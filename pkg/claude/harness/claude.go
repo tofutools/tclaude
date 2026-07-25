@@ -57,6 +57,14 @@ func init() {
 		// ledger of the shells still running and badge an agent that only
 		// LOOKS idle. See BackgroundShells + db.BgShellSet (TCL-613).
 		BackgroundShells: true,
+		// Claude Code blocks a first launch in an untrusted dir on its "Do you
+		// trust the files in this folder?" dialog — the same startup gate as
+		// Codex's trust-folder modal, and equally fatal to an unattended pane.
+		// It records the answer as projects[<dir>].hasTrustDialogAccepted in
+		// ~/.claude.json, which tclaude can seed ahead of launch, so the
+		// trust-dir opt-in applies here exactly as it does to Codex. See
+		// claude_dir_trust.go.
+		DirTrust: true,
 	})
 }
 

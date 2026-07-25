@@ -1151,6 +1151,16 @@ type dashboardHarness struct {
 	// from CanApproval: Codex exposes both axes, while Claude Code's permission
 	// catalog has no separate approvals_reviewer control.
 	CanAutoReview bool `json:"can_auto_review"`
+	// CanDirTrust mirrors Harness.SupportsDirTrust — true for a harness whose
+	// trust-folder dialog tclaude can pre-seed (Claude Code, Codex), false for
+	// one with no such dialog. The spawn dialog's and profile editor's trust-dir
+	// controls gate on this instead of naming a harness, so the two harnesses
+	// that have the dialog both surface the checkbox.
+	CanDirTrust bool `json:"can_dir_trust"`
+	// DirTrustStore is the config file the trust-dir opt-in would edit
+	// (~/.codex/config.toml, ~/.claude.json), so the checkbox can name the side
+	// effect the operator is consenting to. "" when CanDirTrust is false.
+	DirTrustStore string `json:"dir_trust_store,omitempty"`
 	// CanAskTimeout reports whether the harness has a launch AskUserQuestion
 	// idle-timeout catalog (Claude Code). The dialog's timeout row gates on this
 	// + a non-empty AskTimeoutModes, mirroring the sandbox row.
@@ -1223,6 +1233,8 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanApproval:      h.SupportsApproval(),
 			CanTools:         h.SupportsToolGovernance(),
 			CanAutoReview:    h.SupportsAutoReview(),
+			CanDirTrust:      h.SupportsDirTrust(),
+			DirTrustStore:    harness.DirTrustStore(h),
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
 			CanAutoMemory:    h.CanAutoMemory(),

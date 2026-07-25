@@ -715,8 +715,8 @@ type templateAgentLaunch struct {
 	// profile carries (the same pair applyDefaultProfile overlays from a group's
 	// default profile). They are resolved (not just validated) here so the
 	// template instantiator threads them into spawnParams — without this a
-	// profile's trust_dir never reaches a template-spawned Codex agent, leaving
-	// it frozen on the trust-folder modal (JOH-205 regression for the template
+	// profile's trust_dir never reaches a template-spawned agent, leaving it
+	// frozen on the trust-folder dialog (JOH-205 regression for the template
 	// path). Off by default; only a referenced profile turns them on.
 	TrustDir   bool
 	AutoReview bool
@@ -1140,10 +1140,11 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile
 	// spoke) collapses to false = off. ResolveTrustDir/ResolveAutoReview reject
-	// a true request on a harness that has no such concept (Claude Code); in
-	// practice a profile carrying trust_dir=true is a Codex profile (validated
-	// at save) and is only adopted above when the harness matched, so this
-	// won't fire — but a mismatch is a clean per-agent 400, not a silent drop.
+	// a true request on a harness that has no such concept (auto-review off
+	// Codex; trust-dir off a harness with no trust dialog); in practice a
+	// profile carrying either is validated at save and only adopted above when
+	// the harness matched, so this won't fire — but a mismatch is a clean
+	// per-agent 400, not a silent drop.
 	trustDir, trustDirSet, note, fail := resolveBoolLaunchField("trust_dir", false, false, h.Name, tiers,
 		func(p *db.SpawnProfile) *bool { return p.TrustDir }, func(v bool) (bool, error) { return harness.ResolveTrustDir(h, v) })
 	if fail != nil {

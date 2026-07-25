@@ -97,7 +97,14 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	absent(`function refreshDashDefaultProfile(`, "global default no longer has a separate poll fetch")
 	present(`body.trust_dir = !!draft.trustDir`, "profile false trust intent stays explicit on spawn")
 	present(`profile.trust_dir != null`, "sparse profiles preserve trust-dir fallthrough")
-	present(`draft.harness === 'codex' && draft.trustDirSpecified`, "untouched trust-dir stays omitted")
+	present(`view.showTrustDir && draft.trustDirSpecified`, "untouched trust-dir stays omitted")
+	// The trust-dir controls gate on the harness capability, not a hardcoded
+	// harness name — Claude Code has a trust-folder dialog too, so the old
+	// Codex-only gates would wrongly hide the checkbox from it.
+	absent(`draft.harness === 'codex' && draft.trustDirSpecified`, "spawn body no longer gates trust-dir on the codex name")
+	absent(`if (draft.harness === 'codex') seed.trust_dir`, "profile seed no longer gates trust-dir on the codex name")
+	absent(`draft.harness !== 'codex'`, "the profile editor's Trust dir row no longer hides on the codex name")
+	present(`hidden=${hEntry && !hEntry.can_dir_trust}`, "the Trust dir row gates on the dir-trust capability")
 
 	// The retired user-level default-MODEL chip and its inline editor are gone.
 	// (The backend /api/claude-settings/default-model endpoint and the

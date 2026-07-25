@@ -559,8 +559,21 @@ func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
 	}
 }
 
+// defaultSiblingWorktreeTrust reports whether cwd is a worktree tclaude itself
+// created next to its repo, and therefore one the daemon may pre-trust without
+// an explicit operator opt-in. It does double duty on the spawn path: it forces
+// trust on for such a dir, AND it is the sole exemption that lets an
+// AGENT-initiated spawn request trust_dir at all (see the trust_dir_restricted
+// refusals in lifecycle.go) — an agent may vouch for a dir tclaude minted, never
+// for an arbitrary path it names.
+//
+// Gated on SupportsDirTrust rather than a harness name: both Claude Code and
+// Codex block an unattended pane on a trust dialog for a fresh worktree, and a
+// default sibling worktree is equally tclaude-vouched under either. A harness
+// with no trust store returns false — there is nothing to pre-trust.
 func defaultSiblingWorktreeTrust(harnessName, cwd, gitCommonDir string) (bool, error) {
-	if harnessOrDefault(harnessName) != harness.CodexName {
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil || !h.SupportsDirTrust() {
 		return false, nil
 	}
 	if strings.TrimSpace(gitCommonDir) == "" {

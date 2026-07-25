@@ -8,16 +8,21 @@ import (
 	"path/filepath"
 )
 
-// Claude Code directory trust (JOH-369).
+// Claude Code directory trust (JOH-369; generalised to the trust-dir opt-in).
 //
 // On first interactive launch in a directory it does not yet trust, Claude
 // Code shows a "Do you trust the files in this folder?" dialog and blocks
-// until the human answers. A tclaude-spawned scribe runs detached in a tmux
+// until the human answers. A tclaude-spawned agent runs detached in a tmux
 // pane, so — like Codex's dir-trust modal (codex_dir_trust.go) — that dialog
 // is a startup gate that makes the human approve a dir before the agent can
-// act. The scribe-summon path spawns into a stable, daemon-created workdir
-// (~/.tclaude/scribe), so it pre-trusts that dir to keep the ideal at zero
-// prompts.
+// act.
+//
+// Callers reach this editor through the harness-agnostic EnsureDirTrusted
+// (dir_trust.go). Three paths do so, all of them narrow: the scribe-summon
+// path (which spawns into a stable, daemon-created ~/.tclaude/scribe workdir),
+// the explicit trust-dir opt-in (dashboard checkbox / profile trust_dir /
+// `tclaude session new --trust-dir`), and tclaude's own verified default
+// sibling worktrees. It is never a blanket default for an arbitrary cwd.
 //
 // Where Codex records dir trust in ~/.codex/config.toml, Claude Code records
 // it in ~/.claude.json as a per-path project entry:
@@ -28,22 +33,34 @@ import (
 //	  }
 //	}
 //
-// Claude Code trusts a cwd when that dir OR ANY ANCESTOR carries
-// hasTrustDialogAccepted=true — it walks up the path, not just the exact
-// entry. That reconciles the config we observed: ordinary project dirs sit at
-// false yet never re-prompt because a trusted ANCESTOR covers them (a
-// hand-accepted ~/git=true covers every ~/git/* worktree beneath it). $HOME
-// (the case that bit the operator) is false AND has no trusted ancestor, so it
-// prompts — and ~/.tclaude/scribe is the same shape: false/absent with no
-// trusted ancestor above it (~/.tclaude and / are not project entries and
-// $HOME is false). So moving out of $HOME does NOT by itself dodge the dialog
-// — the new dir is equally untrusted — which makes seeding the scribe dir's
-// OWN entry the load-bearing step here. (Moving still matters for the other
-// reasons the ticket cites: out of $HOME's broad reach, a stable cwd, a
-// minimal surface.) The seed is best-effort only as a DEGRADATION strategy: a
-// failure (unreadable / malformed / wrong-shape config) logs and the summon
-// proceeds, worst case a single one-time dialog the human clears via the
-// pane's focus button.
+// Claude Code is believed to trust a cwd when that dir OR AN ANCESTOR carries
+// hasTrustDialogAccepted=true, rather than only on an exact entry. Treat that
+// as UNCONFIRMED: it was inferred to explain why ordinary project dirs sit at
+// false yet do not re-prompt, and the worked example originally recorded here
+// (a hand-accepted ~/git covering every ~/git/* worktree) does not hold — real
+// configs have been observed carrying no ~/git entry at all while worktrees
+// beneath it still launched clean. Whatever the exact rule, what matters for
+// this file is the direction it does NOT change:
+//
+//   - Seeding a dir's OWN entry trusts it under either rule (an exact match
+//     satisfies an exact-match rule and terminates an ancestor walk), so this
+//     editor is correct regardless.
+//   - Merely MOVING to a different dir dodges nothing — a fresh dir with no
+//     trusted ancestor is as untrusted as the old one. So for the scribe
+//     (~/.tclaude/scribe, whose ancestors are not project entries) seeding is
+//     the load-bearing step, not the relocation. Relocation still earns its
+//     keep for the other reasons the ticket cites: out of $HOME's broad reach,
+//     a stable cwd, a minimal surface.
+//
+// The consequence of the rule being ancestor-walking is only that some seeds
+// are redundant no-ops (a dir an ancestor already covers), which the idempotent
+// path handles for free. Do not tighten this editor on the strength of the
+// ancestor claim without confirming it against a real Claude Code build.
+//
+// The seed is best-effort only, as a DEGRADATION strategy: a failure
+// (unreadable / malformed / wrong-shape config) logs and the spawn proceeds,
+// worst case a single one-time dialog the human clears via the pane's focus
+// button.
 //
 // Unlike the surgical line-splice the Codex TOML editor uses, ~/.claude.json
 // is a large JSON state file Claude Code owns and rewrites wholesale on nearly
@@ -87,9 +104,12 @@ func claudeConfigJSONPath() (string, error) {
 // ~/.claude.json carries projects[projectDir].hasTrustDialogAccepted = true.
 // projectDir must be the ABSOLUTE launch cwd — the same path Claude Code keys
 // its project entry on — or the entry won't match. Idempotent (already-trusted
-// → no write) and atomic (temp + rename). Only the daemon's scribe-summon path
-// calls this, and only for the daemon-created scribe workdir; it is never a
-// default and never a caller-supplied path.
+// → no write) and atomic (temp + rename).
+//
+// Reached through EnsureDirTrusted (dir_trust.go), which gates on the harness.
+// Callers are limited to the scribe-summon path, the explicit trust-dir opt-in
+// and tclaude's verified default sibling worktrees; it is never a default for
+// an arbitrary cwd.
 func EnsureClaudeDirTrusted(projectDir string) error {
 	path, err := claudeConfigJSONPath()
 	if err != nil {

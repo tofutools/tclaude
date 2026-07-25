@@ -26,6 +26,7 @@ const harnesses = [{
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
   can_remote_control: true, can_auto_memory: true,
+  can_dir_trust: true, dir_trust_store: '~/.claude.json',
   can_context_features: true,
   context_features: [
     { slug: 'bundled-skills', label: 'Bundled skills', descr: 'shipped skills', heavy: true },
@@ -48,6 +49,7 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+  can_dir_trust: true, dir_trust_store: '~/.codex/config.toml',
   can_context_features: false, context_features: [],
 }, {
   name: 'opencode', display_name: 'OpenCode',
@@ -63,6 +65,8 @@ const harnesses = [{
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+  // OpenCode has no trust-folder dialog, so no store to seed either.
+  can_dir_trust: false, dir_trust_store: '',
 }];
 
 const profiles = [{
@@ -426,6 +430,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(host.querySelector('#agent-spawn-name'), sameNameNode, 'source refresh preserves the keyed draft DOM');
   assert.equal(host.querySelector('#agent-spawn-name').value, 'my worker');
 
+  // Claude Code has its own trust-folder dialog, so the checkbox is offered
+  // here too — and its copy names the file the opt-in would edit, which differs
+  // per harness and is what the operator is consenting to.
+  const trustRow = host.querySelector('#agent-spawn-trust-dir-row');
+  assert.equal(trustRow.hidden, false, 'claude offers the trust-dir checkbox');
+  assert.match(trustRow.textContent, /~\/\.claude\.json/, 'claude copy names its own store');
+
   const harnessSelect = host.querySelector('#agent-spawn-harness');
   setValue(harnessSelect, 'codex');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -439,8 +450,12 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
   assert.equal(host.querySelector('#agent-spawn-remote-control-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
+  assert.match(host.querySelector('#agent-spawn-trust-dir-row').textContent, /~\/\.codex\/config\.toml/,
+    'codex copy names its own store, not the one the previous harness would edit');
   setValue(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, true,
+    'a harness with no trust dialog hides the checkbox');
   const openCodeSandbox = host.querySelector('#agent-spawn-sandbox');
   assert.equal(openCodeSandbox.closest('.cron-create-row').hidden, false);
   assert.deepEqual([...openCodeSandbox.options].map((option) => option.value), ['off']);

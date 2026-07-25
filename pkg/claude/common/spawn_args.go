@@ -155,10 +155,11 @@ type SpawnArgs struct {
 	// (JOH-200 part 2).
 	AutoReview bool
 
-	// TrustDir pre-trusts the launch dir for Codex (SpawnNew only): the forked
-	// `tclaude session new --trust-dir` writes the trust entry into
-	// ~/.codex/config.toml before launch so a detached pane doesn't freeze on the
-	// trust-folder modal (JOH-205). false (the default) leaves the modal in place.
+	// TrustDir pre-trusts the launch dir (SpawnNew only): the forked
+	// `tclaude session new --trust-dir` writes the trust entry into the
+	// harness's own store (~/.codex/config.toml, ~/.claude.json) before launch
+	// so a detached pane doesn't freeze on the trust-folder dialog (JOH-205,
+	// JOH-369). false (the default) leaves the dialog in place.
 	// Fresh-spawn-only — resume paths leave it false (a resumed conv's dir was
 	// already its own at first launch), so SpawnResume ignores it.
 	TrustDir bool

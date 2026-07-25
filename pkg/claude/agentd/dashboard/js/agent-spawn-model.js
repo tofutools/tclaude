@@ -148,7 +148,12 @@ export function spawnCapabilityView(draft, context) {
     tools,
     askTimeout,
     showApprovalReviewer: !!harness?.can_auto_review,
-    showTrustDir: draft.harness === 'codex',
+    showTrustDir: harness ? !!harness.can_dir_trust
+      : (draft.harness === 'codex' || draft.harness === 'claude'),
+    // The config file the opt-in edits, so the checkbox names the side effect.
+    // Blank until the harness catalog loads; the copy degrades to "the
+    // harness's config" rather than naming the wrong file.
+    trustDirStore: harness?.dir_trust_store || '',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
@@ -396,10 +401,10 @@ export function applySpawnProfile(
       profile.ask_user_question_timeout, view.askTimeout.modes, next.askTimeout,
     );
   }
-  if (next.harness === 'codex' && profile.trust_dir != null) {
+  if (view.showTrustDir && profile.trust_dir != null) {
     next.trustDir = !!profile.trust_dir;
     next.trustDirSpecified = true;
-  } else if (next.harness !== 'codex') {
+  } else if (!view.showTrustDir) {
     next.trustDir = false;
     next.trustDirSpecified = false;
   }
@@ -586,7 +591,7 @@ export function spawnProfileSeed(draft, context) {
   const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
   if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
-  if (draft.harness === 'codex') seed.trust_dir = !!draft.trustDir;
+  if (view.showTrustDir) seed.trust_dir = !!draft.trustDir;
   // Seed only an explicit opt-IN. Off is what an unset profile already
   // resolves to, so pinning false would give the operator an "auto-memory off"
   // chip on a field they never touched — indistinguishable from a deliberate
@@ -678,7 +683,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (view.askTimeout.visible && draft.askTimeout) {
     body.ask_user_question_timeout = draft.askTimeout;
   }
-  if (draft.harness === 'codex' && draft.trustDirSpecified) {
+  if (view.showTrustDir && draft.trustDirSpecified) {
     body.trust_dir = !!draft.trustDir;
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;

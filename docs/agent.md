@@ -1168,9 +1168,10 @@ per-agent-worktree repo); the matching `tclaude agent templates …` /
 that create per-agent worktrees during the request fail closed when those new
 checkout admin dirs were not part of the caller's proof; a human can launch
 that topology without the agent-to-agent authority constraint. Separately,
-agent-originated Codex spawns may pre-trust only a verified default sibling worktree; those worktrees are
-always trusted automatically so a detached child cannot stop at Codex's
-trust-folder modal. Other agent-selected paths remain forbidden. All extra
+agent-originated spawns may pre-trust only a verified default sibling worktree;
+those worktrees are always trusted automatically — for Claude Code and Codex
+alike — so a detached child cannot stop at the harness's trust-folder dialog.
+Other agent-selected paths remain forbidden. All extra
 repository write grants are resolved, proved, and pinned before launch rather
 than recomputed from a mutable cwd; Codex consumes them through its managed
 profile and Claude Code through merged `sandbox.filesystem.allowWrite` paths.

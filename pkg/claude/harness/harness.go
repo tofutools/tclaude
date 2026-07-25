@@ -168,6 +168,31 @@ type Harness struct {
 	// background-shell ledger, its liveness reconcile, or the "⚙+N" badge
 	// engages for a Codex agent. See db.BgShellSet (TCL-613).
 	BackgroundShells bool
+
+	// DirTrust marks a harness that gates its first launch in an untrusted
+	// directory behind a blocking "do you trust this folder?" dialog, AND whose
+	// trust record tclaude can pre-seed from outside the process. Both halves
+	// matter: the dialog is what freezes an unattended pane, and the writable
+	// record is what lets the trust-dir opt-in do anything about it.
+	//
+	// Codex sets it (a [projects."<dir>"] trust_level table in
+	// ~/.codex/config.toml — codex_dir_trust.go) and so does Claude Code (a
+	// projects[<dir>].hasTrustDialogAccepted flag in ~/.claude.json —
+	// claude_dir_trust.go). The two stores are unrelated in shape, so
+	// EnsureDirTrusted dispatches; this flag is only the "is there anything to
+	// dispatch to" gate that ResolveTrustDir, the spawn dialog and the profile
+	// editor read.
+	//
+	// OpenCode leaves it false: no trust dialog, hence no record to seed.
+	DirTrust bool
+}
+
+// SupportsDirTrust reports whether tclaude can pre-trust a launch directory
+// for this harness, i.e. whether the trust-dir opt-in is meaningful at all.
+// An unknown/empty harness folds to false, so a harness tclaude cannot reason
+// about is never handed a config file to edit.
+func (h *Harness) SupportsDirTrust() bool {
+	return h != nil && h.DirTrust
 }
 
 // SupportsBackgroundShells reports whether tclaude tracks background shell

@@ -275,15 +275,17 @@ type SpawnRequest struct {
 	// hence an explicit opt-in. See JOH-200 part 2.
 	AutoReview bool `json:"auto_review,omitempty"`
 
-	// TrustDir opts the spawned agent into pre-trusting its launch directory
-	// for Codex: the daemon writes [projects."<cwd>"] trust_level = "trusted"
-	// into the user's ~/.codex/config.toml BEFORE launch, so a detached pane
-	// doesn't freeze on Codex's "do you trust this folder?" onboarding modal
-	// (JOH-205). false (the default) leaves the modal in place — to be cleared
+	// TrustDir opts the spawned agent into pre-trusting its launch directory:
+	// the daemon seeds the harness's own trust record BEFORE launch (Codex's
+	// [projects."<cwd>"] trust_level in ~/.codex/config.toml, Claude Code's
+	// projects.<cwd>.hasTrustDialogAccepted in ~/.claude.json), so a detached
+	// pane doesn't freeze on the "do you trust this folder?" dialog (JOH-205,
+	// JOH-369). false (the default) leaves the dialog in place — to be cleared
 	// by focusing the pending pane. Unlike SandboxMode/ApprovalPolicy this
-	// edits the user's config.toml, so it is strictly opt-in (dashboard
-	// checkbox / `--trust-dir`) and NEVER defaulted. Codex-only; requesting it
-	// for Claude Code is a 400. Forwarded to `tclaude session new --trust-dir`.
+	// edits a config tclaude does not own, so it is strictly opt-in (dashboard
+	// checkbox / `--trust-dir`) and NEVER defaulted. Requesting it for a
+	// harness with no trust dialog is a 400. Forwarded to `tclaude session new
+	// --trust-dir`.
 	TrustDir bool `json:"trust_dir,omitempty"`
 
 	// RemoteControl arms the spawned agent's built-in Remote Access at launch
@@ -1109,10 +1111,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
-		// Resolve the effective trust-dir (Codex-only; taken from a --profile's
-		// trust_dir, since the CLI has no dedicated flag). false for any harness is
-		// always fine; a true for a non-Codex harness fails fast here. The daemon
-		// re-gates server-side.
+		// Resolve the effective trust-dir (taken from a --profile's trust_dir,
+		// since the CLI has no dedicated flag). false for any harness is always
+		// fine; a true for a harness with no trust dialog fails fast here. The
+		// daemon re-gates server-side.
 		if _, err = harness.ResolveTrustDir(h, validationFields.TrustDir); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
