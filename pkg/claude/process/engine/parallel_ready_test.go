@@ -50,7 +50,7 @@ func stepAssertingClassifier(t *testing.T, checkpoint Checkpoint, definition *De
 			if !plannable {
 				return checkpoint
 			}
-			command := programCommand(checkpoint.RunID, node)
+			command := programCommand(checkpoint.RunID, node, nextAttempt(checkpoint, node.id))
 			transition = Transition{Kind: TransitionCommandPlanned, Command: &command}
 		}
 		next, err := apply(checkpoint, definition, transition)
@@ -98,9 +98,10 @@ func TestRuntimeBoundaryLoadsStructurallySafePluralState(t *testing.T) {
 	plural := cloneCheckpoint(base)
 	plural.Nodes["first"] = NodeRunning
 	plural.Nodes["second"] = NodeRunning
+	plural.Attempts = map[string]int{"first": 1, "second": 1}
 	plural.Commands = []Command{
-		programCommand(plural.RunID, definition.nodes[definition.index["first"]]),
-		programCommand(plural.RunID, definition.nodes[definition.index["second"]]),
+		programCommand(plural.RunID, definition.nodes[definition.index["first"]], 1),
+		programCommand(plural.RunID, definition.nodes[definition.index["second"]], 1),
 	}
 
 	if err := ValidateCheckpoint(plural, definition); err != nil {

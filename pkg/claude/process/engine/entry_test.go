@@ -161,7 +161,7 @@ func TestInitializeDecisionEntryExactCheckpointShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"version":2,"runId":"run-1","status":"running",` +
+	want := `{"version":3,"runId":"run-1","status":"running",` +
 		`"nodes":{"canceled":"pending","choose":"ready","done":"pending","work":"pending"},` +
 		`"edges":{"choose":{"abort":"unresolved","proceed":"unresolved"},"work":{"next":"unresolved"}},` +
 		`"awaitingDecisions":[{"nodeId":"choose"}],"commands":null}`
@@ -421,13 +421,16 @@ func TestDirectEntryDoesNotRelaxUnsupportedShapes(t *testing.T) {
 			},
 		},
 		{
-			name: "retry on a direct task entry",
+			// A bounded fresh-attempt retry IS executable on a program task, entry
+			// or not; the backoff wait between attempts is what stays unsupported,
+			// and being the entry node must not relax that.
+			name: "retry backoff on a direct task entry",
 			code: "unsupported_retry",
-			path: "nodes.task.retry",
+			path: "nodes.task.retry.backoff",
 			tmpl: func() *model.Template {
 				tmpl := directTaskEntryTemplate()
 				node := tmpl.Nodes["task"]
-				node.Retry = &model.RetryPolicy{MaxAttempts: 2}
+				node.Retry = &model.RetryPolicy{MaxAttempts: 2, Backoff: "30s"}
 				tmpl.Nodes["task"] = node
 				return tmpl
 			},

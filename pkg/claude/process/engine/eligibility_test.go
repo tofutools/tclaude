@@ -69,6 +69,36 @@ func TestUnstructuredParallelStaysIneligible(t *testing.T) {
 	}
 }
 
+// TestBoundedProgramRetryIsEligible pins the one retry shape this engine
+// executes: a plain program task with a positive budget, no backoff wait, and
+// fresh-attempt semantics — including the default the authoring model resolves
+// an unset onFail to.
+func TestBoundedProgramRetryIsEligible(t *testing.T) {
+	for _, retry := range []*model.RetryPolicy{
+		{MaxAttempts: 1},
+		{MaxAttempts: 3},
+		{MaxAttempts: 3, OnFail: model.RetryModeFreshAttempt},
+	} {
+		tmpl := retryTemplate(retry)
+		assertAuthoringValid(t, tmpl)
+		if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+			t.Fatalf("eligibility diagnostics for %#v = %#v", retry, diagnostics)
+		}
+		definition, err := Prepare(tmpl, nil)
+		if err != nil {
+			t.Fatalf("prepare %#v: %v", retry, err)
+		}
+		if got := definition.nodes[definition.index["task"]].maxAttempts; got != retry.MaxAttempts {
+			t.Fatalf("prepared budget = %d, want the authored %d", got, retry.MaxAttempts)
+		}
+	}
+	// A task with no authored retry keeps the fail-fast budget of one attempt.
+	definition := mustPrepare(t, sequentialTemplate("task"), nil)
+	if got := definition.nodes[definition.index["task"]].maxAttempts; got != 1 {
+		t.Fatalf("default budget = %d, want 1", got)
+	}
+}
+
 func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -109,12 +139,37 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "retry",
+			name: "retry backoff wait",
 			code: "unsupported_retry",
 			tmpl: func() *model.Template {
-				tmpl := sequentialTemplate("task")
-				node := tmpl.Nodes["task"]
+				return retryTemplate(&model.RetryPolicy{MaxAttempts: 2, Backoff: "30s"})
+			},
+		},
+		{
+			name: "same-session retry",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				return retryTemplate(&model.RetryPolicy{MaxAttempts: 2, OnFail: model.RetryModeFeedbackSameSession})
+			},
+		},
+		{
+			name: "retry on a decision node",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				tmpl := decisionDiamondTemplate()
+				node := tmpl.Nodes["choose"]
 				node.Retry = &model.RetryPolicy{MaxAttempts: 2}
+				tmpl.Nodes["choose"] = node
+				return tmpl
+			},
+		},
+		{
+			name: "retry on a compound task",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				tmpl := retryTemplate(&model.RetryPolicy{MaxAttempts: 2})
+				node := tmpl.Nodes["task"]
+				node.Plan = &model.Step{ID: "plan", Performer: model.Performer{Kind: model.PerformerProgram, Run: "plan"}}
 				tmpl.Nodes["task"] = node
 				return tmpl
 			},

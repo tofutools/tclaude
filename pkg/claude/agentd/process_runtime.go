@@ -564,14 +564,20 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		executor.Abandon(claim.run, result.dispatch)
 		return nil
 	}
-	if result.result.Observation.Outcome == engine.ProgramFailed {
-		// Best-effort sibling cancellation. The killed programs still come back
-		// as ordinary observations, so nothing is lost or assumed.
-		claim.cancelWorkers()
-	}
 	next, err := claim.plan(func() (*executor.Dispatch, error) {
 		return executor.Observe(claim.run, result.dispatch, result.result)
 	})
+	// Best-effort sibling cancellation, decided on the run rather than on this
+	// observation: with authored retries a failed program is ordinarily just one
+	// attempt ending, and the branch is re-readied for the next one. Cancelling
+	// then would kill the siblings AND — because workerCtx is never reinstated —
+	// every retry the run went on to plan. It is asked after the commit, so the
+	// answer reflects a budget the observation may itself have exhausted.
+	if claim.run.Failing() {
+		// The killed programs still come back as ordinary observations, so
+		// nothing is lost or assumed.
+		claim.cancelWorkers()
+	}
 	if err != nil {
 		// The worker is gone either way, so this branch can no longer be
 		// accounted for in memory. Dropping the permission is what stops the

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
@@ -15,7 +16,8 @@ import (
 // engine-owned parallel forks, and end nodes. Decisions branch to one authored
 // outcome; a parallel fork takes every authored branch at once; branches may
 // converge on shared nodes and a convergence node may declare join: all. Start
-// and task nodes keep exactly one outgoing route.
+// and task nodes keep exactly one outgoing route. A program task may declare a
+// bounded fresh-attempt retry budget without a backoff wait.
 //
 // An explicit start-typed node is optional, exactly as the authoring contract
 // says: the template's entry node may be any of those kinds, and the engine
@@ -62,8 +64,32 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		// complete candidate input set has settled with at least one arrival;
 		// join: any activates on the first arrival, and its losing branches keep
 		// running to their own settled outcome and arrive late at the reducer.
+		// A plain program task may declare a bounded retry budget: a failed
+		// attempt inside the budget re-readies that node and the next planning
+		// pass mints a fresh attempt-bound command. Only that shape is admitted.
+		// Everything else the authored policy can say — a retry on a node kind
+		// this engine does not execute, a compound stage's retry, a wait between
+		// attempts, or reusing a possibly poisoned performer session — keeps its
+		// own path-specific diagnostic.
 		if node.Retry != nil {
-			add("unsupported_retry", path+".retry", "retries and poison handling are not executable in this engine yet")
+			switch {
+			case node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerProgram:
+				add("unsupported_retry", path+".retry", "only program task retries are executable in this engine yet")
+			case node.IsCompound():
+				add("unsupported_retry", path+".retry", "compound stage retries are not executable in this engine yet")
+			default:
+				if node.Retry.MaxAttempts <= 0 {
+					add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
+				}
+				if strings.TrimSpace(node.Retry.Backoff) != "" {
+					add("unsupported_retry", path+".retry.backoff", "retry backoff waits are not executable in this engine yet")
+				}
+				if model.RetryMode(node.Retry) != model.RetryModeFreshAttempt {
+					add("unsupported_retry", path+".retry.onFail",
+						"only "+model.RetryModeFreshAttempt+" retries are executable in this engine yet; "+
+							model.RetryModeFeedbackSameSession+" needs a performer session this engine does not keep")
+				}
+			}
 		}
 		if node.Plan != nil {
 			if node.Plan.Retry != nil {

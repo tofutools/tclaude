@@ -37,13 +37,19 @@ const (
 )
 
 type definitionNode struct {
-	id       string
-	kind     definitionNodeKind
-	program  ProgramCommand // task nodes only
-	terminal RunStatus      // end nodes only
-	verdicts []string       // decision nodes only: sorted authored outcome labels
-	outgoing []int          // edge indices, sorted by outcome label
-	incoming []int          // edge indices, in edge order
+	id      string
+	kind    definitionNodeKind
+	program ProgramCommand // task nodes only
+	// maxAttempts is the authored retry budget of a task node, first attempt
+	// included, and 1 for a task with no authored retry. It is the ONLY thing
+	// preparation carries about retry: the reducer needs a ceiling to compare
+	// the checkpoint's attempt counter against, and nothing else about the
+	// authored policy is executable in this slice.
+	maxAttempts int
+	terminal    RunStatus // end nodes only
+	verdicts    []string  // decision nodes only: sorted authored outcome labels
+	outgoing    []int     // edge indices, sorted by outcome label
+	incoming    []int     // edge indices, in edge order
 	// joinAll marks a convergence node authored with join: all. Such a node
 	// activates once its complete candidate input set has settled with one or
 	// more arrivals, instead of the non-join exactly-one-arrival rule.
@@ -93,6 +99,10 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			prepared.kind = definitionParallel
 		case model.NodeTypeTask:
 			prepared.kind = definitionTask
+			// Eligibility already admitted only the retry shape this engine
+			// executes, so the budget is taken as authored; RetryBudget resolves an
+			// absent policy to the fail-fast single attempt.
+			prepared.maxAttempts = model.RetryBudget(node.Retry)
 			program, err := bindProgram(nodeID, *node.Performer, params)
 			if err != nil {
 				return nil, err
@@ -334,8 +344,9 @@ func DecodeCheckpoint(data []byte, definition *Definition) (Checkpoint, error) {
 // bytes enter, not on every transition. It enforces concrete structural safety
 // against an immutable prepared definition: checkpoint version and bounded run
 // id, exact known node and edge references, known status/disposition enum
-// values, and unique bounded command/decision obligation entries whose
-// deterministic identity and node binding are compatible with a known node. It
+// values, attempt counters inside their authored budget, and unique bounded
+// command/decision obligation entries whose deterministic identity, attempt,
+// and node binding are compatible with a known node. It
 // deliberately does NOT run the whole-graph exclusive-decision classification
 // (single active node, single failure, pending-arrival exclusion, activation
 // proofs): those are current-slice expectations demoted to ClassifyCheckpoint
@@ -408,10 +419,37 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if err := validateEdgeShape(checkpoint, definition); err != nil {
 		return err
 	}
+	if err := validateAttempts(checkpoint, definition); err != nil {
+		return err
+	}
 	if err := validateCommands(checkpoint, definition); err != nil {
 		return err
 	}
 	return validateAwaitingDecisions(checkpoint, definition)
+}
+
+// validateAttempts enforces that the sparse attempt counter names only known
+// program tasks and holds only attempt numbers the pinned definition could
+// actually have produced: at least the first attempt, at most the authored
+// budget. The map is keyed by node id, so its size is bounded by the prepared
+// node set without a separate count check.
+//
+// It deliberately says nothing about which nodes SHOULD have an entry. The
+// counter is sparse on purpose and the exhaustion disposition is expected to
+// change, so this stays a bound on the values rather than a whole-graph proof
+// about statuses.
+func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
+	for nodeID, attempt := range checkpoint.Attempts {
+		node, ok := definitionNodeByID(definition, nodeID)
+		if !ok || node.kind != definitionTask {
+			return fmt.Errorf("%w: attempts names %q, which is not a prepared program task", ErrInvalidCheckpoint, nodeID)
+		}
+		if attempt < 1 || attempt > node.maxAttempts {
+			return fmt.Errorf("%w: node %q attempt %d is outside its authored budget of 1..%d",
+				ErrInvalidCheckpoint, nodeID, attempt, node.maxAttempts)
+		}
+	}
+	return nil
 }
 
 // validateCommands enforces the durable command outbox is unique, bounded, and
@@ -441,7 +479,11 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("duplicate command for node %q", command.NodeID)
 		}
 		seen[command.NodeID] = struct{}{}
-		expected := programCommand(checkpoint.RunID, node)
+		// The attempt is taken from the counter, not from the command, so a
+		// durable outbox entry that names any attempt other than its node's
+		// current one fails closed here — including one whose id and Attempt
+		// field agree with each other but not with the run's own state.
+		expected := programCommand(checkpoint.RunID, node, checkpoint.Attempts[command.NodeID])
 		if !commandsEqual(command, expected) {
 			return invalid("command does not match the deterministic bound request for node %q", command.NodeID)
 		}
@@ -750,6 +792,7 @@ func terminalStatus(result string) RunStatus {
 
 func commandsEqual(left, right Command) bool {
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
+		left.Attempt == right.Attempt &&
 		left.Program.Profile == right.Program.Profile && left.Program.Run == right.Program.Run &&
 		left.Program.Timeout == right.Program.Timeout && slices.Equal(left.Program.Args, right.Program.Args)
 }

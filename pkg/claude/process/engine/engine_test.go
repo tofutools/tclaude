@@ -11,7 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-func TestInitializeExactV2CheckpointShape(t *testing.T) {
+func TestInitializeExactV3CheckpointShape(t *testing.T) {
 	tmpl := sequentialTemplate("task")
 	definition := mustPrepare(t, tmpl, nil)
 	checkpoint, err := Initialize("run-1", definition)
@@ -24,7 +24,7 @@ func TestInitializeExactV2CheckpointShape(t *testing.T) {
 	}
 	// The durable outbox arrays are parallel-ready plural fields without
 	// omitempty, so an empty pre-execution checkpoint serializes them as null.
-	want := `{"version":2,"runId":"run-1","status":"running",` +
+	want := `{"version":3,"runId":"run-1","status":"running",` +
 		`"nodes":{"end":"pending","start":"ready","task":"pending"},` +
 		`"edges":{"start":{"next":"unresolved"},"task":{"next":"unresolved"}},` +
 		`"awaitingDecisions":null,"commands":null}`
@@ -51,7 +51,7 @@ func TestSequentialProgramsProgressToSuccessfulEnd(t *testing.T) {
 	if initial.Nodes["start"] != NodeReady || len(initial.Commands) != 0 {
 		t.Fatalf("advance mutated input: %#v", initial)
 	}
-	if first == nil || first.ID != "cmd_5_run-1_5_first_program" || first.NodeID != "first" {
+	if first == nil || first.ID != "cmd_5_run-1_5_first_1_program" || first.NodeID != "first" {
 		t.Fatalf("first command = %#v", first)
 	}
 	if first.Program.Run != "printf" || !reflect.DeepEqual(first.Program.Args, []string{"hello world"}) {
@@ -76,7 +76,7 @@ func TestSequentialProgramsProgressToSuccessfulEnd(t *testing.T) {
 	}
 	_, plannedOnce := advanceAndPlan(t, secondReady, definition)
 	_, plannedTwice := advanceAndPlan(t, secondReady, definition)
-	if !reflect.DeepEqual(plannedOnce, plannedTwice) || plannedOnce.ID != "cmd_5_run-1_6_second_program" {
+	if !reflect.DeepEqual(plannedOnce, plannedTwice) || plannedOnce.ID != "cmd_5_run-1_6_second_1_program" {
 		t.Fatalf("ready-state planning is unstable: %#v / %#v", plannedOnce, plannedTwice)
 	}
 
@@ -233,7 +233,7 @@ func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsolicited := Transition{Kind: TransitionProgramObserved, Observation: &ProgramObservation{
-		CommandID: "cmd_14_run-unsolicited_4_task_program",
+		CommandID: "cmd_14_run-unsolicited_4_task_1_program",
 		NodeID:    "task",
 		Outcome:   ProgramSucceeded,
 	}}
@@ -435,6 +435,16 @@ func sequentialTemplate(taskIDs ...string) *model.Template {
 		Start:      "start",
 		Nodes:      nodes,
 	}
+}
+
+// retryTemplate is the canonical retry fixture: start -> task -> end with one
+// authored retry policy on the single program task.
+func retryTemplate(retry *model.RetryPolicy) *model.Template {
+	tmpl := sequentialTemplate("task")
+	node := tmpl.Nodes["task"]
+	node.Retry = retry
+	tmpl.Nodes["task"] = node
+	return tmpl
 }
 
 func startToEndTemplate() *model.Template {

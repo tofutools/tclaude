@@ -209,6 +209,17 @@ func (r *Run) Action() Action {
 	return action
 }
 
+// Failing reports whether a task of this run has already exhausted its attempt
+// budget, so the run can only drain. A driver reads it after committing an
+// observation to decide whether the run is over: with authored retries a failed
+// program is ordinarily just one attempt ending, and the branch is re-readied.
+func (r *Run) Failing() bool {
+	if r == nil {
+		return false
+	}
+	return engine.Failing(r.checkpoint)
+}
+
 // Commands reports every durable outbox entry with whether this process still
 // accounts for it. It is the plural read every presentation and reconciliation
 // surface uses.
