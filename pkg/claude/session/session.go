@@ -47,9 +47,9 @@ type SessionState struct {
 	// process liveness is the authoritative reconcile).
 	BgShells db.BgShellSet `json:"bgShells,omitempty"`
 	Created  time.Time     `json:"created"`
-	Updated   time.Time      `json:"updated"`
-	LastHook  time.Time      `json:"lastHook"`
-	Attached  int            `json:"-"` // Number of attached clients (runtime only, not persisted)
+	Updated  time.Time     `json:"updated"`
+	LastHook time.Time     `json:"lastHook"`
+	Attached int           `json:"-"` // Number of attached clients (runtime only, not persisted)
 	// Harness is the coding tool this session belongs to ("claude",
 	// "codex"). Carried through toRow/fromRow so the hook callback's
 	// load→mutate→save round-trip preserves a non-claude tag instead of
@@ -63,9 +63,23 @@ type SessionState struct {
 	// toRow/fromRow so the hook callback's load→mutate→save round-trip
 	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
-	SandboxMode      string                  `json:"sandboxMode,omitempty"`
-	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
-	ResumeProvenance string                  `json:"resumeProvenance,omitempty"`
+	SandboxMode string `json:"sandboxMode,omitempty"`
+	// OSSandboxState and OSSandboxSource record whether the OS sandbox was
+	// ACTUALLY active for this launch ("on"/"off"/"unconfigured") and what
+	// decided that, resolved once at spawn by harness.ResolveLaunchOSSandbox.
+	// SandboxMode above is the launch REQUEST, which for Claude Code's `inherit`
+	// default answers nothing — these answer it, so the dashboard can badge an
+	// agent confined by the operator's own settings.json. Carried through
+	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
+	// round-trip preserves them. "" for a harness whose mode already states its
+	// posture (Codex) or a pre-column row.
+	OSSandboxState  string `json:"osSandboxState,omitempty"`
+	OSSandboxSource string `json:"osSandboxSource,omitempty"`
+	// OSSandboxUnverified marks a verdict a higher-precedence settings file
+	// tclaude could not read may contradict. Carried like the other two.
+	OSSandboxUnverified bool                    `json:"osSandboxUnverified,omitempty"`
+	EffectiveSandbox    *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
+	ResumeProvenance    string                  `json:"resumeProvenance,omitempty"`
 	// ApprovalPolicy and ApprovalAutoReview preserve the resolved launch-time
 	// approval posture across hook load/mutate/save cycles. They are recorded
 	// for authorization and re-applied when the conversation is resumed.
@@ -191,6 +205,9 @@ func toRow(s *SessionState) *db.SessionRow {
 		LastHook:               s.LastHook,
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
+		OSSandboxState:         s.OSSandboxState,
+		OSSandboxSource:        s.OSSandboxSource,
+		OSSandboxUnverified:    s.OSSandboxUnverified,
 		EffectiveSandbox:       s.EffectiveSandbox,
 		ResumeProvenance:       s.ResumeProvenance,
 		ApprovalPolicy:         s.ApprovalPolicy,
@@ -217,6 +234,9 @@ func fromRow(r *db.SessionRow) *SessionState {
 		LastHook:               r.LastHook,
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
+		OSSandboxState:         r.OSSandboxState,
+		OSSandboxSource:        r.OSSandboxSource,
+		OSSandboxUnverified:    r.OSSandboxUnverified,
 		EffectiveSandbox:       r.EffectiveSandbox,
 		ResumeProvenance:       r.ResumeProvenance,
 		ApprovalPolicy:         r.ApprovalPolicy,

@@ -1679,6 +1679,24 @@ type agentState struct {
 	// Code: on / off — its `inherit` default normalizes to "" and records
 	// nothing). "" renders no sandbox badge. Surfaced regardless of liveness.
 	SandboxMode string `json:"sandbox_mode,omitempty"`
+	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
+	// the OS sandbox ACTUALLY confined this agent ("on" / "off" /
+	// "unconfigured") and what decided it — the settings file that won the
+	// precedence chain, or the launch itself (TCL-729). They answer what
+	// SandboxMode cannot: Claude Code's default mode is `inherit`, which means
+	// "whatever the operator's settings.json says", so a badge driven off the
+	// mode alone stayed blank for a confined agent and an unconfined one alike.
+	// "" is "no verdict recorded" — a pre-column row, or a harness whose mode
+	// already states its posture (Codex) — and the dashboard falls back to
+	// rendering the mode exactly as before. Surfaced regardless of liveness,
+	// like SandboxMode: what a dead agent ran under is still informative.
+	OSSandboxState  string `json:"os_sandbox_state,omitempty"`
+	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
+	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
+	// deciding tier could have overturned, had tclaude been able to read it. The
+	// badge hedges instead of asserting containment — a padlock on an agent
+	// nothing confines is worse than no padlock at all.
+	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -1765,8 +1783,11 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
-		Harness:     pick.Harness,
-		SandboxMode: pick.SandboxMode,
+		Harness:             pick.Harness,
+		SandboxMode:         pick.SandboxMode,
+		OSSandboxState:      pick.OSSandboxState,
+		OSSandboxSource:     pick.OSSandboxSource,
+		OSSandboxUnverified: pick.OSSandboxUnverified,
 		// RemoteControl is tclaude's best-known Remote Access flag for the
 		// conv (JOH-256), surfaced regardless of liveness like the other
 		// launch/row properties — the dashboard reflects the recorded intent

@@ -359,6 +359,39 @@ Two ways to make the warning go away, both of which are the actual fix:
   every Claude agent is sandboxed by default; or
 - spawn with sandbox `on` for that one agent.
 
+## Reading an agent's sandbox badge
+
+Each agent row in the dashboard's Groups tab carries a sandbox badge, and it
+describes what actually confines the agent — not which mode was requested.
+
+That distinction matters because the mode usually cannot answer the question.
+`inherit`, the Claude Code default, means "whatever `settings.json` says", so a
+badge driven off the mode alone would look identical for an agent locked down by
+your global hardening and one running completely unconfined.
+
+So tclaude resolves the verdict once, at launch, using the same precedence chain
+as the warning above, and records it on the session row. The badge then reads:
+
+| Badge | Meaning |
+| --- | --- |
+| `🔒 on` | The OS sandbox confined this agent. Hover to see whether it was forced on for this launch, inherited from your settings, or forced on by managed policy over an explicit `off` — and which file decided it. |
+| *(none)* | Nothing confines the agent, and nothing was asked for — the plain `inherit` launch with no sandbox configured. This is the posture the unsandboxed-autonomy warning is about. |
+| `⚠ off` | The launch forced the sandbox **off**. Explicit opt-in; the agent's Bash runs unconfined. |
+| `⚠ on overridden` | The launch asked for the sandbox to be **on** and did not get it — only managed policy settings can do this. The agent is unconfined despite what was requested. |
+| `⚠ on?` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
+
+Because the verdict is resolved at launch, it describes what the *running* agent
+got. Editing `settings.json` afterwards does not change an existing agent's
+badge — it changes what the next launch will report. A resume re-resolves, so a
+resumed agent picks up your new posture.
+
+Agents older than this feature, and Codex agents, record no verdict: a Codex
+launch's `--sandbox` mode *is* its posture, so its badge shows the mode
+directly. (One caveat: that holds for agents tclaude spawns, where the daemon
+applies its managed-profile default. A bare `tclaude session new --harness codex`
+with no `--sandbox` records no mode at all and gets no badge — its real posture
+comes from `~/.codex/config.toml`, which tclaude does not read.)
+
 ## Verifying
 
 After updating `settings.json`, start an agent through tclaude and, from

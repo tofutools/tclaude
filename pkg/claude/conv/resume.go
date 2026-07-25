@@ -250,6 +250,11 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// Carry the resolved harness onto the saved row so a non-claude tag is
 	// not coalesced back to "claude" by the DB layer (JOH-218).
 	pid := session.ParsePIDFromTmux(tmuxSession)
+	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+	// confines it rather than carrying the predecessor's verdict, because the
+	// operator may have changed settings.json since (TCL-729).
+	resumeMode := resumeSandboxMode(rc.ConvID)
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, rc.ProjectPath)
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -258,7 +263,10 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		ConvID:                 rc.ConvID,
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
-		SandboxMode:            resumeSandboxMode(rc.ConvID),
+		SandboxMode:            resumeMode,
+		OSSandboxState:         launchOSSandbox.State,
+		OSSandboxSource:        launchOSSandbox.Source,
+		OSSandboxUnverified:    launchOSSandbox.Unverified,
 		EffectiveSandbox:       resumeEffectiveSandboxForState(rc.ConvID),
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,

@@ -202,6 +202,22 @@ var claudeManagedSettingsRoot = func() string {
 	return "/etc/claude-code"
 }
 
+// SetClaudeManagedSettingsRootForTest redirects the enterprise managed-policy
+// lookup at a temp dir and returns a restore func.
+//
+// It is exported for tests OUTSIDE this package — the flow-test harness in
+// particular. Once a launch records an OS-sandbox verdict, every simulated
+// Claude spawn resolves this machine-global path, so on a host that really has
+// a managed policy the recorded verdict (and any dashboard payload built from
+// it) would depend on whose machine ran the suite. The in-package tests use
+// isolateClaudeSettings, which also pins $HOME; this seam covers only the tier
+// a caller cannot reach by setting HOME.
+func SetClaudeManagedSettingsRootForTest(root string) func() {
+	previous := claudeManagedSettingsRoot
+	claudeManagedSettingsRoot = func() string { return root }
+	return func() { claudeManagedSettingsRoot = previous }
+}
+
 // claudeManagedSettingsPaths returns the enterprise managed-policy settings
 // file for this platform plus any drop-ins beside it, in lexical order. Managed
 // settings outrank everything including a CLI `--settings` block, so they lead

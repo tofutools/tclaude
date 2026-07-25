@@ -116,6 +116,13 @@ Every group, expandable to its members. Each member row shows the status
 dot, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
+The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
+sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects
+what actually confined the launch, not which mode was requested, so a Claude
+agent sandboxed through your own `settings.json` is badged even though it was
+spawned under the default `inherit`. See
+[Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
+
 Group headers carry status-bot counts for their direct members. In a nested
 group tree, folding a group rolls every hidden descendant into that header's
 bot counts; unfolding it moves descendant activity back down to the visible

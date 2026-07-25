@@ -152,6 +152,24 @@ func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 	return db.SetSessionAutoCompactWindow(label, args.AutoCompactWindow)
 }
 
+// resolveLaunchOSSandbox mirrors what production's session/new.go records at
+// the launch boundary: whether the OS sandbox will ACTUALLY confine this agent,
+// and what decided that (TCL-729). Omitting it here would leave simulated rows
+// claiming no verdict for launches that always have one in production, and a
+// dashboard read path exercised against those rows would quietly under-report.
+//
+// It resolves against the flow test's temp $HOME, so a test that writes a
+// settings.json gets the same answer a real launch under that config would.
+// An unknown harness tag simply records nothing, which is what a harness with
+// no verdict does anyway.
+func resolveLaunchOSSandbox(harnessName, sandboxMode, cwd string) harness.LaunchOSSandbox {
+	h, err := harness.Resolve(harnessName)
+	if err != nil {
+		return harness.LaunchOSSandbox{}
+	}
+	return harness.ResolveLaunchOSSandbox(h, sandboxMode, cwd)
+}
+
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
 // the production hook callback would have written, and registers in
 // TmuxSim. harness=="codex" routes to a CodexSim + a harness="codex" row;
@@ -235,17 +253,21 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// in time. The pane is still registered so it behaves like a real
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
+		launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, cc.Cwd)
 		if err := saveSessionWithResumeProvenance(&db.SessionRow{
-			ID:                 label,
-			TmuxSession:        label,
-			ConvID:             cc.ConvID,
-			Cwd:                cc.Cwd,
-			Status:             "running",
-			Harness:            args.Harness,
-			SandboxMode:        args.Sandbox,
-			EffectiveSandbox:   args.EffectiveSandbox,
-			ApprovalPolicy:     args.Approval,
-			ApprovalAutoReview: args.AutoReview,
+			ID:                  label,
+			TmuxSession:         label,
+			ConvID:              cc.ConvID,
+			Cwd:                 cc.Cwd,
+			Status:              "running",
+			Harness:             args.Harness,
+			SandboxMode:         args.Sandbox,
+			OSSandboxState:      launchOSSandbox.State,
+			OSSandboxSource:     launchOSSandbox.Source,
+			OSSandboxUnverified: launchOSSandbox.Unverified,
+			EffectiveSandbox:    args.EffectiveSandbox,
+			ApprovalPolicy:      args.Approval,
+			ApprovalAutoReview:  args.AutoReview,
 			// Mirror production's session/new.go, which records the resolved
 			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
 			// preserve it (schema v97). "" for a Codex/omitted spawn.
@@ -314,17 +336,21 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
+	launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, cc.Cwd)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                 label,
-		TmuxSession:        label,
-		ConvID:             convID,
-		Cwd:                cc.Cwd,
-		Status:             "running",
-		Harness:            args.Harness,
-		SandboxMode:        args.Sandbox,
-		EffectiveSandbox:   args.EffectiveSandbox,
-		ApprovalPolicy:     args.Approval,
-		ApprovalAutoReview: args.AutoReview,
+		ID:                  label,
+		TmuxSession:         label,
+		ConvID:              convID,
+		Cwd:                 cc.Cwd,
+		Status:              "running",
+		Harness:             args.Harness,
+		SandboxMode:         args.Sandbox,
+		OSSandboxState:      launchOSSandbox.State,
+		OSSandboxSource:     launchOSSandbox.Source,
+		OSSandboxUnverified: launchOSSandbox.Unverified,
+		EffectiveSandbox:    args.EffectiveSandbox,
+		ApprovalPolicy:      args.Approval,
+		ApprovalAutoReview:  args.AutoReview,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,

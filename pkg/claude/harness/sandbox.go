@@ -123,3 +123,80 @@ func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) [
 		return UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)
 	}
 }
+
+// LaunchOSSandbox is the OS-sandbox verdict a launch boundary RECORDS on its
+// session row (sessions.os_sandbox_state / os_sandbox_source), so a later read
+// surface — the dashboard's per-agent badge — can say whether the agent is
+// actually confined instead of inferring it from the requested mode.
+//
+// State is "on", "off", or "unconfigured" (nothing tclaude can read enables it);
+// Source names whatever decided that. Both are "" when tclaude recorded no
+// verdict for this launch — see ResolveLaunchOSSandbox.
+type LaunchOSSandbox struct {
+	State  string
+	Source string
+	// Unverified marks a verdict tclaude could not fully establish: a settings
+	// file that outranks the deciding tier existed but could not be read or
+	// parsed, so a policy tclaude never saw may say the opposite.
+	//
+	// It is recorded because the badge is a durable claim about containment, and
+	// the one thing worse than no badge is a padlock on an agent nothing confines.
+	// ResolveClaudeSandboxEnabled walks tiers most-authoritative-first and stops
+	// at the first that decides, so ANY diagnostic it collected necessarily came
+	// from a HIGHER-precedence tier than the one that answered — which is exactly
+	// the set of files that could overturn the verdict.
+	//
+	// The spawn-time warning already surfaces the unread file, but only on the
+	// stderr of the launch and only when the approval policy runs commands
+	// unattended. The badge is read later, by someone deciding whether to trust
+	// this agent, so the doubt has to travel with it.
+	Unverified bool
+}
+
+// ResolveLaunchOSSandbox answers "will the OS sandbox actually be active for
+// this launch", for a launch boundary to persist beside the requested sandbox
+// mode.
+//
+// It exists because the requested mode does not always answer that question.
+// Claude Code's default and recommended mode is `inherit`, which deliberately
+// emits no `--settings` override so the operator's own settings.json posture
+// survives — so the recorded mode says "whatever your settings say", and a
+// dashboard badge driven off the mode alone stays blank whether the agent is
+// confined by a project/user/global `sandbox.enabled` or by nothing at all
+// (TCL-729). Resolving it once here, at launch, is also the only way to get the
+// answer RIGHT: it is a property of the settings files as they were when the
+// harness read them, so a read surface that re-resolved later would report the
+// operator's current config rather than what the running agent launched under.
+//
+// A harness whose recorded mode already states its posture records nothing (the
+// zero value) and its badge behaves exactly as before:
+//
+//   - Codex spawns under an explicit `--sandbox` mode or the managed permission
+//     profile, so the mode IS the verdict. (For a DAEMON spawn — ResolveSandboxMode
+//     applies that default. A bare `tclaude session new --harness codex` records no
+//     mode and its real posture lives in ~/.codex/config.toml, which tclaude does
+//     not read; that gap is the Codex analogue of the one this fixes for Claude,
+//     and is out of scope here.)
+//   - OpenCode's `access-control` is a soft tool-level policy, not an OS
+//     sandbox; claiming a verdict for it would dress it up as containment (the
+//     distinction openCodeSandboxWarnings exists to make).
+//
+// sandboxMode must be the FINAL resolved mode and cwd the launch directory —
+// the same inputs SpawnSandboxWarnings takes, so the recorded verdict and the
+// warning the operator saw at spawn can never disagree.
+func ResolveLaunchOSSandbox(h *Harness, sandboxMode, cwd string) LaunchOSSandbox {
+	if h == nil || normalizeLineageHarness(h.Name) != DefaultName {
+		return LaunchOSSandbox{}
+	}
+	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+	return LaunchOSSandbox{
+		State:  resolution.State.String(),
+		Source: resolution.Source,
+		// Diagnostics are only ever collected from tiers walked BEFORE the one
+		// that decided, so a non-empty list means something that outranks this
+		// verdict was unreadable — including for an explicit on/off, where the
+		// managed tier is consulted ahead of the launch flag precisely because it
+		// outranks it.
+		Unverified: len(resolution.Diagnostics) > 0,
+	}
+}

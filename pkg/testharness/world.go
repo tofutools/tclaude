@@ -6,6 +6,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // World is the per-test scaffolding bundle. Construction is via New(t)
@@ -107,6 +108,14 @@ func New(t *testing.T) *World {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Launches now resolve Claude Code's OS-sandbox posture, and the enterprise
+	// managed-policy tier lives at a machine-global path that $HOME cannot
+	// redirect. Left alone, every simulated Claude spawn would read whatever
+	// /etc/claude-code holds on THIS host, so a developer with a real managed
+	// policy would see different recorded verdicts — and different dashboard
+	// payloads — than CI. Point it at an empty temp dir so the whole precedence
+	// chain is hermetic.
+	t.Cleanup(harness.SetClaudeManagedSettingsRootForTest(t.TempDir()))
 	db.ResetForTest()
 	return &World{
 		HomeDir:             home,

@@ -2844,6 +2844,11 @@ func createSessionForConv(conv *SessionEntry) error {
 	// Carry the resolved harness onto the saved row so a non-claude tag is not
 	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
 	// watch-resume path now that codex resume lands here.
+	// A resume is a fresh launch: re-resolve whether the OS sandbox actually
+	// confines it rather than carrying the predecessor's verdict, because the
+	// operator may have changed settings.json since (TCL-729).
+	resumeMode := resumeSandboxMode(conv.SessionID)
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, cwd)
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -2852,7 +2857,10 @@ func createSessionForConv(conv *SessionEntry) error {
 		ConvID:                 conv.SessionID,
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
-		SandboxMode:            resumeSandboxMode(conv.SessionID),
+		SandboxMode:            resumeMode,
+		OSSandboxState:         launchOSSandbox.State,
+		OSSandboxSource:        launchOSSandbox.Source,
+		OSSandboxUnverified:    launchOSSandbox.Unverified,
 		EffectiveSandbox:       resumeEffectiveSandboxForState(conv.SessionID),
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,
