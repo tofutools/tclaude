@@ -102,7 +102,3 @@ func TestGetSessionAutoCompactWindow(t *testing.T) {
 		assert.Empty(t, got, "id %q reads as nothing pinned", id)
 	}
 }
-
-func TestMigrateV156IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 156, currentVersion, "tripwire: bump this with the next migration")
-}

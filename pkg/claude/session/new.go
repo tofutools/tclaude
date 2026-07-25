@@ -897,6 +897,15 @@ func runNew(params *NewParams) error {
 		fmt.Fprintf(os.Stderr, "%s\n", warning)
 	}
 
+	// Record what the warning check just resolved: whether the OS sandbox will
+	// actually confine this agent, and what decided that. The recorded
+	// sandbox mode cannot say — Claude Code's `inherit` default means "whatever
+	// settings.json says" — and the answer is only knowable HERE, against the
+	// settings files as they are at launch (TCL-729). Same inputs as the
+	// warnings above, so the badge an operator sees later cannot contradict the
+	// warning they saw at spawn.
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, cwd)
+
 	// Ensure the managed profile file exists before launch (self-healing —
 	// works even if `tclaude setup` was never run). This lives after cwd
 	// resolution so the profile can add a narrow write grant for the launch
@@ -950,6 +959,8 @@ func runNew(params *NewParams) error {
 		Status:                 StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
+		OSSandboxState:         launchOSSandbox.State,
+		OSSandboxSource:        launchOSSandbox.Source,
 		EffectiveSandbox:       effectiveSandbox,
 		ApprovalPolicy:         recordedApprovalPolicy,
 		ApprovalAutoReview:     autoReview,

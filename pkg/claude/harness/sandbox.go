@@ -123,3 +123,51 @@ func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) [
 		return UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)
 	}
 }
+
+// LaunchOSSandbox is the OS-sandbox verdict a launch boundary RECORDS on its
+// session row (sessions.os_sandbox_state / os_sandbox_source), so a later read
+// surface — the dashboard's per-agent badge — can say whether the agent is
+// actually confined instead of inferring it from the requested mode.
+//
+// State is "on", "off", or "unconfigured" (nothing tclaude can read enables it);
+// Source names whatever decided that. Both are "" when tclaude recorded no
+// verdict for this launch — see ResolveLaunchOSSandbox.
+type LaunchOSSandbox struct {
+	State  string
+	Source string
+}
+
+// ResolveLaunchOSSandbox answers "will the OS sandbox actually be active for
+// this launch", for a launch boundary to persist beside the requested sandbox
+// mode.
+//
+// It exists because the requested mode does not always answer that question.
+// Claude Code's default and recommended mode is `inherit`, which deliberately
+// emits no `--settings` override so the operator's own settings.json posture
+// survives — so the recorded mode says "whatever your settings say", and a
+// dashboard badge driven off the mode alone stays blank whether the agent is
+// confined by a project/user/global `sandbox.enabled` or by nothing at all
+// (TCL-729). Resolving it once here, at launch, is also the only way to get the
+// answer RIGHT: it is a property of the settings files as they were when the
+// harness read them, so a read surface that re-resolved later would report the
+// operator's current config rather than what the running agent launched under.
+//
+// A harness whose recorded mode already states its posture records nothing (the
+// zero value) and its badge behaves exactly as before:
+//
+//   - Codex spawns under an explicit `--sandbox` mode or the managed permission
+//     profile, so the mode IS the verdict.
+//   - OpenCode's `access-control` is a soft tool-level policy, not an OS
+//     sandbox; claiming a verdict for it would dress it up as containment (the
+//     distinction openCodeSandboxWarnings exists to make).
+//
+// sandboxMode must be the FINAL resolved mode and cwd the launch directory —
+// the same inputs SpawnSandboxWarnings takes, so the recorded verdict and the
+// warning the operator saw at spawn can never disagree.
+func ResolveLaunchOSSandbox(h *Harness, sandboxMode, cwd string) LaunchOSSandbox {
+	if h == nil || normalizeLineageHarness(h.Name) != DefaultName {
+		return LaunchOSSandbox{}
+	}
+	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+	return LaunchOSSandbox{State: resolution.State.String(), Source: resolution.Source}
+}

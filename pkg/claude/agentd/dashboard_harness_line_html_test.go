@@ -92,9 +92,18 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.
-	must("function SandboxBadge({ member })", "SandboxBadge component is defined")
+	must("export function SandboxBadge({ member })", "SandboxBadge component is defined")
 	must("member.state?.sandbox_mode", "SandboxBadge reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
+
+	// TCL-729: the mode is only the launch REQUEST. Where the row carries a
+	// resolved verdict (Claude Code, whose `inherit` default defers to
+	// settings.json), the badge describes whether the agent is ACTUALLY
+	// confined. Behaviour is covered by jstest/sandbox-badge.test.mjs; these
+	// pin the production wiring.
+	must("function osSandboxBadge(mode, state, source, prefix)", "the recorded-verdict badge decision is defined")
+	must("member.state?.os_sandbox_state", "SandboxBadge reads the recorded OS-sandbox verdict off the agent's state")
+	must("member.state?.os_sandbox_source", "the badge can name whatever decided the verdict")
 
 	// MemberCell: the sandbox chip renders in the agent control cell, next
 	// to the harness line.

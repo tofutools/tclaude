@@ -117,14 +117,60 @@ function HarnessLine({ member }) {
   </div>`;
 }
 
-function SandboxBadge({ member }) {
+// osSandboxBadge describes an agent whose row carries a recorded launch-time
+// OS-sandbox verdict (os_sandbox_state — today, Claude Code). The launch mode
+// alone cannot describe those agents: `inherit`, the default and recommended
+// mode, means "whatever settings.json says", so a mode-driven badge showed
+// nothing for a confined agent and nothing for an unconfined one either, and
+// the operator could not tell them apart.
+//
+// Returns null when there is nothing to say — an `inherit` launch that no
+// settings file confines is the unremarkable, unchanged case.
+function osSandboxBadge(mode, state, source, prefix) {
+  const via = source ? ` (${source})` : '';
+  if (state === 'on') {
+    const why = mode === 'on'
+      ? 'forced ON for this launch'
+      : `not chosen at launch — inherited from your Claude Code settings${via}`;
+    return { label: 'on', title: `${prefix}: on — ${why}. Bash is confined (working dir writable, $HOME read-only).` };
+  }
+  if (mode === 'on') {
+    // The launch asked for `on` and lost. Only enterprise managed policy
+    // outranks a `--settings` block, and an operator who believes this agent is
+    // confined is precisely who needs telling that it is not.
+    return {
+      label: 'on overridden', danger: true,
+      title: `${prefix}: this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.`,
+    };
+  }
+  if (mode === 'off') {
+    return {
+      label: 'off', danger: true,
+      title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.`,
+    };
+  }
+  return null;
+}
+
+export function SandboxBadge({ member }) {
   const mode = member.state?.sandbox_mode || '';
-  if (!mode || mode === 'inherit') return null;
   const offline = !member.online;
+  const prefix = offline ? 'Last used sandbox' : 'Sandbox';
+  // A recorded verdict wins: it is the resolved outcome, where the mode is only
+  // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
+  // IS its posture) the mode-driven rendering below is unchanged.
+  const state = member.state?.os_sandbox_state || '';
+  if (state) {
+    const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix);
+    if (!badge) return null;
+    const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
+    return html`<span class=${className} role="note" aria-label=${badge.title} title=${badge.title}>${badge.danger ? '⚠' : '🔒'} ${badge.label}</span>`;
+  }
+  if (!mode || mode === 'inherit') return null;
   const danger = mode === 'danger-full-access';
   const title = danger
-    ? `${offline ? 'Last used sandbox' : 'Sandbox'}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
-    : `${offline ? 'Last used sandbox' : 'Sandbox'}: ${mode} — launch-time OS sandbox confining the agent's writes`;
+    ? `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
+    : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes`;
   const className = `sandbox-badge${danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
   return html`<span class=${className} role="note" aria-label=${title} title=${title}>${danger ? '⚠' : '🔒'} ${mode}</span>`;
 }

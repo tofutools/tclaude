@@ -63,7 +63,18 @@ type SessionState struct {
 	// toRow/fromRow so the hook callback's load→mutate→save round-trip
 	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
-	SandboxMode      string                  `json:"sandboxMode,omitempty"`
+	SandboxMode string `json:"sandboxMode,omitempty"`
+	// OSSandboxState and OSSandboxSource record whether the OS sandbox was
+	// ACTUALLY active for this launch ("on"/"off"/"unconfigured") and what
+	// decided that, resolved once at spawn by harness.ResolveLaunchOSSandbox.
+	// SandboxMode above is the launch REQUEST, which for Claude Code's `inherit`
+	// default answers nothing — these answer it, so the dashboard can badge an
+	// agent confined by the operator's own settings.json. Carried through
+	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
+	// round-trip preserves them. "" for a harness whose mode already states its
+	// posture (Codex) or a pre-column row.
+	OSSandboxState   string                  `json:"osSandboxState,omitempty"`
+	OSSandboxSource  string                  `json:"osSandboxSource,omitempty"`
 	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
 	ResumeProvenance string                  `json:"resumeProvenance,omitempty"`
 	// ApprovalPolicy and ApprovalAutoReview preserve the resolved launch-time
@@ -191,6 +202,8 @@ func toRow(s *SessionState) *db.SessionRow {
 		LastHook:               s.LastHook,
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
+		OSSandboxState:         s.OSSandboxState,
+		OSSandboxSource:        s.OSSandboxSource,
 		EffectiveSandbox:       s.EffectiveSandbox,
 		ResumeProvenance:       s.ResumeProvenance,
 		ApprovalPolicy:         s.ApprovalPolicy,
@@ -217,6 +230,8 @@ func fromRow(r *db.SessionRow) *SessionState {
 		LastHook:               r.LastHook,
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
+		OSSandboxState:         r.OSSandboxState,
+		OSSandboxSource:        r.OSSandboxSource,
 		EffectiveSandbox:       r.EffectiveSandbox,
 		ResumeProvenance:       r.ResumeProvenance,
 		ApprovalPolicy:         r.ApprovalPolicy,
