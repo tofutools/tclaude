@@ -36,6 +36,7 @@ func TestCodexUsageFromRollout_SkipsOversizedRecord(t *testing.T) {
 	path := writeOversizedCodexRollout(t, nil, [][]byte{codexTestEnvelope(t, "event_msg", map[string]any{
 		"type": "token_count",
 		"rate_limits": map[string]any{
+			"limit_id": "codex",
 			"primary": map[string]any{
 				"used_percent": 37.0, "window_minutes": 300, "resets_at": 1781442692,
 			},
