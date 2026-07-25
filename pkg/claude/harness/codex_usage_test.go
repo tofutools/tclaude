@@ -116,6 +116,52 @@ func TestLatestCodexUsage_LastEventInRolloutWins(t *testing.T) {
 	assert.Equal(t, 55.0, u.FiveHour.UsedPercent, "the latest token_count's figure wins")
 }
 
+// Codex can report more than one quota identity through token_count.rate_limits.
+// The dashboard readout is the account-wide "codex" quota, not any
+// model-specific quota that happens to use the same seven-day duration.
+// Regression for TCL-302: one long-lived rollout switched from the real 55%
+// account quota to a newer 0% "codex_bengalfox" quota, which used to win by
+// position after tclaude discarded limit_id.
+func TestLatestCodexUsage_SelectsAccountQuotaIdentity(t *testing.T) {
+	home := codexTestHome(t)
+	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
+	require.NoError(t, cx.Start())
+	usage := testharness.CodexTokenUsage{TotalTokens: 100}
+	accountObserved := time.Date(2026, time.July, 25, 6, 32, 35, 0, time.UTC)
+	accountReset := time.Unix(1785258144, 0).UTC()
+	cx.SetNextEventTime(accountObserved)
+	require.NoError(t, cx.WriteTokenCountRateLimits(
+		usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 55, WindowMinutes: 10080, ResetsAt: accountReset,
+		},
+		nil,
+	))
+
+	cx.RateLimitID = "codex_bengalfox"
+	cx.RateLimitName = "GPT-5.3-Codex-Spark"
+	cx.RateLimitPlanType = ""
+	cx.SetNextEventTime(time.Date(2026, time.July, 25, 9, 49, 39, 0, time.UTC))
+	require.NoError(t, cx.WriteTokenCountRateLimits(
+		usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 0, WindowMinutes: 10080,
+			ResetsAt: time.Unix(1785577770, 0).UTC(),
+		},
+		nil,
+	))
+
+	u, err := harness.LatestCodexUsage(home, accountObserved.Add(-time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, u)
+	assert.Equal(t, "codex", u.LimitID)
+	assert.Equal(t, "plus", u.PlanType)
+	assert.Equal(t, accountObserved, u.Observed)
+	require.NotNil(t, u.Weekly)
+	assert.Equal(t, 55.0, u.Weekly.UsedPercent)
+	assert.Equal(t, accountReset, u.Weekly.ResetsAt)
+}
+
 // Across rollouts the most recently observed snapshot wins — two Codex
 // sessions, and the account-wide readout reflects whichever ran last.
 func TestLatestCodexUsage_NewestRolloutAcrossFilesWins(t *testing.T) {

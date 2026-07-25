@@ -60,6 +60,47 @@ func TestDashboardCodexUsage_SurfacedInSnapshot(t *testing.T) {
 	assert.NotEmpty(t, snap.Usage.Codex.SevenDay.ResetsAt, "codex weekly resets_at populated")
 }
 
+func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	now := time.Now()
+	cx := testharness.NewCodexSim(t, f.World.HomeDir, f.World.HomeDir)
+	require.NoError(t, cx.Start())
+	usage := testharness.CodexTokenUsage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 55, WindowMinutes: 10080, ResetsAt: now.Add(4 * 24 * time.Hour),
+		},
+		nil,
+	))
+	cx.RateLimitID = "codex_bengalfox"
+	cx.RateLimitName = "GPT-5.3-Codex-Spark"
+	cx.RateLimitPlanType = ""
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 0, WindowMinutes: 10080, ResetsAt: now.Add(7 * 24 * time.Hour),
+		},
+		nil,
+	))
+
+	agentd.RefreshCodexUsageForTest()
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.NotNil(t, snap.Usage.Codex)
+	require.NotNil(t, snap.Usage.Codex.SevenDay)
+	assert.Equal(t, 55.0, snap.Usage.Codex.SevenDay.Pct,
+		"newer model-specific weekly quota must not replace the account quota")
+
+	row, err := db.LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	var cached harness.CodexUsage
+	require.NoError(t, json.Unmarshal(row.Data, &cached))
+	assert.Equal(t, "codex", cached.LimitID, "cache preserves the selected quota identity")
+}
+
 func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)
