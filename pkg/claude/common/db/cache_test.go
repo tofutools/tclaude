@@ -130,11 +130,33 @@ func TestSaveCodexUsageCacheRecordsOpenAIHistory(t *testing.T) {
 func TestSaveCodexUsageCacheAccountIdentityRepairsLegacyAndRejectsDowngrade(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC()
+	_, err := SaveSubscriptionUsageSample(SubscriptionUsageSample{
+		Provider: SubscriptionProviderAnthropic, ObservedAt: now.Add(-2 * time.Hour),
+		Source: "anthropic-api",
+		Windows: []SubscriptionUsageWindow{
+			{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 42},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"Weekly":{"UsedPercent":1}}`),
+		now.Add(-2*time.Hour),
+		"older-legacy-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 1,
+		},
+	)
+	require.NoError(t, err)
+
 	legacyObserved := now
 	stored, err := SaveCodexUsageCacheIfNewer(
 		json.RawMessage(`{"Weekly":{"UsedPercent":0}}`),
 		legacyObserved,
 		"legacy-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 0,
+		},
 	)
 	require.NoError(t, err)
 	require.True(t, stored)
@@ -177,12 +199,22 @@ func TestSaveCodexUsageCacheAccountIdentityRepairsLegacyAndRejectsDowngrade(t *t
 
 	d, err := Open()
 	require.NoError(t, err)
-	var historyWindows int
+	var openAIWindows int
 	var pct float64
-	require.NoError(t, d.QueryRow(`SELECT COUNT(*), MAX(used_percent)
-		FROM subscription_usage_windows`).Scan(&historyWindows, &pct))
-	assert.Equal(t, 1, historyWindows, "rejected identity downgrade does not pollute history")
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*), MAX(w.used_percent)
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		WHERE s.provider = ?`, SubscriptionProviderOpenAI).Scan(&openAIWindows, &pct))
+	assert.Equal(t, 1, openAIWindows,
+		"identity repair replaces all ambiguous OpenAI history with the verified account point")
 	assert.Equal(t, 55.0, pct)
+
+	var anthropicWindows int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*)
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		WHERE s.provider = ?`, SubscriptionProviderAnthropic).Scan(&anthropicWindows))
+	assert.Equal(t, 1, anthropicWindows, "OpenAI identity repair preserves Anthropic history")
 }
 
 func TestSaveCodexUsageCacheOlderSnapshotCanFillMissingHistoryWindow(t *testing.T) {

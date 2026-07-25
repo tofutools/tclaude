@@ -99,7 +99,15 @@ func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) 
 		"Observed": legacyObserved,
 	})
 	require.NoError(t, err)
-	stored, err := db.SaveCodexUsageCacheIfNewer(legacyData, legacyObserved, cx.RolloutPath)
+	stored, err := db.SaveCodexUsageCacheIfNewer(
+		legacyData,
+		legacyObserved,
+		cx.RolloutPath,
+		db.SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 0,
+			ResetsAt: now.Add(7 * 24 * time.Hour),
+		},
+	)
 	require.NoError(t, err)
 	require.True(t, stored)
 
@@ -119,6 +127,12 @@ func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) 
 	assert.Equal(t, "codex", cached.LimitID, "cache preserves the selected quota identity")
 	assert.True(t, row.ObservedAt.Before(legacyObserved),
 		"identified account snapshot repairs a newer legacy cache observation")
+
+	history, err := db.SubscriptionUsageHistorySince(now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, history, 1, "ambiguous pre-fix OpenAI history is replaced during identity repair")
+	assert.Equal(t, db.SubscriptionProviderOpenAI, history[0].Provider)
+	assert.Equal(t, 55.0, history[0].UsedPercent)
 }
 
 func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {

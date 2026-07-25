@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -106,6 +107,7 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 		return false, err
 	}
 	cacheNewer := true
+	identityRepair := false
 	if err == nil {
 		incomingAccount := codexUsageLimitID(data) == codexAccountUsageLimitID
 		existingAccount := codexUsageLimitID(json.RawMessage(existingData)) == codexAccountUsageLimitID
@@ -114,7 +116,7 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 			// re-poison the selected account cache or its history.
 			return false, nil
 		}
-		identityRepair := incomingAccount && !existingAccount
+		identityRepair = incomingAccount && !existingAccount
 		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil &&
 			!identityRepair && !observedAt.After(existing) {
 			cacheNewer = false
@@ -125,6 +127,17 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 	}
 
 	now := time.Now()
+	if identityRepair {
+		// Pre-fix OpenAI history discarded quota identity just like the
+		// current-value cache did. Once that cache is proven ambiguous, no
+		// value/reset/source heuristic can safely recover individual account
+		// points. Drop only the derived OpenAI history and immediately seed it
+		// below from the verified account snapshot; Anthropic is independent.
+		if _, err = tx.Exec(`DELETE FROM subscription_usage_samples WHERE provider = ?`,
+			SubscriptionProviderOpenAI); err != nil {
+			return false, fmt.Errorf("save codex usage cache: clear unidentified OpenAI history: %w", err)
+		}
+	}
 	if cacheNewer {
 		_, err = tx.Exec(`INSERT OR REPLACE INTO codex_usage_cache (id, data, observed_at, updated_at, source)
 			VALUES (1, ?, ?, ?, ?)`,
