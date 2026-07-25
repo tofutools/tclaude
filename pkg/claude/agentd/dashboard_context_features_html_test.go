@@ -54,6 +54,104 @@ func TestDashboardContextFeaturesUI_Wired(t *testing.T) {
 	present("can_context_features", "the capability view gates on the harness flag")
 }
 
+// TestDashboardContextFeaturesSpawnActionForwarded pins the seam that actually
+// broke: the spawn island calls actions.openContextFeatures(), but the actions
+// object is a frozen, explicitly-listed façade built by createAgentSpawnActions.
+// dashboard.js passed openContextFeatures in, the island called it — and the
+// façade in between simply never named it, so the property was undefined and the
+// Context… button threw on click instead of opening anything. The shape tests
+// above all passed throughout, because every needle they check was present.
+// Assert the dependency is both accepted and forwarded, in that one file.
+func TestDashboardContextFeaturesSpawnActionForwarded(t *testing.T) {
+	source := dashboardAssetFile(t, "js/agent-spawn-actions.js")
+	start := strings.Index(source, "export function createAgentSpawnActions(")
+	if start < 0 {
+		t.Fatalf("agent-spawn-actions.js no longer exports createAgentSpawnActions")
+	}
+	head, body, ok := strings.Cut(source[start:], "} = {}) {")
+	if !ok {
+		t.Fatalf("createAgentSpawnActions no longer has a destructured dependency object")
+	}
+	if !regexp.MustCompile(`\bopenContextFeatures\b`).MatchString(head) {
+		t.Errorf("createAgentSpawnActions does not accept openContextFeatures; the spawn " +
+			"dialog's Context… button calls actions.openContextFeatures() and would throw")
+	}
+	// Either shape puts the property on the frozen object and makes the button
+	// work: the explicit wrapper that mirrors openPermissions, or the shorthand
+	// that passes the dependency straight through. Accept both — this test is
+	// here to catch the property going MISSING, not to pin one spelling.
+	forwarded := dashboardSourceContains(body, "openContextFeatures(options) { return openContextFeatures(options); }") ||
+		regexp.MustCompile(`(?m)^\s*openContextFeatures,\s*$`).MatchString(body)
+	if !forwarded {
+		t.Errorf("createAgentSpawnActions does not forward openContextFeatures onto the frozen " +
+			"actions object; the spawn dialog's Context… button would throw on click")
+	}
+}
+
+// cssRule is one declaration block of the stylesheet, split into the selector
+// list and the declarations, with comments already stripped.
+type cssRule struct{ selectors, declarations string }
+
+// dashboardCSSRules parses dashboard.css into declaration blocks.
+//
+// Stripping comments FIRST is the point. dashboard.css carries long explanatory
+// comments that routinely name ids in prose ("the #agent-spawn-perms button note
+// below…"), so any assertion that searches raw text can be satisfied — or
+// derailed — by a sentence rather than a selector. With comments gone, a match
+// on a selector list is a real selector.
+func dashboardCSSRules(t *testing.T) []cssRule {
+	t.Helper()
+	css := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(dashboardAssetFile(t, "dashboard.css"), "")
+	var rules []cssRule
+	for block := range strings.SplitSeq(css, "}") {
+		selectors, declarations, ok := strings.Cut(block, "{")
+		if !ok {
+			continue
+		}
+		rules = append(rules, cssRule{selectors, declarations})
+	}
+	return rules
+}
+
+// TestDashboardContextFeaturesButtonsStyled guards the two CSS halves of the same
+// regression. On the spawn dialog the Role-row Context… button shipped with no
+// rule at all, so it fell back to the browser's default white chrome next to its
+// dark Permissions… twin. In the profile editor it had a rule but rendered
+// taller than its twin, because `.cron-create-row > button.tool` stretches a
+// button to its row and only "Startup context" wraps to two lines.
+//
+// Both fixes are one-line CSS that nothing else in the package would notice
+// going missing, so assert each rule pairs the two buttons.
+func TestDashboardContextFeaturesButtonsStyled(t *testing.T) {
+	rules := dashboardCSSRules(t)
+	// pairs asserts that the rule matching `owner` + `marker` also names `twin`.
+	pairs := func(what, owner, marker, twin string) {
+		t.Helper()
+		for _, rule := range rules {
+			if !strings.Contains(rule.selectors, owner) || !strings.Contains(rule.declarations, marker) {
+				continue
+			}
+			if !strings.Contains(rule.selectors, twin) {
+				t.Errorf("%s: the rule `%s {%s}` does not also cover %s",
+					what, strings.TrimSpace(rule.selectors), strings.TrimSpace(rule.declarations), twin)
+			}
+			return
+		}
+		t.Errorf("%s: no rule found selecting %s and declaring %s", what, owner, marker)
+	}
+
+	// Spawn dialog: the dark inline-button chrome, and its hover.
+	pairs("spawn dialog Context… button renders with the browser's default (white) chrome",
+		".spawn-role-row #agent-spawn-perms", "background:", "#agent-spawn-context-features")
+	pairs("spawn dialog Context… button does not react to hover like its twin",
+		".spawn-role-row #agent-spawn-perms:hover", "background:", "#agent-spawn-context-features:hover")
+
+	// Profile editor: the opt-out from the .tool stretch. Without it the wrapped
+	// "Startup context" label inflates the button past its Permissions… twin.
+	pairs("profile editor Context… button is stretched taller than its twin by its wrapped label",
+		"#profile-editor-context-features", "align-self: flex-start", "#profile-editor-perms")
+}
+
 // TestDashboardContextFeaturesEditorStacksAboveProfileEditor guards the same
 // Escape-correctness invariant TestDashboardPermEditorStacksAboveProfileEditor
 // does, for the same reason: the startup-context editor opens ON TOP of

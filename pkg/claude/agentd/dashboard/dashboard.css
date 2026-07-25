@@ -4123,14 +4123,19 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .spawn-role-row .spawn-owner-toggle input { margin: 0; }
 /* Match the dialog's other inline buttons (Clear / Save as profile… / Attach…),
    which use this dark theme — without it the button falls back to the browser's
-   default (white) styling and clashes with the dialog. */
-.spawn-role-row #agent-spawn-perms {
+   default (white) styling and clashes with the dialog. Permissions… and its
+   Context… twin (TCL-597) share the row and the treatment; listing both here
+   keeps them from drifting apart the way Context… did when it shipped
+   unstyled. */
+.spawn-role-row #agent-spawn-perms,
+.spawn-role-row #agent-spawn-context-features {
   flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
   background: #21262d; border: 1px solid #2a3340; border-radius: 4px;
   padding: 5px 10px; font-size: 12px; color: #c9d1d9; font-family: inherit;
   cursor: pointer;
 }
-.spawn-role-row #agent-spawn-perms:hover { background: #2d333b; }
+.spawn-role-row #agent-spawn-perms:hover,
+.spawn-role-row #agent-spawn-context-features:hover { background: #2d333b; }
 .spawn-role-row .spawn-perms-indicator {
   flex: 0 0 auto; padding-top: 6px; color: #7d8590; white-space: nowrap;
 }
@@ -4163,10 +4168,22 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    of collapsing to its intrinsic (~21px) height and top-aligning. Sizing only
    (colors come from button.tool in plain / the #group-create-modal wizard rule);
    applies in BOTH skins. Same align-self:stretch idiom as .dir-browse-btn above.
-   Only #group-create-manage-templates matches — the other cron-create-row
-   buttons are .dir-browse-btn, not .tool. */
+   The spawn-profile editor's Permissions… / Context… buttons also match and opt
+   back out below — stretching is only right when there IS a sibling control to
+   match. */
 .cron-create-row > button.tool {
   flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
+}
+/* The spawn-profile editor's Permissions… and Context… rows carry a label, a
+   button and a summary badge — no input or select for the button to match — so
+   the stretch above has nothing to size against and just inflates the button to
+   the row height. That is invisible next to the one-line "Permissions" label and
+   obvious next to "Startup context", which wraps to two lines in the 72px label
+   column and left the Context… button visibly taller than its twin. Top-align
+   both and restore button.tool's own vertical padding so they render at the same
+   height as the spawn dialog's Role-row buttons. */
+.cron-create-row > button.tool:is(#profile-editor-perms, #profile-editor-context-features) {
+  align-self: flex-start; padding: 5px 12px;
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
    name field, whose hint is validation feedback rather than static docs. The

@@ -48,6 +48,7 @@ export function createAgentSpawnActions({
   pickDirectory,
   openProfileEditor,
   openPermissions,
+  openContextFeatures,
   confirm,
   notify = () => {},
   refresh = () => {},
@@ -219,6 +220,13 @@ export function createAgentSpawnActions({
 
     openPermissions(options) {
       return openPermissions(options);
+    },
+
+    // Twin of openPermissions for the Role row's "Context…" button (TCL-597).
+    // Both are pure launchers for a buffered editor the spawn draft owns; the
+    // dialog hands the trim map back through the caller's onSave.
+    openContextFeatures(options) {
+      return openContextFeatures(options);
     },
 
     confirmAutoName(name) {

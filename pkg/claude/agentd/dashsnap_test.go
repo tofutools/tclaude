@@ -1195,6 +1195,20 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "spawn-context-features",
+			Title:    "Spawn dialog — startup-context trimming",
+			Caption:  "The Role row's Context… button carries the same dark chrome as its Permissions… twin, and opens the buffered startup-context selector.",
+			JS:       spawnContextFeaturesJS(showGroups, expandGroups),
+			SettleMS: 700,
+		},
+		{
+			Key:      "profile-context-features",
+			Title:    "Profile editor — startup-context trimming",
+			Caption:  "The spawn-profile editor's Context… button matches its Permissions… twin's height despite the wrapped \"Startup context\" label, and opens the same selector.",
+			JS:       profileContextFeaturesJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:      "management-roles",
 			Title:    "Management — role library",
 			Caption:  "Preact-owned role library with stable role cards and canonical brief/launch/permission editing.",
@@ -3128,6 +3142,119 @@ func managementModalJS(modulePath, opener, readySelector string) string {
   }
   if (!document.querySelector(%q)) throw new Error('management modal did not render: %s');
 })();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
+}
+
+// spawnContextFeaturesJS opens the spawn dialog from a group row and drives the
+// Role row's "Context…" button, the startup-context twin of "Permissions…".
+//
+// Both halves of this need a real browser to be provable. The button shipped
+// with no CSS rule of its own, so it fell back to Chrome's default white chrome
+// beside its dark twin — a mismatch only a computed style shows. And the click
+// threw, because the frozen spawn-actions façade never forwarded
+// openContextFeatures, so nothing opened. Compare the two buttons' computed
+// paint, then click and require the editor.
+func spawnContextFeaturesJS(showGroups, expandGroups string) string {
+	return showGroups + expandGroups + `return (async function(){
+  var spawn = document.querySelector('[data-act="spawn-agent"]');
+  if (!spawn) throw new Error('spawn-context-features: no group row offers a spawn button');
+  spawn.click();
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('#agent-spawn-context-features') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var context = document.querySelector('#agent-spawn-context-features');
+  var perms = document.querySelector('#agent-spawn-perms');
+  if (!perms) throw new Error('spawn-context-features: the Permissions… twin is missing');
+  if (!context) throw new Error('spawn-context-features: the Context… button did not render');
+  var ctxStyle = getComputedStyle(context);
+  var permStyle = getComputedStyle(perms);
+  ['backgroundColor', 'color', 'borderTopColor', 'borderRadius', 'fontSize'].forEach(function(prop){
+    if (ctxStyle[prop] !== permStyle[prop]) {
+      throw new Error('spawn-context-features: Context… ' + prop + ' is ' + ctxStyle[prop] +
+        ' but its Permissions… twin is ' + permStyle[prop]);
+    }
+  });
+  var ctxBox = context.getBoundingClientRect();
+  var permBox = perms.getBoundingClientRect();
+  if (Math.abs(ctxBox.height - permBox.height) > 1) {
+    throw new Error('spawn-context-features: Context… is ' + Math.round(ctxBox.height) +
+      'px tall but Permissions… is ' + Math.round(permBox.height) + 'px');
+  }
+  context.click();
+  deadline = Date.now() + 4000;
+  while (!document.querySelector('#context-features-list') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#context-features-list')) {
+    throw new Error('spawn-context-features: clicking Context… did not open the startup-context editor');
+  }
+  if (!document.querySelector('#context-features-list .perm-tristate button[data-state="off"]')) {
+    throw new Error('spawn-context-features: the editor opened with no trimmable features');
+  }
+  // Dismiss it again so the captured frame is the Role row itself — the two
+  // buttons side by side is the thing worth eyeballing in the contact sheet.
+  // Cancel with an untouched draft closes without a discard prompt.
+  document.querySelector('#context-features-cancel').click();
+  deadline = Date.now() + 4000;
+  while (document.querySelector('#context-features-list') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (document.querySelector('#context-features-list')) {
+    throw new Error('spawn-context-features: the startup-context editor would not close');
+  }
+  context.scrollIntoView({block: 'center'});
+})();`
+}
+
+// profileContextFeaturesJS opens the spawn-profile editor and checks its
+// Permissions… / Context… buttons render at the same height.
+//
+// They share a row shape and a .tool class, but "Startup context" wraps to two
+// lines in the 72px label column where "Permissions" does not — and
+// `.cron-create-row > button.tool` stretches a button to its row. That made the
+// Context… button visibly taller than its twin, which only a laid-out page
+// shows. Clicking it also proves this editor's opener still works, so the spawn
+// fix above can't be mistaken for having moved the breakage here.
+func profileContextFeaturesJS() string {
+	return `return (async function(){
+  var module = await import('/static/js/modal-profiles.js');
+  if (typeof module.openProfileEditor !== 'function') throw new Error('profile-context-features: openProfileEditor is gone');
+  module.openProfileEditor(null);
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('#profile-editor-context-features') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var context = document.querySelector('#profile-editor-context-features');
+  var perms = document.querySelector('#profile-editor-perms');
+  if (!perms) throw new Error('profile-context-features: the Permissions… twin is missing');
+  if (!context) throw new Error('profile-context-features: the Context… button did not render');
+  var ctxBox = context.getBoundingClientRect();
+  var permBox = perms.getBoundingClientRect();
+  if (Math.abs(ctxBox.height - permBox.height) > 1) {
+    throw new Error('profile-context-features: Context… is ' + Math.round(ctxBox.height) +
+      'px tall but Permissions… is ' + Math.round(permBox.height) +
+      'px — the wrapped "Startup context" label is stretching it');
+  }
+  context.click();
+  deadline = Date.now() + 4000;
+  while (!document.querySelector('#context-features-list') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!document.querySelector('#context-features-list')) {
+    throw new Error('profile-context-features: clicking Context… did not open the startup-context editor');
+  }
+  // Dismiss it so the frame captures the two rows whose heights this state is
+  // about. Cancel with an untouched draft closes without a discard prompt.
+  document.querySelector('#context-features-cancel').click();
+  deadline = Date.now() + 4000;
+  while (document.querySelector('#context-features-list') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (document.querySelector('#context-features-list')) {
+    throw new Error('profile-context-features: the startup-context editor would not close');
+  }
+  context.scrollIntoView({block: 'center'});
+})();`
 }
 
 // sandboxCommonRulesJS opens the sandbox-profile editor and expands the
