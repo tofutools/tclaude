@@ -82,6 +82,18 @@ func TestShortModelLabel(t *testing.T) {
 		{"nothing known yields placeholder", "", "", "ukn-mdl"},
 		{"whitespace-only fields yield placeholder", "   ", "  ", "ukn-mdl"},
 		{"lone 1m suffix yields placeholder", "[1m]", "[1m]", "ukn-mdl"},
+		// The label names the model only; the window marker beside it is the
+		// caller's job (contextWindowTag) because only the caller knows the
+		// EFFECTIVE window. Keeping Claude Code's own "(1M context)" here
+		// produced "o5(1Mcontext)" — a 1M claim on a pane whose bar had been
+		// re-based onto a 450k pin.
+		{"context parenthetical stripped", "Opus 5 (1M context)", "claude-opus-5[1m]", "o5"},
+		{"context parenthetical stripped lowercase", "opus 5 (200k context)", "claude-opus-5", "o5"},
+		{"context parenthetical on single-token name", "Fable (1M context)", "claude-fable-5", "fable"},
+		// A qualifier that is NOT about capacity must survive: dropping it would
+		// collapse two genuinely different models onto one tag.
+		{"non-context parenthetical preserved", "Opus 5 (fast)", "claude-opus-5", "o5(fast)"},
+		{"parenthetical only yields placeholder", "(1M context)", "", "ukn-mdl"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

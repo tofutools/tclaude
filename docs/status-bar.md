@@ -11,7 +11,7 @@ tclaude provides a status bar command that Claude Code calls automatically to di
 **Example output:**
 
 ```
-o4.6 ████░░░░▒▒ 42% | 5h ░░░░░░░░░░ 8% (3h41m) | 7d ░░░░░░░░░░ 5% (2d9h)
+o4.6(200k) ████░░░░▒▒ 42% | 5h ░░░░░░░░░░ 8% (3h41m) | 7d ░░░░░░░░░░ 5% (2d9h)
 [main] | 🔗 https://github.com/user/project
 ```
 
@@ -45,12 +45,13 @@ tclaude setup --check
 ### Line 1: Context & Rate Limits
 
 ```
-o4.6 <bar> N% | 5h <bar> N% (timer) | 7d <bar> N% (timer) | sonnet <bar> N% (timer)
+o4.6(200k) <bar> N% | 5h <bar> N% (timer) | 7d <bar> N% (timer) | sonnet <bar> N% (timer)
 ```
 
 | Element | Description |
 |---------|-------------|
 | `o4.6` | Short model label (first letter lowercase + version) |
+| `(200k)` | The context window the bar beside it is measured against — see [Which window the context bar measures](#which-window-the-context-bar-measures) |
 | Context bar | Context window usage with compaction buffer indicator |
 | `5h` | 5-hour rate limit utilization and reset timer |
 | `7d` | 7-day rate limit utilization and reset timer |
@@ -67,6 +68,19 @@ Rate limits come directly from Claude Code's statusline input (added in 2.1.80),
 **Context bar** includes a compaction buffer indicator (`▒▒`) showing the ~16.5% reserved for compaction. Color thresholds are adjusted relative to the effective usable space.
 
 **Reset timers** show time until the limit resets: `(45m)`, `(3h30m)`, or `(2d9h)`.
+
+#### Which window the context bar measures
+
+The window in the model label is the one the percentage and the bar are relative to — the **effective** window, meaning the smaller of:
+
+- the model's real context window, and
+- any [auto-compaction window](sessions.md) pinned for this agent (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, set per spawn, by profile, or with `--auto-compact-window`).
+
+Most agents pin nothing, so the marker just names the model's own window: `o4.6(200k)`, or `o5(1M)` on an extended-context model. Pin an agent to 450k of a 1M window and it reads `o5(450k)` — and `47%` there means 47% of 450k, i.e. nearly half-way to the next auto-compaction, not 47% of a million.
+
+Only that one number is shown. Claude Code's own `used_percentage` is always measured against the model's *full* window even when a pin is in force, so on a pinned agent the raw figure would understate how close compaction is; tclaude re-bases it and the label says what it was re-based onto. The dashboard's context meter shows the same effective window, so the two never disagree.
+
+The marker is omitted entirely when no window is known yet — no pin, and no `context_window_size` from Claude Code — leaving a bare `o4.6`.
 
 ### Line 2: Git Info
 

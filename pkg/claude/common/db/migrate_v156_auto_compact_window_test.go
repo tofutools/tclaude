@@ -71,6 +71,38 @@ func TestSetSessionAutoCompactWindowRoundTrips(t *testing.T) {
 	assert.Empty(t, read())
 }
 
+// TestGetSessionAutoCompactWindow covers the read the status line uses when its
+// hook process did not inherit the pane's CLAUDE_CODE_AUTO_COMPACT_WINDOW.
+//
+// The three "" cases matter more than the hit: an unpinned agent is the COMMON
+// case, and a missing row / absent session id happen routinely (an unmanaged
+// conversation, a render before the row exists). All three must read as "nothing
+// pinned" with no error, so the caller leaves the model's own window — and Claude
+// Code's own percentage — alone.
+func TestGetSessionAutoCompactWindow(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status,
+		created_at, updated_at, auto_compact_window)
+		VALUES ('pinned', 'tc-pinned', 0, '/tmp', 'conv-pinned', 'idle',
+		        '2026-07-25T09:00:00Z', '2026-07-25T09:00:00Z', '450000')`)
+	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status,
+		created_at, updated_at)
+		VALUES ('unpinned', 'tc-unpinned', 0, '/tmp', 'conv-unpinned', 'idle',
+		        '2026-07-25T09:00:00Z', '2026-07-25T09:00:00Z')`)
+
+	got, err := GetSessionAutoCompactWindow("pinned")
+	require.NoError(t, err)
+	assert.Equal(t, "450000", got, "recorded window reads back canonically")
+
+	for _, id := range []string{"unpinned", "no-such-session", "", "   "} {
+		got, err := GetSessionAutoCompactWindow(id)
+		require.NoError(t, err, "id %q must not error", id)
+		assert.Empty(t, got, "id %q reads as nothing pinned", id)
+	}
+}
+
 func TestMigrateV156IsTheCurrentHead(t *testing.T) {
 	require.Equal(t, 156, currentVersion, "tripwire: bump this with the next migration")
 }

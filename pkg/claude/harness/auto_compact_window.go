@@ -243,10 +243,25 @@ func RebaseContextPercentage(pct float64, modelWindow, effectiveWindow int64) fl
 // operator might act on. "" (unset) renders as "".
 func FormatAutoCompactWindow(window string) string {
 	tokens, err := strconv.ParseInt(strings.TrimSpace(window), 10, 64)
-	if err != nil || tokens <= 0 {
+	if err != nil {
 		return ""
 	}
+	return FormatContextWindowTokens(tokens)
+}
+
+// FormatContextWindowTokens is FormatAutoCompactWindow for a caller already
+// holding a token count rather than the stored string form — notably the status
+// line, which labels its bar with the EFFECTIVE window: a min of two integers,
+// so never a stored string.
+//
+// 0 (and any negative) renders as "", which callers treat as "omit the marker".
+// That is the COMMON case, not an error: most agents run with no pinned window
+// at all, and a status line that has not yet seen a context_window_size from the
+// harness has no window to name either. Neither deserves a diagnostic.
+func FormatContextWindowTokens(tokens int64) string {
 	switch {
+	case tokens <= 0:
+		return ""
 	case tokens%1_000_000 == 0:
 		return strconv.FormatInt(tokens/1_000_000, 10) + "M"
 	case tokens%1_000 == 0:
