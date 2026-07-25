@@ -1169,6 +1169,15 @@ type dashboardHarness struct {
 	// harness whose startup context tclaude can trim (Claude Code). The spawn
 	// dialog and profile editor gate their "Context…" control on it.
 	CanContextFeatures bool `json:"can_context_features"`
+	// CanAutoCompactWindow mirrors Harness.CanAutoCompactWindow — true only for a
+	// harness whose auto-compaction capacity tclaude can pin (Claude Code). The
+	// spawn dialog and profile editor gate their token-window input on it.
+	CanAutoCompactWindow bool `json:"can_auto_compact_window"`
+	// AutoCompactWindowMin / Max are the accepted bounds, so the dialog can set
+	// the input's own min/max and reject a slipped digit before the round trip.
+	// Both 0 for a harness that cannot pin a window.
+	AutoCompactWindowMin int64 `json:"auto_compact_window_min,omitempty"`
+	AutoCompactWindowMax int64 `json:"auto_compact_window_max,omitempty"`
 	// ContextFeatures is the trim catalog this harness offers, in presentation
 	// order, so the dialog can render the rows (label + description + cautions)
 	// without a second endpoint. [] (not null) for a harness with none, so the
@@ -1218,7 +1227,12 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanRemoteControl: h.CanRemoteControl(),
 			CanAutoMemory:    h.CanAutoMemory(),
 
-			CanContextFeatures: h.CanContextFeatures(),
+			CanContextFeatures:   h.CanContextFeatures(),
+			CanAutoCompactWindow: h.CanAutoCompactWindow(),
+		}
+		if dh.CanAutoCompactWindow {
+			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow
+			dh.AutoCompactWindowMax = harness.MaxAutoCompactWindow
 		}
 		dh.ContextFeatures = []dashboardContextFeature{}
 		if h.CanContextFeatures() {
@@ -1608,10 +1622,16 @@ type agentState struct {
 	// the dashboard context-meter's tooltip; all zero means the
 	// statusline hook hasn't fired for this session yet, which the UI
 	// renders as a neutral / empty meter.
-	ContextPct        float64 `json:"context_pct,omitempty"`
-	TokensInput       int64   `json:"tokens_input,omitempty"`
-	TokensOutput      int64   `json:"tokens_output,omitempty"`
-	ContextWindowSize int64   `json:"context_window_size,omitempty"`
+	ContextPct   float64 `json:"context_pct,omitempty"`
+	TokensInput  int64   `json:"tokens_input,omitempty"`
+	TokensOutput int64   `json:"tokens_output,omitempty"`
+	// ContextWindowSize is the EFFECTIVE window this agent's meter is drawn
+	// against — min(model window, pinned auto-compaction window) — so the
+	// tooltip's denominator matches ContextPct's. AutoCompactWindow is the pin
+	// itself (0 = none), so the UI can say WHY the window is smaller than the
+	// model's.
+	ContextWindowSize int64 `json:"context_window_size,omitempty"`
+	AutoCompactWindow int64 `json:"auto_compact_window,omitempty"`
 	// Model is the LLM model display name the agent is running on
 	// ("Opus 4.8", "Sonnet 4.6", …), recorded by the statusline hook.
 	// Empty until the statusbar has ticked at least once; the dashboard
@@ -1840,7 +1860,28 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		out.ContextPct = snap.ContextPct
 		out.TokensInput = snap.TokensInput
 		out.TokensOutput = snap.TokensOutput
+		// The meter measures against the window compaction ACTUALLY fires at: the
+		// smaller of the model's real window and any pinned auto-compaction
+		// window. ContextPct already arrives re-based (the status line stores it
+		// that way), so re-basing the denominator here is what keeps the tooltip's
+		// "x / y tokens" agreeing with the percentage beside it. The durable
+		// snapshot keeps the model's real window untouched — the relaunch layer
+		// reads that one to re-derive a 1M model's [1m] suffix.
+		//
+		// Gated on a POPULATED snapshot. A zero window here does not mean "unknown
+		// model window, so the pin stands" — it is the all-zero sentinel for "the
+		// statusline hook has never fired", which is the normal state of every
+		// freshly spawned agent (the launch records its pin long before the first
+		// render). Substituting the pin would fabricate a window out of nothing and
+		// make snapshotPopulated / has_snapshot report usage that was never
+		// observed, costing `agent context-info` and the meter their ability to
+		// distinguish "not reported yet" from a genuine 0%.
 		out.ContextWindowSize = snap.ContextWindowSize
+		if snapshotPopulated(snap) {
+			out.ContextWindowSize = harness.EffectiveContextWindow(
+				snap.ContextWindowSize, harness.AutoCompactWindowTokens(pick.AutoCompactWindow))
+			out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
+		}
 		out.Model = snap.Model
 		out.EffortLevel = snap.EffortLevel
 		out.CostUSD = snap.CostUSD

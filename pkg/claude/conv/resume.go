@@ -215,6 +215,14 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	// Same read-before-write ordering for the auto-compaction window: reading
+	// after this resume's own row exists would echo the new row's empty default
+	// and hand the next resume the model's full window back.
+	autoCompactWindow, err := db.AutoCompactWindowForConv(rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -265,6 +273,12 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 			slog.Warn("failed to record resumed session context features",
 				"session_id", sessionID,
 				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
+		}
+	}
+	if h.SupportsAutoCompactWindow() {
+		if err := db.SetSessionAutoCompactWindow(sessionID, autoCompactWindow); err != nil {
+			slog.Warn("failed to record resumed session auto-compact window",
+				"session_id", sessionID, "auto_compact_window", autoCompactWindow, "error", err)
 		}
 	}
 

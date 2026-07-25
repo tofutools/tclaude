@@ -36,6 +36,7 @@ import {
   spawnProfileSeed,
   syncSpawnWorktree,
   validateSpawnDraft,
+  autoCompactWindowHintFor,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
@@ -44,11 +45,18 @@ import { HelpField } from './help-field.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
+// One title for the auto-compaction window control, shared by the spawn dialog
+// and kept next to the hint logic it explains. The two consequences an operator
+// has to know are the cap and the status-line decoupling.
+const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s auto-compaction '
+  + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
+  + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
+  + 'Capped at the model\'s actual context window.';
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner', 'permissionOverrides',
-  'contextFeatures',
+  'contextFeatures', 'autoCompactWindow',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -675,6 +683,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const reviewerHelp = approvalReviewerHelp(draft.approvalReviewer, draft.approval);
   const toolsHelp = view.tools.help[draft.tools] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
+  const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -831,7 +840,21 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           ${view.efforts.map((effort) => html`<option key=${effort} value=${effort}>${effort}</option>`)}
         </select>
       </label>
+      <label class="cron-create-row" id="agent-spawn-auto-compact-window-row" hidden=${!view.showAutoCompactWindow}
+        title=${AUTO_COMPACT_WINDOW_TITLE}>
+        <input id="agent-spawn-auto-compact-window" type="text" aria-label="Auto-compact window (tokens)"
+          value=${draft.autoCompactWindow} disabled=${busy}
+          onInput=${(event) => update('autoCompactWindow', event.currentTarget.value)}
+          placeholder="ctx limit" autocomplete="off" spellcheck="false" inputmode="numeric" />
+      </label>
     </div>
+    ${view.showAutoCompactWindow && autoCompactWindowHint && html`
+      <div class="cron-create-row" id="agent-spawn-auto-compact-window-hint">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target">
+          <div class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>
+        </div>
+      </div>`}
     <label class="cron-create-row" id="agent-spawn-model-custom-row" hidden=${selectedModel !== MODEL_CUSTOM_VALUE}
       title="Type any model id or alias accepted by the selected harness. Validated when the agent spawns.">
       <span class="cron-create-label"></span>

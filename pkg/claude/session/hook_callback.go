@@ -1725,11 +1725,34 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer)
 			"error", err, "session_id", envSessionID, "module", "hooks")
 		return nil
 	}
-	window := snap.ContextWindowSize
+	// Measure against the window compaction ACTUALLY fires at. The stored
+	// ContextPct is already re-based onto it by the status line, so pairing it
+	// with the model's full window here would overstate used tokens by exactly
+	// the ratio between the two — a 1M agent pinned to 450K would look more than
+	// twice as full as it is, and the guard would wave through compactions it
+	// exists to refuse. The pin is read from this hook's own environment for the
+	// same reason the status line does: the hook runs inside the agent's pane, so
+	// it sees the variable Claude Code is actually acting on.
+	pinnedWindow := int64(0)
+	if parsed, err := harness.ParseAutoCompactWindow(os.Getenv(harness.AutoCompactWindowEnvVar)); err == nil {
+		// Parsed, not read raw, so an out-of-range value in the operator's own shell
+		// cannot govern the guard. See the same treatment in the status bar.
+		pinnedWindow = harness.AutoCompactWindowTokens(parsed)
+	}
+	window := harness.EffectiveContextWindow(snap.ContextWindowSize, pinnedWindow)
 	if window <= 0 || snap.ContextPct <= 0 {
 		return nil // no usable usage data yet → allow
 	}
-	minTokens, ok := preCompactFloor(thresholds, window)
+	// The floor is looked up by the MODEL's window and then scaled onto the
+	// effective one. Both halves matter: the ladder is keyed by model class
+	// (≈200000 / ≈1000000) and rejects a match more than 2× away, so handing it a
+	// pinned window would either find no class at all (450K is >2× from both, and
+	// the guard would silently switch OFF) or match a class whose absolute floor
+	// the pinned window can never reach (a 500K pin against the 1M class's 800K
+	// floor would block EVERY compaction, inverting the pin's purpose). Scaling
+	// keeps the floor at the same FRACTION of the window the operator's ladder
+	// asked for, and is an exact no-op when nothing is pinned.
+	minTokens, ok := preCompactFloor(thresholds, snap.ContextWindowSize, window)
 	if !ok {
 		return nil // no threshold matches this window → allow
 	}
@@ -1759,16 +1782,30 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer)
 	return nil
 }
 
-// preCompactFloor returns the MinTokens floor to apply for a context
-// window of windowSize, choosing the configured threshold whose
-// window_size is the closest match by ratio. Claude Code reports a
-// model's real window (≈200000 or ≈1000000); matching by nearest ratio
-// rather than exact equality tolerates a reported window that differs
-// slightly from the round numbers the thresholds are keyed by (e.g.
-// 1048576 vs 1000000). A best match more than 2× away in either
-// direction is rejected (ok=false) so a ladder listing only one window
-// class never silently governs a wildly different window.
-func preCompactFloor(thresholds []config.PreCompactThreshold, windowSize int64) (int64, bool) {
+// preCompactFloor returns the MinTokens floor to apply, choosing the configured
+// threshold whose window_size is the closest match by ratio to modelWindow —
+// the MODEL's real context window, which is what the ladder is keyed by.
+//
+// Claude Code reports a model's real window (≈200000 or ≈1000000); matching by
+// nearest ratio rather than exact equality tolerates a reported window that
+// differs slightly from the round numbers the thresholds are keyed by (e.g.
+// 1048576 vs 1000000). A best match more than 2× away in either direction is
+// rejected (ok=false) so a ladder listing only one window class never silently
+// governs a wildly different window.
+//
+// effectiveWindow is the window compaction ACTUALLY fires at — the smaller of
+// the model's window and any pinned CLAUDE_CODE_AUTO_COMPACT_WINDOW. When a pin
+// binds, the matched class's floor is scaled by effectiveWindow/modelWindow so
+// the guard keeps enforcing the same FRACTION of the window the operator's
+// ladder asked for. That scaling is what keeps the two inputs from fighting:
+// the class lookup needs the model window (an operator-chosen pin is not a model
+// class and would fall outside the 2× tolerance), while the used-token
+// comparison is against the pinned window, so an unscaled class floor could
+// exceed the pinned window entirely and block every compaction.
+//
+// With nothing pinned effectiveWindow == modelWindow and the scaling is an exact
+// no-op, so an unpinned agent keeps the floor its ladder literally specifies.
+func preCompactFloor(thresholds []config.PreCompactThreshold, modelWindow, effectiveWindow int64) (int64, bool) {
 	var best config.PreCompactThreshold
 	var bestRatio float64
 	found := false
@@ -1776,7 +1813,7 @@ func preCompactFloor(thresholds []config.PreCompactThreshold, windowSize int64) 
 		if t.WindowSize <= 0 {
 			continue
 		}
-		r := float64(windowSize) / float64(t.WindowSize)
+		r := float64(modelWindow) / float64(t.WindowSize)
 		if r < 1 {
 			r = 1 / r // ratio ≥ 1 regardless of direction
 		}
@@ -1786,6 +1823,10 @@ func preCompactFloor(thresholds []config.PreCompactThreshold, windowSize int64) 
 	}
 	if !found || bestRatio > 2.0 {
 		return 0, false
+	}
+	if effectiveWindow > 0 && modelWindow > 0 && effectiveWindow < modelWindow {
+		scaled := int64(float64(best.MinTokens) * float64(effectiveWindow) / float64(modelWindow))
+		return scaled, true
 	}
 	return best.MinTokens, true
 }

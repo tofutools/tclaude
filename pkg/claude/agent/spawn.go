@@ -343,6 +343,24 @@ type SpawnRequest struct {
 	// plain map with omitempty could not express the middle case.
 	ContextFeatures *map[string]string `json:"context_features,omitempty"`
 
+	// AutoCompactWindow pins the context capacity in tokens that Claude Code's
+	// auto-compaction calculations run against (CLAUDE_CODE_AUTO_COMPACT_WINDOW),
+	// as a token count — "450000", "450k" and "0.5M" all mean the same thing and
+	// normalize to the first. Empty = unspecified, so the daemon's profile tier
+	// stack fills it; unset everywhere leaves the model's own default threshold in
+	// charge.
+	//
+	// The point is long-lived agents: on a 1M-context model Claude Code compacts
+	// near the top of the window, well after answer quality has started to slide.
+	// Pinning it lower makes compaction fire while the agent is still sharp.
+	// Claude Code caps the value at the model's real context window, so it is a
+	// ceiling and never a floor, and setting it decouples the compaction threshold
+	// from the status line's percentage.
+	//
+	// Claude-Code-only: a value for a harness with no such knob (Codex, OpenCode)
+	// is a 400. Forwarded to `tclaude session new --auto-compact-window`.
+	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -588,6 +606,11 @@ type SpawnParams struct {
 	// positional; the help below points there rather than shipping a flag that
 	// cannot work.
 	ContextFeatures string `long:"context-features" optional:"true" help:"Trim the new agent's Claude Code startup context: comma-separated <feature>[=on|off] (a bare feature means off), or 'none' to override a profile and trim nothing. E.g. bundled-skills,artifact,workflows. Unset = filled by the profile chain. Run 'tclaude session new --help-context-features' for the catalog. Not applicable to codex"`
+
+	// AutoCompactWindow pins where Claude Code auto-compacts for the new agent.
+	// A plain string flag (unlike the opt-in-only bools above), so a blank still
+	// defers to the profile chain and an explicit value overrides it.
+	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for the new agent's Claude Code auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window so a long-lived agent compacts while it is still sharp. Capped at the model's actual window. Unset = filled by the profile chain, then the model default. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -675,6 +698,7 @@ type resolvedSpawnFields struct {
 	Effort                 string
 	Sandbox                string
 	AskUserQuestionTimeout string
+	AutoCompactWindow      string
 	Approval               string
 	ToolGovernance         string
 
@@ -785,6 +809,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Effort = pick(p.Effort, prof.Effort)
 		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
 		out.AskUserQuestionTimeout = pick(p.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
+		out.AutoCompactWindow = pick(p.AutoCompactWindow, prof.AutoCompactWindow)
 		out.Approval = pick(p.Approval, prof.Approval)
 		out.ToolGovernance = pick(p.ToolGovernance, prof.ToolGovernance)
 		if !out.AutoReview && prof.AutoReview != nil {
@@ -799,6 +824,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Effort = strings.TrimSpace(p.Effort)
 		out.Sandbox = strings.TrimSpace(p.Sandbox)
 		out.AskUserQuestionTimeout = strings.TrimSpace(p.AskUserQuestionTimeout)
+		out.AutoCompactWindow = strings.TrimSpace(p.AutoCompactWindow)
 		out.Approval = strings.TrimSpace(p.Approval)
 		out.ToolGovernance = strings.TrimSpace(p.ToolGovernance)
 	}
@@ -975,6 +1001,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	approvalPolicy := strings.TrimSpace(p.Approval)
 	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
+	autoCompactWindow := strings.TrimSpace(p.AutoCompactWindow)
 	autoReview := p.AutoReview
 	trustDir := false
 	remoteControl := p.RemoteControl
@@ -1017,6 +1044,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
 			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
 			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
+			AutoCompactWindow:      p.AutoCompactWindow,
 			AutoReview:             p.AutoReview,
 		}
 		if validateMergedProfile {
@@ -1063,6 +1091,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// AskUserQuestion dialog (Codex) fails fast here. inherit/blank → "" (no
 		// override). The daemon re-validates server-side.
 		if _, err = harness.ResolveAskTimeoutMode(h, validationFields.AskUserQuestionTimeout); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Resolve --auto-compact-window the same way: a Claude-Code-only env knob,
+		// so a value for a harness without it fails fast here, as does an
+		// unparseable or out-of-range token count. The daemon re-validates and
+		// re-normalizes server-side.
+		if _, err = harness.ResolveAutoCompactWindow(h, validationFields.AutoCompactWindow); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
@@ -1135,6 +1171,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Harness:                clientHarness,
 		SandboxMode:            sandboxMode,
 		AskUserQuestionTimeout: askTimeout,
+		AutoCompactWindow:      autoCompactWindow,
 		ApprovalPolicy:         approvalPolicy,
 		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,

@@ -56,8 +56,11 @@ type profileJSON struct {
 	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
 	// per-spawn via `--settings`. Claude-Code-only.
 	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
-	AutoReview             *bool  `json:"auto_review,omitempty"`
-	TrustDir               *bool  `json:"trust_dir,omitempty"`
+	// AutoCompactWindow is the profile's auto-compaction context capacity in
+	// tokens ("450000"; "" = unset). Claude-Code-only.
+	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
+	AutoReview        *bool  `json:"auto_review,omitempty"`
+	TrustDir          *bool  `json:"trust_dir,omitempty"`
 	// RemoteControl is the profile's "start with Remote Access on" default
 	// (tri-state). NOTE: `tclaude agent spawn --profile` does NOT inherit this —
 	// the CLI can't see the group's remote-control policy, which must win, so use
@@ -672,7 +675,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	for _, kv := range []struct{ k, v string }{
 		{"harness", p.Harness}, {"model", p.Model}, {"effort", p.Effort},
 		{"sandbox", p.Sandbox}, {"tools", p.ToolGovernance}, {"ask_user_question_timeout", p.AskUserQuestionTimeout},
-		{"approval", p.Approval},
+		{"approval", p.Approval}, {"auto_compact_window", harness.FormatAutoCompactWindow(p.AutoCompactWindow)},
 	} {
 		if kv.v != "" {
 			launch = append(launch, kv.k+"="+kv.v)

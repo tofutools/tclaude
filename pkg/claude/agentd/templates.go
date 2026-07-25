@@ -745,6 +745,12 @@ type templateAgentLaunch struct {
 	// mergeSnapshotInlineProfile — mirroring AutoReviewSet.
 	ContextFeaturesSet     bool
 	AskUserQuestionTimeout string
+	// AutoCompactWindow is the auto-compaction context capacity (in tokens) a
+	// template-deployed agent launches with, resolved from the profile tiers like
+	// AskUserQuestionTimeout. "" leaves the model's own threshold in charge.
+	// There is no template-LOCAL spelling for it: a template pins the window by
+	// referencing a spawn profile that carries one.
+	AutoCompactWindow string
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -1093,6 +1099,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	autoCompactWindow, _, note, fail := resolveStringLaunchField("auto_compact_window", "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
+		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
 
 	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
@@ -1202,6 +1217,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AutoMemory:             autoMemory,
 		ContextFeatures:        contextFeatures,
 		AskUserQuestionTimeout: askTimeout,
+		AutoCompactWindow:      autoCompactWindow,
 		Notes:                  notes,
 	}, nil
 }
@@ -1271,6 +1287,14 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 			// a re-snapshot record an un-trimmed member as un-trimmed instead of
 			// falling back to the template's previous trims forever.
 			out.ContextFeaturesSet = true
+		}
+	}
+	// Likewise the auto-compaction window this member actually launched with, so a
+	// re-snapshot of a group whose agents compact early records that instead of
+	// quietly handing every future deploy the model's full window.
+	if window, err := db.AutoCompactWindowForConv(convID); err == nil {
+		if resolved, err := harness.ResolveAutoCompactWindow(h, window); err == nil {
+			out.AutoCompactWindow = resolved
 		}
 	}
 	return out
@@ -3688,6 +3712,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.ContextFeatures == nil {
 		out.ContextFeatures = prev.ContextFeatures
 	}
+	// The window is observable too, but "" is ambiguous here (a member that pins
+	// nothing and a member that could not be traced both read ""), so a blank
+	// falls back to the template's previous value like Approval does rather than
+	// silently clearing it.
+	if out.AutoCompactWindow == "" {
+		out.AutoCompactWindow = prev.AutoCompactWindow
+	}
 	for slug, effect := range prev.PermissionOverrides {
 		if effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
@@ -3700,6 +3731,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
+		out.AutoCompactWindow == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
@@ -3755,7 +3787,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(launch.ContextFeatures) > 0 || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3766,6 +3798,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				Effort:              launch.Effort,
 				Sandbox:             launch.Sandbox,
 				Approval:            launch.Approval,
+				AutoCompactWindow:   launch.AutoCompactWindow,
 				PermissionOverrides: po,
 				ContextFeatures:     launch.ContextFeatures,
 			}

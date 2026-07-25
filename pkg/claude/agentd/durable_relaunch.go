@@ -25,6 +25,7 @@ type durableRelaunchConfig struct {
 	RemoteControl          bool
 	AutoMemory             bool
 	ContextFeatures        map[string]string
+	AutoCompactWindow      string
 }
 
 // relaunchProfileForSpawn freezes the already-resolved launch posture at an
@@ -55,6 +56,10 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	for slug, state := range p.ContextFeatures {
 		contextFeatures[slug] = state
 	}
+	// Frozen as KNOWN intent for the same reason, including the empty string: an
+	// agent deliberately spawned with no pinned window should keep the model's
+	// own threshold across relaunches, not inherit one a later profile edit adds.
+	autoCompactWindow := p.AutoCompactWindow
 	return db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
 		SandboxMode:            &sandboxMode,
@@ -68,6 +73,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		RemoteControl:          &remoteControl,
 		AutoMemory:             &autoMemory,
 		ContextFeatures:        &contextFeatures,
+		AutoCompactWindow:      &autoCompactWindow,
 	}
 }
 
@@ -116,6 +122,9 @@ func composeAgentRelaunchProfile(fallback, agent *db.AgentRelaunchProfile) *db.A
 	}
 	if agent.ContextFeatures != nil {
 		merged.ContextFeatures = agent.ContextFeatures
+	}
+	if agent.AutoCompactWindow != nil {
+		merged.AutoCompactWindow = agent.AutoCompactWindow
 	}
 	return &merged
 }
@@ -260,6 +269,17 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		}
 	}
 
+	// Re-resolve the recorded window against the harness this relaunch will
+	// actually use, on the same fail-soft terms as the trims above: a harness
+	// change (or a value that no longer parses) drops the pin rather than wedging
+	// the relaunch. Losing the pin costs an earlier compaction, never correctness.
+	autoCompactWindow := ""
+	if agentProfile.AutoCompactWindow != nil {
+		if resolved, acwErr := harness.ResolveAutoCompactWindow(h, *agentProfile.AutoCompactWindow); acwErr == nil {
+			autoCompactWindow = resolved
+		}
+	}
+
 	return &durableRelaunchConfig{
 		Harness:                h.Name,
 		Cwd:                    strings.TrimSpace(conversation.Cwd),
@@ -274,5 +294,6 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
 		ContextFeatures:        contextFeatures,
+		AutoCompactWindow:      autoCompactWindow,
 	}, nil
 }

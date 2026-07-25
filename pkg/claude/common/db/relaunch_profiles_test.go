@@ -347,3 +347,91 @@ func mustAutoMemoryForConv(t *testing.T, convID string) bool {
 	require.NoError(t, err)
 	return v
 }
+
+// TestObservedAutoCompactWindowReachesTheAgentSpine is the regression guard for
+// the agents-spine merge. relaunchProfileForSpawn freezes a non-nil
+// AutoCompactWindow at birth — INCLUDING ptr("") for an agent that pinned
+// nothing — and AutoCompactWindowForConv short-circuits on the spine value. So a
+// spine merge that never accepts a freshly projected window would freeze that
+// birth "" forever: an operator who later exports
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW would see the live bar re-base correctly while
+// every reincarnate / clone / resume silently reverted the successor to the
+// model's full window — exactly what UpdateSessionAutoCompactWindow's
+// "observers may only ADD a pin" contract promises cannot happen.
+func TestObservedAutoCompactWindowReachesTheAgentSpine(t *testing.T) {
+	setupTestDB(t)
+	const (
+		convID    = "acw-spine-conv"
+		sessionID = "acw-spine-session"
+	)
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: convID, Cwd: "/tmp/acw-spine",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+
+	// Birth: nothing pinned, recorded as KNOWN intent (the empty string).
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, AutoCompactWindow: stringPtr(""),
+	}))
+	require.NoError(t, SetSessionAutoCompactWindow(sessionID, ""))
+	window, err := AutoCompactWindowForConv(convID)
+	require.NoError(t, err)
+	require.Empty(t, window, "birth state: nothing pinned")
+
+	// The operator exports the variable and restarts the pane; the status line
+	// records what it observes.
+	require.NoError(t, UpdateSessionAutoCompactWindow(sessionID, "450000"))
+	// A later hook tick projects it (the plain UPDATE does not project itself).
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: convID, Cwd: "/tmp/acw-spine",
+		Harness: DefaultHarness, Status: "working",
+	}))
+
+	spine, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, spine)
+	require.NotNil(t, spine.AutoCompactWindow)
+	assert.Equal(t, "450000", *spine.AutoCompactWindow,
+		"the agents-spine merge must accept an observed window, or every relaunch loses the pin")
+
+	window, err = AutoCompactWindowForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "450000", window,
+		"the relaunch readers must see the observed window")
+}
+
+// TestLaunchCanAssertNothingPinnedOverAnObservedWindow: the other direction —
+// only the LAUNCH path may say "nothing pinned", and it must win. The observer
+// is a no-op on the empty string precisely so the two can share a column.
+func TestLaunchCanAssertNothingPinnedOverAnObservedWindow(t *testing.T) {
+	setupTestDB(t)
+	const (
+		convID    = "acw-clear-conv"
+		sessionID = "acw-clear-session"
+	)
+	_, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: convID, Cwd: "/tmp/acw-clear",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+
+	require.NoError(t, SetSessionAutoCompactWindow(sessionID, "450000"))
+	window, err := AutoCompactWindowForConv(convID)
+	require.NoError(t, err)
+	require.Equal(t, "450000", window)
+
+	// An observer cannot erase it...
+	require.NoError(t, UpdateSessionAutoCompactWindow(sessionID, ""))
+	window, err = AutoCompactWindowForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "450000", window, "an observer must never erase a recorded pin")
+
+	// ...but a relaunch that deliberately pins nothing can.
+	require.NoError(t, SetSessionAutoCompactWindow(sessionID, ""))
+	window, err = AutoCompactWindowForConv(convID)
+	require.NoError(t, err)
+	assert.Empty(t, window, "the launch path may assert nothing pinned")
+}

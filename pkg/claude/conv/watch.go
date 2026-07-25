@@ -2345,6 +2345,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, fmt.Errorf("load startup-context trims for conversation %s: %w", convID, err)
 	}
 	session.ApplyContextFeaturesEnv(h, contextFeatures, resumeEnv)
+	// Likewise for the auto-compaction window: an agent pinned to compact early
+	// must come back pinned, or the resumed pane silently runs to the model's
+	// full window. A conv with nothing recorded reads "" and injects nothing.
+	autoCompactWindow, err := db.AutoCompactWindowForConv(convID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load auto-compaction window for conversation %s: %w", convID, err)
+	}
+	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {

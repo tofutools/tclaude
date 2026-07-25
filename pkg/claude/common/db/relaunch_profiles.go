@@ -27,6 +27,11 @@ type AgentRelaunchProfile struct {
 	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl          *bool   `json:"remote_control,omitempty"`
 	AutoMemory             *bool   `json:"auto_memory,omitempty"`
+	// AutoCompactWindow is the durable CLAUDE_CODE_AUTO_COMPACT_WINDOW token
+	// count ("" = known intent to pin nothing; nil = unknown/legacy). Distinct
+	// from ContextWindowSize above, which is an OBSERVED statusline value used to
+	// re-derive a 1M model's suffix — this one is operator intent.
+	AutoCompactWindow *string `json:"auto_compact_window,omitempty"`
 	// ContextFeatures is the durable startup-context trim map (slug → "on" |
 	// "off"). A non-nil pointer to a possibly-empty map means "known intent",
 	// which is what lets an agent deliberately trimmed back to nothing stay that
@@ -235,9 +240,10 @@ func SetConversationResumeProvenance(convID, provenance string) error {
 // migration. It is called in the same transaction as launch/status/toggle
 // writes, so pruning can never expose an older durable value.
 type relaunchProjectionOptions struct {
-	RemoteControl   bool
-	AutoMemory      bool
-	ContextFeatures bool
+	RemoteControl     bool
+	AutoMemory        bool
+	ContextFeatures   bool
+	AutoCompactWindow bool
 }
 
 func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts relaunchProjectionOptions) error {
@@ -248,13 +254,14 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	var convID, cwd, harnessName, sandboxMode, approvalPolicy, modelID, effort, askTimeout, provenance, createdAt string
 	var approvalAutoReview, remoteControl, autoMemory int
 	var contextWindowSize int64
-	var contextFeaturesRaw string
-	// sessions.context_features arrives in v155, but this projection also runs
-	// from INSIDE the v145 migration, where the column does not exist yet.
-	// Selecting it unconditionally would break that migration, so the column is
-	// probed and substituted with a literal '' when absent — the same
-	// probe-before-read discipline the agents-spine checks below use.
-	haveContextFeatures, err := sessionsHaveContextFeatures(q)
+	var contextFeaturesRaw, autoCompactWindow string
+	// sessions.context_features arrives in v155 and sessions.auto_compact_window
+	// in v156, but this projection also runs from INSIDE the v145 migration,
+	// where neither column exists yet. Selecting them unconditionally would break
+	// that migration, so each column is probed and substituted with a literal ''
+	// when absent — the same probe-before-read discipline the agents-spine checks
+	// below use.
+	haveContextFeatures, err := sessionsHaveColumn(q, "context_features")
 	if err != nil {
 		return err
 	}
@@ -262,15 +269,23 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if haveContextFeatures {
 		contextFeaturesColumn = "context_features"
 	}
+	haveAutoCompactWindow, err := sessionsHaveColumn(q, "auto_compact_window")
+	if err != nil {
+		return err
+	}
+	autoCompactWindowColumn := "''"
+	if haveAutoCompactWindow {
+		autoCompactWindowColumn = "auto_compact_window"
+	}
 	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
-		auto_memory, `+contextFeaturesColumn+`, resume_provenance, created_at
+		auto_memory, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
 		&rowID, &convID, &cwd, &harnessName, &sandboxMode,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
-		&autoMemory, &contextFeaturesRaw, &provenance, &createdAt)
+		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -308,6 +323,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		autoMemory = 0
 		askTimeout = ""
 		contextFeaturesRaw = ""
+		autoCompactWindow = ""
 	}
 	// Approval-policy normalization is Codex-specific. OpenCode legitimately
 	// represents "no launch-time approval policy" with the empty string.
@@ -353,6 +369,19 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		agent.ContextFeatures = &features
 	}
+	// A pinned window projects unconditionally, like model_id and effort_level:
+	// it is observable launch state, and the status line records it on every
+	// render (see UpdateSessionAutoCompactWindow), so the freshest non-empty
+	// value is always the right one. The EMPTY string is different — it is only
+	// authority when the launch path asserted "nothing pinned", which is what the
+	// opts flag carries. Pre-v156 the absent column would otherwise project as
+	// "known: no window pinned", which this projection never observed.
+	switch {
+	case strings.TrimSpace(autoCompactWindow) != "":
+		agent.AutoCompactWindow = stringPtr(strings.TrimSpace(autoCompactWindow))
+	case opts.AutoCompactWindow && haveAutoCompactWindow:
+		agent.AutoCompactWindow = stringPtr("")
+	}
 	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
 		previous := existingConversation.FallbackRelaunch
 		sameSourceGeneration := existingConversation.SourceSessionCreatedAt == createdAt &&
@@ -377,6 +406,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if sameSourceGeneration && agent.ContextFeatures == nil {
 			agent.ContextFeatures = previous.ContextFeatures
+		}
+		if sameSourceGeneration && agent.AutoCompactWindow == nil {
+			agent.AutoCompactWindow = previous.AutoCompactWindow
 		}
 	}
 	conversation.FallbackRelaunch = &agent
@@ -452,6 +484,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.ContextFeatures != nil {
 			merged.ContextFeatures = agent.ContextFeatures
 		}
+		if agent.AutoCompactWindow != nil {
+			merged.AutoCompactWindow = agent.AutoCompactWindow
+		}
 		agent = merged
 	}
 	agentRaw, err := encodeRelaunchProfile(agent)
@@ -462,10 +497,11 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	return err
 }
 
-// sessionsHaveContextFeatures probes for the v155 sessions.context_features
-// column. This projection runs inside EVERY SaveSession — i.e. on every hook tick
-// — and ALSO inside the v145 migration, where the column does not exist yet, so
-// the probe cannot simply be deleted.
+// sessionsHaveColumn probes for a sessions column added AFTER v145 —
+// context_features (v155) and auto_compact_window (v156). This projection runs
+// inside EVERY SaveSession — i.e. on every hook tick — and ALSO inside the v145
+// migration, where neither column exists yet, so the probe cannot simply be
+// deleted.
 //
 // It is deliberately NOT memoized in a package-level latch. Column existence is
 // monotonic within one DATABASE, but not within a process: a single process
@@ -475,10 +511,10 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 // another that predates v155 — turning every write into an error. The pragma is
 // answered from SQLite's already-loaded schema, so the per-call cost is small;
 // any future caching must be keyed by database identity, not by process.
-func sessionsHaveContextFeatures(q dbExecQuerier) (bool, error) {
+func sessionsHaveColumn(q dbExecQuerier, column string) (bool, error) {
 	var n int
 	if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions')
-		WHERE name = 'context_features'`).Scan(&n); err != nil {
+		WHERE name = ?`, column).Scan(&n); err != nil {
 		return false, err
 	}
 	return n > 0, nil
@@ -534,7 +570,7 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 		return err
 	}
 	return projectSessionRelaunchProfilesTx(q, sessionID, relaunchProjectionOptions{
-		RemoteControl: true, AutoMemory: true, ContextFeatures: true,
+		RemoteControl: true, AutoMemory: true, ContextFeatures: true, AutoCompactWindow: true,
 	})
 }
 

@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
 )
@@ -250,10 +252,42 @@ func run() error {
 	}
 
 	// === Line 2: model+context bar | limit bars with reset timers | cost ===
-	ctxPct := 0
+	rawCtxPct := 0.0
 	if input.ContextWindow.UsedPercentage != nil {
-		ctxPct = int(*input.ContextWindow.UsedPercentage)
+		rawCtxPct = *input.ContextWindow.UsedPercentage
 	}
+	// Re-base the percentage onto the window compaction ACTUALLY fires at.
+	// Claude Code's used_percentage is always measured against the model's full
+	// context window, even when CLAUDE_CODE_AUTO_COMPACT_WINDOW pins compaction
+	// lower — the harness documents that decoupling explicitly. Left alone, an
+	// agent pinned to 450K of a 1M window would read "21% used" while sitting
+	// nearly half-way to its next compaction, which is the opposite of what the
+	// bar is for.
+	//
+	// The pin is read from this process's own environment rather than the
+	// session row: the status line runs inside the agent's pane, so the variable
+	// it sees is exactly the one Claude Code is acting on — including a window an
+	// operator exported by hand, outside any tclaude launch.
+	rawWindow := int64(0)
+	if input.ContextWindow.ContextWindowSize != nil {
+		rawWindow = *input.ContextWindow.ContextWindowSize
+	}
+	// Route the environment through the SAME parser the spawn boundary uses, so
+	// this pane's bar is governed by a value the rest of the feature would accept:
+	// it applies the 10k–10M bounds and understands the `450k` spelling. Reading
+	// the raw integer instead would let a typo'd `=500` in the operator's shell
+	// re-base every percentage against a 500-token window — clamping the bar to
+	// 100%, storing that, firing the context nudge on every render, and (because
+	// the value is recorded durably below) re-injecting itself on every later
+	// resume. An unparseable value is ignored, leaving Claude Code's own default
+	// threshold in charge, which is the same fail-soft direction
+	// durableRelaunchConfigForConv takes.
+	pinnedWindow := int64(0)
+	if parsed, err := harness.ParseAutoCompactWindow(os.Getenv(harness.AutoCompactWindowEnvVar)); err == nil {
+		pinnedWindow = harness.AutoCompactWindowTokens(parsed)
+	}
+	effectiveWindow := harness.EffectiveContextWindow(rawWindow, pinnedWindow)
+	ctxPct := int(harness.RebaseContextPercentage(rawCtxPct, rawWindow, effectiveWindow))
 
 	// Store context-window snapshot in DB for the context nudge + the
 	// agent context-info CLI + the dashboard meter. Only write when the
@@ -277,6 +311,13 @@ func run() error {
 		if cw.ContextWindowSize != nil {
 			winSize = *cw.ContextWindowSize
 		}
+		// The stored window stays the model's REAL one — the relaunch layer reads
+		// it back to re-derive a 1M model's [1m] suffix, so re-basing it here would
+		// cost a resumed agent its extended context. The stored PERCENTAGE is the
+		// re-based one, which is what makes every downstream reader (the dashboard
+		// meter, `tclaude agent context-info`, the context nudge) measure against
+		// the window compaction actually fires at without each having to know the
+		// pin exists.
 		if err := db.UpdateContextSnapshot(sessionID, float64(ctxPct), tokIn, tokOut, winSize); err != nil {
 			slog.Warn("status-bar: failed to update context snapshot", "error", err, "module", "hooks")
 		}
@@ -292,6 +333,16 @@ func run() error {
 	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
+		}
+		// Record the pin this pane is actually running under, so the dashboard
+		// renders the same effective window this bar does. A no-op on the empty
+		// string, so it can only ever ADD a window an operator exported by hand —
+		// never erase one a tclaude launch deliberately recorded. See
+		// UpdateSessionAutoCompactWindow.
+		if pinnedWindow > 0 {
+			if err := db.UpdateSessionAutoCompactWindow(sessionID, strconv.FormatInt(pinnedWindow, 10)); err != nil {
+				slog.Warn("status-bar: failed to update session auto-compact window", "error", err, "module", "hooks")
+			}
 		}
 		// The full model ID rides the same cadence as the display name.
 		// It's what reincarnate/clone/resume feed back to `claude

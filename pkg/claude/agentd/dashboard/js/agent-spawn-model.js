@@ -152,9 +152,79 @@ export function spawnCapabilityView(draft, context) {
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
+    showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
+    autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
+    autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
   };
+}
+
+// AUTO_COMPACT_WINDOW_PATTERN is the client-side shape check, applied to the
+// value AFTER the same normalization harness.ParseAutoCompactWindow performs:
+// surrounding whitespace trimmed, and `_` / interior spaces dropped as digit
+// separators. It must not be STRICTER than the Go parser — this gate blocks
+// submit (see validateSpawnDraft), so a spelling the daemon would accept must
+// not be rejected here. A leading `.` is allowed for the same reason: Go reads
+// ".5M" as 500000.
+//
+// The daemon remains the authority; this exists only so an obvious typo is
+// caught before the round trip.
+const AUTO_COMPACT_WINDOW_PATTERN = /^(\d+(\.\d+)?|\.\d+)[kKmM]?$/;
+
+// normalizeAutoCompactWindowInput strips the separators the Go parser strips, so
+// the pattern and the arithmetic below both see the same digits.
+function normalizeAutoCompactWindowInput(raw) {
+  return text(raw).trim().replace(/[_ ]/g, '');
+}
+
+// parseAutoCompactWindow returns the token count a field value denotes, or null
+// when it is blank or malformed. Float math is fine here: this is a hint, and
+// the daemon does the exact arithmetic on the digit string.
+export function parseAutoCompactWindow(raw) {
+  const value = normalizeAutoCompactWindowInput(raw);
+  if (!value || !AUTO_COMPACT_WINDOW_PATTERN.test(value)) return null;
+  const suffix = value.slice(-1);
+  const scale = /[kK]/.test(suffix) ? 1000 : /[mM]/.test(suffix) ? 1000000 : 1;
+  const digits = scale === 1 ? value : value.slice(0, -1);
+  const tokens = Number(digits) * scale;
+  return Number.isFinite(tokens) && Number.isInteger(tokens) ? tokens : null;
+}
+
+// autoCompactWindowHintFor renders the one-line note under the window field:
+// what the pin means in practice, or why the current text will be rejected.
+// Returns null when the field is blank (nothing useful to say about "unset").
+export function autoCompactWindowHintFor(draft, view) {
+  const raw = text(draft.autoCompactWindow);
+  if (!raw) return null;
+  const tokens = parseAutoCompactWindow(raw);
+  if (tokens == null) {
+    return { warn: true, text: `"${raw}" is not a token count — try 450000, 450k or 0.5M.` };
+  }
+  const min = view.autoCompactWindowMin || 0;
+  const max = view.autoCompactWindowMax || 0;
+  if ((min && tokens < min) || (max && tokens > max)) {
+    return {
+      warn: true,
+      text: `${formatTokenWindow(tokens)} is outside the accepted range `
+        + `(${formatTokenWindow(min)}–${formatTokenWindow(max)}).`,
+    };
+  }
+  // The cap is the thing operators trip over: on a 200K model a 450K pin is a
+  // no-op, and nothing in the UI would otherwise say so.
+  return {
+    warn: false,
+    text: `Auto-compacts at ${formatTokenWindow(tokens)} of context, `
+      + "or at the model's own window if that is smaller.",
+  };
+}
+
+// formatTokenWindow renders a token count the way an operator writes one.
+export function formatTokenWindow(tokens) {
+  if (!tokens) return '';
+  if (tokens % 1000000 === 0) return `${tokens / 1000000}M`;
+  if (tokens % 1000 === 0) return `${tokens / 1000}k`;
+  return String(tokens);
 }
 
 export function modelSelectValue(draft, context) {
@@ -198,6 +268,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // Off is tclaude's recommended posture: agents sharing a repo would
     // otherwise cross-pollute one Claude Code project memory store.
     autoMemory: false,
+    autoCompactWindow: '',
     sandboxProfile: '',
   };
 }
@@ -274,6 +345,9 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // A harness with no steerable startup context cannot carry trims, and keeping
     // them would send a map the daemon rejects with a 400.
     contextFeatures: harness?.can_context_features ? draft.contextFeatures : {},
+    // Likewise a harness with no auto-compaction knob: keeping a typed window
+    // would send a value the daemon rejects with a 400.
+    autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
   };
 }
 
@@ -336,6 +410,11 @@ export function applySpawnProfile(
   // the dialog's own default, which is off.
   next.autoMemory = view.showAutoMemory && profile.auto_memory != null
     ? !!profile.auto_memory : false;
+  // Same "a sparse profile means inherit" rule: an unset window clears any value
+  // the previously selected profile put in the field, rather than leaving it to
+  // silently ride along onto a profile that never asked for it.
+  next.autoCompactWindow = view.showAutoCompactWindow && profile.auto_compact_window
+    ? text(profile.auto_compact_window) : '';
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
   if (profile.descr) next.descr = text(profile.descr);
@@ -385,6 +464,7 @@ export function clearSpawnProfileFields(draft, context, {
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
     autoMemory: false,
+    autoCompactWindow: defaults.autoCompactWindow,
     owner: false,
     permissionOverrides: {},
     contextFeatures: {},
@@ -512,13 +592,16 @@ export function spawnProfileSeed(draft, context) {
   // chip on a field they never touched — indistinguishable from a deliberate
   // pin, and it would opt the profile out of any future default change.
   if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
+  if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
+    seed.auto_compact_window = text(draft.autoCompactWindow);
+  }
   return seed;
 }
 
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -543,6 +626,14 @@ export function validateSpawnDraft(draft, context) {
   }
   if (draft.worktree === WT_NEW && !text(draft.worktreeBranch).trim()) {
     return 'enter a branch name for the new worktree';
+  }
+  // Catch a malformed or out-of-range window here rather than letting the
+  // operator discover it as a 400 after the spawn round trip. The daemon is
+  // still the authority; this just moves the same answer earlier.
+  const view = spawnCapabilityView(draft, context);
+  if (view.showAutoCompactWindow) {
+    const windowHint = autoCompactWindowHintFor(draft, view);
+    if (windowHint?.warn) return windowHint.text;
   }
   return '';
 }
@@ -592,6 +683,11 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
   if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
+  // Blank omits the key so the daemon's profile tier stack still speaks; the
+  // daemon normalizes "450k" to plain digits, so the raw field text is sent.
+  if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
+    body.auto_compact_window = text(draft.autoCompactWindow);
+  }
   if (draft.owner) body.is_owner = true;
   if (Object.keys(draft.permissionOverrides || {}).length) {
     body.permission_overrides = { ...draft.permissionOverrides };

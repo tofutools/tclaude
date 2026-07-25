@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -103,6 +104,17 @@ type SessionRow struct {
 	// clobber it — the same discipline RemoteControl and AutoMemory use. nil for a
 	// pre-column row, which is the untrimmed posture such a session ran with.
 	ContextFeatures map[string]string
+	// AutoCompactWindow is the auto-compaction context capacity this launch
+	// actually resolved to — a canonical decimal token count ("450000"), "" =
+	// unset (the model's own default threshold). A relaunch (resume / clone /
+	// reincarnate) reads it back so an agent deliberately pinned to compact early
+	// does not silently come back running to the model's full window. Written
+	// out-of-band at launch (SetSessionAutoCompactWindow), NOT by SaveSession's
+	// UPSERT, so a state-tracking hook tick that builds a SessionRow without
+	// setting it can't clobber it — the same discipline RemoteControl, AutoMemory
+	// and ContextFeatures use. "" for a pre-column row, which is the unpinned
+	// posture such a session ran with.
+	AutoCompactWindow string
 	// ExitLaunchGeneration and ExitLaunchGateState are write-only launch
 	// boundary inputs. Generic hook/state UPSERTs leave them empty and preserve
 	// the existing durable launch binding; the explicit launch save sets both
@@ -256,7 +268,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -295,7 +307,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +325,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -338,7 +350,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -467,7 +479,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -548,7 +560,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -1038,6 +1050,62 @@ func AutoMemoryForConv(convID string) (bool, error) {
 		return false, err
 	}
 	return s.AutoMemory, nil
+}
+
+// SetSessionAutoCompactWindow records the auto-compaction context capacity a
+// launch resolved to, keyed by session id — the same out-of-band discipline as
+// SetSessionAutoMemory. The launch path sets this once, right after the session
+// row is written, so a later relaunch keeps compacting at the same point instead
+// of quietly handing the successor the model's full window back.
+func SetSessionAutoCompactWindow(sessionID, window string) error {
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{AutoCompactWindow: true},
+		`UPDATE sessions SET auto_compact_window = ? WHERE id = ?`, strings.TrimSpace(window), sessionID)
+}
+
+// UpdateSessionAutoCompactWindow records the auto-compaction window the STATUS
+// LINE observed in the live pane's environment, keyed by session id. It rides
+// the same every-render cadence as UpdateSessionModel and, like it, is a plain
+// UPDATE with no relaunch projection of its own — the next SaveSession picks the
+// value up.
+//
+// It is deliberately a no-op on the empty string, which is what keeps it safe to
+// run alongside SetSessionAutoCompactWindow's launch-intent write: an observer
+// may only ADD a pin the launch did not know about (an operator who exported the
+// variable in their own shell), never erase one the launch deliberately
+// recorded. That asymmetry is the whole reason the two writers can share a
+// column.
+func UpdateSessionAutoCompactWindow(sessionID, window string) error {
+	window = strings.TrimSpace(window)
+	if strings.TrimSpace(sessionID) == "" || window == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE sessions SET auto_compact_window = ? WHERE id = ?`, window, sessionID)
+	return err
+}
+
+// AutoCompactWindowForConv reports durable agent intent, or the unmanaged
+// conversation fallback — the AutoCompactWindow twin of AutoMemoryForConv.
+// Legacy sessions are consulted only when v145 projection has not occurred.
+func AutoCompactWindowForConv(convID string) (string, error) {
+	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
+		return "", err
+	} else if p != nil && p.AutoCompactWindow != nil {
+		return *p.AutoCompactWindow, nil
+	}
+	if p, err := ConversationResumeProfileForConv(convID); err != nil {
+		return "", err
+	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AutoCompactWindow != nil {
+		return *p.FallbackRelaunch.AutoCompactWindow, nil
+	}
+	s, err := FindSessionByConvID(convID)
+	if err != nil || s == nil {
+		return "", err
+	}
+	return s.AutoCompactWindow, nil
 }
 
 // AskTimeoutForConv returns durable agent intent, or the unmanaged conversation

@@ -187,4 +187,12 @@ type SpawnArgs struct {
 	// leaving the agent on Claude Code's own startup context. Claude-Code-only;
 	// harnesses with no steerable startup-context surface ignore it.
 	ContextFeatures map[string]string
+
+	// AutoCompactWindow pins the context capacity in tokens that Claude Code's
+	// auto-compaction calculations run against, forwarded as `tclaude session new
+	// --auto-compact-window <tokens>`; "" omits it and the model's own default
+	// threshold decides. A canonical decimal string by the time it reaches here
+	// (harness.ResolveAutoCompactWindow normalizes "450k" → "450000").
+	// Claude-Code-only; harnesses with no such knob (Codex, OpenCode) ignore it.
+	AutoCompactWindow string
 }
