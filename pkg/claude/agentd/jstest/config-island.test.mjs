@@ -113,7 +113,7 @@ test('Config treats agent directory parent mounting as default-on with an explic
   await mounted.unmount();
 });
 
-test('Config saves a live wizard activity-bot selection over its loaded default', async (t) => {
+test('Config saves live wizard and slop activity-bot selections over their loaded defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
     harness.importDashboardModule('js/config-state.js'),
@@ -126,19 +126,24 @@ test('Config saves a live wizard activity-bot selection over its loaded default'
   }} />`);
   await adapter.loadConfigTab();
 
-  const select = mounted.container.querySelector('#cfg-dashboard-activity-bots-wizard');
-  const emoji = select.querySelector('option[value="emoji"]');
-  const sprites = select.querySelector('option[value="sprites"]');
-  assert.equal(emoji.hasAttribute('selected'), true, 'loaded default is reflected in markup');
-
   // A browser preserves the loaded `selected` attribute as defaultSelected
   // while changing the live properties when the human picks another option.
-  Object.defineProperty(emoji, 'selected', { configurable: true, value: false });
-  Object.defineProperty(sprites, 'selected', { configurable: true, value: true });
-  assert.equal(emoji.hasAttribute('selected'), true, 'loaded attribute remains stale after interaction');
-  assert.equal(sprites.hasAttribute('selected'), false, 'new live selection needs no markup attribute');
+  const selectLiveOption = (id, from, to) => {
+    const select = mounted.container.querySelector(id);
+    const loaded = select.querySelector(`option[value="${from}"]`);
+    const chosen = select.querySelector(`option[value="${to}"]`);
+    assert.equal(loaded.hasAttribute('selected'), true, `${id} loaded default is reflected in markup`);
+    Object.defineProperty(loaded, 'selected', { configurable: true, value: false });
+    Object.defineProperty(chosen, 'selected', { configurable: true, value: true });
+    assert.equal(loaded.hasAttribute('selected'), true, `${id} loaded attribute remains stale after interaction`);
+    assert.equal(chosen.hasAttribute('selected'), false, `${id} new live selection needs no markup attribute`);
+  };
+  selectLiveOption('#cfg-dashboard-activity-bots-wizard', 'emoji', 'sprites');
+  selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
 
-  assert.equal(adapter.assembleConfig().dashboard.activity_bots.wizard, 'sprites');
+  const assembled = adapter.assembleConfig();
+  assert.equal(assembled.dashboard.activity_bots.wizard, 'sprites');
+  assert.equal(assembled.dashboard.activity_bots.slop, 'emoji');
   await mounted.unmount();
 });
 
