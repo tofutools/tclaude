@@ -786,11 +786,13 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 // so it is the part that yields, and it says so when it does.
 func commitEvidence(definition *engine.Definition, before, after engine.Checkpoint,
 	input, advance []db.ProcessRunEvent) []db.ProcessRunEvent {
+	resets := stageResetEvidence(definition, before, after)
 	blocked := blockedEvidence(before, after)
 	joins := joinEvidence(definition, before, after,
-		db.MaxProcessRunEventsPerTransition-len(input)-len(blocked)-len(advance))
-	events := make([]db.ProcessRunEvent, 0, len(input)+len(blocked)+len(joins)+len(advance))
+		db.MaxProcessRunEventsPerTransition-len(input)-len(resets)-len(blocked)-len(advance))
+	events := make([]db.ProcessRunEvent, 0, len(input)+len(resets)+len(blocked)+len(joins)+len(advance))
 	events = append(events, input...)
+	events = append(events, resets...)
 	events = append(events, blocked...)
 	events = append(events, joins...)
 	events = append(events, advance...)
@@ -842,6 +844,46 @@ type blockedEvidencePayload struct {
 	NodeID  string `json:"nodeId"`
 	Attempt int    `json:"attempt"`
 	Reason  string `json:"reason,omitempty"`
+}
+
+// stageResetEvidence is the human-facing record of every compound rework this
+// transition performed: a failed check or review gate — or an operator retrying
+// a parked one — sent the work back, so the do stage runs again and the stages
+// from there through that gate run again with it.
+//
+// It is derived from the before/after checkpoints, the same seam blocked and
+// join evidence use, so the row commits in the SAME transaction as the
+// observation or resolution that caused it and neither can exist without the
+// other. It is deliberately COMPACT: four scalars naming the parent, the gate,
+// the work, and the attempt the work will next carry. It does not enumerate
+// which children were reset — the prepared child list already says that, and
+// re-deriving it into evidence would make history look like a replay source —
+// and it copies no program feedback, which stays in the gate attempt's own
+// bounded program_observed row.
+//
+// The row is attributed to the compound PARENT: the reset is a fact about that
+// compound's stage sequence, while the gate's own failure already has its
+// program_observed row on the gate.
+func stageResetEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+	resets := definition.StageResets(before, after)
+	if len(resets) == 0 {
+		return nil
+	}
+	events := make([]db.ProcessRunEvent, 0, len(resets))
+	for _, reset := range resets {
+		events = append(events, eventForNode("stage_reset", reset.ParentNodeID, EngineActor, stageResetEvidencePayload{
+			ParentNodeID: reset.ParentNodeID, GateNodeID: reset.GateNodeID,
+			WorkNodeID: reset.WorkNodeID, NextWorkAttempt: reset.NextWorkAttempt,
+		}))
+	}
+	return events
+}
+
+type stageResetEvidencePayload struct {
+	ParentNodeID    string `json:"parentNodeId"`
+	GateNodeID      string `json:"gateNodeId"`
+	WorkNodeID      string `json:"workNodeId"`
+	NextWorkAttempt int    `json:"nextWorkAttempt"`
 }
 
 // joinEvidence is the human-facing record of what one committed transition did
