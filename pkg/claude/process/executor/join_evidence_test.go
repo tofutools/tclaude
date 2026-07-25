@@ -180,7 +180,7 @@ func TestCommitEvidenceKeepsTimestampsCausalAfterReordering(t *testing.T) {
 	earlier := time.Now().UTC().Add(-time.Hour)
 	events := commitEvidence(definition, before, after,
 		[]db.ProcessRunEvent{{Kind: "program_observed", OccurredAt: earlier}},
-		[]db.ProcessRunEvent{{Kind: "program_prepared", OccurredAt: earlier}})
+		[]db.ProcessRunEvent{{Kind: "program_prepared", OccurredAt: earlier}}, true)
 	require.GreaterOrEqual(t, len(events), 3)
 	assert.Equal(t, "program_observed", events[0].Kind)
 	assert.Equal(t, "join_won", events[1].Kind)

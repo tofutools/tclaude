@@ -188,8 +188,12 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	// the whole commit rather than just the advance: this observation may itself
 	// be the arrival that won a reducer, or a late one at a reducer somebody else
 	// already won.
+	// The awaited-obligation diff is taken across the WHOLE commit rather than
+	// across the follow-on advance, which is what makes an obligation this very
+	// observation created — a plan stage succeeding into its approval gate —
+	// record its window in the same transaction that opened it.
 	events := commitEvidence(run.definition, run.checkpoint, advanced,
-		input, advanceEvidence(next, advanced, planned))
+		input, advanceEvidence(planned), true)
 	if err := persistEvents(run, advanced, events); err != nil {
 		Abandon(run, dispatch)
 		return nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)

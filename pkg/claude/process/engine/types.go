@@ -236,12 +236,26 @@ type ProgramObservation struct {
 	Error     string         `json:"error,omitempty"`
 }
 
-// DecisionRecord is the reducer payload for one authored exclusive decision:
-// the deciding verdict must name exactly one authored outcome edge of the
-// awaited decision node.
+// DecisionRecord is the reducer payload for one decision verdict: for an
+// authored exclusive decision the verdict must name exactly one authored
+// outcome edge of the awaited node, and for a prepared plan-approval gate it
+// must name one of the fixed approval verdicts.
+//
+// Attempt is the other half of the decision identity, and it is what makes a
+// RECURRING window stale-safe. An authored decision opens exactly once, so its
+// required attempt is always zero and a caller that never learned about this
+// field keeps working. A plan-approval gate reopens once per human rework, so
+// its required attempt is the plan child's current attempt counter: a verdict
+// formed against window N is refused once window N+1 has opened, and while
+// window N is still pending a verdict naming any other window is refused too.
+//
+// The attempt is never stored on the durable obligation. It is DERIVED from the
+// counter the reducer already keeps, so there is no second copy to disagree
+// with it; see Definition.RequiredDecisionAttempt.
 type DecisionRecord struct {
 	NodeID  string `json:"nodeId"`
 	Verdict string `json:"verdict"`
+	Attempt int    `json:"attempt,omitempty"`
 }
 
 // ChosenEdge is the structural authored edge a decision selected, kept as its

@@ -967,6 +967,7 @@ type processRuntimeBlockedView struct {
 type processRuntimeDecisionView struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+	Attempt  int      `json:"attempt"`
 }
 
 type processRuntimeCommandView struct {

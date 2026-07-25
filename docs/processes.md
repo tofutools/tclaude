@@ -38,7 +38,7 @@ tclaude process run <template-id> --param key=value --authorize-program-profile 
 tclaude process runs ls
 tclaude process show <run-id>
 tclaude process events <run-id>
-tclaude process decide <run-id> --node <node> --verdict <verdict>
+tclaude process decide <run-id> --node <node> --verdict <verdict> [--attempt <n>]
 tclaude process resume <run-id>
 tclaude process reconcile <run-id>
 tclaude process reissue <run-id> [--node <node>]
@@ -145,8 +145,33 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   authorized when the run is created**, not just the parent's `performer`.
 
   In this slice each stage performer must be a program with no `contact`
-  schedule, `plan.approval` must be absent or `auto`, and stage-level `retry` /
-  `approvalRetry` are not executable yet.
+  schedule, and stage-level `retry` / `approvalRetry` are not executable yet.
+
+- Human plan approval. A compound whose `plan` declares `approval: human`
+  expands one extra stage between plan and do, `<id>.plan.approval`. It runs no
+  program: it is an ordinary awaited decision with the fixed verdicts `approve`
+  and `rework`, decided over the same `tclaude process decide` command,
+  permission, and state-version CAS as an authored decision.
+
+  `approve` readies the do stage. `rework` returns the plan stage to ready and
+  closes the gate, so ordinary planning runs the plan once more and the window
+  reopens when it succeeds; nothing after the approval is touched, because
+  nothing after it has run. There is no approval budget: each rework is one
+  explicit audited human action that buys exactly one more plan execution. A
+  plan program that *fails* is still fail-fast, and a failed check or review
+  gate reworks the do stage without ever reopening an approval that was already
+  given.
+
+  Because the window reopens, a verdict has to name it:
+
+  ```bash
+  tclaude process decide <run-id> --node <id>.plan.approval --attempt N --verdict approve|rework
+  ```
+
+  `tclaude process show` reports the exact `--attempt` in its next-step hint,
+  and the run refuses any other value — including a verdict a person formed
+  against an earlier window and submitted late. Authored decisions open exactly
+  once, so they need no `--attempt` and their output is unchanged.
 
 - A node id ceiling that only applies to *running* a template. Authoring bounds
   what characters a node id may contain, not how long it is, but a run has to
@@ -157,7 +182,7 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
 
 Not executable yet: agent deciders, agent or human task performers, retry
 backoff waits, same-session retry feedback (`retry.onFail:
-feedback-same-session`), retries on compound stages, human plan approval gates,
+feedback-same-session`), retries on compound stages, `plan.approvalRetry`,
 human or agent stage performers, poison handling, wait nodes, and captures.
 Template validation and run creation both refuse these with a path-specific
 diagnostic rather than failing later.

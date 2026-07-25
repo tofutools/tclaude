@@ -233,6 +233,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// the same identity: the counter has moved on, so the old command no
 		// longer matches anything the reducer would mint.
 		attempt := nextAttempt(next, node.id)
+		// The counter is minted in exactly one place, so one guard here covers
+		// every node kind: a counter at MaxInt would wrap to a negative attempt,
+		// which every budget comparison below would then wave through. It is
+		// arithmetic correctness rather than a policy limit — no reachable run gets
+		// near it, and a checkpoint that claims to is refused rather than trusted.
+		if attempt < 1 {
+			return invalid("node %q attempt counter would overflow", node.id)
+		}
 		if ceiling := executableAttemptCeiling(next, definition, node); attempt > ceiling {
 			return invalid("node %q has no attempt %d within its budget of %d", node.id, attempt, ceiling)
 		}
@@ -372,11 +380,49 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 		index := definition.index[decision.NodeID]
 		node := definition.nodes[index]
+		// The other half of the identity, and the half the obligation deliberately
+		// does not store. An authored decision opens once and requires zero; a
+		// plan-approval gate requires the plan attempt its CURRENT window is about,
+		// so a verdict a human formed against an earlier window is refused — both
+		// while that window is still pending and once the next one has opened.
+		required, approval := definition.ApprovalAttempt(next, node.id)
+		// A gate whose plan never ran has no window to be the current one, and
+		// zero — what the derivation would otherwise report — is precisely what an
+		// authored decision requires, so this would fail OPEN rather than closed.
+		// The load boundary refuses such a checkpoint; this is the same rule at the
+		// point the identity is actually consumed, and it costs nothing because the
+		// anchor lookup below needed doing anyway.
+		if approval && required < 1 {
+			return invalid("approval gate %q has no recorded plan attempt to decide", node.id)
+		}
+		if decision.Attempt != required {
+			return Checkpoint{}, fmt.Errorf("%w: decision %q is awaiting attempt %d, not %d",
+				ErrStaleDecision, node.id, required, decision.Attempt)
+		}
 		if !verdictAllowed(node, decision.Verdict) {
 			return Checkpoint{}, fmt.Errorf("%w: verdict %q is not an authored outcome of decision %q", ErrInvalidDecisionVerdict, decision.Verdict, node.id)
 		}
 		// Per-entry removal only: other branches keep awaiting their own decisions.
 		removeObligation(&next, decision.NodeID)
+		// A prepared approval gate settles no edge: a compound's stages have none,
+		// so both verdicts are moves over the parent's own ordered child list.
+		// approve is exactly what a successful stage does, and rework is the one
+		// local helper beside it.
+		if approval {
+			switch decision.Verdict {
+			case ApprovalApprove:
+				if err := advanceStage(&next, definition, index); err != nil {
+					return Checkpoint{}, err
+				}
+			case ApprovalRework:
+				if err := resetPlanApproval(&next, definition, index); err != nil {
+					return Checkpoint{}, err
+				}
+			default:
+				return invalid("approval gate %q has no disposition for verdict %q", node.id, decision.Verdict)
+			}
+			break
+		}
 		if err := completeAndSettle(&next, definition, index, arrivesAt(decision.Verdict)); err != nil {
 			return Checkpoint{}, err
 		}
@@ -470,6 +516,13 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 // definition already holds, so this is a step along that list. The last child is
 // always the engine-owned done stage, so a WORK stage always has a successor —
 // and the parent is completed only through that done stage, never here.
+//
+// It is also the ONE place a stage's obligation is created. Readying a decision
+// stage is what opens a human approval window, and it happens here in the same
+// reducer step that completed the stage before it, so the window and the
+// obligation are never separately observable and no hook has to be remembered
+// anywhere else. Settlement's own activation rule does the same for an authored
+// decision; a stage has no edges for settlement to reach it along.
 func advanceStage(next *Checkpoint, definition *Definition, childIndex int) error {
 	child := definition.nodes[childIndex]
 	parent := definition.nodes[child.parent]
@@ -489,6 +542,9 @@ func advanceStage(next *Checkpoint, definition *Definition, childIndex int) erro
 	}
 	next.Nodes[child.id] = NodeDone
 	next.Nodes[successor.id] = NodeReady
+	if successor.kind == definitionDecision {
+		addObligation(next, successor.id)
+	}
 	return nil
 }
 

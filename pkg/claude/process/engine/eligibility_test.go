@@ -236,15 +236,6 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "human plan approval gate",
-			code: "unsupported_approval",
-			tmpl: func() *model.Template {
-				return compoundStageTemplate(func(node *model.Node) {
-					node.Plan.Approval = model.PlanApprovalHuman
-				})
-			},
-		},
-		{
 			name: "human plan stage performer",
 			code: "unsupported_performer",
 			tmpl: func() *model.Template {
