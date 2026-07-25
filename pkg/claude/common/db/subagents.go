@@ -157,6 +157,19 @@ func (set SubagentSet) Sight(id, agentType string, now time.Time) SubagentSet {
 	return set
 }
 
+// Has reports whether the ledger currently believes the sub-agent with
+// this id is running. Callers use it to tell an event that names a
+// sub-agent tclaude has actually seen from one naming an id it never
+// heard of — a distinction the harness itself does not draw. An empty id
+// is never a member: it names no sub-agent.
+func (set SubagentSet) Has(id string) bool {
+	if id == "" {
+		return false
+	}
+	_, ok := set[id]
+	return ok
+}
+
 // Remove records a sub-agent ending. A known id is deleted; an unknown
 // non-empty id is a no-op (its Start was lost, or a sibling event —
 // e.g. a sub-agent-context SessionEnd — already removed it). An empty

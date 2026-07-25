@@ -165,6 +165,56 @@ func saveGitCache(g *cachedGitData) {
 	}
 }
 
+// ownedSessionID resolves which tclaude session row a statusline render
+// may write, returning "" when the render must not touch any row.
+//
+// This is the statusline's half of the foreign-process guard ApplyHook
+// already applies to hooks. Every per-session statusbar write (context
+// snapshot, model, model id, effort, cost, the verbatim payload) is keyed
+// by TCLAUDE_SESSION_ID — a plain environment variable that every child
+// process inherits. Nothing else about the render was ever checked, so
+// ANY nested Claude Code launched from an agent's own pane or Bash — a
+// `claude` a human starts to try something, a harness-launched
+// teammate — renders its own statusline against the PARENT's row and
+// silently rewrites the parent's model, effort and context usage with its
+// own. Reproduced on Claude Code 2.1.220: a child launched with the
+// parent's TCLAUDE_SESSION_ID and `--model haiku` wrote "Haiku 4.5" and
+// its own 200K/17% context onto the parent agent's row, which is exactly
+// the "my Opus agent shows Haiku and impossible context numbers"
+// dashboard report this guard exists to stop.
+//
+// renderConvID is Claude Code's own session_id from the payload — the
+// conversation the render actually describes. A render belongs to the row
+// when it names the conversation that row tracks, or the next-conv a
+// transition already announced (pending_conv, so a /clear or /resume
+// rotation is not read as a foreign process — same acceptance rule as
+// the hook guard).
+//
+// Deliberately fail-soft in the three "no evidence of a mismatch" cases:
+// a payload with no session_id at all (Claude Code versions that predate
+// the field), an unreadable row, and a row that has not learned its
+// conv-id yet (a freshly spawned agent renders before its first
+// SessionStart hook lands). Failing closed there would cost real agents
+// their telemetry to protect against a case we cannot even observe.
+func ownedSessionID(envSessionID, renderConvID string) string {
+	if envSessionID == "" || renderConvID == "" {
+		return envSessionID
+	}
+	rowConv, pendingConv, err := db.GetSessionConvAttribution(envSessionID)
+	if err != nil {
+		slog.Warn("status-bar: failed to read session conv attribution; allowing write",
+			"session_id", envSessionID, "error", err, "module", "hooks")
+		return envSessionID
+	}
+	if rowConv == "" || renderConvID == rowConv || renderConvID == pendingConv {
+		return envSessionID
+	}
+	slog.Info("status-bar: ignoring statusline render from a foreign conversation",
+		"session_id", envSessionID, "tracked_conv", rowConv, "render_conv", renderConvID,
+		"module", "hooks")
+	return ""
+}
+
 func run() error {
 
 	// Read JSON from stdin (only if piped, not a terminal)
@@ -187,6 +237,11 @@ func run() error {
 	} else {
 		return fmt.Errorf("no input received on stdin")
 	}
+
+	// Which tclaude session row — if any — this render is allowed to
+	// write. Every per-session write below keys off THIS, never the raw
+	// environment variable. See ownedSessionID.
+	ownedSession := ownedSessionID(os.Getenv("TCLAUDE_SESSION_ID"), input.SessionID)
 
 	// Short model label for the head of the context line. Prefers CC's
 	// display name ("Opus 4.6" -> "o4.6"); when that's missing or a lone
@@ -227,10 +282,14 @@ func run() error {
 	// `git checkout` in an idle session's launch dir reaches the dashboard
 	// within the next statusline render rather than after the next turn.
 	// SessionID from CC's stdin tracks /clear rotations; fall back to
-	// TCLAUDE_SESSION_ID when CC is too old to emit it.
+	// TCLAUDE_SESSION_ID when CC is too old to emit it. This row is keyed
+	// by CONV id, so a render that names its own conversation is already
+	// self-attributing — only the fallback needs the ownership guard,
+	// since a foreign child would otherwise stamp its cwd and branch onto
+	// the parent conversation's workspace row.
 	sessionID := input.SessionID
 	if sessionID == "" {
-		sessionID = os.Getenv("TCLAUDE_SESSION_ID")
+		sessionID = ownedSession
 	}
 	if sessionID != "" {
 		ws := db.AgentWorkspace{
@@ -267,8 +326,11 @@ func run() error {
 	if input.ContextWindow.ContextWindowSize != nil {
 		rawWindow = *input.ContextWindow.ContextWindowSize
 	}
+	// The row lookup rides the ownership guard too: a foreign render must
+	// not re-base its own bar against the pin recorded for somebody else's
+	// agent. Its own environment (the first argument) still governs it.
 	envPinnedWindow, pinnedWindow := resolvePinnedWindow(
-		os.Getenv(harness.AutoCompactWindowEnvVar), os.Getenv("TCLAUDE_SESSION_ID"))
+		os.Getenv(harness.AutoCompactWindowEnvVar), ownedSession)
 	effectiveWindow := harness.EffectiveContextWindow(rawWindow, pinnedWindow)
 	ctxPct := int(harness.RebaseContextPercentage(rawCtxPct, rawWindow, effectiveWindow))
 
@@ -283,7 +345,7 @@ func run() error {
 	cw := input.ContextWindow
 	hasContextData := cw.UsedPercentage != nil || cw.TotalInputTokens != nil ||
 		cw.TotalOutputTokens != nil || cw.ContextWindowSize != nil
-	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" && hasContextData {
+	if sessionID := ownedSession; sessionID != "" && hasContextData {
 		var tokIn, tokOut, winSize int64
 		if cw.TotalInputTokens != nil {
 			tokIn = *cw.TotalInputTokens
@@ -313,7 +375,7 @@ func run() error {
 	// regardless of hasContextData: model.display_name is present even
 	// before a turn's first API response, and UpdateSessionModel no-ops
 	// on an empty string, so we never blank a good value.
-	if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+	if sessionID := ownedSession; sessionID != "" {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
 		}
@@ -399,7 +461,7 @@ func run() error {
 		// start-of-turn renders keeps a hollow payload from clobbering a
 		// good snapshot. Keyed by the stable tclaude session id (the
 		// sessions-row id), same as the model/cost writes above.
-		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+		if sessionID := ownedSession; sessionID != "" {
 			if err := db.UpdateStatuslineSnapshot(sessionID, string(stdinData)); err != nil {
 				slog.Warn("status-bar: failed to update statusline snapshot", "error", err, "module", "hooks")
 			}
@@ -454,7 +516,7 @@ func run() error {
 		// dashboard's status column can show the per-agent cost. On a
 		// subscription plan hasLimits is true and this never fires: the
 		// column stays 0 and the dashboard renders no cost badge.
-		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+		if sessionID := ownedSession; sessionID != "" {
 			if err := db.UpdateSessionCost(sessionID, input.Cost.TotalCostUSD); err != nil {
 				slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
 			}
@@ -468,7 +530,7 @@ func run() error {
 		// limits, not cost), so the data is already there the moment the human
 		// opts into the WHAT-IF view via cost.show_on_subscription. Keyed by
 		// the same stable tclaude session id as the real-cost write above.
-		if sessionID := os.Getenv("TCLAUDE_SESSION_ID"); sessionID != "" {
+		if sessionID := ownedSession; sessionID != "" {
 			if err := db.UpdateSessionVirtualCost(sessionID, input.Cost.TotalCostUSD); err != nil {
 				slog.Warn("status-bar: failed to update session virtual cost", "error", err, "module", "hooks")
 			}

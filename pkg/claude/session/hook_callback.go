@@ -626,6 +626,33 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// any OTHER hook carrying agent_id proves that sub-agent is alive —
 	// Sight() re-adds one whose SubagentStart was lost.
 	state.Subagents.Sweep(state.LastHook)
+	// Whether this SubagentStop names a sub-agent the ledger actually
+	// knows, captured BEFORE Remove deletes it. Claude Code 2.1.220 ends
+	// EVERY main-thread turn with a synthetic SubagentStop carrying a
+	// freshly minted agent_id that no SubagentStart ever announced, an
+	// empty agent_type, and an agent_transcript_path pointing at a file
+	// that does not exist — fired right after the turn's real Stop. It
+	// describes the main thread finishing, not a sub-agent.
+	//
+	// This is HARDENING, not a repair: at the ordering 2.1.220 actually
+	// produces (always after Stop) the sub-agent lifecycle arm happens to
+	// be a no-op or idempotent, so no misbehaviour was observed. What it
+	// removes is the standing hazard of an event that is not a sub-agent
+	// stopping being routed through the arm that decides what a sub-agent
+	// stopping means to the MAIN thread's status — an ordering tclaude
+	// does not control and upstream has already changed once.
+	//
+	// Ledger membership, not the empty agent_type, is the discriminator —
+	// it costs nothing that self-healing needs. A real sub-agent whose
+	// SubagentStart was lost is re-added by Sight() on any hook it fires,
+	// so its own SubagentStop still matches; and one that fired NO hooks
+	// at all never held the session at main_agent_idle in the first place,
+	// which is the only state that arm acts on.
+	// An empty agent_id is the legacy shape (a SubagentStop payload that
+	// carried no id at all); Remove falls back to decrement semantics for
+	// it, so it keeps its old fall-through too.
+	knownSubagentStop := input.HookEventName == "SubagentStop" &&
+		(input.AgentID == "" || state.Subagents.Has(input.AgentID))
 	switch {
 	case input.HookEventName == "SubagentStart":
 		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
@@ -670,14 +697,24 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// main_agent_idle, so the parent stayed wedged at "working" after
 	// the sub-agent finished. Exceptions that DO fall through to the
 	// status switch:
-	//   - SubagentStart/SubagentStop — their arms below handle the main
-	//     status transitions around sub-agent lifecycle;
+	//   - SubagentStart, and a SubagentStop for a sub-agent the ledger
+	//     knows — their arms below handle the main status transitions
+	//     around sub-agent lifecycle. A SubagentStop naming an id the
+	//     ledger never held is NOT one of those: see knownSubagentStop,
+	//     where Claude Code's per-turn synthetic SubagentStop is
+	//     described. It takes the default arm like any other in-sub-agent
+	//     hook;
 	//   - PermissionRequest / Notification — a sub-agent's permission
 	//     prompt surfaces on the parent (Claude Code parks the prompt in
 	//     the parent's UI), so awaiting_permission must still be set.
 	if input.AgentID != "" {
 		switch input.HookEventName {
-		case "SubagentStart", "SubagentStop", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
+		case "SubagentStop":
+			if !knownSubagentStop {
+				state.SubagentCount = len(state.Subagents)
+				return SaveSessionState(state)
+			}
+		case "SubagentStart", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
 			// fall through to the status switch below
 		default:
 			// A sub-agent acting again while the parent shows awaiting_*
