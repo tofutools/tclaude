@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -41,8 +41,8 @@ import (
 type seanceParams struct {
 	Question string `pos:"true" optional:"true" help:"What to ask the predecessor. Quote multi-word strings. Read from --file instead for long/multi-line questions. Omit only with --print-cmd."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the question from this file ('-' reads stdin) instead of the positional argument. Sidesteps shell quoting. Mutually exclusive with the positional argument."`
-	Target   string `long:"target" optional:"true" help:"Consult a SPECIFIC dead conversation (conv-id or 8+-char prefix) instead of your immediate predecessor. Unlike most selectors this does NOT redirect forward to a live successor — a séance addresses a specific generation."`
-	Back     int    `long:"back" optional:"true" default:"1" help:"Walk back this many generations of reincarnation before asking (1 = immediate predecessor). Ignored when --target is given."`
+	Target   string `long:"target" optional:"true" help:"Agent or exact dead generation to consult. Agent selectors (stable agent-id or name) apply --back from that actor's live head; a conv-id or 8+-char prefix addresses that exact generation without redirecting forward."`
+	Back     int    `long:"back" optional:"true" default:"1" help:"Walk back this many generations (1 = immediate predecessor). Applies to self and agent selectors; an exact conv-id already names the generation."`
 	Model    string `long:"model" optional:"true" help:"Model for the séance turn (default: the harness's configured default). The predecessor's own model is not recorded; you pick the medium for the summoning."`
 	Effort   string `long:"effort" optional:"true" help:"Reasoning effort for the séance turn (harness-specific; default: harness default)."`
 	Timeout  string `long:"timeout" optional:"true" help:"Cap the séance call, e.g. '90s' or '3m'. Default: no timeout."`
@@ -60,8 +60,9 @@ func seanceCmd() *cobra.Command {
 			"re-loading its whole history into your live context. " +
 			"\n\n" +
 			"By default the target is your immediate predecessor (the agent whose identity " +
-			"you inherited at reincarnate). Use --back N to reach further up the chain, or " +
-			"--target <conv-id> to consult a specific dead conversation. " +
+			"you inherited at reincarnate). Use --back N to reach further up the chain. " +
+			"With --target, a stable agent-id or name selects that actor and applies --back " +
+			"from its live head; a conv-id or 8+-char prefix selects that exact dead generation. " +
 			"\n\n" +
 			"A séance is a deliberate, billable act: it replays the predecessor's full " +
 			"context to answer. Use --print-cmd to see exactly what would run (and from " +
@@ -92,6 +93,19 @@ type seancePlan struct {
 }
 
 var seanceRun = liveSeanceRun
+
+// seanceResolveResp is the daemon-owned half of a séance plan. Resolution
+// belongs in agentd because succession, session cwd and harness metadata live
+// in private ~/.tclaude/data; the sandboxed CLI keeps ownership of the actual
+// billable harness subprocess.
+type seanceResolveResp struct {
+	Predecessor string `json:"predecessor"`
+	Harness     string `json:"harness"`
+	Cwd         string `json:"cwd"`
+	Hops        int    `json:"hops"`
+	Requested   int    `json:"requested_back"`
+	Exact       bool   `json:"exact"`
+}
 
 func liveSeanceRun(p seancePlan) error {
 	if len(p.Argv) == 0 {
@@ -138,25 +152,28 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		timeout = d
 	}
 
-	// 2) Resolve which dead conversation to consult.
-	target, rc := resolveSeanceTarget(p, stderr)
-	if rc != rcOK {
+	// 2) Ask agentd to resolve the dead generation and its launch metadata.
+	//    The daemon owns the private DB; this CLI must never reach into
+	//    ~/.tclaude/data directly from an agent sandbox.
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	var resolved seanceResolveResp
+	if err := DaemonRequest(http.MethodPost, "/v1/whoami/seance", map[string]any{
+		"target": strings.TrimSpace(p.Target),
+		"back":   max(p.Back, 1),
+	}, &resolved, DaemonOpts{}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	target := resolved.Predecessor
+	if target == "" || resolved.Cwd == "" {
+		fmt.Fprintln(stderr, "Error: agentd returned an incomplete séance plan")
+		return rcIOFailure
+	}
 
-	// 3) Recover its launch dir (resume is cwd-scoped) and its harness.
-	loc := ResolveLocation(target)
-	cwd := loc.StartupDir
-	if cwd == "" {
-		fmt.Fprintf(stderr, "Error: cannot locate predecessor %s's working directory; its grave is unreachable.\n", short(target))
-		return rcNotFound
-	}
-	row := FreshConvRowResolved(target)
-	harnessName := ""
-	if row != nil {
-		harnessName = row.Harness
-	}
-	h, err := harness.Resolve(harnessName)
+	// 3) Build the headless one-shot resume argv via the shared Asker.
+	h, err := harness.Resolve(resolved.Harness)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
@@ -166,7 +183,6 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 
-	// 4) Build the headless one-shot resume argv via the shared Asker.
 	spec := harness.AskSpec{
 		ResumeID: target,
 		Prompt:   question,
@@ -176,19 +192,22 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	argv := h.Ask.BuildAskArgv(spec)
 
+	if !resolved.Exact && resolved.Hops > 0 && resolved.Hops < resolved.Requested {
+		fmt.Fprintf(stderr, "Note: chain is only %d generation(s) deep; consulting the oldest ancestor.\n", resolved.Hops)
+	}
 	if p.PrintCmd {
 		fmt.Fprintf(stdout, "predecessor: %s\n", short(target))
 		fmt.Fprintf(stdout, "harness:     %s\n", h.Name)
-		fmt.Fprintf(stdout, "cwd:         %s\n", cwd)
+		fmt.Fprintf(stdout, "cwd:         %s\n", resolved.Cwd)
 		fmt.Fprintf(stdout, "command:     %s\n", strings.Join(argv, " "))
 		return rcOK
 	}
 
-	// 5) Hold the séance. The answer streams straight to our stdout.
-	fmt.Fprintf(stderr, "Summoning %s (resuming in %s)...\n", short(target), cwd)
+	// 4) Hold the séance. The answer streams straight to our stdout.
+	fmt.Fprintf(stderr, "Summoning %s (resuming in %s)...\n", short(target), resolved.Cwd)
 	plan := seancePlan{
 		Argv:    argv,
-		Cwd:     cwd,
+		Cwd:     resolved.Cwd,
 		Timeout: timeout,
 		Stdin:   stdin,
 		Stdout:  stdout,
@@ -199,46 +218,4 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	return rcOK
-}
-
-// resolveSeanceTarget picks the dead conversation to consult: an explicit
-// --target (resolved to a specific generation, NOT redirected forward to
-// a live successor), else the caller's own predecessor walked back
-// --back generations.
-func resolveSeanceTarget(p *seanceParams, stderr io.Writer) (string, int) {
-	if t := strings.TrimSpace(p.Target); t != "" {
-		// A séance addresses a specific generation, so resolve WITHOUT the
-		// usual forward redirect (which would walk us to the live head and
-		// have the agent consult itself). A raw conv-id or prefix is the
-		// supported form.
-		if row, err := db.GetConvIndex(t); err == nil && row != nil {
-			return row.ConvID, rcOK
-		}
-		if row, err := db.FindConvIndexByPrefix(t); err == nil && row != nil {
-			return row.ConvID, rcOK
-		}
-		fmt.Fprintf(stderr, "Error: no conversation matches --target %q (pass a conv-id or 8+-char prefix).\n", t)
-		return "", rcNotFound
-	}
-
-	back := max(p.Back, 1)
-	me, err := currentConvID()
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return "", rcNotFound
-	}
-	ancestor, hops, err := db.ResolvePredecessorN(me, back)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return "", rcIOFailure
-	}
-	if ancestor == "" {
-		fmt.Fprintln(stderr, "Error: you have no predecessor to consult — this conversation was not reincarnated from another agent.")
-		fmt.Fprintln(stderr, "Use --target <conv-id> to hold a séance with a specific dead conversation.")
-		return "", rcNotFound
-	}
-	if hops < back {
-		fmt.Fprintf(stderr, "Note: chain is only %d generation(s) deep; consulting the oldest ancestor.\n", hops)
-	}
-	return ancestor, rcOK
 }

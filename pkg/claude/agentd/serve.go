@@ -866,6 +866,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/reincarnate", handleWhoamiReincarnate)
 	mux.HandleFunc("/v1/whoami/clone", handleWhoamiClone)
 	mux.HandleFunc("/v1/whoami/context", handleWhoamiContext)
+	mux.HandleFunc("/v1/whoami/seance", handleWhoamiSeance)
 	mux.HandleFunc("/v1/whoami/dir", handleWhoamiDir)
 	mux.HandleFunc("/v1/whoami/dir/repair", handleWhoamiDirRepair)
 	mux.HandleFunc("/v1/whoami/task", handleWhoamiTask)
