@@ -352,9 +352,13 @@ func DecodeCheckpoint(data []byte, definition *Definition) (Checkpoint, error) {
 // bytes enter, not on every transition. It enforces concrete structural safety
 // against an immutable prepared definition: checkpoint version and bounded run
 // id, exact known node and edge references, known status/disposition enum
-// values, attempt counters inside their authored budget, and unique bounded
-// command/decision obligation entries whose deterministic identity, attempt,
-// and node binding are compatible with a known node. It
+// values, attempt counters inside the node's current budget, and unique bounded
+// command/decision/blocked obligation entries whose deterministic identity,
+// attempt, and node binding are compatible with a known node. It
+// deliberately does NOT reconstruct whether stored values are ones the reducer
+// could have produced: the private checkpoint is authoritative and every
+// supported write path preserves those invariants, so tamper detection on an
+// ordinary load is a deferred product decision rather than a gap here. It also
 // deliberately does NOT run the whole-graph exclusive-decision classification
 // (single active node, single failure, pending-arrival exclusion, activation
 // proofs): those are current-slice expectations demoted to ClassifyCheckpoint
@@ -470,14 +474,23 @@ func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 	return nil
 }
 
-// validateAttemptCeilings enforces that the sparse ceiling override names only
-// nodes that could ever have earned one and holds only values the reducer could
-// have written. A ceiling is raised by exactly one thing — an operator retry of
-// a blocked branch — which requires an explicitly authored retry policy, so an
-// entry for any other node is not a state this engine produced.
+// validateAttemptCeilings is a narrow structural check on the sparse ceiling
+// override, and deliberately nothing more. It enforces exactly two things:
 //
-// An entry that merely repeats the authored budget is refused too: absent means
-// authored, so storing it again would give one logical state two encodings.
+//   - the entry names a KNOWN reference — a prepared program task with an
+//     authored retry policy, since only such a node can ever be blocked and
+//     therefore only such a node can ever be retried into a raised ceiling;
+//   - the value is CANONICAL — strictly above the authored budget, because an
+//     absent entry already means the authored budget, so repeating it would
+//     give one logical state two durable encodings.
+//
+// It is explicitly NOT a proof that the value is one the reducer produced, and
+// there is no upper bound. The private checkpoint under ~/.tclaude/data is
+// authoritative and every supported write path preserves the invariant, so
+// reconstructing reachability here would be a tamper check on an ordinary load
+// — deferred by explicit product decision — and any bound it could impose would
+// be an invented lifetime limit on an audited operator retry rather than a
+// safety property.
 func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, ceiling := range checkpoint.AttemptCeilings {
 		node, ok := definitionNodeByID(definition, nodeID)
@@ -485,9 +498,9 @@ func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) erro
 			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy",
 				ErrInvalidCheckpoint, nodeID)
 		}
-		if ceiling <= node.maxAttempts || ceiling > maxAttemptCeiling {
-			return fmt.Errorf("%w: node %q ceiling %d is outside %d..%d",
-				ErrInvalidCheckpoint, nodeID, ceiling, node.maxAttempts+1, maxAttemptCeiling)
+		if ceiling <= node.maxAttempts {
+			return fmt.Errorf("%w: node %q ceiling %d must be above its authored budget of %d",
+				ErrInvalidCheckpoint, nodeID, ceiling, node.maxAttempts)
 		}
 	}
 	return nil

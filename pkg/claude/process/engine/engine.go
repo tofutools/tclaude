@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -882,14 +883,6 @@ func nextAttempt(checkpoint Checkpoint, nodeID string) int {
 	return checkpoint.Attempts[nodeID] + 1
 }
 
-// maxAttemptCeiling bounds the durable attempt ceiling. One operator retry
-// raises a node's ceiling by one authored window, which eligibility already
-// caps at maxExecutableRetryAttempts, so reaching this needs a thousand audited
-// operator retries of the widest budget an author can even declare. It is a
-// durable-state sanity bound, not a retry policy: past it a stored value is far
-// likelier to be corruption than history.
-const maxAttemptCeiling = maxExecutableRetryAttempts * 1000
-
 // attemptCeiling is the SINGLE derivation of how many attempts a node may still
 // have, and every rule that depends on it — planning's budget guard, the
 // exhaustion disposition, and the load-boundary attempt bound — goes through
@@ -908,18 +901,24 @@ func attemptCeiling(checkpoint Checkpoint, node definitionNode) int {
 // attempt that just exhausted the budget. Attempts is deliberately left alone:
 // the counter is the run's attempt identity and must never move backwards, so
 // an operator retry buys headroom rather than a reset.
+//
+// There is deliberately NO cap on how many times an operator may do this. Each
+// raise is one audited operator action against a branch that really parked, so
+// a lifetime limit would be an invented policy whose only effect is to strand a
+// legitimately blocked branch with no way out. The one arithmetic bound here is
+// integer overflow, which is not policy.
 func raiseAttemptCeiling(checkpoint *Checkpoint, node definitionNode) error {
-	raised := checkpoint.Attempts[node.id] + node.maxAttempts
+	attempts := checkpoint.Attempts[node.id]
+	if attempts > math.MaxInt-node.maxAttempts {
+		return fmt.Errorf("%w: node %q attempt ceiling would overflow", ErrInvalidTransition, node.id)
+	}
+	raised := attempts + node.maxAttempts
 	// Monotonic guard. The blocked precondition already implies this, so a
 	// failure here means the checkpoint disagreed with itself rather than that
 	// an operator asked for something unreasonable.
 	if raised <= attemptCeiling(*checkpoint, node) {
 		return fmt.Errorf("%w: node %q ceiling would not rise above %d",
 			ErrInvalidTransition, node.id, attemptCeiling(*checkpoint, node))
-	}
-	if raised > maxAttemptCeiling {
-		return fmt.Errorf("%w: node %q has consumed its durable attempt ceiling of %d",
-			ErrInvalidTransition, node.id, maxAttemptCeiling)
 	}
 	if checkpoint.AttemptCeilings == nil {
 		checkpoint.AttemptCeilings = make(map[string]int, 1)

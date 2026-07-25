@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -530,6 +531,62 @@ func TestBlockedResolutionsFailClosed(t *testing.T) {
 	}
 }
 
+// TestOperatorRetryHasNoInventedLifetimeLimit pins the absence of a cap. Each
+// raise is one audited operator action against a branch that really parked, so
+// a lifetime limit would only ever strand a legitimately blocked branch. The
+// one arithmetic bound is integer overflow, which is not policy: a checkpoint
+// carrying an absurd attempt still LOADS — the boundary makes no claim about
+// which values the reducer could have produced — and it is the raise itself
+// that refuses, leaving the branch parked and the state untouched.
+func TestOperatorRetryHasNoInventedLifetimeLimit(t *testing.T) {
+	definition := mustPrepare(t, retryTemplate(&model.RetryPolicy{MaxAttempts: 2}), nil)
+	checkpoint, err := Initialize("run-no-cap", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint = exhaust(t, checkpoint, definition, "task", 2)
+
+	// Many consecutive operator retries, each opening one authored window. The
+	// ceiling simply keeps rising; nothing refuses on grounds of "too many".
+	for round := range 50 {
+		resolved, err := Apply(checkpoint, definition, resolve("task", checkpoint.Attempts["task"], ResolveRetry))
+		if err != nil {
+			t.Fatalf("operator retry %d was refused: %v", round+1, err)
+		}
+		checkpoint = exhaust(t, resolved, definition, "task", 2)
+		if got, want := checkpoint.AttemptCeilings["task"], (round+2)*2; got != want {
+			t.Fatalf("ceiling after retry %d = %d, want %d", round+1, got, want)
+		}
+	}
+	if got := checkpoint.Attempts["task"]; got != 102 {
+		t.Fatalf("attempt counter = %d, want 102 after 51 authored windows", got)
+	}
+	encoded, err := json.Marshal(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeCheckpoint(encoded, definition); err != nil {
+		t.Fatalf("a much-retried run did not cold-load: %v", err)
+	}
+
+	// Overflow is the one arithmetic refusal. The absurd counter loads fine —
+	// the boundary bounds references and canonical shape, not plausibility.
+	overflowing := cloneCheckpoint(checkpoint)
+	overflowing.Attempts["task"] = math.MaxInt
+	overflowing.AttemptCeilings["task"] = math.MaxInt
+	if err := ValidateCheckpoint(overflowing, definition); err != nil {
+		t.Fatalf("the load boundary invented a plausibility limit: %v", err)
+	}
+	before := cloneCheckpoint(overflowing)
+	_, err = Apply(overflowing, definition, resolve("task", math.MaxInt, ResolveRetry))
+	if !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("error = %v, want a refused overflowing raise", err)
+	}
+	if !reflect.DeepEqual(overflowing, before) {
+		t.Fatal("a refused raise mutated the checkpoint")
+	}
+}
+
 // TestBlockedStateSurvivesColdLoad covers restart: the parked branch, its exact
 // attempt, its reason, and any raised ceiling round-trip through the durable
 // encoding, and a resolution formed after the reload commits normally.
@@ -648,10 +705,6 @@ func TestBlockedCheckpointsFailClosedAtTheLoadBoundary(t *testing.T) {
 		}},
 		{name: "ceiling that does not rise above the authored budget", mutate: func(c Checkpoint) Checkpoint {
 			c.AttemptCeilings = map[string]int{"task": 2}
-			return c
-		}},
-		{name: "ceiling past the durable bound", mutate: func(c Checkpoint) Checkpoint {
-			c.AttemptCeilings = map[string]int{"task": maxAttemptCeiling + 1}
 			return c
 		}},
 		{name: "ceiling on an unknown node", mutate: func(c Checkpoint) Checkpoint {
