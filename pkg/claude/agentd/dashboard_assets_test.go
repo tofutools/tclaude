@@ -43,6 +43,21 @@ var dashboardAssets = func() string {
 	return b.String()
 }()
 
+// dashboardAssetFile reads one embedded dashboard asset by name (e.g.
+// "dashboard.css" or "js/agent-spawn-actions.js"). dashboardAssets is the right
+// tool for "this string exists somewhere in the dashboard"; this is for the
+// stricter assertions that only mean something within a single file — "THIS
+// module forwards that dependency", "THIS rule names both buttons" — where a
+// match anywhere in the concatenation would be a false pass.
+func dashboardAssetFile(t *testing.T, name string) string {
+	t.Helper()
+	data, err := fs.ReadFile(dashboardAssetsFS, name)
+	if err != nil {
+		t.Fatalf("reading embedded dashboard asset %s: %v", name, err)
+	}
+	return string(data)
+}
+
 // dashboardSourceContains is for source-shape assertions spanning formatted
 // HTML/HTM. These tests should pin structure and copy, not Prettier's choice of
 // line breaks around attributes or component children.

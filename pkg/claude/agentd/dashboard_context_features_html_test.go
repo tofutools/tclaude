@@ -54,6 +54,61 @@ func TestDashboardContextFeaturesUI_Wired(t *testing.T) {
 	present("can_context_features", "the capability view gates on the harness flag")
 }
 
+// TestDashboardContextFeaturesSpawnActionForwarded pins the seam that actually
+// broke: the spawn island calls actions.openContextFeatures(), but the actions
+// object is a frozen, explicitly-listed façade built by createAgentSpawnActions.
+// dashboard.js passed openContextFeatures in, the island called it — and the
+// façade in between simply never named it, so the property was undefined and the
+// Context… button threw on click instead of opening anything. The shape tests
+// above all passed throughout, because every needle they check was present.
+// Assert the dependency is both accepted and forwarded, in that one file.
+func TestDashboardContextFeaturesSpawnActionForwarded(t *testing.T) {
+	source := dashboardAssetFile(t, "js/agent-spawn-actions.js")
+	factory := source[strings.Index(source, "export function createAgentSpawnActions("):]
+	head, body, ok := strings.Cut(factory, "} = {}) {")
+	if !ok {
+		t.Fatalf("createAgentSpawnActions no longer has a destructured dependency object")
+	}
+	if !strings.Contains(head, "openContextFeatures,") {
+		t.Errorf("createAgentSpawnActions does not accept openContextFeatures; the spawn " +
+			"dialog's Context… button calls actions.openContextFeatures() and would throw")
+	}
+	if !dashboardSourceContains(body, "openContextFeatures(options) { return openContextFeatures(options); }") {
+		t.Errorf("createAgentSpawnActions does not forward openContextFeatures onto the frozen " +
+			"actions object; the spawn dialog's Context… button would throw on click")
+	}
+}
+
+// TestDashboardContextFeaturesSpawnButtonStyled guards the other half of the same
+// regression: the Role-row Context… button shipped with no CSS at all, so it fell
+// back to the browser's default white chrome next to its dark Permissions… twin.
+// The rule that dresses Permissions… must name both.
+func TestDashboardContextFeaturesSpawnButtonStyled(t *testing.T) {
+	css := dashboardAssetFile(t, "dashboard.css")
+	// Walk the stylesheet as rule blocks ("selectors { declarations }") and keep
+	// the one that both names #agent-spawn-perms and paints it. Matching blocks
+	// rather than a regex over the whole file keeps the prose mention of
+	// #agent-spawn-perms in a nearby comment from being mistaken for the rule.
+	var themed string
+	for block := range strings.SplitSeq(css, "}") {
+		selectors, declarations, ok := strings.Cut(block, "{")
+		if !ok || !strings.Contains(selectors, ".spawn-role-row #agent-spawn-perms") ||
+			!strings.Contains(declarations, "background:") {
+			continue
+		}
+		themed = block
+		break
+	}
+	if themed == "" {
+		t.Fatalf("no themed rule found for the spawn dialog's #agent-spawn-perms button")
+	}
+	if !strings.Contains(themed, "#agent-spawn-context-features") {
+		t.Errorf("the rule that themes #agent-spawn-perms does not also cover "+
+			"#agent-spawn-context-features, so the Context… button renders with the "+
+			"browser's default (white) chrome inside the dark spawn dialog:\n%s", themed)
+	}
+}
+
 // TestDashboardContextFeaturesEditorStacksAboveProfileEditor guards the same
 // Escape-correctness invariant TestDashboardPermEditorStacksAboveProfileEditor
 // does, for the same reason: the startup-context editor opens ON TOP of
