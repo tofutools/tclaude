@@ -79,6 +79,20 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   assert.match(mounted.container.textContent, /WHAT-IF/);
   assert.match(mounted.container.textContent, /mixes real billed spend/);
   assert.match(mounted.container.textContent, /≈\$2\.00/);
+
+  // A row states its amount once and defers the caveat to the banner: the
+  // hypothetical row gets a single ⚠ linking there, not a ≈ prefix, a repeated
+  // WHAT-IF label or (on a mixed row) an inline real+estimate split.
+  const realAmount = mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"] .cost-amt');
+  const whatIfAmount = mounted.container.querySelector('tr[data-key="cost-conv-b-2026-07-10"] .cost-amt');
+  assert.match(realAmount.textContent.replace(/\s+/g, ''), /^\$3\.00$/, 'a real row is the bare amount');
+  assert.equal(realAmount.querySelector('.cost-whatif-mark'), null, 'a real row carries no WHAT-IF marker');
+  assert.match(whatIfAmount.textContent.replace(/\s+/g, ''), /^\$2\.00⚠︎$/,
+    'a hypothetical row is the bare amount plus one text-presentation ⚠ marker');
+  const mark = whatIfAmount.querySelector('.cost-whatif-mark');
+  assert.equal(mark.getAttribute('href'), '#costs-whatif-banner', 'the marker points at the banner');
+  assert.match(mark.title, /not a real charge/, 'the marker documents itself on hover');
+
   await harness.act(() => state.beginRequest(2));
   await harness.act(() => state.failRequest(2, new Error('offline')));
   assert.match(getByRole(mounted.container, 'alert').textContent, /offline/);

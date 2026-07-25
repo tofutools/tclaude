@@ -126,6 +126,39 @@ function SortHeader({ state, current }) {
   })}</tr></thead>`;
 }
 
+// Scroll the tab's WHAT-IF banner into view and flash it, for a click on a
+// row's WHAT-IF marker. The marker is a real anchor to the banner so it reads
+// and middle-clicks as a link, but the default fragment jump is suppressed:
+// it would push a history entry and leave #costs-whatif-banner in the URL,
+// which the terminal-handoff hash listener also watches.
+function gotoWhatIfBanner(event) {
+  event.preventDefault();
+  const banner = document.getElementById('costs-whatif-banner');
+  if (!banner) return;
+  banner.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  banner.classList.remove('cost-whatif-flash');
+  // Re-added a frame later so a second click restarts the animation rather
+  // than being swallowed as "the class is already there".
+  requestAnimationFrame(() => banner.classList.add('cost-whatif-flash'));
+}
+
+// U+26A0 with U+FE0E (text presentation selector) so a system with an emoji
+// font in the fallback chain can't promote the marker to a full-colour emoji
+// triangle, which would ignore .cost-whatif-mark's dim amber and shout.
+const WHAT_IF_MARK = '⚠︎';
+
+// Tooltip for a row's WHAT-IF marker. Mixed rows spell out the split the cell
+// no longer shows inline; pure WHAT-IF rows just qualify the amount.
+function whatIfRowTip(agent) {
+  if (agent.cost_kind === 'mixed') {
+    return `${fmtUSD(agent.cost_usd)} total = ${fmtUSD(agent.real_cost_usd)} real`
+      + ` + ${fmtUSD(agent.what_if_cost_usd)} WHAT-IF estimate — the estimate is hypothetical,`
+      + ' not a real charge. Click for details.';
+  }
+  return `${fmtUSD(agent.cost_usd)} WHAT-IF estimate — hypothetical pay-per-token equivalent,`
+    + ' not a real charge. Click for details.';
+}
+
 function CostsTable({ state, current }) {
   const [hovered, setHovered] = useState(null);
   const inputRef = useRef(null);
@@ -153,19 +186,21 @@ function CostsTable({ state, current }) {
             const chain = slices[agent.conv_id] > 1;
             const classes = [agent.continued ? 'cost-continued' : '', chain ? 'cost-chain' : '', hovered === agent.conv_id ? 'cost-chain-hl' : ''].filter(Boolean).join(' ');
             const marker = agent.continued ? '↩' : chain ? '↳' : '';
-            const amount = agent.cost_kind === 'what_if'
-              ? `≈${fmtUSD(agent.cost_usd)}`
-              : agent.cost_kind === 'mixed'
-                ? `${fmtUSD(agent.real_cost_usd)} + ≈${fmtUSD(agent.what_if_cost_usd)}`
-                : fmtUSD(agent.cost_usd);
+            // Every row shows one plain total in the same money-green,
+            // WHAT-IF or not, so the column scans as a column of amounts. The
+            // caveat is a single dim marker pointing back at the banner that
+            // already states it in full — see .cost-whatif-mark in the CSS.
+            const whatIf = agent.cost_kind !== 'real';
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-conv=${chain ? agent.conv_id : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${agent.continued ? 'cost-cont' : 'cost-head'}
                 title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`}${marker ? ' ' : ''}
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
-              <td><span class=${`cost-amt${agent.cost_kind !== 'real' ? ' cost-amt-whatif' : ''}`}
-                title=${agent.cost_kind === 'real' ? `$${(agent.cost_usd || 0).toFixed(4)} real spend` : `${amount} — WHAT-IF values are hypothetical, not real charges`}>
-                ${amount}${agent.cost_kind !== 'real' && html` <small>WHAT-IF</small>`}</span></td>
+              <td><span class="cost-amt"
+                title=${`$${(agent.cost_usd || 0).toFixed(4)}${whatIf ? ' estimated (WHAT-IF)' : ' real spend'}`}>
+                ${fmtUSD(agent.cost_usd)}${whatIf && html`<a class="cost-whatif-mark" href="#costs-whatif-banner"
+                  title=${whatIfRowTip(agent)} aria-label=${whatIfRowTip(agent)}
+                  onClick=${gotoWhatIfBanner}>${WHAT_IF_MARK}</a>`}</span></td>
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${agent.model || ''}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>

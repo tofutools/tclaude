@@ -54,9 +54,12 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must("'hide-costs'", "refresh toggles body.hide-costs")
 
 	// Costs always fetches one mixed response, whose per-row kind metadata
-	// drives WHAT-IF labels; the toggle is bound and persisted.
+	// drives the per-row WHAT-IF marker — a dim ⚠ back to the banner rather
+	// than a repeat of its caveat; the toggle is bound and persisted.
 	must("what_if_total_usd", "Costs state carries the hypothetical subtotal")
-	must("agent.cost_kind === 'what_if'", "Costs table labels hypothetical rows per row")
+	must(`<a class="cost-whatif-mark" href="#costs-whatif-banner"`,
+		"Costs table marks hypothetical rows with a ⚠ pointing at the banner")
+	must(".cost-whatif-mark {", "the per-row WHAT-IF marker has a style rule")
 	must("segment.kind === 'what_if'", "Costs chart tooltips label hypothetical segments")
 	must("function bindCostDisplayToggle(", "the 💲 toggle is bound")
 	must("'agent-cost-hidden'", "the toggle drives body.agent-cost-hidden")
