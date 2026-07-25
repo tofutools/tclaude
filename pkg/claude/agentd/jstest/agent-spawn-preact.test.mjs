@@ -26,6 +26,7 @@ const harnesses = [{
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
   can_remote_control: true, can_auto_memory: true,
+  can_dir_trust: true, dir_trust_store: '~/.claude.json',
   can_context_features: true,
   context_features: [
     { slug: 'bundled-skills', label: 'Bundled skills', descr: 'shipped skills', heavy: true },
@@ -48,6 +49,7 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+  can_dir_trust: true, dir_trust_store: '~/.codex/config.toml',
   can_context_features: false, context_features: [],
 }, {
   name: 'opencode', display_name: 'OpenCode',
@@ -63,6 +65,8 @@ const harnesses = [{
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+  // OpenCode has no trust-folder dialog, so no store to seed either.
+  can_dir_trust: false, dir_trust_store: '',
 }];
 
 const profiles = [{
@@ -161,6 +165,29 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(model.spawnProfileSeed(draft, context).auto_review, true);
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
+
+  // A profile that TURNED TRUST ON must not leak into the next profile applied.
+  // Note the leak is only reachable through a profile with NO harness field: a
+  // profile that names one goes through selectSpawnHarness, whose
+  // harnessDefaults already resets both fields. A harness-less sparse profile
+  // (role/initial_message only) skips that path entirely, so the trust branch
+  // is the sole thing standing between a stale opt-in and an unasked-for
+  // pre-trust — plus, because trustDirSpecified pins an explicit value, a
+  // suppressed group/global default. Same rule the reviewer field follows.
+  const trusting = model.applySpawnProfile(
+    draft, { ...profiles[1], trust_dir: true }, context, remembered,
+  );
+  assert.equal(trusting.trustDir, true, 'an explicit profile opt-in is honoured');
+  assert.equal(trusting.trustDirSpecified, true);
+  const thenSparse = model.applySpawnProfile(
+    trusting, { name: 'sparse-no-harness', role: 'navigator' }, context, remembered,
+  );
+  assert.equal(thenSparse.harness, 'codex', 'a harness-less profile leaves the harness alone');
+  assert.equal(thenSparse.trustDir, false, 'a sparse profile clears a prior trust-dir opt-in');
+  assert.equal(thenSparse.trustDirSpecified, false, 'and stops pinning it, so the tier stack decides');
+  assert.equal('trust_dir' in model.buildSpawnRequest(
+    { ...thenSparse, name: 'w' }, context, { path: '', branch: '' },
+  ).body, false, 'so the request omits trust_dir entirely');
   assert.equal(model.spawnCapabilityView(draft, context).sandboxProfilesDisabled, true);
 
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
@@ -426,6 +453,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(host.querySelector('#agent-spawn-name'), sameNameNode, 'source refresh preserves the keyed draft DOM');
   assert.equal(host.querySelector('#agent-spawn-name').value, 'my worker');
 
+  // Claude Code has its own trust-folder dialog, so the checkbox is offered
+  // here too — and its copy names the file the opt-in would edit, which differs
+  // per harness and is what the operator is consenting to.
+  const trustRow = host.querySelector('#agent-spawn-trust-dir-row');
+  assert.equal(trustRow.hidden, false, 'claude offers the trust-dir checkbox');
+  assert.match(trustRow.textContent, /~\/\.claude\.json/, 'claude copy names its own store');
+
   const harnessSelect = host.querySelector('#agent-spawn-harness');
   setValue(harnessSelect, 'codex');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -439,8 +473,12 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
   assert.equal(host.querySelector('#agent-spawn-remote-control-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
+  assert.match(host.querySelector('#agent-spawn-trust-dir-row').textContent, /~\/\.codex\/config\.toml/,
+    'codex copy names its own store, not the one the previous harness would edit');
   setValue(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, true,
+    'a harness with no trust dialog hides the checkbox');
   const openCodeSandbox = host.querySelector('#agent-spawn-sandbox');
   assert.equal(openCodeSandbox.closest('.cron-create-row').hidden, false);
   assert.deepEqual([...openCodeSandbox.options].map((option) => option.value), ['off']);

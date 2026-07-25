@@ -7,7 +7,9 @@ import (
 	"strings"
 )
 
-// Codex directory trust (JOH-205 inc4 Part B).
+// Codex directory trust (JOH-205 inc4 Part B). The harness-agnostic entry
+// points that reach this editor — ResolveTrustDir and EnsureDirTrusted — live
+// in dir_trust.go; Claude Code's equivalent store is claude_dir_trust.go.
 //
 // On first launch in a directory it has not seen, Codex shows a "do you
 // trust this folder?" onboarding modal and blocks until the human answers.
@@ -43,28 +45,6 @@ import (
 //   - Fail-safe: a config that defines `projects` in a conflicting form
 //     (an inline table / scalar / array-of-tables) is refused rather than
 //     corrupted.
-
-// ResolveTrustDir gates the opt-in pre-trust request against the chosen
-// harness: it is a Codex-only concept (Claude Code has no dir-trust modal),
-// and it edits the user's ~/.codex/config.toml, so requesting it for any
-// other harness is an error rather than a silently dropped flag. Mirrors
-// ResolveAutoReview: an unset request (false) always passes, returning
-// false. Both the direct `tclaude session new --trust-dir` path and the
-// daemon spawn boundary call this before acting.
-func ResolveTrustDir(h *Harness, requested bool) (bool, error) {
-	if !requested {
-		return false, nil
-	}
-	if h == nil || h.Name != CodexName {
-		name := "the selected harness"
-		if h != nil && h.Name != "" {
-			name = h.Name
-		}
-		return false, fmt.Errorf("--trust-dir applies only to the codex harness "+
-			"(it pre-trusts the directory in ~/.codex/config.toml); %s has no directory-trust prompt", name)
-	}
-	return true, nil
-}
 
 // codexConfigTomlPath returns ~/.codex/config.toml, matching the home
 // resolution tclaude uses elsewhere (codexHooksPath, CodexConfigPath) —

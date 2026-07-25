@@ -50,6 +50,11 @@ func init() {
 		// buildSpawnSeedPrompt). Claude Code reports its id via the SessionStart
 		// hook and leaves this false.
 		SeedsFirstTurn: true,
+		// Codex blocks a first launch in an unseen dir on its trust-folder
+		// modal, recording the answer as a [projects."<dir>"] trust_level table
+		// in ~/.codex/config.toml — seedable ahead of launch, so the trust-dir
+		// opt-in applies. See codex_dir_trust.go.
+		DirTrust: true,
 	})
 }
 

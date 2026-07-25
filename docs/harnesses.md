@@ -143,6 +143,7 @@ instead of slash-command injection).
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) | ❌ no reviewer equivalent |
+| **Directory pre-trust at spawn** ([below](#directory-trust-at-spawn)) | ✅ opt-in `trust_dir` seeds `projects.<dir>.hasTrustDialogAccepted` in `~/.claude.json` | ✅ opt-in `trust_dir` seeds `[projects."<dir>"] trust_level` in `~/.codex/config.toml` | ➖ no trust dialog, nothing to seed |
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
 | **Auto-compaction window at spawn** | ✅ per-agent token window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`), set per spawn, by profile, or with `--auto-compact-window`; accepts `450000` / `450k` / `0.5M`. Unset uses the model's own threshold. Pin it below a 1M model's real window so a long-lived agent compacts while it is still sharp. Claude Code caps it at the model's actual window, and tclaude re-bases every context meter, bar and percentage onto whichever is smaller | ➖ no equivalent setting (Codex manages its own compaction) | ➖ no equivalent setting |
 | **Startup-context trimming at spawn** ([guide](startup-context.md)) | ✅ per-agent catalog of `default`/`keep`/`trim` switches for bundled skills, unused tool schemas and system-prompt blocks — set per spawn, per profile, or in a group template; nothing is trimmed unless you ask | ➖ no equivalent switches | ➖ no equivalent switches |
@@ -211,10 +212,10 @@ safe and non-blocking:
   (fail-closed). Off by default; the underlying Codex key is still experimental,
   so treat it as unstable.
 
-These are launch-time flags only. Directory trust is the one exception:
-an explicit `trust_dir` opt-in, and every verified default sibling worktree,
-adds an idempotent trusted-project entry to `~/.codex/config.toml` before Codex
-starts so a detached agent cannot freeze on the trust-folder modal. The managed
+These are launch-time flags only. Directory trust is the one exception, and it
+is not Codex-specific — see **Directory trust** below. For Codex it adds an
+idempotent trusted-project entry to `~/.codex/config.toml` before the pane
+starts. The managed
 sandbox baseline lives in `~/.codex/tclaude-agent.config.toml`, installed by
 `tclaude setup`. Spawn-time copies use launch-unique filenames and are removed
 when their Codex process exits. If a persistent-config merge fails transiently,
@@ -292,6 +293,52 @@ axis: `never` (daemon default/recommended), `untrusted`, deprecated
 `on-failure`, and `on-request`. The catalog comes from the same harness-owned
 source used by CLI and profile validation, so UI options cannot drift from the
 accepted policy set.
+
+### Directory trust at spawn
+
+Claude Code and Codex both block a first launch in a directory they do not yet
+trust behind a *"do you trust this folder?"* dialog. A tclaude-spawned agent
+runs detached in a tmux pane with nobody at its TUI, so that dialog is a startup
+gate that can leave a freshly spawned agent frozen before it does anything.
+
+tclaude can seed the trust record ahead of launch. Each harness keeps its own,
+in unrelated shapes:
+
+| Harness | Trust store | Entry |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` | `projects.<dir>.hasTrustDialogAccepted = true` |
+| Codex CLI | `~/.codex/config.toml` | `[projects."<dir>"] trust_level = "trusted"` |
+| OpenCode | ➖ | no trust dialog, nothing to seed |
+
+Turn it on with the spawn dialog's **"Pre-trust this directory"** checkbox, a
+spawn profile's `trust_dir`, or `tclaude session new --trust-dir`. The checkbox
+names the file it will edit, and it is hidden for a harness with no trust
+dialog.
+
+This is the one launch control that writes to a config file tclaude does not
+own, so it is deliberately narrow:
+
+- **Never a default.** Off unless you explicitly ask for it. Requesting it for
+  a harness with no trust dialog is an error, not a silently dropped flag.
+- **Auto-trusted only for default sibling worktrees.** A worktree at the
+  location tclaude itself picks (`../<repo>-<branch>`) is trusted automatically
+  for both harnesses, so a freshly cut worktree doesn't stall.
+- **Agents cannot widen it.** An agent-initiated spawn may pre-trust *only*
+  such a sibling worktree; any other path it names is a `trust_dir_restricted`
+  refusal. Ask a human to spawn that child instead. Note the layout check is
+  paired with the dir write-proof, which independently requires the agent to
+  prove write access to the worktree's Git admin dir — the two together are the
+  guard, not the naming convention on its own.
+- **Conservative writes.** Atomic (temp + rename), idempotent (an
+  already-trusted dir is a clean no-op), and fail-safe — a config shape the
+  editor cannot edit safely is refused rather than corrupted.
+- **Best-effort.** If the write fails the agent still launches; clear the
+  dialog once via the dashboard's focus button.
+
+Note that `~/.claude.json` is a large file Claude Code rewrites constantly, so
+that seed is last-writer-wins against a concurrent Claude Code write. It is
+bounded — the idempotent no-op means a dir is written at most once, ever — and
+what it could revert is Claude-owned churn, never your trust setting.
 
 ### OpenCode managed server
 

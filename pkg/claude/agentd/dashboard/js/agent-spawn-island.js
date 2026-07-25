@@ -933,12 +933,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       help=${askTimeoutHelp} open=${helpOpen === 'agent-spawn-ask-timeout'} setOpen=${setHelpOpen}
       disabled=${!view.askTimeout.visible} busy=${busy} />
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" hidden=${!view.showTrustDir}
-      title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's trust-folder modal.">
+      title="Pre-trust the launch directory so the new agent doesn't freeze on the harness's trust-folder dialog.">
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}
         onChange=${(event) => {
           touched.current.add('trustDir'); touched.current.add('trustDirSpecified');
           setDraft((before) => ({ ...before, trustDir: event.currentTarget.checked, trustDirSpecified: true }));
-        }} /> Pre-trust this directory for Codex — skip the trust-folder modal (edits ~/.codex/config.toml)
+        }} /> ${`Pre-trust this directory — skip the trust-folder dialog (edits ${view.trustDirStore || "the harness's config"})`}
     </label>
     <label class="cron-create-row">
       <span class="cron-create-label">CWD</span>

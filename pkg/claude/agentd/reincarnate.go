@@ -374,8 +374,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// come back as Codex, not Claude Code.
 	// Reincarnation is a relaunch, so the experimental auto-review guardian is
 	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
-	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
-	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
+	// trustDir=false for the same reason: pre-trusting the cwd edits a config
+	// tclaude does not own (~/.codex/config.toml or ~/.claude.json, depending on
+	// the harness) and is only ever an explicit fresh-spawn opt-in.
 	// A successor inherits the predecessor's recorded sandbox posture, not the
 	// harness default — reincarnation must not weaken the sandbox.
 	reincarnateSandbox := relaunch.Sandbox

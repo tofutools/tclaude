@@ -85,7 +85,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if ((!h || h.can_auto_compact_window) && String(draft.auto_compact_window || '').trim()) {
     body.auto_compact_window = String(draft.auto_compact_window).trim();
   }
-  const trust = draft.harness === 'codex' ? readTri(draft.trust_dir) : null;
+  const trust = (!h || h.can_dir_trust) ? readTri(draft.trust_dir) : null;
   if (trust != null) body.trust_dir = trust;
   const remote = (!h || h.can_remote_control) ? readTri(draft.remote_control) : null;
   if (remote != null) body.remote_control = remote;

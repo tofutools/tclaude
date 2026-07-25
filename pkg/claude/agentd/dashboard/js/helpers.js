@@ -149,7 +149,7 @@ function refreshModalMinSize(modalEl) {
 // growModalToFitContent expands a resizable modal whose *applied* (saved or
 // dragged) height has been outgrown by content that appeared after the drag
 // — e.g. the spawn dialog revealing the worktree branch field on name entry,
-// or the Codex Model / Sandbox / trust-dir rows on a harness switch. Without
+// or the Codex Model / Sandbox rows on a harness switch. Without
 // an applied inline height the box is content-driven and CSS already grows it
 // (overflow:auto + max-height), so this is a no-op then; it only kicks in once
 // a fixed height is pinned, where the extra rows would otherwise scroll inside

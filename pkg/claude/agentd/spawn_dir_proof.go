@@ -559,8 +559,32 @@ func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
 	}
 }
 
+// defaultSiblingWorktreeTrust reports whether cwd sits at the location
+// AddWorktreeIn picks by default — a sibling <repo>-<branch> of the main
+// worktree — and may therefore be pre-trusted without an explicit operator
+// opt-in. It does double duty on the spawn path: it forces trust on for such a
+// dir, AND it is the sole exemption that lets an AGENT-initiated spawn request
+// trust_dir at all (see the trust_dir_restricted refusals in lifecycle.go).
+//
+// Read what this actually guarantees. IsDefaultSiblingWorktree verifies LAYOUT
+// (naming, sibling position, a gitCommonDir resolved FROM cwd), not provenance
+// — nothing records that tclaude created the checkout, and a hand-written .git
+// file can point at a neighbouring repo and satisfy the predicate. The guard
+// that makes this safe for an agent caller is therefore not this function
+// alone but its pairing with the dir write-proof: an agent must prove write
+// access to every path the child receives, which for a pinned Git common dir
+// includes GitDir(cwd). For a genuine linked worktree that is
+// <repo>/.git/worktrees/<name> (which `git worktree add` already required); for
+// a forged one it is the whole neighbouring <repo>/.git, so forging is strictly
+// HARDER than doing it legitimately. Keep that pairing in mind before narrowing
+// the proven-dir set for any harness — this exemption leans on it.
+//
+// Gated on SupportsDirTrust rather than a harness name: both Claude Code and
+// Codex block an unattended pane on a trust dialog for a fresh worktree. A
+// harness with no trust store returns false — there is nothing to pre-trust.
 func defaultSiblingWorktreeTrust(harnessName, cwd, gitCommonDir string) (bool, error) {
-	if harnessOrDefault(harnessName) != harness.CodexName {
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil || !h.SupportsDirTrust() {
 		return false, nil
 	}
 	if strings.TrimSpace(gitCommonDir) == "" {

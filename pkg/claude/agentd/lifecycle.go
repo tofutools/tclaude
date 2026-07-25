@@ -3082,12 +3082,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
-	// Gate the opt-in dir-trust request: it is Codex-only (pre-trusting the
-	// cwd in ~/.codex/config.toml) and, unlike sandbox/approval, edits the
-	// user's config — so requesting it for a harness with no trust modal
-	// (Claude Code) is a 400 here rather than a flag silently dropped. Off by
-	// default except for a verified tclaude-style sibling worktree, which must
-	// be trusted before a detached Codex child starts. See JOH-205 inc4.
+	// Gate the opt-in dir-trust request: it means something only for a harness
+	// with a trust dialog tclaude can pre-seed (Claude Code, Codex) and, unlike
+	// sandbox/approval, edits a config tclaude does not own — so requesting it
+	// for a harness with no trust dialog is a 400 here rather than a flag
+	// silently dropped. Off by default except for a verified tclaude-style
+	// sibling worktree, which must be trusted before a detached child starts.
+	// See JOH-205 inc4 / JOH-369.
 	trustDir, tdErr := harness.ResolveTrustDir(h, body.TrustDir)
 	if tdErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_trust_dir", tdErr.Error())
@@ -3407,14 +3408,15 @@ type spawnParams struct {
 	// AutoReviewSet / TrustDirSet preserve a higher tier's explicit false
 	// through executeSpawn's safety-net overlay.
 	AutoReviewSet bool
-	// TrustDir opts the spawn into pre-trusting its launch cwd for Codex,
-	// forwarding `--trust-dir` to `tclaude session new` so the daemon writes
-	// the [projects."<cwd>"] trust entry into ~/.codex/config.toml before
-	// launch and a detached pane doesn't freeze on the trust-folder modal
-	// (JOH-205). false (the default) leaves the modal in place. Codex-only and
-	// strictly opt-in (it edits the user's config) — gated at the spawn
-	// boundary (handleGroupSpawn → harness.ResolveTrustDir) and never set on a
-	// relaunch (reincarnate/clone), exactly like AutoReview.
+	// TrustDir opts the spawn into pre-trusting its launch cwd, forwarding
+	// `--trust-dir` to `tclaude session new` so the daemon seeds the harness's
+	// trust record before launch and a detached pane doesn't freeze on the
+	// trust-folder dialog (JOH-205 for Codex, JOH-369 for Claude Code). false
+	// (the default) leaves the dialog in place. Available for any harness with
+	// a trust dialog and strictly opt-in (it edits a config tclaude does not
+	// own) — gated at the spawn boundary (handleGroupSpawn →
+	// harness.ResolveTrustDir) and never set on a relaunch (reincarnate/clone),
+	// exactly like AutoReview.
 	TrustDir    bool
 	TrustDirSet bool
 	// RemoteControl arms the new agent's built-in Remote Access at launch
@@ -6260,12 +6262,13 @@ func appendAutoReviewFlag(args []string, autoReview bool) []string {
 }
 
 // appendTrustDirFlag adds `--trust-dir` to a `tclaude session new` argv when
-// the spawn opted into pre-trusting its launch dir for Codex. false (the
-// default) omits it, so an ordinary spawn leaves Codex's trust-folder modal in
-// place. It is a boolean flag — no value — gated at the spawn boundary
-// (harness.ResolveTrustDir rejects it for a non-Codex harness), and the forked
-// `tclaude session new` re-validates and performs the actual ~/.codex/config.toml
-// write. Opt-in only because it edits the user's config (JOH-205 inc4).
+// the spawn opted into pre-trusting its launch dir. false (the default) omits
+// it, so an ordinary spawn leaves the harness's trust-folder dialog in place.
+// It is a boolean flag — no value — gated at the spawn boundary
+// (harness.ResolveTrustDir rejects it for a harness with no trust dialog), and
+// the forked `tclaude session new` re-validates and performs the actual write
+// into that harness's own store. Opt-in only because it edits a config tclaude
+// does not own (JOH-205 inc4).
 func appendTrustDirFlag(args []string, trustDir bool) []string {
 	if trustDir {
 		args = append(args, "--trust-dir")
