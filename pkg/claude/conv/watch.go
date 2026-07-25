@@ -2413,6 +2413,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
 		return "", "", nil, err
 	}
+	askTimeout, err := resumeAskTimeout(h, convID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	remoteControl, err := resumeRemoteControl(h, convID)
+	if err != nil {
+		return "", "", nil, err
+	}
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
 		ShellEnvironment: shellEnvironment,
@@ -2424,6 +2432,13 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxDenyDirs:  denyDirs,
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
+		// The recorded AskUserQuestion timeout rides the same `--settings` payload
+		// as the sandbox block, so it has to reach the spec too — an omitted one
+		// silently returns a resumed agent to blocking on every question.
+		AskUserQuestionTimeout: askTimeout,
+		// Same for Remote Access: the recorded posture is a launch flag, so a
+		// resume that omits it quietly makes the agent unreachable from the app.
+		RemoteControl: remoteControl,
 		// The trims must reach the spec, not just the env: the settings-only
 		// entries (those with no CLAUDE_CODE_DISABLE_* twin) ride the `--settings`
 		// payload the spec builds, and ApplyContextFeaturesEnv above delivers only
@@ -2597,6 +2612,81 @@ func resumeSandboxMode(convID string) string {
 	return mode
 }
 
+// resumeContextPosture reads the three launch postures SaveSession's UPSERT
+// does not own, so a resume can re-record them onto the fresh row it creates.
+// resumeLaunchCmd reads the same durable owners to build the pane environment;
+// this read exists because the ROW needs them too — a row that is never
+// annotated reports "nothing recorded", which is how a posture that survived
+// one resume evaporated at the second (TCL-730).
+//
+// A read failure is fatal rather than a zero value, for the same reason as
+// resumeAskTimeout's: these values are written straight back onto the resumed
+// row, so recording a default on a failed read would ASSERT that default and
+// erase the record.
+func resumeContextPosture(convID string) (autoMemory bool, contextFeatures map[string]string, autoCompactWindow string, err error) {
+	if autoMemory, err = db.AutoMemoryForConv(convID); err != nil {
+		return false, nil, "", fmt.Errorf("load recorded auto-memory posture for conversation %s: %w", convID, err)
+	}
+	if contextFeatures, err = db.ContextFeaturesForConv(convID); err != nil {
+		return false, nil, "", fmt.Errorf("load recorded startup-context trims for conversation %s: %w", convID, err)
+	}
+	if autoCompactWindow, err = db.AutoCompactWindowForConv(convID); err != nil {
+		return false, nil, "", fmt.Errorf("load recorded auto-compaction window for conversation %s: %w", convID, err)
+	}
+	return autoMemory, contextFeatures, autoCompactWindow, nil
+}
+
+// resumeRemoteControl carries the recorded Remote Access posture onto the
+// relaunch, so an agent that was reachable from claude.ai / the Claude app
+// before the resume is reachable after it. The daemon's own resume path already
+// does this; without it a human-typed `conv resume` silently dropped the
+// capability (TCL-730).
+//
+// Fail-soft, and only ever in the direction of LESS exposure: an unreadable
+// record or a harness with no Remote Access resumes without it.
+// A READ failure is fatal, not a silent false: the resumed row records this
+// posture, so continuing on a default would ASSERT that default and destroy the
+// record — the erasure this whole change exists to prevent. Only a resolve
+// failure (the harness has no Remote Access) drops the value.
+func resumeRemoteControl(h *harness.Harness, convID string) (bool, error) {
+	recorded, err := db.RemoteControlForConv(convID)
+	if err != nil {
+		return false, fmt.Errorf("load recorded remote-access posture for conversation %s: %w", convID, err)
+	}
+	remoteControl, err := harness.ResolveRemoteControl(h, recorded)
+	if err != nil {
+		slog.Warn("recorded remote-access posture does not apply to this harness; resuming without it",
+			"conv_id", convID, "harness", h.Name, "error", err)
+		return false, nil
+	}
+	return remoteControl, nil
+}
+
+// resumeAskTimeout carries the recorded AskUserQuestion idle-timeout onto the
+// next session generation. Without it a resumed agent both loses the
+// auto-continue behaviour it was launched with AND writes a blank column that
+// the durable projection asserts as "known: inherit" — erasing the recorded
+// value for every later relaunch too (TCL-730).
+//
+// A READ failure is fatal for the same reason as resumeRemoteControl's:
+// continuing on "" would write that "" onto the resumed row and the projection
+// would assert it as "known: inherit". Only a RESOLVE failure — a value this
+// harness has no dialog for — drops the override, matching how the daemon
+// relaunch path treats a recorded value its harness can no longer honour.
+func resumeAskTimeout(h *harness.Harness, convID string) (string, error) {
+	recorded, err := db.AskTimeoutForConv(convID)
+	if err != nil {
+		return "", fmt.Errorf("load recorded AskUserQuestion timeout for conversation %s: %w", convID, err)
+	}
+	timeout, err := harness.ResolveAskTimeoutMode(h, strings.TrimSpace(recorded))
+	if err != nil {
+		slog.Warn("recorded AskUserQuestion timeout no longer applies to this harness; resuming without it",
+			"conv_id", convID, "harness", h.Name, "ask_user_question_timeout", recorded, "error", err)
+		return "", nil
+	}
+	return timeout, nil
+}
+
 // resumeApprovalState carries the most recently recorded posture onto the
 // next session generation. Legacy rows have no posture; pin those to the
 // harness's daemon-safe default instead of creating another unknown row.
@@ -2723,6 +2813,23 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err != nil {
 		return err
 	}
+	// Read the postures this resume must reproduce BEFORE it creates any row of
+	// its own — including the row the resumed pane's own SessionStart hook may
+	// write the moment it starts. Each lookup resolves the conv's newest record,
+	// so reading afterwards would echo that fresh row's blank defaults and hand
+	// the NEXT resume nothing. Same read-before-write ordering as conv/resume.go.
+	askTimeout, err := resumeAskTimeout(h, conv.SessionID)
+	if err != nil {
+		return err
+	}
+	remoteControl, err := resumeRemoteControl(h, conv.SessionID)
+	if err != nil {
+		return err
+	}
+	autoMemory, contextFeatures, autoCompactWindow, err := resumeContextPosture(conv.SessionID)
+	if err != nil {
+		return err
+	}
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -2738,24 +2845,34 @@ func createSessionForConv(conv *SessionEntry) error {
 	// coalesced back to "claude" — closes the inline TODO(JOH-155) for the
 	// watch-resume path now that codex resume lands here.
 	state := &session.SessionState{
-		ID:                 sessionID,
-		TmuxSession:        tmuxSession,
-		PID:                pid,
-		Cwd:                cwd,
-		ConvID:             conv.SessionID,
-		Status:             session.StatusIdle,
-		Harness:            h.Name,
-		SandboxMode:        resumeSandboxMode(conv.SessionID),
-		EffectiveSandbox:   resumeEffectiveSandboxForState(conv.SessionID),
-		ApprovalPolicy:     approvalPolicy,
-		ApprovalAutoReview: autoReview,
-		Created:            time.Now(),
-		Updated:            time.Now(),
+		ID:                     sessionID,
+		TmuxSession:            tmuxSession,
+		PID:                    pid,
+		Cwd:                    cwd,
+		ConvID:                 conv.SessionID,
+		Status:                 session.StatusIdle,
+		Harness:                h.Name,
+		SandboxMode:            resumeSandboxMode(conv.SessionID),
+		EffectiveSandbox:       resumeEffectiveSandboxForState(conv.SessionID),
+		ApprovalPolicy:         approvalPolicy,
+		ApprovalAutoReview:     autoReview,
+		AskUserQuestionTimeout: askTimeout,
+		Created:                time.Now(),
+		Updated:                time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
+	// resumeLaunchCmd already applied these to the pane's environment; this
+	// write is what keeps them alive for the NEXT resume, since the fresh row
+	// otherwise reports "nothing recorded".
+	session.RecordLaunchPosture(sessionID, h, session.LaunchPosture{
+		AutoMemory:        autoMemory,
+		ContextFeatures:   contextFeatures,
+		AutoCompactWindow: autoCompactWindow,
+		RemoteControl:     remoteControl,
+	})
 
 	fmt.Printf("Created session %s\n", tmuxSession)
 	fmt.Println("Attaching... (Ctrl+B D to detach)")

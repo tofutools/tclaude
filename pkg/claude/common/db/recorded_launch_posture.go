@@ -1,0 +1,162 @@
+package db
+
+import (
+	"maps"
+	"strings"
+)
+
+// ComposeAgentRelaunchProfile overlays one relaunch profile onto another, FIELD
+// BY FIELD. A nil field in the overlay means "unknown", so it retains base's
+// value instead of erasing it — the tri-state rule the whole relaunch contract
+// rests on (nil = unknown, a pointer to the zero value = asserted intent).
+//
+// Adding a field to AgentRelaunchProfile without adding it here silently makes
+// that field un-overlayable; TestComposeAgentRelaunchProfileCoversEveryField
+// fails when that happens.
+func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRelaunchProfile {
+	if overlay == nil {
+		return base
+	}
+	if base == nil {
+		return overlay
+	}
+	merged := *base
+	merged.Version = overlay.Version
+	if overlay.SandboxMode != nil {
+		merged.SandboxMode = overlay.SandboxMode
+	}
+	if overlay.ApprovalPolicy != nil {
+		merged.ApprovalPolicy = overlay.ApprovalPolicy
+	}
+	if overlay.ToolGovernance != nil {
+		merged.ToolGovernance = overlay.ToolGovernance
+	}
+	if overlay.ApprovalAutoReview != nil {
+		merged.ApprovalAutoReview = overlay.ApprovalAutoReview
+	}
+	if overlay.ModelID != nil {
+		merged.ModelID = overlay.ModelID
+	}
+	if overlay.Effort != nil {
+		merged.Effort = overlay.Effort
+	}
+	if overlay.ContextWindowSize != nil {
+		merged.ContextWindowSize = overlay.ContextWindowSize
+	}
+	if overlay.AskUserQuestionTimeout != nil {
+		merged.AskUserQuestionTimeout = overlay.AskUserQuestionTimeout
+	}
+	if overlay.RemoteControl != nil {
+		merged.RemoteControl = overlay.RemoteControl
+	}
+	if overlay.AutoMemory != nil {
+		merged.AutoMemory = overlay.AutoMemory
+	}
+	if overlay.AutoCompactWindow != nil {
+		merged.AutoCompactWindow = overlay.AutoCompactWindow
+	}
+	if overlay.ContextFeatures != nil {
+		merged.ContextFeatures = overlay.ContextFeatures
+	}
+	return &merged
+}
+
+// RecordedLaunchPostureForConv returns everything tclaude knows about the
+// posture a conversation was last launched with, as a TRI-STATE profile: nil
+// means the conversation has no recorded posture at all, and a nil FIELD means
+// nothing was ever recorded for that field — never "recorded as empty".
+//
+// That distinction is the point. A relaunch that collapses unknown into a known
+// zero writes the zero onto its fresh session row, the durable projection then
+// asserts it as intent, and the original posture is gone for good — the erasure
+// TCL-730 describes. Callers preserve on nil and only override on an explicit
+// caller value.
+//
+// The tiers are the ones the per-field *ForConv helpers below have always
+// consulted, in the same order:
+//
+//  1. the stable agent's durable intent (agents.relaunch_profile),
+//  2. the conversation-owned fallback (conversation_resume_profiles), which is
+//     what keeps an ordinary non-agent conversation resumable,
+//  3. the newest session row, for records predating the v145 projection.
+//
+// Tier 3 reads plain columns, which cannot express "unknown", so a ZERO column
+// there is reported as unknown rather than as intent. That is the safe reading
+// twice over: a legacy row never asserted anything, and every zero in that tier
+// is also the launch default, so preserving nothing and preserving the zero
+// produce the same launch.
+func RecordedLaunchPostureForConv(convID string) (*AgentRelaunchProfile, error) {
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return nil, nil
+	}
+	var posture *AgentRelaunchProfile
+	conversation, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	if conversation != nil {
+		posture = conversation.FallbackRelaunch
+	}
+	agent, err := AgentRelaunchProfileForConv(convID)
+	if err != nil {
+		return nil, err
+	}
+	posture = ComposeAgentRelaunchProfile(posture, agent)
+	if posture != nil && recordedPostureIsComplete(posture) {
+		return posture, nil
+	}
+	// Only pay for the session lookup when something is still unknown; the
+	// legacy row is the weakest tier, so it goes underneath what we already have.
+	legacy, err := legacySessionLaunchPosture(convID)
+	if err != nil || legacy == nil {
+		return posture, err
+	}
+	return ComposeAgentRelaunchProfile(legacy, posture), nil
+}
+
+// recordedPostureIsComplete reports whether every field the legacy session tier
+// could contribute is already known, so that tier can be skipped.
+func recordedPostureIsComplete(p *AgentRelaunchProfile) bool {
+	return p.SandboxMode != nil && p.ApprovalPolicy != nil && p.ApprovalAutoReview != nil &&
+		p.AskUserQuestionTimeout != nil && p.RemoteControl != nil && p.AutoMemory != nil &&
+		p.ContextFeatures != nil && p.AutoCompactWindow != nil
+}
+
+// legacySessionLaunchPosture reconstructs what a pre-v145 record can still
+// prove from its newest session row. Zero columns stay nil (see the tier-3 note
+// on RecordedLaunchPostureForConv).
+func legacySessionLaunchPosture(convID string) (*AgentRelaunchProfile, error) {
+	s, err := FindSessionByConvID(convID)
+	if err != nil || s == nil {
+		return nil, err
+	}
+	p := &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	if mode := strings.TrimSpace(s.SandboxMode); mode != "" {
+		p.SandboxMode = stringPtr(mode)
+	}
+	if policy := strings.TrimSpace(s.ApprovalPolicy); policy != "" {
+		p.ApprovalPolicy = stringPtr(policy)
+		// auto-review is only meaningful alongside a recorded policy; on its own
+		// a false column is indistinguishable from a row that never carried one.
+		p.ApprovalAutoReview = boolPtr(s.ApprovalAutoReview)
+	}
+	if timeout := strings.TrimSpace(s.AskUserQuestionTimeout); timeout != "" {
+		p.AskUserQuestionTimeout = stringPtr(timeout)
+	}
+	if s.RemoteControl {
+		p.RemoteControl = boolPtr(true)
+	}
+	if s.AutoMemory {
+		p.AutoMemory = boolPtr(true)
+	}
+	if len(s.ContextFeatures) > 0 {
+		features := make(map[string]string, len(s.ContextFeatures))
+		maps.Copy(features, s.ContextFeatures)
+		p.ContextFeatures = &features
+	}
+	if window := strings.TrimSpace(s.AutoCompactWindow); window != "" {
+		p.AutoCompactWindow = stringPtr(window)
+	}
+	return p, nil
+}

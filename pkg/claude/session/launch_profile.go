@@ -7,37 +7,68 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-type explicitLaunchFields struct {
-	harness bool
-	model   bool
-	effort  bool
-}
+// explicitLaunchFields records which launch flags the caller actually typed,
+// keyed by flag name. Cobra's Changed() is the ONLY place the distinction
+// between "omitted" and "explicitly set to the default" still exists — by the
+// time a flag reaches NewParams, `--auto-memory=false` and no flag at all are
+// the same bool. Both the global-default profile and the relaunch carryover
+// fill omitted fields only, so both need this.
+//
+// A map rather than a struct so a new entry in launchCarryoverFields needs no
+// parallel edit here.
+type explicitLaunchFields map[string]bool
+
+func (e explicitLaunchFields) has(flag string) bool { return e[flag] }
 
 // RunNewFromCommand launches a session from a Cobra CLI surface while
 // preserving the distinction between an omitted launch flag and an explicitly
-// empty one. The dashboard/global profile only fills omitted fields.
+// empty one. The dashboard/global profile only fills omitted fields, and on a
+// --resume so does the recorded launch posture.
 func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
-	explicit := explicitLaunchFields{
-		harness: cmd.Flags().Changed("harness"),
-		model:   cmd.Flags().Changed("model"),
-		effort:  cmd.Flags().Changed("effort"),
-	}
+	explicit := explicitLaunchFields{}
+	cmd.Flags().Visit(func(f *pflag.Flag) { explicit[f.Name] = true })
 	return runNewWithGlobalDefault(params, explicit)
 }
 
 // RunNew is the exported programmatic entry point. Programmatic callers retain
-// their historical raw launch behavior; only the two direct Cobra entrypoints
-// opt into terminal default resolution through RunNewFromCommand.
+// their historical raw launch behavior for the global default profile; only the
+// two direct Cobra entrypoints opt into terminal default resolution through
+// RunNewFromCommand.
+//
+// The relaunch carryover is NOT part of that opt-in, though, and applies here
+// too: it is not a convenience default, it is what stops a resume from erasing
+// the record. `worktree add` resumes a copied conversation through this entry
+// point, so leaving it out would keep a second `-r` path outside the contract.
+// With no Cobra command there is no Changed() to consult, so the table falls
+// back to "a non-zero value on params is the caller's own" — which is exactly
+// what a programmatic caller expresses.
+//
+// Two consequences for programmatic callers: a resume whose recorded posture
+// cannot be READ fails here rather than launching on defaults (launching would
+// overwrite the record with those defaults, which is not recoverable), and a
+// carried posture that changes the launch is disclosed on os.Stderr.
 func RunNew(params *NewParams) error {
+	if err := applyRecordedLaunchPosture(params, nil); err != nil {
+		return err
+	}
 	return runNew(params)
 }
 
 func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) error {
 	if err := applyGlobalDefaultLaunchProfile(params, explicit); err != nil {
+		return err
+	}
+	// A --resume must relaunch the conversation the way it was launched, so the
+	// recorded posture fills every flag the caller left out. This runs BEFORE
+	// runNew because runNew validates and records straight off params: a field
+	// still blank here is what gets asserted onto the fresh session row, and the
+	// durable projection turns that assertion into permanent loss (TCL-730).
+	if err := applyRecordedLaunchPosture(params, explicit); err != nil {
 		return err
 	}
 	return runNew(params)
@@ -72,7 +103,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 		return nil
 	}
 	if prof == nil {
-		if !explicit.harness && strings.TrimSpace(params.Harness) == "" {
+		if !explicit.has("harness") && strings.TrimSpace(params.Harness) == "" {
 			params.Harness = firstInstalledHarness(lookPath)
 		}
 		return nil
@@ -85,7 +116,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 		return fmt.Errorf("global default spawn profile %q is disabled: %s", prof.Name, reason)
 	}
 
-	if !explicit.harness && strings.TrimSpace(params.Harness) == "" {
+	if !explicit.has("harness") && strings.TrimSpace(params.Harness) == "" {
 		params.Harness = strings.TrimSpace(prof.Harness)
 	}
 	h, err := harness.Resolve(params.Harness)
@@ -98,7 +129,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 	}
 	profileMatchesHarness := profileHarness == h.Name
 
-	if !explicit.model && strings.TrimSpace(params.Model) == "" {
+	if !explicit.has("model") && strings.TrimSpace(params.Model) == "" {
 		if raw := strings.TrimSpace(prof.Model); raw != "" {
 			value, validateErr := h.Models.ValidateModel(raw)
 			switch {
@@ -112,7 +143,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 			}
 		}
 	}
-	if !explicit.effort && strings.TrimSpace(params.Effort) == "" {
+	if !explicit.has("effort") && strings.TrimSpace(params.Effort) == "" {
 		if raw := strings.TrimSpace(prof.Effort); raw != "" {
 			value, validateErr := h.Models.ValidateEffort(raw)
 			switch {

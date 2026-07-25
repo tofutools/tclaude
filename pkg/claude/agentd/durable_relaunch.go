@@ -81,52 +81,13 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 // conversation fallback one field at a time. This matters for migrated agents
 // whose historical birth request captured only explicit overrides: nil means
 // unknown, not an instruction to discard the last proven conversation value.
+//
+// The field-by-field overlay itself lives in db, because the same rule governs
+// the recorded-posture read that non-daemon relaunch paths use (TCL-730); two
+// copies of the list is how a field ends up carried on one path and dropped on
+// the other.
 func composeAgentRelaunchProfile(fallback, agent *db.AgentRelaunchProfile) *db.AgentRelaunchProfile {
-	if agent == nil {
-		return fallback
-	}
-	if fallback == nil {
-		return agent
-	}
-	merged := *fallback
-	merged.Version = agent.Version
-	if agent.SandboxMode != nil {
-		merged.SandboxMode = agent.SandboxMode
-	}
-	if agent.ApprovalPolicy != nil {
-		merged.ApprovalPolicy = agent.ApprovalPolicy
-	}
-	if agent.ToolGovernance != nil {
-		merged.ToolGovernance = agent.ToolGovernance
-	}
-	if agent.ApprovalAutoReview != nil {
-		merged.ApprovalAutoReview = agent.ApprovalAutoReview
-	}
-	if agent.ModelID != nil {
-		merged.ModelID = agent.ModelID
-	}
-	if agent.Effort != nil {
-		merged.Effort = agent.Effort
-	}
-	if agent.ContextWindowSize != nil {
-		merged.ContextWindowSize = agent.ContextWindowSize
-	}
-	if agent.AskUserQuestionTimeout != nil {
-		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
-	}
-	if agent.RemoteControl != nil {
-		merged.RemoteControl = agent.RemoteControl
-	}
-	if agent.AutoMemory != nil {
-		merged.AutoMemory = agent.AutoMemory
-	}
-	if agent.ContextFeatures != nil {
-		merged.ContextFeatures = agent.ContextFeatures
-	}
-	if agent.AutoCompactWindow != nil {
-		merged.AutoCompactWindow = agent.AutoCompactWindow
-	}
-	return &merged
+	return db.ComposeAgentRelaunchProfile(fallback, agent)
 }
 
 func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error) {

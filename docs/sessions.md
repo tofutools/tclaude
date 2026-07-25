@@ -53,6 +53,50 @@ agentd-managed launches retain their existing resolved launch shape, and the
 profile's sandbox, approval, identity, and permission fields remain agent-spawn
 policy rather than overrides for a directly attached human session.
 
+### A resume keeps the posture it was launched with
+
+`tclaude session new --resume <id>` relaunches the conversation the way it was
+recorded, not the way a fresh session would start. Every launch parameter tclaude
+records — `--sandbox`, `--ask-for-approval`, `--auto-review`, `--tools`,
+`--ask-user-question-timeout`, `--remote-control`, `--auto-memory`,
+`--context-features`, `--auto-compact-window` — is carried over unless you pass
+that flag yourself. Passing it wins, including when you pass the value that is
+also the default (`--auto-memory=false` keeps memory off even if the recorded
+posture had it on).
+
+This matters beyond the one launch: a resume records the posture it resolved, so
+a flag that silently fell back to its default would overwrite the recorded value
+and the original intent would be unrecoverable on the next resume. `tclaude conv
+resume`, the watch-mode resume, and the daemon's resume/clone/reincarnate paths
+follow the same rule.
+
+Model and effort are not on that list because they need no help: the harness
+itself remembers which model a conversation runs on across a resume, and the
+status line re-records both on every render.
+
+Because a resume can apply a posture you did not type, it says so: the carried
+flags are echoed on stderr, e.g.
+
+```
+Resuming with this conversation's recorded launch posture (--sandbox --auto-compact-window). Pass a flag explicitly to override it.
+```
+
+Only postures that make the launch differ from a fresh one are listed. Most
+conversations pin nothing on most axes, and a resume that reproduces a recorded
+"nothing pinned" is byte-identical to one without the carryover — announcing
+those would put the line on every ordinary resume, which is how a line stops
+being read. That includes `inherit`, which is the recorded spelling of "nothing
+pinned" for `--sandbox`, `--ask-for-approval` and
+`--ask-user-question-timeout`: it is still carried, because keeping it distinct
+from *unrecorded* is what stops a profile or group default from silently winning
+on the next hop, but it changes nothing about this launch.
+
+A recorded value the relaunch harness cannot honour — a Claude-only posture on a
+Codex resume, or a startup-context feature since retired from the catalog — is
+dropped rather than failing the resume. For `--sandbox` and `--ask-for-approval`
+that drop leaves the launch *less* confined than the record, so it is warned
+about on stderr rather than only logged.
+
 **Flags:**
 
 | Flag               | Description                                              |
