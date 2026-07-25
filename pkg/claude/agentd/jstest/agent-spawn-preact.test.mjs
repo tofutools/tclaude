@@ -165,6 +165,29 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(model.spawnProfileSeed(draft, context).auto_review, true);
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
+
+  // A profile that TURNED TRUST ON must not leak into the next profile applied.
+  // Note the leak is only reachable through a profile with NO harness field: a
+  // profile that names one goes through selectSpawnHarness, whose
+  // harnessDefaults already resets both fields. A harness-less sparse profile
+  // (role/initial_message only) skips that path entirely, so the trust branch
+  // is the sole thing standing between a stale opt-in and an unasked-for
+  // pre-trust — plus, because trustDirSpecified pins an explicit value, a
+  // suppressed group/global default. Same rule the reviewer field follows.
+  const trusting = model.applySpawnProfile(
+    draft, { ...profiles[1], trust_dir: true }, context, remembered,
+  );
+  assert.equal(trusting.trustDir, true, 'an explicit profile opt-in is honoured');
+  assert.equal(trusting.trustDirSpecified, true);
+  const thenSparse = model.applySpawnProfile(
+    trusting, { name: 'sparse-no-harness', role: 'navigator' }, context, remembered,
+  );
+  assert.equal(thenSparse.harness, 'codex', 'a harness-less profile leaves the harness alone');
+  assert.equal(thenSparse.trustDir, false, 'a sparse profile clears a prior trust-dir opt-in');
+  assert.equal(thenSparse.trustDirSpecified, false, 'and stops pinning it, so the tier stack decides');
+  assert.equal('trust_dir' in model.buildSpawnRequest(
+    { ...thenSparse, name: 'w' }, context, { path: '', branch: '' },
+  ).body, false, 'so the request omits trust_dir entirely');
   assert.equal(model.spawnCapabilityView(draft, context).sandboxProfilesDisabled, true);
 
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);

@@ -401,10 +401,15 @@ export function applySpawnProfile(
       profile.ask_user_question_timeout, view.askTimeout.modes, next.askTimeout,
     );
   }
+  // Same rule as the reviewer block above: a sparse profile means "let the
+  // tier stack decide", NOT "keep whatever the last profile set". Leaving a
+  // prior true in place would both pre-trust a directory nobody asked to trust
+  // for THIS profile and — because trustDirSpecified pins an explicit value —
+  // suppress the group/global default that should have spoken instead.
   if (view.showTrustDir && profile.trust_dir != null) {
     next.trustDir = !!profile.trust_dir;
     next.trustDirSpecified = true;
-  } else if (!view.showTrustDir) {
+  } else {
     next.trustDir = false;
     next.trustDirSpecified = false;
   }
