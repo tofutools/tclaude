@@ -731,19 +731,21 @@ func TestClaudeSpawner_LaunchEnrollment(t *testing.T) {
 		t.Fatalf("expected quoted positional prompt, got %q", got)
 	}
 
-	// On a --resume the preset id + positional prompt are omitted (the
-	// conversation already has an id and history); --name still applies.
+	// On a --resume the preset id is omitted (the conversation already has one),
+	// but --name and the positional prompt both still apply: that is what lets a
+	// clone — which forks its source's jsonl and resumes into it — be born named
+	// and briefed instead of having both injected over tmux (TCL-732).
 	r := claudeSpawner{}.BuildCommand(SpawnSpec{
 		ResumeID:      "conv-9",
 		SessionID:     "2567b392-357b-4d6c-9a59-74fd23424cda",
 		Name:          "worker",
-		InitialPrompt: "hello",
+		InitialPrompt: "hello there",
 	})
 	if strings.Contains(r, "--session-id") {
 		t.Fatalf("a resume must not emit --session-id, got %q", r)
 	}
-	if strings.Contains(r, "hello") {
-		t.Fatalf("a resume must not emit a positional prompt, got %q", r)
+	if !strings.Contains(r, `'hello there'`) {
+		t.Fatalf("a resume must emit its positional prompt as one quoted arg, got %q", r)
 	}
 	if !strings.Contains(r, "--resume conv-9") || !strings.Contains(r, "--name worker") {
 		t.Fatalf("resume must keep --resume and --name, got %q", r)

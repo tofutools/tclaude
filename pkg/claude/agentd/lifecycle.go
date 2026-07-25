@@ -6078,6 +6078,20 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	if a.GitWorktreeWriteDirsPinned {
 		args = append(args, "--git-worktree-write-dirs-pinned")
 	}
+	// Launch-enrollment fields on a RESUME: a clone forks its source's jsonl and
+	// resumes into it, so its display name and first-turn handoff have to ride
+	// this argv rather than being injected once the pane answers (TCL-732).
+	//
+	// No --session-id here — a resume already has a conversation id. And no
+	// harness-default seed fallback either (unlike sessionNewArgs): the seed
+	// exists to make Codex mint an id at first turn, which a resumed
+	// conversation has by definition, so an unset InitialPrompt must stay unset.
+	if a.Name != "" {
+		args = append(args, "--name", a.Name)
+	}
+	if a.InitialPrompt != "" {
+		args = append(args, "--initial-prompt", a.InitialPrompt)
+	}
 	if a.Effort != "" {
 		args = append(args, "--effort", a.Effort)
 	}

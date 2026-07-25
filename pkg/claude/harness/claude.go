@@ -141,10 +141,18 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	// interactive session submits itself at launch (verified against the
 	// `claude --help` "[prompt] Your prompt" arg). The daemon spawn path
 	// uses it to deliver the agent's welcome turn without a tmux send-keys
-	// injection. Only on a FRESH launch: a --resume continues an existing
-	// conversation and takes no launch prompt. Quoted as a single arg so the
-	// whole prompt is one positional, never split into stray flags/words.
-	if spec.InitialPrompt != "" && spec.ResumeID == "" {
+	// injection. Quoted as a single arg so the whole prompt is one positional,
+	// never split into stray flags/words.
+	//
+	// A --resume takes one too, which is what lets a CLONE be born briefed: the
+	// clone forks the source's jsonl and resumes into it, so its first turn has
+	// to ride the resume argv (TCL-732). Verified against claude 2.1.220 that
+	// `claude --resume <id> --name <n> '<prompt>'` submits the positional as a
+	// turn on the RESUMED conversation and records the name as a custom-title
+	// turn, without forking the conversation id. Codex differs here — `codex
+	// resume` handles positionals differently — so its spawner keeps the
+	// fresh-launch-only gate.
+	if spec.InitialPrompt != "" {
 		cmd += " " + clcommon.ShellQuoteArg(spec.InitialPrompt)
 	}
 	// --remote-control arms Claude Code's built-in Remote Access at launch
