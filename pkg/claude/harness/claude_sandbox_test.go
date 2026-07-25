@@ -167,9 +167,23 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	if b["enabled"] != true {
 		t.Fatalf("on block must enable the sandbox, got %v", b["enabled"])
 	}
+	if b["failIfUnavailable"] != true {
+		t.Fatalf("on block must fail closed when the sandbox runtime is unavailable, got %v",
+			b["failIfUnavailable"])
+	}
+	if b["allowUnsandboxedCommands"] != false {
+		t.Fatalf("on block must disable the dangerouslyDisableSandbox bypass, got %v",
+			b["allowUnsandboxedCommands"])
+	}
 	net, _ := b["network"].(map[string]any)
 	if net == nil || net["allowAllUnixSockets"] != true {
 		t.Fatalf("on block must keep unix sockets reachable, got %v", b["network"])
+	}
+	if domains, _ := net["allowedDomains"].([]any); !slices.Equal(
+		domains, []any{"github.com", "api.github.com"},
+	) {
+		t.Fatalf("on block must keep the GitHub PR workflow sandboxed, got %v",
+			net["allowedDomains"])
 	}
 	fs, _ := b["filesystem"].(map[string]any)
 	if fs == nil {
