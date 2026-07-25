@@ -40,6 +40,8 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 	require.NoError(t, err)
 	sandboxMode, err := harness.ValidateSandboxMode(h, params.Sandbox)
 	require.NoError(t, err)
+	remoteControl, err := harness.ResolveRemoteControl(h, params.RemoteControl)
+	require.NoError(t, err)
 
 	created := time.Now().Add(time.Duration(hop) * time.Minute)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
@@ -48,7 +50,12 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 		ApprovalPolicy: harness.ClaudePermissionInherit,
 		CreatedAt:      created, UpdatedAt: created,
 	}))
-	RecordLaunchPosture(convID, h, autoMemory, contextFeatures, autoCompactWindow)
+	RecordLaunchPosture(convID, h, LaunchPosture{
+		AutoMemory:        autoMemory,
+		ContextFeatures:   contextFeatures,
+		AutoCompactWindow: autoCompactWindow,
+		RemoteControl:     remoteControl,
+	})
 	return params
 }
 
@@ -69,6 +76,7 @@ func TestRecordedLaunchPostureSurvivesRepeatedFlaglessResumes(t *testing.T) {
 			assert.Equal(t, "bundled-skills=off", params.ContextFeatures, "a lean agent must come back lean")
 			assert.Equal(t, "5m", params.AskUserQuestionTimeout, "the auto-continue timeout must survive")
 			assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox, "the recorded containment must survive")
+			assert.True(t, params.RemoteControl, "an agent reachable from the app must come back reachable")
 		})
 	}
 
@@ -82,6 +90,8 @@ func TestRecordedLaunchPostureSurvivesRepeatedFlaglessResumes(t *testing.T) {
 	assert.True(t, *posture.AutoMemory)
 	require.NotNil(t, posture.AskUserQuestionTimeout)
 	assert.Equal(t, "5m", *posture.AskUserQuestionTimeout)
+	require.NotNil(t, posture.RemoteControl, "RecordLaunchPosture must give RemoteControl a write-side twin")
+	assert.True(t, *posture.RemoteControl)
 }
 
 // TestFlaglessResumeOfAnUnrecordedConvChangesNothing pins that the carryover
@@ -102,4 +112,5 @@ func TestFlaglessResumeOfAnUnrecordedConvChangesNothing(t *testing.T) {
 	assert.Empty(t, params.ContextFeatures)
 	assert.Empty(t, params.AskUserQuestionTimeout)
 	assert.Empty(t, params.Sandbox)
+	assert.False(t, params.RemoteControl)
 }

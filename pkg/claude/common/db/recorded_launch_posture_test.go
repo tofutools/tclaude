@@ -25,7 +25,12 @@ func populatedRelaunchProfile(seed string) AgentRelaunchProfile {
 		case reflect.Bool:
 			elem.Elem().SetBool(seed == "a")
 		case reflect.Int64:
-			elem.Elem().SetInt(int64(len(seed)))
+			// seed[0], not len(seed): every seed this test uses is one character,
+			// so a length-derived value would make base and overlay IDENTICAL for
+			// the only *int64 field and the coverage assertion would pass
+			// vacuously — verified by mutation, deleting the ContextWindowSize
+			// branch from the overlay left the whole suite green.
+			elem.Elem().SetInt(int64(seed[0]))
 		case reflect.Map:
 			elem.Elem().Set(reflect.ValueOf(map[string]string{seed: "off"}))
 		default:

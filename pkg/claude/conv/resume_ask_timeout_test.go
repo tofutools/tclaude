@@ -41,7 +41,9 @@ func TestResumeAskTimeout_UnrecordedStaysInherit(t *testing.T) {
 	setupTestDB(t)
 	h, err := harness.Resolve(harness.DefaultName)
 	require.NoError(t, err)
-	assert.Empty(t, resumeAskTimeout(h, resumeConvClaude))
+	timeout, err := resumeAskTimeout(h, resumeConvClaude)
+	require.NoError(t, err)
+	assert.Empty(t, timeout)
 }
 
 // TestResumeAskTimeout_DroppedForAHarnessWithoutTheDialog pins the fail-soft
@@ -55,7 +57,9 @@ func TestResumeAskTimeout_DroppedForAHarnessWithoutTheDialog(t *testing.T) {
 	}))
 	codex, err := harness.Resolve(harness.CodexName)
 	require.NoError(t, err)
-	assert.Empty(t, resumeAskTimeout(codex, resumeConvCodex))
+	timeout, err := resumeAskTimeout(codex, resumeConvCodex)
+	require.NoError(t, err, "a posture the harness cannot honour is dropped, never fatal")
+	assert.Empty(t, timeout)
 }
 
 // TestResumeRemoteControl_PreservesRecordedPosture pins that an agent that was
@@ -71,15 +75,21 @@ func TestResumeRemoteControl_PreservesRecordedPosture(t *testing.T) {
 
 	h, err := harness.Resolve(harness.DefaultName)
 	require.NoError(t, err)
-	assert.True(t, resumeRemoteControl(h, resumeConvClaude))
+	on, err := resumeRemoteControl(h, resumeConvClaude)
+	require.NoError(t, err)
+	assert.True(t, on)
 
 	// Never in the direction of more exposure: a harness with no Remote Access
 	// resumes without it rather than failing.
 	codex, err := harness.Resolve(harness.CodexName)
 	require.NoError(t, err)
-	assert.False(t, resumeRemoteControl(codex, resumeConvClaude))
+	off, err := resumeRemoteControl(codex, resumeConvClaude)
+	require.NoError(t, err)
+	assert.False(t, off)
 	// And an unrecorded conversation stays off.
-	assert.False(t, resumeRemoteControl(h, resumeConvCodex))
+	unrecorded, err := resumeRemoteControl(h, resumeConvCodex)
+	require.NoError(t, err)
+	assert.False(t, unrecorded)
 }
 
 // TestResumeContextPosture_ReadsTheRecordedValues pins the row-side read the
@@ -96,7 +106,8 @@ func TestResumeContextPosture_ReadsTheRecordedValues(t *testing.T) {
 	require.NoError(t, db.SetSessionContextFeatures(sessionID, map[string]string{"bundled-skills": "off"}))
 	require.NoError(t, db.SetSessionAutoCompactWindow(sessionID, "450000"))
 
-	autoMemory, contextFeatures, autoCompactWindow := resumeContextPosture(resumeConvClaude)
+	autoMemory, contextFeatures, autoCompactWindow, err := resumeContextPosture(resumeConvClaude)
+	require.NoError(t, err)
 	assert.True(t, autoMemory)
 	assert.Equal(t, map[string]string{"bundled-skills": "off"}, contextFeatures)
 	assert.Equal(t, "450000", autoCompactWindow)

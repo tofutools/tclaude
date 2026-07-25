@@ -416,13 +416,18 @@ func runNew(params *NewParams) error {
 		return err
 	}
 
-	// Validate --sandbox up front WITHOUT defaulting it: a direct
+	// Validate --sandbox up front WITHOUT defaulting it: a FRESH
 	// `tclaude session new` is the human's own session, and the human is the
 	// trust root — tclaude must not silently override their config.toml
 	// sandbox_mode, so we emit a sandbox flag only when they pass it explicitly.
 	// (The daemon spawn path is where the secure default belongs — an
 	// agentd-spawned agent is the untrusted party — and it threads the resolved
-	// mode in explicitly.) For Claude Code, ValidateSandboxMode normalizes its
+	// mode in explicitly.) On a --resume params.Sandbox may already carry the
+	// conversation's RECORDED mode, filled by applyRecordedLaunchPosture before
+	// runNew: a relaunch replays the containment decision that was made rather
+	// than re-deriving a new one, and erasing it would be permanent (TCL-730).
+	// That is a replay, not a default — an explicit flag still wins.
+	// For Claude Code, ValidateSandboxMode normalizes its
 	// inherit/blank to "" (no `--settings` override); the spawner turns on/off
 	// into the override. The cwd-safety check needs the resolved cwd, so it
 	// happens later.
@@ -533,11 +538,13 @@ func runNew(params *NewParams) error {
 	}
 
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
-	// trust-root reason as --sandbox above: a direct `tclaude session new` is
+	// trust-root reason as --sandbox above: a FRESH `tclaude session new` is
 	// the human's own session and they can attach to answer prompts, so tclaude
 	// emits the approval/permission flag only when they pass it explicitly. The
 	// daemon spawn path is where each harness's safe default belongs (its pane
-	// is unattended) and it threads the resolved value in explicitly. The value
+	// is unattended) and it threads the resolved value in explicitly. A --resume
+	// may arrive with the recorded posture already on params, on the same replay
+	// terms as --sandbox above. The value
 	// is validated per-harness (Codex's --ask-for-approval policy vs Claude
 	// Code's --permission-mode); for Claude, inherit/blank normalizes to "" (no
 	// --permission-mode override). The spawner emits the harness-appropriate flag.
@@ -583,9 +590,11 @@ func runNew(params *NewParams) error {
 
 	// Gate --remote-control: arming built-in Remote Access at launch is a
 	// Claude Code feature (the --remote-control flag), so setting it for a
-	// harness without Remote Access (Codex) errors here. Off unless opted into,
-	// so one ResolveRemoteControl serves both this direct path and the daemon
-	// path. See JOH-258.
+	// harness without Remote Access (Codex) errors here. Off unless opted into
+	// on a fresh launch — or unless a --resume carried the conversation's
+	// recorded posture onto params, which reproduces reachability the agent
+	// already had rather than granting new. One ResolveRemoteControl serves this
+	// direct path and the daemon path. See JOH-258.
 	remoteControl, err := harness.ResolveRemoteControl(h, params.RemoteControl)
 	if err != nil {
 		return err
@@ -876,11 +885,14 @@ func runNew(params *NewParams) error {
 
 	// Spawn-posture warnings: the Claude unsandboxed-autonomy pairing (TCL-586)
 	// and OpenCode's look-like-a-sandbox access-control mode. Unlike the daemon
-	// spawn path this one applies no approval default, so the Claude case only
-	// ever fires on a posture the human asked for by name — but a human who typed
-	// `--permission-mode auto` still deserves to know tclaude found nothing that
-	// confines it. It stays a warning on stderr, never a refusal: the human is
-	// the trust root here.
+	// spawn path this one applies no approval default, so the Claude case fires
+	// only on a posture the human asked for by name OR one a --resume replayed
+	// from the conversation's own record — never on a tclaude-invented default.
+	// A human who typed `--permission-mode auto`, and equally one who typed a
+	// bare `-r` on a conversation recorded under it, deserves to know tclaude
+	// found nothing that confines it; applyRecordedLaunchPosture separately
+	// echoes which postures the resume carried. It stays a warning on stderr,
+	// never a refusal: the human is the trust root here.
 	for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 		fmt.Fprintf(os.Stderr, "%s\n", warning)
 	}
@@ -1160,7 +1172,12 @@ func runNew(params *NewParams) error {
 	// columns. On a --resume the values came from the conversation's own record
 	// via applyRecordedLaunchPosture, so this write keeps them alive rather than
 	// overwriting them. See RecordLaunchPosture.
-	RecordLaunchPosture(sessionID, h, autoMemory, contextFeatures, autoCompactWindow)
+	RecordLaunchPosture(sessionID, h, LaunchPosture{
+		AutoMemory:        autoMemory,
+		ContextFeatures:   contextFeatures,
+		AutoCompactWindow: autoCompactWindow,
+		RemoteControl:     remoteControl,
+	})
 	if h.Name == harness.CodexName {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("failed to seed Codex session model", "session_id", sessionID, "error", err)

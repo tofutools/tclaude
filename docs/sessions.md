@@ -74,9 +74,18 @@ Model and effort are not on that list because they need no help: the harness
 itself remembers which model a conversation runs on across a resume, and the
 status line re-records both on every render.
 
+Because a resume can apply a posture you did not type, it says so: the carried
+flags are echoed on stderr, e.g.
+
+```
+Resuming with this conversation's recorded launch posture (--sandbox --auto-compact-window). Pass a flag explicitly to override it.
+```
+
 A recorded value the relaunch harness cannot honour — a Claude-only posture on a
 Codex resume, or a startup-context feature since retired from the catalog — is
-dropped rather than failing the resume.
+dropped rather than failing the resume. For `--sandbox` and `--ask-for-approval`
+that drop leaves the launch *less* confined than the record, so it is warned
+about on stderr rather than only logged.
 
 **Flags:**
 

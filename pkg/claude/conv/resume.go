@@ -225,7 +225,16 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// Same read-before-write ordering for the AskUserQuestion idle-timeout.
 	// resumeLaunchCmd already applied it to the launch; recording it on the row
 	// below is what keeps it from being asserted away as "known: inherit".
-	askTimeout := resumeAskTimeout(h, rc.ConvID)
+	askTimeout, err := resumeAskTimeout(h, rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
+	remoteControl, err := resumeRemoteControl(h, rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -266,7 +275,12 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// like the spawn path: SaveSession's UPSERT does not own these columns.
 	// Best-effort — the pane is already running with the right env, and a lost
 	// write only costs a FUTURE resume its opt-in.
-	session.RecordLaunchPosture(sessionID, h, autoMemory, contextFeatures, autoCompactWindow)
+	session.RecordLaunchPosture(sessionID, h, session.LaunchPosture{
+		AutoMemory:        autoMemory,
+		ContextFeatures:   contextFeatures,
+		AutoCompactWindow: autoCompactWindow,
+		RemoteControl:     remoteControl,
+	})
 
 	displayName := rc.DisplayName
 	if len(displayName) > 50 {

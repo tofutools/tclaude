@@ -36,9 +36,21 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 }
 
 // RunNew is the exported programmatic entry point. Programmatic callers retain
-// their historical raw launch behavior; only the two direct Cobra entrypoints
-// opt into terminal default resolution through RunNewFromCommand.
+// their historical raw launch behavior for the global default profile; only the
+// two direct Cobra entrypoints opt into terminal default resolution through
+// RunNewFromCommand.
+//
+// The relaunch carryover is NOT part of that opt-in, though, and applies here
+// too: it is not a convenience default, it is what stops a resume from erasing
+// the record. `worktree add` resumes a copied conversation through this entry
+// point, so leaving it out would keep a second `-r` path outside the contract.
+// With no Cobra command there is no Changed() to consult, so the table falls
+// back to "a non-zero value on params is the caller's own" — which is exactly
+// what a programmatic caller expresses.
 func RunNew(params *NewParams) error {
+	if err := applyRecordedLaunchPosture(params, nil); err != nil {
+		return err
+	}
 	return runNew(params)
 }
 

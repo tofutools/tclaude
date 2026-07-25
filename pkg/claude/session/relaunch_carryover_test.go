@@ -41,7 +41,9 @@ func carryoverTestHome(t *testing.T) string {
 }
 
 // fullClaudePosture is a conversation launched with a deliberately non-default
-// posture on every field `session new -r` carries.
+// posture on every field `session new -r` carries. ToolGovernance is an
+// OpenCode-only axis, so a Claude relaunch drops it — carryoverHarness picks the
+// harness that can actually honour each field.
 func fullClaudePosture() *db.AgentRelaunchProfile {
 	features := map[string]string{"bundled-skills": "off"}
 	return &db.AgentRelaunchProfile{
@@ -54,7 +56,21 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 		AutoMemory:             ptr(true),
 		ContextFeatures:        &features,
 		AutoCompactWindow:      ptr("450000"),
+		ToolGovernance:         ptr("ask"),
 	}
+}
+
+// carryoverHarness returns a harness that supports the given carryover flag.
+// Only --tools needs anything other than Claude Code.
+func carryoverHarness(t *testing.T, flag string) *harness.Harness {
+	t.Helper()
+	name := harness.DefaultName
+	if flag == "tools" {
+		name = harness.OpenCodeName
+	}
+	h, err := harness.Resolve(name)
+	require.NoError(t, err)
+	return h
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -183,14 +199,17 @@ func TestLaunchCarryoverDropsValuesTheHarnessCannotHonour(t *testing.T) {
 
 	recorded := fullClaudePosture()
 	params := &NewParams{}
+	dropped := map[string]bool{}
 	for _, field := range launchCarryoverFields {
-		if field.carry(codex, recorded, params) {
-			assert.NotEqual(t, "auto-memory", field.flag)
-			assert.NotEqual(t, "context-features", field.flag)
-			assert.NotEqual(t, "auto-compact-window", field.flag)
-			assert.NotEqual(t, "remote-control", field.flag)
-			assert.NotEqual(t, "ask-user-question-timeout", field.flag)
+		if field.carry(codex, recorded, params) == carryDropped {
+			dropped[field.flag] = true
 		}
+	}
+	// A dropped value must be reported as dropped, not as "nothing recorded" —
+	// that distinction is what makes the operator warning possible.
+	for _, flag := range []string{"sandbox", "auto-memory", "context-features",
+		"auto-compact-window", "remote-control", "ask-user-question-timeout"} {
+		assert.True(t, dropped[flag], "a recorded --%s Codex cannot honour must report carryDropped", flag)
 	}
 	assert.False(t, params.AutoMemory)
 	assert.Empty(t, params.ContextFeatures)
@@ -198,6 +217,35 @@ func TestLaunchCarryoverDropsValuesTheHarnessCannotHonour(t *testing.T) {
 	assert.False(t, params.RemoteControl)
 	assert.Empty(t, params.AskUserQuestionTimeout)
 	assert.Empty(t, params.Sandbox, "Claude's sandbox modes are not Codex's")
+	assert.Empty(t, params.Approval, "Claude's permission modes are not Codex approval policies")
+	assert.Empty(t, params.ToolGovernance, "tool governance is an OpenCode knob")
+}
+
+// TestLaunchCarryoverReadsTheFieldItDeclares closes the gap between the
+// `recorded` label and what `carry` actually dereferences: the two structural
+// guards check the label against db.AgentRelaunchProfile, but neither would
+// notice a row whose closure reads a DIFFERENT field. Setting exactly one field
+// on an otherwise-empty posture must make exactly that row carry.
+func TestLaunchCarryoverReadsTheFieldItDeclares(t *testing.T) {
+	full := reflect.ValueOf(*fullClaudePosture())
+
+	for _, field := range launchCarryoverFields {
+		t.Run(field.flag, func(t *testing.T) {
+			h := carryoverHarness(t, field.flag)
+			only := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+			value := full.FieldByName(field.recorded)
+			require.True(t, value.IsValid(), "no such profile field")
+			require.False(t, value.IsNil(), "fullClaudePosture must set %s for this test to mean anything", field.recorded)
+			reflect.ValueOf(&only).Elem().FieldByName(field.recorded).Set(value)
+
+			assert.Equal(t, carryApplied, field.carry(h, &only, &NewParams{}),
+				"--%s must carry when only %s is recorded", field.flag, field.recorded)
+
+			empty := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+			assert.Equal(t, carryUnrecorded, field.carry(h, &empty, &NewParams{}),
+				"--%s must read %s, and report unknown when it is unset", field.flag, field.recorded)
+		})
+	}
 }
 
 // TestApplyRecordedLaunchPosture_SkipsNonResumeAndManagedLaunches pins the two
