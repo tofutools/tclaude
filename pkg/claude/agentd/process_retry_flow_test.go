@@ -145,6 +145,30 @@ func TestProcessRuntimeRetriesFailedProgramUntilItSucceeds(t *testing.T) {
 		"public evidence distinguishes attempts through the existing command payload")
 }
 
+// TestProcessRuntimeRefusesAnUnthrottledRetryBudget proves the cap is enforced
+// where it matters: run creation. Retries here are immediate, so an unbounded
+// budget would be an unthrottled spawn loop with no run-cancel verb to stop it.
+// The refusal lands before a run exists at all.
+func TestProcessRuntimeRefusesAnUnthrottledRetryBudget(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processRetryTemplate("unthrottled", 1_000_000))
+
+	refused := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateId": "unthrottled", "authorizeProgramProfiles": []string{"safe"},
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), `"code":"process_run_invalid"`)
+	assert.Contains(t, refused.Body.String(), "nodes.task-01.retry.maxAttempts")
+
+	list := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	var listed struct {
+		Runs []processRuntimeRunView `json:"runs"`
+	}
+	testharness.DecodeJSON(t, list, &listed)
+	assert.Empty(t, listed.Runs, "an over-budget template must not create a run")
+}
+
 // TestProcessRuntimeExhaustedRetryBudgetFailsTheRun pins this slice's
 // deliberately unchanged exhaustion disposition: once the authored budget is
 // spent the run follows today's failure and drain behaviour.

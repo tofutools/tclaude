@@ -83,8 +83,10 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   a shell, with a bounded environment and output.
 - Human deciders on decision nodes.
 - Bounded program retries. A program task may declare
-  `retry.maxAttempts: <n>`, which **includes the first attempt**. A failed
-  attempt inside the budget re-readies only that node and runs a fresh attempt;
+  `retry.maxAttempts: <n>`, which **includes the first attempt** and is capped
+  at 100 — retries here run back to back, so an unbounded budget would be an
+  unthrottled loop with no run-cancel verb to stop it. A failed attempt inside
+  the budget re-readies only that node and runs a fresh attempt;
   parallel siblings are untouched and are neither cancelled nor renumbered. A
   task with no `retry` stays fail-fast. Every attempt of a node carries its own
   attempt number and its own command id, so a delayed or duplicated report from

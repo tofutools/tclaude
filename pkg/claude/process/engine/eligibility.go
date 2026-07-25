@@ -8,6 +8,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
+// maxExecutableRetryAttempts caps an authored retry budget, first attempt
+// included. Every executable retry here is immediate — backoff waits are not
+// executable and the next attempt commits with the failed observation — and
+// there is no run-cancel verb, so an unbounded budget is an unthrottled spawn
+// loop with nothing short of a daemon restart to interrupt it. Revisit when
+// real throttling exists.
+const maxExecutableRetryAttempts = 100
+
 // CheckEligibility reports why an authoring-valid template cannot execute in
 // the deliberately small M2 engine. Authoring errors are returned unchanged;
 // execution capability checks never redefine what templates are valid to edit.
@@ -80,6 +88,10 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			default:
 				if node.Retry.MaxAttempts <= 0 {
 					add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
+				} else if node.Retry.MaxAttempts > maxExecutableRetryAttempts {
+					add("unsupported_retry", path+".retry.maxAttempts", fmt.Sprintf(
+						"an executable retry budget is at most %d attempts including the first; got %d, and this engine retries immediately with no backoff wait to throttle it",
+						maxExecutableRetryAttempts, node.Retry.MaxAttempts))
 				}
 				if strings.TrimSpace(node.Retry.Backoff) != "" {
 					add("unsupported_retry", path+".retry.backoff", "retry backoff waits are not executable in this engine yet")

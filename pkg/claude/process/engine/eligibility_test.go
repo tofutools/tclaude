@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -96,6 +97,62 @@ func TestBoundedProgramRetryIsEligible(t *testing.T) {
 	definition := mustPrepare(t, sequentialTemplate("task"), nil)
 	if got := definition.nodes[definition.index["task"]].maxAttempts; got != 1 {
 		t.Fatalf("default budget = %d, want 1", got)
+	}
+}
+
+// TestExecutableRetryBudgetIsCapped pins the ceiling exactly at its boundary.
+// Every executable retry here is immediate — backoff is ineligible and the next
+// attempt commits with the failed observation — so an unbounded budget is an
+// unthrottled spawn loop with no run-cancel verb to stop it.
+//
+// The gate is eligibility, not authoring: a template that reaches Prepare by
+// some other route still fails closed, which is what stops an over-budget
+// definition from ever backing a run.
+func TestExecutableRetryBudgetIsCapped(t *testing.T) {
+	atCap := retryTemplate(&model.RetryPolicy{MaxAttempts: maxExecutableRetryAttempts})
+	assertAuthoringValid(t, atCap)
+	if diagnostics := CheckEligibility(atCap); len(diagnostics) != 0 {
+		t.Fatalf("the budget at the cap was refused: %#v", diagnostics)
+	}
+	definition, err := Prepare(atCap, nil)
+	if err != nil {
+		t.Fatalf("prepare at the cap: %v", err)
+	}
+	if got := definition.nodes[definition.index["task"]].maxAttempts; got != maxExecutableRetryAttempts {
+		t.Fatalf("prepared budget = %d, want the cap %d", got, maxExecutableRetryAttempts)
+	}
+
+	for _, budget := range []int{maxExecutableRetryAttempts + 1, 1_000_000} {
+		overCap := retryTemplate(&model.RetryPolicy{MaxAttempts: budget})
+		// Authoring still accepts it: this is an execution capability limit, not a
+		// redefinition of what templates are valid to edit.
+		assertAuthoringValid(t, overCap)
+		diagnostics := CheckEligibility(overCap)
+		if !hasCodeAtPath(diagnostics, "unsupported_retry", "nodes.task.retry.maxAttempts") {
+			t.Fatalf("budget %d was admitted: %#v", budget, diagnostics)
+		}
+		if _, err := Prepare(overCap, nil); !errors.Is(err, ErrTemplateIneligible) {
+			t.Fatalf("Prepare admitted budget %d: %v", budget, err)
+		}
+	}
+
+	// The cap is the checkpoint's upper bound too: validateAttempts compares
+	// against the prepared budget, so the two can never disagree about what a
+	// loadable attempt number is.
+	checkpoint, err := Initialize("run-capped", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.Nodes["task"] = NodeRunning
+	checkpoint.Attempts = map[string]int{"task": maxExecutableRetryAttempts}
+	checkpoint.Commands = []Command{programCommand(checkpoint.RunID,
+		definition.nodes[definition.index["task"]], maxExecutableRetryAttempts)}
+	if err := ValidateCheckpoint(checkpoint, definition); err != nil {
+		t.Fatalf("an attempt at the cap must load: %v", err)
+	}
+	checkpoint.Attempts["task"] = maxExecutableRetryAttempts + 1
+	if err := ValidateCheckpoint(checkpoint, definition); !errors.Is(err, ErrInvalidCheckpoint) {
+		t.Fatalf("an attempt past the cap loaded: %v", err)
 	}
 }
 

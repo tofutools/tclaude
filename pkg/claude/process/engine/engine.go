@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Initialize creates the exact pre-execution v2 state from one prepared
+// Initialize creates the exact pre-execution v3 state from one prepared
 // definition. It performs no implicit advancement: the entry node is the sole
 // ready node and every authored edge begins unresolved. As a creation boundary
 // it runs the full structural ValidateCheckpoint once on the constructed state;
