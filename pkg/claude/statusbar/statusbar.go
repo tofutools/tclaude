@@ -263,29 +263,12 @@ func run() error {
 	// agent pinned to 450K of a 1M window would read "21% used" while sitting
 	// nearly half-way to its next compaction, which is the opposite of what the
 	// bar is for.
-	//
-	// The pin is read from this process's own environment rather than the
-	// session row: the status line runs inside the agent's pane, so the variable
-	// it sees is exactly the one Claude Code is acting on — including a window an
-	// operator exported by hand, outside any tclaude launch.
 	rawWindow := int64(0)
 	if input.ContextWindow.ContextWindowSize != nil {
 		rawWindow = *input.ContextWindow.ContextWindowSize
 	}
-	// Route the environment through the SAME parser the spawn boundary uses, so
-	// this pane's bar is governed by a value the rest of the feature would accept:
-	// it applies the 10k–10M bounds and understands the `450k` spelling. Reading
-	// the raw integer instead would let a typo'd `=500` in the operator's shell
-	// re-base every percentage against a 500-token window — clamping the bar to
-	// 100%, storing that, firing the context nudge on every render, and (because
-	// the value is recorded durably below) re-injecting itself on every later
-	// resume. An unparseable value is ignored, leaving Claude Code's own default
-	// threshold in charge, which is the same fail-soft direction
-	// durableRelaunchConfigForConv takes.
-	pinnedWindow := int64(0)
-	if parsed, err := harness.ParseAutoCompactWindow(os.Getenv(harness.AutoCompactWindowEnvVar)); err == nil {
-		pinnedWindow = harness.AutoCompactWindowTokens(parsed)
-	}
+	envPinnedWindow, pinnedWindow := resolvePinnedWindow(
+		os.Getenv(harness.AutoCompactWindowEnvVar), os.Getenv("TCLAUDE_SESSION_ID"))
 	effectiveWindow := harness.EffectiveContextWindow(rawWindow, pinnedWindow)
 	ctxPct := int(harness.RebaseContextPercentage(rawCtxPct, rawWindow, effectiveWindow))
 
@@ -334,13 +317,15 @@ func run() error {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
 		}
-		// Record the pin this pane is actually running under, so the dashboard
+		// Record the pin OBSERVED IN THIS PANE'S ENVIRONMENT, so the dashboard
 		// renders the same effective window this bar does. A no-op on the empty
 		// string, so it can only ever ADD a window an operator exported by hand —
 		// never erase one a tclaude launch deliberately recorded. See
-		// UpdateSessionAutoCompactWindow.
-		if pinnedWindow > 0 {
-			if err := db.UpdateSessionAutoCompactWindow(sessionID, strconv.FormatInt(pinnedWindow, 10)); err != nil {
+		// UpdateSessionAutoCompactWindow. Gated on the environment-observed value
+		// rather than the resolved one so a window READ from the row is not written
+		// straight back to it.
+		if envPinnedWindow > 0 {
+			if err := db.UpdateSessionAutoCompactWindow(sessionID, strconv.FormatInt(envPinnedWindow, 10)); err != nil {
 				slog.Warn("status-bar: failed to update session auto-compact window", "error", err, "module", "hooks")
 			}
 		}
@@ -363,7 +348,8 @@ func run() error {
 
 	var line2 []string
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
-	line2 = append(line2, fmt.Sprintf("%s %s %s", modelLabel, contextBar(ctxPct), ctxLabel))
+	line2 = append(line2, fmt.Sprintf("%s%s %s %s",
+		modelLabel, contextWindowTag(effectiveWindow), contextBar(ctxPct), ctxLabel))
 
 	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan).
 	// Falls back to Anthropic usage API (cached) when statusline input lacks rate limit data
@@ -521,6 +507,14 @@ func run() error {
 // ("claude-opus-5" -> "opus-5"). Only when neither field carries anything
 // does it use the "ukn-mdl" (unknown model) placeholder, so the statusline
 // never renders a meaningless label when a real model string is available.
+//
+// The label names the MODEL only. Any context-window marker Claude Code bakes
+// into its display name ("Opus 5 (1M context)") is stripped here, because the
+// caller appends the window the bar is actually measured against — see
+// contextWindowTag. Leaving it in produced the worst possible reading: the
+// mashed-together "o5(1Mcontext)" advertised a 1M window on a pane whose bar
+// was re-based onto a 450k pin, so the one window number on the line was the
+// one number that did not apply.
 func shortModelLabel(displayName, id string) string {
 	// unknownModel is the last-resort tag when neither display_name nor id
 	// carries anything — a distinct "unknown model" marker rather than a
@@ -530,6 +524,7 @@ func shortModelLabel(displayName, id string) string {
 	if raw == "" {
 		raw = strings.TrimSpace(id)
 	}
+	raw = strings.TrimSpace(trimContextParenthetical(raw))
 	// Drop a trailing [1m]/[1M] 1M-window suffix; the label never showed it.
 	if len(raw) >= len("[1m]") && strings.EqualFold(raw[len(raw)-len("[1m]"):], "[1m]") {
 		raw = strings.TrimSpace(raw[:len(raw)-len("[1m]")])
@@ -543,6 +538,109 @@ func shortModelLabel(displayName, id string) string {
 	// Single token: a full model ID or a one-word display name. Strip the
 	// "claude-" vendor prefix so "claude-opus-5" reads as "opus-5".
 	return strings.TrimPrefix(strings.ToLower(raw), "claude-")
+}
+
+// resolvePinnedWindow reports the auto-compaction window this pane is running
+// under, in tokens, as (observed, resolved). Both are 0 when nothing is pinned —
+// which is the ORDINARY case: most agents never pin a window and simply run on
+// Claude Code's own per-model default. Neither an absent variable nor an absent
+// session row is an error, and neither produces a diagnostic.
+//
+// `observed` is what this process found in its own environment; `resolved` is
+// what the bar should be measured against. They differ only when the environment
+// carried nothing and the session row supplied a window.
+//
+// WHY THE ENVIRONMENT COMES FIRST. The status line runs inside the agent's pane,
+// so the variable it sees is exactly the one Claude Code is acting on — including
+// a window an operator exported by hand, outside any tclaude launch, which no row
+// would ever know about.
+//
+// WHY THE ROW IS CONSULTED AT ALL. A hook process is not guaranteed to inherit
+// the pane's environment. When it does not, an environment-only read leaves the
+// pane's meter measured against the model's full window while the dashboard —
+// which reads this same column — measures against the pin. Same agent, same
+// moment, two different answers, and the pane is the wrong one. That asymmetry is
+// exactly what an operator reported after the window landed.
+//
+// WHY ONLY `observed` MAY BE WRITTEN BACK. The row write's safety property is
+// "an observer may only ADD a pin the launch did not know about, never erase
+// one". That holds for something seen live in the environment; echoing a value
+// that came FROM the row back to it proves nothing and only muddies which writer
+// last spoke.
+func resolvePinnedWindow(envValue, sessionID string) (observed, resolved int64) {
+	// Route the environment through the SAME parser the spawn boundary uses, so
+	// this pane's bar is governed by a value the rest of the feature would accept:
+	// it applies the 10k–10M bounds and understands the `450k` spelling. Reading
+	// the raw integer instead would let a typo'd `=500` in the operator's shell
+	// re-base every percentage against a 500-token window — clamping the bar to
+	// 100%, storing that, firing the context nudge on every render, and (because
+	// the value is recorded durably by the caller) re-injecting itself on every
+	// later resume. An unparseable value is ignored, leaving Claude Code's own
+	// default threshold in charge, which is the same fail-soft direction
+	// durableRelaunchConfigForConv takes.
+	if parsed, err := harness.ParseAutoCompactWindow(envValue); err == nil {
+		observed = harness.AutoCompactWindowTokens(parsed)
+	}
+	if observed > 0 {
+		return observed, observed
+	}
+	// The row's value is already canonical (SetSessionAutoCompactWindow stores
+	// what ResolveAutoCompactWindow parsed), so AutoCompactWindowTokens is enough
+	// here — the bounds check the environment path needs was applied at the launch
+	// boundary that wrote it. A read error is fail-soft for the same reason an
+	// unparseable environment value is: no pin, the model's window stands.
+	window, err := db.GetSessionAutoCompactWindow(sessionID)
+	if err != nil {
+		slog.Warn("status-bar: failed to read session auto-compact window",
+			"error", err, "module", "hooks")
+		return observed, 0
+	}
+	return observed, harness.AutoCompactWindowTokens(window)
+}
+
+// trimContextParenthetical removes a trailing parenthesised context-window
+// marker from a model name ("Opus 5 (1M context)" -> "Opus 5").
+//
+// It matches on the word "context" rather than on "any trailing parenthetical"
+// deliberately. Claude Code is free to qualify a display name for reasons that
+// have nothing to do with capacity, and a future "Opus 5 (fast)" must keep its
+// qualifier: dropping it would make two genuinely different models render as the
+// same tag. Only the marker the status line is about to state itself, more
+// precisely, is removed.
+func trimContextParenthetical(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if !strings.HasSuffix(trimmed, ")") {
+		return name
+	}
+	open := strings.LastIndex(trimmed, "(")
+	if open < 0 {
+		return name
+	}
+	if !strings.Contains(strings.ToLower(trimmed[open:]), "context") {
+		return name
+	}
+	return strings.TrimSpace(trimmed[:open])
+}
+
+// contextWindowTag renders the parenthesised window marker the status line
+// appends to its model label: the window the context bar beside it is measured
+// against — "(450k)" on an agent pinned to 450k, "(1M)" on an unpinned 1M model.
+//
+// This is the whole point of the label. The percentage is silently re-based onto
+// the effective window, so without a marker naming that window a pinned pane and
+// an unpinned one render identically and an operator has no way to tell that
+// compaction is going to fire at 450k. Only ONE window is ever shown, and it is
+// always the effective one; per operator decision the raw model-relative
+// percentage is not surfaced alongside it.
+//
+// An unknown window (no pin AND no context_window_size from the harness) yields
+// "", so the label degrades to the bare model tag rather than naming a window
+// nobody knows.
+func contextWindowTag(effectiveWindow int64) string {
+	if formatted := harness.FormatContextWindowTokens(effectiveWindow); formatted != "" {
+		return "(" + formatted + ")"
+	}
+	return ""
 }
 
 // gitCmd runs a git command and returns trimmed stdout, or empty string on error.

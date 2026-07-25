@@ -1087,6 +1087,43 @@ func UpdateSessionAutoCompactWindow(sessionID, window string) error {
 	return err
 }
 
+// GetSessionAutoCompactWindow returns the auto-compaction window recorded for a
+// session row, or "" when none is recorded.
+//
+// This is the read twin of the two writers above, and it exists for the STATUS
+// LINE. The status line runs as a hook process inside the agent's pane and would
+// rather read the pin out of its own environment — that is the value Claude Code
+// is provably acting on. But a hook process is not guaranteed to inherit the
+// pane's environment, and when it does not, reading only the environment makes
+// the pane's context meter silently disagree with the dashboard's (which reads
+// this column): same agent, same moment, two different windows. Consulting the
+// column as a fallback closes that gap.
+//
+// Deliberately keyed by session id rather than conv id, and deliberately NOT
+// routed through AutoCompactWindowForConv: the relaunch-profile lookup that one
+// performs describes what the NEXT launch should do, whereas the status line
+// needs what THIS pane was launched with. Those differ exactly when an operator
+// has edited the profile mid-session, and rendering the pending value would put
+// a window on the bar that compaction is not yet using.
+func GetSessionAutoCompactWindow(id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", nil
+	}
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var window sql.NullString
+	err = d.QueryRow(`SELECT auto_compact_window FROM sessions WHERE id = ?`, id).Scan(&window)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(window.String), nil
+}
+
 // AutoCompactWindowForConv reports durable agent intent, or the unmanaged
 // conversation fallback — the AutoCompactWindow twin of AutoMemoryForConv.
 // Legacy sessions are consulted only when v145 projection has not occurred.

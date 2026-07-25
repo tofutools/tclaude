@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestParseAutoCompactWindow(t *testing.T) {
 	// Every accepted spelling, and the one canonical form they all collapse to.
@@ -171,9 +174,45 @@ func TestFormatAutoCompactWindow(t *testing.T) {
 		"1000000": "1M",
 		"450500":  "450500",
 		"nope":    "",
+		"0":       "",
+		"-1":      "",
 	} {
 		if got := FormatAutoCompactWindow(in); got != want {
 			t.Errorf("FormatAutoCompactWindow(%q) = %q; want %q", in, got, want)
+		}
+	}
+}
+
+// TestFormatContextWindowTokens covers the int64 twin the status line renders its
+// window marker from. The "" answer for a non-positive count is load-bearing: it
+// is how a caller that knows no window at all — no pin, and no
+// context_window_size from the harness yet — omits the marker rather than
+// printing "(0)". That is an ordinary render, not an error.
+func TestFormatContextWindowTokens(t *testing.T) {
+	for in, want := range map[int64]string{
+		450_000:   "450k",
+		1_000_000: "1M",
+		200_000:   "200k",
+		450_500:   "450500",
+		0:         "",
+		-1:        "",
+	} {
+		if got := FormatContextWindowTokens(in); got != want {
+			t.Errorf("FormatContextWindowTokens(%d) = %q; want %q", in, got, want)
+		}
+	}
+}
+
+// TestFormatAutoCompactWindowDelegates keeps the string and int64 spellings from
+// drifting: a given window must render identically whichever entry point a
+// surface reaches for, or the dashboard and the status line would name the same
+// window two different ways.
+func TestFormatAutoCompactWindowDelegates(t *testing.T) {
+	for _, tokens := range []int64{10_000, 200_000, 450_000, 450_500, 1_000_000, 10_000_000} {
+		str := strconv.FormatInt(tokens, 10)
+		if got, want := FormatAutoCompactWindow(str), FormatContextWindowTokens(tokens); got != want {
+			t.Errorf("FormatAutoCompactWindow(%q) = %q; FormatContextWindowTokens(%d) = %q",
+				str, got, tokens, want)
 		}
 	}
 }
