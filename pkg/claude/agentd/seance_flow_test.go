@@ -72,6 +72,27 @@ type seanceRunView struct {
 	Harness     string `json:"harness"`
 }
 
+func haveSeanceSession(f *testharness.Flow, convID, label, tmuxSession, cwd string) {
+	f.HaveAliveSession(convID, label, tmuxSession, cwd)
+	setSeanceSessionSnapshot(f.T, convID, sandboxpolicy.EmptySnapshot())
+}
+
+func haveSeanceCodexSession(f *testharness.Flow, convID, label, tmuxSession, cwd string) {
+	f.HaveAliveCodexSession(convID, label, tmuxSession, cwd)
+	setSeanceSessionSnapshot(f.T, convID, sandboxpolicy.EmptySnapshot())
+}
+
+func setSeanceSessionSnapshot(t *testing.T, convID string, snapshot sandboxpolicy.Snapshot) {
+	t.Helper()
+	rows, err := db.FindSessionsByConvID(convID)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	for _, row := range rows {
+		row.EffectiveSandbox = &snapshot
+		require.NoError(t, db.SaveSession(row))
+	}
+}
+
 // Production-path contract: the daemon resolves the caller's stable actor,
 // walks the real succession table backward, and returns the dead generation's
 // harness + cwd. The caller never needs direct access to ~/.tclaude/data.
@@ -86,11 +107,11 @@ func TestSeancePlan_DefaultAndSelectorsResolveThroughDaemon(t *testing.T) {
 	newCwd := f.TestCwd("seance-new")
 
 	f.HaveConvWithTitle(oldConv, "worker-x")
-	f.HaveAliveSession(oldConv, "seance-old-label", "seance-old-tmux", oldCwd)
+	haveSeanceSession(f, oldConv, "seance-old-label", "seance-old-tmux", oldCwd)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "worker")
-	f.HaveAliveSession(newConv, "seance-new-label", "seance-new-tmux", newCwd)
+	haveSeanceSession(f, newConv, "seance-new-label", "seance-new-tmux", newCwd)
 	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err, "rotate actor old → new")
 
@@ -195,7 +216,7 @@ func TestSeancePlan_FirstGenerationGetsClearNotFound(t *testing.T) {
 	f := newFlow(t)
 	const conv = "11112222-3333-4444-5555-666677778888"
 	f.HaveConvWithTitle(conv, "first-life")
-	f.HaveAliveSession(conv, "first-life-label", "first-life-tmux", f.TestCwd("first-life"))
+	haveSeanceSession(f, conv, "first-life-label", "first-life-tmux", f.TestCwd("first-life"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", conv)
 
@@ -213,15 +234,15 @@ func TestSeancePlan_PrunedExactGenerationDoesNotRedirect(t *testing.T) {
 	)
 	firstCwd := f.TestCwd("seance-pruned-first")
 	f.HaveConvWithTitle(first, "first")
-	f.HaveAliveSession(first, "first-label", "first-tmux", firstCwd)
+	haveSeanceSession(f, first, "first-label", "first-tmux", firstCwd)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", first)
 	f.HaveConvWithTitle(middle, "middle")
-	f.HaveAliveSession(middle, "middle-label", "middle-tmux", f.TestCwd("seance-pruned-middle"))
+	haveSeanceSession(f, middle, "middle-label", "middle-tmux", f.TestCwd("seance-pruned-middle"))
 	_, err := db.RotateAgentConv(first, middle, "reincarnate")
 	require.NoError(t, err)
 	f.HaveConvWithTitle(head, "head")
-	f.HaveAliveSession(head, "head-label", "head-tmux", f.TestCwd("seance-pruned-head"))
+	haveSeanceSession(f, head, "head-label", "head-tmux", f.TestCwd("seance-pruned-head"))
 	_, err = db.RotateAgentConv(middle, head, "reincarnate")
 	require.NoError(t, err)
 	require.NoError(t, db.DeleteConvIndex(first), "prune first generation from cache")
@@ -254,7 +275,7 @@ func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
 		{id: head, title: "open-head", cwd: f.TestCwd("seance-opencode-head")},
 	} {
 		f.HaveConvWithTitle(generation.id, generation.title)
-		f.HaveAliveSession(generation.id, generation.title+"-label", generation.title+"-tmux", generation.cwd)
+		haveSeanceSession(f, generation.id, generation.title+"-label", generation.title+"-tmux", generation.cwd)
 		row, err := db.GetConvIndex(generation.id)
 		require.NoError(t, err)
 		require.NotNil(t, row)
@@ -309,11 +330,11 @@ func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
 		newConv = "9876fedc-1111-2222-3333-444444444444"
 	)
 	f.HaveConvWithTitle(oldConv, "old")
-	f.HaveAliveSession(oldConv, "old-label", "old-tmux", f.TestCwd("bounded-old"))
+	haveSeanceSession(f, oldConv, "old-label", "old-tmux", f.TestCwd("bounded-old"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "new")
-	f.HaveAliveSession(newConv, "new-label", "new-tmux", f.TestCwd("bounded-new"))
+	haveSeanceSession(f, newConv, "new-label", "new-tmux", f.TestCwd("bounded-new"))
 	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err)
 
@@ -375,11 +396,11 @@ func TestSeanceRun_ExecutesThroughDaemonBoundary(t *testing.T) {
 	)
 	oldCwd := f.TestCwd("seance-run-old")
 	f.HaveConvWithTitle(oldConv, "old-runner")
-	f.HaveAliveSession(oldConv, "old-runner-label", "old-runner-tmux", oldCwd)
+	haveSeanceSession(f, oldConv, "old-runner-label", "old-runner-tmux", oldCwd)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "new-runner")
-	f.HaveAliveSession(newConv, "new-runner-label", "new-runner-tmux", f.TestCwd("seance-run-new"))
+	haveSeanceSession(f, newConv, "new-runner-label", "new-runner-tmux", f.TestCwd("seance-run-new"))
 	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err)
 
@@ -433,7 +454,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	)
 	oldCwd := f.TestCwd("seance-codex-old")
 	newCwd := f.TestCwd("seance-codex-new")
-	f.HaveAliveCodexSession(oldConv, "codex-old", "tmux-codex-old", oldCwd)
+	haveSeanceCodexSession(f, oldConv, "codex-old", "tmux-codex-old", oldCwd)
 	predecessorSnapshot := sandboxpolicy.EmptySnapshot()
 	predecessorSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "POLICY_OWNER", Value: "predecessor",
@@ -450,7 +471,7 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
-	f.HaveAliveCodexSession(newConv, "codex-new", "tmux-codex-new", newCwd)
+	haveSeanceCodexSession(f, newConv, "codex-new", "tmux-codex-new", newCwd)
 	successorSnapshot := sandboxpolicy.EmptySnapshot()
 	successorSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "POLICY_OWNER", Value: "successor",
@@ -476,9 +497,16 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 		assert.Equal(t, oldCwd, cwd)
 		assert.Len(t, launchID, 16)
 		rendered = snapshot
-		return "tclaude-agent-0123456789abcdef", t.TempDir() + "/profile", nil, nil
+		return "tclaude-agent-0123456789abcdef", t.TempDir() + "/profile",
+			&harness.CodexSplitPolicyCapability{ExecutablePath: "/verified/codex"}, nil
 	}
 	t.Cleanup(func() { agentd.EnsureSeanceCodexProfile = previousProfile })
+	previousRevalidate := agentd.RevalidateSeanceCodexCapability
+	agentd.RevalidateSeanceCodexCapability = func(capability harness.CodexSplitPolicyCapability) error {
+		assert.Equal(t, "/verified/codex", capability.ExecutablePath)
+		return nil
+	}
+	t.Cleanup(func() { agentd.RevalidateSeanceCodexCapability = previousRevalidate })
 
 	previousRun := agentd.RunSeanceHarness
 	var captured agentd.SeanceExecPlan
@@ -503,6 +531,97 @@ func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
 	assert.Contains(t, command, "exec resume "+oldConv)
 	assert.Contains(t, command, "--ephemeral")
 	assert.NotContains(t, command, `sandbox_mode="read-only"`)
+	assert.Equal(t, "/verified/codex", captured.Argv[0])
+}
+
+func TestSeanceRun_CodexManagedSandboxRejectsHarnessHomeAsWorkspace(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "c0de1111-1111-2222-3333-444444444444"
+		newConv = "c0de1111-5555-6666-7777-888888888888"
+	)
+	oldCwd := f.TestCwd("seance-codex-home")
+	t.Setenv("HOME", oldCwd)
+	haveSeanceCodexSession(f, oldConv, "codex-home-old", "tmux-codex-home-old", oldCwd)
+	oldRows, err := db.FindSessionsByConvID(oldConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldRows)
+	for _, row := range oldRows {
+		row.SandboxMode = harness.SandboxManagedProfile
+		row.ApprovalPolicy = harness.ApprovalNever
+		require.NoError(t, db.SaveSession(row))
+	}
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	haveSeanceCodexSession(f, newConv, "codex-home-new", "tmux-codex-home-new",
+		f.TestCwd("seance-codex-home-successor"))
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previousProfile := agentd.EnsureSeanceCodexProfile
+	profileCalled := false
+	agentd.EnsureSeanceCodexProfile = func(
+		_, _ string, _ *sandboxpolicy.Snapshot,
+	) (string, string, *harness.CodexSplitPolicyCapability, error) {
+		profileCalled = true
+		return "", "", nil, errors.New("must not be called")
+	}
+	t.Cleanup(func() { agentd.EnsureSeanceCodexProfile = previousProfile })
+
+	previousRun := agentd.RunSeanceHarness
+	runCalled := false
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		runCalled = true
+		return agentd.SeanceExecResult{Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previousRun })
+
+	_, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target": oldConv, "question": "What was recorded?",
+	})
+	assert.Equal(t, http.StatusConflict, status, "body=%s", body)
+	assert.Contains(t, body, "sandbox_cwd_conflict")
+	assert.Contains(t, body, "private harness state writable")
+	assert.False(t, profileCalled)
+	assert.False(t, runCalled)
+}
+
+func TestSeancePlan_MissingPredecessorSnapshotDoesNotBorrowSuccessorAuthority(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "5eed0000-1111-2222-3333-444444444444"
+		newConv = "5eed0000-5555-6666-7777-888888888888"
+	)
+	haveSeanceSession(f, oldConv, "snapshot-old", "tmux-snapshot-old",
+		f.TestCwd("seance-snapshot-old"))
+	oldRows, err := db.FindSessionsByConvID(oldConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldRows)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	haveSeanceSession(f, newConv, "snapshot-new", "tmux-snapshot-new",
+		f.TestCwd("seance-snapshot-new"))
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+	for _, row := range oldRows {
+		require.NoError(t, db.DeleteSession(row.ID))
+	}
+
+	agentID, err := db.AgentIDForConv(newConv)
+	require.NoError(t, err)
+	successor := sandboxpolicy.EmptySnapshot()
+	successor.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "SUCCESSOR_ONLY", Value: "must-not-be-borrowed",
+	}}
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &successor))
+
+	_, status, body := requestSeancePlan(t, f, newConv, map[string]any{
+		"target": oldConv,
+	})
+	assert.Equal(t, http.StatusConflict, status, "body=%s", body)
+	assert.Contains(t, body, "resume_profile")
+	assert.Contains(t, body, "historical sandbox snapshot is unavailable")
+	assert.Contains(t, body, "refusing to substitute the successor")
 }
 
 func TestSeanceRun_BoundsAndFailureModes(t *testing.T) {
@@ -512,11 +631,11 @@ func TestSeanceRun_BoundsAndFailureModes(t *testing.T) {
 		newConv = "face0000-1111-2222-3333-444444444444"
 	)
 	f.HaveConvWithTitle(oldConv, "old-bounds")
-	f.HaveAliveSession(oldConv, "old-bounds-label", "old-bounds-tmux", f.TestCwd("seance-bounds-old"))
+	haveSeanceSession(f, oldConv, "old-bounds-label", "old-bounds-tmux", f.TestCwd("seance-bounds-old"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "new-bounds")
-	f.HaveAliveSession(newConv, "new-bounds-label", "new-bounds-tmux", f.TestCwd("seance-bounds-new"))
+	haveSeanceSession(f, newConv, "new-bounds-label", "new-bounds-tmux", f.TestCwd("seance-bounds-new"))
 	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err)
 
@@ -617,11 +736,11 @@ func TestSeanceRun_ConcurrencyIsBounded(t *testing.T) {
 		newConv = "2222face-1111-2222-3333-444444444444"
 	)
 	f.HaveConvWithTitle(oldConv, "old-concurrent")
-	f.HaveAliveSession(oldConv, "old-concurrent-label", "old-concurrent-tmux", f.TestCwd("seance-concurrent-old"))
+	haveSeanceSession(f, oldConv, "old-concurrent-label", "old-concurrent-tmux", f.TestCwd("seance-concurrent-old"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "new-concurrent")
-	f.HaveAliveSession(newConv, "new-concurrent-label", "new-concurrent-tmux", f.TestCwd("seance-concurrent-new"))
+	haveSeanceSession(f, newConv, "new-concurrent-label", "new-concurrent-tmux", f.TestCwd("seance-concurrent-new"))
 	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err)
 

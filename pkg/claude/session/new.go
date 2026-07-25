@@ -1666,6 +1666,23 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 	return &out, nil
 }
 
+// SandboxSnapshotForOneShotLaunch freezes the exact active filesystem and
+// break-glass rules for a brokered one-shot launch. It is the exported twin of
+// runNew's launch preparation: missing ordinary grants become inactive, while
+// missing denies or acknowledged protected grants fail closed.
+func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+	out, err := sandboxSnapshotForLaunch(snapshot)
+	if err != nil || out == nil {
+		return out, err
+	}
+	breakGlass, err := sandboxpolicy.BreakGlassForLaunch(out.Effective)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+	}
+	out.Effective.BreakGlassFilesystem = breakGlass
+	return out, nil
+}
+
 func commandWithFileCleanup(cmd, path string) string {
 	return commandWithFileCleanupCommand(cmd, CodexProfileCleanupShell(path))
 }

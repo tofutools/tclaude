@@ -107,6 +107,11 @@ var RunSeanceHarness = liveRunSeanceHarness
 // tests replace it so they never touch the operator's real CODEX_HOME.
 var EnsureSeanceCodexProfile = session.EnsureCodexManagedOneShotProfile
 
+// RevalidateSeanceCodexCapability is split separately so flow tests can prove
+// the verified executable is carried into argv without depending on a real
+// platform sandbox probe.
+var RevalidateSeanceCodexCapability = harness.RevalidateCodexHomeSplitPolicyCapability
+
 // handleWhoamiSeance resolves the private-state half of a séance plan.
 //
 // Planning is deliberately free: the actual harness subprocess is only run by
@@ -232,6 +237,18 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	profilePath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			writeError(w, http.StatusBadGateway, "seance_init",
+				"resolve home for the recorded sandbox: "+homeErr.Error())
+			return
+		}
+		if harness.CodexSandboxCwdConflict(harness.SandboxWorkspaceWrite, resolved.Cwd, home) {
+			writeError(w, http.StatusConflict, "sandbox_cwd_conflict",
+				fmt.Sprintf("cannot reproduce the predecessor's managed sandbox in %q: "+
+					"the workspace would make private harness state writable", resolved.Cwd))
+			return
+		}
 		profileName, path, capability, profileErr := EnsureSeanceCodexProfile(
 			resolved.Cwd, session.GenerateSessionID(), resolved.effectiveSandbox)
 		if profileErr != nil {
@@ -246,7 +263,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = os.Remove(profilePath) }()
 	}
 	if splitCapability != nil {
-		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*splitCapability); err != nil {
+		if err := RevalidateSeanceCodexCapability(*splitCapability); err != nil {
 			writeError(w, http.StatusBadGateway, "seance_init",
 				"the harness sandbox could not initialize: "+err.Error())
 			return
@@ -264,6 +281,9 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	if len(argv) == 0 {
 		writeError(w, http.StatusConflict, "unsupported_harness", "the resolved harness returned an empty command")
 		return
+	}
+	if splitCapability != nil {
+		argv[0] = splitCapability.ExecutablePath
 	}
 
 	setAuditTargetConv(r, resolved.Predecessor)
@@ -489,20 +509,15 @@ func resolveSeancePlan(
 	// The session row is the exact generation's immutable launch snapshot. It
 	// is preferable to the stable actor copy here because a séance addresses a
 	// historical generation, not whichever successor currently owns the actor.
-	// Legacy/pruned rows fall back to the durable actor snapshot used by stopped
-	// agent resume.
+	// A legacy/pruned row must fail closed: the stable actor copy belongs to the
+	// successor and may have changed since this generation launched.
 	var effectiveSandbox *sandboxpolicy.Snapshot
-	if sourceRow != nil {
-		effectiveSandbox = sourceRow.EffectiveSandbox
+	if sourceRow == nil || sourceRow.EffectiveSandbox == nil {
+		writeError(w, http.StatusConflict, "resume_profile",
+			"the predecessor's historical sandbox snapshot is unavailable; refusing to substitute the successor's current authority")
+		return seanceResolveResp{}, false
 	}
-	if effectiveSandbox == nil {
-		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(target)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io",
-				"load predecessor sandbox snapshot: "+err.Error())
-			return seanceResolveResp{}, false
-		}
-	}
+	effectiveSandbox = sourceRow.EffectiveSandbox
 	if effectiveSandbox != nil {
 		validated, validateErr := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if validateErr != nil {
@@ -511,6 +526,12 @@ func resolveSeancePlan(
 			return seanceResolveResp{}, false
 		}
 		effectiveSandbox = &validated
+	}
+	effectiveSandbox, err = session.SandboxSnapshotForOneShotLaunch(effectiveSandbox)
+	if err != nil {
+		writeError(w, http.StatusConflict, "sandbox_profile_changed",
+			"the predecessor's recorded sandbox is no longer valid: "+err.Error())
+		return seanceResolveResp{}, false
 	}
 	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, effectiveSandbox); fail != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
