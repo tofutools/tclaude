@@ -162,7 +162,7 @@ func TestRegularMessageProcessingTracksInlineAndPointerFlows(t *testing.T) {
 	assert.False(t, inline.ReadAt.IsZero())
 	assert.True(t, inline.ProcessedAt.IsZero(), "inline prompt waits for a terminal turn hook")
 
-	processed, err := MarkStartedRegularAgentMessagesProcessed(target, time.Now())
+	processed, err := MarkReadRegularAgentMessagesProcessed(target, time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), processed)
 	inline, err = GetAgentMessage(inlineID)
@@ -172,7 +172,7 @@ func TestRegularMessageProcessingTracksInlineAndPointerFlows(t *testing.T) {
 	started, err = MarkRegularAgentMessageStarted(pointerID, target, false, time.Now())
 	require.NoError(t, err)
 	require.True(t, started)
-	processed, err = MarkStartedRegularAgentMessagesProcessed(target, time.Now())
+	processed, err = MarkReadRegularAgentMessagesProcessed(target, time.Now())
 	require.NoError(t, err)
 	assert.Zero(t, processed, "a pointer prompt does not consume the inbox body")
 	pointer, err := GetAgentMessage(pointerID)
@@ -215,6 +215,111 @@ func TestLaterRegularMessagePromptWatermarksEarlierInlineRows(t *testing.T) {
 	later, err := GetAgentMessage(laterID)
 	require.NoError(t, err)
 	assert.True(t, later.ProcessedAt.IsZero(), "current prompt still waits for its terminal hook")
+}
+
+// TCL-737: a terminal hook must acknowledge inline mail whose body reached the
+// pane even when the turn's UserPromptSubmit correlation was missed, so a full
+// queue can always be reopened by the recipient taking one more turn. Pointer
+// mail, whose body never reached the pane, must survive the same hook.
+func TestTerminalHookProcessesReadInlineMailWithoutStartedCorrelation(t *testing.T) {
+	setupTestDB(t)
+	const target = "unstarted-inline-target"
+	_, _, err := EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+
+	inlineID, _, err := InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "inline"}, 2)
+	require.NoError(t, err)
+	claim, claimed, err := ClaimAgentMessageNudge(inlineID, time.Now())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	completed, err := CompleteAgentMessageNudgeState(inlineID, claim, time.Now(), true)
+	require.NoError(t, err)
+	require.True(t, completed)
+
+	pointerID, _, err := InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "pointer"}, 2)
+	require.NoError(t, err)
+	pointerClaim, claimed, err := ClaimAgentMessageNudge(pointerID, time.Now())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	completed, err = CompleteAgentMessageNudgeState(pointerID, pointerClaim, time.Now(), false)
+	require.NoError(t, err)
+	require.True(t, completed)
+
+	inline, err := GetAgentMessage(inlineID)
+	require.NoError(t, err)
+	require.False(t, inline.ReadAt.IsZero(), "inline delivery put the body in the pane")
+	require.True(t, inline.StartedAt.IsZero(), "no UserPromptSubmit hook correlated the injected prompt")
+
+	processed, err := MarkReadRegularAgentMessagesProcessed(target, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), processed, "the terminal hook drains read-but-unacknowledged inline mail")
+
+	inline, err = GetAgentMessage(inlineID)
+	require.NoError(t, err)
+	assert.False(t, inline.ProcessedAt.IsZero())
+	pointer, err := GetAgentMessage(pointerID)
+	require.NoError(t, err)
+	assert.True(t, pointer.ReadAt.IsZero())
+	assert.True(t, pointer.ProcessedAt.IsZero(), "pointer mail still pends until inbox read")
+
+	// The freed slot is real capacity, and the pointer row still holds its own.
+	_, pending, err := InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "reopened"}, 2)
+	require.NoError(t, err)
+	assert.Equal(t, 2, pending)
+	_, _, err = InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "over capacity"}, 2)
+	var full *AgentMessageQueueFullError
+	require.ErrorAs(t, err, &full, "unread pointer mail keeps counting against the bound")
+}
+
+// MarkReadRegularAgentMessagesProcessed treats read_at on a regular_send row as
+// proof the body reached the pane, which is only sound while every
+// explicit-read path stamps read_at and processed_at together. A future path
+// that marked a regular row read without processing it would make the sweep
+// silently acknowledge pointer mail the agent never fetched — the contract
+// TestMessageBackpressureTerminalHookLeavesPointerMailPending protects. This
+// pins the coupling at each explicit-read entry point.
+func TestExplicitReadPathsNeverLeaveRegularMailReadButUnprocessed(t *testing.T) {
+	setupTestDB(t)
+	const target = "read-coupling-target"
+	_, _, err := EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+
+	seedUnreadPointer := func(t *testing.T) int64 {
+		t.Helper()
+		id, _, err := InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "pointer"}, 10)
+		require.NoError(t, err)
+		require.NoError(t, MarkAgentMessageDelivered(id))
+		message, err := GetAgentMessage(id)
+		require.NoError(t, err)
+		require.True(t, message.ReadAt.IsZero())
+		require.True(t, message.ProcessedAt.IsZero())
+		return id
+	}
+
+	for name, markRead := range map[string]func(t *testing.T, id int64){
+		"MarkAgentMessageRead": func(t *testing.T, id int64) {
+			require.NoError(t, MarkAgentMessageRead(id))
+		},
+		"SetAgentMessagesRead": func(t *testing.T, id int64) {
+			_, err := SetAgentMessagesRead([]int64{id}, true)
+			require.NoError(t, err)
+		},
+		"MarkAgentMailboxRead": func(t *testing.T, _ int64) {
+			_, err := MarkAgentMailboxRead(target)
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := seedUnreadPointer(t)
+			markRead(t, id)
+			message, err := GetAgentMessage(id)
+			require.NoError(t, err)
+			require.False(t, message.ReadAt.IsZero(), "%s marks the row read", name)
+			assert.False(t, message.ProcessedAt.IsZero(),
+				"%s must acknowledge a regular row in the same write, or the terminal-hook sweep "+
+					"would later treat this row as inline mail that reached the pane", name)
+		})
+	}
 }
 
 func backpressureAgentIDForConv(t *testing.T, convID string) string {

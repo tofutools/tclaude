@@ -635,6 +635,12 @@ type AgentMessage struct {
 	// inline turn ends or the recipient explicitly reads the inbox row, and
 	// NudgeDiscardedAt records an offline notification attempt deliberately
 	// suppressed without discarding the durable unread message.
+	//
+	// StartedAt no longer gates whether a row is acknowledged — a missed
+	// UserPromptSubmit correlation must not pin a queue slot (TCL-737). It
+	// survives as the watermark input to MarkReadRegularAgentMessagesProcessed
+	// ("the newest prompt this recipient actually began") and as diagnostics;
+	// do not reintroduce it as a required predicate.
 	RegularSend       bool
 	StartedAt         time.Time
 	ProcessedAt       time.Time
@@ -2905,6 +2911,14 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 	// Reaching a later injected message proves the harness advanced past any
 	// earlier prompt for this recipient. Only already-read rows qualify here,
 	// which recovers missed inline hooks without falsely consuming pointer mail.
+	//
+	// This keeps delivered_at != '' while the same watermark in
+	// MarkReadRegularAgentMessagesProcessed does not; the difference is
+	// deliberate, not drift. Reached from UserPromptSubmit, this statement can
+	// run before the daemon's post-send completion stamp lands, so delivered_at
+	// distinguishes a genuine pane delivery from a row still mid-flight. By the
+	// time a terminal hook runs there is nothing left to disambiguate, and
+	// read_at alone already implies the body reached the pane.
 	if _, err := tx.Exec(`UPDATE agent_messages SET processed_at = ?
 		WHERE id < ? AND regular_send = 1 AND delivered_at != '' AND read_at != '' AND processed_at = ''
 		  AND `+targetWhere, stamp, id, convID, convID); err != nil {
@@ -2916,10 +2930,57 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 	return true, nil
 }
 
-// MarkStartedRegularAgentMessagesProcessed acknowledges inline regular prompts
-// whose full body was consumed and whose turn reached a terminal hook. Pointer
-// notifications remain pending until inbox read marks their row processed.
-func MarkStartedRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
+// MarkReadRegularAgentMessagesProcessed acknowledges regular messages whose
+// full body is already in the recipient's pane, once its turn reaches a
+// terminal hook. Pointer notifications remain pending until inbox read marks
+// their row processed.
+//
+// read_at is deliberately the only delivery predicate here, which rests on an
+// invariant worth stating explicitly: on a regular_send row, read_at != '' with
+// processed_at == '' can only mean inline pane delivery. Exactly three writers
+// produce that state, and all three put the full body in the pane:
+//
+//   - MarkAgentMessageDeliveredState (the direct-send twin), consumed only
+//   - CompleteAgentMessageNudgeState (the daemon's post-send stamp), consumed only
+//   - the inline branch of MarkRegularAgentMessageStarted
+//
+// Every explicit-read path — MarkAgentMessageRead, SetAgentMessagesRead,
+// MarkAgentMailboxRead — stamps read_at and processed_at together on a regular
+// row, so it never lands here. Pointer nudges leave read_at empty entirely.
+// TestExplicitReadPathsNeverLeaveRegularMailReadButUnprocessed pins that
+// coupling: a future path that marks a regular row read without processing it
+// would make this sweep silently acknowledge mail the agent never fetched.
+//
+// Requiring started_at as well used to wedge the recipient permanently
+// (TCL-737): an inline turn that missed its UserPromptSubmit correlation, or
+// whose Stop hook never fired, left a row read-but-unprocessed. Nothing showed
+// it as unread, the backlog gate counted it, and the only self-heal — the
+// catch-up in MarkRegularAgentMessageStarted — needed a NEW inline message that
+// the full queue rejected first.
+//
+// The id watermark is what keeps this from trading that deadlock for an
+// unbounded queue. Delivery is not gated on the pane being idle
+// (deliverablePane admits a working pane), so mail sent to a busy recipient is
+// send-keys'd mid-turn and waits in the harness input box. Acknowledging every
+// read row on each Stop would therefore bound admissions per turn rather than
+// outstanding work: a sender faster than the recipient's turn rate would be
+// readmitted a full queue every turn while the recipient consumed one prompt,
+// growing the queued-prompt backlog without limit. So instead:
+//
+//   - When a prompt did begin this turn, acknowledge every read row up to the
+//     NEWEST one that began. Reaching a later prompt proves the harness
+//     advanced past the earlier ones, which sweeps up rows whose own hooks were
+//     missed while still admitting only what the recipient actually consumed —
+//     one row per turn under steady traffic, exactly as before.
+//   - When none began, acknowledge the single OLDEST read row. That is the
+//     deadlock escape: a fully wedged queue reopens by one slot per completed
+//     turn, so it always drains without operator intervention, and a recipient
+//     busy with non-mail work still cannot be flooded.
+//
+// The result only ever acknowledges MORE than the old started_at predicate did,
+// never less: every started-and-read row is by construction at or below the
+// watermark.
+func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
 	if convID == "" {
 		return 0, nil
 	}
@@ -2927,12 +2988,20 @@ func MarkStartedRegularAgentMessagesProcessed(convID string, now time.Time) (int
 	if err != nil {
 		return 0, err
 	}
+	const recipient = `(to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
+		COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`
 	stamp := now.Format(time.RFC3339Nano)
 	res, err := d.Exec(`UPDATE agent_messages SET processed_at = ?
-		WHERE regular_send = 1 AND started_at != '' AND read_at != '' AND processed_at = ''
-		  AND (to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
-			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`,
-		stamp, convID, convID)
+		WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
+		  AND `+recipient+`
+		  AND id <= COALESCE(
+			(SELECT MAX(id) FROM agent_messages
+			  WHERE regular_send = 1 AND read_at != '' AND processed_at = '' AND started_at != ''
+				AND `+recipient+`),
+			(SELECT MIN(id) FROM agent_messages
+			  WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
+				AND `+recipient+`))`,
+		stamp, convID, convID, convID, convID, convID, convID)
 	if err != nil {
 		return 0, err
 	}

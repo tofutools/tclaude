@@ -1231,8 +1231,16 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			}
 		}
 	}
-	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
-		if _, err := db.MarkStartedRegularAgentMessagesProcessed(state.ConvID, time.Now()); err != nil {
+	// Stop only, deliberately NOT StopFailure: the same reasoning as the
+	// stopped=false decision in the StopFailure case above. A turn that ended in
+	// an API/auth/billing error consumed nothing, so acknowledging its mail
+	// would reopen the sender's capacity into a pane making no progress —
+	// rate-limited is precisely when backpressure should hold. Nothing is lost
+	// by waiting: the next successful Stop drains, and the wedge TCL-737 fixed
+	// cannot return, because an agent whose turns only ever fail has no
+	// working pane to deliver into either.
+	if input.HookEventName == "Stop" {
+		if _, err := db.MarkReadRegularAgentMessagesProcessed(state.ConvID, time.Now()); err != nil {
 			slog.Warn("failed to mark regular agent messages processed",
 				"error", err, "conv_id", state.ConvID, "module", "hooks")
 		}
