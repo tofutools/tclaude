@@ -85,6 +85,24 @@ func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) 
 		nil,
 	))
 
+	// Model the cache state left by the pre-fix parser: the special quota won
+	// with a newer observation, but its identity was discarded before the JSON
+	// reached SQLite. Refresh must repair this row from the older, positively
+	// identified account sample in the rollout.
+	legacyObserved := now.Add(time.Minute)
+	legacyData, err := json.Marshal(map[string]any{
+		"FiveHour": nil,
+		"Weekly": map[string]any{
+			"UsedPercent": 0,
+			"ResetsAt":    now.Add(7 * 24 * time.Hour),
+		},
+		"Observed": legacyObserved,
+	})
+	require.NoError(t, err)
+	stored, err := db.SaveCodexUsageCacheIfNewer(legacyData, legacyObserved, cx.RolloutPath)
+	require.NoError(t, err)
+	require.True(t, stored)
+
 	agentd.RefreshCodexUsageForTest()
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 
@@ -99,6 +117,8 @@ func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) 
 	var cached harness.CodexUsage
 	require.NoError(t, json.Unmarshal(row.Data, &cached))
 	assert.Equal(t, "codex", cached.LimitID, "cache preserves the selected quota identity")
+	assert.True(t, row.ObservedAt.Before(legacyObserved),
+		"identified account snapshot repairs a newer legacy cache observation")
 }
 
 func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {

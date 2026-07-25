@@ -69,12 +69,22 @@ func DeleteUsageCache() error {
 	return err
 }
 
-// SaveCodexUsageCacheIfNewer stores a Codex usage snapshot when its rollout
-// observation timestamp is newer than the current cache row. Equal or older
-// observations cannot regress the account-wide readout, but their genuinely
-// observed windows still pass through the per-window history freshness gate:
-// an out-of-order weekly-only event may fill a history child that a newer
-// five-hour-only cache snapshot did not contain.
+const codexAccountUsageLimitID = "codex"
+
+// SaveCodexUsageCacheIfNewer stores a Codex usage snapshot when it belongs to
+// the selected account-wide quota or its rollout observation timestamp is
+// newer than the current cache row. Identity outranks time: an identified
+// account snapshot repairs a legacy/unidentified or different-quota row even
+// when that row has a newer observation, while an unidentified/different
+// snapshot cannot downgrade an identified account row. This lets the parser's
+// quota selection survive cache arbitration without comparing percentages or
+// inferring quota resets.
+//
+// When identities are equivalent, equal or older observations cannot regress
+// the current readout, but their genuinely observed windows still pass through
+// the per-window history freshness gate: an out-of-order weekly-only event may
+// fill a history child that a newer five-hour-only cache snapshot did not
+// contain.
 func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, source string, historyWindows ...SubscriptionUsageWindow) (bool, error) {
 	if observedAt.IsZero() {
 		return false, nil
@@ -89,14 +99,24 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var observedStr string
-	err = tx.QueryRow(`SELECT observed_at FROM codex_usage_cache WHERE id = 1`).Scan(&observedStr)
+	var existingData, observedStr string
+	err = tx.QueryRow(`SELECT data, observed_at FROM codex_usage_cache WHERE id = 1`).
+		Scan(&existingData, &observedStr)
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
 	cacheNewer := true
 	if err == nil {
-		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil && !observedAt.After(existing) {
+		incomingAccount := codexUsageLimitID(data) == codexAccountUsageLimitID
+		existingAccount := codexUsageLimitID(json.RawMessage(existingData)) == codexAccountUsageLimitID
+		if existingAccount && !incomingAccount {
+			// A pre-upgrade hook or other unidentified writer must not
+			// re-poison the selected account cache or its history.
+			return false, nil
+		}
+		identityRepair := incomingAccount && !existingAccount
+		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil &&
+			!identityRepair && !observedAt.After(existing) {
 			cacheNewer = false
 		}
 	}
@@ -132,6 +152,20 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 		return false, err
 	}
 	return cacheNewer, nil
+}
+
+func codexUsageLimitID(data json.RawMessage) string {
+	var identity struct {
+		LimitID      string
+		SnakeLimitID string `json:"limit_id"`
+	}
+	if json.Unmarshal(data, &identity) != nil {
+		return ""
+	}
+	if identity.LimitID != "" {
+		return identity.LimitID
+	}
+	return identity.SnakeLimitID
 }
 
 // LoadCodexUsageCache returns the cached Codex usage snapshot, or nil if none
