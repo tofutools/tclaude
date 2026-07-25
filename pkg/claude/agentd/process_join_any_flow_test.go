@@ -115,6 +115,10 @@ func TestProcessRuntimeJoinAnyWinnerRunsDownstreamOnceAndWaitsForLosers(t *testi
 	require.NotEqual(t, -1, observedWinner)
 	require.NotEqual(t, -1, joinWon)
 	require.NotEqual(t, -1, joinPrepared)
+	for _, index := range []int{observedWinner, joinWon, joinPrepared} {
+		require.Falsef(t, sequence[index].OccurredAt.IsZero(),
+			"%s evidence has no occurredAt", sequence[index].Kind)
+	}
 	assert.Less(t, observedWinner, joinWon, "the arrival is recorded after the input that caused it")
 	assert.Less(t, joinWon, joinPrepared, "the downstream command is recorded after the join it needed")
 	assert.False(t, sequence[joinWon].OccurredAt.Before(sequence[observedWinner].OccurredAt),

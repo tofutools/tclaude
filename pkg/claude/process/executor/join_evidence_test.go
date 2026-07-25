@@ -185,6 +185,9 @@ func TestCommitEvidenceKeepsTimestampsCausalAfterReordering(t *testing.T) {
 	assert.Equal(t, "program_observed", events[0].Kind)
 	assert.Equal(t, "join_won", events[1].Kind)
 	assert.Equal(t, "program_prepared", events[len(events)-1].Kind)
+	assert.Equal(t, earlier, events[0].OccurredAt, "an already-causal timestamp is unchanged")
+	assert.Equal(t, events[len(events)-2].OccurredAt, events[len(events)-1].OccurredAt,
+		"an inverted successor inherits the preceding causal timestamp")
 	for index := 1; index < len(events); index++ {
 		assert.Falsef(t, events[index].OccurredAt.Before(events[index-1].OccurredAt),
 			"event %d (%s) predates event %d (%s)",
