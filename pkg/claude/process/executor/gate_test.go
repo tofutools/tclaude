@@ -132,7 +132,7 @@ func TestBlockedGateRetryCommitsItsStageResetWithTheResolution(t *testing.T) {
 	reset := slices.IndexFunc(events, func(event db.ProcessRunEvent) bool { return event.Kind == "stage_reset" })
 	require.GreaterOrEqual(t, reset, 1)
 	assert.Equal(t, "blocked_resolved", events[reset-1].Kind, "the operator input comes first")
-	assert.Equal(t, "human:operator@example", "human:"+events[reset-1].Actor)
+	assert.Equal(t, "operator@example", events[reset-1].Actor)
 	assert.Equal(t, EngineActor, events[reset].Actor, "the reset is the engine's own effect")
 	var payload map[string]any
 	require.NoError(t, events[reset].DecodePayload(&payload))

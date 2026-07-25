@@ -161,9 +161,7 @@ type StageReset struct {
 // keeps the recorded gate the one that actually rendered the verdict: a reset
 // sweeps every stage from just after the work through the failed gate back to
 // pending, so an intervening gate that merely got caught up in it satisfies
-// everything else while not being the cause. It reads only this gate's own
-// parent's child list, the same bounded slice the reset itself moves, and never
-// another parent's.
+// everything else while not being the cause.
 //
 // The next work attempt is read from the BEFORE checkpoint deliberately. One
 // commit can hold the observation, the reset, and the follow-on plan the reset
