@@ -379,6 +379,13 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	if err := recordLaunchPosture(label, args); err != nil {
 		return err
 	}
+	// Match SpawnNew's dead-at-launch model: the resume row and launch-arg
+	// transcript landed, but the harness exited before a pane survived. This
+	// catches callers that mistake durable metadata for liveness.
+	if s.w.SpawnPaneDiesAtLaunch {
+		cc.Shutdown()
+		return nil
+	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
 	return nil

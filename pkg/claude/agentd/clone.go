@@ -119,6 +119,16 @@ type cloneSpawnResult struct {
 	HandoffInlined bool
 }
 
+// cloneSupportsArgvEnrollment narrows TCL-732's launch-argv contract to Claude
+// Code. LaunchEnrollment alone is not sufficient: OpenCode also advertises the
+// capability, but implements it by pre-minting a server-side ses_ id and
+// submitting the welcome through prompt_async. cloneSpawnOnce does neither of
+// those things; its --session-id / --name / positional-prompt path is the
+// Claude Code contract specifically.
+func cloneSupportsArgvEnrollment(h *harness.Harness) bool {
+	return h != nil && h.Name == harness.DefaultName && h.SupportsLaunchEnrollment()
+}
+
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
 // Two branches:
 //   - copy: use convops to fork the existing jsonl onto a fresh
@@ -248,7 +258,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	// injected stream, so the two-streams-merge-into-one-line bug this fixes
 	// cannot arise in the first place.
 	cloneHarness, _ := harness.Resolve(srcHarness)
-	launchEnroll := cloneHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection() && p.FollowUp != ""
+	launchEnroll := cloneSupportsArgvEnrollment(cloneHarness) && !spawnUsesLegacyInjection() && p.FollowUp != ""
 	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
 	// enrollLaunch stamps the clone's name and first-turn handoff onto the
 	// launch args once its conv-id is known — preset by the caller on the
@@ -410,12 +420,23 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		}
 		slog.Warn("clone: no-copy poll timed out; clone never came up",
 			"label", label, "missing", missing, "deadline", reincarnateSpawnTimeout)
+		// The pre-fork handoff is about to be rolled back, so do not leave a
+		// late-starting pane whose launch prompt points at that deleted row.
+		// This mirrors reincarnate's timeout cleanup; the generated label is
+		// unique to this launch.
+		tmuxToKill := newTmux
+		if tmuxToKill == "" {
+			tmuxToKill = label
+		}
+		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
+			slog.Warn("clone: timed-out no-copy launch kill failed",
+				"session", tmuxToKill, "error", err)
+		}
 		rollbackHandoff()
 		return cloneSpawnResult{NewTmux: newTmux, Label: label}, &cloneSpawnError{
 			Status: http.StatusGatewayTimeout, Code: "timeout",
 			Msg: "spawned session " + label + " but " + missing + " never materialised within " +
-				reincarnateSpawnTimeout.String() +
-				" — the session may still come up; check `tclaude session attach " + label + "`",
+				reincarnateSpawnTimeout.String() + "; the timed-out clone was stopped",
 		}
 	}
 	// Copy path: fork the jsonl first, then resume into it.
@@ -500,6 +521,15 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 			if s.ID != "" {
 				label = s.ID
 			}
+			// A launch-enrolled clone's first turn is already recorded in the
+			// copied jsonl, so the row and transcript can both exist after the
+			// harness has died at startup. Require the pane to survive before
+			// reporting success. Legacy clones keep their historical
+			// registration-only gate.
+			if launchEnroll && !isConvOnline(newConv) {
+				time.Sleep(250 * time.Millisecond)
+				continue
+			}
 			// Tag the sibling row's best-known remote-control ON (JOH-261); the
 			// --remote-control launch flag (on the resume) already armed its
 			// pane. The copy path discovers the label from the row (s.ID), so
@@ -511,6 +541,20 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 			return res, nil
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+	if launchEnroll {
+		if newTmux != "" {
+			if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
+				slog.Warn("clone: timed-out copy launch kill failed",
+					"session", newTmux, "error", err)
+			}
+		}
+		rollbackHandoff()
+		return cloneSpawnResult{NewConv: newConv, NewTmux: newTmux, Label: label}, &cloneSpawnError{
+			Status: http.StatusGatewayTimeout, Code: "timeout",
+			Msg: "spawned session for " + short8(newConv) + " but a live pane never materialised within " +
+				reincarnateSpawnTimeout.String() + "; the timed-out clone was stopped",
+		}
 	}
 	// Spawn was best-effort fire-and-forget: the conv-id is already
 	// known and the .jsonl exists, so we don't fail the request. But

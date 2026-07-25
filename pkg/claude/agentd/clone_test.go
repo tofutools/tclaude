@@ -36,6 +36,26 @@ func TestApprovalForRelaunchRepairsLegacyCodexWithoutBroadeningAmbiguousRows(t *
 	}
 }
 
+func TestCloneSupportsArgvEnrollmentIsClaudeCodeSpecific(t *testing.T) {
+	for _, tc := range []struct {
+		harnessName string
+		want        bool
+	}{
+		{harness.DefaultName, true},
+		{harness.CodexName, false},
+		// OpenCode also advertises LaunchEnrollment, but its contract is a
+		// server-side ses_ id + prompt_async, not Claude's launch argv.
+		{harness.OpenCodeName, false},
+	} {
+		t.Run(tc.harnessName, func(t *testing.T) {
+			h, err := harness.Resolve(tc.harnessName)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cloneSupportsArgvEnrollment(h))
+		})
+	}
+	assert.False(t, cloneSupportsArgvEnrollment(nil))
+}
+
 func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

@@ -62,3 +62,28 @@ func TestSessionResumeArgs_ModelIncludedWhenSet(t *testing.T) {
 		t.Fatalf("resume args must keep `-r <conv>`, got %v", args)
 	}
 }
+
+// TestSessionResumeArgs_LaunchEnrollmentFields verifies the detached resume
+// wrapper carries a clone's --name and --initial-prompt into the nested
+// `tclaude session new -r` invocation. Flow tests replace SpawnResume and
+// therefore cannot observe this argv-building seam directly.
+func TestSessionResumeArgs_LaunchEnrollmentFields(t *testing.T) {
+	args := sessionResumeArgs(clcommon.SpawnArgs{
+		ConvID:        "conv-1",
+		Cwd:           "/tmp/x",
+		Name:          "worker-c-1",
+		InitialPrompt: "continue the merge",
+	})
+	for flag, want := range map[string]string{
+		"--name":           "worker-c-1",
+		"--initial-prompt": "continue the merge",
+	} {
+		i := slices.Index(args, flag)
+		if i < 0 || i+1 >= len(args) || args[i+1] != want {
+			t.Fatalf("resume must carry %s %q, got %v", flag, want, args)
+		}
+	}
+	if slices.Contains(args, "--session-id") {
+		t.Fatalf("a resume already has a conv-id and must not carry --session-id, got %v", args)
+	}
+}

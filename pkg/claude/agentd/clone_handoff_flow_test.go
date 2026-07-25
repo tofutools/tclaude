@@ -257,6 +257,50 @@ func TestClone_OverCapHandoff_RidesAsInboxPointer(t *testing.T) {
 		"a pointer handoff is announced, not consumed; the clone still has to read it")
 }
 
+// Scenario: launch metadata lands but the clone's pane dies at startup. A
+// preset conv-id or copied jsonl is not proof that a harness survived.
+//
+// Expected on both launch-enrolled branches: clone returns a timeout rather
+// than handing the caller a dead sibling, and the pre-fork handoff row is
+// rolled back.
+func TestClone_DeadPaneDoesNotReportLaunchEnrolledClone(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		oldConv    string
+		noCopyConv bool
+	}{
+		{name: "no-copy", oldConv: "chf6aaaa-bbbb-cccc-dddd-eeeeffff0001", noCopyConv: true},
+		{name: "copy", oldConv: "c1f6aaaa-bbbb-cccc-dddd-eeeeffff0002"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetReincarnateSpawnTimeoutForTest(50 * time.Millisecond))
+			f := newFlow(t)
+
+			f.HaveConvWithTitle(tc.oldConv, "worker")
+			f.HaveEnrolledAgent(tc.oldConv)
+			f.HaveAliveSession(tc.oldConv, "spwn-"+tc.name, "tclaude-"+tc.name, f.TestCwd("work"))
+			g := f.HaveGroup("alpha")
+			f.HaveMember("alpha", tc.oldConv)
+			require.NoError(t, db.AddAgentGroupOwner(g.ID, tc.oldConv, "test"))
+			f.World.SpawnPaneDiesAtLaunch = true
+
+			c := f.AsAgent(tc.oldConv).CloneWith(tc.oldConv, map[string]any{
+				"no_copy_conv": tc.noCopyConv,
+				"follow_up":    "PROBE-DEAD-CLONE: must be rolled back",
+			})
+			require.Equalf(t, http.StatusGatewayTimeout, c.Code,
+				"a clone whose pane died must not report success; body=%s", c.Raw)
+
+			outbox, err := db.ListAgentMessagesFromConv(tc.oldConv, 50)
+			require.NoError(t, err)
+			for _, m := range outbox {
+				assert.NotEqual(t, agentd.CloneHandoffSubject, m.Subject,
+					"the pre-fork handoff must be rolled back when launch fails")
+			}
+		})
+	}
+}
+
 // cloneHandoffMessageIDFor finds the clone-handoff row addressed to the new
 // clone. Polls: the orchestration inserts it before responding, but the test
 // reads through the same DB the daemon writes.
