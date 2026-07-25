@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -18,30 +19,39 @@ import (
 
 // initSiblingWorktreeRepo builds a real repo plus a real linked worktree at the
 // default sibling location (<repo>-<branch>) and returns both paths.
+//
+// The temp root is resolved through EvalSymlinks first — matching
+// initRepoOnMain. IsDefaultSiblingWorktree compares cwd's parent against the
+// parent of the git common dir, and `git rev-parse` reports a RESOLVED path, so
+// on macOS (where t.TempDir() hands back /var/... for /private/var/...) an
+// unresolved root makes the two disagree and the predicate wrongly returns
+// false.
 func initSiblingWorktreeRepo(t *testing.T) (repo, sibling string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err, "EvalSymlinks tempdir")
 	repo = filepath.Join(root, "proj")
-	run := func(dir string, args ...string) {
+	require.NoError(t, os.MkdirAll(repo, 0o755), "mkdir repo")
+	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(cmd.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
-		out, err := cmd.CombinedOutput()
-		require.NoError(t, err, "git %v: %s", args, out)
+		cmd.Dir = repo
+		out, gerr := cmd.CombinedOutput()
+		require.NoError(t, gerr, "git %v: %s", args, out)
 	}
-	require.NoError(t, exec.Command("git", "init", "-b", "main", repo).Run())
-	run(repo, "config", "user.email", "t@e")
-	run(repo, "config", "user.name", "t")
-	run(repo, "commit", "--allow-empty", "-m", "init")
+	run("init", "-q")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "tclaude tests")
+	run("config", "commit.gpgsign", "false")
+	run("commit", "-q", "--allow-empty", "-m", "init")
+	// -M renames whatever the init default branch was (master / main) to main.
+	run("branch", "-M", "main")
 
 	sibling = filepath.Join(root, "proj-feature")
-	run(repo, "worktree", "add", "-b", "feature", sibling)
+	run("worktree", "add", "-q", "-b", "feature", sibling)
 	return repo, sibling
 }
 
