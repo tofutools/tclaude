@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -231,4 +232,115 @@ func TestSubagentLedger_SubagentSessionEndRemovesEntry(t *testing.T) {
 	// The paired SubagentStop for the same id arrives too: no-op.
 	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-a"})
 	assert.Equal(t, 1, loadState(t, "send-sess").SubagentCount, "double removal of one sub-agent is a no-op")
+}
+
+// A real sub-agent can arrive "unknown" at SubagentStop time when its
+// ledger entry was swept during a long model turn. Its stop must still
+// settle an otherwise-empty main_agent_idle parent; the unknown id only
+// suppresses stopped-only side effects, not the lifecycle settle.
+func TestSubagentLedger_StopAfterTTLSweepStillSettles(t *testing.T) {
+	stale := db.SubagentSet{
+		"ag-slow": {Type: "Explore", Seen: time.Now().Add(-db.SubagentTTL - time.Minute)},
+	}
+	apply := ledgerWorld(t, "slow-sess", "conv-slow", &SessionState{
+		Status:        StatusMainAgentIdle,
+		StatusDetail:  "1 subagent running",
+		SubagentCount: 1,
+		Subagents:     stale,
+	})
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-slow", AgentType: "Explore"})
+
+	got := loadState(t, "slow-sess")
+	assert.Equal(t, StatusIdle, got.Status, "delayed real stop settles the parent after sweep")
+	assert.Empty(t, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
+// SessionEnd may remove the ledger entry before the paired SubagentStop.
+// That ordering has the same settle requirement as the TTL path.
+func TestSubagentLedger_StopAfterSubagentSessionEndStillSettles(t *testing.T) {
+	apply := ledgerWorld(t, "paired-sess", "conv-paired", &SessionState{Status: StatusMainAgentIdle})
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-paired", AgentType: "Explore"})
+
+	apply(HookCallbackInput{HookEventName: "SessionEnd", Reason: "other", AgentID: "ag-paired"})
+	require.Equal(t, StatusMainAgentIdle, loadState(t, "paired-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-paired", AgentType: "Explore"})
+
+	got := loadState(t, "paired-sess")
+	assert.Equal(t, StatusIdle, got.Status, "paired stop settles after SessionEnd removed the ledger entry")
+	assert.Empty(t, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
+// Claude Code 2.1.220 ends EVERY main-thread turn with a synthetic
+// SubagentStop: a freshly minted agent_id no SubagentStart ever
+// announced, an empty agent_type, and an agent_transcript_path pointing
+// at a file that does not exist — fired immediately after the turn's real
+// Stop. Captured verbatim from a tapped 2.1.220 session; each turn's id
+// differs, so it can never match a ledger entry.
+//
+// It describes the main thread finishing, not a sub-agent, so it must not
+// reach the sub-agent lifecycle arm. These pin the contract rather than
+// reproduce a live defect: at the ordering 2.1.220 produces (always after
+// Stop) the old fall-through happened to be a no-op, so they pass either
+// way. What they stop is a future ordering — or a future edit — turning a
+// non-sub-agent event into a main-thread status transition.
+func TestSubagentLedger_SyntheticTurnEndStopIsNotASubagent(t *testing.T) {
+	apply := ledgerWorld(t, "phantom-sess", "conv-phantom", nil)
+
+	// A background shell keeps the parent at main_agent_idle after Stop —
+	// the state the sub-agent lifecycle arm acts on.
+	apply(HookCallbackInput{
+		HookEventName: "PostToolUse",
+		ToolName:      "Bash",
+		ToolInput:     json.RawMessage(`{"command":"sleep 300","run_in_background":true}`),
+	})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+
+	before := loadState(t, "phantom-sess")
+	require.Equal(t, StatusMainAgentIdle, before.Status, "background shell holds the turn open")
+	require.Len(t, before.BgShells, 1)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "a6e8d5931bc6aaaa1", AgentType: ""})
+
+	got := loadState(t, "phantom-sess")
+	assert.Equal(t, before.Status, got.Status, "synthetic turn-end stop must not move the main status")
+	assert.Equal(t, before.StatusDetail, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+	assert.Len(t, got.BgShells, 1, "the background-shell ledger is untouched")
+}
+
+// The same synthetic event must not be mistaken for "a sub-agent acted
+// again, so the permission prompt parked on the parent was answered".
+// Only a hook from a sub-agent the ledger actually knows carries that
+// evidence; an unannounced id carries none.
+func TestSubagentLedger_SyntheticTurnEndStopLeavesAwaitingAlone(t *testing.T) {
+	apply := ledgerWorld(t, "phantom-perm-sess", "conv-phantom-perm", nil)
+
+	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash"})
+	require.Equal(t, StatusAwaitingPermission, loadState(t, "phantom-perm-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "adcba0fdc4cf55998", AgentType: ""})
+
+	assert.Equal(t, StatusAwaitingPermission, loadState(t, "phantom-perm-sess").Status,
+		"the parent is still waiting on the human")
+}
+
+// A SubagentStop for a sub-agent the ledger DOES know keeps its full
+// lifecycle behaviour — the guard discriminates on ledger membership
+// alone, so nothing about the real path changes.
+func TestSubagentLedger_KnownSubagentStopStillSettles(t *testing.T) {
+	apply := ledgerWorld(t, "known-sess", "conv-known", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-real", AgentType: "Explore"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	require.Equal(t, StatusMainAgentIdle, loadState(t, "known-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-real", AgentType: "Explore"})
+
+	got := loadState(t, "known-sess")
+	assert.Equal(t, StatusIdle, got.Status, "a real sub-agent finishing still settles the parent")
+	assert.Equal(t, 0, got.SubagentCount)
 }

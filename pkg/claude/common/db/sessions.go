@@ -850,6 +850,30 @@ func GetSessionPendingConv(id string) (string, error) {
 	return conv, nil
 }
 
+// GetSessionConvAttribution returns the conversation a session row
+// currently tracks together with the next-conv it has announced, in one
+// read. Both are "" when the row does not exist.
+//
+// It exists for the statusline's attribution guard, which has to answer
+// "does this render belong to the row I am about to write?" on every
+// render: the two values are always wanted together, and a statusline
+// render is a hot path where a second round trip is pure cost.
+func GetSessionConvAttribution(id string) (convID, pendingConv string, err error) {
+	d, err := Open()
+	if err != nil {
+		return "", "", err
+	}
+	err = d.QueryRow(`SELECT conv_id, pending_conv FROM sessions WHERE id = ?`, id).
+		Scan(&convID, &pendingConv)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return convID, pendingConv, nil
+}
+
 // UpdateContextPct stores the latest context window usage percentage for a session.
 func UpdateContextPct(sessionID string, pct float64) error {
 	db, err := Open()

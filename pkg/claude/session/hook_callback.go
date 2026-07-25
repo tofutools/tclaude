@@ -626,6 +626,34 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// any OTHER hook carrying agent_id proves that sub-agent is alive —
 	// Sight() re-adds one whose SubagentStart was lost.
 	state.Subagents.Sweep(state.LastHook)
+	// Whether this SubagentStop names a sub-agent the ledger still knows
+	// after the TTL sweep, captured before Remove erases that evidence.
+	// Claude Code 2.1.220 ends
+	// EVERY main-thread turn with a synthetic SubagentStop carrying a
+	// freshly minted agent_id that no SubagentStart ever announced, an
+	// empty agent_type, and an agent_transcript_path pointing at a file
+	// that does not exist — fired right after the turn's real Stop. It
+	// describes the main thread finishing, not a sub-agent.
+	//
+	// This is HARDENING, not a repair: at the ordering 2.1.220 actually
+	// produces (always after Stop) the sub-agent lifecycle arm happens to
+	// be a no-op or idempotent, so no misbehaviour was observed. What it
+	// removes is the standing hazard of an event that is not a sub-agent
+	// stopping being routed through the arm that decides what a sub-agent
+	// stopping means to the MAIN thread's status — an ordering tclaude
+	// does not control and upstream has already changed once.
+	//
+	// Ledger membership, not the empty agent_type, is the discriminator
+	// for whether the stop may drive stopped-only side effects. A real
+	// sub-agent can still arrive unknown when its ledger entry was swept
+	// during a long model turn, or when its preceding SessionEnd removed
+	// the entry. Such a stop may settle a now-empty main_agent_idle state
+	// below, but does not drive the context nudge/task signal because its
+	// attribution is ambiguous. An empty agent_id is the legacy shape;
+	// Remove falls back to decrement semantics for it, so it keeps its
+	// old stopped behaviour.
+	trackedSubagentStop := input.HookEventName == "SubagentStop" &&
+		(input.AgentID == "" || state.Subagents.Has(input.AgentID))
 	switch {
 	case input.HookEventName == "SubagentStart":
 		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
@@ -670,14 +698,24 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// main_agent_idle, so the parent stayed wedged at "working" after
 	// the sub-agent finished. Exceptions that DO fall through to the
 	// status switch:
-	//   - SubagentStart/SubagentStop — their arms below handle the main
-	//     status transitions around sub-agent lifecycle;
+	//   - SubagentStart and SubagentStop — their arms below handle the
+	//     main status transitions around sub-agent lifecycle. An unknown
+	//     SubagentStop gets this dedicated fall-through rather than the
+	//     default arm, so Claude Code's synthetic per-turn event cannot
+	//     clear awaiting_*; trackedSubagentStop controls whether it may
+	//     drive stopped-only side effects;
 	//   - PermissionRequest / Notification — a sub-agent's permission
 	//     prompt surfaces on the parent (Claude Code parks the prompt in
 	//     the parent's UI), so awaiting_permission must still be set.
 	if input.AgentID != "" {
 		switch input.HookEventName {
-		case "SubagentStart", "SubagentStop", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
+		case "SubagentStop":
+			// Fall through to the lifecycle settle below. An unknown id
+			// may be CC's synthetic turn-end event or a real stop whose
+			// ledger entry was already swept/removed; only the latter
+			// needs the now-empty main_agent_idle state settled, while
+			// neither should take the default awaiting_* arm.
+		case "SubagentStart", "PermissionRequest", "Notification", "SessionStart", "SessionEnd":
 			// fall through to the status switch below
 		default:
 			// A sub-agent acting again while the parent shows awaiting_*
@@ -765,7 +803,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	case "SubagentStop":
 		if len(state.Subagents) == 0 && state.Status == StatusMainAgentIdle {
-			stopped = true
+			// Unknown-id stops are ambiguous: allow the status settle so
+			// a delayed real stop cannot leave stale activity, but reserve
+			// context nudges and task signals for tracked/legacy stops.
+			stopped = trackedSubagentStop
 			if state.hasBackgroundActivity() {
 				state.StatusDetail = state.backgroundActivityDetail()
 			} else {
