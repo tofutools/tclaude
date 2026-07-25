@@ -125,6 +125,33 @@ func saveSessionWithResumeProvenance(row *db.SessionRow) error {
 	return db.SaveSession(row)
 }
 
+// recordLaunchPosture mirrors the OUT-OF-BAND writes production's `tclaude
+// session new` performs immediately after its session row lands: the launch
+// postures that SaveSession's UPSERT deliberately does not own
+// (auto-memory, the startup-context trims, the auto-compaction window).
+//
+// Without this the simulator is faithful for one hop and lies on the second: a
+// relaunch reads the SOURCE conv's recorded posture, so a successor whose row was
+// never annotated reads "nothing recorded" and the posture silently evaporates at
+// generation 2 — for every field on this list, including ones that work correctly
+// in production. That made multi-hop carry untestable, which is exactly where
+// these regressions hide.
+//
+// Gated on the Claude Code harness the same way the production writes are, so a
+// Codex/OpenCode spawn records nothing.
+func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
+	if args.Harness != "" && args.Harness != harness.DefaultName {
+		return nil
+	}
+	if err := db.SetSessionAutoMemory(label, args.AutoMemory); err != nil {
+		return err
+	}
+	if err := db.SetSessionContextFeatures(label, args.ContextFeatures); err != nil {
+		return err
+	}
+	return db.SetSessionAutoCompactWindow(label, args.AutoCompactWindow)
+}
+
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
 // the production hook callback would have written, and registers in
 // TmuxSim. harness=="codex" routes to a CodexSim + a harness="codex" row;
@@ -223,6 +250,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		}); err != nil {
 			return err
 		}
+		if err := recordLaunchPosture(label, args); err != nil {
+			return err
+		}
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
@@ -287,6 +317,9 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 	}); err != nil {
+		return err
+	}
+	if err := recordLaunchPosture(label, args); err != nil {
 		return err
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
