@@ -117,6 +117,10 @@ func TestProcessRuntimeJoinAnyWinnerRunsDownstreamOnceAndWaitsForLosers(t *testi
 	require.NotEqual(t, -1, joinPrepared)
 	assert.Less(t, observedWinner, joinWon, "the arrival is recorded after the input that caused it")
 	assert.Less(t, joinWon, joinPrepared, "the downstream command is recorded after the join it needed")
+	assert.False(t, sequence[joinWon].OccurredAt.Before(sequence[observedWinner].OccurredAt),
+		"join evidence must not predate the observation that caused it")
+	assert.False(t, sequence[joinPrepared].OccurredAt.Before(sequence[joinWon].OccurredAt),
+		"downstream preparation must not predate the join it needed")
 }
 
 // TestProcessRuntimeJoinAnySimultaneousArrivalsElectOneWinner releases two
@@ -257,8 +261,9 @@ func TestProcessRuntimeJoinAnyRestartPreservesTheWinnerAndInventsNoWork(t *testi
 // processRunEvent is one row of the public evidence stream, reduced to what an
 // ordering assertion needs.
 type processRunEvent struct {
-	Kind   string
-	NodeID string
+	Kind       string
+	NodeID     string
+	OccurredAt time.Time
 }
 
 // processRunEventSequence reads the whole public evidence stream in sequence
@@ -273,7 +278,9 @@ func processRunEventSequence(t *testing.T, f *testharness.Flow, runID string) []
 		var page processRuntimeEventPage
 		testharness.DecodeJSON(t, response, &page)
 		for _, event := range page.Events {
-			sequence = append(sequence, processRunEvent{Kind: event.Kind, NodeID: event.NodeID})
+			sequence = append(sequence, processRunEvent{
+				Kind: event.Kind, NodeID: event.NodeID, OccurredAt: event.OccurredAt,
+			})
 		}
 		if len(page.Events) == 0 || page.Next <= cursor {
 			return sequence

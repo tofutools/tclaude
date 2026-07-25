@@ -3,6 +3,7 @@ package executor
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -165,4 +166,28 @@ func TestJoinEvidenceBudgetHandlesTheLastFewSlots(t *testing.T) {
 		assert.NotEqual(t, "join_arrivals_truncated", event.Kind)
 	}
 	assert.Len(t, joinEvidence(definition, before, after, 99), 3, "spare room adds nothing")
+}
+
+func TestCommitEvidenceKeepsTimestampsCausalAfterReordering(t *testing.T) {
+	setupExecutorTest(t)
+	definition, err := engine.Prepare(wideMixedJoinAnyTemplate(2, 0), map[string]string{})
+	require.NoError(t, err)
+	before, err := engine.Initialize("run_causal_times", definition)
+	require.NoError(t, err)
+	after, err := engine.AdvanceUntilQuiescent(before, definition)
+	require.NoError(t, err)
+
+	earlier := time.Now().UTC().Add(-time.Hour)
+	events := commitEvidence(definition, before, after,
+		[]db.ProcessRunEvent{{Kind: "program_observed", OccurredAt: earlier}},
+		[]db.ProcessRunEvent{{Kind: "program_prepared", OccurredAt: earlier}})
+	require.GreaterOrEqual(t, len(events), 3)
+	assert.Equal(t, "program_observed", events[0].Kind)
+	assert.Equal(t, "join_won", events[1].Kind)
+	assert.Equal(t, "program_prepared", events[len(events)-1].Kind)
+	for index := 1; index < len(events); index++ {
+		assert.Falsef(t, events[index].OccurredAt.Before(events[index-1].OccurredAt),
+			"event %d (%s) predates event %d (%s)",
+			index, events[index].Kind, index-1, events[index-1].Kind)
+	}
 }
