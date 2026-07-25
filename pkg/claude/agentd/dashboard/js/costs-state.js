@@ -74,6 +74,15 @@ export function createCostsState({
     const tableWhatIfTotal = filtered
       ? visibleRows.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0)
       : (data?.what_if_total_usd || 0);
+    // The caveat also keys off the row kinds, not the hypothetical subtotal
+    // alone: a payload can carry a row's kind without its split fields (the
+    // chart walk in costs-model defends against that same legacy shape), and
+    // then the banner would hide while the rows still show WHAT-IF markers
+    // pointing at it — leaving each marker a dead control. Narrowed by harness
+    // like the subtotals, but not by the text query, so the caveat covers the
+    // same rows the header totals do.
+    const hasWhatIfRows = agents.some((agent) => selected.has(harnessLabel(agent.harness))
+      && (agent.cost_kind === 'what_if' || agent.cost_kind === 'mixed'));
     return {
       span: span.value,
       monthOffset: monthOffset.value,
@@ -95,7 +104,7 @@ export function createCostsState({
       filtered,
       tableTotal,
       tableWhatIfTotal,
-      hasWhatIf: (narrowed?.what_if_total_usd || 0) > 0,
+      hasWhatIf: (narrowed?.what_if_total_usd || 0) > 0 || hasWhatIfRows,
       hasReal: (narrowed?.real_total_usd || 0) > 0,
       request: request.value,
       factor: factor.value,

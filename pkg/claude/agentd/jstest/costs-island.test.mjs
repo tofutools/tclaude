@@ -78,7 +78,11 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
   assert.match(mounted.container.textContent, /WHAT-IF/);
   assert.match(mounted.container.textContent, /mixes real billed spend/);
-  assert.match(mounted.container.textContent, /≈\$2\.00/);
+  // Scoped to the summary on purpose: the ≈ left the rows, not the header, so
+  // an unscoped match here would keep passing off the summary while reading
+  // like a row assertion.
+  assert.match(mounted.container.querySelector('#costs-summary').textContent, /≈\$2\.00/,
+    'the header summary keeps its real/estimate split');
 
   // A row states its amount once and defers the caveat to the banner: the
   // hypothetical row gets a single ⚠ linking there, not a ≈ prefix, a repeated
@@ -143,5 +147,104 @@ test('Costs island keeps its cross-line word gaps and leads with the WHAT-IF cav
     'the projection keeps a space after its label');
   assert.match(mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"] td').textContent, /↳ Alpha/,
     'the chain marker keeps a space before the agent name');
+  await mounted.unmount();
+});
+
+// A row's ⚠ is a pointer to the banner, not a repeat of it, so what it says and
+// what clicking it does are the whole contract. The mixed row is the case worth
+// pinning: it holds both kinds of money, so it is exactly where a single
+// "this row is hypothetical" boolean silently relabels real spend as an
+// estimate. The zero-cost row guards the other direction — kind "" is what the
+// server returns when both subtotals are 0, and it is not an estimate.
+test('Costs rows carry an accurate, banner-linked WHAT-IF marker', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const mixed = payload();
+  mixed.agents.push({
+    agent_id: 'agt_gamma', conv_id: 'conv-c', day: '2026-07-10', title: 'Gamma', harness: 'claude',
+    model: 'opus', cost_usd: 1.5, real_cost_usd: 1, what_if_cost_usd: 0.5, cost_kind: 'mixed',
+  });
+  mixed.agents.push({
+    agent_id: 'agt_delta', conv_id: 'conv-d', day: '2026-07-10', title: 'Delta', harness: 'claude',
+    model: 'opus', cost_usd: 0, cost_kind: '',
+  });
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
+  const activeTab = harness.signals.signal('costs');
+  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, mixed);
+  const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  const cell = (conv) => mounted.container.querySelector(`tr[data-key="cost-${conv}-2026-07-10"] .cost-amt`);
+
+  // A mixed row shows its total once, and neither tooltip may call that total
+  // hypothetical — $1.00 of it is billed.
+  const mixedCell = cell('conv-c');
+  assert.match(mixedCell.textContent.replace(/\s+/g, ''), /^\$1\.50⚠︎$/, 'a mixed row shows one total plus the marker');
+  assert.equal(mixedCell.title, '$1.5000 total — $1.0000 real spend + $0.5000 estimated (WHAT-IF)',
+    'the amount tooltip names both parts instead of labelling the whole total an estimate');
+  assert.match(mixedCell.querySelector('.cost-whatif-mark').title, /\$1\.00 real \+ \$0\.50 WHAT-IF estimate/,
+    'the marker tooltip carries the split the cell no longer shows inline');
+
+  assert.equal(cell('conv-a').title, '$3.0000 real spend', 'a real row is named real');
+  assert.equal(cell('conv-b').title, '$2.0000 estimated (WHAT-IF)', 'a hypothetical row is named an estimate');
+  assert.equal(cell('conv-d').querySelector('.cost-whatif-mark'), null,
+    'a zero-cost row (kind "") is not marked as an estimate');
+
+  // Clicking through. A modified click belongs to the browser — the marker is a
+  // real anchor and ⌘/Ctrl-click must still open it — while a plain click is
+  // handled in place and has to land the reader somewhere they can perceive.
+  const banner = mounted.container.querySelector('#costs-whatif-banner');
+  const mark = cell('conv-b').querySelector('.cost-whatif-mark');
+  assert.equal(mark.getAttribute('href'), '#costs-whatif-banner', 'the marker points at the banner');
+  assert.equal(mark.getAttribute('aria-label'), 'About this WHAT-IF estimate',
+    'its accessible name is short — every row carries one on a subscription');
+
+  let event;
+  await harness.act(() => { event = harness.fireEvent(mark, 'click', { button: 0, ctrlKey: true }); });
+  assert.equal(event.defaultPrevented, false, 'a modified click is left to the browser to open');
+  assert.equal(banner.classList.contains('cost-whatif-flash'), false, 'and does not scroll/flash in place');
+
+  await harness.act(() => { event = harness.fireEvent(mark, 'click', { button: 0 }); });
+  assert.equal(event.defaultPrevented, true, 'a plain click is handled in place, without a history entry');
+  assert.ok(banner.classList.contains('cost-whatif-flash'), 'the banner flashes so the jump visibly lands');
+  assert.equal(harness.document.activeElement, banner,
+    'and takes focus, so a keyboard or screen-reader visitor arrives too');
+  await mounted.unmount();
+});
+
+// The banner is what every row's ⚠ points at, so it must be shown whenever any
+// row is marked. A payload can name a row's kind without carrying its split
+// fields — costs-model's chart walk defends against that same shape — and
+// keying the banner off the hypothetical subtotal alone would hide it there,
+// leaving every marker on the page a dead link.
+test('Costs banner shows for row kinds that carry no split fields', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const legacy = {
+    from: '2026-07-01', to: '2026-07-10', first_day: '2026-07-01', total_usd: 2,
+    days: [{ day: '2026-07-10', cost_usd: 2, cost_kind: 'what_if' }],
+    agents: [{
+      agent_id: 'agt_beta', conv_id: 'conv-b', day: '2026-07-10', title: 'Beta',
+      harness: 'codex', model: 'gpt', cost_usd: 2, cost_kind: 'what_if',
+    }],
+  };
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
+  const activeTab = harness.signals.signal('costs');
+  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, legacy);
+  const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+  const cell = mounted.container.querySelector('tr[data-key="cost-conv-b-2026-07-10"] .cost-amt');
+  assert.ok(cell.querySelector('.cost-whatif-mark'), 'the row is marked from its kind alone');
+  assert.equal(mounted.container.querySelector('#costs-whatif-banner').hidden, false,
+    'so the banner it points at is shown');
   await mounted.unmount();
 });

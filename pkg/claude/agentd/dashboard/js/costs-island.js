@@ -7,7 +7,7 @@ import {
   COST_COLUMNS, COST_SPANS, fmtLastActivity, fmtUSD, harnessLabel,
   harnessSegmentClass, monthProjectionLabel,
 } from './costs-model.js';
-import { idTooltip, shortAgentId } from './helpers.js';
+import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
 const html = htm.bind(h);
 
@@ -126,26 +126,59 @@ function SortHeader({ state, current }) {
   })}</tr></thead>`;
 }
 
-// Scroll the tab's WHAT-IF banner into view and flash it, for a click on a
-// row's WHAT-IF marker. The marker is a real anchor to the banner so it reads
-// and middle-clicks as a link, but the default fragment jump is suppressed:
-// it would push a history entry and leave #costs-whatif-banner in the URL,
-// which the terminal-handoff hash listener also watches.
+// Send the reader to the tab's WHAT-IF banner, for a click on a row's WHAT-IF
+// marker. The marker is a real anchor to the banner, so a modified or
+// non-primary click is left to the browser to open however the reader asked
+// (the same bail-out every other in-page dashboard anchor makes). A plain
+// click is handled here because the native fragment jump would push a history
+// entry whose Back press then appears to do nothing.
 function gotoWhatIfBanner(event) {
+  if (isModifiedClick(event)) return;
   event.preventDefault();
   const banner = document.getElementById('costs-whatif-banner');
   if (!banner) return;
-  banner.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  const reduceMotion = window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  banner.scrollIntoView?.({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+  // The suppressed jump would also have made the banner the sequential-focus
+  // start point and announced it on arrival. Do both by hand, or a keyboard or
+  // screen-reader visitor is sent to text they are never told about and lands
+  // back in the table on the next Tab. preventScroll leaves the scroll above
+  // in charge of how they get there; the focus ring is also the whole landing
+  // cue under reduced motion, where the flash is dropped.
+  banner.tabIndex = -1;
+  banner.focus?.({ preventScroll: true });
   banner.classList.remove('cost-whatif-flash');
-  // Re-added a frame later so a second click restarts the animation rather
-  // than being swallowed as "the class is already there".
-  requestAnimationFrame(() => banner.classList.add('cost-whatif-flash'));
+  // Forced reflow between the remove and the add, so a repeat click restarts
+  // the animation instead of being swallowed as "already has that class".
+  void banner.offsetWidth;
+  banner.classList.add('cost-whatif-flash');
 }
 
 // U+26A0 with U+FE0E (text presentation selector) so a system with an emoji
 // font in the fallback chain can't promote the marker to a full-colour emoji
-// triangle, which would ignore .cost-whatif-mark's dim amber and shout.
+// triangle, which would ignore .cost-whatif-mark's dim amber and shout. The
+// label is the marker's accessible NAME, kept short because a subscription
+// install marks every row; the caveat itself rides in the title, which becomes
+// the description, so a screen reader doesn't read one long sentence twice.
 const WHAT_IF_MARK = '⚠︎';
+const WHAT_IF_LABEL = 'About this WHAT-IF estimate';
+
+// Tooltip for the amount itself. fmtUSD rounds to cents and collapses anything
+// under one into "<1¢", so the exact figure is worth a hover — and a mixed row
+// names its two parts rather than calling the whole total an estimate.
+function amountTip(agent) {
+  const exact = (value) => `$${(value || 0).toFixed(4)}`;
+  switch (agent.cost_kind) {
+    case 'mixed':
+      return `${exact(agent.cost_usd)} total — ${exact(agent.real_cost_usd)} real spend`
+        + ` + ${exact(agent.what_if_cost_usd)} estimated (WHAT-IF)`;
+    case 'what_if':
+      return `${exact(agent.cost_usd)} estimated (WHAT-IF)`;
+    default:
+      return `${exact(agent.cost_usd)} real spend`;
+  }
+}
 
 // Tooltip for a row's WHAT-IF marker. Mixed rows spell out the split the cell
 // no longer shows inline; pure WHAT-IF rows just qualify the amount.
@@ -190,16 +223,18 @@ function CostsTable({ state, current }) {
             // WHAT-IF or not, so the column scans as a column of amounts. The
             // caveat is a single dim marker pointing back at the banner that
             // already states it in full — see .cost-whatif-mark in the CSS.
-            const whatIf = agent.cost_kind !== 'real';
+            // Tested against the two hypothetical kinds rather than "not real",
+            // so a zero-cost slice (kind "", which costKind returns when both
+            // subtotals are 0) is not marked as an estimate it isn't.
+            const whatIf = agent.cost_kind === 'what_if' || agent.cost_kind === 'mixed';
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-conv=${chain ? agent.conv_id : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${agent.continued ? 'cost-cont' : 'cost-head'}
                 title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`}${marker ? ' ' : ''}
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
-              <td><span class="cost-amt"
-                title=${`$${(agent.cost_usd || 0).toFixed(4)}${whatIf ? ' estimated (WHAT-IF)' : ' real spend'}`}>
+              <td><span class="cost-amt" title=${amountTip(agent)}>
                 ${fmtUSD(agent.cost_usd)}${whatIf && html`<a class="cost-whatif-mark" href="#costs-whatif-banner"
-                  title=${whatIfRowTip(agent)} aria-label=${whatIfRowTip(agent)}
+                  title=${whatIfRowTip(agent)} aria-label=${WHAT_IF_LABEL}
                   onClick=${gotoWhatIfBanner}>${WHAT_IF_MARK}</a>`}</span></td>
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${agent.model || ''}</span></td>
