@@ -113,6 +113,35 @@ test('Config treats agent directory parent mounting as default-on with an explic
   await mounted.unmount();
 });
 
+test('Config saves a live wizard activity-bot selection over its loaded default', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: '{}' }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+
+  const select = mounted.container.querySelector('#cfg-dashboard-activity-bots-wizard');
+  const emoji = select.querySelector('option[value="emoji"]');
+  const sprites = select.querySelector('option[value="sprites"]');
+  assert.equal(emoji.hasAttribute('selected'), true, 'loaded default is reflected in markup');
+
+  // A browser preserves the loaded `selected` attribute as defaultSelected
+  // while changing the live properties when the human picks another option.
+  Object.defineProperty(emoji, 'selected', { configurable: true, value: false });
+  Object.defineProperty(sprites, 'selected', { configurable: true, value: true });
+  assert.equal(emoji.hasAttribute('selected'), true, 'loaded attribute remains stale after interaction');
+  assert.equal(sprites.hasAttribute('selected'), false, 'new live selection needs no markup attribute');
+
+  assert.equal(adapter.assembleConfig().dashboard.activity_bots.wizard, 'sprites');
+  await mounted.unmount();
+});
+
 test('Config parses the OpenCode legacy pricing cutoff as a positive safe integer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([

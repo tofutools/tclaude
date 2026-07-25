@@ -71,7 +71,12 @@ function controlValue(control) {
   if (!control) return '';
   if (control.tagName === 'SELECT') {
     const options = Array.from(control.querySelectorAll('option'));
-    const selected = options.find(option => option.selected || option.hasAttribute('selected'));
+    // The selected attribute is the initial/default selection; browsers leave
+    // it on that option when the user chooses another one and update only the
+    // live selected property. Prefer that live state, falling back to the
+    // attribute for lightweight DOM implementations.
+    const selected = options.find(option => option.selected)
+      || options.find(option => option.hasAttribute('selected'));
     return selected?.getAttribute('value') ?? selected?.value
       ?? options[0]?.getAttribute('value') ?? options[0]?.value ?? '';
   }
