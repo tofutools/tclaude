@@ -187,7 +187,11 @@ export function SandboxBadge({ member }) {
   // otherwise every legacy `off` agent keeps the padlock this change removes.
   const danger = mode === 'danger-full-access' || mode === 'off';
   const title = danger
-    ? `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
+    ? mode === 'off'
+      // Claude's `off` disables the OS sandbox; it has no "full access" mode,
+      // so borrowing Codex's vocabulary here would name a concept it lacks.
+      ? `${prefix}: off — the OS sandbox is disabled for this launch. The agent's Bash runs unconfined. Explicit opt-in.`
+      : `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes`;
   const className = `sandbox-badge${danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
   return html`<span class=${className} role="note" aria-label=${title} title=${title}>${danger ? '⚠' : '🔒'} ${mode}</span>`;

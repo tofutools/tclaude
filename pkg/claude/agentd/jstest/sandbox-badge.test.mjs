@@ -115,6 +115,27 @@ const CASES = [
     absent: true,
   },
   {
+    // Deliberate asymmetry: the hedge rides an ON verdict, where a padlock would
+    // over-claim. An unconfigured/off verdict already renders nothing, and the
+    // no-badge reading is the SAFE direction — so an unreadable higher tier adds
+    // no badge here rather than inventing a warning about an agent tclaude
+    // already reports as unconfined. Pinned so a later refactor does not surface
+    // one by accident.
+    name: 'an unverified unconfigured verdict still renders nothing',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'unconfigured', os_sandbox_unverified: true,
+    },
+    absent: true,
+  },
+  {
+    name: 'a legacy Claude off row does not borrow Codex\'s "full access" wording',
+    state: { harness: 'claude', sandbox_mode: 'off' },
+    text: /⚠\s*off/, danger: true,
+    title: [/the OS sandbox is disabled for this launch/],
+    titleNot: [/full access/],
+  },
+  {
     name: 'a pre-column Claude row with no verdict and no explicit mode renders nothing',
     state: { harness: 'claude', sandbox_mode: '' },
     absent: true,

@@ -128,3 +128,69 @@ func TestDashboardSnapshot_CodexRecordsNoOSSandboxVerdict(t *testing.T) {
 	assert.Empty(t, agent.State.OSSandboxState, "codex records no separate verdict")
 	assert.Empty(t, agent.State.OSSandboxSource)
 }
+
+// The hedge has to survive the trip to the browser, not merely reach the row.
+// Its two ends were covered independently — the launch tests assert the DB row,
+// the jstest asserts a hand-built member state — leaving the join between them
+// unpinned, which is exactly where it can be dropped silently: without it every
+// unverifiable verdict renders as a plain padlock claiming "Bash is confined",
+// which is the failure the flag exists to prevent.
+func TestDashboardSnapshot_UnverifiedOSSandboxVerdictSurfaces(t *testing.T) {
+	const convID = "sbx4-1111-2222-3333-4444"
+	const label = "spwn-sbx4"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("doubtful")
+	f.HaveAliveSession(convID, label, "tmux-sbx4", f.TestCwd("sbx4"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                  label,
+		TmuxSession:         "tmux-sbx4",
+		ConvID:              convID,
+		Cwd:                 f.TestCwd("sbx4"),
+		Status:              "running",
+		Harness:             "claude",
+		SandboxMode:         "on",
+		OSSandboxState:      "on",
+		OSSandboxSource:     "this launch (sandbox `on`)",
+		OSSandboxUnverified: true,
+	}), "stamp an unverifiable verdict")
+	f.HaveMember("doubtful", convID)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agent := findDashAgent(snap, convID)
+	require.NotNil(t, agent, "agent missing from Agents[]")
+	assert.True(t, agent.State.OSSandboxUnverified, "Agents[] carries the doubt")
+
+	member := findDashMember(snap, "doubtful", convID)
+	require.NotNil(t, member, "agent missing from group members")
+	assert.True(t, member.State.OSSandboxUnverified, "Members[] carries the doubt")
+}
+
+// The converse, so the flag is not simply always true: a fully-resolved verdict
+// reaches the browser without the hedge.
+func TestDashboardSnapshot_VerifiedOSSandboxVerdictCarriesNoDoubt(t *testing.T) {
+	const convID = "sbx5-1111-2222-3333-4444"
+	const label = "spwn-sbx5"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("certain")
+	f.HaveAliveSession(convID, label, "tmux-sbx5", f.TestCwd("sbx5"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: label, TmuxSession: "tmux-sbx5", ConvID: convID, Cwd: f.TestCwd("sbx5"),
+		Status: "running", Harness: "claude",
+		OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+	}), "stamp a fully-resolved verdict")
+	f.HaveMember("certain", convID)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agent := findDashAgent(snap, convID)
+	require.NotNil(t, agent)
+	assert.False(t, agent.State.OSSandboxUnverified,
+		"a verdict every tier confirmed must not wear the hedge")
+}

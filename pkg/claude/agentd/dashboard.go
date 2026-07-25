@@ -1783,8 +1783,8 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
-		Harness:         pick.Harness,
-		SandboxMode:     pick.SandboxMode,
+		Harness:             pick.Harness,
+		SandboxMode:         pick.SandboxMode,
 		OSSandboxState:      pick.OSSandboxState,
 		OSSandboxSource:     pick.OSSandboxSource,
 		OSSandboxUnverified: pick.OSSandboxUnverified,

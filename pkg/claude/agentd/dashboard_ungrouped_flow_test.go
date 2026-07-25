@@ -194,6 +194,7 @@ type dashState struct {
 	SandboxMode          string  `json:"sandbox_mode,omitempty"`
 	OSSandboxState       string  `json:"os_sandbox_state,omitempty"`
 	OSSandboxSource      string  `json:"os_sandbox_source,omitempty"`
+	OSSandboxUnverified  bool    `json:"os_sandbox_unverified,omitempty"`
 	RemoteControl        bool    `json:"remote_control,omitempty"`
 	RecoveryStatus       string  `json:"recovery_status,omitempty"`
 	RecoveryDetail       string  `json:"recovery_detail,omitempty"`
