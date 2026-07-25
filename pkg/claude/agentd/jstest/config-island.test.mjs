@@ -113,6 +113,40 @@ test('Config treats agent directory parent mounting as default-on with an explic
   await mounted.unmount();
 });
 
+test('Config saves live wizard and slop activity-bot selections over their loaded defaults', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: '{}' }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+
+  // A browser preserves the loaded `selected` attribute as defaultSelected
+  // while changing the live properties when the human picks another option.
+  const selectLiveOption = (id, from, to) => {
+    const select = mounted.container.querySelector(id);
+    const loaded = select.querySelector(`option[value="${from}"]`);
+    const chosen = select.querySelector(`option[value="${to}"]`);
+    assert.equal(loaded.hasAttribute('selected'), true, `${id} loaded default is reflected in markup`);
+    Object.defineProperty(loaded, 'selected', { configurable: true, value: false });
+    Object.defineProperty(chosen, 'selected', { configurable: true, value: true });
+    assert.equal(loaded.hasAttribute('selected'), true, `${id} loaded attribute remains stale after interaction`);
+    assert.equal(chosen.hasAttribute('selected'), false, `${id} new live selection needs no markup attribute`);
+  };
+  selectLiveOption('#cfg-dashboard-activity-bots-wizard', 'emoji', 'sprites');
+  selectLiveOption('#cfg-dashboard-activity-bots-slop', 'sprites', 'emoji');
+
+  const assembled = adapter.assembleConfig();
+  assert.equal(assembled.dashboard.activity_bots.wizard, 'sprites');
+  assert.equal(assembled.dashboard.activity_bots.slop, 'emoji');
+  await mounted.unmount();
+});
+
 test('Config parses the OpenCode legacy pricing cutoff as a positive safe integer', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
