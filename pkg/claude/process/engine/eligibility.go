@@ -210,12 +210,11 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 func addStageDiagnostics(add func(code, path, message string), path, nodeID string, node model.Node) {
 	addStageIDDiagnostics(add, path, nodeID, node)
 	if node.Plan != nil {
-		// A human plan-approval gate has no verdict input in this slice, so
-		// admitting it would expand into a stage nothing could ever advance.
-		if node.Plan.Approval == model.PlanApprovalHuman {
-			add("unsupported_approval", path+".plan.approval",
-				"human plan approval gates are not executable in this engine yet")
-		}
+		// A human plan-approval gate IS executable: it expands into a prepared
+		// decision whose verdict a person supplies through the ordinary decision
+		// obligation path. Its approvalRetry policy keeps its own diagnostic in the
+		// node loop, because a rework budget is not what bounds it — one explicit
+		// human rework buys exactly one more plan execution.
 		addStagePerformerDiagnostics(add, path+".plan.performer", node.Plan.Performer)
 	}
 	for index, check := range node.Checks {

@@ -51,9 +51,16 @@ type processRunJSON struct {
 	UpdatedAt             time.Time                `json:"updatedAt"`
 }
 
+// processRunDecisionJSON mirrors the daemon's awaited-decision view. Attempt is
+// present only for a recurring plan-approval gate, whose window reopens once per
+// human rework; an authored decision opens exactly once and reports zero.
 type processRunDecisionJSON struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+	// omitempty mirrors the daemon's own tag deliberately: --json decodes this
+	// view and re-encodes it, so a plain tag would put "attempt":0 back onto every
+	// ordinary authored decision the daemon had omitted it from.
+	Attempt int `json:"attempt,omitempty"`
 }
 
 type processRunBlockedJSON struct {
@@ -548,6 +555,7 @@ type processDecideParams struct {
 	Node     string `long:"node" help:"Awaited decision node id"`
 	Verdict  string `long:"verdict" help:"Authored outcome label to select"`
 	Evidence string `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision"`
+	Attempt  int    `long:"attempt" optional:"true" help:"Exact approval window from tclaude process show; only a plan-approval gate has one"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 
@@ -555,7 +563,10 @@ func processDecideCmd() *cobra.Command {
 	return boa.CmdT[processDecideParams]{
 		Use:         "decide",
 		Short:       "Record a manual verdict for the run's awaited decision node",
-		Long:        "Selects exactly one authored outcome edge of the awaited decision node and closes every alternative. Duplicate, stale, or wrong-node input is refused; use tclaude process show to see the awaited node and its verdicts.",
+		Long: "Selects exactly one authored outcome edge of the awaited decision node and closes every alternative. " +
+			"A compound's plan-approval gate is decided the same way, with approve readying the do stage and rework " +
+			"sending the plan back for one more run; because that window reopens, its verdict must also name the exact " +
+			"--attempt tclaude process show reports. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processDecideParams, _ *cobra.Command, _ []string) {
 			exitProcessRuntime(runProcessDecide(p, os.Stdout, os.Stderr), os.Stderr)
@@ -582,7 +593,8 @@ func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
 		NodeID   string `json:"nodeId"`
 		Verdict  string `json:"verdict"`
 		Evidence string `json:"evidence,omitempty"`
-	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence}
+		Attempt  int    `json:"attempt,omitempty"`
+	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence, Attempt: p.Attempt}
 	var response struct {
 		Started bool           `json:"started"`
 		Run     processRunJSON `json:"run"`
@@ -790,7 +802,16 @@ func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
 		fmt.Fprintf(out, "Next: name one of %s, for example tclaude process reissue %s --node %s\n",
 			strings.Join(ambiguous, ", "), run.ID, ambiguous[0])
 	}
+	// A recurring approval window is part of the decision's identity, so its hint
+	// carries the exact one rather than an invocation the daemon would refuse as
+	// stale. An authored decision opens once, reports zero, and keeps the command
+	// it has always had.
 	for _, decision := range run.AwaitingDecisions {
+		if decision.Attempt > 0 {
+			fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --attempt %d --verdict <verdict>\n",
+				run.ID, decision.NodeID, decision.Attempt)
+			continue
+		}
 		fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --verdict <verdict>\n",
 			run.ID, decision.NodeID)
 	}

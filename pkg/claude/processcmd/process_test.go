@@ -723,6 +723,58 @@ func TestRuntimeDecideValidatesInputAndPrintsAwaitedFollowUpDecision(t *testing.
 	assert.Contains(t, stdout.String(), "confirm")
 	assert.Contains(t, stdout.String(), "no, yes")
 	assert.Contains(t, stdout.String(), "tclaude process decide run_1 --node confirm")
+	assert.NotContains(t, stdout.String(), "--attempt",
+		"an authored decision opens once and keeps the command it always had")
+}
+
+// TestRuntimeDecideCarriesTheApprovalWindow is the recurring-window half of the
+// same surface: a plan-approval gate's verdict names the exact window, and the
+// printed follow-up carries it so the suggested command is one the daemon would
+// accept rather than refuse as stale.
+func TestRuntimeDecideCarriesTheApprovalWindow(t *testing.T) {
+	stubProcessRuntime(t, func(_ string, _ string, in, out any, _ agent.DaemonOpts) error {
+		encoded, err := json.Marshal(in)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"nodeId":"build.plan.approval","verdict":"rework","attempt":1}`, string(encoded))
+		response := out.(*struct {
+			Started bool           `json:"started"`
+			Run     processRunJSON `json:"run"`
+		})
+		response.Run = processRunJSON{
+			ID: "run_1", Action: "runnable",
+			AwaitingDecisions: []processRunDecisionJSON{
+				{NodeID: "build.plan.approval", Verdicts: []string{"approve", "rework"}, Attempt: 2},
+				{NodeID: "confirm", Verdicts: []string{"no", "yes"}},
+			},
+		}
+		return nil
+	})
+
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runProcessDecide(&processDecideParams{
+		RunID: "run_1", Node: "build.plan.approval", Verdict: "rework", Attempt: 1,
+	}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(),
+		"tclaude process decide run_1 --node build.plan.approval --attempt 2 --verdict <verdict>")
+	assert.Contains(t, stdout.String(),
+		"tclaude process decide run_1 --node confirm --verdict <verdict>")
+}
+
+// TestProcessRunJSONRoundTripOmitsTheAuthoredDecisionWindow pins the one place
+// a new optional field could leak into an existing surface: --json decodes the
+// daemon's view and re-encodes it, so an authored decision that arrived without
+// an attempt key must leave without one too.
+func TestProcessRunJSONRoundTripOmitsTheAuthoredDecisionWindow(t *testing.T) {
+	var run processRunJSON
+	require.NoError(t, json.Unmarshal([]byte(`{"id":"run_1","action":"awaiting_decision",`+
+		`"awaitingDecisions":[{"nodeId":"confirm","verdicts":["no","yes"]},`+
+		`{"nodeId":"build.plan.approval","verdicts":["approve","rework"],"attempt":2}],`+
+		`"commands":[],"blocked":[]}`), &run))
+	encoded, err := json.Marshal(run.AwaitingDecisions)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"nodeId":"confirm","verdicts":["no","yes"]},`+
+		`{"nodeId":"build.plan.approval","verdicts":["approve","rework"],"attempt":2}]`, string(encoded))
+	assert.NotContains(t, string(encoded), `"nodeId":"confirm","verdicts":["no","yes"],"attempt"`)
 }
 
 // TestRuntimeResolveBlockedValidatesInputAndPrintsTheParkedBranch covers the

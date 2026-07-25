@@ -94,6 +94,19 @@ type definitionNode struct {
 	// second scan of the child list, and it is the single node the compound's one
 	// rework budget lives on.
 	doAnchor int
+	// planAnchor is a compound parent's prepared plan-child index, and -1
+	// everywhere else — including on a compound that authored no plan stage. It
+	// is the doAnchor of the approval gate: the minimum private anchor that makes
+	// "the work this approval renders its verdict over" an O(1) lookup, and the
+	// node whose attempt counter IS the approval window's identity.
+	planAnchor int
+	// approvalGate is a compound parent's prepared plan-approval-gate child
+	// index, and -1 everywhere else — including on a compound whose plan needs no
+	// human approval. It is the other direction of the same pair: planAnchor
+	// answers "which work is this gate about", and this answers "is this plan
+	// gated by a person", which is what the plan-stage ceiling rule turns on. Both
+	// are prepared once so neither question is ever a walk of the child list.
+	approvalGate int
 }
 
 type definitionEdge struct {
@@ -143,11 +156,13 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
 		prepared := definitionNode{
-			id:       nodeID,
-			parent:   -1,
-			doAnchor: -1,
-			joinAll:  node.Join == model.JoinAll,
-			joinAny:  node.Join == model.JoinAny,
+			id:           nodeID,
+			parent:       -1,
+			doAnchor:     -1,
+			planAnchor:   -1,
+			approvalGate: -1,
+			joinAll:      node.Join == model.JoinAll,
+			joinAny:      node.Join == model.JoinAny,
 		}
 		switch node.Type {
 		case model.NodeTypeStart:
@@ -194,12 +209,25 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			// eligibility rejects stage retry and approvalRetry policies, so no
 			// other child carries an authored budget.
 			child := definitionNode{
-				id: spec.ChildID, parent: parentIndex, doAnchor: -1,
-				stage: spec.Stage, maxAttempts: 1,
+				id: spec.ChildID, parent: parentIndex, doAnchor: -1, planAnchor: -1,
+				approvalGate: -1, stage: spec.Stage, maxAttempts: 1,
 			}
-			if spec.Stage == model.StageDone {
+			switch spec.Stage {
+			case model.StageDone:
 				child.kind = definitionStageDone
-			} else {
+			case model.StagePlanApproval:
+				// The one prepared stage nobody dispatches. It is an ordinary
+				// decision as far as the reducer, the durable obligation outbox, and
+				// every decision surface are concerned; only its verdict vocabulary
+				// is fixed rather than authored, because a compound's stages have no
+				// authored edges for an author to have named outcomes on.
+				//
+				// bindProgram is deliberately never called for it: model.ExpandNode
+				// gives it a synthetic human performer that describes who decides,
+				// not a program to run.
+				child.kind = definitionDecision
+				child.verdicts = approvalVerdicts()
+			default:
 				child.kind = definitionTask
 				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
 				if err != nil {
@@ -220,12 +248,25 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 				return nil, err
 			}
 			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
-			if spec.Stage == model.StageDo {
+			switch spec.Stage {
+			case model.StageDo:
 				definition.nodes[parentIndex].doAnchor = childIndex
+			case model.StagePlan:
+				definition.nodes[parentIndex].planAnchor = childIndex
+			case model.StagePlanApproval:
+				definition.nodes[parentIndex].approvalGate = childIndex
 			}
 		}
 		if definition.nodes[parentIndex].doAnchor < 0 {
 			return nil, fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, nodeID)
+		}
+		// An approval gate whose plan child is missing would be a decision nothing
+		// could ever derive a window identity for. Expansion only ever emits the
+		// gate directly after the plan stage, so this fails closed on a caller that
+		// reached preparation with an expansion this engine did not derive.
+		if parent := definition.nodes[parentIndex]; parent.approvalGate >= 0 && parent.planAnchor < 0 {
+			return nil, fmt.Errorf("%w: compound %q expanded an approval gate without a plan stage",
+				ErrInvalidDefinition, nodeID)
 		}
 	}
 	for fromIndex := range definition.nodes {
@@ -347,6 +388,40 @@ func (d *Definition) DecisionVerdicts(nodeID string) ([]string, bool) {
 		return nil, false
 	}
 	return append([]string(nil), node.verdicts...), true
+}
+
+// ApprovalAttempt reports the plan attempt one prepared plan-approval gate's
+// CURRENT window is bound to, and false for every node that is not such a gate
+// — including an ordinary authored decision, which opens exactly once.
+//
+// It is the single derivation of the approval half of decision identity, shared
+// by the reducer's staleness check, the executor's evidence, and the API view,
+// so those three cannot drift apart. The number is read from the plan child's
+// own monotonic counter, which is why nothing durable stores it: a window is
+// exactly "the approval of plan attempt N", and the counter is what already
+// says which N that is.
+func (d *Definition) ApprovalAttempt(checkpoint Checkpoint, nodeID string) (int, bool) {
+	node, ok := definitionNodeByID(d, nodeID)
+	if !ok {
+		return 0, false
+	}
+	plan, ok := approvalAnchor(d, node)
+	if !ok {
+		return 0, false
+	}
+	return checkpoint.Attempts[plan.id], true
+}
+
+// RequiredDecisionAttempt is the exact attempt a verdict for one prepared
+// decision has to name, and it is deterministic from the prepared node: an
+// authored one-shot decision requires zero, so every caller that predates the
+// field keeps working, and a recurring plan-approval gate requires its current
+// window's plan attempt.
+func (d *Definition) RequiredDecisionAttempt(checkpoint Checkpoint, nodeID string) int {
+	if attempt, ok := d.ApprovalAttempt(checkpoint, nodeID); ok {
+		return attempt
+	}
+	return 0
 }
 
 // DecisionEdge returns the structural authored edge one verdict selects.
@@ -750,6 +825,20 @@ func validateAwaitingDecisions(checkpoint Checkpoint, definition *Definition) er
 		seen[obligation.NodeID] = struct{}{}
 		if checkpoint.Nodes[obligation.NodeID] != NodeReady {
 			return invalid("awaiting decision node %q must be ready", obligation.NodeID)
+		}
+		// A plan-approval window is "the approval of plan attempt N", and N is
+		// derived from the plan child's counter rather than stored, so a window
+		// whose plan never ran has no identity for a verdict to bind to. This is
+		// the same known-reference rule validateBlocked already applies to a parked
+		// branch, and for the same reason: without it the obligation would fail
+		// OPEN — the derived window would read as zero, which is exactly what an
+		// authored decision requires, so a no-attempt verdict would decide it.
+		//
+		// It is an O(1) lookup on an obligation this loop is already visiting, not
+		// a scan: only a prepared approval gate answers, and only about its own
+		// prepared plan anchor.
+		if attempt, approval := definition.ApprovalAttempt(checkpoint, obligation.NodeID); approval && attempt < 1 {
+			return invalid("awaiting approval gate %q has no recorded plan attempt to decide", obligation.NodeID)
 		}
 	}
 	return nil

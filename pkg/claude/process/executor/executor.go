@@ -137,13 +137,21 @@ type RecordedOutcome struct {
 	Note     string
 }
 
-// DecisionInput is one attempt at resolving the run's awaited decision. It is
-// bound to the durable obligation identity (run id + decision node id); the
-// store's state-version compare-and-swap serializes concurrent attempts.
+// DecisionInput is one attempt at resolving one of the run's awaited decisions.
+// It is bound to the durable obligation identity (run id + decision node id +
+// the window's attempt); the store's state-version compare-and-swap serializes
+// concurrent attempts.
+//
+// Attempt is zero for an authored decision, which opens exactly once, so a
+// caller that never learned about the field keeps working unchanged. A recurring
+// plan-approval gate requires the exact attempt of the window being decided, so
+// a verdict a person formed against an earlier window is refused rather than
+// silently applied to the current one.
 type DecisionInput struct {
 	NodeID   string
 	Verdict  string
 	Evidence string
+	Attempt  int
 }
 
 // ResolutionInput is one attempt at resolving a parked branch. It is bound to
@@ -383,7 +391,7 @@ func Prepare(run *Run) (*Dispatch, error) {
 	// is what wins a join, and everything advanceEvidence reports — a parked
 	// branch, a planned command — is downstream of that.
 	events := commitEvidence(run.definition, run.checkpoint, next,
-		nil, advanceEvidence(run.checkpoint, next, command))
+		nil, advanceEvidence(command), true)
 	if err := persistEvents(run, next, events); err != nil {
 		return nil, err
 	}
@@ -446,15 +454,15 @@ func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) er
 	// worker's own observation would have, and names the same gate.
 	input := append([]db.ProcessRunEvent{event("program_outcome_recorded", &command, actor, payload)},
 		causedStageReset(run.definition, command.NodeID, run.checkpoint, next)...)
-	events := commitEvidence(run.definition, run.checkpoint, next, input, nil)
+	events := commitEvidence(run.definition, run.checkpoint, next, input, nil, false)
 	return persistEvents(run, next, events)
 }
 
-// RecordDecision durably applies one manual decision verdict to the run's
-// awaited decision node. The engine refuses stale, duplicate, or wrong-node
-// input and verdicts outside the authored outcome vocabulary; the checkpoint,
-// chosen/closed edge dispositions, and decision evidence commit in one
-// state-version-guarded transaction. It never executes a program.
+// RecordDecision durably applies one manual decision verdict to one of the
+// run's awaited decision nodes. The engine refuses stale, duplicate, wrong-node,
+// and wrong-attempt input and verdicts outside the node's vocabulary; the
+// checkpoint, chosen/closed edge dispositions, and decision evidence commit in
+// one state-version-guarded transaction. It never executes a program.
 func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	if err := validateReconciliationActor(actor); err != nil {
 		return err
@@ -466,24 +474,44 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 		return ErrInvalidRun
 	}
 	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
-		Kind:     engine.TransitionDecisionRecorded,
-		Decision: &engine.DecisionRecord{NodeID: input.NodeID, Verdict: input.Verdict},
+		Kind: engine.TransitionDecisionRecorded,
+		Decision: &engine.DecisionRecord{
+			NodeID: input.NodeID, Verdict: input.Verdict, Attempt: input.Attempt,
+		},
 	})
 	if err != nil {
 		return err
 	}
-	chosen, ok := run.definition.DecisionEdge(input.NodeID, input.Verdict)
-	if !ok {
+	payload := decisionEvidencePayload{
+		Verdict: input.Verdict, Evidence: input.Evidence, Attempt: input.Attempt,
+	}
+	// A prepared approval gate has no authored edge, and one is not invented for
+	// it: its verdict moves the compound's own stage sequence. For an authored
+	// decision the edge is the whole point of the verdict, so a missing one stays
+	// the fail-closed contradiction it always was.
+	if chosen, ok := run.definition.DecisionEdge(input.NodeID, input.Verdict); ok {
+		payload.ChosenEdge = &chosen
+	} else if _, approval := run.definition.ApprovalAttempt(run.checkpoint, input.NodeID); !approval {
 		return fmt.Errorf("%w: decision %q has no edge for verdict %q", ErrInvalidRun, input.NodeID, input.Verdict)
 	}
-	payload := struct {
-		Verdict    string            `json:"verdict"`
-		Evidence   string            `json:"evidence,omitempty"`
-		ChosenEdge engine.ChosenEdge `json:"chosenEdge"`
-	}{Verdict: input.Verdict, Evidence: input.Evidence, ChosenEdge: chosen}
-	events := commitEvidence(run.definition, run.checkpoint, next,
-		[]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)}, nil)
+	// A rework verdict sends the compound's plan back, and this decision named
+	// the only gate that could have happened at. The row goes immediately after
+	// the verdict that caused it; every other decision pays one map lookup.
+	causal := append([]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)},
+		causedStageReset(run.definition, input.NodeID, run.checkpoint, next)...)
+	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
 	return persistEvents(run, next, events)
+}
+
+// decisionEvidencePayload is the human-facing record of one verdict. ChosenEdge
+// is a pointer because a prepared approval gate genuinely has none, and Attempt
+// is omitted for an authored decision, whose single window is always zero — so
+// an ordinary decision's row is byte-identical to what it has always been.
+type decisionEvidencePayload struct {
+	Verdict    string             `json:"verdict"`
+	Evidence   string             `json:"evidence,omitempty"`
+	ChosenEdge *engine.ChosenEdge `json:"chosenEdge,omitempty"`
+	Attempt    int                `json:"attempt,omitempty"`
 }
 
 // ResolveBlocked durably applies one operator resolution to a parked branch.
@@ -521,7 +549,7 @@ func ResolveBlocked(run *Run, actor string, input ResolutionInput) error {
 	// from the action.
 	causal := append([]db.ProcessRunEvent{eventForNode("blocked_resolved", input.NodeID, actor, payload)},
 		causedStageReset(run.definition, input.NodeID, run.checkpoint, next)...)
-	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil)
+	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
 	return persistEvents(run, next, events)
 }
 
@@ -567,6 +595,12 @@ func validateDecisionInput(input DecisionInput) error {
 		if unicode.IsControl(value) {
 			return fmt.Errorf("%w: node id and verdict cannot contain control characters", ErrInvalidDecisionInput)
 		}
+	}
+	// Bounded input, not an identity check: the engine compares the attempt
+	// exactly against the window it derives, so all this refuses is a number no
+	// window could ever have.
+	if input.Attempt < 0 {
+		return fmt.Errorf("%w: attempt cannot be negative", ErrInvalidDecisionInput)
 	}
 	if len(input.Evidence) > MaxDecisionEvidenceBytes || !utf8.ValidString(input.Evidence) {
 		return fmt.Errorf("%w: evidence must be at most %d bytes of UTF-8", ErrInvalidDecisionInput, MaxDecisionEvidenceBytes)
@@ -749,34 +783,65 @@ func eventForNode(kind, nodeID, actor string, payload any) db.ProcessRunEvent {
 	}
 }
 
-// advanceEvidence is the human-facing record of one engine-owned advance: the
-// prepared command, plus one row per decision the advance newly parked a branch
-// on. Fan-out can park several branches in a single advance, and each of those
-// obligations is separately addressable, so each gets its own row rather than
-// one row standing in for all of them. An advance that did neither leaves the
-// plain status move.
-func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command) []db.ProcessRunEvent {
+// advanceEvidence is the human-facing record of what one engine-owned advance
+// produced by itself: the at-most-one prepared command. The obligations an
+// advance parked a branch on are NOT derived here — see awaitedEvidence, which
+// derives them once for the whole commit — and neither is the fallback row for
+// an advance that produced nothing, which commitEvidence owns because only it
+// can see whether anything else was recorded.
+func advanceEvidence(command *engine.Command) []db.ProcessRunEvent {
+	if command == nil {
+		return nil
+	}
+	return []db.ProcessRunEvent{event("program_prepared", command, EngineActor,
+		preparedEvidence{Command: cloneCommand(*command)})}
+}
+
+// awaitedEvidence is the human-facing record of every decision window this
+// COMMIT newly opened: which node, and — for a recurring plan-approval gate —
+// which window, so a reader can tell the approval of plan attempt 2 from the
+// approval of plan attempt 1.
+//
+// Deriving it from the commit's own before/after checkpoints rather than from
+// the advance is what closes a real gap: an obligation can be created by the
+// settling transition itself — a task succeeding into an authored decision, or a
+// plan stage succeeding into its approval gate — and such an obligation already
+// existed by the time the follow-on advance began, so an advance-scoped diff
+// never saw it and its row was silently never written. This is the same diff
+// that used to live in advanceEvidence, moved out one level rather than added
+// beside it, so a commit still pays exactly one obligation walk.
+//
+// That walk is bounded by the durable outbox, which holds one entry per branch
+// currently parked on a human — not by the definition. A run with one branch
+// awaiting a human while its siblings keep committing programs therefore pays a
+// single-element scan per commit, and a run parking nobody returns on the first
+// line.
+func awaitedEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+	if len(after.AwaitingDecisions) == 0 {
+		return nil
+	}
 	var events []db.ProcessRunEvent
-	for _, obligation := range advanced.AwaitingDecisions {
+	for _, obligation := range after.AwaitingDecisions {
 		if slices.ContainsFunc(before.AwaitingDecisions, func(existing engine.DecisionObligation) bool {
 			return existing.NodeID == obligation.NodeID
 		}) {
 			continue
 		}
-		events = append(events, eventForNode("decision_awaited", obligation.NodeID, EngineActor, struct {
-			NodeID string `json:"nodeId"`
-		}{NodeID: obligation.NodeID}))
-	}
-	if command != nil {
-		events = append(events, event("program_prepared", command, EngineActor,
-			preparedEvidence{Command: cloneCommand(*command)}))
-	}
-	if len(events) == 0 {
-		events = append(events, event("engine_advanced", nil, EngineActor, struct {
-			Status engine.RunStatus `json:"status"`
-		}{Status: advanced.Status}))
+		events = append(events, eventForNode("decision_awaited", obligation.NodeID, EngineActor,
+			awaitedEvidencePayload{
+				NodeID:  obligation.NodeID,
+				Attempt: definition.RequiredDecisionAttempt(after, obligation.NodeID),
+			}))
 	}
 	return events
+}
+
+// awaitedEvidencePayload names one newly opened decision window. Attempt is
+// omitted for an authored decision, whose single window is always zero, so those
+// rows stay byte-identical to what they have always been.
+type awaitedEvidencePayload struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt,omitempty"`
 }
 
 // commitEvidence assembles one transaction's evidence in the order a reader
@@ -794,19 +859,36 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 // named. This assembler stays agnostic to that and does no compound work of its
 // own, so an advance, a decision, or an ordinary program pays nothing for it.
 //
+// engineAdvanced says whether an engine pass ran at all as part of this commit,
+// and exists only for the fallback row: an advance that produced no command, no
+// obligation, and nothing else worth recording still leaves the plain status
+// move, so its commit is never silently empty. A caller that only applied an
+// external input — a recorded outcome, a verdict, a resolution — passes false
+// and never produces one.
+//
 // The budget is what the rest of the commit leaves. Join history is optional —
 // it must never be the reason an otherwise valid state transition is refused —
 // so it is the part that yields, and it says so when it does.
 func commitEvidence(definition *engine.Definition, before, after engine.Checkpoint,
-	input, advance []db.ProcessRunEvent) []db.ProcessRunEvent {
+	input, advance []db.ProcessRunEvent, engineAdvanced bool) []db.ProcessRunEvent {
 	blocked := blockedEvidence(before, after)
+	awaited := awaitedEvidence(definition, before, after)
 	joins := joinEvidence(definition, before, after,
-		db.MaxProcessRunEventsPerTransition-len(input)-len(blocked)-len(advance))
-	events := make([]db.ProcessRunEvent, 0, len(input)+len(blocked)+len(joins)+len(advance))
+		db.MaxProcessRunEventsPerTransition-len(input)-len(blocked)-len(awaited)-len(advance))
+	events := make([]db.ProcessRunEvent, 0, len(input)+len(blocked)+len(joins)+len(awaited)+len(advance))
 	events = append(events, input...)
 	events = append(events, blocked...)
 	events = append(events, joins...)
+	// A newly opened window precedes the command the same advance prepared: the
+	// obligation is a fact about this commit, the command is what the engine then
+	// went on to do with the branches that were not parked.
+	events = append(events, awaited...)
 	events = append(events, advance...)
+	if engineAdvanced && len(awaited)+len(advance) == 0 {
+		events = append(events, event("engine_advanced", nil, EngineActor, struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: after.Status}))
+	}
 	// Evidence is constructed before its causal order is assembled: in
 	// particular, downstream advance evidence exists before join evidence is
 	// derived, even though the join must precede it in the public stream. Keep

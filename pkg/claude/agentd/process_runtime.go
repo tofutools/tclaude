@@ -247,9 +247,17 @@ type processRunView struct {
 // processRunDecisionView presents one awaited decision with its selectable
 // verdicts derived from the prepared definition; the durable checkpoint keeps
 // only the obligation identity.
+//
+// Attempt is the recurring half of that identity and appears only for a
+// plan-approval gate, whose window reopens once per human rework. It is DERIVED
+// from the checkpoint's own plan attempt counter through the same accessor the
+// reducer checks against, so a caller reading it here and deciding with it can
+// never be told one number and refused for another. An authored decision opens
+// exactly once, so its window is always zero and the field stays absent.
 type processRunDecisionView struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+	Attempt  int      `json:"attempt,omitempty"`
 }
 
 // processRunBlockedView presents one parked branch with the exact attempt a
@@ -319,10 +327,16 @@ type processRunReissueRequest struct {
 	NodeID string `json:"nodeId,omitempty"`
 }
 
+// processRunDecideRequest carries the verdict and the window it was formed
+// against. Attempt stays optional: an authored decision opens exactly once and
+// requires zero, so a client that predates the field keeps working, while a
+// recurring plan-approval gate refuses a verdict that names any window but its
+// current one.
 type processRunDecideRequest struct {
 	NodeID   string `json:"nodeId"`
 	Verdict  string `json:"verdict"`
 	Evidence string `json:"evidence,omitempty"`
+	Attempt  int    `json:"attempt,omitempty"`
 }
 
 type processRunResolveBlockedRequest struct {
@@ -1012,9 +1026,10 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleProcessRunDecide records one manual decision verdict. The input is
-// bound to the awaited decision node and the durable state-version CAS, so
-// duplicate, stale, wrong-node, and concurrent attempts are refused; the actor
-// is always the authenticated caller, never request content.
+// bound to the awaited decision node, the window it was formed against, and the
+// durable state-version CAS, so duplicate, stale, wrong-node, wrong-attempt, and
+// concurrent attempts are refused; the actor is always the authenticated caller,
+// never request content.
 //
 // It succeeds while sibling branches are mid-program: the verdict is routed to
 // the run's live owner instead of being refused because the run is claimed.
@@ -1037,10 +1052,12 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 	// The detail records the attempt (including refused input), so the raw
 	// request fields are neutralized before they reach the audit row.
 	setAuditDetail(r, "run: "+runID+", decision node: "+stripControl(request.NodeID)+
-		", verdict: "+stripControl(request.Verdict))
+		", verdict: "+stripControl(request.Verdict)+
+		", attempt: "+strconv.Itoa(request.Attempt))
 	started, err := processRuns.submit(runID, string(actor), processRunInput{
 		decision: &executor.DecisionInput{
-			NodeID: request.NodeID, Verdict: request.Verdict, Evidence: request.Evidence,
+			NodeID: request.NodeID, Verdict: request.Verdict,
+			Evidence: request.Evidence, Attempt: request.Attempt,
 		}})
 	if err != nil {
 		writeProcessRuntimeError(w, err)
@@ -1360,8 +1377,22 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 				return processRunView{}, fmt.Errorf("%w: awaited node %q is not a prepared decision",
 					executor.ErrInvalidRun, obligation.NodeID)
 			}
+			// Zero for an authored decision, and the current window's plan attempt
+			// for a plan-approval gate. Read straight out of the counter, with no
+			// evidence anywhere on the path.
+			//
+			// A gate reporting no window fails the read CLOSED rather than omitting
+			// the field: omitting it is how an authored decision says "there is no
+			// window", so a reader told that about a gate would form the very verdict
+			// the run refuses. The load boundary already rejects such a checkpoint —
+			// this is the read surface refusing to describe one anyway.
+			attempt, approval := definition.ApprovalAttempt(checkpoint, obligation.NodeID)
+			if approval && attempt < 1 {
+				return processRunView{}, fmt.Errorf("%w: awaited approval gate %q has no recorded plan attempt",
+					executor.ErrInvalidRun, obligation.NodeID)
+			}
 			awaitingDecisions = append(awaitingDecisions,
-				processRunDecisionView{NodeID: obligation.NodeID, Verdicts: verdicts})
+				processRunDecisionView{NodeID: obligation.NodeID, Verdicts: verdicts, Attempt: attempt})
 		}
 	}
 	var awaiting *processRunDecisionView
