@@ -2980,6 +2980,27 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 // The result only ever acknowledges MORE than the old started_at predicate did,
 // never less: every started-and-read row is by construction at or below the
 // watermark.
+//
+// Which arm carries the load depends on the recipient. For an agent whose
+// prompt correlation works, the MAX arm is the normal path and the fallback
+// almost never fires. For an agent with broken correlation — the population
+// this ticket is about, where all ten live rows had started_at empty — it is
+// the other way round: MAX stays NULL and the fallback carries everything, one
+// row per completed turn. That regime is self-sustaining, because once the
+// fallback acknowledges a row, that row's own later UserPromptSubmit hits
+// MarkRegularAgentMessageStarted's processed_at = '' guard and never stamps
+// started_at. Both regimes drain; neither can wedge.
+//
+// Both subqueries MUST stay non-correlated — they may reference bound
+// parameters only, never the outer row. SQLite evaluates a non-correlated
+// scalar subquery once into a register; scoping an inner WHERE by the outer row
+// instead (say to_conv = agent_messages.to_conv, which compiles and reads
+// perfectly sensibly) would make it correlated and re-evaluated per row, so
+// each acknowledged row would advance MIN(id) to the next and the fallback
+// would cascade from "release one" into "release the whole queue" — silently
+// restoring the unbounded-admissions defect the watermark exists to prevent.
+// TestMessageBackpressureInlineMailDrainsOnNextTerminalHook is the cascade
+// test: it drains exactly 1 of 10 and needs 9 further turns to finish.
 func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
 	if convID == "" {
 		return 0, nil

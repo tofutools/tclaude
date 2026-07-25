@@ -171,6 +171,69 @@ func TestMessageBackpressureTerminalHookAcknowledgesOnlyUpToTheStartedPrompt(t *
 	}
 }
 
+// A turn that ended in an API/auth/billing error consumed nothing, so
+// StopFailure must not acknowledge mail — reopening the sender's capacity into
+// a pane making no progress is backwards, and a rate-limited pane is still
+// deliverable (isAwaitingHumanInput deliberately excludes StatusError), so mail
+// keeps arriving there. The queue therefore holds through the error window and
+// drains on the first successful Stop.
+func TestMessageBackpressureStopFailureHoldsTheQueueUntilASuccessfulTurn(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	const sender = "wedge-err-send-cccc-000000000001"
+	const target = "wedge-err-recv-cccc-000000000002"
+	const tmux = "tclaude-wedge-err"
+	const label = "spwn-wedge-err"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(target, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(target)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", target)
+	cwd := f.TestCwd("wedge-err")
+	f.HaveAliveSession(target, label, tmux, cwd)
+
+	// Put the recipient INTO the error state first, so the delivery below is
+	// genuinely exercised against a rate-limited pane. Ordering it the other way
+	// round would assert nothing about StatusError: the test would still pass if
+	// erroring panes stopped being deliverable, which is the premise this whole
+	// case rests on.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "StopFailure", ConvID: target, Cwd: cwd, ErrorType: "rate_limit",
+	}, label), "ApplyHook(StopFailure)")
+	state, err := session.LoadSessionState(label)
+	require.NoError(t, err)
+	require.Equal(t, session.StatusError, state.Status, "the recipient is rate-limited")
+
+	rec := postMessage(t, f, sender, map[string]any{"to": target, "body": "sent during a rate limit"})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var response sendRespView
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+	agentd.WaitForBackgroundForTest()
+	agentd.FlushUndeliveredForTest(target)
+	message, err := db.GetAgentMessage(response.ID)
+	require.NoError(t, err)
+	require.False(t, message.ReadAt.IsZero(),
+		"isAwaitingHumanInput excludes StatusError, so a rate-limited pane still takes the body")
+
+	// The error window continues: more failed turns must not acknowledge it.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "StopFailure", ConvID: target, Cwd: cwd, ErrorType: "rate_limit",
+	}, label), "ApplyHook(StopFailure)")
+	message, err = db.GetAgentMessage(response.ID)
+	require.NoError(t, err)
+	assert.True(t, message.ProcessedAt.IsZero(),
+		"a failed turn consumed nothing, so it must not reopen the sender's capacity")
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "Stop", ConvID: target, Cwd: cwd,
+	}, label), "ApplyHook(Stop)")
+	message, err = db.GetAgentMessage(response.ID)
+	require.NoError(t, err)
+	assert.False(t, message.ProcessedAt.IsZero(),
+		"the first successful turn after the error window drains it, with no operator intervention")
+}
+
 // A terminal hook must not consume pointer/notification mail: that row's body
 // was never put in the pane, so it still pends until `tclaude agent inbox read`
 // — the contract stated in MarkReadRegularAgentMessagesProcessed's docstring.
