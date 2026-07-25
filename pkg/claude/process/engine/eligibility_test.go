@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -233,13 +234,128 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "compound stages",
+			// Only a task node derives stages, so stages anywhere else are still a
+			// capability this engine has no meaning for at all.
+			name: "compound stages on a non-task node",
 			code: "unsupported_compound_stages",
 			tmpl: func() *model.Template {
-				tmpl := sequentialTemplate("task")
-				node := tmpl.Nodes["task"]
+				tmpl := decisionDiamondTemplate()
+				node := tmpl.Nodes["choose"]
 				node.Plan = &model.Step{ID: "plan", Performer: model.Performer{Kind: model.PerformerProgram, Run: "plan"}}
-				tmpl.Nodes["task"] = node
+				tmpl.Nodes["choose"] = node
+				return tmpl
+			},
+		},
+		{
+			name: "human plan approval gate",
+			code: "unsupported_approval",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Plan.Approval = model.PlanApprovalHuman
+				})
+			},
+		},
+		{
+			name: "human plan stage performer",
+			code: "unsupported_performer",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Plan.Performer = model.Performer{Kind: model.PerformerHuman, Ask: "Plan it?"}
+				})
+			},
+		},
+		{
+			name: "agent check stage performer",
+			code: "unsupported_performer",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Checks[0].Performer = model.Performer{Kind: model.PerformerAgent, Prompt: "Check it"}
+				})
+			},
+		},
+		{
+			name: "human review stage performer",
+			code: "unsupported_performer",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Review.Performer = model.Performer{Kind: model.PerformerHuman, Ask: "Ship it?"}
+				})
+			},
+		},
+		{
+			name: "stage performer contact schedule",
+			code: "unsupported_contact",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Review.Performer.Contact = &model.ContactSchedule{
+						Cadence: "1h", Budget: 3, EscalationTarget: "operator"}
+				})
+			},
+		},
+		{
+			name: "plan stage retry",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Plan.Retry = &model.RetryPolicy{MaxAttempts: 2}
+				})
+			},
+		},
+		{
+			name: "check stage retry",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Checks[0].Retry = &model.RetryPolicy{MaxAttempts: 2}
+				})
+			},
+		},
+		{
+			name: "review stage retry",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Review.Retry = &model.RetryPolicy{MaxAttempts: 2}
+				})
+			},
+		},
+		{
+			name: "plan approval retry",
+			code: "unsupported_retry",
+			tmpl: func() *model.Template {
+				return compoundStageTemplate(func(node *model.Node) {
+					node.Plan.Approval = model.PlanApprovalHuman
+					node.Plan.ApprovalRetry = &model.RetryPolicy{MaxAttempts: 2}
+				})
+			},
+		},
+		{
+			name: "compound routing to more than one outcome",
+			code: "unsupported_routing",
+			tmpl: func() *model.Template {
+				tmpl := compoundStageTemplate(nil)
+				node := tmpl.Nodes["build"]
+				node.Next = model.Next{"pass": "end", "fail": "end"}
+				tmpl.Nodes["build"] = node
+				return tmpl
+			},
+		},
+		{
+			name: "expansion above the executable node ceiling",
+			code: "expanded_node_limit",
+			tmpl: func() *model.Template {
+				tmpl := compoundStageTemplate(func(node *model.Node) {
+					// start, end, the parent, and its plan/do/review/done stages
+					// already account for seven; the checks carry it over the top.
+					checks := make([]model.Step, 0, model.MaxNormalizedNodes)
+					for index := range model.MaxNormalizedNodes {
+						checks = append(checks, model.Step{
+							ID:        fmt.Sprintf("check%04d", index),
+							Performer: model.Performer{Kind: model.PerformerProgram, Run: "check"},
+						})
+					}
+					node.Checks = checks
+				})
 				return tmpl
 			},
 		},

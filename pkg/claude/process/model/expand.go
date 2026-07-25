@@ -81,14 +81,15 @@ type StageSpec struct {
 }
 
 // IsCompound reports whether a task node declares compound stages and
-// therefore expands into child stage nodes at activation.
+// therefore expands into child stage nodes.
 func (n Node) IsCompound() bool {
 	return n.Type == NodeTypeTask && (n.Plan != nil || len(n.Checks) > 0 || n.Review != nil)
 }
 
 // ExpandNode derives the ordered child stages of a compound task node. The
-// derivation is a pure function of the template so the reducer-recorded
-// expansion can always be re-checked against the pinned template.
+// derivation is a pure function of the template, which is why the engine can
+// expand once during preparation and persist nothing about it: the same pinned
+// template always yields the same stages, in the same order, with the same ids.
 func ExpandNode(nodeID string, node Node) []StageSpec {
 	if !node.IsCompound() {
 		return nil

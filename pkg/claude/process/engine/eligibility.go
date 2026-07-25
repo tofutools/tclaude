@@ -70,6 +70,17 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
 
+		// Every node a run can name has to fit the durable evidence envelope,
+		// authored or derived. Authoring bounds the id CHARSET but not its length,
+		// so without this a template with a long id is created and then wedges: the
+		// evidence row for that node can never be written, and no transition it
+		// takes part in can commit.
+		if len(nodeID) > model.MaxExecutableNodeIDBytes {
+			add("node_id_limit", path, fmt.Sprintf(
+				"this node id is %d bytes, above the %d-byte executable node id ceiling",
+				len(nodeID), model.MaxExecutableNodeIDBytes))
+		}
+
 		// Both authored join policies are executable. join: all activates once the
 		// complete candidate input set has settled with at least one arrival;
 		// join: any activates on the first arrival, and its losing branches keep
@@ -122,7 +133,13 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			add("unsupported_retry", path+".review.retry", "stage retries are not executable in this engine yet")
 		}
 		if node.Plan != nil || len(node.Checks) > 0 || node.Review != nil {
-			add("unsupported_compound_stages", path, "plan, check, and review stages are not executable in this engine yet")
+			// Compound stages execute only where they mean something: on a task
+			// node, which is the only kind model.ExpandNode derives stages for.
+			if node.Type != model.NodeTypeTask {
+				add("unsupported_compound_stages", path, "plan, check, and review stages are executable only on task nodes")
+			} else {
+				addStageDiagnostics(add, path, nodeID, node)
+			}
 		}
 		if node.Wait != nil && node.Type != model.NodeTypeWait {
 			add("unsupported_wait", path+".wait", "wait configuration is not executable in this engine yet")
@@ -171,7 +188,98 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 	if _, ok := tmpl.Nodes[tmpl.Start]; !ok {
 		add("unsupported_sequence_start", "start", "start must name a declared node")
 	}
+	// Compound stages become ordinary prepared nodes, so the executable graph is
+	// bigger than the authored one. The ceiling is a property of what actually
+	// runs, and it is checked HERE — before a run is created — so an oversized
+	// expansion is a template diagnostic rather than a preparation failure a
+	// caller has to interpret.
+	if expanded := expandedNodeCount(tmpl); expanded > model.MaxNormalizedNodes {
+		add("expanded_node_limit", "nodes", fmt.Sprintf(
+			"expanding compound stages yields %d executable nodes, above the %d node ceiling",
+			expanded, model.MaxNormalizedNodes))
+	}
 	return diagnostics
+}
+
+// addStageDiagnostics reports why one compound task's derived stages cannot
+// execute yet. Each stage gets its own path so an author is told which slot is
+// the problem rather than that the node "has stages".
+//
+// Stage retry, approvalRetry, and the parent's own retry policy keep the
+// separate diagnostics they already had; this covers the performer, approval,
+// and derived-id axes.
+func addStageDiagnostics(add func(code, path, message string), path, nodeID string, node model.Node) {
+	addStageIDDiagnostics(add, path, nodeID, node)
+	if node.Plan != nil {
+		// A human plan-approval gate has no verdict input in this slice, so
+		// admitting it would expand into a stage nothing could ever advance.
+		if node.Plan.Approval == model.PlanApprovalHuman {
+			add("unsupported_approval", path+".plan.approval",
+				"human plan approval gates are not executable in this engine yet")
+		}
+		addStagePerformerDiagnostics(add, path+".plan.performer", node.Plan.Performer)
+	}
+	for index, check := range node.Checks {
+		addStagePerformerDiagnostics(add, fmt.Sprintf("%s.checks[%d].performer", path, index), check.Performer)
+	}
+	if node.Review != nil {
+		addStagePerformerDiagnostics(add, path+".review.performer", node.Review.Performer)
+	}
+}
+
+// addStageIDDiagnostics rejects a compound whose expansion derives a node id
+// too long for a run to name.
+//
+// It is the derived half of the same envelope the node loop enforces on authored
+// ids, and it is not implied by that check: a derived id is the parent id, the
+// stage, and the step id concatenated, so a parent and a check step that are
+// each individually inside the ceiling can still derive a child id past it.
+//
+// It is checked over the exact ids model.ExpandNode returns — the same call
+// preparation makes — so it cannot disagree with what actually gets prepared.
+func addStageIDDiagnostics(add func(code, path, message string), path, nodeID string, node model.Node) {
+	// The specs arrive in expansion order, so the nth test stage is checks[n] and
+	// the index is a count rather than a second derivation of the same shape.
+	checkIndex := 0
+	for _, spec := range model.ExpandNode(nodeID, node) {
+		stagePath := path + "." + string(spec.Stage)
+		if spec.Stage == model.StageTest {
+			stagePath = fmt.Sprintf("%s.checks[%d]", path, checkIndex)
+			checkIndex++
+		}
+		if len(spec.ChildID) > model.MaxExecutableNodeIDBytes {
+			// The offending id is deliberately not echoed: it is unbounded input,
+			// and its length plus its stage is what an author needs to act.
+			add("expanded_node_id_limit", stagePath, fmt.Sprintf(
+				"this stage derives a %d-byte node id, above the %d-byte executable node id ceiling; shorten the task id or the step id",
+				len(spec.ChildID), model.MaxExecutableNodeIDBytes))
+		}
+	}
+}
+
+// addStagePerformerDiagnostics admits exactly the stage performer this engine
+// dispatches: a program with no contact schedule. Human and agent stage
+// performers stay ineligible until their real dispatch and gate semantics land.
+func addStagePerformerDiagnostics(add func(code, path, message string), path string, performer model.Performer) {
+	if performer.Kind != model.PerformerProgram {
+		add("unsupported_performer", path+".kind", "this engine executes only program stage performers")
+		return
+	}
+	if performer.Contact != nil {
+		add("unsupported_contact", path+".contact", "performer contact schedules are not executable in this engine yet")
+	}
+}
+
+// expandedNodeCount is the executable node count after compound expansion: one
+// per authored node, plus each compound's derived stages. It counts through
+// model.ExpandNode rather than restating the stage shape, so the bound can
+// never disagree with what preparation actually appends.
+func expandedNodeCount(tmpl *model.Template) int {
+	count := 0
+	for nodeID, node := range tmpl.Nodes {
+		count += 1 + len(model.ExpandNode(nodeID, node))
+	}
+	return count
 }
 
 func RequireEligible(tmpl *model.Template) error {

@@ -35,6 +35,15 @@ const (
 	definitionEnd
 	definitionDecision
 	definitionParallel
+	// definitionCompound is an authored task node that declares plan, check, or
+	// review stages. It runs no program of its own: preparation expanded it into
+	// ordinary prepared stage children, and the parent exists to hold the
+	// authored edges and the ordered child list.
+	definitionCompound
+	// definitionStageDone is the engine-owned final stage of a compound
+	// expansion. Advancing it is what completes the parent and settles the
+	// parent's authored outgoing route, exactly once.
+	definitionStageDone
 )
 
 type definitionNode struct {
@@ -66,6 +75,14 @@ type definitionNode struct {
 	// the one node kind whose incoming edges can still settle after it activated,
 	// and the only one whose edges may hold EdgeArrivedLate.
 	joinAny bool
+	// children are the prepared indices of a compound parent's derived stages, in
+	// the order model.ExpandNode returned them. It is the ONLY thing that
+	// sequences a compound: the stages carry no prepared or durable edges, so
+	// advancing one is a step along this list rather than a second graph.
+	children []int
+	// parent is the prepared index of the compound parent whose expansion
+	// produced this node, or -1 for an authored node.
+	parent int
 }
 
 type definitionEdge struct {
@@ -77,9 +94,15 @@ type definitionEdge struct {
 }
 
 // Prepare performs all immutable work once: complete authoring validation,
-// engine eligibility, deterministic topological ordering, edge identity
-// derivation, decision verdict binding, parameter binding, and final
-// bound-program validation. Plan, Apply, and Advance reuse the result.
+// engine eligibility, deterministic topological ordering, compound stage
+// expansion, edge identity derivation, decision verdict binding, parameter
+// binding, and final bound-program validation. Plan, Apply, and Advance reuse
+// the result.
+//
+// Compound expansion happens HERE and nowhere else. It is a pure projection of
+// the pinned template, so the one-time prepared definition is exactly where it
+// belongs: a run records no expansion of its own, and a cold load re-derives
+// the identical stages from the same immutable snapshot.
 func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error) {
 	if err := RequireEligible(tmpl); err != nil {
 		return nil, err
@@ -92,10 +115,25 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		nodes: make([]definitionNode, 0, len(order)),
 		index: make(map[string]int, len(order)),
 	}
+	// appendNode is the single insertion point, so the id->index map and the
+	// prepared order cannot disagree. Authoring rejects every child-id collision
+	// before this runs (model.validateExpansionCollisions); the guard is here so
+	// a caller reaching preparation another way fails closed instead of silently
+	// aliasing two nodes onto one index.
+	appendNode := func(prepared definitionNode) (int, error) {
+		if _, exists := definition.index[prepared.id]; exists {
+			return 0, fmt.Errorf("%w: node id %q is prepared twice", ErrInvalidDefinition, prepared.id)
+		}
+		index := len(definition.nodes)
+		definition.index[prepared.id] = index
+		definition.nodes = append(definition.nodes, prepared)
+		return index, nil
+	}
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
 		prepared := definitionNode{
 			id:      nodeID,
+			parent:  -1,
 			joinAll: node.Join == model.JoinAll,
 			joinAny: node.Join == model.JoinAny,
 		}
@@ -105,6 +143,12 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		case model.NodeTypeParallel:
 			prepared.kind = definitionParallel
 		case model.NodeTypeTask:
+			if node.IsCompound() {
+				// The parent runs no program: its do work is one of the derived
+				// stages below. It keeps the authored edges and the child list.
+				prepared.kind = definitionCompound
+				break
+			}
 			prepared.kind = definitionTask
 			// Eligibility already admitted only the retry shape this engine
 			// executes, so the budget is taken as authored; RetryBudget resolves an
@@ -123,11 +167,45 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			prepared.kind = definitionEnd
 			prepared.terminal = terminalStatus(node.Result)
 		}
-		definition.index[nodeID] = len(definition.nodes)
-		definition.nodes = append(definition.nodes, prepared)
+		parentIndex, err := appendNode(prepared)
+		if err != nil {
+			return nil, err
+		}
+		if prepared.kind != definitionCompound {
+			continue
+		}
+		// Derived stages are appended immediately after their parent, so the
+		// prepared order stays a single deterministic sequence and a compound's
+		// stages sit exactly where the parent did.
+		for _, spec := range model.ExpandNode(nodeID, node) {
+			// Every stage is a single fail-fast attempt: eligibility rejects stage
+			// retry and approvalRetry policies, so no child carries an authored
+			// budget and none of them can park a branch on an operator.
+			child := definitionNode{id: spec.ChildID, parent: parentIndex, maxAttempts: 1}
+			if spec.Stage == model.StageDone {
+				child.kind = definitionStageDone
+			} else {
+				child.kind = definitionTask
+				program, err := bindProgram(spec.ChildID, *spec.Performer, params)
+				if err != nil {
+					return nil, err
+				}
+				child.program = program
+			}
+			childIndex, err := appendNode(child)
+			if err != nil {
+				return nil, err
+			}
+			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
+		}
 	}
 	for fromIndex := range definition.nodes {
 		from := &definition.nodes[fromIndex]
+		// Derived stages have no authored edges, and the engine gives them no
+		// synthetic ones: their sequence is the parent's ordered child list.
+		if from.parent >= 0 {
+			continue
+		}
 		next := tmpl.Nodes[from.id].Next
 		for _, outcome := range sortedOutcomes(next) {
 			toIndex, ok := definition.index[next[outcome]]

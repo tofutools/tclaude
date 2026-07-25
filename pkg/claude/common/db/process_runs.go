@@ -38,7 +38,7 @@ const (
 	MaxProcessRunIDBytes               = 128
 	MaxProcessRunTemplateRef           = 512
 	MaxProcessRunStatusBytes           = 64
-	MaxProcessRunNodeIDBytes           = 256
+	MaxProcessRunNodeIDBytes           = model.MaxExecutableNodeIDBytes
 	MaxProcessRunEventKind             = 128
 	MaxProcessRunEventActor            = 256
 	MaxProcessRunAuthorizationProfiles = model.MaxNormalizedNodes
