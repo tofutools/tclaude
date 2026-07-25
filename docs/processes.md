@@ -84,8 +84,10 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
 - Human deciders on decision nodes.
 - Bounded program retries. A program task may declare
   `retry.maxAttempts: <n>`, which **includes the first attempt** and is capped
-  at 100 — retries here run back to back, so an unbounded budget would be an
-  unthrottled loop with no run-cancel verb to stop it. A failed attempt inside
+  at 100 — retries here run back to back and nothing can interrupt a task that
+  is still spending its budget, so an unbounded budget would be an unthrottled
+  loop. (The `cancel` resolution below acts on a branch that has already
+  exhausted its budget, not on one mid-loop.) A failed attempt inside
   the budget re-readies only that node and runs a fresh attempt;
   parallel siblings are untouched and are neither cancelled nor renumbered. A
   task with no `retry` stays fail-fast. Every attempt of a node carries its own
@@ -95,8 +97,34 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   checkpoint's sparse `attempts` map and each outstanding command's `attempt`)
   and in the `program_prepared` / `program_observed` rows of `tclaude process
   events`; the plain `show` table's COMMAND column carries the same attempt in
-  the command id. Once the budget is exhausted the run fails exactly as an
-  unretried failure does today.
+  the command id.
+- Blocked branches and audited resolution. When an explicitly retry-authored
+  task exhausts its budget, that branch is **parked**, not failed: the node
+  becomes `blocked`, the run stays running, and unaffected siblings keep
+  executing. A task with no `retry` policy still fails the run outright — so
+  `retry.maxAttempts: 1` and no policy at all behave differently on purpose.
+  `tclaude process show` lists each parked branch with the exact attempt it is
+  blocked at and the reason from the failed attempt, and an operator resolves it
+  with
+
+  ```bash
+  tclaude process resolve-blocked <run> --node <node> --attempt <n> \
+      --action retry|skip|cancel [--note "why"]
+  ```
+
+  `retry` opens one more authored-size attempt window — attempt numbers keep
+  going up rather than being reset or reused, so an earlier attempt's report is
+  still refused as stale — and the branch parks again if that window is spent
+  too. `skip` settles the task through its authored route and activates
+  downstream work as a successful run would have; only the `blocked_resolved`
+  evidence distinguishes the two. `cancel` gives up on the whole run: it stops
+  further planning, drops every parked branch and awaited decision, lets
+  already-dispatched programs drain honestly, and finishes the run `canceled`.
+  The node and attempt must match exactly, so a stale, duplicated, or
+  wrong-branch resolution is refused rather than applied to whatever is parked
+  now. A run whose branches are all parked is left alone by the periodic
+  recovery sweep, and a parked branch keeps the run open — an end node will not
+  complete around a resolution that is still on offer.
 
 Not executable yet: agent deciders, agent or human task performers, retry
 backoff waits, same-session retry feedback (`retry.onFail:
@@ -122,7 +150,16 @@ another one from the budget; `record-outcome --outcome failed` spends it, and
 the next attempt starts if the budget allows.
 
 A failed branch fails the run, but the run is only reported failed once every
-command still in flight has been accounted for.
+command still in flight has been accounted for. The same holds for a `cancel`
+resolution: the run reports `canceled` only after its last in-flight program
+has been accounted for.
+
+A parked branch survives a restart unchanged — the checkpoint carries the
+obligation and the exact blocked attempt, so nothing has to be replayed from
+evidence — and a blocked run is never re-run by itself. If some other branch
+fails or is cancelled while a branch is parked, the parked obligations are
+dropped: the run is over, so it stops offering a resolution nothing could act
+on.
 
 ## Storage
 

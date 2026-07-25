@@ -954,7 +954,14 @@ type processRuntimeRunView struct {
 	AwaitingDecision      *processRuntimeDecisionView  `json:"awaitingDecision"`
 	AwaitingDecisions     []processRuntimeDecisionView `json:"awaitingDecisions"`
 	Commands              []processRuntimeCommandView  `json:"commands"`
+	Blocked               []processRuntimeBlockedView  `json:"blocked"`
 	Checkpoint            engine.Checkpoint            `json:"checkpoint"`
+}
+
+type processRuntimeBlockedView struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason"`
 }
 
 type processRuntimeDecisionView struct {

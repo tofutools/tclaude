@@ -3,8 +3,10 @@ package engine
 import (
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Initialize creates the exact pre-execution v3 state from one prepared
@@ -115,7 +117,7 @@ func Runnable(checkpoint Checkpoint, definition *Definition) bool {
 // ready task never already carries a command — planning moves it to Running —
 // so no outbox scan is needed here.
 func nextPlannableTask(checkpoint Checkpoint, definition *Definition) (definitionNode, bool) {
-	if checkpoint.Status != RunRunning || hasFailedNode(checkpoint) {
+	if checkpoint.Status != RunRunning || doomed(checkpoint) {
 		return definitionNode{}, false
 	}
 	for _, node := range definition.nodes {
@@ -148,7 +150,8 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 
 	switch transition.Kind {
 	case TransitionAdvance:
-		if transition.Command != nil || transition.Observation != nil || transition.Decision != nil {
+		if transition.Command != nil || transition.Observation != nil ||
+			transition.Decision != nil || transition.Resolution != nil {
 			return invalid("advance transition cannot carry a payload")
 		}
 		// Advance is node-addressed. Several nodes can be ready at once under
@@ -184,7 +187,8 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			return invalid("ready node %q requires a planned command or decision", node.id)
 		}
 	case TransitionCommandPlanned:
-		if transition.Command == nil || transition.Observation != nil || transition.Decision != nil {
+		if transition.Command == nil || transition.Observation != nil ||
+			transition.Decision != nil || transition.Resolution != nil {
 			return invalid("command_planned requires only a command payload")
 		}
 		// The command names its own node, so planning is node-addressed too.
@@ -202,8 +206,8 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// the same identity: the counter has moved on, so the old command no
 		// longer matches anything the reducer would mint.
 		attempt := nextAttempt(next, node.id)
-		if attempt > node.maxAttempts {
-			return invalid("node %q has no attempt %d within its authored budget of %d", node.id, attempt, node.maxAttempts)
+		if ceiling := attemptCeiling(next, node); attempt > ceiling {
+			return invalid("node %q has no attempt %d within its budget of %d", node.id, attempt, ceiling)
 		}
 		expected := programCommand(next.RunID, node, attempt)
 		if !commandsEqual(*transition.Command, expected) {
@@ -217,7 +221,8 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// whatever they had outstanding.
 		putCommand(&next, cloneCommand(expected))
 	case TransitionProgramObserved:
-		if transition.Observation == nil || transition.Command != nil || transition.Decision != nil {
+		if transition.Observation == nil || transition.Command != nil ||
+			transition.Decision != nil || transition.Resolution != nil {
 			return invalid("program_observed requires only an observation payload")
 		}
 		observation := transition.Observation
@@ -253,7 +258,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// off, settling must not park the run on a new human decision, and
 			// this is the transition that may empty the last outbox entry and
 			// let the failed run finalize.
-			abandonAfterFailure(&next)
+			abandonAfterDoom(&next)
 		case ProgramFailed:
 			// Per-entry removal only, exactly like a success: a failing branch
 			// must never erase a sibling command whose program is still
@@ -261,33 +266,45 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// outbox drains, so those siblings remain individually observable
 			// or reconcilable and a crash mid-drain cold-loads them honestly.
 			removeCommand(&next, outstanding.NodeID)
-			// Retry is authored policy, and it is branch-local: a failed attempt
-			// still inside its budget re-readies only THIS node, so the next
-			// planning pass mints a fresh attempt for it while every sibling
-			// keeps exactly what it had. A task with no authored retry has a
-			// budget of one and therefore stays fail-fast.
-			//
-			// A run some OTHER branch already failed is the exception, and it has
-			// to be: planning is shut off for the rest of that run, so a re-readied
-			// node would never get its next attempt. Leaving it ready would strand
-			// the run — non-terminal, nothing outstanding, nothing runnable — so a
-			// doomed run spends no further budget and takes the failure path below.
-			if !hasFailedNode(next) && next.Attempts[node.id] < node.maxAttempts {
-				next.Nodes[node.id] = NodeReady
-				break
+			// A run some OTHER branch already doomed takes neither of the two
+			// live dispositions below, and it has to be that way: planning is
+			// shut off for the rest of that run, so a re-readied node would never
+			// get its next attempt and a parked branch would offer a resolution
+			// nothing could act on. A doomed run spends no further budget, parks
+			// nobody, and takes the failure path.
+			if !doomed(next) {
+				// Retry is authored policy, and it is branch-local: a failed
+				// attempt still inside its budget re-readies only THIS node, so
+				// the next planning pass mints a fresh attempt for it while every
+				// sibling keeps exactly what it had.
+				if next.Attempts[node.id] < attemptCeiling(next, node) {
+					next.Nodes[node.id] = NodeReady
+					break
+				}
+				// The budget is spent. An author who explicitly asked for retries
+				// asked for a person to look at exhaustion, so the branch parks
+				// instead of dooming the run: siblings keep running, the run stays
+				// live, and an operator resolves it. A task with NO authored retry
+				// policy has nothing to park on and stays fail-fast.
+				if node.retryAuthored {
+					next.Nodes[node.id] = NodeBlocked
+					addBlocked(&next, node.id, observation.Error)
+					break
+				}
 			}
-			// Budget exhausted, or spent by a run that was already doomed:
+			// Fail-fast, or a budget spent by a run that was already doomed:
 			// today's failure disposition, unchanged. Planning stops immediately
-			// — hasFailedNode shuts off both nextPlannableTask and
-			// nextEngineTransition — and this is the transition that may empty
-			// the last outbox entry and let the failed run finalize.
+			// — doomed shuts off both nextPlannableTask and nextEngineTransition
+			// — and this is the transition that may empty the last outbox entry
+			// and let the doomed run finalize.
 			next.Nodes[node.id] = NodeFailed
-			abandonAfterFailure(&next)
+			abandonAfterDoom(&next)
 		default:
 			return invalid("unknown program outcome %q", observation.Outcome)
 		}
 	case TransitionDecisionRecorded:
-		if transition.Decision == nil || transition.Command != nil || transition.Observation != nil {
+		if transition.Decision == nil || transition.Command != nil ||
+			transition.Observation != nil || transition.Resolution != nil {
 			return invalid("decision_recorded requires only a decision payload")
 		}
 		decision := transition.Decision
@@ -306,6 +323,64 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		removeObligation(&next, decision.NodeID)
 		if err := completeAndSettle(&next, definition, index, arrivesAt(decision.Verdict)); err != nil {
 			return Checkpoint{}, err
+		}
+	case TransitionBlockedResolved:
+		if transition.Resolution == nil || transition.Command != nil ||
+			transition.Observation != nil || transition.Decision != nil {
+			return invalid("blocked_resolved requires only a resolution payload")
+		}
+		resolution := transition.Resolution
+		// The preconditions every action shares, in one place because they really
+		// are the same question: is this branch still parked, and is this the
+		// exact parked attempt? A doomed run has already dropped its obligations,
+		// so it fails the first of them rather than needing its own rule.
+		if next.Status != RunRunning {
+			return Checkpoint{}, fmt.Errorf("%w: run is not running", ErrStaleResolution)
+		}
+		if !hasBlocked(next, resolution.NodeID) || next.Nodes[resolution.NodeID] != NodeBlocked {
+			return Checkpoint{}, fmt.Errorf("%w: node %q is not blocked", ErrStaleResolution, resolution.NodeID)
+		}
+		index, ok := definition.index[resolution.NodeID]
+		if !ok {
+			return invalid("blocked_resolved names unknown node %q", resolution.NodeID)
+		}
+		node := definition.nodes[index]
+		// Exact identity: the blocked attempt cannot move while the node is
+		// blocked, so a resolution naming any other attempt is one an operator
+		// formed against a state this run has left behind.
+		if resolution.Attempt != next.Attempts[node.id] {
+			return Checkpoint{}, fmt.Errorf("%w: node %q is blocked at attempt %d, not %d",
+				ErrStaleResolution, node.id, next.Attempts[node.id], resolution.Attempt)
+		}
+		switch resolution.Action {
+		case ResolveRetry:
+			removeBlocked(&next, node.id)
+			if err := raiseAttemptCeiling(&next, node); err != nil {
+				return Checkpoint{}, err
+			}
+			// Nothing is dispatched here. The node is simply ready again, and
+			// ordinary planning mints attempt N+1 exactly as it would have.
+			next.Nodes[node.id] = NodeReady
+		case ResolveSkip:
+			removeBlocked(&next, node.id)
+			// The task settles through its sole authored route, so downstream work
+			// activates exactly as it would have on success. The checkpoint cannot
+			// tell the two apart — NodeSkipped already means "closed by a decision"
+			// and must not be overloaded — which is precisely why the blocked
+			// resolution evidence records that a person skipped this node.
+			if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
+				return Checkpoint{}, err
+			}
+		case ResolveCancel:
+			// The operator gave up on the run, not just this branch. Marking the
+			// node dooms it, and the shared cleanup drops every parked obligation
+			// so no dishonest resolution is left to offer. Commands stay: their
+			// programs may still be running, and their real observations are still
+			// accepted while the run drains to RunCanceled.
+			next.Nodes[node.id] = NodeCanceled
+			abandonAfterDoom(&next)
+		default:
+			return invalid("unknown blocked resolution action %q", resolution.Action)
 		}
 	default:
 		return invalid("unknown transition kind %q", transition.Kind)
@@ -340,6 +415,13 @@ func remainingWork(checkpoint Checkpoint, definition *Definition, endNodeID stri
 	}
 	if len(checkpoint.AwaitingDecisions) > 0 {
 		return "is still awaiting a decision", checkpoint.AwaitingDecisions[0].NodeID, true
+	}
+	// A parked branch is live work: an operator can still retry it back into the
+	// graph. Terminating around it — a join: any winner reaching the end while
+	// the losing branch sits blocked, say — would call the run over while a
+	// resolution is still on offer.
+	if len(checkpoint.Blocked) > 0 {
+		return "is blocked awaiting an operator resolution", checkpoint.Blocked[0].NodeID, true
 	}
 	for _, other := range definition.nodes {
 		if other.id == endNodeID {
@@ -396,10 +478,12 @@ func (a outgoingArrivals) disposition(outcome string) EdgeDisposition {
 // settlement pass stays linear in the affected nodes and edges.
 func completeAndSettle(next *Checkpoint, definition *Definition, index int, arrivals outgoingArrivals) error {
 	node := definition.nodes[index]
-	// Monotonic guard: only an active node may complete. Final states never
-	// regress or reactivate, so a caller that lost track of node status fails
+	// Monotonic guard: only an active or parked node may complete. Blocked is
+	// not a final state — it is a branch waiting for a person, and an operator
+	// skip is exactly the input that completes it. Every truly final state never
+	// regresses or reactivates, so a caller that lost track of node status fails
 	// closed here rather than silently rewriting a settled node.
-	if status := next.Nodes[node.id]; status != NodeReady && status != NodeRunning {
+	if status := next.Nodes[node.id]; status != NodeReady && status != NodeRunning && status != NodeBlocked {
 		return fmt.Errorf("%w: node %q is not active and cannot complete", ErrInvalidTransition, node.id)
 	}
 	next.Nodes[node.id] = NodeDone
@@ -548,33 +632,84 @@ func removeObligation(checkpoint *Checkpoint, nodeID string) {
 	}
 }
 
-// Failing reports whether this run has already exhausted a task's attempts and
-// can therefore only drain: no further command will ever be planned for it.
-//
-// It is deliberately distinct from "an attempt failed". With authored retries a
-// failed observation is routinely just the end of one attempt, so a caller that
-// wants to act on a run being over — cancelling sibling programs, say — has to
-// ask about the run rather than about the observation it just committed.
-func Failing(checkpoint Checkpoint) bool { return hasFailedNode(checkpoint) }
+// addBlocked parks one branch. The reason is the exhausted observation's own
+// failure text, truncated to the durable bound: the obligation exists to point
+// an operator at a branch, and the untruncated output already lives in that
+// attempt's program_observed evidence.
+func addBlocked(checkpoint *Checkpoint, nodeID, reason string) {
+	if hasBlocked(*checkpoint, nodeID) {
+		return
+	}
+	checkpoint.Blocked = append(checkpoint.Blocked, BlockedObligation{
+		NodeID: nodeID, Reason: truncateReason(reason),
+	})
+	slices.SortFunc(checkpoint.Blocked, func(a, b BlockedObligation) int {
+		return strings.Compare(a.NodeID, b.NodeID)
+	})
+}
 
-// hasFailedNode reports whether any program task has already failed.
+func hasBlocked(checkpoint Checkpoint, nodeID string) bool {
+	return slices.ContainsFunc(checkpoint.Blocked, func(obligation BlockedObligation) bool {
+		return obligation.NodeID == nodeID
+	})
+}
+
+func removeBlocked(checkpoint *Checkpoint, nodeID string) {
+	checkpoint.Blocked = slices.DeleteFunc(checkpoint.Blocked,
+		func(obligation BlockedObligation) bool { return obligation.NodeID == nodeID })
+	if len(checkpoint.Blocked) == 0 {
+		checkpoint.Blocked = nil
+	}
+}
+
+// truncateReason keeps the durable reason inside its bound on a rune boundary,
+// so the stored text is always valid UTF-8.
+func truncateReason(reason string) string {
+	if len(reason) <= MaxBlockedReasonBytes {
+		return reason
+	}
+	cut := MaxBlockedReasonBytes
+	for cut > 0 && !utf8.ValidString(reason[:cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
+
+// Draining reports whether this run is already doomed and can therefore only
+// drain: no further command will ever be planned for it, and the only thing
+// left is accounting for the programs still in flight.
 //
-// A failed task fails the whole run, but with several commands in flight the
+// It is deliberately distinct from "an attempt failed" AND from "a branch is
+// blocked". With authored retries a failed observation is routinely just the
+// end of one attempt, and an exhausted branch that parked on an operator has
+// not doomed anything — its siblings keep running and the run can still
+// complete. A caller that wants to act on a run being over — cancelling sibling
+// programs, say — has to ask about the run rather than about the observation it
+// just committed.
+func Draining(checkpoint Checkpoint) bool { return doomed(checkpoint) }
+
+// doomed reports whether any program task has already failed outright or been
+// canceled by an operator.
+//
+// A doomed node dooms the whole run, but with several commands in flight the
 // run cannot become terminal at that instant — the siblings still owe
 // observations. This predicate is what stops the engine from planning or
-// advancing anything more in the meantime, so the failed run drains rather than
-// grows. It is a bounded scan of the node-status map (one entry per prepared
-// node), not a graph walk, and it reads no edges.
-func hasFailedNode(checkpoint Checkpoint) bool {
+// advancing anything more in the meantime, so the doomed run drains rather than
+// grows. NodeBlocked is deliberately NOT included: a parked branch is live work
+// awaiting an operator, and treating it as doom would shut off the very
+// siblings that might still carry the run to its end. It is a bounded scan of
+// the node-status map (one entry per prepared node), not a graph walk, and it
+// reads no edges.
+func doomed(checkpoint Checkpoint) bool {
 	for _, status := range checkpoint.Nodes {
-		if status == NodeFailed {
+		if status == NodeFailed || status == NodeCanceled {
 			return true
 		}
 	}
 	return false
 }
 
-// abandonAfterFailure is TERMINAL CLEANUP, not ordinary cross-branch clearing.
+// abandonAfterDoom is TERMINAL CLEANUP, not ordinary cross-branch clearing.
 //
 // The distinction matters and is deliberate. Ordinary reducer mutations are
 // strictly per-entry — planning, observing, and deciding each touch exactly one
@@ -583,21 +718,42 @@ func hasFailedNode(checkpoint Checkpoint) bool {
 // program that may still be running, and its outcome has to be accounted for
 // before the run can be called over.
 //
-// Awaited decisions are the opposite case and are abandoned at once. The run is
-// already destined to fail, so accepting further human work for it would be
-// dishonest; dropping the obligations is also what makes a later verdict fail
-// closed as stale, and what keeps a crash mid-drain from cold-loading a
-// decision nobody should answer.
+// The two human outboxes are the opposite case and are abandoned at once. The
+// run is already destined to end badly, so accepting further human work for it
+// would be dishonest; dropping the obligations is also what makes a later
+// verdict or resolution fail closed as stale, and what keeps a crash mid-drain
+// from cold-loading work nobody should do. A parked branch loses its parked
+// STATUS too, not just its obligation: blocked means "an operator can still act
+// on this", and once the run is doomed that branch is simply the exhausted
+// failure it always was.
 //
 // The run itself becomes terminal only when the last command has drained.
-func abandonAfterFailure(checkpoint *Checkpoint) {
-	if !hasFailedNode(*checkpoint) {
+func abandonAfterDoom(checkpoint *Checkpoint) {
+	if !doomed(*checkpoint) {
 		return
 	}
 	checkpoint.AwaitingDecisions = nil
-	if len(checkpoint.Commands) == 0 {
-		checkpoint.Status = RunFailed
+	for _, obligation := range checkpoint.Blocked {
+		if checkpoint.Nodes[obligation.NodeID] == NodeBlocked {
+			checkpoint.Nodes[obligation.NodeID] = NodeFailed
+		}
 	}
+	checkpoint.Blocked = nil
+	if len(checkpoint.Commands) == 0 {
+		checkpoint.Status = doomStatus(*checkpoint)
+	}
+}
+
+// doomStatus names how a doomed run finishes. An operator cancel is the reason
+// the run is over whenever one happened, so it outranks a failure a draining
+// sibling reported afterwards.
+func doomStatus(checkpoint Checkpoint) RunStatus {
+	for _, status := range checkpoint.Nodes {
+		if status == NodeCanceled {
+			return RunCanceled
+		}
+	}
+	return RunFailed
 }
 
 // AdvanceUntilQuiescent commits only engine-owned transitions — start, parallel
@@ -655,7 +811,7 @@ func advanceUntilQuiescent(checkpoint Checkpoint, definition *Definition, budget
 // node in prepared topological order. The scan is over nodes only and reads no
 // edges; it is a lookup for the next unit of work, not a validity proof.
 func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transition, bool) {
-	if checkpoint.Status != RunRunning || hasFailedNode(checkpoint) {
+	if checkpoint.Status != RunRunning || doomed(checkpoint) {
 		return Transition{}, false
 	}
 	for _, node := range definition.nodes {
@@ -727,6 +883,50 @@ func nextAttempt(checkpoint Checkpoint, nodeID string) int {
 	return checkpoint.Attempts[nodeID] + 1
 }
 
+// attemptCeiling is the SINGLE derivation of how many attempts a node may still
+// have, and every rule that depends on it — planning's budget guard, the
+// exhaustion disposition, and the load-boundary attempt bound — goes through
+// here so those three cannot drift apart.
+//
+// An absent override means the prepared authored budget, which is why a run
+// with no operator retry stores nothing.
+func attemptCeiling(checkpoint Checkpoint, node definitionNode) int {
+	if raised, ok := checkpoint.AttemptCeilings[node.id]; ok && raised > node.maxAttempts {
+		return raised
+	}
+	return node.maxAttempts
+}
+
+// raiseAttemptCeiling opens exactly one fresh authored-size window above the
+// attempt that just exhausted the budget. Attempts is deliberately left alone:
+// the counter is the run's attempt identity and must never move backwards, so
+// an operator retry buys headroom rather than a reset.
+//
+// There is deliberately NO cap on how many times an operator may do this. Each
+// raise is one audited operator action against a branch that really parked, so
+// a lifetime limit would be an invented policy whose only effect is to strand a
+// legitimately blocked branch with no way out. The one arithmetic bound here is
+// integer overflow, which is not policy.
+func raiseAttemptCeiling(checkpoint *Checkpoint, node definitionNode) error {
+	attempts := checkpoint.Attempts[node.id]
+	if attempts > math.MaxInt-node.maxAttempts {
+		return fmt.Errorf("%w: node %q attempt ceiling would overflow", ErrInvalidTransition, node.id)
+	}
+	raised := attempts + node.maxAttempts
+	// Monotonic guard. The blocked precondition already implies this, so a
+	// failure here means the checkpoint disagreed with itself rather than that
+	// an operator asked for something unreasonable.
+	if raised <= attemptCeiling(*checkpoint, node) {
+		return fmt.Errorf("%w: node %q ceiling would not rise above %d",
+			ErrInvalidTransition, node.id, attemptCeiling(*checkpoint, node))
+	}
+	if checkpoint.AttemptCeilings == nil {
+		checkpoint.AttemptCeilings = make(map[string]int, 1)
+	}
+	checkpoint.AttemptCeilings[node.id] = raised
+	return nil
+}
+
 // recordAttempt commits a node's new current attempt. It is called only from
 // the planning transition, in the same reducer step that moves the node to
 // running and writes its outbox entry, so the durable counter and the durable
@@ -754,8 +954,15 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 		maps.Copy(copied, dispositions)
 		clone.Edges[from] = copied
 	}
+	if len(checkpoint.AttemptCeilings) > 0 {
+		clone.AttemptCeilings = make(map[string]int, len(checkpoint.AttemptCeilings))
+		maps.Copy(clone.AttemptCeilings, checkpoint.AttemptCeilings)
+	}
 	if len(checkpoint.AwaitingDecisions) > 0 {
 		clone.AwaitingDecisions = append([]DecisionObligation(nil), checkpoint.AwaitingDecisions...)
+	}
+	if len(checkpoint.Blocked) > 0 {
+		clone.Blocked = append([]BlockedObligation(nil), checkpoint.Blocked...)
 	}
 	if len(checkpoint.Commands) > 0 {
 		clone.Commands = make([]Command, len(checkpoint.Commands))

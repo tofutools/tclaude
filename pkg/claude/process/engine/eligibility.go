@@ -11,9 +11,11 @@ import (
 // maxExecutableRetryAttempts caps an authored retry budget, first attempt
 // included. Every executable retry here is immediate — backoff waits are not
 // executable and the next attempt commits with the failed observation — and
-// there is no run-cancel verb, so an unbounded budget is an unthrottled spawn
-// loop with nothing short of a daemon restart to interrupt it. Revisit when
-// real throttling exists.
+// nothing can interrupt a task that is still spending its budget: the operator
+// cancel resolution acts on a branch that has ALREADY exhausted its budget and
+// parked, not on one mid-loop. An unbounded budget would therefore be an
+// unthrottled spawn loop with nothing short of a daemon restart to stop it.
+// Revisit when real throttling exists.
 const maxExecutableRetryAttempts = 100
 
 // CheckEligibility reports why an authoring-valid template cannot execute in

@@ -62,10 +62,14 @@ func TestAttemptsAreMonotonicAndMintDistinctCommandIdentities(t *testing.T) {
 			}
 		}
 	}
-	// The third failure exhausted the authored budget, so this slice keeps
-	// today's failure disposition.
-	if checkpoint.Nodes["task"] != NodeFailed || checkpoint.Status != RunFailed {
+	// The third failure exhausted the authored budget. The author explicitly
+	// asked for retries, so the branch parks on an operator rather than dooming
+	// the run: nothing further is plannable, but the run is still live.
+	if checkpoint.Nodes["task"] != NodeBlocked || checkpoint.Status != RunRunning {
 		t.Fatalf("exhausted checkpoint = %#v", checkpoint)
+	}
+	if len(checkpoint.Blocked) != 1 || checkpoint.Blocked[0].NodeID != "task" {
+		t.Fatalf("exhausted blocked outbox = %#v", checkpoint.Blocked)
 	}
 	if got := checkpoint.Attempts["task"]; got != 3 {
 		t.Fatalf("exhausted attempt counter = %d, want 3", got)

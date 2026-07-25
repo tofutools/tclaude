@@ -28,6 +28,15 @@ const (
 	// NodeSkipped marks a node every path to which was closed by an exclusive
 	// decision. Skipped nodes can never activate for the rest of the run.
 	NodeSkipped NodeStatus = "skipped"
+	// NodeBlocked marks a task whose author explicitly asked for retries and
+	// whose attempt budget is now spent while the run is still live. It is a
+	// PARKED branch, not a doom marker: unaffected siblings keep executing, the
+	// run stays running, and only an operator resolution moves it again.
+	NodeBlocked NodeStatus = "blocked"
+	// NodeCanceled marks the blocked node an operator resolved with cancel. That
+	// resolution dooms the run, so this is the local record of which node the
+	// operator gave up on while already-dispatched sibling commands drain.
+	NodeCanceled NodeStatus = "canceled"
 )
 
 // EdgeDisposition is the durable per-run state of one authored edge. An edge
@@ -93,6 +102,26 @@ type Checkpoint struct {
 	// the durable outbox of fully bound program requests.
 	AwaitingDecisions []DecisionObligation `json:"awaitingDecisions"`
 	Commands          []Command            `json:"commands"`
+	// Blocked is the third durable outbox: one entry per branch parked on an
+	// operator after an authored retry budget ran out. It follows the same
+	// per-entry, sorted-by-node-id rules as the other two, and it is sparse —
+	// a run that never exhausted a budget encodes nothing at all.
+	//
+	// It carries no owner, no time, and no attempt. Routing and worklists are
+	// TCL-651's; the parking time is in the node_blocked evidence row; and the
+	// exact blocked attempt is always Attempts[nodeId], which cannot move while
+	// the node is blocked. Duplicating any of those here would create a second
+	// copy of a fact that already has an authority.
+	Blocked []BlockedObligation `json:"blocked,omitempty"`
+	// AttemptCeilings is the sparse, monotonic per-node override of the authored
+	// attempt budget. An absent entry means the prepared authored maxAttempts,
+	// which is why a run with no operator retry encodes nothing here.
+	//
+	// It only ever rises, and only by one operator retry resolution: the ceiling
+	// becomes Attempts[nodeId] + the authored maxAttempts, opening one fresh
+	// authored-size window WITHOUT resetting or reusing an attempt number. That
+	// is what keeps attempt identity monotonic across an operator retry.
+	AttemptCeilings map[string]int `json:"attemptCeilings,omitempty"`
 }
 
 // FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
@@ -126,6 +155,46 @@ func (c Checkpoint) FirstAwaitingDecision() *DecisionObligation {
 // Together with the run id it is the narrow identity decision input binds to.
 type DecisionObligation struct {
 	NodeID string `json:"nodeId"`
+}
+
+// MaxBlockedReasonBytes bounds the human-facing reason copied out of the
+// exhausted observation into durable state. The observation's own error text is
+// already bounded far more generously, so this is deliberately small: the
+// obligation is a pointer to a parked branch, not a place to store output.
+const MaxBlockedReasonBytes = 1024
+
+// BlockedObligation names one branch parked on an operator, and why. Together
+// with the run id and Attempts[NodeID] it is the exact identity a resolution
+// binds to.
+type BlockedObligation struct {
+	NodeID string `json:"nodeId"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ResolutionAction is what an operator decided to do about one blocked branch.
+type ResolutionAction string
+
+const (
+	// ResolveRetry opens one fresh authored-size attempt window and re-readies
+	// the node. Ordinary planning then mints attempt N+1; nothing here dispatches.
+	ResolveRetry ResolutionAction = "retry"
+	// ResolveSkip settles the task through its sole authored route, activating
+	// downstream work exactly as a successful program would have. Only the
+	// evidence distinguishes the two, which is why it is recorded.
+	ResolveSkip ResolutionAction = "skip"
+	// ResolveCancel gives up on the run: the node is canceled, every parked
+	// obligation is dropped, and the run drains its in-flight commands before
+	// finishing RunCanceled.
+	ResolveCancel ResolutionAction = "cancel"
+)
+
+// BlockedResolution is the reducer payload for one operator resolution. It is
+// bound to the exact blocked identity — the node and the attempt that exhausted
+// the budget — so a stale, duplicated, or wrong-branch resolution is refused.
+type BlockedResolution struct {
+	NodeID  string           `json:"nodeId"`
+	Attempt int              `json:"attempt"`
+	Action  ResolutionAction `json:"action"`
 }
 
 // Command is the one durable outbox item this sequential slice can produce.
@@ -190,6 +259,11 @@ const (
 	TransitionCommandPlanned   TransitionKind = "command_planned"
 	TransitionProgramObserved  TransitionKind = "program_observed"
 	TransitionDecisionRecorded TransitionKind = "decision_recorded"
+	// TransitionBlockedResolved is the ONE transition every operator resolution
+	// takes. retry, skip, and cancel share their preconditions exactly, and
+	// differ only in what they then do with the parked branch, so they are one
+	// payload with an action rather than three near-identical transitions.
+	TransitionBlockedResolved TransitionKind = "blocked_resolved"
 )
 
 // Transition is an explicit reducer input. Exactly one payload is allowed for
@@ -206,6 +280,7 @@ type Transition struct {
 	Command     *Command
 	Observation *ProgramObservation
 	Decision    *DecisionRecord
+	Resolution  *BlockedResolution
 }
 
 var (
@@ -216,6 +291,7 @@ var (
 	ErrInvalidTransition         = errors.New("invalid process transition")
 	ErrStaleObservation          = errors.New("stale process command observation")
 	ErrStaleDecision             = errors.New("stale or duplicate process decision input")
+	ErrStaleResolution           = errors.New("stale or duplicate process blocked resolution")
 	ErrInvalidDecisionVerdict    = errors.New("process decision verdict does not name an authored outcome")
 	ErrTransitionBudgetExhausted = errors.New("process engine transition budget exhausted")
 )

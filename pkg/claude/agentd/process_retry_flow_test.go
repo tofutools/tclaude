@@ -169,10 +169,11 @@ func TestProcessRuntimeRefusesAnUnthrottledRetryBudget(t *testing.T) {
 	assert.Empty(t, listed.Runs, "an over-budget template must not create a run")
 }
 
-// TestProcessRuntimeExhaustedRetryBudgetFailsTheRun pins this slice's
-// deliberately unchanged exhaustion disposition: once the authored budget is
-// spent the run follows today's failure and drain behaviour.
-func TestProcessRuntimeExhaustedRetryBudgetFailsTheRun(t *testing.T) {
+// TestProcessRuntimeExhaustedRetryBudgetParksTheBranch pins the exhaustion
+// disposition of an explicitly retry-authored task: the budget is spent
+// exactly once and the branch then parks on an operator, leaving the run live
+// rather than failed. The counter is still never reset by exhaustion.
+func TestProcessRuntimeExhaustedRetryBudgetParksTheBranch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRetryTemplate("exhausting", 2))
 
@@ -198,12 +199,14 @@ func TestProcessRuntimeExhaustedRetryBudgetFailsTheRun(t *testing.T) {
 	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
 	var shown processRuntimeRunView
 	testharness.DecodeJSON(t, show, &shown)
-	assert.Equal(t, engine.RunFailed, shown.Checkpoint.Status)
-	assert.Equal(t, engine.NodeFailed, shown.Checkpoint.Nodes["task-01"])
+	assert.Equal(t, engine.RunRunning, shown.Checkpoint.Status)
+	assert.Equal(t, engine.NodeBlocked, shown.Checkpoint.Nodes["task-01"])
 	assert.Equal(t, map[string]int{"task-01": 2}, shown.Checkpoint.Attempts,
 		"the counter is never reset, even by exhaustion")
-	assert.Empty(t, shown.Checkpoint.Commands, "the failed run drained its outbox")
-	assert.Equal(t, "terminal", shown.Action)
+	assert.Empty(t, shown.Checkpoint.Commands, "the exhausted attempt's command is consumed")
+	assert.Equal(t, "blocked", shown.Action)
+	require.Len(t, shown.Blocked, 1)
+	assert.Equal(t, 2, shown.Blocked[0].Attempt, "the parked branch names its exact attempt")
 }
 
 // TestProcessRuntimeRetryingBranchDoesNotCancelOrStallItsSibling proves retry
