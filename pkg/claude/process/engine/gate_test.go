@@ -55,6 +55,20 @@ func runStage(t *testing.T, checkpoint Checkpoint, definition *Definition,
 	return settled
 }
 
+// assertStageReset checks the compact fact a transition input makes derivable
+// for evidence, looked up through the gate that input named.
+func assertStageReset(t *testing.T, definition *Definition, gateNodeID string,
+	before, after Checkpoint, want StageReset) {
+	t.Helper()
+	got, ok := definition.StageReset(gateNodeID, before, after)
+	if !ok {
+		t.Fatalf("gate %q reported no stage reset", gateNodeID)
+	}
+	if got != want {
+		t.Fatalf("stage reset\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
 // assertNodes compares the whole node-status map against an exact expectation.
 func assertNodes(t *testing.T, checkpoint Checkpoint, want map[string]NodeStatus) {
 	t.Helper()
@@ -178,12 +192,21 @@ func TestFailedCheckReRunsTheWorkAndEveryGateThenCompletes(t *testing.T) {
 		t.Fatalf("the reset settled the parent's authored route: %q",
 			checkpoint.Edges["build"][model.DefaultOutcome])
 	}
-	// One compact reset fact is derivable for evidence: which parent, which gate,
-	// which work, and the attempt that work will next carry.
-	if got, want := definition.StageResets(before, checkpoint), []StageReset{{
+	// One compact reset fact is derivable for evidence, from the gate the causing
+	// input already named: which parent, which work, and the attempt it will
+	// next carry.
+	assertStageReset(t, definition, "build.test.lint", before, checkpoint, StageReset{
 		ParentNodeID: "build", GateNodeID: "build.test.lint", WorkNodeID: "build.do", NextWorkAttempt: 2,
-	}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("stage resets\n got: %#v\nwant: %#v", got, want)
+	})
+	// The derivation is targeted and fail-closed: no other node of the same
+	// transition claims the reset, including the work it re-readied.
+	for _, nodeID := range []string{
+		"build", "build.do", "build.plan", "build.test.unit", "build.review", "build.done",
+		"start", "end", "nowhere",
+	} {
+		if reset, ok := definition.StageReset(nodeID, before, checkpoint); ok {
+			t.Fatalf("node %q claimed the reset: %#v", nodeID, reset)
+		}
 	}
 
 	// The second pass re-runs the work and BOTH gates, including the one that
@@ -474,8 +497,8 @@ func TestBlockedGateRetryRaisesTheDoCeilingAndResumesTheLoop(t *testing.T) {
 	if checkpoint.Nodes["build.do"] != NodeDone || checkpoint.Nodes["build.test.unit"] != NodeDone {
 		t.Fatalf("parking reset stages: %v", checkpoint.Nodes)
 	}
-	if resets := definition.StageResets(before, checkpoint); len(resets) != 0 {
-		t.Fatalf("parking reported a stage reset: %#v", resets)
+	if reset, ok := definition.StageReset("build.test.lint", before, checkpoint); ok {
+		t.Fatalf("parking reported a stage reset: %#v", reset)
 	}
 
 	beforeRetry := cloneCheckpoint(checkpoint)
@@ -499,11 +522,9 @@ func TestBlockedGateRetryRaisesTheDoCeilingAndResumesTheLoop(t *testing.T) {
 	if len(resolved.Blocked) != 0 {
 		t.Fatalf("retry left the obligation behind: %#v", resolved.Blocked)
 	}
-	if got, want := definition.StageResets(beforeRetry, resolved), []StageReset{{
+	assertStageReset(t, definition, "build.test.lint", beforeRetry, resolved, StageReset{
 		ParentNodeID: "build", GateNodeID: "build.test.lint", WorkNodeID: "build.do", NextWorkAttempt: 2,
-	}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("resolution stage resets\n got: %#v\nwant: %#v", got, want)
-	}
+	})
 
 	// The loop resumes on the raised window and the compound finishes.
 	resolved = runStage(t, resolved, definition, "build.do", 2, ProgramSucceeded)
@@ -529,12 +550,17 @@ func TestBlockedGateSkipPassesTheGateAndAdvancesTheStages(t *testing.T) {
 	checkpoint = runStage(t, checkpoint, definition, "build.do", 1, ProgramSucceeded)
 	checkpoint = runStage(t, checkpoint, definition, "build.test.unit", 1, ProgramFailed)
 
+	before := cloneCheckpoint(checkpoint)
 	skipped, err := Apply(checkpoint, definition, resolve("build.test.unit", 1, ResolveSkip))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if skipped.Nodes["build.test.unit"] != NodeDone || skipped.Nodes["build.test.lint"] != NodeReady {
 		t.Fatalf("state after skip = %v", skipped.Nodes)
+	}
+	// Passing a gate is not reworking, so there is no reset fact to record.
+	if reset, ok := definition.StageReset("build.test.unit", before, skipped); ok {
+		t.Fatalf("a skip reported a stage reset: %#v", reset)
 	}
 	if len(skipped.Blocked) != 0 {
 		t.Fatalf("skip left the obligation behind: %#v", skipped.Blocked)
@@ -800,11 +826,13 @@ func TestParallelCompoundsResetInIsolation(t *testing.T) {
 	if !reflect.DeepEqual(reset.Edges, before.Edges) {
 		t.Fatalf("the reset settled an edge: %v", reset.Edges)
 	}
-	// Only the left parent reports a reset.
-	if got, want := definition.StageResets(before, reset), []StageReset{{
+	// Only the left gate reports a reset, and the sibling sitting at the very
+	// same stage reports none.
+	assertStageReset(t, definition, "left.test.unit", before, reset, StageReset{
 		ParentNodeID: "left", GateNodeID: "left.test.unit", WorkNodeID: "left.do", NextWorkAttempt: 2,
-	}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("stage resets\n got: %#v\nwant: %#v", got, want)
+	})
+	if got, ok := definition.StageReset("right.test.unit", before, reset); ok {
+		t.Fatalf("the sibling compound claimed a reset: %#v", got)
 	}
 
 	// Both branches then finish independently, each on its own budget.
@@ -1015,20 +1043,15 @@ func BenchmarkCompoundStageReset(b *testing.B) {
 	}
 }
 
-// BenchmarkStageResets measures the per-commit evidence derivation at both ends
-// of the range: a template with no compound at all, and a wide parallel one.
-func BenchmarkStageResets(b *testing.B) {
-	for _, width := range []int{0, 8, 256} {
-		name := fmt.Sprintf("compounds=%d", width)
-		if width == 0 {
-			name = "no-compound"
-		}
-		b.Run(name, func(b *testing.B) {
-			tmpl := wideParallelGateTemplate(width)
-			if width == 0 {
-				tmpl = fanOutTemplate("left", "right")
-			}
-			definition, err := Prepare(tmpl, nil)
+// BenchmarkStageReset measures the evidence lookup a commit that reworked
+// nothing pays — the overwhelmingly common case, and the one that used to be a
+// walk of every compound in the run. The named node is an ordinary program task
+// with no compound anywhere near it, so this is the cost of the whole derivation
+// on an unrelated transition, at growing run sizes.
+func BenchmarkStageReset(b *testing.B) {
+	for _, width := range []int{2, 8, 256} {
+		b.Run(fmt.Sprintf("compounds=%d", width), func(b *testing.B) {
+			definition, err := Prepare(wideParallelGateTemplate(width), nil)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1043,7 +1066,9 @@ func BenchmarkStageResets(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				_ = definition.StageResets(before, after)
+				if _, ok := definition.StageReset("join", before, after); ok {
+					b.Fatal("an unrelated node reported a stage reset")
+				}
 			}
 		})
 	}

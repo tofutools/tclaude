@@ -138,48 +138,73 @@ type StageReset struct {
 	NextWorkAttempt int
 }
 
-// StageResets reports the compound stage resets that happened between two
-// checkpoints of the same run, in deterministic prepared order. It is how a
-// caller derives human-facing evidence from a committed transition without the
-// reducer having to emit anything — the same before/after seam JoinArrivals and
-// the executor's blocked evidence already use.
+// StageReset reports whether the transition that named nodeID reworked a
+// compound, and what that rework was. It is how a caller derives human-facing
+// evidence from a committed transition without the reducer having to emit
+// anything — the same before/after seam JoinArrivals and the executor's blocked
+// evidence already use.
 //
-// The signal is a stage returning TO pending, which only the reset ever does:
-// every other transition moves a node forwards. The gate is the LAST child the
-// transition returned to pending, because the reset runs from just after the do
-// stage through the failed gate, so that is exactly where it stopped.
+// It is a TARGETED lookup rather than a scan, and that is the point. At most
+// one reset can happen per transition, and every transition that can cause one
+// already NAMES the gate: an observation and an operator-recorded outcome name
+// their command's node, and a resolution names the parked node. So the caller
+// passes that node, this reads only that node's own prepared parent, and a
+// commit that reworked nothing pays a single map lookup. Nothing walks the
+// run's other compounds, or even this compound's other children.
+//
+// It is fail-closed in both directions: the named node must be a prepared check
+// or review gate, and the before/after delta must demonstrate THAT gate's
+// reset — the gate returned to pending, which nothing but the reset ever does,
+// inside a compound whose work stage had actually completed, and with no LATER
+// stage of the same compound reset alongside it. That last condition is what
+// keeps the recorded gate the one that actually rendered the verdict: a reset
+// sweeps every stage from just after the work through the failed gate back to
+// pending, so an intervening gate that merely got caught up in it satisfies
+// everything else while not being the cause. It reads only this gate's own
+// parent's child list, the same bounded slice the reset itself moves, and never
+// another parent's.
 //
 // The next work attempt is read from the BEFORE checkpoint deliberately. One
 // commit can hold the observation, the reset, and the follow-on plan the reset
 // made possible, so the after-state's counter may already have advanced to that
 // very attempt; before-plus-one names it either way.
 //
-// It walks the prepared compound index, so the cost is the number of compounds
-// the template has and a definition without one returns on the first line. It
-// runs once per durable commit, and it is never read back: the checkpoint stays
-// authoritative and evidence is never replayed.
-func (d *Definition) StageResets(before, after Checkpoint) []StageReset {
-	if d == nil || len(d.compounds) == 0 {
-		return nil
+// It is never read back: the checkpoint stays authoritative and evidence is
+// never replayed.
+func (d *Definition) StageReset(nodeID string, before, after Checkpoint) (StageReset, bool) {
+	if d == nil {
+		return StageReset{}, false
 	}
-	var resets []StageReset
-	for _, parentIndex := range d.compounds {
-		parent := d.nodes[parentIndex]
-		gateNodeID := ""
-		for _, childIndex := range parent.children {
-			child := d.nodes[childIndex]
-			if after.Nodes[child.id] == NodePending && before.Nodes[child.id] != NodePending {
-				gateNodeID = child.id
-			}
-		}
-		if gateNodeID == "" {
-			continue
-		}
-		work := d.nodes[parent.doAnchor]
-		resets = append(resets, StageReset{
-			ParentNodeID: parent.id, GateNodeID: gateNodeID, WorkNodeID: work.id,
-			NextWorkAttempt: before.Attempts[work.id] + 1,
-		})
+	gateIndex, ok := d.index[nodeID]
+	if !ok {
+		return StageReset{}, false
 	}
-	return resets
+	gate := d.nodes[gateIndex]
+	work, ok := gateAnchor(d, gate)
+	if !ok {
+		return StageReset{}, false
+	}
+	if !returnedToPending(before, after, gate.id) || before.Nodes[work.id] != NodeDone {
+		return StageReset{}, false
+	}
+	parent := d.nodes[gate.parent]
+	position := slices.Index(parent.children, gateIndex)
+	if position < 0 {
+		return StageReset{}, false
+	}
+	for _, childIndex := range parent.children[position+1:] {
+		if returnedToPending(before, after, d.nodes[childIndex].id) {
+			return StageReset{}, false
+		}
+	}
+	return StageReset{
+		ParentNodeID: parent.id, GateNodeID: gate.id, WorkNodeID: work.id,
+		NextWorkAttempt: before.Attempts[work.id] + 1,
+	}, true
+}
+
+// returnedToPending reports the one status move only a compound reset makes.
+// Every other transition moves a node forwards.
+func returnedToPending(before, after Checkpoint, nodeID string) bool {
+	return after.Nodes[nodeID] == NodePending && before.Nodes[nodeID] != NodePending
 }

@@ -25,11 +25,6 @@ type Definition struct {
 	// walk of exactly the edges that can carry it rather than of the graph: a
 	// definition with no join: any node has an empty index and pays nothing.
 	joinAnyIncoming []int
-	// compounds is the prepared index of every compound parent, in prepared
-	// order, for exactly the same reason: deriving stage-reset evidence walks the
-	// compounds a template actually has rather than all of its nodes, and a
-	// template without one pays a nil check.
-	compounds []int
 }
 
 type definitionNodeKind uint8
@@ -191,7 +186,6 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		if prepared.kind != definitionCompound {
 			continue
 		}
-		definition.compounds = append(definition.compounds, parentIndex)
 		// Derived stages are appended immediately after their parent, so the
 		// prepared order stays a single deterministic sequence and a compound's
 		// stages sit exactly where the parent did.

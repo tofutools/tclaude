@@ -155,6 +155,45 @@ func TestBlockedGateRetryCommitsItsStageResetWithTheResolution(t *testing.T) {
 	assert.Equal(t, 2, dispatch.Command().Attempt)
 }
 
+// TestCommitsThatReworkNothingRecordNoStageReset is the negative direction, and
+// it is the one that keeps the derivation honest: a commit only records a reset
+// when its own input actually caused one. A compound that passed every gate,
+// and an operator resolution that passed a parked gate rather than re-running
+// the work, both record nothing.
+func TestCommitsThatReworkNothingRecordNoStageReset(t *testing.T) {
+	setupExecutorTest(t)
+	success := helperProgram(t, "success")
+
+	// Every stage passes: plan, do, gate, done, and the run completes.
+	createGateRun(t, "run_gate_clean", 2, success, success)
+	clean := mustLoadRun(t, "run_gate_clean")
+	driveGateRun(t, clean, 8)
+	record, err := db.GetProcessRun(clean.ID())
+	require.NoError(t, err)
+	assert.Equal(t, string(engine.RunCompleted), record.Status)
+	kinds := eventKinds(t, clean.ID())
+	assert.Equal(t, 0, countKind(kinds, "stage_reset"), "a clean compound run recorded a reset: %v", kinds)
+
+	// A skip resolution passes the gate rather than re-running the work.
+	createGateRun(t, "run_gate_skip", 1, success, helperProgram(t, "unrecognized-mode"))
+	skipped := mustLoadRun(t, "run_gate_skip")
+	driveGateRun(t, skipped, 6)
+	require.Len(t, skipped.Blocked(), 1)
+	require.NoError(t, ResolveBlocked(skipped, "operator@example", ResolutionInput{
+		NodeID: "build.test.unit", Attempt: 1, Action: engine.ResolveSkip,
+	}))
+	skippedKinds := eventKinds(t, skipped.ID())
+	assert.Equal(t, 1, countKind(skippedKinds, "blocked_resolved"))
+	assert.Equal(t, 0, countKind(skippedKinds, "stage_reset"),
+		"skipping a gate is passing it, not reworking: %v", skippedKinds)
+	skippedRecord, err := db.GetProcessRun(skipped.ID())
+	require.NoError(t, err)
+	var checkpoint engine.Checkpoint
+	require.NoError(t, skippedRecord.DecodeCheckpoint(&checkpoint))
+	assert.Equal(t, engine.NodeDone, checkpoint.Nodes["build.test.unit"])
+	assert.Equal(t, engine.NodeDone, checkpoint.Nodes["build.do"], "the skip must not have re-readied the work")
+}
+
 // TestFailedGateRollsBackWhenItsEvidenceCannotCommit keeps the reset and its
 // evidence atomic in the failure direction: if the stage_reset row cannot be
 // written, the reset itself does not happen either, and the gate's command is
@@ -242,7 +281,23 @@ func TestReconciledGateFailureReworksTheCompound(t *testing.T) {
 	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
 	assert.Equal(t, engine.NodeReady, checkpoint.Nodes["build.do"])
 	assert.Equal(t, engine.NodePending, checkpoint.Nodes["build.test.unit"])
+
+	// The reset row belongs to the reconciliation's own transaction, immediately
+	// after the operator's recorded outcome, and carries the same compact fact.
+	events, err := db.ListProcessRunEvents(cold.ID(), 0, db.MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	reset := slices.IndexFunc(events, func(event db.ProcessRunEvent) bool { return event.Kind == "stage_reset" })
+	require.GreaterOrEqual(t, reset, 1)
 	assert.Equal(t, 1, countKind(eventKinds(t, cold.ID()), "stage_reset"))
+	assert.Equal(t, "program_outcome_recorded", events[reset-1].Kind)
+	assert.Equal(t, "operator@example", events[reset-1].Actor)
+	assert.Equal(t, EngineActor, events[reset].Actor, "the reset is the engine's own effect")
+	var payload map[string]any
+	require.NoError(t, events[reset].DecodePayload(&payload))
+	assert.Equal(t, map[string]any{
+		"parentNodeId": "build", "gateNodeId": "build.test.unit",
+		"workNodeId": "build.do", "nextWorkAttempt": float64(2),
+	}, payload)
 	// The reconciled run is dispatchable again, at the work's next attempt.
 	next, err := Prepare(cold)
 	require.NoError(t, err)
