@@ -47,16 +47,38 @@ type launchCarryoverField struct {
 }
 
 // carryOutcome is what one launchCarryoverField did with the recorded posture.
-// Distinguishing "nothing was recorded" from "a recorded value was dropped"
-// matters: the first is silent and normal, the second is a launch that differs
-// from the record and the operator should hear about it.
+// The four cases exist because they are told to the operator differently:
+// nothing recorded and a recorded no-op are both silent, a recorded value that
+// this harness cannot honour is a warning, and a recorded value that genuinely
+// changes the launch is the one worth a disclosure.
 type carryOutcome int
 
 const (
 	carryUnrecorded carryOutcome = iota
+	// carryApplied: a recorded value landed on params AND differs from what a
+	// flagless launch would have produced.
 	carryApplied
+	// carryAppliedDefault: a recorded value landed on params but is that field's
+	// no-op — "known: nothing pinned", which resolves to exactly the launch an
+	// omitted flag gives. Still applied (the record must stay asserted rather
+	// than decaying to unknown), but never disclosed: a banner that fires on
+	// every ordinary resume listing postures that changed nothing is noise the
+	// operator learns to skip, and then --sandbox off arrives inside it.
+	carryAppliedDefault
 	carryDropped
 )
+
+// carriedValue classifies what a carry actually put on params: its type's zero
+// value means the record asserts "nothing pinned", which is not a change worth
+// reporting. Fields with a non-zero spelling of "unset" (approval's `inherit`)
+// normalize before calling this.
+func carriedValue[T comparable](applied T) carryOutcome {
+	var unpinned T
+	if applied == unpinned {
+		return carryAppliedDefault
+	}
+	return carryApplied
+}
 
 // launchCarryoverExcused names the db.AgentRelaunchProfile fields `session new
 // -r` deliberately does NOT carry, with the reason. Together with
@@ -97,7 +119,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.Sandbox = mode
-			return carryApplied
+			return carriedValue(mode)
 		},
 	},
 	{
@@ -114,7 +136,13 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.Approval = policy
-			return carryApplied
+			// `inherit` is Claude Code's first-class spelling of "no
+			// --permission-mode flag", so it is this field's unpinned value even
+			// though it is not the empty string.
+			if policy == harness.ClaudePermissionInherit {
+				return carryAppliedDefault
+			}
+			return carriedValue(policy)
 		},
 	},
 	{
@@ -130,7 +158,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.AutoReview = autoReview
-			return carryApplied
+			return carriedValue(autoReview)
 		},
 	},
 	{
@@ -146,7 +174,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.ToolGovernance = governance
-			return carryApplied
+			return carriedValue(governance)
 		},
 	},
 	{
@@ -162,7 +190,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.AskUserQuestionTimeout = timeout
-			return carryApplied
+			return carriedValue(timeout)
 		},
 	},
 	{
@@ -178,7 +206,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.RemoteControl = remoteControl
-			return carryApplied
+			return carriedValue(remoteControl)
 		},
 	},
 	{
@@ -194,7 +222,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.AutoMemory = autoMemory
-			return carryApplied
+			return carriedValue(autoMemory)
 		},
 	},
 	{
@@ -223,7 +251,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.ContextFeatures = harness.FormatContextFeatures(resolved)
-			return carryApplied
+			return carriedValue(p.ContextFeatures)
 		},
 	},
 	{
@@ -239,7 +267,7 @@ var launchCarryoverFields = []launchCarryoverField{
 				return carryDropped
 			}
 			p.AutoCompactWindow = window
-			return carryApplied
+			return carriedValue(window)
 		},
 	},
 }
@@ -317,14 +345,18 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 						"resuming without it. Pass --%s to choose the posture yourself.\n",
 					field.flag, h.Name, field.flag)
 			}
-		case carryUnrecorded:
+		case carryUnrecorded, carryAppliedDefault:
 		}
 	}
-	// Tell the operator what this resume is reproducing. Carrying a launch
-	// posture they did not type is the correct behaviour, but it must not be
-	// invisible: --sandbox and --ask-for-approval in particular decide how
-	// confined the pane is, and a human who typed a bare `-r` deserves to see
-	// which postures came back with it.
+	// Tell the operator what this resume is reproducing — but only the postures
+	// that make this launch differ from a fresh one. Carrying a launch posture
+	// they did not type is the correct behaviour, and it must not be invisible:
+	// --sandbox and --ask-for-approval in particular decide how confined the
+	// pane is, and a human who typed a bare `-r` deserves to see which postures
+	// came back with it. Which is exactly why the line has to stay rare. Most
+	// conversations pin nothing, so listing their carried no-ops would put this
+	// banner on every ordinary resume, and an operator who has learned to skip
+	// it will skip the one that says `--sandbox off` too.
 	if len(carried) > 0 {
 		fmt.Fprintf(os.Stderr, "Resuming with this conversation's recorded launch posture (%s). "+
 			"Pass a flag explicitly to override it.\n", strings.Join(carried, " "))

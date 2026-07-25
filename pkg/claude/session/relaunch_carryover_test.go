@@ -1,6 +1,8 @@
 package session
 
 import (
+	"io"
+	"os"
 	"reflect"
 	"testing"
 
@@ -41,16 +43,18 @@ func carryoverTestHome(t *testing.T) string {
 }
 
 // fullClaudePosture is a conversation launched with a deliberately non-default
-// posture on every field `session new -r` carries. ToolGovernance is an
-// OpenCode-only axis, so a Claude relaunch drops it — carryoverHarness picks the
-// harness that can actually honour each field.
+// posture on every field `session new -r` carries — every value here differs
+// from what a flagless launch resolves to, which is what makes the carry
+// observable at all. ToolGovernance is an OpenCode-only axis and auto-review a
+// Codex-only one, so a Claude relaunch drops those two — carryoverHarness picks
+// the harness that can actually honour each field.
 func fullClaudePosture() *db.AgentRelaunchProfile {
 	features := map[string]string{"bundled-skills": "off"}
 	return &db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
 		SandboxMode:            ptr(harness.ClaudeSandboxOn),
 		ApprovalPolicy:         ptr("plan"),
-		ApprovalAutoReview:     ptr(false),
+		ApprovalAutoReview:     ptr(true),
 		AskUserQuestionTimeout: ptr("5m"),
 		RemoteControl:          ptr(true),
 		AutoMemory:             ptr(true),
@@ -61,12 +65,15 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 }
 
 // carryoverHarness returns a harness that supports the given carryover flag.
-// Only --tools needs anything other than Claude Code.
+// Only --tools and --auto-review need anything other than Claude Code.
 func carryoverHarness(t *testing.T, flag string) *harness.Harness {
 	t.Helper()
 	name := harness.DefaultName
-	if flag == "tools" {
+	switch flag {
+	case "tools":
 		name = harness.OpenCodeName
+	case "auto-review":
+		name = harness.CodexName
 	}
 	h, err := harness.Resolve(name)
 	require.NoError(t, err)
@@ -189,6 +196,76 @@ func TestApplyRecordedLaunchPosture_KnownEmptyIsCarried(t *testing.T) {
 	assert.Empty(t, params.ContextFeatures)
 }
 
+// captureCarryoverStderr runs applyRecordedLaunchPosture with os.Stderr pointed
+// at a pipe and returns everything it wrote there. The disclosure is an
+// operator-facing side effect, so the only honest way to test it is to read the
+// bytes the operator would see.
+func captureCarryoverStderr(t *testing.T, params *NewParams, explicit explicitLaunchFields) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = orig })
+
+	applyErr := applyRecordedLaunchPosture(params, explicit)
+
+	require.NoError(t, w.Close())
+	os.Stderr = orig
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.NoError(t, applyErr)
+	return string(out)
+}
+
+// TestApplyRecordedLaunchPosture_DisclosesThePosturesThatChangeTheLaunch pins
+// that a resume tells the operator which postures came back with a bare `-r`.
+// Containment in particular: a human who typed no flags must not silently land
+// in a sandboxed, plan-mode, app-reachable pane.
+func TestApplyRecordedLaunchPosture_DisclosesThePosturesThatChangeTheLaunch(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	seedResumableConv(t, cwd, fullClaudePosture())
+
+	out := captureCarryoverStderr(t, &NewParams{Resume: carryoverConvID, Dir: cwd}, explicitLaunchFields{})
+
+	for _, flag := range []string{"--sandbox", "--ask-for-approval", "--ask-user-question-timeout",
+		"--remote-control", "--auto-memory", "--context-features", "--auto-compact-window"} {
+		assert.Contains(t, out, flag, "a carried posture that changes the launch must be disclosed")
+	}
+}
+
+// TestApplyRecordedLaunchPosture_SaysNothingWhenNothingWasPinned is the other
+// half, and the one that keeps the line worth reading. A plain `tclaude session
+// new` records an ASSERTED empty posture on every axis — that is the common
+// case, not a rare one. Those values are still carried (the assertion must not
+// decay back to unknown), but they resolve to exactly the launch an omitted flag
+// gives, so announcing them would put a banner on every ordinary resume. An
+// operator who has learned to skip that banner skips the `--sandbox off` one too.
+func TestApplyRecordedLaunchPosture_SaysNothingWhenNothingWasPinned(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	nothing := map[string]string{}
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version:                db.RelaunchProfileVersion,
+		SandboxMode:            ptr(""),
+		ApprovalPolicy:         ptr(harness.ClaudePermissionInherit),
+		ApprovalAutoReview:     ptr(false),
+		AskUserQuestionTimeout: ptr(""),
+		RemoteControl:          ptr(false),
+		AutoMemory:             ptr(false),
+		ContextFeatures:        &nothing,
+		AutoCompactWindow:      ptr(""),
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	out := captureCarryoverStderr(t, params, explicitLaunchFields{})
+
+	assert.Empty(t, out, "a resume that changes nothing must say nothing")
+	// The values were still carried, they just did not need announcing.
+	assert.Equal(t, harness.ClaudePermissionInherit, params.Approval)
+	assert.False(t, params.AutoMemory)
+	assert.Empty(t, params.AutoCompactWindow)
+}
+
 // TestLaunchCarryoverDropsValuesTheHarnessCannotHonour pins the fail-soft rule:
 // a recorded value the relaunch harness has no switch for is dropped, never
 // turned into a launch error. Losing a Claude-only posture on a Codex relaunch
@@ -244,6 +321,29 @@ func TestLaunchCarryoverReadsTheFieldItDeclares(t *testing.T) {
 			empty := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
 			assert.Equal(t, carryUnrecorded, field.carry(h, &empty, &NewParams{}),
 				"--%s must read %s, and report unknown when it is unset", field.flag, field.recorded)
+		})
+	}
+}
+
+// TestLaunchCarryoverReportsAnAssertedEmptyAsADefault is the structural guard
+// for the disclosure: a posture that asserts "nothing pinned" is carried but
+// must never be announced. Without this, one new row returning carryApplied
+// unconditionally is enough to put the banner back on every ordinary resume,
+// where it stops being read — and the `--sandbox off` line goes with it.
+func TestLaunchCarryoverReportsAnAssertedEmptyAsADefault(t *testing.T) {
+	for _, field := range launchCarryoverFields {
+		t.Run(field.flag, func(t *testing.T) {
+			h := carryoverHarness(t, field.flag)
+			// Set exactly this field to a pointer-to-zero: recorded, and recorded
+			// as nothing.
+			pinned := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+			slot := reflect.ValueOf(&pinned).Elem().FieldByName(field.recorded)
+			require.True(t, slot.IsValid(), "no such profile field")
+			slot.Set(reflect.New(slot.Type().Elem()))
+
+			assert.Equal(t, carryAppliedDefault, field.carry(h, &pinned, &NewParams{}),
+				"an asserted-empty %s resolves to the same launch as an omitted --%s, "+
+					"so it must not be disclosed", field.recorded, field.flag)
 		})
 	}
 }

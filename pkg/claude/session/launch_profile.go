@@ -47,6 +47,11 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 // With no Cobra command there is no Changed() to consult, so the table falls
 // back to "a non-zero value on params is the caller's own" — which is exactly
 // what a programmatic caller expresses.
+//
+// Two consequences for programmatic callers: a resume whose recorded posture
+// cannot be READ fails here rather than launching on defaults (launching would
+// overwrite the record with those defaults, which is not recoverable), and a
+// carried posture that changes the launch is disclosed on os.Stderr.
 func RunNew(params *NewParams) error {
 	if err := applyRecordedLaunchPosture(params, nil); err != nil {
 		return err

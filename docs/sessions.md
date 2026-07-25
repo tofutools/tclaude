@@ -81,6 +81,12 @@ flags are echoed on stderr, e.g.
 Resuming with this conversation's recorded launch posture (--sandbox --auto-compact-window). Pass a flag explicitly to override it.
 ```
 
+Only postures that make the launch differ from a fresh one are listed. Most
+conversations pin nothing on most axes, and a resume that reproduces a recorded
+"nothing pinned" is byte-identical to one without the carryover — announcing
+those would put the line on every ordinary resume, which is how a line stops
+being read.
+
 A recorded value the relaunch harness cannot honour — a Claude-only posture on a
 Codex resume, or a startup-context feature since retired from the catalog — is
 dropped rather than failing the resume. For `--sandbox` and `--ask-for-approval`
