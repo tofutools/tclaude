@@ -24,9 +24,13 @@ import (
 // OwnerImplied marks a slug that group ownership confers structurally:
 // when an agent owns a group, the daemon's owner-bypass (the permUndecided
 // gap-filler in requireGroupPermission / requireCrossAgentPermission /
-// requireNotifyHumanPermission) lets it exercise the capability against
-// that group or its members WITHOUT the slug being granted — unless an
-// explicit per-conv deny override suppresses it. These structural grants
+// requireNotifyHumanPermission / requireProcessRunReadPermission) lets it
+// exercise the capability WITHOUT the slug being granted — unless an
+// explicit per-conv deny override suppresses it. Most of these bypasses are
+// scoped to the owned group or its members; human.notify and
+// process.runs.read are owner-wide (owning any group is enough), because
+// there is no per-group surface to scope them to.
+// These structural grants
 // are otherwise invisible in the permission editor, so the dashboard reads
 // this flag to show owner-conferred slugs as effectively held for owners.
 // The set is kept in lockstep with the bypassing call sites by
@@ -280,8 +284,9 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and edit process templates through tclaude agent process-templates save. Does not execute or instantiate a process. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
-		Slug:        PermProcessRunsRead,
-		Description: "List and inspect daemon-owned process runs and reconciliation state. Not default-granted; runtime state can contain bound command details and parameters.",
+		Slug:         PermProcessRunsRead,
+		OwnerImplied: true,
+		Description:  "List and inspect daemon-owned process runs and reconciliation state. Group owners get this by default (a coordinating role driving process validation needs run status and evidence without a popup per read), suppressible by a deny override; otherwise not in the global defaults, because runtime state can contain bound command details and parameters. Read-only — it confers no run mutation authority.",
 	},
 	{
 		Slug:        PermProcessRunsManage,
@@ -718,6 +723,20 @@ func ownerImpliedSlugsFor(convID string) []string {
 		return nil
 	}
 	return OwnerImpliedSlugs()
+}
+
+// ownsAnyGroup reports whether convID owns at least one group. It backs the
+// owner bypasses that are NOT scoped to one group or one target member —
+// human.notify and process.runs.read — where owning anything at all marks
+// the caller as a coordinating role. A DB error degrades to "not an owner"
+// so the bypass fails closed onto the ordinary slug/popup path.
+func ownsAnyGroup(convID string) bool {
+	owned, err := db.ListGroupsOwnedBy(convID)
+	if err != nil {
+		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
+		return false
+	}
+	return len(owned) > 0
 }
 
 // effectivePermsFor returns the slug list the daemon would consult for

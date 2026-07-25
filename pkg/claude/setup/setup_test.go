@@ -80,6 +80,14 @@ func assertBundledPermsGranted(t *testing.T) {
 	for _, slug := range defaultPermsForBundledSkills {
 		assert.Contains(t, cfg.Agent.DefaultPermissions, slug)
 	}
+	// The installed set is exactly defaultPermsForBundledSkills, so the two
+	// process boundaries below follow from the list — asserted here anyway
+	// because they are the contract callers depend on: every agent reads
+	// process templates by default, and no agent reads or manages runs by
+	// default (owners get run read structurally instead — TCL-722).
+	assert.Contains(t, cfg.Agent.DefaultPermissions, "process.templates.read")
+	assert.NotContains(t, cfg.Agent.DefaultPermissions, "process.runs.read")
+	assert.NotContains(t, cfg.Agent.DefaultPermissions, "process.runs.manage")
 }
 
 func assertBundledPermsNotGranted(t *testing.T) {
@@ -127,9 +135,20 @@ func TestInstallExtras_PermsOnly(t *testing.T) {
 	assertBundledPermsGranted(t)
 }
 
+// The ordinary default set carries exactly one process slug: the read-only
+// template surface every agent needs for the bundled process-template scribe
+// skill. Template authoring and BOTH run slugs stay out of it — run read is
+// conferred structurally to group owners instead (TCL-722), and run
+// management always needs an explicit grant or human approval.
 func TestBundledPermissionDefaultsGrantProcessTemplateReadOnly(t *testing.T) {
 	assert.Contains(t, defaultPermsForBundledSkills, "process.templates.read")
-	assert.NotContains(t, defaultPermsForBundledSkills, "process.templates.manage")
+	for _, notDefault := range []string{
+		"process.templates.manage",
+		"process.runs.read",
+		"process.runs.manage",
+	} {
+		assert.NotContains(t, defaultPermsForBundledSkills, notDefault)
+	}
 }
 
 // --install-all installs every optional extra.

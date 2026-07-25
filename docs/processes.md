@@ -19,9 +19,11 @@ tclaude agent process-templates validate --file template.yaml
 tclaude agent process-templates save --file template.yaml --source-hash <hash>
 ```
 
-Reads require `process.templates.read`; saves require
-`process.templates.manage`. These permissions authorize authoring only and do
-not execute a template.
+Reads require `process.templates.read` — installed as an ordinary agent
+default by `tclaude setup --install-default-agent-permissions`, so every agent
+can list, show, and validate templates. Saves require
+`process.templates.manage`, which is never a default. These permissions
+authorize authoring only and do not execute a template.
 
 ## Running
 
@@ -42,7 +44,14 @@ edits to the template never change a run already in flight. Every program
 profile a run may execute must be authorized explicitly at creation with
 `--authorize-program-profile`; nothing is authorized implicitly.
 
-Reads require `process.runs.read` and mutations require `process.runs.manage`.
+Reads (`runs ls`, `show`, `events`) require `process.runs.read` and mutations
+require `process.runs.manage`. Neither is an ordinary default, but **owning a
+group confers `process.runs.read`**: a coordinating agent driving a validation
+reads run status and evidence without a human approval per read. Plain members
+need the slug granted. An explicit per-agent **deny** overrides both the
+defaults and the owner grant. Ownership confers reads only — every mutating
+verb above still needs `process.runs.manage` (an explicit grant or a one-shot
+`--ask-human` approval), and it never grants `process.templates.manage`.
 
 ## What executes today
 
