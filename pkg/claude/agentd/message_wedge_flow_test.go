@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,25 +78,97 @@ func TestMessageBackpressureInlineMailDrainsOnNextTerminalHook(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, rejected.Code, "body=%s", rejected.Body.String())
 	decodeQueueFull(t, rejected.Body.Bytes())
 
-	// The recipient takes one more turn. Its terminal hook must drain every
-	// read-but-unacknowledged row, with no operator intervention and no new
-	// inline injection needed to trigger the catch-up.
+	// The recipient takes one more turn. No prompt began during it — these rows
+	// are the wedged kind — so its terminal hook releases the oldest row, with
+	// no operator intervention and no new inline injection needed. One slot per
+	// completed turn is the deadlock escape; releasing all ten would instead let
+	// a fast sender refill the whole queue every turn.
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName: "Stop", ConvID: target, Cwd: cwd,
 	}, label), "ApplyHook(Stop)")
 
-	for _, id := range ids {
+	oldest, err := db.GetAgentMessage(ids[0])
+	require.NoError(t, err)
+	assert.False(t, oldest.ProcessedAt.IsZero(), "the oldest wedged row is released")
+	for _, id := range ids[1:] {
 		message, err := db.GetAgentMessage(id)
 		require.NoError(t, err)
-		assert.False(t, message.ProcessedAt.IsZero(),
-			"message #%d must be acknowledged by the recipient's terminal hook", id)
+		assert.True(t, message.ProcessedAt.IsZero(),
+			"message #%d must still hold its slot: no prompt began this turn", id)
 	}
 	accepted := postMessage(t, f, sender, map[string]any{"to": target, "body": "capacity reopened"})
 	require.Equal(t, http.StatusOK, accepted.Code, "body=%s", accepted.Body.String())
 	var response sendRespView
 	require.NoError(t, json.Unmarshal(accepted.Body.Bytes(), &response))
 	assert.True(t, response.Queued)
-	assert.Equal(t, 1, response.Pending, "the drained queue starts over at the new message")
+	assert.Equal(t, regularMessageQueueLimitForTest, response.Pending,
+		"exactly one slot reopened, and the new message takes it")
+
+	// Repeating that drains the queue completely: the deadlock property is that
+	// capacity always reopens, without the operator touching anything.
+	for range regularMessageQueueLimitForTest {
+		require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+			HookEventName: "Stop", ConvID: target, Cwd: cwd,
+		}, label), "ApplyHook(Stop)")
+	}
+	for _, id := range ids {
+		message, err := db.GetAgentMessage(id)
+		require.NoError(t, err)
+		assert.False(t, message.ProcessedAt.IsZero(), "message #%d drains on a later turn", id)
+	}
+}
+
+// The bound must keep measuring outstanding work, not admissions per turn.
+// Delivery is not gated on the pane being idle, so mail sent to a busy
+// recipient queues in the harness input box; a turn that consumes one queued
+// prompt must acknowledge only up to that prompt, leaving mail injected
+// afterwards to hold its slot. Without the id watermark, a sender faster than
+// the recipient's turn rate would be readmitted a full queue every turn.
+func TestMessageBackpressureTerminalHookAcknowledgesOnlyUpToTheStartedPrompt(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	const sender = "wedge-rate-send-cccc-000000000001"
+	const target = "wedge-rate-recv-cccc-000000000002"
+	const tmux = "tclaude-wedge-rate"
+	const label = "spwn-wedge-rate"
+	f.HaveConvWithTitle(sender, "po")
+	f.HaveConvWithTitle(target, "worker")
+	f.HaveEnrolledAgent(sender)
+	f.HaveEnrolledAgent(target)
+	f.HaveMember("team", sender)
+	f.HaveMember("team", target)
+	cwd := f.TestCwd("wedge-rate")
+	f.HaveAliveSession(target, label, tmux, cwd)
+
+	ids := make([]int64, 0, 3)
+	for i := range 3 {
+		rec := postMessage(t, f, sender, map[string]any{"to": target, "body": fmt.Sprintf("queued-%d", i)})
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var response sendRespView
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+		ids = append(ids, response.ID)
+	}
+	agentd.WaitForBackgroundForTest()
+	agentd.FlushUndeliveredForTest(target)
+
+	// The harness dequeues the first queued prompt; the other two are still
+	// sitting in its input box when the turn ends.
+	started, err := db.MarkRegularAgentMessageStarted(ids[0], target, true, time.Now())
+	require.NoError(t, err)
+	require.True(t, started)
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "Stop", ConvID: target, Cwd: cwd,
+	}, label), "ApplyHook(Stop)")
+
+	consumed, err := db.GetAgentMessage(ids[0])
+	require.NoError(t, err)
+	assert.False(t, consumed.ProcessedAt.IsZero(), "the prompt the recipient actually began is acknowledged")
+	for _, id := range ids[1:] {
+		message, err := db.GetAgentMessage(id)
+		require.NoError(t, err)
+		assert.True(t, message.ProcessedAt.IsZero(),
+			"message #%d is still queued in the pane and must keep holding its slot", id)
+	}
 }
 
 // A terminal hook must not consume pointer/notification mail: that row's body
