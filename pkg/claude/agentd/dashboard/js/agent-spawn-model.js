@@ -591,7 +591,13 @@ export function spawnProfileSeed(draft, context) {
   const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
   if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
-  if (view.showTrustDir) seed.trust_dir = !!draft.trustDir;
+  // Seed trust-dir only when the operator actually touched the checkbox. An
+  // explicit false is NOT free: it chips the profile as "trust-dir off" on a
+  // field nobody set, and its TrustDirSet bit suppresses an inherited
+  // group-default trust_dir. Same reasoning as auto-memory just below — it
+  // matters more now that this row is shown for Claude Code too, i.e. for most
+  // profiles saved from this dialog.
+  if (view.showTrustDir && draft.trustDirSpecified) seed.trust_dir = !!draft.trustDir;
   // Seed only an explicit opt-IN. Off is what an unset profile already
   // resolves to, so pinning false would give the operator an "auto-memory off"
   // chip on a field they never touched — indistinguishable from a deliberate

@@ -164,3 +164,64 @@ func TestEnsureClaudeDirTrustedInFile_PreservesMode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o640), fi.Mode().Perm(), "existing file mode is preserved")
 }
+
+// A lone surrogate escape cannot survive Go's decode→encode round-trip (it
+// becomes U+FFFD), so the editor refuses rather than silently corrupting the
+// operator's config — the same fail-safe posture as a wrong-shape `projects`.
+// This matters more now that the trust-dir opt-in is no longer Codex-only and
+// so this editor runs on ordinary spawns rather than only a rare scribe summon.
+func TestPlanClaudeDirTrust_RefusesLoneSurrogateEscape(t *testing.T) {
+	for _, tc := range []struct{ name, config string }{
+		{"high surrogate alone", `{"tip":"lone \ud83d surrogate","projects":{}}`},
+		{"low surrogate alone", `{"tip":"lone \udc4d surrogate","projects":{}}`},
+		{"high followed by a plain escape", `{"tip":"\ud83d\n","projects":{}}`},
+		{"high in a project entry value", `{"projects":{"/x":{"note":"\udbff"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed, _, err := planClaudeDirTrust([]byte(tc.config), "/work/proj")
+			require.Error(t, err, "an unpaired surrogate must be refused, not mangled")
+			assert.False(t, changed)
+			assert.Contains(t, err.Error(), "surrogate")
+		})
+	}
+}
+
+// ...but a properly PAIRED surrogate escape round-trips fine, so refusing it
+// would be over-broad — a config with an escaped emoji must still be editable.
+func TestPlanClaudeDirTrust_AllowsPairedSurrogateEscape(t *testing.T) {
+	const cfg = `{"tip":"thumbs \ud83d\udc4d up","projects":{}}`
+	changed, out, err := planClaudeDirTrust([]byte(cfg), "/work/proj")
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.True(t, trustedInParsed(t, out, "/work/proj"))
+
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(out, &root))
+	assert.Equal(t, "thumbs \U0001F44D up", root["tip"], "the pair decodes to the real rune, uncorrupted")
+}
+
+// A backslash-escaped backslash followed by "u" is NOT a unicode escape; the
+// scanner must consume the pair rather than misreading the tail as one.
+func TestPlanClaudeDirTrust_LiteralBackslashUIsNotAnEscape(t *testing.T) {
+	const cfg = `{"path":"C:\\ud800\\next","projects":{}}`
+	changed, out, err := planClaudeDirTrust([]byte(cfg), "/work/proj")
+	require.NoError(t, err, "a literal \\ud800 in a string is not a surrogate escape")
+	require.True(t, changed)
+
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(out, &root))
+	assert.Equal(t, `C:\ud800\next`, root["path"], "the literal text survives verbatim")
+}
+
+// Encoding must not rewrite <, > and & as \u003c/\u003e/\u0026 across a file
+// tclaude did not author — that is gratuitous churn in a diff the operator may
+// well read.
+func TestPlanClaudeDirTrust_DoesNotEscapeHTMLCharacters(t *testing.T) {
+	const cfg = `{"tip":"use <b> & </b>","projects":{}}`
+	changed, out, err := planClaudeDirTrust([]byte(cfg), "/work/proj")
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.Contains(t, string(out), `"use <b> & </b>"`, "HTML characters are left verbatim")
+	assert.NotContains(t, string(out), `\u003c`)
+	assert.NotContains(t, string(out), `\u0026`)
+}

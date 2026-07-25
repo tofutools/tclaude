@@ -70,7 +70,11 @@ import (
 //
 //   - Precise: decoded with UseNumber so large integer state (epoch-ms
 //     timestamps, token counters) round-trips EXACTLY, never lossily rewritten
-//     as floats.
+//     as floats. Strings have no equivalent knob — an unpaired surrogate escape
+//     would decode to U+FFFD — so a config carrying one is refused outright
+//     (errOnLoneSurrogateEscape) rather than silently mangled. Encoding uses
+//     SetEscapeHTML(false), so <, > and & are left as written instead of being
+//     rewritten across a file tclaude did not author.
 //   - Additive: every other key/value is preserved; only the one project
 //     entry's hasTrustDialogAccepted is set. (Key ORDER is not preserved — Go
 //     marshals maps sorted — which is immaterial for an order-independent JSON
@@ -79,14 +83,22 @@ import (
 //     rewritten.
 //   - Atomic: temp file in the same dir, fsync'd, renamed over the original
 //     (shared atomicWriteFile), so a reader (or a crash mid-write) never sees
-//     a partial config. On the rare summon that actually WRITES, the edit is
+//     a partial config. On a spawn that actually WRITES, the edit is
 //     last-writer-wins against any concurrent Claude Code write in the
-//     read→marshal→rename window: our rename would revert whatever CC wrote in
-//     that window (a tip flag, a history entry — CC-owned churn, never our
-//     trust bit). Bounded and accepted: the idempotent no-op means a dir stays
-//     write-free after its first-ever seed, so this is a one-time event on a
-//     rare human action, and CC exposes no lock to coordinate on. Inherent to
-//     any external editor of this Claude-owned file.
+//     read→encode→rename window: our rename reverts whatever CC wrote in that
+//     window. Usually that is CC-owned churn (a tip flag, a history entry), but
+//     do not read it as "never anything that matters" — a trust dialog accepted
+//     in ANOTHER CC instance during the window, or an oauthAccount refresh, is
+//     losable too.
+//
+//     Bounded and accepted. The bound is per-dir idempotence: a dir is written
+//     at most once ever, so the window is a single event per directory, not a
+//     recurring risk. Note the trigger count grew when the trust-dir opt-in
+//     stopped being Codex-only — it is no longer just the rare scribe summon
+//     but any opted-in spawn plus every default sibling worktree — so the
+//     number of one-time events tracks worktree creation now. Still acceptable:
+//     CC exposes no lock to coordinate on, and this is inherent to any external
+//     editor of a Claude-owned file.
 //   - Fail-safe: a config whose `projects` (or the target entry) is bound to a
 //     non-object is refused rather than corrupted.
 
@@ -164,6 +176,15 @@ func ensureClaudeDirTrustedInFile(configPath, projectDir string) error {
 func planClaudeDirTrust(data []byte, projectDir string) (bool, []byte, error) {
 	root := map[string]any{}
 	if len(bytes.TrimSpace(data)) > 0 {
+		// A lone surrogate escape does NOT survive decode→marshal: Go replaces
+		// it with U+FFFD, irreversibly. UseNumber protects integers but there is
+		// no equivalent knob for strings, so the only safe move on a config
+		// carrying one is to leave the file alone — same fail-safe posture as a
+		// wrong-shape `projects`. (JSON.stringify emits these only for a split
+		// surrogate pair, so a real config is very unlikely to trip this.)
+		if err := errOnLoneSurrogateEscape(data); err != nil {
+			return false, nil, err
+		}
 		dec := json.NewDecoder(bytes.NewReader(data))
 		dec.UseNumber() // keep big ints exact across the round-trip
 		if err := dec.Decode(&root); err != nil {
@@ -201,10 +222,91 @@ func planClaudeDirTrust(data []byte, projectDir string) (bool, []byte, error) {
 	}
 	entry["hasTrustDialogAccepted"] = true
 
-	out, err := json.MarshalIndent(root, "", "  ")
-	if err != nil {
+	// json.Marshal escapes <, > and & as </>/& by default, which
+	// would rewrite those characters throughout a file tclaude did not author
+	// (harmless but gratuitous churn in a diff the operator may well read).
+	// Encoder + SetEscapeHTML(false) emits them verbatim; it also appends the
+	// trailing newline MarshalIndent does not.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(root); err != nil {
 		return false, nil, fmt.Errorf("encode Claude config: %w", err)
 	}
-	out = append(out, '\n')
-	return true, out, nil
+	return true, buf.Bytes(), nil
+}
+
+// errOnLoneSurrogateEscape reports an error when data contains a \uXXXX escape
+// that is an UNPAIRED surrogate — a high surrogate (D800-DBFF) not immediately
+// followed by a low one, or a low surrogate (DC00-DFFF) not immediately
+// preceded by a high one. Such an escape cannot survive Go's decode→encode
+// round-trip (it becomes U+FFFD), so the caller refuses the edit rather than
+// silently corrupting the operator's config.
+//
+// Properly PAIRED surrogate escapes round-trip fine and are deliberately
+// allowed. Scanning tracks string context so a `\u` inside a comment-free JSON
+// document is only read where it can actually be an escape, and consumes
+// backslash pairs so a literal `\\u0041` is not mistaken for an escape.
+func errOnLoneSurrogateEscape(data []byte) error {
+	isHigh := func(r rune) bool { return r >= 0xD800 && r <= 0xDBFF }
+	isLow := func(r rune) bool { return r >= 0xDC00 && r <= 0xDFFF }
+
+	inString := false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if !inString {
+			if c == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			esc, width, ok := parseUnicodeEscape(data, i)
+			if !ok {
+				i++ // an ordinary two-byte escape (\" \\ \n …); skip its payload
+				continue
+			}
+			if isHigh(esc) {
+				// A valid pair is \uD8xx immediately followed by \uDCxx.
+				if next, nextWidth, nextOK := parseUnicodeEscape(data, i+width); nextOK && isLow(next) {
+					i += width + nextWidth - 1
+					continue
+				}
+				return fmt.Errorf("claude dir-trust: Claude config contains an unpaired high-surrogate escape (\\u%04X) that would be corrupted by a rewrite; refusing to edit", esc)
+			}
+			if isLow(esc) {
+				return fmt.Errorf("claude dir-trust: Claude config contains an unpaired low-surrogate escape (\\u%04X) that would be corrupted by a rewrite; refusing to edit", esc)
+			}
+			i += width - 1
+		}
+	}
+	return nil
+}
+
+// parseUnicodeEscape decodes a `\uXXXX` escape starting at data[i] (which must
+// be the backslash), returning the code unit and the escape's byte width.
+// ok=false when data[i:] is not a well-formed \u escape — including an
+// ordinary escape like \n, which the caller handles separately.
+func parseUnicodeEscape(data []byte, i int) (esc rune, width int, ok bool) {
+	if i+5 >= len(data) || data[i] != '\\' || data[i+1] != 'u' {
+		return 0, 0, false
+	}
+	var v rune
+	for _, b := range data[i+2 : i+6] {
+		switch {
+		case b >= '0' && b <= '9':
+			v = v<<4 | rune(b-'0')
+		case b >= 'a' && b <= 'f':
+			v = v<<4 | rune(b-'a'+10)
+		case b >= 'A' && b <= 'F':
+			v = v<<4 | rune(b-'A'+10)
+		default:
+			return 0, 0, false
+		}
+	}
+	return v, 6, true
 }

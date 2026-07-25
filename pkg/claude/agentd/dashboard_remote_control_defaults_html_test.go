@@ -11,7 +11,8 @@ import (
 //  1. The spawn-profile editor's tri-state `remote_control` toggle — a *bool
 //     (unset / off / on) that rides into the profile create/edit body as
 //     `remote_control`, gated on the chosen harness's Remote Access capability
-//     (the inverse of the Codex-only trust-dir toggle it sits beside).
+//     (the same capability-gated shape as the trust-dir toggle it sits beside,
+//     which is offered for Claude Code and Codex but not OpenCode).
 //  2. The group remote-control-policy control — a STRING enum
 //     (inherit / optin / deny) that PATCHes the group's `remote_control_policy`
 //     through the same /api/groups/{name} endpoint the default_profile /
