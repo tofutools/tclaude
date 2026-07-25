@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,7 @@ type processRunJSON struct {
 	AwaitingDecision      *processRunDecisionJSON  `json:"awaitingDecision,omitempty"`
 	AwaitingDecisions     []processRunDecisionJSON `json:"awaitingDecisions"`
 	Commands              []processRunCommandJSON  `json:"commands"`
+	Blocked               []processRunBlockedJSON  `json:"blocked"`
 	CreatedAt             time.Time                `json:"createdAt"`
 	UpdatedAt             time.Time                `json:"updatedAt"`
 }
@@ -52,6 +54,12 @@ type processRunJSON struct {
 type processRunDecisionJSON struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+}
+
+type processRunBlockedJSON struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason"`
 }
 
 type processRunCommandJSON struct {
@@ -589,6 +597,83 @@ func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
 	return nil
 }
 
+type processResolveBlockedParams struct {
+	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" help:"Blocked node id"`
+	Attempt  int    `long:"attempt" help:"Exact attempt the node is blocked at, from tclaude process show"`
+	Action   string `long:"action" help:"retry, skip, or cancel"`
+	Note     string `long:"note" optional:"true" help:"Human-facing note recorded with the resolution"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+}
+
+func processResolveBlockedCmd() *cobra.Command {
+	return boa.CmdT[processResolveBlockedParams]{
+		Use:   "resolve-blocked",
+		Short: "Retry, skip, or cancel a branch parked by an exhausted retry budget",
+		Long: "Resolves one blocked branch, bound to the exact node and attempt tclaude process show reports. " +
+			"retry opens one fresh authored-size attempt window without reusing an attempt number; " +
+			"skip settles the task through its authored route and activates downstream work; " +
+			"cancel gives up on the run, which drains its in-flight programs and finishes canceled. " +
+			"Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processResolveBlockedParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Action).SetAlternatives(processResolutionActions)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *processResolveBlockedParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessResolveBlocked(p, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
+var processResolutionActions = []string{
+	string(engine.ResolveRetry), string(engine.ResolveSkip), string(engine.ResolveCancel),
+}
+
+// runProcessResolveBlocked validates in the same order the other run verbs do:
+// the daemon requirement first, then this command's own arguments, so a
+// malformed invocation never depends on whether agentd happens to be up.
+func runProcessResolveBlocked(p *processResolveBlockedParams, stdout, stderr io.Writer) error {
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	node := strings.TrimSpace(p.Node)
+	if node == "" {
+		return fmt.Errorf("--node is required")
+	}
+	if p.Attempt < 1 {
+		return fmt.Errorf("--attempt must be the exact attempt the node is blocked at")
+	}
+	action := engine.ResolutionAction(strings.TrimSpace(p.Action))
+	if !slices.Contains(processResolutionActions, string(action)) {
+		return fmt.Errorf("--action must be %s", strings.Join(processResolutionActions, ", "))
+	}
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
+	request := struct {
+		NodeID  string                  `json:"nodeId"`
+		Attempt int                     `json:"attempt"`
+		Action  engine.ResolutionAction `json:"action"`
+		Note    string                  `json:"note,omitempty"`
+	}{NodeID: node, Attempt: p.Attempt, Action: action, Note: p.Note}
+	var response struct {
+		Started bool           `json:"started"`
+		Run     processRunJSON `json:"run"`
+	}
+	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/resolve-blocked"
+	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Resolved blocked node %s attempt %d with %s for process run %s.\n",
+		node, p.Attempt, action, response.Run.ID)
+	printProcessRun(stdout, &response.Run)
+	return nil
+}
+
 func fetchProcessRun(runID string, askHuman time.Duration, stderr io.Writer) (*processRunJSON, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -665,6 +750,16 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		}
 		_ = tw.Flush()
 	}
+	if len(run.Blocked) > 0 {
+		fmt.Fprintln(out, "blocked:")
+		tw := newTable(out)
+		fmt.Fprintln(tw, "NODE\tATTEMPT\tREASON")
+		for _, blocked := range run.Blocked {
+			fmt.Fprintf(tw, "%s\t%d\t%s\n", blocked.NodeID, blocked.Attempt,
+				displayProcessEventField(blocked.Reason))
+		}
+		_ = tw.Flush()
+	}
 	if len(run.AwaitingDecisions) > 0 {
 		fmt.Fprintln(out, "awaitingDecisions:")
 		tw := newTable(out)
@@ -698,6 +793,12 @@ func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
 	for _, decision := range run.AwaitingDecisions {
 		fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --verdict <verdict>\n",
 			run.ID, decision.NodeID)
+	}
+	// The attempt is part of the blocked identity, so the hint carries the exact
+	// one rather than an invocation the daemon would refuse as stale.
+	for _, blocked := range run.Blocked {
+		fmt.Fprintf(out, "Next: tclaude process resolve-blocked %s --node %s --attempt %d --action <%s>\n",
+			run.ID, blocked.NodeID, blocked.Attempt, strings.Join(processResolutionActions, "|"))
 	}
 }
 

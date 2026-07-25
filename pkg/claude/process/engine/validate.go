@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
@@ -46,10 +47,16 @@ type definitionNode struct {
 	// the checkpoint's attempt counter against, and nothing else about the
 	// authored policy is executable in this slice.
 	maxAttempts int
-	terminal    RunStatus // end nodes only
-	verdicts    []string  // decision nodes only: sorted authored outcome labels
-	outgoing    []int     // edge indices, sorted by outcome label
-	incoming    []int     // edge indices, in edge order
+	// retryAuthored records whether the author asked for retries AT ALL, which
+	// maxAttempts alone cannot say: an explicit maxAttempts: 1 and no policy at
+	// all both resolve to a budget of one. It is what decides the exhaustion
+	// disposition — an explicit policy parks the branch for an operator, no
+	// policy stays fail-fast — so the two shapes have to stay distinguishable.
+	retryAuthored bool
+	terminal      RunStatus // end nodes only
+	verdicts      []string  // decision nodes only: sorted authored outcome labels
+	outgoing      []int     // edge indices, sorted by outcome label
+	incoming      []int     // edge indices, in edge order
 	// joinAll marks a convergence node authored with join: all. Such a node
 	// activates once its complete candidate input set has settled with one or
 	// more arrivals, instead of the non-join exactly-one-arrival rule.
@@ -103,6 +110,7 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 			// executes, so the budget is taken as authored; RetryBudget resolves an
 			// absent policy to the fail-fast single attempt.
 			prepared.maxAttempts = model.RetryBudget(node.Retry)
+			prepared.retryAuthored = node.Retry != nil
 			program, err := bindProgram(nodeID, *node.Performer, params)
 			if err != nil {
 				return nil, err
@@ -411,12 +419,16 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("nodes contains unknown node %q", nodeID)
 		}
 		switch status {
-		case NodePending, NodeReady, NodeRunning, NodeDone, NodeFailed, NodeSkipped:
+		case NodePending, NodeReady, NodeRunning, NodeDone, NodeFailed, NodeSkipped,
+			NodeBlocked, NodeCanceled:
 		default:
 			return invalid("node %q has unknown status %q", nodeID, status)
 		}
 	}
 	if err := validateEdgeShape(checkpoint, definition); err != nil {
+		return err
+	}
+	if err := validateAttemptCeilings(checkpoint, definition); err != nil {
 		return err
 	}
 	if err := validateAttempts(checkpoint, definition); err != nil {
@@ -425,7 +437,10 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if err := validateCommands(checkpoint, definition); err != nil {
 		return err
 	}
-	return validateAwaitingDecisions(checkpoint, definition)
+	if err := validateAwaitingDecisions(checkpoint, definition); err != nil {
+		return err
+	}
+	return validateBlocked(checkpoint, definition)
 }
 
 // validateAttempts enforces that the sparse attempt counter names only known
@@ -444,9 +459,87 @@ func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 		if !ok || node.kind != definitionTask {
 			return fmt.Errorf("%w: attempts names %q, which is not a prepared program task", ErrInvalidCheckpoint, nodeID)
 		}
-		if attempt < 1 || attempt > node.maxAttempts {
-			return fmt.Errorf("%w: node %q attempt %d is outside its authored budget of 1..%d",
-				ErrInvalidCheckpoint, nodeID, attempt, node.maxAttempts)
+		// The ceiling, not the authored budget: an operator retry durably raised
+		// it, and both this bound and planning's own guard read the same helper
+		// so a legitimately retried run cannot fail to cold-load.
+		if ceiling := attemptCeiling(checkpoint, node); attempt < 1 || attempt > ceiling {
+			return fmt.Errorf("%w: node %q attempt %d is outside its budget of 1..%d",
+				ErrInvalidCheckpoint, nodeID, attempt, ceiling)
+		}
+	}
+	return nil
+}
+
+// validateAttemptCeilings enforces that the sparse ceiling override names only
+// nodes that could ever have earned one and holds only values the reducer could
+// have written. A ceiling is raised by exactly one thing — an operator retry of
+// a blocked branch — which requires an explicitly authored retry policy, so an
+// entry for any other node is not a state this engine produced.
+//
+// An entry that merely repeats the authored budget is refused too: absent means
+// authored, so storing it again would give one logical state two encodings.
+func validateAttemptCeilings(checkpoint Checkpoint, definition *Definition) error {
+	for nodeID, ceiling := range checkpoint.AttemptCeilings {
+		node, ok := definitionNodeByID(definition, nodeID)
+		if !ok || node.kind != definitionTask || !node.retryAuthored {
+			return fmt.Errorf("%w: attemptCeilings names %q, which is not a prepared program task with an authored retry policy",
+				ErrInvalidCheckpoint, nodeID)
+		}
+		if ceiling <= node.maxAttempts || ceiling > maxAttemptCeiling {
+			return fmt.Errorf("%w: node %q ceiling %d is outside %d..%d",
+				ErrInvalidCheckpoint, nodeID, ceiling, node.maxAttempts+1, maxAttemptCeiling)
+		}
+	}
+	return nil
+}
+
+// validateBlocked enforces the durable blocked outbox is unique, bounded, and
+// bound to genuinely parked branches of a running run, in both directions.
+//
+// The reverse direction matters as much as the forward one: a node left blocked
+// with no obligation would be a branch no operator surface can see and no
+// resolution can name — a silently stranded run — so the count is checked too.
+func validateBlocked(checkpoint Checkpoint, definition *Definition) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidCheckpoint, fmt.Sprintf(format, args...))
+	}
+	parked := 0
+	for _, status := range checkpoint.Nodes {
+		if status == NodeBlocked {
+			parked++
+		}
+	}
+	if len(checkpoint.Blocked) != parked {
+		return invalid("blocked holds %d obligations for %d blocked nodes", len(checkpoint.Blocked), parked)
+	}
+	if len(checkpoint.Blocked) == 0 {
+		return nil
+	}
+	if checkpoint.Status != RunRunning {
+		return invalid("blocked obligations require a running run")
+	}
+	seen := make(map[string]struct{}, len(checkpoint.Blocked))
+	for _, obligation := range checkpoint.Blocked {
+		node, ok := definitionNodeByID(definition, obligation.NodeID)
+		if !ok || node.kind != definitionTask || !node.retryAuthored {
+			return invalid("blocked node %q is not a prepared program task with an authored retry policy", obligation.NodeID)
+		}
+		if _, dup := seen[obligation.NodeID]; dup {
+			return invalid("duplicate blocked obligation for node %q", obligation.NodeID)
+		}
+		seen[obligation.NodeID] = struct{}{}
+		if checkpoint.Nodes[obligation.NodeID] != NodeBlocked {
+			return invalid("blocked node %q must have blocked status", obligation.NodeID)
+		}
+		// A branch parks only after an attempt really ran, and that attempt is
+		// the identity a resolution binds to, so a blocked node without one has
+		// no exact identity to resolve against.
+		if checkpoint.Attempts[obligation.NodeID] < 1 {
+			return invalid("blocked node %q has no recorded attempt to resolve", obligation.NodeID)
+		}
+		if len(obligation.Reason) > MaxBlockedReasonBytes || !utf8.ValidString(obligation.Reason) {
+			return invalid("blocked node %q reason must be at most %d bytes of UTF-8",
+				obligation.NodeID, MaxBlockedReasonBytes)
 		}
 	}
 	return nil
@@ -543,7 +636,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	// These local checks encode the single-token exclusive semantics: at most
 	// one arrival per node, closure marks everything unreachable as skipped,
 	// and activation requires a fully settled candidate set.
-	activeIndex, failedIndex, doneEndIndex := -1, -1, -1
+	activeIndex, doomedIndex, doneEndIndex := -1, -1, -1
 	for index, node := range definition.nodes {
 		in := countDispositions(checkpoint, definition, node.incoming)
 		out := countDispositions(checkpoint, definition, node.outgoing)
@@ -613,19 +706,35 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if out.notTaken != len(node.outgoing) {
 				return invalid("skipped node %q requires every outgoing edge to be not taken", node.id)
 			}
-		case NodeFailed:
-			if failedIndex >= 0 {
-				return invalid("nodes %q and %q are both failed", definition.nodes[failedIndex].id, node.id)
+		case NodeFailed, NodeCanceled:
+			if doomedIndex >= 0 {
+				return invalid("nodes %q and %q both doomed the run", definition.nodes[doomedIndex].id, node.id)
 			}
-			failedIndex = index
+			doomedIndex = index
 			if node.kind != definitionTask {
-				return invalid("only a program task may fail; got %q", node.id)
+				return invalid("only a program task may fail or be canceled; got %q", node.id)
 			}
 			if !entry && (in.unresolved > 0 || in.arrived != 1) {
-				return invalid("failed node %q requires a settled candidate set with exactly one arrival", node.id)
+				return invalid("%s node %q requires a settled candidate set with exactly one arrival", status, node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
-				return invalid("failed node %q cannot have settled outgoing edges", node.id)
+				return invalid("%s node %q cannot have settled outgoing edges", status, node.id)
+			}
+		case NodeBlocked:
+			// A parked branch holds the sequential slice's single live token: it
+			// is not final, and an operator resolution moves it again.
+			if activeIndex >= 0 {
+				return invalid("nodes %q and %q are both active", definition.nodes[activeIndex].id, node.id)
+			}
+			activeIndex = index
+			if node.kind != definitionTask {
+				return invalid("only a program task may block; got %q", node.id)
+			}
+			if !entry && (in.unresolved > 0 || in.arrived != 1) {
+				return invalid("blocked node %q requires a settled candidate set with exactly one arrival", node.id)
+			}
+			if out.unresolved != len(node.outgoing) {
+				return invalid("blocked node %q cannot have settled outgoing edges", node.id)
 			}
 		default:
 			return invalid("node %q has unknown status %q", node.id, status)
@@ -647,14 +756,14 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 
 	switch checkpoint.Status {
 	case RunRunning:
-		if failedIndex >= 0 {
-			return invalid("running run cannot contain failed node %q", definition.nodes[failedIndex].id)
+		if doomedIndex >= 0 {
+			return invalid("running run cannot contain doomed node %q", definition.nodes[doomedIndex].id)
 		}
 		if doneEndIndex >= 0 {
 			return invalid("running run cannot contain done end node %q", definition.nodes[doneEndIndex].id)
 		}
 		if activeIndex < 0 {
-			return invalid("running run must have one ready or running node")
+			return invalid("running run must have one ready, running, or blocked node")
 		}
 		active := definition.nodes[activeIndex]
 		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.FirstCommand() != nil {
@@ -675,8 +784,8 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("terminal run cannot have active node %q", definition.nodes[activeIndex].id)
 		}
 		if doneEndIndex >= 0 {
-			if failedIndex >= 0 {
-				return invalid("terminal run cannot have both a done end and a failed task")
+			if doomedIndex >= 0 {
+				return invalid("terminal run cannot have both a done end and a failed or canceled task")
 			}
 			if definition.nodes[doneEndIndex].terminal != checkpoint.Status {
 				return invalid("terminal run status %q disagrees with reached end status %q",
@@ -689,11 +798,14 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			}
 			break
 		}
-		if checkpoint.Status != RunFailed {
+		if checkpoint.Status != RunFailed && checkpoint.Status != RunCanceled {
 			return invalid("terminal run status %q requires a done end node", checkpoint.Status)
 		}
-		if failedIndex < 0 {
-			return invalid("failed run must contain one failed task or a failed end result")
+		if doomedIndex < 0 {
+			return invalid("doomed run must contain one failed or canceled task, or a failed end result")
+		}
+		if got := doomStatus(checkpoint); got != checkpoint.Status {
+			return invalid("terminal run status %q disagrees with its doomed node, which implies %q", checkpoint.Status, got)
 		}
 	default:
 		return invalid("unknown run status %q", checkpoint.Status)

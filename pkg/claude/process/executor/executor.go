@@ -44,6 +44,8 @@ var (
 	ErrStaleDispatch        = errors.New("stale or already-used process dispatch")
 	ErrInvalidActor         = errors.New("reconciliation actor is invalid")
 	ErrInvalidDecisionInput = errors.New("invalid process decision input")
+
+	ErrInvalidResolutionInput = errors.New("invalid process blocked resolution input")
 )
 
 // Decision input mirrors the evidence-payload scale used elsewhere: verdicts
@@ -52,6 +54,9 @@ const (
 	MaxDecisionNodeIDBytes   = 256
 	MaxDecisionVerdictBytes  = 1024
 	MaxDecisionEvidenceBytes = 4096
+	// MaxResolutionNoteBytes bounds the optional operator note recorded with one
+	// blocked resolution, at the same scale as decision evidence.
+	MaxResolutionNoteBytes = 4096
 )
 
 // Run is one cold-reconstructed run. The immutable Definition is prepared
@@ -136,6 +141,18 @@ type DecisionInput struct {
 	Evidence string
 }
 
+// ResolutionInput is one attempt at resolving a parked branch. It is bound to
+// the exact blocked identity (run id + node id + the attempt that exhausted the
+// budget); the store's state-version compare-and-swap serializes concurrent
+// attempts, and the attempt match refuses input formed against a state the run
+// has already left behind.
+type ResolutionInput struct {
+	NodeID  string
+	Attempt int
+	Action  engine.ResolutionAction
+	Note    string
+}
+
 func (r *Run) ID() string {
 	if r == nil {
 		return ""
@@ -209,15 +226,17 @@ func (r *Run) Action() Action {
 	return action
 }
 
-// Failing reports whether a task of this run has already exhausted its attempt
-// budget, so the run can only drain. A driver reads it after committing an
-// observation to decide whether the run is over: with authored retries a failed
-// program is ordinarily just one attempt ending, and the branch is re-readied.
-func (r *Run) Failing() bool {
+// Draining reports whether this run is already doomed — a task failed outright
+// or an operator canceled one — so it can only drain. A driver reads it after
+// committing an input to decide whether the run is over: with authored retries
+// a failed program is ordinarily just one attempt ending, and an exhausted
+// branch that parked on an operator has doomed nothing, so neither of those is
+// a reason to tear the run's siblings down.
+func (r *Run) Draining() bool {
 	if r == nil {
 		return false
 	}
-	return engine.Failing(r.checkpoint)
+	return engine.Draining(r.checkpoint)
 }
 
 // Commands reports every durable outbox entry with whether this process still
@@ -242,6 +261,24 @@ func (r *Run) AwaitingDecisions() []engine.DecisionObligation {
 		return nil
 	}
 	return append([]engine.DecisionObligation(nil), r.checkpoint.AwaitingDecisions...)
+}
+
+// Blocked reports every branch currently parked on an operator.
+func (r *Run) Blocked() []engine.BlockedObligation {
+	if r == nil || len(r.checkpoint.Blocked) == 0 {
+		return nil
+	}
+	return append([]engine.BlockedObligation(nil), r.checkpoint.Blocked...)
+}
+
+// BlockedAttempt reports the exact attempt one parked branch is blocked at, or
+// zero when that node is not blocked. It is the attempt a resolution has to
+// name, derived from the checkpoint's own counter rather than from evidence.
+func (r *Run) BlockedAttempt(nodeID string) int {
+	if r == nil || r.checkpoint.Nodes[nodeID] != engine.NodeBlocked {
+		return 0
+	}
+	return r.checkpoint.Attempts[nodeID]
 }
 
 // VerdictsFor exposes the prepared verdict vocabulary of one awaited decision,
@@ -435,6 +472,72 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	events := commitEvidence(run.definition, run.checkpoint, next,
 		[]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)}, nil)
 	return persistEvents(run, next, events)
+}
+
+// ResolveBlocked durably applies one operator resolution to a parked branch.
+// The engine refuses stale, duplicate, wrong-node, wrong-attempt, and
+// already-doomed input; the checkpoint and the resolution evidence commit in
+// one state-version-guarded transaction. It never executes a program: a retry
+// simply re-readies the node, and ordinary planning mints the next attempt.
+func ResolveBlocked(run *Run, actor string, input ResolutionInput) error {
+	if err := validateReconciliationActor(actor); err != nil {
+		return err
+	}
+	if err := validateResolutionInput(input); err != nil {
+		return err
+	}
+	if run == nil || run.definition == nil {
+		return ErrInvalidRun
+	}
+	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
+		Kind: engine.TransitionBlockedResolved,
+		Resolution: &engine.BlockedResolution{
+			NodeID: input.NodeID, Attempt: input.Attempt, Action: input.Action,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	payload := struct {
+		NodeID  string                  `json:"nodeId"`
+		Attempt int                     `json:"attempt"`
+		Action  engine.ResolutionAction `json:"action"`
+		Note    string                  `json:"note,omitempty"`
+	}{NodeID: input.NodeID, Attempt: input.Attempt, Action: input.Action, Note: input.Note}
+	events := commitEvidence(run.definition, run.checkpoint, next,
+		[]db.ProcessRunEvent{eventForNode("blocked_resolved", input.NodeID, actor, payload)}, nil)
+	return persistEvents(run, next, events)
+}
+
+func validateResolutionInput(input ResolutionInput) error {
+	if input.NodeID == "" || len(input.NodeID) > MaxDecisionNodeIDBytes || !utf8.ValidString(input.NodeID) {
+		return fmt.Errorf("%w: node id must be 1..%d bytes of UTF-8", ErrInvalidResolutionInput, MaxDecisionNodeIDBytes)
+	}
+	for _, value := range input.NodeID {
+		if unicode.IsControl(value) {
+			return fmt.Errorf("%w: node id cannot contain control characters", ErrInvalidResolutionInput)
+		}
+	}
+	// The attempt is the other half of the blocked identity, so an unusable one
+	// is refused here rather than being compared against the counter.
+	if input.Attempt < 1 {
+		return fmt.Errorf("%w: attempt must be the positive attempt the node is blocked at", ErrInvalidResolutionInput)
+	}
+	switch input.Action {
+	case engine.ResolveRetry, engine.ResolveSkip, engine.ResolveCancel:
+	default:
+		return fmt.Errorf("%w: action must be %s, %s, or %s",
+			ErrInvalidResolutionInput, engine.ResolveRetry, engine.ResolveSkip, engine.ResolveCancel)
+	}
+	if len(input.Note) > MaxResolutionNoteBytes || !utf8.ValidString(input.Note) {
+		return fmt.Errorf("%w: note must be at most %d bytes of UTF-8", ErrInvalidResolutionInput, MaxResolutionNoteBytes)
+	}
+	for _, value := range input.Note {
+		if unicode.IsControl(value) && value != '\n' && value != '\r' && value != '\t' {
+			return fmt.Errorf("%w: note cannot contain control characters other than line breaks and tabs", ErrInvalidResolutionInput)
+		}
+	}
+	return nil
 }
 
 func validateDecisionInput(input DecisionInput) error {
@@ -674,10 +777,12 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 // so it is the part that yields, and it says so when it does.
 func commitEvidence(definition *engine.Definition, before, after engine.Checkpoint,
 	input, advance []db.ProcessRunEvent) []db.ProcessRunEvent {
+	blocked := blockedEvidence(before, after)
 	joins := joinEvidence(definition, before, after,
-		db.MaxProcessRunEventsPerTransition-len(input)-len(advance))
-	events := make([]db.ProcessRunEvent, 0, len(input)+len(joins)+len(advance))
+		db.MaxProcessRunEventsPerTransition-len(input)-len(blocked)-len(advance))
+	events := make([]db.ProcessRunEvent, 0, len(input)+len(blocked)+len(joins)+len(advance))
 	events = append(events, input...)
+	events = append(events, blocked...)
 	events = append(events, joins...)
 	events = append(events, advance...)
 	// Evidence is constructed before its causal order is assembled: in
@@ -691,6 +796,43 @@ func commitEvidence(definition *engine.Definition, before, after engine.Checkpoi
 		}
 	}
 	return events
+}
+
+// blockedEvidence is the human-facing record of every branch this transition
+// newly parked on an operator: which node, the exact attempt that exhausted the
+// budget, and the reason carried out of that attempt's failed observation.
+//
+// It is derived from the before/after checkpoints — the same seam
+// advanceEvidence uses for a newly parked decision — so the row is written in
+// the SAME transaction that creates the obligation and neither can exist
+// without the other. It is also where the parking TIME lives, which is why the
+// durable obligation does not carry one.
+//
+// This is a bounded scan of the after-state's blocked outbox, which the
+// prepared node count bounds; a transition that parked nobody returns on the
+// first line. It is never read back: SQLite's checkpoint stays authoritative.
+func blockedEvidence(before, after engine.Checkpoint) []db.ProcessRunEvent {
+	if len(after.Blocked) == 0 {
+		return nil
+	}
+	var events []db.ProcessRunEvent
+	for _, obligation := range after.Blocked {
+		if slices.ContainsFunc(before.Blocked, func(existing engine.BlockedObligation) bool {
+			return existing.NodeID == obligation.NodeID
+		}) {
+			continue
+		}
+		events = append(events, eventForNode("node_blocked", obligation.NodeID, EngineActor, blockedEvidencePayload{
+			NodeID: obligation.NodeID, Attempt: after.Attempts[obligation.NodeID], Reason: obligation.Reason,
+		}))
+	}
+	return events
+}
+
+type blockedEvidencePayload struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // joinEvidence is the human-facing record of what one committed transition did

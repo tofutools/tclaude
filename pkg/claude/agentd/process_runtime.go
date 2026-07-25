@@ -38,12 +38,12 @@ const (
 	// may have in flight. Ready branches past it simply stay ready: there is no
 	// durable queue, and the next completion plans the next one.
 	processRunConcurrency = 4
-	// processRunDecideAttempts bounds the alternation between routing a
-	// decision to a live owner and taking the claim ourselves. Each pass loses
-	// only if the claim changed hands in between, which cannot repeat
-	// indefinitely under a real workload; the bound exists so a pathological
-	// hand-off storm fails closed instead of spinning.
-	processRunDecideAttempts = 8
+	// processRunInputAttempts bounds the alternation between routing an external
+	// input to a live owner and taking the claim ourselves. Each pass loses only
+	// if the claim changed hands in between, which cannot repeat indefinitely
+	// under a real workload; the bound exists so a pathological hand-off storm
+	// fails closed instead of spinning.
+	processRunInputAttempts = 8
 )
 
 var (
@@ -54,13 +54,36 @@ var (
 	processRuns              = newProcessRunManager()
 )
 
-// processRunDecisionRequest is the entire live-claim request seam: one
-// authenticated decision handed to the run's single state owner, answered
-// exactly once. It is deliberately not a general mailbox — nothing else is
-// routed this way, and the owner is the only reader.
-type processRunDecisionRequest struct {
+// processRunInput is one authenticated external input for a run's single state
+// owner. Exactly one member is set: this is a typed union of the two things an
+// operator can hand a live run, NOT a generic event bus. A third kind arriving
+// is the point at which to reach for a small typed-union cleanup instead.
+type processRunInput struct {
+	decision   *executor.DecisionInput
+	resolution *executor.ResolutionInput
+}
+
+// apply commits this input against the run. It is called only by the run's
+// owner — either the live claim's driver goroutine or the fresh claim a
+// begin() took — so it is never a second writer.
+func (i processRunInput) apply(run *executor.Run, actor string) error {
+	switch {
+	case i.decision != nil:
+		return executor.RecordDecision(run, actor, *i.decision)
+	case i.resolution != nil:
+		return executor.ResolveBlocked(run, actor, *i.resolution)
+	default:
+		return fmt.Errorf("process run input names neither a decision nor a blocked resolution")
+	}
+}
+
+// processRunInputRequest is the entire live-claim request seam: one
+// authenticated input handed to the run's single state owner, answered exactly
+// once. It is deliberately not a general mailbox — nothing else is routed this
+// way, and the owner is the only reader.
+type processRunInputRequest struct {
 	actor string
-	input executor.DecisionInput
+	input processRunInput
 	// reply is buffered, so the owner answers without ever blocking on an HTTP
 	// caller that gave up. The owner MUST send exactly one answer for every
 	// request it receives, before it exits.
@@ -86,7 +109,7 @@ type processRunClaim struct {
 	// parent ctx instead and reaches the same workers.
 	workerCtx     context.Context
 	cancelWorkers context.CancelFunc
-	decisions     chan *processRunDecisionRequest
+	inputs        chan *processRunInputRequest
 	// gone is closed once this claim can no longer accept anything, after the
 	// manager has already dropped it. A sender that observes it can safely fall
 	// back to the ordinary load/claim path.
@@ -149,13 +172,13 @@ func (c *processRunClaim) accountedNodes() map[string]struct{} {
 	return nodes
 }
 
-// submitDecision hands one decision to this claim's owner and waits for its
+// submitInput hands one external input to this claim's owner and waits for its
 // answer. delivered is false only when the claim died before accepting it, in
 // which case the caller retries through the ordinary path.
-func (c *processRunClaim) submitDecision(actor string, input executor.DecisionInput) (err error, delivered bool) {
-	request := &processRunDecisionRequest{actor: actor, input: input, reply: make(chan error, 1)}
+func (c *processRunClaim) submitInput(actor string, input processRunInput) (err error, delivered bool) {
+	request := &processRunInputRequest{actor: actor, input: input, reply: make(chan error, 1)}
 	select {
-	case c.decisions <- request:
+	case c.inputs <- request:
 	case <-c.gone:
 		return nil, false
 	}
@@ -182,7 +205,10 @@ const (
 	processRunResume processRunStartMode = iota
 	processRunReissue
 	processRunRecordOutcome
-	processRunDecide
+	// processRunApplyInput covers both operator inputs a live run accepts — a
+	// decision verdict and a blocked resolution. They start a run identically:
+	// commit the input, then plan whatever it made ready.
+	processRunApplyInput
 )
 
 type processRunStart struct {
@@ -192,7 +218,7 @@ type processRunStart struct {
 	selector string
 	actor    string
 	outcome  executor.RecordedOutcome
-	decision executor.DecisionInput
+	input    processRunInput
 }
 
 type processRunView struct {
@@ -213,6 +239,7 @@ type processRunView struct {
 	AwaitingDecision  *processRunDecisionView  `json:"awaitingDecision,omitempty"`
 	AwaitingDecisions []processRunDecisionView `json:"awaitingDecisions"`
 	Commands          []processRunCommandView  `json:"commands"`
+	Blocked           []processRunBlockedView  `json:"blocked"`
 	CreatedAt         time.Time                `json:"createdAt"`
 	UpdatedAt         time.Time                `json:"updatedAt"`
 }
@@ -223,6 +250,16 @@ type processRunView struct {
 type processRunDecisionView struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+}
+
+// processRunBlockedView presents one parked branch with the exact attempt a
+// resolution has to name. The attempt is DERIVED from the checkpoint's own
+// counter — a blocked node's attempt cannot move — so no reader ever has to
+// replay evidence to find out what to resolve against.
+type processRunBlockedView struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // processRunCommandView presents one durable outbox entry. State is executing
@@ -288,6 +325,13 @@ type processRunDecideRequest struct {
 	Evidence string `json:"evidence,omitempty"`
 }
 
+type processRunResolveBlockedRequest struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt"`
+	Action  string `json:"action"`
+	Note    string `json:"note,omitempty"`
+}
+
 func newProcessRunManager() *processRunManager {
 	return &processRunManager{claims: make(map[string]*processRunClaim)}
 }
@@ -309,7 +353,7 @@ func (m *processRunManager) claim(runID string) (*processRunClaim, bool, error) 
 	claim := &processRunClaim{
 		ctx: ctx, cancel: cancel,
 		workerCtx: workerCtx, cancelWorkers: cancelWorkers,
-		decisions: make(chan *processRunDecisionRequest),
+		inputs:    make(chan *processRunInputRequest),
 		gone:      make(chan struct{}),
 		accounted: make(map[string]struct{}),
 	}
@@ -426,10 +470,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 			committed = true
 			dispatches, fillErr = fillProcessRun(claim, run, processRunConcurrency)
 		}
-	case processRunDecide:
-		if err = executor.RecordDecision(run, start.actor, start.decision); err == nil {
+	case processRunApplyInput:
+		if err = start.input.apply(run, start.actor); err == nil {
 			committed = true
-			// The verdict itself committed atomically above. The sweep reaches
+			// The input itself committed atomically above. The sweep reaches
 			// this run again even when a sibling branch is still awaiting its
 			// own decision, because the runnable predicate admits a run whose
 			// ready nodes outnumber its awaited obligations.
@@ -537,12 +581,12 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			if next := m.observeProcessRunResult(runID, claim, result); next != nil {
 				pending = append(pending, next)
 			}
-		case request := <-claim.decisions:
-			// The owner is the single writer, so a verdict racing a program
-			// result is serialized here rather than by a lock: whichever the
-			// select takes first commits first, and the loser sees the state the
-			// winner left behind.
-			request.reply <- executor.RecordDecision(claim.run, request.actor, request.input)
+		case request := <-claim.inputs:
+			// The owner is the single writer, so an operator input racing a
+			// program result is serialized here rather than by a lock: whichever
+			// the select takes first commits first, and the loser sees the state
+			// the winner left behind.
+			request.reply <- request.input.apply(claim.run, request.actor)
 		}
 		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
@@ -573,7 +617,7 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 	// then would kill the siblings AND — because workerCtx is never reinstated —
 	// every retry the run went on to plan. It is asked after the commit, so the
 	// answer reflects a budget the observation may itself have exhausted.
-	if claim.run.Failing() {
+	if claim.run.Draining() {
 		// The killed programs still come back as ordinary observations, so
 		// nothing is lost or assumed.
 		claim.cancelWorkers()
@@ -590,27 +634,29 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 	return next
 }
 
-// decide routes one authenticated verdict to whoever currently owns the run:
-// the live claim's owner while programs are executing, or a fresh claim of our
-// own when nothing is driving it. A run whose siblings are mid-program is
-// exactly the case that used to be refused for as long as those programs ran.
+// submit routes one authenticated operator input to whoever currently owns the
+// run: the live claim's owner while programs are executing, or a fresh claim of
+// our own when nothing is driving it. A run whose siblings are mid-program is
+// exactly the case that used to be refused for as long as those programs ran,
+// and a blocked resolution needs the same routing for the same reason — the
+// branch that is parked is rarely the only branch.
 // started reports whether the run is being actively driven afterwards, which
 // for the live-owner path it already was.
-func (m *processRunManager) decide(runID, actor string, input executor.DecisionInput) (started bool, err error) {
-	for range processRunDecideAttempts {
+func (m *processRunManager) submit(runID, actor string, input processRunInput) (started bool, err error) {
+	for range processRunInputAttempts {
 		claim, live, err := m.liveClaim(runID)
 		if err != nil {
 			return false, err
 		}
 		if live {
-			if err, delivered := claim.submitDecision(actor, input); delivered {
+			if err, delivered := claim.submitInput(actor, input); delivered {
 				return err == nil, err
 			}
 			// The claim was released between the lookup and the send, so the run
 			// is ours to take on the next pass.
 			continue
 		}
-		started, err := m.begin(runID, processRunStart{mode: processRunDecide, actor: actor, decision: input})
+		started, err := m.begin(runID, processRunStart{mode: processRunApplyInput, actor: actor, input: input})
 		if !errors.Is(err, errProcessRunClaimed) {
 			return started, err
 		}
@@ -981,8 +1027,56 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 	// request fields are neutralized before they reach the audit row.
 	setAuditDetail(r, "run: "+runID+", decision node: "+stripControl(request.NodeID)+
 		", verdict: "+stripControl(request.Verdict))
-	started, err := processRuns.decide(runID, string(actor),
-		executor.DecisionInput{NodeID: request.NodeID, Verdict: request.Verdict, Evidence: request.Evidence})
+	started, err := processRuns.submit(runID, string(actor), processRunInput{
+		decision: &executor.DecisionInput{
+			NodeID: request.NodeID, Verdict: request.Verdict, Evidence: request.Evidence,
+		}})
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	view, err := loadProcessRunView(runID)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
+}
+
+// handleProcessRunResolveBlocked records one operator resolution — retry, skip,
+// or cancel — for a parked branch. The input is bound to the exact blocked
+// identity (node id plus the attempt that exhausted the budget) and the durable
+// state-version CAS, so duplicate, stale, wrong-node, wrong-attempt, and
+// concurrent attempts are refused; the actor is always the authenticated
+// caller, never request content.
+//
+// Like a decision it succeeds while sibling branches are mid-program, because
+// it is routed to the run's live owner rather than refused as claimed.
+func handleProcessRunResolveBlocked(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	if !ok {
+		return
+	}
+	var request processRunResolveBlockedRequest
+	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
+		return
+	}
+	runID := r.PathValue("id")
+	// The detail records the attempt, including refused input, so the raw
+	// request fields are neutralized before they reach the audit row.
+	setAuditDetail(r, "run: "+runID+", blocked node: "+stripControl(request.NodeID)+
+		", attempt: "+strconv.Itoa(request.Attempt)+", action: "+stripControl(request.Action))
+	started, err := processRuns.submit(runID, string(actor), processRunInput{
+		resolution: &executor.ResolutionInput{
+			NodeID: request.NodeID, Attempt: request.Attempt,
+			Action: engine.ResolutionAction(request.Action), Note: request.Note,
+		}})
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -1244,6 +1338,17 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		awaiting = &first
 	}
 
+	// The blocked attempt is read straight out of the checkpoint's counter: a
+	// blocked node's attempt cannot move, so this is the exact identity a
+	// resolution must name, with no evidence read anywhere on the path.
+	blocked := make([]processRunBlockedView, 0, len(checkpoint.Blocked))
+	for _, obligation := range checkpoint.Blocked {
+		blocked = append(blocked, processRunBlockedView{
+			NodeID: obligation.NodeID, Attempt: checkpoint.Attempts[obligation.NodeID],
+			Reason: obligation.Reason,
+		})
+	}
+
 	// A coarse summary in operator-relevance order, not a state machine: an
 	// ambiguous command needs a human before anything else, live work outranks
 	// a parked branch, and the plural fields above stay addressable regardless.
@@ -1255,6 +1360,8 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		action = processCommandExecuting
 	case awaiting != nil:
 		action = "awaiting_decision"
+	case len(blocked) > 0:
+		action = "blocked"
 	case checkpoint.Status != engine.RunRunning:
 		action = "terminal"
 	case claimed:
@@ -1266,6 +1373,7 @@ func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, clai
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
+		Blocked:   blocked,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
 }
@@ -1328,12 +1436,16 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_not_reconcilable", err.Error())
 	case errors.Is(err, engine.ErrStaleDecision):
 		writeError(w, http.StatusConflict, "process_decision_stale", err.Error())
+	case errors.Is(err, engine.ErrStaleResolution):
+		writeError(w, http.StatusConflict, "process_blocked_stale", err.Error())
 	case errors.Is(err, db.ErrProcessRunVersionConflict):
 		writeError(w, http.StatusConflict, "process_run_conflict", err.Error())
 	case errors.Is(err, engine.ErrInvalidDecisionVerdict):
 		writeError(w, http.StatusUnprocessableEntity, "process_decision_verdict", err.Error())
 	case errors.Is(err, executor.ErrInvalidDecisionInput):
 		writeError(w, http.StatusUnprocessableEntity, "process_decision_invalid", err.Error())
+	case errors.Is(err, executor.ErrInvalidResolutionInput):
+		writeError(w, http.StatusUnprocessableEntity, "process_blocked_invalid", err.Error())
 	case errors.As(err, &eligibilityErr), errors.Is(err, engine.ErrTemplateIneligible),
 		errors.Is(err, engine.ErrInvalidCheckpoint), errors.Is(err, engine.ErrInvalidTransition),
 		errors.Is(err, executor.ErrInvalidRun), errors.Is(err, db.ErrProcessRunInvalid),

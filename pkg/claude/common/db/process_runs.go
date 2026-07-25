@@ -706,28 +706,34 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// An outstanding program command always excludes the run: it needs explicit
 	// reconciliation, not a resume.
 	//
-	// Awaited decisions are subtler, and fan-out is why. A decision parked on a
-	// human is excluded so the periodic fallback does not reload and re-prepare
-	// it every tick. But with fan-out an awaited decision no longer implies the
-	// run is quiescent: a sibling branch can hold a ready task that only a
-	// resume will plan. Every awaited obligation names a node that is itself
-	// ready, so the run still has pushable work exactly when it has MORE ready
-	// nodes than awaited obligations — a ready node that is not one of the
-	// awaited decisions is a task or an engine-owned node. Excluding those runs
-	// would strand that branch until an unrelated event happened to resume the
-	// run. The nested CASE keeps json_type/json_each off malformed checkpoints.
+	// Everything else the run could be parked on is decided by one comparison:
+	// the run has pushable work exactly when it holds MORE ready nodes than
+	// awaited decision obligations. Every awaited obligation names a node that
+	// is itself ready, so a surplus ready node is a task or an engine-owned node
+	// nothing external is holding — which is precisely what a resume can push.
+	//
+	// That single rule covers both parked shapes without naming either one:
+	//
+	//   - a decision parked on a human is excluded, so the periodic fallback does
+	//     not reload and re-prepare it every tick, while a sibling branch holding
+	//     a ready task still keeps the run runnable rather than stranded until
+	//     some unrelated event resumes it;
+	//   - a branch parked on an operator resolution is BLOCKED, not ready, so a
+	//     blocked-only run counts zero ready nodes and is likewise excluded —
+	//     while a blocked branch beside a live sibling still resumes normally.
+	//
+	// The nested CASE keeps json_type/json_each off malformed checkpoints, which
+	// then count zero ready nodes and are left alone rather than reloaded every
+	// tick only to fail at the reconstruction boundary.
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
 			AND COALESCE(json_array_length(checkpoint_json, '$.commands'), 0) = 0
-			AND (
-				COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0) = 0
-				OR CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
+			AND CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')
 						WHERE value = 'ready')
 					ELSE 0 END
-					> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
-			)
+				> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
 			THEN 1 ELSE 0 END
 		FROM (
 			SELECT id, checkpoint_json FROM process_runs
