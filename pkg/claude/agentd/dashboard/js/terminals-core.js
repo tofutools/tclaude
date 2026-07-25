@@ -12,6 +12,7 @@
 // dashboard.css / helpers.js.
 
 import { attachTerminalInteractions } from './terminal-interactions.js';
+import { restartWatcher as sharedRestartWatcher } from './instance-watch.js';
 import { terminalThemeFor } from './terminal-theme.js';
 
 // A newly-created browser terminal can briefly lose an attach race with the
@@ -21,6 +22,16 @@ import { terminalThemeFor } from './terminal-theme.js';
 // the explicit Reconnect control instead of creating a permanent retry loop.
 export const INITIAL_RETRY_DELAYS_MS = Object.freeze([200, 500, 1000]);
 export const INITIAL_RETRY_STABILITY_MS = 1000;
+
+// Losing agentd is the one disconnect a terminal may repair on its own, because
+// it is the one it can PROVE. Every other reason a socket closes — the session
+// ended, the operator reopened this terminal somewhere else — leaves a daemon
+// that is alive and unchanged, and reattaching there drags back a terminal
+// somebody deliberately moved. So a settled disconnect asks /api/instance what
+// the daemon was doing when we lost it, and only a daemon that had already gone
+// away (or already come back as a different process) earns one reattach. See
+// instance-watch.js and watchForRestart below; everything else keeps nothing
+// but the explicit Reconnect control.
 
 // departedAgentSelectors returns every stable agent-id / conversation-id that
 // belonged to the previous active roster but not the next one. Keeping this as
@@ -91,6 +102,12 @@ export function mountTerminalWidget({
   initialRetry = false,
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
+  restartWatcher = sharedRestartWatcher,
+  // Off for a surface that answers its own disconnect. The modal terminal
+  // raises a blocking "reconnect or close?" dialog, and a reattach landing
+  // silently behind it would leave the operator answering a stale question —
+  // "Close terminal" would then kill a session that had already come back.
+  autoReattach = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
   now = () => Date.now(),
@@ -120,6 +137,10 @@ export function mountTerminalWidget({
   let reconnectAvailable = false;
   let retryIndex = 0;
   let retryTimer = null;
+  // The daemon this socket is attached to, read when it opened, and the
+  // outstanding "tell me if that changes" registration.
+  let instanceBaseline = null;
+  let cancelRestartWatch = null;
   const disposables = [];
 
   const term = new TerminalCtor({
@@ -195,6 +216,86 @@ export function mountTerminalWidget({
     retryTimer = null;
   }
 
+  function cancelRestartWatchIfAny() {
+    if (!cancelRestartWatch) return;
+    const cancel = cancelRestartWatch;
+    cancelRestartWatch = null;
+    cancel();
+  }
+
+  // captureInstanceBaseline records which agentd this socket is attached to.
+  // Read per connection rather than once per page: a widget opened long after
+  // the last one must not inherit a stale id, or its very first probe would
+  // read as a restart. Failure is fine and simply leaves this terminal without
+  // self-repair for the current connection.
+  function captureInstanceBaseline(mine) {
+    instanceBaseline = null;
+    if (!restartWatcher) return;
+    Promise.resolve()
+      .then(() => restartWatcher.currentID())
+      .then((id) => {
+        if (disposed || mine !== generation) return;
+        instanceBaseline = typeof id === 'string' && id ? id : null;
+        // The socket can die while this read is still in flight — a reattach
+        // dropped by a daemon that is up but not yet ready does exactly that.
+        // Such a disconnect settled with no baseline to reason about, so give
+        // it the chance now rather than losing its repair to a race.
+        if (instanceBaseline && !cancelRestartWatch && status === 'disconnected') {
+          watchForRestart();
+        }
+      }, () => { /* no baseline; this connection simply cannot self-repair */ });
+  }
+
+  function armRestartWatch(baseline, mine) {
+    cancelRestartWatch = restartWatcher.watchForRestart(baseline, (id) => {
+      cancelRestartWatch = null;
+      if (disposed || mine !== generation) return;
+      // Adopt the daemon we were just told about BEFORE dialing it. A reattach
+      // that dies before its socket ever opens would otherwise still be holding
+      // the dead process's id, and the very next probe would read as another
+      // restart — turning "one reattach per restart" into a dial per probe for
+      // the rest of the round.
+      if (typeof id === 'string' && id) instanceBaseline = id;
+      void connect();
+    });
+  }
+
+  // watchForRestart decides whether this disconnect is one a reattach may
+  // repair, and arms at most one automatic reattach if it is. It runs only from
+  // a SETTLED disconnect, after the bounded initial-retry window.
+  //
+  // A later restart is NOT on its own a reason to reattach: it says the daemon
+  // changed, not that this socket died because of it. A terminal the operator
+  // moved elsewhere — a second dashboard tab, another device, a native window —
+  // is dead here while its session runs happily under the new client, and
+  // reattaching would drag it back (tmux attaches with -d, so the reattach
+  // detaches whoever holds it). So the disconnect has to qualify first: probe
+  // once, immediately, and ask what the daemon was doing when we lost it.
+  //
+  //   answers, same id  → it was alive and unchanged, so it did not kill this
+  //                       socket. Something else did. Never reattach.
+  //   answers, new id   → it already restarted. Reattach now.
+  //   no answer         → it is gone, which is exactly the case this exists
+  //                       for. Wait for it to come back as a different process.
+  function watchForRestart() {
+    cancelRestartWatchIfAny();
+    if (disposed || !autoReattach || !restartWatcher || !instanceBaseline) return;
+    const baseline = instanceBaseline;
+    const mine = generation;
+    Promise.resolve()
+      .then(() => restartWatcher.currentID())
+      .then((id) => {
+        if (disposed || mine !== generation || cancelRestartWatch) return;
+        if (id === baseline) return;
+        if (typeof id === 'string' && id) {
+          instanceBaseline = id;
+          void connect();
+          return;
+        }
+        armRestartWatch(baseline, mine);
+      }, () => { /* nothing learned; this disconnect keeps its manual control */ });
+  }
+
   function scheduleInitialRetry() {
     if (!initialRetry || retryIndex >= initialRetryDelays.length) return false;
     const delay = Math.max(0, Number(initialRetryDelays[retryIndex]) || 0);
@@ -214,6 +315,8 @@ export function mountTerminalWidget({
     const mine = generation;
     abortAuth();
     closeSocket();
+    // Dialing now, so any pending "tell me when the daemon is new" is moot.
+    cancelRestartWatchIfAny();
     setReconnectAvailable(false);
 
     if (authenticate) {
@@ -235,6 +338,7 @@ export function mountTerminalWidget({
         if (scheduleInitialRetry()) return false;
         setStatus('disconnected');
         setReconnectAvailable(true);
+        watchForRestart();
         return false;
       } finally {
         if (authController === controller) authController = null;
@@ -251,6 +355,7 @@ export function mountTerminalWidget({
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
       openedAt = now();
+      captureInstanceBaseline(mine);
       setStatus('connected');
       setReconnectAvailable(false);
       if (isActive) fit();
@@ -266,6 +371,7 @@ export function mountTerminalWidget({
       if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
       setReconnectAvailable(true);
+      watchForRestart();
       onDisconnect();
     };
     socket.onerror = () => {
@@ -326,6 +432,7 @@ export function mountTerminalWidget({
       disposed = true;
       generation += 1;
       cancelRetry();
+      cancelRestartWatchIfAny();
       abortAuth();
       closeSocket();
       documentRef.removeEventListener('tclaude:wizard', syncTheme);

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
@@ -100,6 +101,33 @@ var dashboardGraceSessionHashes = map[string]time.Time{}
 // dashboardSessionNow is indirected for focused expiry tests.
 var dashboardSessionNow = time.Now
 
+// daemonInstanceID identifies THIS agentd process. It is generated once at
+// startup, so it necessarily differs in the next process — including a restart
+// of the same build, which Version cannot distinguish.
+//
+// It exists for clients holding something that dies with the daemon: a browser
+// terminal's PTY WebSocket. Such a client polls /api/instance while it is down
+// and reattaches when the id it sees is no longer the one it connected under.
+// It is a restart marker and nothing more: not a credential, carrying no state,
+// and useless to anyone who cannot already authenticate to the dashboard.
+var daemonInstanceID = uuid.NewString()
+
+// handleDashboardInstance answers the restart probe above. It is deliberately
+// the cheapest endpoint in the daemon — a disconnected terminal polls it once a
+// second — so it touches no database, builds no view, and returns one field.
+func handleDashboardInstance(w http.ResponseWriter, r *http.Request) {
+	// Auth first: an unauthenticated caller learns nothing about this route,
+	// not even that it exists.
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"instance_id": daemonInstanceID})
+}
+
 const dashboardCookieName = "tclaude_dashboard_session"
 
 func initDashboardToken() {
@@ -178,6 +206,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
+	mux.HandleFunc("/api/instance", handleDashboardInstance)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
