@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -78,6 +79,52 @@ func GetConvSuccessor(convID string) (string, error) {
 		return "", err
 	}
 	return newID, nil
+}
+
+// FindKnownConvIDsByPrefix returns up to limit distinct conversation IDs from
+// durable daemon state. Unlike FindConvIndexByPrefix, this also sees pruned
+// historical generations that survive only in succession rows, plus freshly
+// started generations that have a session/actor row but no conv_index row yet.
+//
+// The query selects IDs only (not prompt/summary-bearing conv_index rows), and
+// the escaped prefix plus caller-supplied small limit keep selector resolution
+// bounded for daemon endpoints.
+func FindKnownConvIDsByPrefix(prefix string, limit int) ([]string, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || limit < 1 {
+		return nil, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	pattern := likeEscape(prefix) + "%"
+	rows, err := d.Query(`SELECT conv_id FROM (
+			SELECT conv_id FROM conv_index WHERE conv_id LIKE ? ESCAPE '\'
+			UNION
+			SELECT old_conv_id AS conv_id FROM agent_conv_succession WHERE old_conv_id LIKE ? ESCAPE '\'
+			UNION
+			SELECT new_conv_id AS conv_id FROM agent_conv_succession WHERE new_conv_id LIKE ? ESCAPE '\'
+			UNION
+			SELECT conv_id FROM sessions WHERE conv_id LIKE ? ESCAPE '\'
+			UNION
+			SELECT current_conv_id AS conv_id FROM agents WHERE current_conv_id LIKE ? ESCAPE '\'
+		) ORDER BY conv_id LIMIT ?`,
+		pattern, pattern, pattern, pattern, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var convID string
+		if err := rows.Scan(&convID); err != nil {
+			return nil, err
+		}
+		out = append(out, convID)
+	}
+	return out, rows.Err()
 }
 
 // ResolveLatestConv walks the succession chain forward from convID

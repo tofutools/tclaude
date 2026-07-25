@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,4 +172,82 @@ func TestSeancePlan_FirstGenerationGetsClearNotFound(t *testing.T) {
 	_, status, body := requestSeancePlan(t, f, conv, map[string]any{"back": 1})
 	assert.Equal(t, http.StatusNotFound, status, "body=%s", body)
 	assert.Contains(t, body, "no predecessor")
+}
+
+func TestSeancePlan_PrunedExactGenerationDoesNotRedirect(t *testing.T) {
+	f := newFlow(t)
+	const (
+		first  = "deadbeef-1111-2222-3333-444444444444"
+		middle = "feedface-1111-2222-3333-444444444444"
+		head   = "cafebabe-1111-2222-3333-444444444444"
+	)
+	firstCwd := f.TestCwd("seance-pruned-first")
+	f.HaveConvWithTitle(first, "first")
+	f.HaveAliveSession(first, "first-label", "first-tmux", firstCwd)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", first)
+	f.HaveConvWithTitle(middle, "middle")
+	f.HaveAliveSession(middle, "middle-label", "middle-tmux", f.TestCwd("seance-pruned-middle"))
+	_, err := db.RotateAgentConv(first, middle, "reincarnate")
+	require.NoError(t, err)
+	f.HaveConvWithTitle(head, "head")
+	f.HaveAliveSession(head, "head-label", "head-tmux", f.TestCwd("seance-pruned-head"))
+	_, err = db.RotateAgentConv(middle, head, "reincarnate")
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteConvIndex(first), "prune first generation from cache")
+
+	for _, selector := range []string{first, first[:8]} {
+		got, status, body := requestSeancePlan(t, f, head, map[string]any{
+			"target": selector,
+			"back":   1,
+		})
+		require.Equal(t, http.StatusOK, status, "selector=%q body=%s", selector, body)
+		assert.Equal(t, first, got.Predecessor,
+			"exact pruned generation must not redirect to head then walk back to middle")
+		assert.True(t, got.Exact)
+	}
+}
+
+func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "abcd1234-1111-2222-3333-444444444444"
+		newConv = "9876fedc-1111-2222-3333-444444444444"
+	)
+	f.HaveConvWithTitle(oldConv, "old")
+	f.HaveAliveSession(oldConv, "old-label", "old-tmux", f.TestCwd("bounded-old"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	f.HaveConvWithTitle(newConv, "new")
+	f.HaveAliveSession(newConv, "new-label", "new-tmux", f.TestCwd("bounded-new"))
+	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{name: "short conversation prefix", body: map[string]any{"target": oldConv[:4]}, want: "at least 8"},
+		{name: "target length", body: map[string]any{"target": strings.Repeat("x", 257)}, want: "too long"},
+		{name: "back bound", body: map[string]any{"back": 129}, want: "between 1 and 128"},
+		{name: "body bound", body: map[string]any{"target": strings.Repeat("x", 5<<10)}, want: "invalid JSON"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, status, body := requestSeancePlan(t, f, newConv, tc.body)
+			assert.Equal(t, http.StatusBadRequest, status, "body=%s", body)
+			assert.Contains(t, body, tc.want)
+		})
+	}
+
+	t.Run("ambiguous exact prefix", func(t *testing.T) {
+		const samePrefix = "abcd1234-aaaa-bbbb-cccc-dddddddddddd"
+		f.HaveConvWithTitle(samePrefix, "same-prefix")
+		_, status, body := requestSeancePlan(t, f, newConv, map[string]any{
+			"target": oldConv[:8],
+		})
+		assert.Equal(t, http.StatusConflict, status, "body=%s", body)
+		assert.Contains(t, body, "multiple generations")
+	})
 }

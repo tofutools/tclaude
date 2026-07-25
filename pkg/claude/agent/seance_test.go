@@ -52,6 +52,30 @@ func TestSeance_NoPredecessorIsAClearError(t *testing.T) {
 	assert.Contains(t, stderr.String(), "no predecessor", "explains the empty grave")
 }
 
+func TestSeance_MapsDaemonPlanningErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		want int
+	}{
+		{name: "permission", code: "permission", want: rcAuth},
+		{name: "unsupported harness", code: "unsupported_harness", want: rcInvalidArg},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stubSeanceDaemon(t, seanceResolveResp{}, nil, &DaemonError{
+				Status: http.StatusConflict,
+				Code:   tc.code,
+				Msg:    "planning failed",
+			})
+			var stdout, stderr bytes.Buffer
+			rc := runSeance(&seanceParams{PrintCmd: true}, strings.NewReader(""), &stdout, &stderr)
+			assert.Equal(t, tc.want, rc)
+			assert.Contains(t, stderr.String(), "planning failed")
+		})
+	}
+}
+
 // --print-cmd resolves everything and prints the resume command + cwd
 // without running anything (the free, no-cost targeting check).
 func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
