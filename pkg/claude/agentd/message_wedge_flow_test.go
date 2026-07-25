@@ -193,6 +193,18 @@ func TestMessageBackpressureStopFailureHoldsTheQueueUntilASuccessfulTurn(t *test
 	cwd := f.TestCwd("wedge-err")
 	f.HaveAliveSession(target, label, tmux, cwd)
 
+	// Put the recipient INTO the error state first, so the delivery below is
+	// genuinely exercised against a rate-limited pane. Ordering it the other way
+	// round would assert nothing about StatusError: the test would still pass if
+	// erroring panes stopped being deliverable, which is the premise this whole
+	// case rests on.
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "StopFailure", ConvID: target, Cwd: cwd, ErrorType: "rate_limit",
+	}, label), "ApplyHook(StopFailure)")
+	state, err := session.LoadSessionState(label)
+	require.NoError(t, err)
+	require.Equal(t, session.StatusError, state.Status, "the recipient is rate-limited")
+
 	rec := postMessage(t, f, sender, map[string]any{"to": target, "body": "sent during a rate limit"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var response sendRespView
@@ -201,8 +213,10 @@ func TestMessageBackpressureStopFailureHoldsTheQueueUntilASuccessfulTurn(t *test
 	agentd.FlushUndeliveredForTest(target)
 	message, err := db.GetAgentMessage(response.ID)
 	require.NoError(t, err)
-	require.False(t, message.ReadAt.IsZero(), "an erroring pane is still deliverable, so the body lands")
+	require.False(t, message.ReadAt.IsZero(),
+		"isAwaitingHumanInput excludes StatusError, so a rate-limited pane still takes the body")
 
+	// The error window continues: more failed turns must not acknowledge it.
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName: "StopFailure", ConvID: target, Cwd: cwd, ErrorType: "rate_limit",
 	}, label), "ApplyHook(StopFailure)")
