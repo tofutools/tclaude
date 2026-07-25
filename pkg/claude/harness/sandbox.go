@@ -135,6 +135,22 @@ func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) [
 type LaunchOSSandbox struct {
 	State  string
 	Source string
+	// Unverified marks a verdict tclaude could not fully establish: a settings
+	// file that outranks the deciding tier existed but could not be read or
+	// parsed, so a policy tclaude never saw may say the opposite.
+	//
+	// It is recorded because the badge is a durable claim about containment, and
+	// the one thing worse than no badge is a padlock on an agent nothing confines.
+	// ResolveClaudeSandboxEnabled walks tiers most-authoritative-first and stops
+	// at the first that decides, so ANY diagnostic it collected necessarily came
+	// from a HIGHER-precedence tier than the one that answered — which is exactly
+	// the set of files that could overturn the verdict.
+	//
+	// The spawn-time warning already surfaces the unread file, but only on the
+	// stderr of the launch and only when the approval policy runs commands
+	// unattended. The badge is read later, by someone deciding whether to trust
+	// this agent, so the doubt has to travel with it.
+	Unverified bool
 }
 
 // ResolveLaunchOSSandbox answers "will the OS sandbox actually be active for
@@ -156,7 +172,11 @@ type LaunchOSSandbox struct {
 // zero value) and its badge behaves exactly as before:
 //
 //   - Codex spawns under an explicit `--sandbox` mode or the managed permission
-//     profile, so the mode IS the verdict.
+//     profile, so the mode IS the verdict. (For a DAEMON spawn — ResolveSandboxMode
+//     applies that default. A bare `tclaude session new --harness codex` records no
+//     mode and its real posture lives in ~/.codex/config.toml, which tclaude does
+//     not read; that gap is the Codex analogue of the one this fixes for Claude,
+//     and is out of scope here.)
 //   - OpenCode's `access-control` is a soft tool-level policy, not an OS
 //     sandbox; claiming a verdict for it would dress it up as containment (the
 //     distinction openCodeSandboxWarnings exists to make).
@@ -169,5 +189,14 @@ func ResolveLaunchOSSandbox(h *Harness, sandboxMode, cwd string) LaunchOSSandbox
 		return LaunchOSSandbox{}
 	}
 	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
-	return LaunchOSSandbox{State: resolution.State.String(), Source: resolution.Source}
+	return LaunchOSSandbox{
+		State:  resolution.State.String(),
+		Source: resolution.Source,
+		// Diagnostics are only ever collected from tiers walked BEFORE the one
+		// that decided, so a non-empty list means something that outranks this
+		// verdict was unreadable — including for an explicit on/off, where the
+		// managed tier is consulted ahead of the launch flag precisely because it
+		// outranks it.
+		Unverified: len(resolution.Diagnostics) > 0,
+	}
 }

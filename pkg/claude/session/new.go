@@ -961,6 +961,7 @@ func runNew(params *NewParams) error {
 		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
+		OSSandboxUnverified:    launchOSSandbox.Unverified,
 		EffectiveSandbox:       effectiveSandbox,
 		ApprovalPolicy:         recordedApprovalPolicy,
 		ApprovalAutoReview:     autoReview,

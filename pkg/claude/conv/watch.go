@@ -2860,6 +2860,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		SandboxMode:            resumeMode,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
+		OSSandboxUnverified:    launchOSSandbox.Unverified,
 		EffectiveSandbox:       resumeEffectiveSandboxForState(conv.SessionID),
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,

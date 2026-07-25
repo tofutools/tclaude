@@ -1692,6 +1692,11 @@ type agentState struct {
 	// like SandboxMode: what a dead agent ran under is still informative.
 	OSSandboxState  string `json:"os_sandbox_state,omitempty"`
 	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
+	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
+	// deciding tier could have overturned, had tclaude been able to read it. The
+	// badge hedges instead of asserting containment — a padlock on an agent
+	// nothing confines is worse than no padlock at all.
+	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -1780,8 +1785,9 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// exited override below only touches Status/StatusDetail.
 		Harness:         pick.Harness,
 		SandboxMode:     pick.SandboxMode,
-		OSSandboxState:  pick.OSSandboxState,
-		OSSandboxSource: pick.OSSandboxSource,
+		OSSandboxState:      pick.OSSandboxState,
+		OSSandboxSource:     pick.OSSandboxSource,
+		OSSandboxUnverified: pick.OSSandboxUnverified,
 		// RemoteControl is tclaude's best-known Remote Access flag for the
 		// conv (JOH-256), surfaced regardless of liveness like the other
 		// launch/row properties — the dashboard reflects the recorded intent

@@ -126,13 +126,27 @@ function HarnessLine({ member }) {
 //
 // Returns null when there is nothing to say — an `inherit` launch that no
 // settings file confines is the unremarkable, unchanged case.
-function osSandboxBadge(mode, state, source, prefix) {
+function osSandboxBadge(mode, state, source, prefix, unverified) {
   const via = source ? ` (${source})` : '';
+  // A settings file outranking the one that decided could not be read, so a
+  // policy tclaude never saw may say the opposite. Hedge rather than assert:
+  // the operator reading this badge is deciding whether to trust the agent, and
+  // a padlock on something nothing confines is worse than no padlock at all.
+  const caveat = unverified
+    ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
+    : '';
   if (state === 'on') {
     const why = mode === 'on'
       ? 'forced ON for this launch'
-      : `not chosen at launch — inherited from your Claude Code settings${via}`;
-    return { label: 'on', title: `${prefix}: on — ${why}. Bash is confined (working dir writable, $HOME read-only).` };
+      // Managed policy outranks the launch's own `--settings` block, so it can
+      // turn the sandbox ON over an explicit `off`. Calling that "not chosen at
+      // launch" would be true but useless, and calling an enterprise policy file
+      // "your Claude Code settings" is simply wrong.
+      : mode === 'off'
+        ? `forced ON by ${source || 'a higher-precedence settings file'}, overriding this launch's \`off\``
+        : `not chosen at launch — inherited from your Claude Code settings${via}`;
+    const confined = unverified ? '' : ' Bash is confined (working dir writable, $HOME read-only).';
+    return { label: unverified ? 'on?' : 'on', danger: unverified, title: `${prefix}: on — ${why}.${confined}${caveat}` };
   }
   if (mode === 'on') {
     // The launch asked for `on` and lost. Only enterprise managed policy
@@ -140,13 +154,13 @@ function osSandboxBadge(mode, state, source, prefix) {
     // confined is precisely who needs telling that it is not.
     return {
       label: 'on overridden', danger: true,
-      title: `${prefix}: this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.`,
+      title: `${prefix}: this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
     };
   }
   if (mode === 'off') {
     return {
       label: 'off', danger: true,
-      title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.`,
+      title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.${caveat}`,
     };
   }
   return null;
@@ -161,13 +175,17 @@ export function SandboxBadge({ member }) {
   // IS its posture) the mode-driven rendering below is unchanged.
   const state = member.state?.os_sandbox_state || '';
   if (state) {
-    const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix);
+    const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix,
+      !!member.state?.os_sandbox_unverified);
     if (!badge) return null;
     const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
     return html`<span class=${className} role="note" aria-label=${badge.title} title=${badge.title}>${badge.danger ? '⚠' : '🔒'} ${badge.label}</span>`;
   }
   if (!mode || mode === 'inherit') return null;
-  const danger = mode === 'danger-full-access';
+  // `off` is Claude-only (no other harness offers it) and means the OS sandbox
+  // is disabled outright, so it is a danger badge on a pre-verdict row too —
+  // otherwise every legacy `off` agent keeps the padlock this change removes.
+  const danger = mode === 'danger-full-access' || mode === 'off';
   const title = danger
     ? `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes`;

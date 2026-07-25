@@ -47,9 +47,9 @@ type SessionState struct {
 	// process liveness is the authoritative reconcile).
 	BgShells db.BgShellSet `json:"bgShells,omitempty"`
 	Created  time.Time     `json:"created"`
-	Updated   time.Time      `json:"updated"`
-	LastHook  time.Time      `json:"lastHook"`
-	Attached  int            `json:"-"` // Number of attached clients (runtime only, not persisted)
+	Updated  time.Time     `json:"updated"`
+	LastHook time.Time     `json:"lastHook"`
+	Attached int           `json:"-"` // Number of attached clients (runtime only, not persisted)
 	// Harness is the coding tool this session belongs to ("claude",
 	// "codex"). Carried through toRow/fromRow so the hook callback's
 	// load→mutate→save round-trip preserves a non-claude tag instead of
@@ -73,10 +73,13 @@ type SessionState struct {
 	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
 	// round-trip preserves them. "" for a harness whose mode already states its
 	// posture (Codex) or a pre-column row.
-	OSSandboxState   string                  `json:"osSandboxState,omitempty"`
-	OSSandboxSource  string                  `json:"osSandboxSource,omitempty"`
-	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
-	ResumeProvenance string                  `json:"resumeProvenance,omitempty"`
+	OSSandboxState  string `json:"osSandboxState,omitempty"`
+	OSSandboxSource string `json:"osSandboxSource,omitempty"`
+	// OSSandboxUnverified marks a verdict a higher-precedence settings file
+	// tclaude could not read may contradict. Carried like the other two.
+	OSSandboxUnverified bool                    `json:"osSandboxUnverified,omitempty"`
+	EffectiveSandbox    *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
+	ResumeProvenance    string                  `json:"resumeProvenance,omitempty"`
 	// ApprovalPolicy and ApprovalAutoReview preserve the resolved launch-time
 	// approval posture across hook load/mutate/save cycles. They are recorded
 	// for authorization and re-applied when the conversation is resumed.
@@ -204,6 +207,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		SandboxMode:            s.SandboxMode,
 		OSSandboxState:         s.OSSandboxState,
 		OSSandboxSource:        s.OSSandboxSource,
+		OSSandboxUnverified:    s.OSSandboxUnverified,
 		EffectiveSandbox:       s.EffectiveSandbox,
 		ResumeProvenance:       s.ResumeProvenance,
 		ApprovalPolicy:         s.ApprovalPolicy,
@@ -232,6 +236,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		SandboxMode:            r.SandboxMode,
 		OSSandboxState:         r.OSSandboxState,
 		OSSandboxSource:        r.OSSandboxSource,
+		OSSandboxUnverified:    r.OSSandboxUnverified,
 		EffectiveSandbox:       r.EffectiveSandbox,
 		ResumeProvenance:       r.ResumeProvenance,
 		ApprovalPolicy:         r.ApprovalPolicy,

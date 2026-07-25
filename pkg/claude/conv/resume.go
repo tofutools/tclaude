@@ -266,6 +266,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		SandboxMode:            resumeMode,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
+		OSSandboxUnverified:    launchOSSandbox.Unverified,
 		EffectiveSandbox:       resumeEffectiveSandboxForState(rc.ConvID),
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,

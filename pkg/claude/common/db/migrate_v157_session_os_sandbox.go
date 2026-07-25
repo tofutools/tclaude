@@ -11,6 +11,10 @@ import (
 //     "was the harness's OS sandbox actually active for this launch".
 //   - sessions.os_sandbox_source — what decided it (the launch flag, or the
 //     settings file that won the precedence chain).
+//   - sessions.os_sandbox_unverified — 1 when a file OUTRANKING the deciding
+//     tier could not be read or parsed, so a policy tclaude never saw may say
+//     the opposite. The badge is a durable claim about containment, so the doubt
+//     has to be stored with the verdict rather than left on the spawn's stderr.
 //
 // They exist because `sessions.sandbox_mode` records the launch REQUEST, not
 // the outcome. For Claude Code the default request is `inherit` — deliberately
@@ -40,20 +44,24 @@ func migrateV156toV157(db *sql.DB) error {
 		return fmt.Errorf("migrate v156→v157 (probe sessions): %w", err)
 	}
 	if haveTable > 0 {
-		for _, column := range []string{"os_sandbox_state", "os_sandbox_source"} {
+		for _, add := range []struct{ column, decl string }{
+			{"os_sandbox_state", "TEXT NOT NULL DEFAULT ''"},
+			{"os_sandbox_source", "TEXT NOT NULL DEFAULT ''"},
+			{"os_sandbox_unverified", "INTEGER NOT NULL DEFAULT 0"},
+		} {
 			var haveColumn int
 			if err := tx.QueryRow(
-				`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?`, column,
+				`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?`, add.column,
 			).Scan(&haveColumn); err != nil {
-				return fmt.Errorf("migrate v156→v157 (probe sessions.%s): %w", column, err)
+				return fmt.Errorf("migrate v156→v157 (probe sessions.%s): %w", add.column, err)
 			}
 			if haveColumn > 0 {
 				continue
 			}
 			if _, err := tx.Exec(
-				`ALTER TABLE sessions ADD COLUMN ` + column + ` TEXT NOT NULL DEFAULT ''`,
+				`ALTER TABLE sessions ADD COLUMN ` + add.column + ` ` + add.decl,
 			); err != nil {
-				return fmt.Errorf("migrate v156→v157 (add sessions.%s): %w", column, err)
+				return fmt.Errorf("migrate v156→v157 (add sessions.%s): %w", add.column, err)
 			}
 		}
 	}

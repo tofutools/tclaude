@@ -62,6 +62,49 @@ const CASES = [
     title: [/asked for the OS sandbox to be ON/, /managed-settings\.json/],
   },
   {
+    // Managed policy is the one tier that outranks the launch's own --settings
+    // block, so it can force the sandbox ON over an explicit `off`. Calling that
+    // "inherited from your Claude Code settings" would name an enterprise policy
+    // file as the operator's own config, and "not chosen at launch" reads as
+    // indifference when they actively chose the opposite.
+    name: 'a managed policy that forces on over an explicit off says so',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
+    },
+    text: /🔒\s*on/, danger: false,
+    title: [/forced ON by/, /overriding this launch's `off`/],
+    titleNot: [/your Claude Code settings/, /not chosen at launch/],
+  },
+  {
+    // The verdict tclaude could not prove. A padlock here would assert
+    // containment that a policy file it never read may contradict.
+    name: 'an unverified on hedges instead of asserting containment',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      os_sandbox_source: 'this launch (sandbox `on`)', os_sandbox_unverified: true,
+    },
+    text: /⚠\s*on\?/, danger: true,
+    title: [/Unverified: tclaude could not read a settings file that outranks this/],
+    titleNot: [/Bash is confined/],
+  },
+  {
+    name: 'a verified on keeps the plain padlock and the confinement claim',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'on',
+      os_sandbox_source: '~/.claude/settings.json', os_sandbox_unverified: false,
+    },
+    text: /🔒\s*on/, danger: false, title: [/Bash is confined/],
+    titleNot: [/Unverified/],
+  },
+  {
+    // A pre-verdict Claude row: `off` is Claude-only and means the sandbox is
+    // disabled outright, so the padlock was wrong there for the same reason.
+    name: 'a legacy Claude off row with no verdict is a danger badge too',
+    state: { harness: 'claude', sandbox_mode: 'off' },
+    text: /⚠\s*off/, danger: true,
+  },
+  {
     name: 'an inherit launch that nothing configures still renders no badge',
     state: { harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'unconfigured' },
     absent: true,

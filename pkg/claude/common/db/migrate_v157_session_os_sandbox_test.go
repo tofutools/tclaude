@@ -14,6 +14,7 @@ func TestMigrateV156toV157AddsOSSandboxColumns(t *testing.T) {
 
 	mustExec(t, d, `ALTER TABLE sessions DROP COLUMN os_sandbox_state`)
 	mustExec(t, d, `ALTER TABLE sessions DROP COLUMN os_sandbox_source`)
+	mustExec(t, d, `ALTER TABLE sessions DROP COLUMN os_sandbox_unverified`)
 	mustExec(t, d, `UPDATE schema_version SET version = 156`)
 	mustExec(t, d, `INSERT INTO sessions (id, tmux_session, pid, cwd, conv_id, status, created_at, updated_at)
 		VALUES ('legacy-session', 'tc-legacy', 0, '/tmp', 'conv-legacy', 'idle',
@@ -26,11 +27,13 @@ func TestMigrateV156toV157AddsOSSandboxColumns(t *testing.T) {
 	// renders empty exactly as it did before the columns existed rather than
 	// retroactively claiming the agent was or was not confined.
 	var state, source string
+	var unverified int
 	require.NoError(t, d.QueryRow(
-		`SELECT os_sandbox_state, os_sandbox_source FROM sessions WHERE id = 'legacy-session'`).
-		Scan(&state, &source))
+		`SELECT os_sandbox_state, os_sandbox_source, os_sandbox_unverified FROM sessions WHERE id = 'legacy-session'`).
+		Scan(&state, &source, &unverified))
 	assert.Empty(t, state)
 	assert.Empty(t, source)
+	assert.Zero(t, unverified)
 
 	assert.Equal(t, 157, schemaVersion(d))
 	require.NoError(t, migrateV156toV157(d), "partially applied migration converges")
@@ -47,12 +50,14 @@ func TestSessionOSSandboxVerdictRoundTrips(t *testing.T) {
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "s1", ConvID: "c1", Status: "running", Harness: DefaultHarness,
 		SandboxMode: "", OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+		OSSandboxUnverified: true,
 	}))
 
 	got, err := LoadSession("s1")
 	require.NoError(t, err)
 	assert.Equal(t, "on", got.OSSandboxState)
 	assert.Equal(t, "~/.claude/settings.json", got.OSSandboxSource)
+	assert.True(t, got.OSSandboxUnverified, "the doubt is stored with the verdict")
 
 	got.Status = "idle"
 	require.NoError(t, SaveSession(got))
@@ -70,6 +75,7 @@ func TestSessionOSSandboxVerdictRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "on", preserved.OSSandboxState, "a verdict-less save preserves the recorded verdict")
 	assert.Equal(t, "~/.claude/settings.json", preserved.OSSandboxSource)
+	assert.True(t, preserved.OSSandboxUnverified, "and preserves its doubt")
 
 	// A relaunch that genuinely resolved a different posture DOES overwrite it.
 	require.NoError(t, SaveSession(&SessionRow{
@@ -80,6 +86,8 @@ func TestSessionOSSandboxVerdictRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unconfigured", replaced.OSSandboxState)
 	assert.Empty(t, replaced.OSSandboxSource, "source follows its state, never outliving it")
+	assert.False(t, replaced.OSSandboxUnverified,
+		"a newly-resolved verdict clears the previous doubt rather than inheriting it")
 }
 
 func TestMigrateV157IsTheCurrentHead(t *testing.T) {
