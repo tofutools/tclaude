@@ -167,18 +167,31 @@ one-liner in Bash. (Claude Code's docs note the two layers also
 reinforce each other — `Read`/`Edit` deny rules are merged into the
 sandbox boundary — but set both explicitly rather than relying on that.)
 
+There is also an escape hatch around the OS layer:
+`dangerouslyDisableSandbox: true` asks Claude Code to run a Bash command
+outside the sandbox and fall back to the normal permission flow. A
+`permissions.deny` rule such as `Read(path)` binds reliably to file tools, not
+to every arbitrary program that can read the same bytes. Set
+`sandbox.allowUnsandboxedCommands` to `false` so the agent cannot request that
+bypass. Because this also removes the fallback for ordinary network tools, the
+recommended block first allows the exact GitHub domains needed to push a
+branch, open a PR, and inspect its checks inside the sandbox.
+
 Add this to your Claude Code **`~/.claude/settings.json`** — both deny
-layers, plus the `sandbox.network` block the daemon socket needs (see
-"Keeping the daemon socket reachable" below). User scope means a deny
-rule there cannot be weakened by any project's `.claude/settings.json`:
+layers, the disabled escape hatch, and the `sandbox.network` allowances the
+daemon socket and GitHub workflow need (see "Keeping the daemon socket
+reachable" below). User scope means a deny rule there cannot be weakened by
+any project's `.claude/settings.json`:
 
 ```json
 {
   "sandbox": {
     "enabled": true,
+    "allowUnsandboxedCommands": false,
     "network": {
       "allowUnixSockets":    ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"],
-      "allowAllUnixSockets": true
+      "allowAllUnixSockets": true,
+      "allowedDomains":      ["github.com", "api.github.com"]
     },
     "filesystem": {
       "denyWrite": ["~/.tclaude/data", "~/.claude/sessions"],
@@ -197,10 +210,23 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
 }
 ```
 
+`tclaude setup --install-sandbox-hardening` installs this block
+append-only and idempotently. **Existing installations must re-run that command
+after upgrading**: settings written by an older tclaude do not acquire
+`allowUnsandboxedCommands: false` or the GitHub domains until the installer
+runs again.
+
 Notes:
 
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1
   does nothing and a Bash one-liner can write anywhere your user can.
+- **`allowUnsandboxedCommands` must be `false`.** Otherwise an agent can set
+  `dangerouslyDisableSandbox: true` on a Bash call and ask the permission layer
+  to run it outside every filesystem and network boundary above.
+- **The GitHub allowlist is deliberately narrow.** `github.com` covers this
+  repository's Git transport and `api.github.com` covers `gh pr` / `gh run`.
+  They are trusted but still provide an exfiltration path; operators whose
+  agents never push or open PRs can omit them manually.
 - **The daemon socket needs two settings, not one.**
   `sandbox.filesystem.allowRead` keeps
   `~/.tclaude/api/agentd.sock` visible. *Separately*, the `sandbox.network`
@@ -240,6 +266,23 @@ Notes:
   covers every built-in file-editing tool (creation included), so it is
   the must-have integrity rule; `Read(...)` is the confidentiality rule
   (recommended defense-in-depth).
+
+### User setting or managed policy?
+
+The setup command deliberately writes the user-level
+`~/.claude/settings.json`. It is non-privileged, preserves the existing
+append-only/conflict behavior, and is appropriate for a single-user
+workstation where the operator controls that file. If
+`allowUnsandboxedCommands` is already `true`, setup reports
+`sandbox.allowUnsandboxedCommands: hardening wants false ... left unchanged
+(fix it manually)` and does not overwrite the operator's choice.
+
+This is strong default configuration, not an administrator lock: a project
+setting with higher precedence can change a scalar setting. For a shared
+machine or a policy that agents must not be able to relax between launches,
+use Claude Code's root-owned managed policy settings and add top-level
+`"forbidUnsandboxedCommands": true`. `tclaude setup` does not write system
+policy files or invoke privilege escalation.
 
 ### Keeping the daemon socket reachable
 
@@ -314,10 +357,11 @@ safer and lower-maintenance.
 ### Multi-user / shared machines
 
 On a shared machine, put the same `sandbox` and `permissions.deny`
-blocks in **managed settings** instead
-(`/etc/claude-code/managed-settings.json` on Linux, the platform
-equivalent elsewhere). Managed settings sit at the top of the precedence
-chain and cannot be overridden by user or project settings.
+blocks in **managed settings** instead, together with top-level
+`"forbidUnsandboxedCommands": true`. On Linux, that file is
+`/etc/claude-code/managed-settings.json`; use the platform equivalent
+elsewhere. Managed settings sit at the top of the precedence chain and cannot
+be overridden by user or project settings.
 
 ## The unsandboxed-autonomy warning
 
@@ -414,6 +458,11 @@ inside that agent's session, confirm:
    agent's own identity, and `tclaude agent inbox ls` works. This
    confirms both the socket-file visibility and the `sandbox.network`
    unix-socket allowance survived the lockdown.
+4. **The bypass is disabled and GitHub still works** —
+   `git ls-remote origin HEAD`, `gh pr list --limit 1`, and
+   `gh run list --limit 1` run inside the sandbox. A Bash request carrying
+   `dangerouslyDisableSandbox: true` remains sandboxed instead of exposing the
+   denied state paths.
 
 If step 1 succeeds in writing a file, the sandbox is not denying that
 path — re-check `sandbox.enabled`, the `allowWrite` /

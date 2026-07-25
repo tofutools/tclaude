@@ -135,14 +135,17 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // `sandbox` block, so the per-session override and the global hardening can
 // never drift (docs/sandbox-hardening.md is the human-facing source of truth).
 //
-// It enables the sandbox AND preserves the two properties a daemon-spawned
-// agent needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
+// It enables the sandbox AND preserves the properties a daemon-spawned agent
+// needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
 // reachable (network allowlist + filesystem read allowance) so the agent can
-// still run `tclaude agent`, and
+// still run `tclaude agent`; GitHub and its API stay reachable so the agent can
+// push branches, open PRs, and inspect checks without leaving the sandbox; and
 // ~/.tclaude/data and ~/.claude/sessions are denied (read + write) so a
 // sandboxed agent can neither tamper with nor snoop on shared daemon/Claude
-// session state. ~/.codex remains readable because it also contains the Codex
-// runtime itself; denying that whole root can strand the harness.
+// session state. The model-controlled dangerouslyDisableSandbox escape hatch
+// is disabled so those boundaries cannot be skipped. ~/.codex remains readable
+// because it also contains the Codex runtime itself; denying that whole root
+// can strand the harness.
 // block is cross-platform: macOS honors per-path `allowUnixSockets`, Linux/WSL2
 // the broader `allowAllUnixSockets` — listing both keeps one block valid on
 // either (the inert key is harmless).
@@ -154,10 +157,12 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // call so the setup merge can mutate it in place without aliasing.
 func ClaudeSandboxOnBlock() map[string]any {
 	return map[string]any{
-		"enabled": true,
+		"enabled":                  true,
+		"allowUnsandboxedCommands": false,
 		"network": map[string]any{
 			"allowUnixSockets":    tclaudeAgentdSocketTildes(),
 			"allowAllUnixSockets": true,
+			"allowedDomains":      []any{"github.com", "api.github.com"},
 		},
 		"filesystem": map[string]any{
 			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},

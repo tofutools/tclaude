@@ -66,13 +66,24 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 20 leaf values: 2 scalars (sandbox.enabled,
-// sandbox.network.allowAllUnixSockets) and 18 array elements
-// (allowUnixSockets 3, denyWrite 3, denyRead 3, allowRead 3,
-// permissions.deny 6). The socket lists carry the canonical api/ socket
-// plus the two retained pre-split sockets. The deny lists cover the two
-// protected roots: ~/.tclaude/data and ~/.claude/sessions.
-const specLeafCount = 16
+// The spec has 19 leaf values: 3 scalars (sandbox.enabled,
+// sandbox.allowUnsandboxedCommands, sandbox.network.allowAllUnixSockets) and
+// 16 array elements (allowedDomains 2, allowUnixSockets 3, denyWrite 2,
+// denyRead 2, allowRead 3, permissions.deny 4). The socket lists carry the
+// canonical api/ socket plus the two retained pre-split sockets. The deny lists
+// cover the two protected roots: ~/.tclaude/data and ~/.claude/sessions.
+const specLeafCount = 19
+
+// Pin the two halves that make disabling dangerouslyDisableSandbox usable:
+// GitHub operations required by the agent workflow stay inside the network
+// sandbox, then the model-controlled escape hatch is switched off.
+func TestSandboxHardeningSpec_DisablesBypassAfterAllowingGitHub(t *testing.T) {
+	sandbox := sandboxHardeningSpec()["sandbox"].(map[string]any)
+	assert.Equal(t, false, sandbox["allowUnsandboxedCommands"])
+
+	network := sandbox["network"].(map[string]any)
+	assert.Equal(t, []any{"github.com", "api.github.com"}, network["allowedDomains"])
+}
 
 // --- merge engine: the risky part, tested hard --------------------------------
 
@@ -194,6 +205,24 @@ func TestMergeHardening_ScalarConflict(t *testing.T) {
 	// The rest of the hardening still applied around the conflict.
 	assert.True(t, r.changed())
 	assert.Contains(t, sandbox, "filesystem")
+}
+
+// The new bypass setting uses the same append-only scalar behavior as every
+// other hardening key. An operator's explicit true remains untouched, and the
+// warning names the exact unsafe key and the required value.
+func TestMergeHardening_UnsandboxedBypassConflictReadsClearly(t *testing.T) {
+	tree := decodeTree(t, `{"sandbox": {"allowUnsandboxedCommands": true}}`)
+
+	r := runMerge(tree)
+
+	sandbox := tree["sandbox"].(map[string]any)
+	assert.Equal(t, true, sandbox["allowUnsandboxedCommands"],
+		"conflicting scalar must NOT be overwritten")
+	require.Len(t, r.scalarConflicts, 1)
+	assert.Equal(t,
+		"sandbox.allowUnsandboxedCommands: hardening wants false but settings.json "+
+			"already has true — left unchanged (fix it manually)",
+		r.scalarConflicts[0])
 }
 
 // A scalar already present with the wanted value is a no-op, not a conflict.
