@@ -54,9 +54,20 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must("'hide-costs'", "refresh toggles body.hide-costs")
 
 	// Costs always fetches one mixed response, whose per-row kind metadata
-	// drives WHAT-IF labels; the toggle is bound and persisted.
+	// drives the per-row WHAT-IF marker — a dim ⚠ back to the banner rather
+	// than a repeat of its caveat; the toggle is bound and persisted.
 	must("what_if_total_usd", "Costs state carries the hypothetical subtotal")
-	must("agent.cost_kind === 'what_if'", "Costs table labels hypothetical rows per row")
+	must(`<a class="cost-whatif-mark" href="#costs-whatif-banner"`,
+		"Costs table marks hypothetical rows with a ⚠ pointing at the banner")
+	must(".cost-whatif-mark {", "the per-row WHAT-IF marker has a style rule")
+	// The marker's click-through spans all three files, and the jstest suites
+	// mount JS without the stylesheet, so this seam is only visible here: the
+	// class the handler adds, the rule that animates it, and the shared
+	// keyframes that rule borrows from the Access queue.
+	must("classList.add('cost-whatif-flash')", "clicking the marker flashes the banner it scrolled to")
+	must(".cost-whatif-flash { animation: access-attn", "the flash animates via the shared attention pulse")
+	must("@keyframes access-attn {", "that shared pulse still exists to borrow")
+	must(".cost-whatif-banner:focus", "the focused banner shows where the jump landed")
 	must("segment.kind === 'what_if'", "Costs chart tooltips label hypothetical segments")
 	must("function bindCostDisplayToggle(", "the 💲 toggle is bound")
 	must("'agent-cost-hidden'", "the toggle drives body.agent-cost-hidden")

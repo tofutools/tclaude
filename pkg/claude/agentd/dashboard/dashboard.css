@@ -1924,8 +1924,18 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
     rgba(255, 255, 255, 0.22) 3px, rgba(255, 255, 255, 0.22) 5px
   );
 }
-.cost-amt-whatif { color: #d6b25a; }
-.cost-amt-whatif small { font-size: 9px; letter-spacing: .04em; }
+/* Per-row WHAT-IF marker in the Cost column. The tab already leads with the
+   full ⚠ WHAT-IF banner, and the header totals and total row both carry the
+   real/estimate split, so a row needs a pointer back to that caveat rather
+   than a fourth restatement of it: one dim amber glyph, its detail (including
+   a mixed row's split) in the tooltip, brightening on hover to read as the
+   link it is. The amount itself keeps .cost-amt's green whatever its kind, so
+   the column still scans as one column of money. */
+.cost-whatif-mark {
+  margin-left: 4px; font-size: 10px; line-height: 1;
+  color: #8a7444; text-decoration: none; cursor: pointer;
+}
+.cost-whatif-mark:hover, .cost-whatif-mark:focus-visible { color: #d6b25a; }
 /* Legend swatch on each harness filter toggle — reuses the palette class,
    so the filter bar reads as the chart's legend. */
 .cost-legend-sw {
@@ -5728,6 +5738,20 @@ body:has(#tab-terminals.active) > nav {
   color: #d6b25a; font-size: 12px; line-height: 1.5;
 }
 .cost-whatif-banner code { color: #e6c878; }
+/* Added for about a second when a row's ⚠ marker is clicked, so a jump from
+   far down a long table visibly lands on the banner instead of leaving the
+   reader to find what just scrolled into view. Borrows the Access queue's
+   attention pulse (@keyframes access-attn) rather than restating its tokens:
+   a ring, so it composes with whatever palette the active theme gave the
+   banner instead of overriding it mid-flash. Under reduced motion the pulse is
+   dropped and the focus outline below is the whole landing cue, which is why
+   gotoWhatIfBanner focuses the banner rather than only scrolling to it. */
+.cost-whatif-flash { animation: access-attn 1.1s ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) { .cost-whatif-flash { animation: none; } }
+/* The banner is only ever focused programmatically (tabindex -1), so this
+   styles arrival, not a tab stop. :focus, not :focus-visible — a mouse click
+   on the marker must show it too, since that is the reduced-motion cue. */
+.cost-whatif-banner:focus { outline: 2px solid #d6b25a; outline-offset: 2px; }
 /* The card holds the welcome intro (its header) above the dynamic player
    content (song/station/audio, injected into #vegas-player by vegas.js). */
 .vegas-card {
@@ -11683,6 +11707,11 @@ body.wizard .cost-whatif-banner {
   border-color: #d9b45a; color: #e7d9f5;
 }
 body.wizard .cost-whatif-banner code { color: #f0d066; }
+/* The per-row marker back to that banner gilds with the rest of the table's
+   money tokens, so the default amber never sits next to wizard gold. */
+body.wizard .cost-whatif-mark { color: #9c8148; }
+body.wizard .cost-whatif-mark:hover,
+body.wizard .cost-whatif-mark:focus-visible { color: #f0d066; }
 
 /* prefers-reduced-motion — double-gated like slop: wizard-fx.js short-
    circuits before spawning, and this CSS layer kills any motion that slips
