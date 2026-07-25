@@ -149,6 +149,16 @@ findings like CodeRabbit's: fix valid issues and document any deliberate
 skips. Record the review status in the PR description or a PR comment,
 including who reviewed and any important follow-up.
 
+How you obtain that fresh agent is deliberately not fixed. `tclaude agent
+spawn` is the preferred mechanism, because the reviewer becomes a real peer
+the operator can see and talk to. It is not the only one: when spawn
+permission is unavailable, an in-harness subagent of the local harness
+(Claude Code's Task tool, Codex CLI's equivalent) is a valid fallback, as is
+asking the operator to arrange a reviewer. What must hold is the cold and
+uninvolved property described above, not the spawn path. Say which mechanism
+you used when you record the review status, so a subagent review is not
+mistaken for a peer-agent one.
+
 Do not `git add -A`; stage specific paths.
 
 ## Work tracking
