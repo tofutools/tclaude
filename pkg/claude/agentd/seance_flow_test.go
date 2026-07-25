@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -208,6 +209,48 @@ func TestSeancePlan_PrunedExactGenerationDoesNotRedirect(t *testing.T) {
 	}
 }
 
+func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
+	f := newFlow(t)
+	const (
+		first  = "ses_alpha111111111111111111111111"
+		middle = "ses_bravo222222222222222222222222"
+		head   = "ses_charlie3333333333333333333333"
+	)
+	firstCwd := f.TestCwd("seance-opencode-first")
+	for _, generation := range []struct {
+		id, title, cwd string
+	}{
+		{id: first, title: "open-first", cwd: firstCwd},
+		{id: middle, title: "open-middle", cwd: f.TestCwd("seance-opencode-middle")},
+		{id: head, title: "open-head", cwd: f.TestCwd("seance-opencode-head")},
+	} {
+		f.HaveConvWithTitle(generation.id, generation.title)
+		f.HaveAliveSession(generation.id, generation.title+"-label", generation.title+"-tmux", generation.cwd)
+		row, err := db.GetConvIndex(generation.id)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		row.Harness = harness.OpenCodeName
+		require.NoError(t, db.UpsertConvIndex(row))
+		setSessionHarness(t, generation.id, harness.OpenCodeName)
+	}
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", first)
+	_, err := db.RotateAgentConv(first, middle, "reincarnate")
+	require.NoError(t, err)
+	_, err = db.RotateAgentConv(middle, head, "reincarnate")
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteConvIndex(first), "prune first OpenCode generation from cache")
+
+	for _, selector := range []string{first, first[:8]} {
+		got, status, body := requestSeancePlan(t, f, head, map[string]any{"target": selector})
+		require.Equal(t, http.StatusOK, status, "selector=%q body=%s", selector, body)
+		assert.Equal(t, first, got.Predecessor)
+		assert.Equal(t, harness.OpenCodeName, got.Harness)
+		assert.Equal(t, firstCwd, got.Cwd)
+		assert.True(t, got.Exact)
+	}
+}
+
 func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
 	f := newFlow(t)
 	const (
@@ -249,5 +292,26 @@ func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
 		})
 		assert.Equal(t, http.StatusConflict, status, "body=%s", body)
 		assert.Contains(t, body, "multiple generations")
+	})
+
+	t.Run("short agent name is not mistaken for a conversation prefix", func(t *testing.T) {
+		f.HaveConvWithTitle(newConv, "ace")
+		got, status, body := requestSeancePlan(t, f, newConv, map[string]any{
+			"target": "ace",
+			"back":   1,
+		})
+		require.Equal(t, http.StatusOK, status, "body=%s", body)
+		assert.Equal(t, oldConv, got.Predecessor)
+		assert.False(t, got.Exact)
+	})
+
+	t.Run("short OpenCode conversation prefix is rejected", func(t *testing.T) {
+		const openCodeConv = "ses_alpha111111111111111111111111"
+		f.HaveConvWithTitle(openCodeConv, "open-short-prefix")
+		_, status, body := requestSeancePlan(t, f, newConv, map[string]any{
+			"target": openCodeConv[:5],
+		})
+		assert.Equal(t, http.StatusBadRequest, status, "body=%s", body)
+		assert.Contains(t, body, "at least 8")
 	})
 }

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -164,9 +163,14 @@ func resolveSeanceGeneration(
 	// the general agent selector so a predecessor never redirects to its live
 	// head. The durable lookup includes succession rows, so a historical
 	// generation stays exact even after its conv_index cache row is pruned.
-	exactID, matchCount, err := exactSeanceGeneration(req.Target)
+	exactID, matchCount, shortPrefix, err := exactSeanceGeneration(req.Target)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return "", 0, false, false
+	}
+	if shortPrefix {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			fmt.Sprintf("conversation prefix %q is too short; pass at least 8 characters", req.Target))
 		return "", 0, false, false
 	}
 	if matchCount > 1 {
@@ -187,11 +191,6 @@ func resolveSeanceGeneration(
 			return "", 0, false, false
 		}
 		return exactID, 0, true, true
-	}
-	if looksLikeConvIDPrefix(req.Target) && len(req.Target) < 8 {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			fmt.Sprintf("conversation prefix %q is too short; pass at least 8 characters", req.Target))
-		return "", 0, false, false
 	}
 
 	res, matches, rerr := agent.ResolveSelectorCached(req.Target)
@@ -221,36 +220,25 @@ func resolveSeanceGeneration(
 	return target, hops, false, ok
 }
 
-// exactSeanceGeneration returns (id, matchCount, error). A matchCount greater
-// than one is an ambiguous prefix; zero means the selector should fall through
-// to stable agent-id/name resolution.
-func exactSeanceGeneration(selector string) (string, int, error) {
-	if strings.HasPrefix(selector, db.AgentIDPrefix) ||
-		(!clcommon.IsValidUUID(selector) && (len(selector) < 8 || !looksLikeConvIDPrefix(selector))) {
-		return "", 0, nil
+// exactSeanceGeneration returns (id, matchCount, shortPrefix, error). A
+// matchCount greater than one is an ambiguous prefix; zero means the selector
+// should fall through to stable agent-id/name resolution. Conversation IDs are
+// deliberately not assumed to be UUIDs: OpenCode uses ses_... IDs.
+func exactSeanceGeneration(selector string) (string, int, bool, error) {
+	if strings.HasPrefix(selector, db.AgentIDPrefix) {
+		return "", 0, false, nil
 	}
 	ids, err := db.FindKnownConvIDsByPrefix(selector, 2)
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
+	}
+	if len(selector) < 8 && len(ids) > 0 {
+		return "", len(ids), true, nil
 	}
 	if len(ids) == 1 {
-		return ids[0], 1, nil
+		return ids[0], 1, false, nil
 	}
-	return "", len(ids), nil
-}
-
-func looksLikeConvIDPrefix(selector string) bool {
-	if selector == "" {
-		return false
-	}
-	for _, c := range selector {
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
-			(c >= 'A' && c <= 'F') || c == '-' {
-			continue
-		}
-		return false
-	}
-	return true
+	return "", len(ids), false, nil
 }
 
 func walkSeancePredecessor(w http.ResponseWriter, head string, back int) (string, int, bool) {
