@@ -60,18 +60,25 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   template may begin directly at a task, a decision, or a parallel fork.
 - Sequential task chains, and exclusive decisions whose verdict selects exactly
   one authored outcome edge and closes the alternatives.
-- Structured fan-out (`type: parallel`) reduced by `join: all`. Branches of one
-  run execute concurrently, bounded to four external programs at a time; ready
-  branches past that bound wait for a slot. A branch parked on a human decision
-  does not block its siblings, and that decision can be answered while the
-  sibling programs are still running.
+- Structured fan-out (`type: parallel`) reduced by `join: all` or `join: any`.
+  Branches of one run execute concurrently, bounded to four external programs
+  at a time; ready branches past that bound wait for a slot. A branch parked on
+  a human decision does not block its siblings, and that decision can be
+  answered while the sibling programs are still running.
+- `join: any` races its branches: the first arrival wins, and only the winner
+  activates the reducer and everything downstream of it. Losing branches are
+  **not** cancelled, closed, or compensated — they run on to their own settled
+  outcome and arrive late at the reducer, where they are recorded as honest
+  evidence that cannot replace the winner or run the downstream route twice.
+  The run therefore does not report a terminal status until every branch that
+  was dispatched or queued has settled. A losing branch that *fails* still
+  fails the run, exactly as under `join: all`.
 - Program task performers (`performer.kind: program`), executed as argv without
   a shell, with a bounded environment and output.
 - Human deciders on decision nodes.
 
-Not executable yet: `join: any`, agent deciders, agent or human task
-performers, retries and poison handling, wait nodes, captures, and compound
-plan/check/review stages. Template validation and run creation both refuse
+Not executable yet: agent deciders, agent or human task performers, retries and
+poison handling, wait nodes, captures, and compound plan/check/review stages. Template validation and run creation both refuse
 these with a path-specific diagnostic rather than failing later.
 
 ## Crashes and reconciliation

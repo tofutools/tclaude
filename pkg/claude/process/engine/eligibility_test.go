@@ -99,19 +99,6 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			// join: any needs branch cancellation the engine does not have; the
-			// otherwise identical join: all shape is executable (TCL-715).
-			name: "join any",
-			code: "unsupported_join",
-			tmpl: func() *model.Template {
-				tmpl := parallelTemplate()
-				node := tmpl.Nodes["join"]
-				node.Join = model.JoinAny
-				tmpl.Nodes["join"] = node
-				return tmpl
-			},
-		},
-		{
 			name: "wait",
 			code: "unsupported_wait",
 			tmpl: func() *model.Template {

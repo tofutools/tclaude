@@ -19,6 +19,11 @@ type Definition struct {
 	nodes []definitionNode
 	index map[string]int
 	edges []definitionEdge
+	// joinAnyIncoming is the prepared index of every inbound edge of a join: any
+	// reducer, in deterministic order. It exists so deriving join evidence is a
+	// walk of exactly the edges that can carry it rather than of the graph: a
+	// definition with no join: any node has an empty index and pays nothing.
+	joinAnyIncoming []int
 }
 
 type definitionNodeKind uint8
@@ -43,6 +48,11 @@ type definitionNode struct {
 	// activates once its complete candidate input set has settled with one or
 	// more arrivals, instead of the non-join exactly-one-arrival rule.
 	joinAll bool
+	// joinAny marks a convergence node authored with join: any: it activates on
+	// its FIRST arrival without waiting for the rest of its candidate set. It is
+	// the one node kind whose incoming edges can still settle after it activated,
+	// and the only one whose edges may hold EdgeArrivedLate.
+	joinAny bool
 }
 
 type definitionEdge struct {
@@ -71,7 +81,11 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	}
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
-		prepared := definitionNode{id: nodeID, joinAll: node.Join == model.JoinAll}
+		prepared := definitionNode{
+			id:      nodeID,
+			joinAll: node.Join == model.JoinAll,
+			joinAny: node.Join == model.JoinAny,
+		}
 		switch node.Type {
 		case model.NodeTypeStart:
 			prepared.kind = definitionStart
@@ -113,6 +127,9 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	for edgeIndex, edge := range definition.edges {
 		to := &definition.nodes[edge.toIndex]
 		to.incoming = append(to.incoming, edgeIndex)
+		if to.joinAny {
+			definition.joinAnyIncoming = append(definition.joinAnyIncoming, edgeIndex)
+		}
 	}
 	return definition, nil
 }
@@ -225,6 +242,48 @@ func (d *Definition) DecisionEdge(nodeID, verdict string) (ChosenEdge, bool) {
 	return ChosenEdge{}, false
 }
 
+// JoinArrival is one arrival at a join: any reducer, as evidence: which join,
+// which authored edge got there, and whether it was the one that won.
+type JoinArrival struct {
+	JoinNodeID string
+	From       string
+	Outcome    string
+	Winner     bool
+}
+
+// JoinArrivals reports the join: any arrivals that settled between two
+// checkpoints of the same run, in deterministic prepared order. It is how a
+// caller derives human-facing evidence from a committed transition without the
+// reducer having to emit anything — the same shape the executor already uses to
+// derive a newly parked decision from before/after checkpoints.
+//
+// It is deliberately NOT a graph diff. It walks the prepared joinAnyIncoming
+// index — exactly the edges that can carry a join arrival — so the cost is the
+// inbound degree of the template's join: any reducers, and a definition without
+// one returns on the first line. It runs once per durable commit, not per
+// transition, and reads two map lookups per indexed edge.
+func (d *Definition) JoinArrivals(before, after Checkpoint) []JoinArrival {
+	if d == nil || len(d.joinAnyIncoming) == 0 {
+		return nil
+	}
+	var arrivals []JoinArrival
+	for _, edgeIndex := range d.joinAnyIncoming {
+		edge := d.edges[edgeIndex]
+		if before.Edges[edge.from][edge.outcome] != EdgeUnresolved {
+			continue
+		}
+		switch after.Edges[edge.from][edge.outcome] {
+		case EdgeArrived:
+			arrivals = append(arrivals, JoinArrival{
+				JoinNodeID: edge.to, From: edge.from, Outcome: edge.outcome, Winner: true})
+		case EdgeArrivedLate:
+			arrivals = append(arrivals, JoinArrival{
+				JoinNodeID: edge.to, From: edge.from, Outcome: edge.outcome})
+		}
+	}
+	return arrivals
+}
+
 func bindProgram(nodeID string, performer model.Performer, params map[string]string) (ProgramCommand, error) {
 	for _, reference := range model.ParamReferences(performer.Run) {
 		value, ok := params[reference]
@@ -304,11 +363,15 @@ func ClassifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	return classifyCheckpoint(checkpoint, definition)
 }
 
-// edgeCounts aggregates the dispositions on one side of a node.
+// edgeCounts aggregates the dispositions on one side of a node. arrivedLate is
+// counted separately from arrived precisely because a late arrival settles its
+// edge without being a candidate for anything: it can neither activate a target
+// nor stand in for the winner.
 type edgeCounts struct {
-	unresolved int
-	arrived    int
-	notTaken   int
+	unresolved  int
+	arrived     int
+	notTaken    int
+	arrivedLate int
 }
 
 func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
@@ -613,7 +676,10 @@ func validateEdgeShape(checkpoint Checkpoint, definition *Definition) error {
 		for _, edgeIndex := range node.outgoing {
 			edge := definition.edges[edgeIndex]
 			switch dispositions[edge.outcome] {
-			case EdgeUnresolved, EdgeArrived, EdgeNotTaken:
+			// The boundary decodes the disposition vocabulary and nothing more.
+			// Winner/late-arrival semantics are maintained locally by the reducer;
+			// no cross-graph semantic revalidation is performed on load.
+			case EdgeUnresolved, EdgeArrived, EdgeNotTaken, EdgeArrivedLate:
 			default:
 				return invalid("edge %q/%q has unknown disposition %q", edge.from, edge.outcome, dispositions[edge.outcome])
 			}
@@ -634,6 +700,8 @@ func countDispositions(checkpoint Checkpoint, definition *Definition, edgeIndice
 			counts.arrived++
 		case EdgeNotTaken:
 			counts.notTaken++
+		case EdgeArrivedLate:
+			counts.arrivedLate++
 		default:
 			counts.unresolved++
 		}

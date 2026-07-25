@@ -322,7 +322,9 @@ func Prepare(run *Run) (*Dispatch, error) {
 		// is nothing to commit and a resume must not bump the state version.
 		return nil, nil
 	}
-	if err := persistEvents(run, next, advanceEvidence(run.checkpoint, next, command)); err != nil {
+	events := append(advanceEvidence(run.checkpoint, next, command),
+		joinEvidence(run.definition, run.checkpoint, next)...)
+	if err := persistEvents(run, next, events); err != nil {
 		return nil, err
 	}
 	if command == nil {
@@ -380,7 +382,9 @@ func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) er
 		Observation engine.ProgramObservation `json:"observation"`
 		Note        string                    `json:"note,omitempty"`
 	}{Decision: "record_outcome", Observation: observation, Note: outcome.Note}
-	return persist(run, next, event("program_outcome_recorded", &command, actor, payload))
+	events := append([]db.ProcessRunEvent{event("program_outcome_recorded", &command, actor, payload)},
+		joinEvidence(run.definition, run.checkpoint, next)...)
+	return persistEvents(run, next, events)
 }
 
 // RecordDecision durably applies one manual decision verdict to the run's
@@ -414,7 +418,9 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 		Evidence   string            `json:"evidence,omitempty"`
 		ChosenEdge engine.ChosenEdge `json:"chosenEdge"`
 	}{Verdict: input.Verdict, Evidence: input.Evidence, ChosenEdge: chosen}
-	return persist(run, next, eventForNode("decision_recorded", input.NodeID, actor, payload))
+	events := append([]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)},
+		joinEvidence(run.definition, run.checkpoint, next)...)
+	return persistEvents(run, next, events)
 }
 
 func validateDecisionInput(input DecisionInput) error {
@@ -638,6 +644,66 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 		}{Status: advanced.Status}))
 	}
 	return events
+}
+
+// maxJoinEvidenceEvents bounds how many join arrivals one commit records
+// individually. A settlement pass can settle an authored fork's whole branch
+// set at once — up to the normalized degree ceiling — and a transaction accepts
+// at most db.MaxProcessRunEventsPerTransition events, so an unbounded row per
+// arrival would refuse the very transition it is evidence for. Past the cap the
+// exact counts are still recorded, so the truncation is visible rather than
+// silent. Ordinary runs settle one arrival per commit and never reach it.
+const maxJoinEvidenceEvents = 32
+
+// joinEvidence is the human-facing record of what one committed transition did
+// to the run's join: any reducers: which branch won a reducer, and which
+// branches got there once it was already won.
+//
+// It is history, not authority — nothing reads it back, and the durable edge
+// dispositions remain the only winner fact. Deriving it from before/after
+// checkpoints is the same seam advanceEvidence already uses for a newly parked
+// decision; the walk itself is the definition's prepared join: any edge index,
+// so a template without one costs a nil check.
+func joinEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+	arrivals := definition.JoinArrivals(before, after)
+	if len(arrivals) == 0 {
+		return nil
+	}
+	recorded := min(len(arrivals), maxJoinEvidenceEvents)
+	events := make([]db.ProcessRunEvent, 0, recorded+1)
+	won, late := 0, 0
+	for index, arrival := range arrivals {
+		if arrival.Winner {
+			won++
+		} else {
+			late++
+		}
+		if index >= recorded {
+			continue
+		}
+		kind := "join_arrival_late"
+		if arrival.Winner {
+			kind = "join_won"
+		}
+		events = append(events, eventForNode(kind, arrival.JoinNodeID, EngineActor, joinArrivalEvidence{
+			JoinNodeID: arrival.JoinNodeID, From: arrival.From, Outcome: arrival.Outcome,
+		}))
+	}
+	if len(arrivals) > recorded {
+		events = append(events, eventForNode("join_arrivals_truncated", "", EngineActor, struct {
+			Settled  int `json:"settled"`
+			Recorded int `json:"recorded"`
+			Won      int `json:"won"`
+			Late     int `json:"late"`
+		}{Settled: len(arrivals), Recorded: recorded, Won: won, Late: late}))
+	}
+	return events
+}
+
+type joinArrivalEvidence struct {
+	JoinNodeID string `json:"joinNodeId"`
+	From       string `json:"from"`
+	Outcome    string `json:"outcome"`
 }
 
 type preparedEvidence struct {

@@ -397,18 +397,6 @@ func TestDirectEntryDoesNotRelaxUnsupportedShapes(t *testing.T) {
 		tmpl func() *model.Template
 	}{
 		{
-			name: "join any on a direct parallel entry",
-			code: "unsupported_join",
-			path: "nodes.join.join",
-			tmpl: func() *model.Template {
-				tmpl := directParallelEntryTemplate()
-				node := tmpl.Nodes["join"]
-				node.Join = model.JoinAny
-				tmpl.Nodes["join"] = node
-				return tmpl
-			},
-		},
-		{
 			name: "agent decider as the entry",
 			code: "unsupported_performer",
 			path: "nodes.choose.performer.kind",
