@@ -19,6 +19,17 @@ const (
 	// staying aligned with the 4,096-entry routing/viewer operational scale.
 	MaxNormalizedEdges = 2 * MaxNormalizedNodes
 
+	// MaxExecutableNodeIDBytes is the envelope every node id a RUN can name has
+	// to fit in: the durable run evidence rows are bounded at exactly this, so a
+	// node id above it cannot be recorded and the run that produced it could
+	// never make a durable transition.
+	//
+	// Authoring itself does not bound id length — it bounds the charset — and
+	// that stays true. This is the executable bound, which is why it lives beside
+	// the other executable-scale limits and is derived from, not duplicated by,
+	// the persistence layer.
+	MaxExecutableNodeIDBytes = 256
+
 	// Authoring findings are bounded at the same aggregate graph-work scale.
 	// Wire accounting reserves a small response envelope inside the same 4 MiB
 	// public source/request scale, then charges worst-case JSON expansion and a

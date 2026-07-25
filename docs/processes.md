@@ -148,6 +148,13 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   schedule, `plan.approval` must be absent or `auto`, and stage-level `retry` /
   `approvalRetry` are not executable yet.
 
+- A node id ceiling that only applies to *running* a template. Authoring bounds
+  what characters a node id may contain, not how long it is, but a run has to
+  record durable evidence per node, and that row bounds the id at 256 bytes. Run
+  creation therefore refuses a template whose node ids — authored **or derived
+  from a compound's stages** — exceed it, rather than creating a run that could
+  never commit a transition. Editing and storing such a template still works.
+
 Not executable yet: agent deciders, agent or human task performers, retry
 backoff waits, same-session retry feedback (`retry.onFail:
 feedback-same-session`), retries on compound stages, human plan approval gates,

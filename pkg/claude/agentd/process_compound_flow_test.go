@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -173,6 +174,78 @@ func TestProcessRuntimeCompoundColdLoadResumesMidStage(t *testing.T) {
 	testharness.DecodeJSON(t, show, &shown)
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
 	assert.Equal(t, engine.NodeDone, shown.Checkpoint.Nodes["build.done"])
+}
+
+// TestProcessRuntimeRefusesRunsWhoseNodeIDExceedsTheEvidenceEnvelope is the
+// regression for the Medium finding of this PR's cold review.
+//
+// A node id longer than a durable evidence row can name used to be accepted:
+// the run was CREATED and then wedged, because every deterministic
+// program_prepared transition failed to persist and recovery looped on it. The
+// refusal has to happen before the run row exists.
+// It covers both halves of the boundary, because neither implies the other: the
+// derived case has a parent and a step that are each individually inside the
+// ceiling, and the authored case involves no compound at all.
+func TestProcessRuntimeRefusesRunsWhoseNodeIDExceedsTheEvidenceEnvelope(t *testing.T) {
+	// One byte over, in each of the two ways a node id can get there.
+	derived := processCompoundTemplate("compound-long-id")
+	build := derived.Nodes["build"]
+	build.Checks = []model.Step{{
+		ID:        strings.Repeat("c", db.MaxProcessRunNodeIDBytes-len("build.test.")+1),
+		Performer: model.Performer{Kind: model.PerformerProgram, Profile: "checker", Run: "true"},
+	}}
+	derived.Nodes["build"] = build
+
+	longNodeID := strings.Repeat("t", db.MaxProcessRunNodeIDBytes+1)
+	authored := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "plain-long-id", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": longNodeID}},
+			longNodeID: {
+				Type: model.NodeTypeTask, Next: model.Next{"next": "end"},
+				Performer: &model.Performer{Kind: model.PerformerProgram, Profile: "doer", Run: "true"},
+			},
+			"end": {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}
+
+	for _, test := range []struct {
+		name     string
+		tmpl     *model.Template
+		wantPath string
+	}{
+		{name: "derived stage id", tmpl: derived, wantPath: "nodes.build.checks[0]"},
+		{name: "authored node id", tmpl: authored, wantPath: "nodes." + longNodeID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, root := processRuntimeFlow(t)
+			putProcessRuntimeTemplate(t, root, test.tmpl)
+
+			var dispatched atomic.Int32
+			t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+				dispatched.Add(1)
+				return executor.Perform(ctx, dispatch)
+			}))
+
+			refused := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+				"templateId":               test.tmpl.ID,
+				"authorizeProgramProfiles": []string{"checker", "doer", "planner", "reviewer"},
+			})
+			require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
+			assert.Contains(t, refused.Body.String(), "process_run_invalid")
+			// The eligibility error renders the offending path and the ceiling, so an
+			// operator is told what to shorten rather than just "not executable".
+			assert.Contains(t, refused.Body.String(), test.wantPath)
+			assert.Contains(t, refused.Body.String(), "executable node id ceiling")
+
+			// No run row, and nothing was ever dispatched.
+			list := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
+			require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+			assert.Contains(t, list.Body.String(), `"runs":[]`)
+			agentd.WaitForProcessRunRuntimeForTest()
+			assert.Zero(t, dispatched.Load())
+		})
+	}
 }
 
 // createCompoundRunFixture writes a run row authorized for every stage profile

@@ -70,6 +70,17 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
 
+		// Every node a run can name has to fit the durable evidence envelope,
+		// authored or derived. Authoring bounds the id CHARSET but not its length,
+		// so without this a template with a long id is created and then wedges: the
+		// evidence row for that node can never be written, and no transition it
+		// takes part in can commit.
+		if len(nodeID) > model.MaxExecutableNodeIDBytes {
+			add("node_id_limit", path, fmt.Sprintf(
+				"this node id is %d bytes, above the %d-byte executable node id ceiling",
+				len(nodeID), model.MaxExecutableNodeIDBytes))
+		}
+
 		// Both authored join policies are executable. join: all activates once the
 		// complete candidate input set has settled with at least one arrival;
 		// join: any activates on the first arrival, and its losing branches keep
@@ -127,7 +138,7 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			if node.Type != model.NodeTypeTask {
 				add("unsupported_compound_stages", path, "plan, check, and review stages are executable only on task nodes")
 			} else {
-				addStageDiagnostics(add, path, node)
+				addStageDiagnostics(add, path, nodeID, node)
 			}
 		}
 		if node.Wait != nil && node.Type != model.NodeTypeWait {
@@ -195,9 +206,10 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 // the problem rather than that the node "has stages".
 //
 // Stage retry, approvalRetry, and the parent's own retry policy keep the
-// separate diagnostics they already had; this covers the performer and approval
-// axes.
-func addStageDiagnostics(add func(code, path, message string), path string, node model.Node) {
+// separate diagnostics they already had; this covers the performer, approval,
+// and derived-id axes.
+func addStageDiagnostics(add func(code, path, message string), path, nodeID string, node model.Node) {
+	addStageIDDiagnostics(add, path, nodeID, node)
 	if node.Plan != nil {
 		// A human plan-approval gate has no verdict input in this slice, so
 		// admitting it would expand into a stage nothing could ever advance.
@@ -212,6 +224,36 @@ func addStageDiagnostics(add func(code, path, message string), path string, node
 	}
 	if node.Review != nil {
 		addStagePerformerDiagnostics(add, path+".review.performer", node.Review.Performer)
+	}
+}
+
+// addStageIDDiagnostics rejects a compound whose expansion derives a node id
+// too long for a run to name.
+//
+// It is the derived half of the same envelope the node loop enforces on authored
+// ids, and it is not implied by that check: a derived id is the parent id, the
+// stage, and the step id concatenated, so a parent and a check step that are
+// each individually inside the ceiling can still derive a child id past it.
+//
+// It is checked over the exact ids model.ExpandNode returns — the same call
+// preparation makes — so it cannot disagree with what actually gets prepared.
+func addStageIDDiagnostics(add func(code, path, message string), path, nodeID string, node model.Node) {
+	// The specs arrive in expansion order, so the nth test stage is checks[n] and
+	// the index is a count rather than a second derivation of the same shape.
+	checkIndex := 0
+	for _, spec := range model.ExpandNode(nodeID, node) {
+		stagePath := path + "." + string(spec.Stage)
+		if spec.Stage == model.StageTest {
+			stagePath = fmt.Sprintf("%s.checks[%d]", path, checkIndex)
+			checkIndex++
+		}
+		if len(spec.ChildID) > model.MaxExecutableNodeIDBytes {
+			// The offending id is deliberately not echoed: it is unbounded input,
+			// and its length plus its stage is what an author needs to act.
+			add("expanded_node_id_limit", stagePath, fmt.Sprintf(
+				"this stage derives a %d-byte node id, above the %d-byte executable node id ceiling; shorten the task id or the step id",
+				len(spec.ChildID), model.MaxExecutableNodeIDBytes))
+		}
 	}
 }
 

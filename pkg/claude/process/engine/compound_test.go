@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
@@ -423,6 +425,161 @@ func TestFailedStageKeepsTheCompoundParentRunningWhileTheRunDrains(t *testing.T)
 	if checkpoint.Edges["left"][model.DefaultOutcome] != EdgeUnresolved {
 		t.Fatalf("failed compound settled its authored route: %q", checkpoint.Edges["left"][model.DefaultOutcome])
 	}
+}
+
+// TestCompoundRejectsDerivedNodeIDsAboveTheExecutableEnvelope covers the case
+// authoring cannot see: the parent id and the step id are each individually
+// fine, but the id their expansion derives is past the envelope a run's durable
+// evidence can name. Such a run would be created and then wedge on its first
+// transition, so it has to be refused before it exists.
+func TestCompoundRejectsDerivedNodeIDsAboveTheExecutableEnvelope(t *testing.T) {
+	// The two derived shapes, each measured against the exact suffix
+	// model.ExpandNode appends, one byte either side of the boundary.
+	//
+	// A plan-only compound derives ".plan", ".do", and ".done", so ".plan" is the
+	// longest suffix a parent id has to fit under. A checks-only compound with a
+	// one-byte parent isolates the step id instead.
+	longestPlanParent := strings.Repeat("a", model.MaxExecutableNodeIDBytes-len(".plan"))
+	longestCheckStep := strings.Repeat("c", model.MaxExecutableNodeIDBytes-len("p.test."))
+
+	planOnly := func(nodeID string) *model.Template {
+		tmpl := compoundStageTemplate(func(node *model.Node) {
+			node.Checks, node.Review = nil, nil
+		})
+		renameCompoundParent(tmpl, nodeID)
+		return tmpl
+	}
+	checksOnly := func(stepID string) *model.Template {
+		tmpl := compoundStageTemplate(func(node *model.Node) {
+			node.Plan, node.Review = nil, nil
+			node.Checks = []model.Step{{ID: stepID,
+				Performer: model.Performer{Kind: model.PerformerProgram, Run: "unit"}}}
+		})
+		renameCompoundParent(tmpl, "p")
+		return tmpl
+	}
+
+	tests := []struct {
+		name     string
+		tmpl     func() *model.Template
+		wantPath string
+	}{
+		{
+			name: "longest accepted parent.plan",
+			tmpl: func() *model.Template { return planOnly(longestPlanParent) },
+		},
+		{
+			name:     "parent.plan one byte too long",
+			tmpl:     func() *model.Template { return planOnly(longestPlanParent + "a") },
+			wantPath: "nodes." + longestPlanParent + "a.plan",
+		},
+		{
+			name: "longest accepted parent.test.step",
+			tmpl: func() *model.Template { return checksOnly(longestCheckStep) },
+		},
+		{
+			name:     "parent.test.step one byte too long",
+			tmpl:     func() *model.Template { return checksOnly(longestCheckStep + "c") },
+			wantPath: "nodes.p.checks[0]",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmpl := test.tmpl()
+			assertAuthoringValid(t, tmpl)
+
+			diagnostics := CheckEligibility(tmpl)
+			if test.wantPath == "" {
+				if len(diagnostics) != 0 {
+					t.Fatalf("eligibility diagnostics = %#v", diagnostics)
+				}
+				// It must genuinely prepare, not merely pass the bound.
+				if _, err := Prepare(tmpl, nil); err != nil {
+					t.Fatalf("prepare: %v", err)
+				}
+				return
+			}
+			if !hasCode(diagnostics, "expanded_node_id_limit") {
+				t.Fatalf("missing expanded_node_id_limit in %#v", diagnostics)
+			}
+			var found bool
+			for _, diagnostic := range diagnostics {
+				if diagnostic.Code == "expanded_node_id_limit" && diagnostic.Path == test.wantPath {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no expanded_node_id_limit at %q in %#v", test.wantPath, diagnostics)
+			}
+			// Ineligible means no run: preparation refuses rather than building a
+			// definition whose transitions could never be recorded.
+			if _, err := Prepare(tmpl, nil); !errors.Is(err, ErrTemplateIneligible) {
+				t.Fatalf("prepare error = %v", err)
+			}
+		})
+	}
+}
+
+// TestRejectsAuthoredNodeIDsAboveTheExecutableEnvelope is the same boundary for
+// an ordinary authored node, with no compound involved. Authoring bounds the id
+// charset and not its length, so a long id passes validation and then wedges the
+// run it creates; the ceiling is a property of what a run can NAME, so it has to
+// hold for every prepared node, not only derived ones.
+func TestRejectsAuthoredNodeIDsAboveTheExecutableEnvelope(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		size     int
+		rejected bool
+	}{
+		{name: "at the ceiling", size: model.MaxExecutableNodeIDBytes},
+		{name: "one byte over", size: model.MaxExecutableNodeIDBytes + 1, rejected: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			nodeID := strings.Repeat("t", test.size)
+			tmpl := sequentialTemplate(nodeID)
+			assertAuthoringValid(t, tmpl)
+
+			diagnostics := CheckEligibility(tmpl)
+			if !test.rejected {
+				if len(diagnostics) != 0 {
+					t.Fatalf("eligibility diagnostics = %#v", diagnostics)
+				}
+				if _, err := Prepare(tmpl, nil); err != nil {
+					t.Fatalf("prepare: %v", err)
+				}
+				return
+			}
+			if !hasCode(diagnostics, "node_id_limit") {
+				t.Fatalf("missing node_id_limit in %#v", diagnostics)
+			}
+			if _, err := Prepare(tmpl, nil); !errors.Is(err, ErrTemplateIneligible) {
+				t.Fatalf("prepare error = %v", err)
+			}
+		})
+	}
+}
+
+// TestExecutableNodeIDEnvelopeMatchesTheDurableEvidenceBound pins the two
+// constants together. The eligibility bound is only meaningful because it is the
+// SAME envelope the durable evidence row enforces; if persistence ever tightened
+// its own limit independently, this check would start admitting runs that wedge.
+func TestExecutableNodeIDEnvelopeMatchesTheDurableEvidenceBound(t *testing.T) {
+	if model.MaxExecutableNodeIDBytes != db.MaxProcessRunNodeIDBytes {
+		t.Fatalf("executable node id envelope %d disagrees with the durable evidence bound %d",
+			model.MaxExecutableNodeIDBytes, db.MaxProcessRunNodeIDBytes)
+	}
+}
+
+// renameCompoundParent re-keys the fixture's compound node and the start edge
+// that reaches it.
+func renameCompoundParent(tmpl *model.Template, nodeID string) {
+	build := tmpl.Nodes["build"]
+	delete(tmpl.Nodes, "build")
+	tmpl.Nodes[nodeID] = build
+	start := tmpl.Nodes["start"]
+	start.Next = model.Next{model.DefaultOutcome: nodeID}
+	tmpl.Nodes["start"] = start
 }
 
 func preparedNodeIDs(definition *Definition) []string {
