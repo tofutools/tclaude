@@ -2919,6 +2919,18 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   overflow: auto;
   margin: 10px 0;
 }
+/* Import inspection is an intermediate action, not a form field or the final
+   commit. Keep it compact at the start of the modal and opt it into the shared
+   `.tool` skin; otherwise flex stretching plus the browser's native button
+   chrome turns Preview into a full-width white bar. */
+.profile-transfer-preview-button {
+  align-self: flex-start;
+  white-space: nowrap;
+}
+.profile-transfer-preview-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
 .profile-transfer-row {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -10089,6 +10101,16 @@ body.wizard :is(#profile-export-modal, #profile-import-modal) input:focus,
 body.wizard :is(#profile-export-modal, #profile-import-modal) textarea:focus,
 body.wizard :is(#profile-export-modal, #profile-import-modal) select:focus { border-color: #a97bd6; }
 body.wizard :is(#profile-export-modal, #profile-import-modal) input[type=checkbox] { accent-color: #a97bd6; }
+/* Preview sits outside .modal-buttons, so it needs its own scoped wizard skin.
+   The same shared control appears in the sandbox-profile import sibling. */
+body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button {
+  background: #241b3d;
+  border-color: #d9b45a;
+  color: #f3e6c0;
+}
+body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button:hover:not(:disabled) {
+  background: #3a2a63;
+}
 
 /* ─── Wizard sandbox-profile dialogs — "Wards" ─────────────────────────
    The sandbox-profile manage overlay + its editor and export/import modals get

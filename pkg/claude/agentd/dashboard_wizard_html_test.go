@@ -590,6 +590,7 @@ func TestDashboardHTML_WizardProfilesManage(t *testing.T) {
 	must("body.wizard #profiles-manage-modal .manage-modal", "the profiles overlay surface is re-skinned")
 	must("body.wizard #profiles-manage-modal #profile-create-open.primary", "the + new profile button gets the gilded-arcane treatment")
 	must("body.wizard #profiles-manage-modal .template-card", "the profile cards are re-skinned")
+	must("body.wizard :is(#profile-import-modal, #sandbox-profile-import-modal) .profile-transfer-preview-button", "the profile import Preview action has a scoped wizard skin")
 }
 
 // TestDashboardCSS_WizardProfilesManageScoped guards that the wizard

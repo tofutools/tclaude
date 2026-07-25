@@ -62,6 +62,10 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="profile-export-list"`, "the profile export checklist")
 	present(`id="profile-import-modal"`, "the profile import modal")
 	present(`id="profile-import-preview"`, "the profile import preview")
+	if count := strings.Count(dashboardAssets, `class="tool profile-transfer-preview-button"`); count != 2 {
+		t.Errorf("dashboard has %d styled import Preview actions, want 2 (spawn and sandbox profiles)", count)
+	}
+	present(".profile-transfer-preview-button {\n  align-self: flex-start;", "the import Preview action stays compact instead of stretching across the modal")
 	present(`id="profile-editor-modal"`, "the profile editor modal")
 	present(`id="profile-editor-name"`, "the editor's profile-name field")
 	present(`id="profile-editor-disabled"`, "the editor can disable a profile without deleting it")
