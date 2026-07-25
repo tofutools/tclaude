@@ -668,7 +668,18 @@ func commitEvidence(definition *engine.Definition, before, after engine.Checkpoi
 	events := make([]db.ProcessRunEvent, 0, len(input)+len(joins)+len(advance))
 	events = append(events, input...)
 	events = append(events, joins...)
-	return append(events, advance...)
+	events = append(events, advance...)
+	// Evidence is constructed before its causal order is assembled: in
+	// particular, downstream advance evidence exists before join evidence is
+	// derived, even though the join must precede it in the public stream. Keep
+	// occurredAt useful to human-facing readers by carrying a later timestamp
+	// forward inside this committed batch. Sequence remains authoritative.
+	for index := 1; index < len(events); index++ {
+		if events[index].OccurredAt.Before(events[index-1].OccurredAt) {
+			events[index].OccurredAt = events[index-1].OccurredAt
+		}
+	}
+	return events
 }
 
 // joinEvidence is the human-facing record of what one committed transition did
