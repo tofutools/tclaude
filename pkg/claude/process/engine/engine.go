@@ -233,7 +233,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// the same identity: the counter has moved on, so the old command no
 		// longer matches anything the reducer would mint.
 		attempt := nextAttempt(next, node.id)
-		if ceiling := attemptCeiling(next, node); attempt > ceiling {
+		if ceiling := executableAttemptCeiling(next, definition, node); attempt > ceiling {
 			return invalid("node %q has no attempt %d within its budget of %d", node.id, attempt, ceiling)
 		}
 		expected := programCommand(next.RunID, node, attempt)
@@ -307,11 +307,29 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// nothing could act on. A doomed run spends no further budget, parks
 			// nobody, and takes the failure path.
 			if !doomed(next) {
-				// Retry is authored policy, and it is branch-local: a failed
-				// attempt still inside its budget re-readies only THIS node, so
-				// the next planning pass mints a fresh attempt for it while every
+				// budget names the node whose attempt budget this failure spends.
+				// For an ordinary task that is the node itself. For a compound's
+				// check or review gate it is the do stage: the gate's non-success
+				// is a verdict about that work, and the compound's single authored
+				// budget is what pays for another pass at it.
+				budget, gate := node, false
+				if anchor, ok := gateAnchor(definition, node); ok {
+					budget, gate = anchor, true
+				}
+				// Retry is authored policy, and it is branch-local: a failure still
+				// inside its budget re-readies only work inside THIS branch, so the
+				// next planning pass mints a fresh attempt for it while every
 				// sibling keeps exactly what it had.
-				if next.Attempts[node.id] < attemptCeiling(next, node) {
+				if next.Attempts[budget.id] < attemptCeiling(next, budget) {
+					if gate {
+						// One local reset over the parent's own child list: the work
+						// runs again and every stage from there through this gate
+						// runs again with it.
+						if err := resetCompoundStages(&next, definition, index); err != nil {
+							return Checkpoint{}, err
+						}
+						break
+					}
 					next.Nodes[node.id] = NodeReady
 					break
 				}
@@ -319,8 +337,12 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 				// asked for a person to look at exhaustion, so the branch parks
 				// instead of dooming the run: siblings keep running, the run stays
 				// live, and an operator resolves it. A task with NO authored retry
-				// policy has nothing to park on and stays fail-fast.
-				if node.retryAuthored {
+				// policy — including a gate whose compound authored none — has
+				// nothing to park on and stays fail-fast.
+				if budget.retryAuthored {
+					// The gate parks at its OWN node and attempt: that pair is the
+					// exact identity an operator resolution binds to, and it is
+					// what the reset would have moved next.
 					next.Nodes[node.id] = NodeBlocked
 					addBlocked(&next, node.id, observation.Error)
 					break
@@ -389,6 +411,15 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		switch resolution.Action {
 		case ResolveRetry:
 			removeBlocked(&next, node.id)
+			// A parked gate is the one asymmetric case: its budget lives on its do
+			// anchor, so the raise lands on a different node and the work runs
+			// again. That is why it is its own named helper.
+			if _, gate := gateAnchor(definition, node); gate {
+				if err := retryBlockedGate(&next, definition, index); err != nil {
+					return Checkpoint{}, err
+				}
+				break
+			}
 			if err := raiseAttemptCeiling(&next, node); err != nil {
 				return Checkpoint{}, err
 			}
@@ -397,6 +428,15 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			next.Nodes[node.id] = NodeReady
 		case ResolveSkip:
 			removeBlocked(&next, node.id)
+			// A prepared stage has no authored route of its own, so passing it is a
+			// step along its parent's ordered child list — exactly what a successful
+			// stage observation does, and the only way the next stage activates.
+			if node.parent >= 0 {
+				if err := advanceStage(&next, definition, index); err != nil {
+					return Checkpoint{}, err
+				}
+				break
+			}
 			// The task settles through its sole authored route, so downstream work
 			// activates exactly as it would have on success. The checkpoint cannot
 			// tell the two apart — NodeSkipped already means "closed by a decision"

@@ -83,6 +83,17 @@ type definitionNode struct {
 	// parent is the prepared index of the compound parent whose expansion
 	// produced this node, or -1 for an authored node.
 	parent int
+	// stage is the derived stage kind of a compound child, and the empty kind for
+	// an authored node. It is the minimum private identity the rework rules need:
+	// which child is the work, and which are the gates that render a verdict over
+	// it. Nothing durable ever names it — expansion stays a pure projection of the
+	// pinned template, re-derived identically on every cold load.
+	stage model.StageKind
+	// doAnchor is a compound parent's prepared do-child index, and -1 everywhere
+	// else. It is what makes "this gate's work stage" an O(1) lookup instead of a
+	// second scan of the child list, and it is the single node the compound's one
+	// rework budget lives on.
+	doAnchor int
 }
 
 type definitionEdge struct {
@@ -132,10 +143,11 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
 		prepared := definitionNode{
-			id:      nodeID,
-			parent:  -1,
-			joinAll: node.Join == model.JoinAll,
-			joinAny: node.Join == model.JoinAny,
+			id:       nodeID,
+			parent:   -1,
+			doAnchor: -1,
+			joinAll:  node.Join == model.JoinAll,
+			joinAny:  node.Join == model.JoinAny,
 		}
 		switch node.Type {
 		case model.NodeTypeStart:
@@ -178,10 +190,13 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		// prepared order stays a single deterministic sequence and a compound's
 		// stages sit exactly where the parent did.
 		for _, spec := range model.ExpandNode(nodeID, node) {
-			// Every stage is a single fail-fast attempt: eligibility rejects stage
-			// retry and approvalRetry policies, so no child carries an authored
-			// budget and none of them can park a branch on an operator.
-			child := definitionNode{id: spec.ChildID, parent: parentIndex, maxAttempts: 1}
+			// Every stage but the do stage is a single fail-fast attempt:
+			// eligibility rejects stage retry and approvalRetry policies, so no
+			// other child carries an authored budget.
+			child := definitionNode{
+				id: spec.ChildID, parent: parentIndex, doAnchor: -1,
+				stage: spec.Stage, maxAttempts: 1,
+			}
 			if spec.Stage == model.StageDone {
 				child.kind = definitionStageDone
 			} else {
@@ -192,11 +207,25 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 				}
 				child.program = program
 			}
+			// The compound's authored retry budget belongs to the do stage and to
+			// nothing else. It is the SINGLE rework budget: it bounds do executions
+			// whether a do program failed or a gate sent the work back, which is why
+			// no gate is ever prepared with one of its own.
+			if spec.Stage == model.StageDo {
+				child.maxAttempts = model.RetryBudget(node.Retry)
+				child.retryAuthored = node.Retry != nil
+			}
 			childIndex, err := appendNode(child)
 			if err != nil {
 				return nil, err
 			}
 			definition.nodes[parentIndex].children = append(definition.nodes[parentIndex].children, childIndex)
+			if spec.Stage == model.StageDo {
+				definition.nodes[parentIndex].doAnchor = childIndex
+			}
+		}
+		if definition.nodes[parentIndex].doAnchor < 0 {
+			return nil, fmt.Errorf("%w: compound %q expanded without a do stage", ErrInvalidDefinition, nodeID)
 		}
 	}
 	for fromIndex := range definition.nodes {
@@ -550,8 +579,10 @@ func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 		}
 		// The ceiling, not the authored budget: an operator retry durably raised
 		// it, and both this bound and planning's own guard read the same helper
-		// so a legitimately retried run cannot fail to cold-load.
-		if ceiling := attemptCeiling(checkpoint, node); attempt < 1 || attempt > ceiling {
+		// so a legitimately retried run cannot fail to cold-load. For a compound
+		// gate that helper derives the bound from the do anchor, because a gate
+		// re-runs once per do execution and has no ceiling entry of its own.
+		if ceiling := executableAttemptCeiling(checkpoint, definition, node); attempt < 1 || attempt > ceiling {
 			return fmt.Errorf("%w: node %q attempt %d is outside its budget of 1..%d",
 				ErrInvalidCheckpoint, nodeID, attempt, ceiling)
 		}
@@ -618,8 +649,13 @@ func validateBlocked(checkpoint Checkpoint, definition *Definition) error {
 	}
 	seen := make(map[string]struct{}, len(checkpoint.Blocked))
 	for _, obligation := range checkpoint.Blocked {
+		// A compound gate carries no authored policy of its own — the compound's
+		// single budget lives on the do stage it gates — so the reference check
+		// follows that anchor rather than demanding a policy the prepared shape
+		// never puts there. It stays a stage-kind and parent scoped relaxation:
+		// nothing about the parent's or the siblings' current state is proved.
 		node, ok := definitionNodeByID(definition, obligation.NodeID)
-		if !ok || node.kind != definitionTask || !node.retryAuthored {
+		if !ok || node.kind != definitionTask || !blockableTask(definition, node) {
 			return invalid("blocked node %q is not a prepared program task with an authored retry policy", obligation.NodeID)
 		}
 		if _, dup := seen[obligation.NodeID]; dup {

@@ -223,17 +223,6 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "retry on a compound task",
-			code: "unsupported_retry",
-			tmpl: func() *model.Template {
-				tmpl := retryTemplate(&model.RetryPolicy{MaxAttempts: 2})
-				node := tmpl.Nodes["task"]
-				node.Plan = &model.Step{ID: "plan", Performer: model.Performer{Kind: model.PerformerProgram, Run: "plan"}}
-				tmpl.Nodes["task"] = node
-				return tmpl
-			},
-		},
-		{
 			// Only a task node derives stages, so stages anywhere else are still a
 			// capability this engine has no meaning for at all.
 			name: "compound stages on a non-task node",

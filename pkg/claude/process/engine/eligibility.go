@@ -85,20 +85,19 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		// complete candidate input set has settled with at least one arrival;
 		// join: any activates on the first arrival, and its losing branches keep
 		// running to their own settled outcome and arrive late at the reducer.
-		// A plain program task may declare a bounded retry budget: a failed
-		// attempt inside the budget re-readies that node and the next planning
-		// pass mints a fresh attempt-bound command. Only that shape is admitted.
-		// Everything else the authored policy can say — a retry on a node kind
-		// this engine does not execute, a compound stage's retry, a wait between
-		// attempts, or reusing a possibly poisoned performer session — keeps its
-		// own path-specific diagnostic.
+		// A program task may declare a bounded retry budget, and the SAME shape is
+		// admitted whether or not it declares stages: for a plain task a failed
+		// attempt inside the budget re-readies that node, and for a compound the
+		// budget is its one rework budget — it bounds do-stage executions whether
+		// a do program failed or a check or review gate sent the work back. Only
+		// that shape is admitted. Everything else the authored policy can say — a
+		// retry on a node kind this engine does not execute, a per-stage retry, a
+		// wait between attempts, or reusing a possibly poisoned performer session
+		// — keeps its own path-specific diagnostic.
 		if node.Retry != nil {
-			switch {
-			case node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerProgram:
+			if node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerProgram {
 				add("unsupported_retry", path+".retry", "only program task retries are executable in this engine yet")
-			case node.IsCompound():
-				add("unsupported_retry", path+".retry", "compound stage retries are not executable in this engine yet")
-			default:
+			} else {
 				if node.Retry.MaxAttempts <= 0 {
 					add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
 				} else if node.Retry.MaxAttempts > maxExecutableRetryAttempts {
