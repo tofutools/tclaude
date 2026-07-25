@@ -878,22 +878,29 @@ or a replaced browser client finishes tearing down. Once the connection has
 been stable for a second, later disconnects keep the explicit **Reconnect**
 control; they never enter a permanent automatic retry loop.
 
-Losing `agentd` is the one exception. It drops every web terminal at once, and
-the dashboard notices in one of two ways: a poll that was refused and then
-succeeded, or a snapshot carrying a different daemon instance id than the last
-one. The second matters because the poll runs only every 2 seconds — every 10
-while the tab is hidden — so a quick restart is easily stepped over without a
-single failed request; the instance id changes on every restart regardless.
+Restarting `agentd` is the one exception, because it is the one disconnect a
+terminal can prove. Every web terminal's connection dies with the daemon while
+the tmux session behind it keeps running, so a reattach is exactly the right
+move — but from the browser's side that looks identical to the ordinary reasons
+a terminal closes (the session ended, the terminal was reopened in another
+window, you closed it elsewhere), where reattaching would steal back a terminal
+you deliberately moved.
 
-On that recovery — and only there — the dashboard makes one reconnect pass over
-its terminals. A pane is redialled exactly when it is offering its **Reconnect**
-control, so the pass is the dashboard pressing that button once for you. Panes
-that are still connected, still dialling, or waiting on their own disconnect
-prompt are left alone, so it never races a terminal reopened elsewhere. A
-redial may still resolve through the short initial-retry window described above,
-and if it fails the pane goes back to the **Reconnect** control: there is no
-recurring background retry. Standalone pop-out tabs do not poll the daemon, so
-they keep that control instead of reconnecting on their own.
+`agentd` publishes an instance id that is fixed for the life of the process and
+necessarily different in the next one, at `/api/instance`. A terminal remembers
+the id it connected under; when its connection settles as disconnected it polls
+that endpoint — roughly once a second at first, backing off, giving up after
+about 80 seconds — and reattaches once if it is told the daemon is now a
+different process. A daemon that is simply unreachable is not an answer, so it
+keeps waiting; the same daemon answering is a definite no, so it does nothing.
+All waiting terminals share one poll, and a hidden browser tab spends nothing:
+it checks the moment you look at it again.
+
+A reattach that itself fails needs a further restart to try again, and once the
+budget runs out the terminal keeps only its **Reconnect** control. Nothing else
+about a disconnect triggers an automatic reattach, and this works the same in
+the dashboard's Terminals tab and in a standalone pop-out — neither depends on
+the dashboard's own connection state.
 
 Terminal tabs can be dragged within the tab strip to reorder them. The insertion
 line shows whether the drop will land before or after the tab under the pointer.

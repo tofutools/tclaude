@@ -33,10 +33,8 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 	// stops the banner appearing / clearing silently.
 	must("export function noteConnected", "connection.js exposes the connected signal")
 	must("export function noteDisconnected", "connection.js exposes the disconnected signal")
-	// The import list itself is checked by the module-graph test; here it is
-	// enough that some module still pulls the watchdog in, alongside the call
-	// needles below.
-	must("from './connection.js'", "refresh.js imports the watchdog")
+	must("import { noteConnected, noteDisconnected } from './connection.js'",
+		"refresh.js imports the watchdog")
 	must("noteConnected();", "refresh.js reports a reachable agentd each poll")
 	must("noteDisconnected();", "refresh.js reports an unreachable agentd on a rejected fetch")
 
@@ -66,23 +64,6 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 		strings.Contains(dashboardAssets, "getElementById('disconnect-status')") {
 		t.Error("connection watchdog must publish Signal state, not imperatively rewrite Preact-owned disconnect DOM")
 	}
-
-	// An agentd outage also kills every web terminal's WebSocket. The recovery
-	// edge is published once per outage and the terminal shell redials the dead
-	// panes from it. Behaviour — including which panes are eligible and the
-	// once-per-outage guarantee — is covered by jstest/terminal-outage-reconnect;
-	// these needles only pin that the modules are still connected to each other,
-	// because a JS unit test can inject its own wiring and would not notice the
-	// production graph coming apart.
-	must("export function onConnectionRestored", "connection.js publishes the recovery edge")
-	must("export function noteServerIdentity",
-		"connection.js reads the daemon instance id, so a restart no poll refused is still seen")
-	must("noteServerIdentity(data.instance_id)", "refresh.js reports each poll's daemon identity")
-	must("import { onConnectionRestored } from './connection.js'",
-		"the dashboard entry subscribes the terminal shell to the recovery edge")
-	must("onConnectionRestored: dependencies.onConnectionRestored",
-		"the terminals island descriptor forwards the recovery edge")
-	must("reconnectAfterOutage", "the terminal shell has a redial pass for the recovery edge")
 
 	// CSS: hidden by default (display:none) and revealed via .show. It remains a
 	// distinct non-dialog overlay because it is connection status, not modal UI.

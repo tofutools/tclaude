@@ -101,11 +101,30 @@ var dashboardGraceSessionHashes = map[string]time.Time{}
 // dashboardSessionNow is indirected for focused expiry tests.
 var dashboardSessionNow = time.Now
 
-// daemonInstanceID is generated once per agentd process and published in every
-// snapshot. It is a restart marker for connected pages, nothing more: it is not
-// a credential, carries no state, and is meaningless to anyone who cannot
-// already read a snapshot.
+// daemonInstanceID identifies THIS agentd process. It is generated once at
+// startup, so it necessarily differs in the next process — including a restart
+// of the same build, which Version cannot distinguish.
+//
+// It exists for clients holding something that dies with the daemon: a browser
+// terminal's PTY WebSocket. Such a client polls /api/instance while it is down
+// and reattaches when the id it sees is no longer the one it connected under.
+// It is a restart marker and nothing more: not a credential, carrying no state,
+// and useless to anyone who cannot already authenticate to the dashboard.
 var daemonInstanceID = uuid.NewString()
+
+// handleDashboardInstance answers the restart probe above. It is deliberately
+// the cheapest endpoint in the daemon — a disconnected terminal polls it once a
+// second — so it touches no database, builds no view, and returns one field.
+func handleDashboardInstance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+		return
+	}
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"instance_id": daemonInstanceID})
+}
 
 const dashboardCookieName = "tclaude_dashboard_session"
 
@@ -185,6 +204,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
 	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
+	mux.HandleFunc("/api/instance", handleDashboardInstance)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
@@ -782,12 +802,6 @@ func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int
 type snapshotPayload struct {
 	GeneratedAt string `json:"generated_at"`
 	Version     string `json:"version"`
-	// InstanceID identifies THIS agentd process and changes on every restart,
-	// including a restart of the same build (Version does not). A page that sees
-	// it change knows the daemon it was talking to is gone — and with it every
-	// browser-terminal WebSocket — even when the restart was quick enough that
-	// no poll was ever refused.
-	InstanceID string `json:"instance_id"`
 	// StaticVersion fingerprints the registry-shaped payload fields that rarely
 	// change. The browser echoes it on the next poll; when it still matches,
 	// StaticUnchanged is true and those fields are sent as null then restored
@@ -2238,7 +2252,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		Version:              buildversion.AppVersion(),
-		InstanceID:           daemonInstanceID,
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     readUserDefaultModel(),
 		Harnesses:            buildHarnessCatalog(),

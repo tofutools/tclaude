@@ -1346,7 +1346,6 @@ export function mountTerminalShellIsland({
   widgetFactory = mountTerminalWidget,
   onComposeMessage = null,
   composeMessageDialogKind = () => '',
-  onConnectionRestored = null,
 }) {
   // A custom widget factory (tests or another embedding) owns its own runtime.
   // The production xterm adapter asks the facade to load the classic core
@@ -1363,20 +1362,7 @@ export function mountTerminalShellIsland({
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
-  // An agentd outage drops every terminal WebSocket while the dashboard itself
-  // recovers. The panes are then dead but perfectly happy to be redialed, so
-  // the shell repairs them when the watchdog reports agentd came back — one
-  // pass per outage, never a background retry loop.
-  //
-  // Subscribed LAST, immediately before the cleanup that releases it: the
-  // watchdog's listener set outlives this island, so a render that throws
-  // before registerCleanup must not leave a listener behind holding a shell
-  // that was never mounted.
-  const unbindConnectionRestored = typeof onConnectionRestored === 'function'
-    ? onConnectionRestored(() => actions.reconnectAfterOutage())
-    : null;
   registerCleanup(() => {
-    unbindConnectionRestored?.();
     unbindHandoff();
     unregisterController();
     render(null, modalHost);

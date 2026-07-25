@@ -248,43 +248,6 @@ export function createTerminalShellActions({
     void promptModalReconnect(id);
   }
 
-  // reconnectAfterOutage repairs the terminals an agentd outage killed. The
-  // caller decides WHEN — the dashboard fires it on the connection watchdog's
-  // recovery edge, so it runs once per outage and never on a terminal that
-  // merely closed on its own.
-  //
-  // The pane's own Reconnect control is the selector: exactly the widgets
-  // offering it are dialed, which is this pass pressing that button once for
-  // the operator. That signal (reconnectAvailable) is the settled one — the
-  // widget clears it for the whole of a dial and its bounded initial-retry
-  // window, and unlike the status string it cannot be masked by a transient
-  // interaction message such as 'copied'. So a live pane, a dial already in
-  // flight, and a pane the operator reopened elsewhere are all left alone; a
-  // pane stuck at 'authentication required' is included deliberately, since a
-  // restarted daemon is exactly when that can start working again.
-  //
-  // One dial each. It may still resolve through the widget's initial-retry
-  // ladder (a few hundred milliseconds of bounded retries for a daemon whose
-  // listener is up before its sessions are), after which the pane returns to
-  // the explicit control — never a background loop.
-  //
-  // A modal whose own disconnect confirmation is open is skipped: that dialog
-  // already owns the decision and answering it reconnects.
-  //
-  // Returns the number of widgets dialed, for tests and callers that report.
-  function reconnectAfterOutage() {
-    if (disposed) return 0;
-    const modalID = state.modal.value?.id ?? null;
-    let dialed = 0;
-    for (const [id, widget] of widgets) {
-      if (widget.isDisposed?.() || !widget.reconnectAvailable()) continue;
-      if (confirmOpen && id === modalID) continue;
-      dialed += 1;
-      void widget.connect();
-    }
-    return dialed;
-  }
-
   async function confirmModalClose(id) {
     const descriptor = state.modal.value;
     if (disposed || confirmOpen || !descriptor || descriptor.id !== id) return;
@@ -370,7 +333,6 @@ export function createTerminalShellActions({
     closeModal,
     promptModalReconnect,
     onModalDisconnect,
-    reconnectAfterOutage,
     confirmModalClose,
     detachModal,
     moveModalToPane,
