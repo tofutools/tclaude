@@ -23,14 +23,15 @@ import { terminalThemeFor } from './terminal-theme.js';
 export const INITIAL_RETRY_DELAYS_MS = Object.freeze([200, 500, 1000]);
 export const INITIAL_RETRY_STABILITY_MS = 1000;
 
-// A restarted agentd is the one disconnect a terminal may repair on its own,
-// because it is the one it can PROVE: the daemon answering /api/instance is a
-// different process than the one this socket was attached to, so the socket did
-// not close because the session ended or because someone took the attach
-// elsewhere — it closed because the daemon went away, and the tmux session on
-// the other side is still there. See instance-watch.js; the widget arms a
-// watcher when it settles at disconnected and redials once if it is told the
-// daemon is new. Everything else keeps the explicit Reconnect control.
+// Losing agentd is the one disconnect a terminal may repair on its own, because
+// it is the one it can PROVE. Every other reason a socket closes — the session
+// ended, the operator reopened this terminal somewhere else — leaves a daemon
+// that is alive and unchanged, and reattaching there drags back a terminal
+// somebody deliberately moved. So a settled disconnect asks /api/instance what
+// the daemon was doing when we lost it, and only a daemon that had already gone
+// away (or already come back as a different process) earns one reattach. See
+// instance-watch.js and watchForRestart below; everything else keeps nothing
+// but the explicit Reconnect control.
 
 // departedAgentSelectors returns every stable agent-id / conversation-id that
 // belonged to the previous active roster but not the next one. Keeping this as
@@ -102,6 +103,11 @@ export function mountTerminalWidget({
   initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
   initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
   restartWatcher = sharedRestartWatcher,
+  // Off for a surface that answers its own disconnect. The modal terminal
+  // raises a blocking "reconnect or close?" dialog, and a reattach landing
+  // silently behind it would leave the operator answering a stale question —
+  // "Close terminal" would then kill a session that had already come back.
+  autoReattach = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
   now = () => Date.now(),
@@ -230,19 +236,17 @@ export function mountTerminalWidget({
       .then((id) => {
         if (disposed || mine !== generation) return;
         instanceBaseline = typeof id === 'string' && id ? id : null;
+        // The socket can die while this read is still in flight — a reattach
+        // dropped by a daemon that is up but not yet ready does exactly that.
+        // Such a disconnect settled with no baseline to reason about, so give
+        // it the chance now rather than losing its repair to a race.
+        if (instanceBaseline && !cancelRestartWatch && status === 'disconnected') {
+          watchForRestart();
+        }
       }, () => { /* no baseline; this connection simply cannot self-repair */ });
   }
 
-  // watchForRestart arms the one automatic reattach this widget will make. It
-  // runs only from a SETTLED disconnect (after the bounded initial-retry
-  // window), fires at most once, and re-arms only if the redial itself settles
-  // disconnected again — which then needs a further, different restart to
-  // trigger. There is no path here that redials a daemon that never changed.
-  function watchForRestart() {
-    cancelRestartWatchIfAny();
-    if (disposed || !restartWatcher || !instanceBaseline) return;
-    const baseline = instanceBaseline;
-    const mine = generation;
+  function armRestartWatch(baseline, mine) {
     cancelRestartWatch = restartWatcher.watchForRestart(baseline, (id) => {
       cancelRestartWatch = null;
       if (disposed || mine !== generation) return;
@@ -254,6 +258,42 @@ export function mountTerminalWidget({
       if (typeof id === 'string' && id) instanceBaseline = id;
       void connect();
     });
+  }
+
+  // watchForRestart decides whether this disconnect is one a reattach may
+  // repair, and arms at most one automatic reattach if it is. It runs only from
+  // a SETTLED disconnect, after the bounded initial-retry window.
+  //
+  // A later restart is NOT on its own a reason to reattach: it says the daemon
+  // changed, not that this socket died because of it. A terminal the operator
+  // moved elsewhere — a second dashboard tab, another device, a native window —
+  // is dead here while its session runs happily under the new client, and
+  // reattaching would drag it back (tmux attaches with -d, so the reattach
+  // detaches whoever holds it). So the disconnect has to qualify first: probe
+  // once, immediately, and ask what the daemon was doing when we lost it.
+  //
+  //   answers, same id  → it was alive and unchanged, so it did not kill this
+  //                       socket. Something else did. Never reattach.
+  //   answers, new id   → it already restarted. Reattach now.
+  //   no answer         → it is gone, which is exactly the case this exists
+  //                       for. Wait for it to come back as a different process.
+  function watchForRestart() {
+    cancelRestartWatchIfAny();
+    if (disposed || !autoReattach || !restartWatcher || !instanceBaseline) return;
+    const baseline = instanceBaseline;
+    const mine = generation;
+    Promise.resolve()
+      .then(() => restartWatcher.currentID())
+      .then((id) => {
+        if (disposed || mine !== generation || cancelRestartWatch) return;
+        if (id === baseline) return;
+        if (typeof id === 'string' && id) {
+          instanceBaseline = id;
+          void connect();
+          return;
+        }
+        armRestartWatch(baseline, mine);
+      }, () => { /* nothing learned; this disconnect keeps its manual control */ });
   }
 
   function scheduleInitialRetry() {

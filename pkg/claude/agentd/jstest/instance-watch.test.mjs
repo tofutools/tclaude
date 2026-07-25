@@ -120,6 +120,71 @@ test('waiters share one poll, one round, and one budget', async () => {
   assert.deepEqual(fired, ['a', 'b', 'c'], 'one restart repairs every waiter');
 });
 
+test('a late joiner gets its own budget, and one waiter timing out spares the others', async () => {
+  // A terminal that disconnected for an ordinary reason keeps politely asking
+  // until its budget runs out. A terminal that dies from a real restart in the
+  // tail of that round must still get its own full run of probes — and must not
+  // be swept away when the first one gives up.
+  const daemon = fakeDaemon({ id: 'agentd-1' });
+  const { watcher, clock } = build(daemon, { delays: [10, 10, 10] });
+
+  let early = 0;
+  let late = 0;
+  watcher.watchForRestart('agentd-1', () => { early += 1; });
+  await clock.tick();
+  await clock.tick();
+
+  watcher.watchForRestart('agentd-1', () => { late += 1; });
+  await clock.tick();
+  assert.equal(early, 0, 'the early waiter never saw a different daemon');
+  assert.equal(watcher.waiting(), 1, 'and has now spent its budget');
+
+  daemon.id = 'agentd-2';
+  await clock.tick();
+  assert.equal(late, 1, 'the late waiter still had probes of its own left');
+});
+
+test('a transient bad answer is not a verdict, an unsupported one is', async () => {
+  // A 503 from something in front of the listener, or a momentary auth race,
+  // must not permanently abandon every waiting terminal for the whole outage.
+  const daemon = fakeDaemon({ status: 503 });
+  const { watcher, clock } = build(daemon, { delays: [10, 10, 10] });
+  const fired = [];
+  watcher.watchForRestart('agentd-1', (id) => fired.push(id));
+  await clock.tick();
+  assert.equal(watcher.waiting(), 1, 'a non-2xx is just another way of not answering');
+
+  daemon.status = 200;
+  daemon.id = 'agentd-2';
+  await clock.tick();
+  assert.deepEqual(fired, ['agentd-2'], 'and the round survives to see the real answer');
+
+  // An agentd too old to publish the field, by contrast, will never answer this
+  // question — asking it 38 times is pure waste.
+  const old = fakeDaemon({ body: {} });
+  const second = build(old, { delays: [10, 10, 10] });
+  let firedOld = 0;
+  second.watcher.watchForRestart('agentd-1', () => { firedOld += 1; });
+  await second.clock.tick();
+  await second.clock.tick();
+  assert.equal(old.calls, 1, 'one clean answer with no id is enough to stop asking');
+  assert.equal(second.watcher.waiting(), 0);
+  assert.equal(firedOld, 0);
+});
+
+test('one waiter throwing does not deny the others their repair', async () => {
+  const daemon = fakeDaemon({ id: 'agentd-1' });
+  const { watcher, clock } = build(daemon, { delays: [10] });
+  const fired = [];
+  watcher.watchForRestart('agentd-1', () => { throw new Error('a rude waiter'); });
+  watcher.watchForRestart('agentd-1', () => fired.push('b'));
+
+  daemon.id = 'agentd-2';
+  await clock.tick();
+  assert.deepEqual(fired, ['b']);
+  assert.equal(watcher.waiting(), 0);
+});
+
 test('the budget is finite and gives up silently', async () => {
   const daemon = fakeDaemon({ down: true });
   const { watcher, clock } = build(daemon, { delays: [10, 20, 30] });
@@ -133,31 +198,12 @@ test('the budget is finite and gives up silently', async () => {
   assert.equal(watcher.waiting(), 0);
   assert.deepEqual(clock.scheduled(), [], 'nothing is left running in the background');
 
-  // A fresh waiter after the round ended gets a fresh budget.
+  // A fresh waiter brings its own budget.
   daemon.down = false;
   daemon.id = 'agentd-9';
   watcher.watchForRestart('agentd-1', () => { fired += 1; });
   await clock.tick();
   assert.equal(fired, 1);
-});
-
-test('an answer that cannot decide the question ends the round', async () => {
-  // An agentd too old to publish the field would otherwise be polled 38 times
-  // per outage forever, and an expired session likewise: neither is something
-  // more polling fixes.
-  for (const daemon of [
-    fakeDaemon({ body: {} }),
-    fakeDaemon({ status: 401 }),
-  ]) {
-    const { watcher, clock } = build(daemon, { delays: [10, 10, 10] });
-    let fired = 0;
-    watcher.watchForRestart('agentd-1', () => { fired += 1; });
-    await clock.tick();
-    await clock.tick();
-    assert.equal(daemon.calls, 1, 'one useless answer is enough to stop asking');
-    assert.equal(fired, 0);
-    assert.equal(watcher.waiting(), 0);
-  }
 });
 
 test('a hidden tab spends nothing and repairs the moment it is looked at', async () => {

@@ -116,11 +116,13 @@ var daemonInstanceID = uuid.NewString()
 // the cheapest endpoint in the daemon — a disconnected terminal polls it once a
 // second — so it touches no database, builds no view, and returns one field.
 func handleDashboardInstance(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", http.StatusMethodNotAllowed)
+	// Auth first: an unauthenticated caller learns nothing about this route,
+	// not even that it exists.
+	if !checkDashboardAuth(w, r) {
 		return
 	}
-	if !checkDashboardAuth(w, r) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"instance_id": daemonInstanceID})

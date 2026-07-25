@@ -42,7 +42,6 @@ export function createRestartWatcher({
 } = {}) {
   const waiters = new Set();
   let timer = null;
-  let attempt = 0;
   let probing = false;
   let inFlight = null;
   let visibilityBound = false;
@@ -52,24 +51,30 @@ export function createRestartWatcher({
   }
 
   // read returns the live instance id, or null when agentd did not answer with
-  // one. Single-flight: several terminals opening (or waking) at once share the
-  // request rather than each asking the daemon the same question.
+  // one. Single-flight: several terminals opening, dying, or waking at once
+  // share the request rather than each asking the daemon the same question.
   //
-  // The two null cases are deliberately NOT distinguished by the return value —
-  // both mean "no usable answer" — but they differ for the poll loop, so the
-  // outcome is reported separately to it.
+  // `unsupported` separates the one null worth giving up on — a daemon that
+  // answered cleanly and simply has no such field — from every null that just
+  // means "ask again".
   function read() {
     if (inFlight) return inFlight;
     inFlight = (async () => {
       try {
         const response = await fetchImpl(url, { credentials: 'same-origin', cache: 'no-store' });
-        if (!response.ok) return { id: null, reachable: true };
+        // A non-2xx is NOT treated as a verdict. A transient 503, a proxy hiccup
+        // or a momentary auth race would otherwise permanently abandon every
+        // waiting terminal for that outage; the bounded budget already stops us
+        // asking forever.
+        if (!response.ok) return { id: null, unsupported: false };
         const body = await response.json();
         const id = typeof body?.instance_id === 'string' && body.instance_id ? body.instance_id : null;
-        return { id, reachable: true };
+        // Answered, parsed, and no id: this agentd does not publish one, and no
+        // amount of asking will change that.
+        return { id, unsupported: id === null };
       } catch (_) {
-        // Refused / network down: agentd is simply not back yet.
-        return { id: null, reachable: false };
+        // Refused / network down / unparseable: agentd is simply not back yet.
+        return { id: null, unsupported: false };
       } finally {
         inFlight = null;
       }
@@ -82,31 +87,40 @@ export function createRestartWatcher({
       clearTimeoutImpl(timer);
       timer = null;
     }
-    attempt = 0;
   }
 
-  // giveUp ends the whole round. Waiters are dropped WITHOUT being notified:
-  // they asked to hear about a restart, and none was observed within the
-  // budget. Each one falls back to whatever it does when nobody answers —
-  // for a terminal, the Reconnect control it is already showing.
-  function giveUp() {
-    stop();
-    waiters.clear();
+  // abandon drops waiters without notifying them: they asked to hear about a
+  // restart, and none was observed. Each falls back to whatever it does when
+  // nobody answers — for a terminal, the Reconnect control it already shows.
+  function abandon(doomed) {
+    for (const waiter of doomed) waiters.delete(waiter);
+    if (waiters.size === 0) stop();
+  }
+
+  // Each waiter owns its own budget rather than sharing a round's. A terminal
+  // that starts waiting late — while some earlier one is most of the way
+  // through its schedule — must get its own full run of probes, or the outage
+  // it registered for would be abandoned before it was ever asked about.
+  function pruneExhausted() {
+    abandon([...waiters].filter((waiter) => waiter.attempt >= delays.length));
   }
 
   function schedule() {
-    if (probing || timer !== null || waiters.size === 0) return;
+    if (probing || timer !== null) return;
+    pruneExhausted();
+    if (waiters.size === 0) return;
     // Nothing is watching this tab, so nothing needs repairing yet. Browsers
     // throttle background timers to a crawl anyway; resuming on visibility
     // means the repair happens exactly when someone looks at the page, and
-    // spends no requests while nobody does.
+    // spends no requests while nobody does. A waiter therefore outlives its
+    // nominal budget while hidden — the budget counts probes, and a hidden tab
+    // takes none.
     if (hidden()) return;
-    if (attempt >= delays.length) {
-      giveUp();
-      return;
-    }
-    const delay = Math.max(0, Number(delays[attempt]) || 0);
-    attempt += 1;
+    // The soonest any waiter wants to be asked. One request answers for all of
+    // them, so the earliest need sets the cadence.
+    const delay = Math.min(...[...waiters].map(
+      (waiter) => Math.max(0, Number(delays[waiter.attempt]) || 0),
+    ));
     timer = setTimeoutImpl(() => {
       timer = null;
       void probe();
@@ -123,23 +137,27 @@ export function createRestartWatcher({
       probing = false;
     }
     if (waiters.size === 0) return;
+    // One probe costs every waiter one slot: they were all asked.
+    for (const waiter of waiters) waiter.attempt += 1;
     if (outcome.id === null) {
-      // Answered but unusable (an agentd too old to publish the field, or an
-      // expired session) is not something more polling will fix. Not answering
-      // at all is exactly what a restart looks like from here — keep going.
-      if (outcome.reachable) giveUp();
+      // An OK response with no id means an agentd too old to publish the field.
+      // More polling cannot change that answer, so stop asking entirely.
+      // Anything else — refused, unreachable, a non-2xx from a proxy or a
+      // session that needs re-auth — is simply not an answer yet, and being
+      // unreachable is exactly what a restart looks like from here.
+      if (outcome.unsupported) abandon([...waiters]);
       else schedule();
       return;
     }
-    for (const waiter of [...waiters]) {
-      if (waiter.baseline === outcome.id) continue;
-      waiters.delete(waiter);
+    const restarted = [...waiters].filter((waiter) => waiter.baseline !== outcome.id);
+    abandon(restarted);
+    for (const waiter of restarted) {
+      // Contained: one waiter throwing must not deny the others their repair.
       try { waiter.onRestart(outcome.id); } catch (error) {
         console.warn('restart watcher listener failed:', error);
       }
     }
-    if (waiters.size === 0) stop();
-    else schedule();
+    schedule();
   }
 
   function onVisible() {
@@ -181,11 +199,7 @@ export function createRestartWatcher({
       if (typeof baseline !== 'string' || !baseline || typeof onRestart !== 'function') {
         return () => {};
       }
-      // A round's budget starts fresh when the first waiter arrives. Terminals
-      // that die together (the case this exists for) share one round; a late
-      // joiner shares whatever is left of it.
-      if (waiters.size === 0) attempt = 0;
-      const waiter = { baseline, onRestart };
+      const waiter = { baseline, onRestart, attempt: 0 };
       waiters.add(waiter);
       bindVisibility();
       schedule();
@@ -199,7 +213,8 @@ export function createRestartWatcher({
     waiting: () => waiters.size,
 
     dispose() {
-      giveUp();
+      abandon([...waiters]);
+      stop();
       if (visibilityBound && documentRef?.removeEventListener) {
         documentRef.removeEventListener('visibilitychange', onVisible);
         visibilityBound = false;

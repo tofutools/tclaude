@@ -119,6 +119,7 @@ function OpaqueTerminalHost({
   active,
   activationToken,
   authenticate,
+  autoReattach = true,
   className,
   fitClassName,
   actions,
@@ -136,6 +137,7 @@ function OpaqueTerminalHost({
       host: hostRef.current,
       wsPath: descriptor.seed.ws,
       authenticate,
+      autoReattach,
       active,
       onStatus,
       onReconnectChange,
@@ -1315,6 +1317,7 @@ function TerminalModalSession({ descriptor, actions, widgetFactory }) {
           runtimeID=${descriptor.id}
           active=${true}
           authenticate=${false}
+          autoReattach=${false}
           className="term-session-xterm"
           fitClassName="term-session-xterm-fit"
           actions=${actions}

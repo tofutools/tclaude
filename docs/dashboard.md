@@ -886,21 +886,32 @@ a terminal closes (the session ended, the terminal was reopened in another
 window, you closed it elsewhere), where reattaching would steal back a terminal
 you deliberately moved.
 
-`agentd` publishes an instance id that is fixed for the life of the process and
-necessarily different in the next one, at `/api/instance`. A terminal remembers
-the id it connected under; when its connection settles as disconnected it polls
-that endpoint — roughly once a second at first, backing off, giving up after
-about 80 seconds — and reattaches once if it is told the daemon is now a
-different process. A daemon that is simply unreachable is not an answer, so it
-keeps waiting; the same daemon answering is a definite no, so it does nothing.
-All waiting terminals share one poll, and a hidden browser tab spends nothing:
-it checks the moment you look at it again.
+`agentd` publishes an instance id at `/api/instance` that is fixed for the life
+of the process and necessarily different in the next one. A terminal remembers
+the id it connected under, and when its connection settles as disconnected it
+asks that endpoint what the daemon was doing when the connection was lost:
 
-A reattach that itself fails needs a further restart to try again, and once the
-budget runs out the terminal keeps only its **Reconnect** control. Nothing else
-about a disconnect triggers an automatic reattach, and this works the same in
-the dashboard's Terminals tab and in a standalone pop-out — neither depends on
-the dashboard's own connection state.
+- **It answers with the same id.** The daemon was alive and unchanged, so it is
+  not what closed this terminal — something else did. This terminal is never
+  reattached automatically, no matter how many restarts follow. That is the case
+  where you moved the terminal somewhere else deliberately.
+- **It answers with a different id.** The daemon already restarted. Reattach.
+- **It does not answer.** The daemon is gone. Keep asking — roughly once a
+  second at first, then backing off — and reattach once it comes back as a
+  different process.
+
+Waiting terminals share a single poll, which gives up after about 38 attempts
+(~80 seconds of the tab being visible). A hidden browser tab does not poll at
+all — it checks the moment you look at it again, so the budget is spent on time
+you are actually waiting.
+
+A reattach that itself fails goes back to needing a further restart, and once
+the budget runs out the terminal keeps only its **Reconnect** control. The
+fullscreen terminal modal opts out entirely: it already asks you what to do when
+its connection drops, and answering that question is the reconnect.
+
+None of this depends on the dashboard's own connection state, so a standalone
+pop-out behaves exactly like a pane in the Terminals tab.
 
 Terminal tabs can be dragged within the tab strip to reorder them. The insertion
 line shows whether the drop will land before or after the tab under the pointer.
