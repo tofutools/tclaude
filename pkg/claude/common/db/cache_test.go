@@ -127,6 +127,96 @@ func TestSaveCodexUsageCacheRecordsOpenAIHistory(t *testing.T) {
 	assert.Equal(t, 27.0, pct)
 }
 
+func TestSaveCodexUsageCacheAccountIdentityRepairsLegacyAndRejectsDowngrade(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	_, err := SaveSubscriptionUsageSample(SubscriptionUsageSample{
+		Provider: SubscriptionProviderAnthropic, ObservedAt: now.Add(-2 * time.Hour),
+		Source: "anthropic-api",
+		Windows: []SubscriptionUsageWindow{
+			{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 42},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"Weekly":{"UsedPercent":1}}`),
+		now.Add(-2*time.Hour),
+		"older-legacy-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 1,
+		},
+	)
+	require.NoError(t, err)
+
+	legacyObserved := now
+	stored, err := SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"Weekly":{"UsedPercent":0}}`),
+		legacyObserved,
+		"legacy-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 0,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	accountObserved := now.Add(-time.Hour)
+	stored, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"LimitID":"codex","Weekly":{"UsedPercent":55}}`),
+		accountObserved,
+		"account-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 55,
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, stored, "identified account snapshot repairs a newer legacy cache row")
+
+	row, err := LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, accountObserved, row.ObservedAt)
+	assert.Equal(t, "account-rollout.jsonl", row.Source)
+	assert.JSONEq(t, `{"LimitID":"codex","Weekly":{"UsedPercent":55}}`, string(row.Data))
+
+	stored, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"Weekly":{"UsedPercent":0}}`),
+		now.Add(time.Hour),
+		"late-legacy-rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 0,
+		},
+	)
+	require.NoError(t, err)
+	assert.False(t, stored, "unidentified snapshot cannot downgrade an identified account row")
+
+	row, err = LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, accountObserved, row.ObservedAt)
+	assert.Equal(t, "account-rollout.jsonl", row.Source)
+
+	d, err := Open()
+	require.NoError(t, err)
+	var openAIWindows int
+	var pct float64
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*), MAX(w.used_percent)
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		WHERE s.provider = ?`, SubscriptionProviderOpenAI).Scan(&openAIWindows, &pct))
+	assert.Equal(t, 1, openAIWindows,
+		"identity repair replaces all ambiguous OpenAI history with the verified account point")
+	assert.Equal(t, 55.0, pct)
+
+	var anthropicWindows int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*)
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		WHERE s.provider = ?`, SubscriptionProviderAnthropic).Scan(&anthropicWindows))
+	assert.Equal(t, 1, anthropicWindows, "OpenAI identity repair preserves Anthropic history")
+}
+
 func TestSaveCodexUsageCacheOlderSnapshotCanFillMissingHistoryWindow(t *testing.T) {
 	setupTestDB(t)
 	base := time.Now().UTC().Truncate(SubscriptionUsageSampleInterval)

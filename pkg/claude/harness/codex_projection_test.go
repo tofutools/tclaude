@@ -74,6 +74,29 @@ func TestCodexHookProjection_EquivalentToForwardScans(t *testing.T) {
 	assert.Equal(t, got, fromHook)
 }
 
+func TestCodexHookProjection_SelectsAccountQuotaIdentity(t *testing.T) {
+	path := t.TempDir() + "/rollout.jsonl"
+	lines := [][]byte{
+		codexProjectionEnvelope(t, "2026-07-25T06:32:29Z", "turn_context", map[string]any{
+			"model": "gpt-5.6-sol", "effort": "high",
+		}),
+		codexProjectionTokenCountForLimit(t, "2026-07-25T06:32:35Z",
+			"codex", "", "pro", 55, 1000, 100),
+		codexProjectionTokenCountForLimit(t, "2026-07-25T09:49:39Z",
+			"codex_bengalfox", "GPT-5.3-Codex-Spark", "", 0, 2000, 200),
+	}
+	require.NoError(t, os.WriteFile(path, append(bytes.Join(lines, []byte{'\n'}), '\n'), 0o600))
+
+	got, err := CodexHookProjectionFromRollout(path, "")
+	require.NoError(t, err)
+	require.NotNil(t, got.Usage)
+	assert.Equal(t, "codex", got.Usage.LimitID)
+	assert.Equal(t, "pro", got.Usage.PlanType)
+	assert.Equal(t, time.Date(2026, time.July, 25, 6, 32, 35, 0, time.UTC), got.Usage.Observed)
+	require.NotNil(t, got.Usage.FiveHour)
+	assert.Equal(t, 55.0, got.Usage.FiveHour.UsedPercent)
+}
+
 func TestCodexHookProjection_WindowOnlyNewestTokenCountMatchesForward(t *testing.T) {
 	path := t.TempDir() + "/rollout.jsonl"
 	lines := [][]byte{
@@ -232,6 +255,16 @@ func BenchmarkCodexHookProjection(b *testing.B) {
 }
 
 func codexProjectionTokenCount(t testing.TB, timestamp string, usagePercent float64, totalInput, totalOutput int64) []byte {
+	return codexProjectionTokenCountForLimit(t, timestamp, "codex", "", "pro",
+		usagePercent, totalInput, totalOutput)
+}
+
+func codexProjectionTokenCountForLimit(
+	t testing.TB,
+	timestamp, limitID, limitName, planType string,
+	usagePercent float64,
+	totalInput, totalOutput int64,
+) []byte {
 	payload := map[string]any{
 		"type": "token_count",
 		"info": map[string]any{
@@ -247,9 +280,12 @@ func codexProjectionTokenCount(t testing.TB, timestamp string, usagePercent floa
 		},
 	}
 	if usagePercent >= 0 {
-		payload["rate_limits"] = map[string]any{"primary": map[string]any{
-			"used_percent": usagePercent, "window_minutes": 300, "resets_at": 1781442692,
-		}}
+		payload["rate_limits"] = map[string]any{
+			"limit_id": limitID, "limit_name": limitName, "plan_type": planType,
+			"primary": map[string]any{
+				"used_percent": usagePercent, "window_minutes": 300, "resets_at": 1781442692,
+			},
+		}
 	}
 	return codexProjectionEnvelope(t, timestamp, "event_msg", payload)
 }

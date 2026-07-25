@@ -78,13 +78,17 @@ type CodexSim struct {
 	RolloutPath string
 
 	// Model / Effort / CliVersion / ContextWindow stamp the lines the read
-	// path reads for harness/model/effort/context% resolution. Defaults
-	// match the sampled v0.139 session; override before Start to model
-	// another.
-	Model         string
-	Effort        string
-	CliVersion    string
-	ContextWindow int
+	// path reads for harness/model/effort/context% resolution. RateLimit*
+	// selects the quota metadata written by WriteTokenCountRateLimits.
+	// Defaults match the sampled v0.139 session; override before Start to
+	// model another.
+	Model             string
+	Effort            string
+	CliVersion        string
+	ContextWindow     int
+	RateLimitID       string
+	RateLimitName     string
+	RateLimitPlanType string
 
 	// GitBranch, when non-empty, models the working branch. Codex keeps
 	// it in the state DB (threads.git_branch), not in rollout turns, so
@@ -146,15 +150,17 @@ func NewCodexSimWithID(t *testing.T, home, convID, cwd string) *CodexSim {
 	}
 	created := time.Now()
 	cx := &CodexSim{
-		ConvID:        convID,
-		Cwd:           cwd,
-		RolloutPath:   codexRolloutPath(home, convID, created),
-		Model:         "gpt-5.5",
-		Effort:        "high",
-		CliVersion:    "0.139.0",
-		ContextWindow: 258400,
-		createdAt:     created,
-		home:          home,
+		ConvID:            convID,
+		Cwd:               cwd,
+		RolloutPath:       codexRolloutPath(home, convID, created),
+		Model:             "gpt-5.5",
+		Effort:            "high",
+		CliVersion:        "0.139.0",
+		ContextWindow:     258400,
+		RateLimitID:       "codex",
+		RateLimitPlanType: "plus",
+		createdAt:         created,
+		home:              home,
 	}
 	cx.installDefaultHandlers()
 	t.Cleanup(cx.Shutdown)
@@ -490,16 +496,23 @@ func (c *CodexSim) WriteTokenCountRateLimits(total, last CodexTokenUsage, primar
 			"model_context_window": c.ContextWindow,
 		},
 		"rate_limits": map[string]any{
-			"limit_id":                "codex",
-			"limit_name":              nil,
+			"limit_id":                c.RateLimitID,
+			"limit_name":              nullableCodexRateLimitField(c.RateLimitName),
 			"primary":                 codexRateLimitSeedToMap(primary),
 			"secondary":               codexRateLimitSeedToMap(secondary),
 			"credits":                 nil,
 			"individual_limit":        nil,
-			"plan_type":               "plus",
+			"plan_type":               nullableCodexRateLimitField(c.RateLimitPlanType),
 			"rate_limit_reached_type": nil,
 		},
 	})
+}
+
+func nullableCodexRateLimitField(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // codexRateLimitSeedToMap renders a window seed as the on-disk rate-limit

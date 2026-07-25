@@ -60,6 +60,81 @@ func TestDashboardCodexUsage_SurfacedInSnapshot(t *testing.T) {
 	assert.NotEmpty(t, snap.Usage.Codex.SevenDay.ResetsAt, "codex weekly resets_at populated")
 }
 
+func TestDashboardCodexUsage_ModelQuotaDoesNotReplaceAccountQuota(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	f := newFlow(t)
+	now := time.Now()
+	cx := testharness.NewCodexSim(t, f.World.HomeDir, f.World.HomeDir)
+	require.NoError(t, cx.Start())
+	usage := testharness.CodexTokenUsage{InputTokens: 100, OutputTokens: 20, TotalTokens: 120}
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 55, WindowMinutes: 10080, ResetsAt: now.Add(4 * 24 * time.Hour),
+		},
+		nil,
+	))
+	cx.RateLimitID = "codex_bengalfox"
+	cx.RateLimitName = "GPT-5.3-Codex-Spark"
+	cx.RateLimitPlanType = ""
+	require.NoError(t, cx.WriteTokenCountRateLimits(usage, usage,
+		&testharness.CodexRateLimitWindowSeed{
+			UsedPercent: 0, WindowMinutes: 10080, ResetsAt: now.Add(7 * 24 * time.Hour),
+		},
+		nil,
+	))
+
+	// Model the cache state left by the pre-fix parser: the special quota won
+	// with a newer observation, but its identity was discarded before the JSON
+	// reached SQLite. Refresh must repair this row from the older, positively
+	// identified account sample in the rollout.
+	legacyObserved := now.Add(time.Minute)
+	legacyData, err := json.Marshal(map[string]any{
+		"FiveHour": nil,
+		"Weekly": map[string]any{
+			"UsedPercent": 0,
+			"ResetsAt":    now.Add(7 * 24 * time.Hour),
+		},
+		"Observed": legacyObserved,
+	})
+	require.NoError(t, err)
+	stored, err := db.SaveCodexUsageCacheIfNewer(
+		legacyData,
+		legacyObserved,
+		cx.RolloutPath,
+		db.SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: 0,
+			ResetsAt: now.Add(7 * 24 * time.Hour),
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	agentd.RefreshCodexUsageForTest()
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	require.NotNil(t, snap.Usage.Codex)
+	require.NotNil(t, snap.Usage.Codex.SevenDay)
+	assert.Equal(t, 55.0, snap.Usage.Codex.SevenDay.Pct,
+		"newer model-specific weekly quota must not replace the account quota")
+
+	row, err := db.LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	var cached harness.CodexUsage
+	require.NoError(t, json.Unmarshal(row.Data, &cached))
+	assert.Equal(t, "codex", cached.LimitID, "cache preserves the selected quota identity")
+	assert.True(t, row.ObservedAt.Before(legacyObserved),
+		"identified account snapshot repairs a newer legacy cache observation")
+
+	history, err := db.SubscriptionUsageHistorySince(now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, history, 1, "ambiguous pre-fix OpenAI history is replaced during identity repair")
+	assert.Equal(t, db.SubscriptionProviderOpenAI, history[0].Provider)
+	assert.Equal(t, 55.0, history[0].UsedPercent)
+}
+
 func TestDashboardCodexUsage_ReadsSQLiteCache(t *testing.T) {
 	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
 	t.Cleanup(restoreURL)

@@ -22,9 +22,15 @@ import (
 // The rate_limits block looks like:
 //
 //	"rate_limits": {
+//	  "limit_id": "codex",
 //	  "primary":   {"used_percent": 2.0, "window_minutes": 300,   "resets_at": 1781442692},
 //	  "secondary": {"used_percent": 1.0, "window_minutes": 10080, "resets_at": 1781987376}
 //	}
+//
+// Codex can multiplex other quota identities through the same field. The
+// dashboard's subscription readout is specifically the account-wide "codex"
+// quota, so identity is selected before durations are classified; a
+// model-specific weekly-shaped quota must not replace the account figure.
 //
 // "primary"/"secondary" are slots, not durations — a free account with no
 // 5-hour tier reports its weekly cap in the primary slot — so windows are
@@ -42,6 +48,9 @@ type codexRateLimitWindow struct {
 // slots are pointers so an absent or null window stays nil rather than
 // decoding to a zero-percent window that would render as "0%".
 type codexRateLimits struct {
+	LimitID   string                `json:"limit_id"`
+	LimitName string                `json:"limit_name"`
+	PlanType  string                `json:"plan_type"`
 	Primary   *codexRateLimitWindow `json:"primary"`
 	Secondary *codexRateLimitWindow `json:"secondary"`
 }
@@ -61,9 +70,12 @@ type CodexRateLimitWindow struct {
 // the timestamp of the token_count event the figures came from, so the caller
 // can cap staleness the same way the Claude readout does.
 type CodexUsage struct {
-	FiveHour *CodexRateLimitWindow // window ≈ 300 min
-	Weekly   *CodexRateLimitWindow // window ≈ 10080 min (7 days)
-	Observed time.Time
+	FiveHour  *CodexRateLimitWindow // window ≈ 300 min
+	Weekly    *CodexRateLimitWindow // window ≈ 10080 min (7 days)
+	Observed  time.Time
+	LimitID   string
+	LimitName string
+	PlanType  string
 }
 
 // codexWindowToleranceNum/Den express the ±tolerance band around a known
@@ -73,6 +85,7 @@ const (
 	codexWindowToleranceDen = 20
 	codexFiveHourMinutes    = 300   // 5h
 	codexWeeklyMinutes      = 10080 // 7d
+	codexAccountLimitID     = "codex"
 
 	// Some supported filesystems expose mtimes at coarser precision than the
 	// millisecond timestamps inside Codex rollouts. Keep the newest-first
@@ -219,11 +232,12 @@ func LatestCodexUsageForConvs(home string, convIDs []string, since time.Time) (*
 }
 
 // CodexUsageFromRollout reads rolloutPath (transparently decompressing
-// `.zst`) and returns the LAST token_count event whose rate_limits block
-// resolves to at least one known window. Returns (nil, nil) when the rollout
-// carries no such event — a session that has not yet received rate-limit
-// headers. A malformed line is skipped; only an I/O / scanner error is
-// returned.
+// `.zst`) and returns the LAST token_count event whose rate_limits block is
+// the account-wide Codex quota and resolves to at least one known window.
+// Other quota identities are skipped even when they use a weekly-shaped
+// window. Returns (nil, nil) when the rollout carries no such event — a
+// session that has not yet received account rate-limit headers. A malformed
+// line is skipped; only an I/O / scanner error is returned.
 func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
@@ -264,15 +278,21 @@ func CodexUsageFromRollout(rolloutPath string) (*CodexUsage, error) {
 	return best, nil
 }
 
-// codexUsageFromRateLimits resolves a rate_limits block into a CodexUsage,
-// classifying each slot by window_minutes. Returns nil when the block is
-// absent or neither slot matches a known window duration (so an unrecognised
-// limit shape can't mask a good earlier snapshot).
+// codexUsageFromRateLimits resolves an account-wide rate_limits block into a
+// CodexUsage, preserving its identity and classifying each slot by
+// window_minutes. Returns nil when the block is absent, belongs to another
+// quota, or neither slot matches a known window duration (so an unrecognised
+// limit identity or shape can't mask a good earlier snapshot).
 func codexUsageFromRateLimits(rl *codexRateLimits, timestamp string) *CodexUsage {
-	if rl == nil {
+	if rl == nil || rl.LimitID != codexAccountLimitID {
 		return nil
 	}
-	u := &CodexUsage{Observed: parseCodexEventTime(timestamp)}
+	u := &CodexUsage{
+		Observed:  parseCodexEventTime(timestamp),
+		LimitID:   rl.LimitID,
+		LimitName: rl.LimitName,
+		PlanType:  rl.PlanType,
+	}
 	assignCodexWindow(u, rl.Primary)
 	assignCodexWindow(u, rl.Secondary)
 	if u.FiveHour == nil && u.Weekly == nil {
