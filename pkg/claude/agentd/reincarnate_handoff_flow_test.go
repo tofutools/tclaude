@@ -2,12 +2,14 @@ package agentd_test
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -185,6 +187,141 @@ func TestReincarnate_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testin
 	assert.NotEqual(t, "worker", merged,
 		"this test exists to pin the MERGE; if the legacy path stopped merging, "+
 			"the simulator's unready-pane model has regressed")
+}
+
+// Scenario: the successor's harness dies on startup — expired auth, a broken
+// `claude` install, a failing MCP server. `tclaude session new` writes the
+// session row BEFORE it creates the tmux session, and on the launch-enrollment
+// path that row is born carrying the preset conv-id, so neither the row nor the
+// id it holds is proof that anything is running.
+//
+// Expected: reincarnate must NOT mistake that for success. It is destructive —
+// it archives and `/exit`-s the predecessor — so a dead successor has to land on
+// the timeout branch, leaving the predecessor alive with its identity intact.
+func TestReincarnate_DeadSuccessorPane_DoesNotDecommissionPredecessor(t *testing.T) {
+	t.Cleanup(agentd.SetReincarnateSpawnTimeoutForTest(50 * time.Millisecond))
+	f := newFlow(t)
+
+	const oldConv = "hof4-aaaa-bbbb-cccc-dddd"
+	const oldLabel = "spwn-hof4-001"
+	const oldTmux = "tclaude-spwn-hof4-001"
+
+	f.HaveConvWithTitle(oldConv, "worker")
+	f.HaveEnrolledAgent(oldConv)
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
+	g := f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+
+	// The row lands; the pane does not.
+	f.World.SpawnPaneDiesAtLaunch = true
+
+	r := f.AsHuman().ReincarnateWith(oldConv,
+		map[string]any{"follow_up": "PROBE-DEAD-PANE: should never be delivered"})
+	require.Equalf(t, http.StatusGatewayTimeout, r.Code,
+		"a successor whose harness died must not report success; body=%s", r.Raw)
+
+	// The predecessor is untouched: still the group's live member, never
+	// archive-renamed, never /exit-ed.
+	f.AssertGroupMember(g.Name, oldConv, "worker", 10*time.Second)
+	for _, sk := range f.World.Tmux.Sent() {
+		assert.NotContainsf(t, sk.Text, "/exit",
+			"a failed reincarnation must not soft-stop the predecessor; sent=%+v", f.World.Tmux.Sent())
+		assert.NotContainsf(t, sk.Text, "worker-x",
+			"a failed reincarnation must not archive-rename the predecessor; sent=%+v", f.World.Tmux.Sent())
+	}
+	row, err := db.GetConvIndex(oldConv)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.False(t, row.IsArchived(), "the predecessor must not be archived")
+
+	// And the pre-fork handoff row was rolled back rather than left addressed
+	// to a conv-id that will never exist.
+	msgs, err := db.ListAgentMessagesForConv(r.NewConv, 50)
+	require.NoError(t, err)
+	for _, m := range msgs {
+		assert.NotEqual(t, db.ReincarnationHandoffSubject, m.Subject,
+			"the pre-fork handoff must be rolled back when the launch fails")
+	}
+}
+
+// Scenario: a handoff too long to inline. It stays in the inbox and the launch
+// prompt points at it by id — the same inline-vs-pointer rule spawn briefings
+// follow. The pointer copy must be marked delivered (the successor was told
+// where it is) but NOT read (it still has to open it), and still nothing is
+// typed into the pane.
+func TestReincarnate_OverCapHandoff_RidesAsInboxPointer(t *testing.T) {
+	f := newFlow(t)
+
+	const oldConv = "hof5-aaaa-bbbb-cccc-dddd"
+	const oldLabel = "spwn-hof5-001"
+	const oldTmux = "tclaude-spwn-hof5-001"
+	// Comfortably over config.DefaultSpawnInlineMaxChars (2000 runes).
+	handoff := "PROBE-OVERCAP: " + strings.Repeat("x", 4000)
+
+	f.HaveConvWithTitle(oldConv, "worker")
+	f.HaveEnrolledAgent(oldConv)
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+
+	r := f.AsHuman().Reincarnate(oldConv, handoff)
+
+	msgID := handoffMessageIDFor(t, r.NewConv)
+	f.AssertSpawnInitialPrompt(r.NewConv, fmt.Sprintf("inbox read %d", msgID), 10*time.Second)
+	prompt, _ := f.World.SpawnInitialPrompt(r.NewConv)
+	assert.NotContains(t, prompt, handoff,
+		"an over-cap handoff stays in the inbox rather than ballooning the launch command")
+
+	assertHandoffDelivered(t, msgID)
+	m, err := db.GetAgentMessage(msgID)
+	require.NoError(t, err)
+	assert.True(t, m.ReadAt.IsZero(),
+		"a pointer handoff stays UNREAD — the successor still has to open it")
+
+	assertNoSendKeysTo(t, f, r.TmuxTarget())
+}
+
+// Scenario: an agent reincarnated TWICE. Each generation's handoff row is
+// inserted before its successor is linked to the actor, so without the
+// post-rotation re-derive it would carry an empty to_agent and fall out of the
+// actor-keyed inbox as soon as the agent rotated again.
+//
+// Expected: after the second reincarnation, BOTH handoffs are still readable
+// from the live generation's actor inbox.
+func TestReincarnate_HandoffsStayInTheActorInboxAcrossGenerations(t *testing.T) {
+	f := newFlow(t)
+
+	const gen0 = "hof6-aaaa-bbbb-cccc-dddd"
+	const gen0Label = "spwn-hof6-001"
+	const gen0Tmux = "tclaude-spwn-hof6-001"
+
+	f.HaveConvWithTitle(gen0, "worker")
+	f.HaveEnrolledAgent(gen0)
+	f.HaveAliveSession(gen0, gen0Label, gen0Tmux, f.TestCwd("work"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", gen0)
+
+	first := f.AsHuman().Reincarnate(gen0, "PROBE-GEN1: first handoff")
+	firstMsg := handoffMessageIDFor(t, first.NewConv)
+
+	// The successor's own pane is what the second reincarnation retires.
+	second := f.AsHuman().Reincarnate(first.NewConv, "PROBE-GEN2: second handoff")
+	secondMsg := handoffMessageIDFor(t, second.NewConv)
+	require.NotEqual(t, firstMsg, secondMsg, "each generation gets its own handoff row")
+
+	agentID, err := db.AgentIDForConv(second.NewConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID, "the live generation resolves to the stable actor")
+
+	inbox, err := db.ListInboxForActor(second.NewConv, agentID, 100)
+	require.NoError(t, err)
+	seen := map[int64]bool{}
+	for _, m := range inbox {
+		seen[m.ID] = true
+	}
+	assert.Truef(t, seen[firstMsg],
+		"generation 1's handoff must survive the second rotation in the actor inbox; got %+v", inbox)
+	assert.True(t, seen[secondMsg], "generation 2's handoff is in the inbox")
 }
 
 // handoffMessageIDFor finds the reincarnation handoff row addressed to the

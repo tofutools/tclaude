@@ -29,6 +29,20 @@ type World struct {
 	// the preset id and keep the enrollment, never roll back a live pane).
 	SkipSpawnRow bool
 
+	// SpawnPaneDiesAtLaunch, when true, is the inverse of SkipSpawnRow: the CC
+	// simSpawner writes the SessionRow (and records the launch args) but never
+	// registers a tmux pane, modelling a launch whose harness exits immediately
+	// — expired auth, a broken `claude` install, a failing MCP server — so the
+	// pane it was launched into closes with it.
+	//
+	// Production writes the session row BEFORE creating the tmux session and,
+	// on the launch-enrollment path, that row is born carrying the preset
+	// conv-id — so a caller that treats "the row exists" as proof the harness
+	// booted cannot tell this case from a healthy launch. That matters for any
+	// caller which then decommissions something (reincarnate archives and
+	// /exit-s the predecessor), so the simulator has to be able to produce it.
+	SpawnPaneDiesAtLaunch bool
+
 	// SpawnInputUnreadyEnters, when > 0, is applied to every CCSim the
 	// simSpawner builds via CCSim.SetInputUnreadyForEnters: the pane buffers
 	// literal send-keys text but swallows that many Enters before it starts
