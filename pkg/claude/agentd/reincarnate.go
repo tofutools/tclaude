@@ -733,7 +733,19 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		// path drains it as the tail of runReincarnatePostSpawn; without this
 		// the launch-enrolled successor would wait for its own first `tclaude
 		// agent` call or the periodic reaper to pick that mail up.
+		//
+		// Take waitForConvAlive's settle sleep first. The poll above only
+		// established that the PANE exists — which is true the moment tmux
+		// new-session returns, i.e. inside the very pre-TUI window this change
+		// is about. Any nudge is still send-keys, so firing it here would land
+		// buffered text and a dropped Enter, and flushQueue would count it
+		// delivered regardless. This is the parity the legacy path got for free.
 		goBackground(func() {
+			if !waitForConvAlive(newConv) {
+				slog.Warn("reincarnate: successor never came online; queued mail left for the next drain",
+					"conv", newConv)
+				return
+			}
 			enqueueDeliveryForConv(newConv)
 		})
 	} else {
@@ -863,8 +875,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	}
 	// On the launch-enrollment path spawnArgs.Name is the truth: a title the
 	// rename charset gate rejected was never passed as --name, so the note must
-	// not claim the successor came up under it.
-	if launchEnroll && spawnArgs.Name == "" {
+	// not claim the successor came up under it. Only when there WAS a base name
+	// to reject — an untitled predecessor yields no name for an unrelated
+	// reason, and blaming the charset gate for it would be a false lead.
+	if launchEnroll && successorTitle != "" && spawnArgs.Name == "" {
 		renamedTo = "no launch name (the base name failed the rename charset gate)"
 	}
 	resp["follow_up"] = followUp
