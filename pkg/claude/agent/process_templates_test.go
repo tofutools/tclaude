@@ -46,12 +46,31 @@ func TestRunProcessTemplatesLsUsesSharedRESTSurface(t *testing.T) {
 	assert.Contains(t, stdout.String(), "actor=agent:agt_writer")
 }
 
-func TestRunProcessTemplatesLsJSONEmitsTheWholeListingOnStdout(t *testing.T) {
+// fullDaemonTemplateListing is a complete GET /v1/process/templates payload:
+// every field processTemplateListView and processTemplateVersionView can emit,
+// including a version-history entry and both attributed and unattributed
+// versions. `--json` must hand all of it through untouched.
+const fullDaemonTemplateListing = `{"templates":[
+  {"id":"demo","name":"Demo","description":"d",
+   "latestVersion":{"ref":"demo@sha256:abc","semanticHash":"abc","sourceHash":"src2",
+                    "storedAt":"2026-07-20T10:11:12Z","actor":"agent:agt_writer",
+                    "authoredAt":"2026-07-20T10:11:00Z"},
+   "versionCount":2,
+   "versions":[{"ref":"demo@sha256:abc","semanticHash":"abc","sourceHash":"src2",
+                "storedAt":"2026-07-20T10:11:12Z","actor":"agent:agt_writer",
+                "authoredAt":"2026-07-20T10:11:00Z"},
+               {"ref":"demo@sha256:old","semanticHash":"old","sourceHash":"src1",
+                "storedAt":"2026-07-19T08:00:00Z","actor":"human:johan"}]},
+  {"id":"other",
+   "latestVersion":{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src3",
+                    "storedAt":"2026-07-18T07:06:05Z"},
+   "versionCount":1,
+   "versions":[{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src3",
+                "storedAt":"2026-07-18T07:06:05Z"}]}]}`
+
+func TestRunProcessTemplatesLsJSONForwardsTheFullDaemonListing(t *testing.T) {
 	var calls []capturedReq
-	stubDaemon(t, &calls, ok(`{"templates":[`+
-		`{"id":"demo","name":"Demo","description":"d","versionCount":2,`+
-		`"latestVersion":{"ref":"demo@sha256:abc","semanticHash":"abc","sourceHash":"src","actor":"agent:agt_writer"}},`+
-		`{"id":"other","versionCount":1,"latestVersion":{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src2"}}]}`))
+	stubDaemon(t, &calls, ok(fullDaemonTemplateListing))
 	var stdout, stderr bytes.Buffer
 
 	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
@@ -61,36 +80,82 @@ func TestRunProcessTemplatesLsJSONEmitsTheWholeListingOnStdout(t *testing.T) {
 	assert.Equal(t, "/v1/process/templates", calls[0].path)
 	assert.Empty(t, stderr.String(), "--json must keep stderr clean on success")
 
+	// Field-for-field equality against the daemon payload, so a field added to
+	// the shared listing view but forgotten in the CLI types fails here rather
+	// than silently disappearing from the contract.
+	var want, got any
+	require.NoError(t, json.Unmarshal([]byte(fullDaemonTemplateListing), &want))
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &got), "stdout must be pure JSON: %q", stdout.String())
+	assert.Equal(t, want, got, "--json must forward the whole bounded listing without dropping fields")
+
 	var decoded struct {
 		Templates []processTemplateListJSON `json:"templates"`
 	}
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded), "stdout must be pure JSON: %q", stdout.String())
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded))
 	require.Len(t, decoded.Templates, 2)
 	assert.Equal(t, []string{"demo", "other"}, []string{decoded.Templates[0].ID, decoded.Templates[1].ID},
 		"--json must preserve the daemon's ordering")
-	assert.Equal(t, processTemplateListJSON{
-		ID: "demo", Name: "Demo", Description: "d", VersionCount: 2,
-		LatestVersion: processTemplateVersionJSON{
-			Ref: "demo@sha256:abc", SemanticHash: "abc", SourceHash: "src", Actor: "agent:agt_writer",
-		},
-	}, decoded.Templates[0])
+	demo := decoded.Templates[0]
+	require.Len(t, demo.Versions, 2, "version history must survive")
+	assert.Equal(t, []string{"demo@sha256:abc", "demo@sha256:old"},
+		[]string{demo.Versions[0].Ref, demo.Versions[1].Ref}, "version order must survive")
+	assert.Equal(t, time.Date(2026, 7, 20, 10, 11, 12, 0, time.UTC), demo.LatestVersion.StoredAt)
+	require.NotNil(t, demo.LatestVersion.AuthoredAt)
+	assert.Equal(t, time.Date(2026, 7, 20, 10, 11, 0, 0, time.UTC), *demo.LatestVersion.AuthoredAt)
+	assert.Equal(t, "agent:agt_writer", demo.LatestVersion.Actor)
 	assert.NotContains(t, stdout.String(), "versions=", "--json must not mix in the human table")
 }
 
-func TestRunProcessTemplatesLsJSONEmitsEmptyCollectionNotNull(t *testing.T) {
-	for name, response := range map[string]string{
-		"empty array": `{"templates":[]}`,
-		"absent key":  `{}`,
-	} {
+// Attribution is optional by design: legacy and hand-written versions carry no
+// actor or authoredAt, and the bundled skill tells scribes to expect that.
+func TestRunProcessTemplatesLsJSONOmitsAbsentAttribution(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(fullDaemonTemplateListing))
+	var stdout, stderr bytes.Buffer
+
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+
+	var decoded struct {
+		Templates []processTemplateListJSON `json:"templates"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded))
+	require.Len(t, decoded.Templates, 2)
+	unattributed := decoded.Templates[1].LatestVersion
+	assert.Empty(t, unattributed.Actor)
+	assert.Nil(t, unattributed.AuthoredAt)
+	assert.False(t, unattributed.StoredAt.IsZero(), "storedAt is always present, unlike attribution")
+
+	// Optional fields must be absent rather than emitted as null/"".
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &raw))
+	entry := raw["templates"].([]any)[1].(map[string]any)["latestVersion"].(map[string]any)
+	assert.NotContains(t, entry, "actor")
+	assert.NotContains(t, entry, "authoredAt")
+}
+
+func TestRunProcessTemplatesLsJSONEmitsEmptyCollectionsNotNull(t *testing.T) {
+	tests := map[string]struct{ response, want string }{
+		"empty array": {`{"templates":[]}`, `{"templates":[]}`},
+		"absent key":  {`{}`, `{"templates":[]}`},
+		"template without versions": {
+			`{"templates":[{"id":"demo","versionCount":0,` +
+				`"latestVersion":{"ref":"","semanticHash":"","sourceHash":"","storedAt":"0001-01-01T00:00:00Z"}}]}`,
+			`{"templates":[{"id":"demo","versionCount":0,` +
+				`"latestVersion":{"ref":"","semanticHash":"","sourceHash":"","storedAt":"0001-01-01T00:00:00Z"},` +
+				`"versions":[]}]}`,
+		},
+	}
+	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			var calls []capturedReq
-			stubDaemon(t, &calls, ok(response))
+			stubDaemon(t, &calls, ok(test.response))
 			var stdout, stderr bytes.Buffer
 
 			rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
 
 			require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
-			assert.JSONEq(t, `{"templates":[]}`, stdout.String())
+			assert.JSONEq(t, test.want, stdout.String())
 			assert.NotContains(t, stdout.String(), "No process templates.")
 		})
 	}

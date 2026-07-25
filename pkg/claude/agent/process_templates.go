@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -35,19 +36,30 @@ func processTemplatesCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// processTemplateVersionJSON and processTemplateListJSON mirror the shared
+// GET /v1/process/templates response field for field. The table rendering below
+// reads only a few of them, but `ls --json` re-serializes these values as the
+// listing contract, so a field dropped here is a field silently withheld from
+// machine consumers. Keep them in step with processTemplateVersionView and
+// processTemplateListView in pkg/claude/agentd/process_templates.go.
+// Attribution is genuinely optional: legacy and hand-written versions carry no
+// actor or authoredAt, so consumers must not require them.
 type processTemplateVersionJSON struct {
-	Ref          string `json:"ref"`
-	SemanticHash string `json:"semanticHash"`
-	SourceHash   string `json:"sourceHash"`
-	Actor        string `json:"actor,omitempty"`
+	Ref          string     `json:"ref"`
+	SemanticHash string     `json:"semanticHash"`
+	SourceHash   string     `json:"sourceHash"`
+	StoredAt     time.Time  `json:"storedAt"`
+	Actor        string     `json:"actor,omitempty"`
+	AuthoredAt   *time.Time `json:"authoredAt,omitempty"`
 }
 
 type processTemplateListJSON struct {
-	ID            string                     `json:"id"`
-	Name          string                     `json:"name,omitempty"`
-	Description   string                     `json:"description,omitempty"`
-	VersionCount  int                        `json:"versionCount"`
-	LatestVersion processTemplateVersionJSON `json:"latestVersion"`
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name,omitempty"`
+	Description   string                       `json:"description,omitempty"`
+	VersionCount  int                          `json:"versionCount"`
+	LatestVersion processTemplateVersionJSON   `json:"latestVersion"`
+	Versions      []processTemplateVersionJSON `json:"versions"`
 }
 
 type processTemplateShowJSON struct {
@@ -114,10 +126,15 @@ func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer
 		return MapDaemonErrorToRC(err)
 	}
 	if p.JSON {
-		// The daemon always emits the key, but keep an empty listing "[]" rather
-		// than "null" so consumers can iterate the field unconditionally.
+		// The daemon always emits both collection keys, but keep an empty one as
+		// "[]" rather than "null" so consumers can iterate them unconditionally.
 		if response.Templates == nil {
 			response.Templates = []processTemplateListJSON{}
+		}
+		for i := range response.Templates {
+			if response.Templates[i].Versions == nil {
+				response.Templates[i].Versions = []processTemplateVersionJSON{}
+			}
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

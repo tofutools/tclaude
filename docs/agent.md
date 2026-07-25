@@ -1692,8 +1692,10 @@ tclaude agent process-templates save --file <template.yaml> [--expect-source-has
 ```
 
 `ls` prints a human table by default; `--json` emits the whole bounded listing
-as one `{"templates": [...]}` document on stdout, for agents and scripts that
-should not parse columns.
+as one `{"templates": [...]}` document on stdout — every field of the shared
+REST response, including each template's `versions` history — for agents and
+scripts that should not parse columns. Version `actor` and `authoredAt` are
+optional and omitted for unattributed versions.
 
 `ls`, `show`, and `validate` require `process.templates.read` (included by the
 optional default-permission installer). `save` independently requires the

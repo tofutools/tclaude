@@ -43,10 +43,23 @@ tclaude agent process-templates ls --json   # {"templates": [...]} on stdout
 
 Prefer `--json` when you are deciding programmatically: it emits the whole
 bounded listing as one document, so never scrape the table columns. Each entry
-carries `id`, optional `name`/`description`, `versionCount`, and a
-`latestVersion` with `ref`, `semanticHash`, `sourceHash`, and the saving
-`actor`. `latestVersion.sourceHash` is a listing snapshot, not a CAS token:
-always take the `sourceHash` you save with from a fresh `show`.
+carries:
+
+| Field | Always present | Meaning |
+|---|---|---|
+| `id` | yes | Stable template key. |
+| `name`, `description` | no | Omitted when the template declares neither. |
+| `versionCount` | yes | Number of stored versions. |
+| `latestVersion` | yes | The current head version (see below). |
+| `versions` | yes | Every stored version, newest first; `[]` when there are none. |
+
+A version object carries `ref`, `semanticHash`, `sourceHash`, and `storedAt`.
+It also carries `actor` and `authoredAt`, but **both are optional and omitted
+for legacy or hand-written versions** — treat a version without attribution as
+normal, never as malformed, and never require those keys.
+
+`latestVersion.sourceHash` is a listing snapshot, not a CAS token: always take
+the `sourceHash` you save with from a fresh `show`.
 
 ### Edit an existing template
 
