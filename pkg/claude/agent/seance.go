@@ -164,7 +164,7 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		"back":   max(p.Back, 1),
 	}, &resolved, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return MapDaemonErrorToRC(err)
+		return mapSeanceDaemonErrorToRC(err)
 	}
 	target := resolved.Predecessor
 	if target == "" || resolved.Cwd == "" {
@@ -218,4 +218,16 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	return rcOK
+}
+
+func mapSeanceDaemonErrorToRC(err error) int {
+	if de, ok := err.(*DaemonError); ok {
+		switch de.Code {
+		case "permission":
+			return rcAuth
+		case "unsupported_harness":
+			return rcInvalidArg
+		}
+	}
+	return MapDaemonErrorToRC(err)
 }

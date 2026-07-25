@@ -746,9 +746,7 @@ func MapDaemonErrorToRC(err error) int {
 		return rcAmbiguous
 	case "invalid_arg":
 		return rcInvalidArg
-	case "unsupported_harness":
-		return rcInvalidArg
-	case "auth", "permission":
+	case "auth":
 		return rcAuth
 	default:
 		return rcIOFailure
