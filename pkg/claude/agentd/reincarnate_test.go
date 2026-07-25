@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,4 +129,61 @@ func TestRetiredGenerationTitle_XEndingNameStillArchivesWithoutCollision(t *test
 	// name the living successor keeps.
 	assert.NotEqual(t, reincarnateBase("project-x"), got,
 		"retired predecessor title must differ from the successor's base name")
+}
+
+// TCL-731: the successor's launch prompt is the reincarnation twin of
+// buildSpawnLaunchPrompt — inline the handoff when it fits, otherwise point at
+// the inbox copy — and it always orients the agent about what it just became.
+func TestBuildReincarnationLaunchPrompt(t *testing.T) {
+	const handoff = "Continue the TCL-731 migration; the branch is reinc-fix."
+
+	t.Run("short handoff is inlined and notes the inbox copy", func(t *testing.T) {
+		got := buildReincarnationLaunchPrompt("worker", "", 42, handoff, 2000)
+		assert.Contains(t, got, "[system:", "opens with the system orientation")
+		assert.Contains(t, got, `"worker"`, "names the title it was launched with")
+		assert.Contains(t, got, "tclaude agent", "keeps the coordination pointer")
+		assert.Contains(t, got, "message #42", "notes the inbox copy by id")
+		assert.Contains(t, got, handoff, "the handoff rides inline")
+		assert.NotContains(t, got, "inbox read", "an inlined handoff needs no round-trip")
+	})
+
+	t.Run("multi-line handoff survives verbatim", func(t *testing.T) {
+		body := "Where I got to:\n\n- pkg/foo done\n- pkg/bar next\n"
+		got := buildReincarnationLaunchPrompt("worker", "", 7, body, 2000)
+		assert.Contains(t, got, strings.TrimSpace(body),
+			"argv carries newlines a send-keys nudge could not")
+	})
+
+	t.Run("over-cap handoff falls back to the inbox pointer", func(t *testing.T) {
+		body := strings.Repeat("x", 5000)
+		got := buildReincarnationLaunchPrompt("worker", "", 9, body, 2000)
+		assert.NotContains(t, got, body, "an over-cap handoff stays in the inbox")
+		assert.Contains(t, got, "inbox read 9", "tells the agent how to fetch it")
+	})
+
+	t.Run("over-cap handoff inlines anyway when the inbox copy failed", func(t *testing.T) {
+		body := strings.Repeat("y", 5000)
+		got := buildReincarnationLaunchPrompt("worker", "", 0, body, 2000)
+		assert.Contains(t, got, body,
+			"with no inbox row to point at, inlining is the only way the successor gets the handoff")
+		assert.NotContains(t, got, "message #", "never claims a message that does not exist")
+	})
+
+	t.Run("a cross-agent reincarnation names the handoff's author", func(t *testing.T) {
+		got := buildReincarnationLaunchPrompt("worker", "manager", 3, handoff, 2000)
+		assert.Contains(t, got, "written by manager")
+	})
+
+	t.Run("a rejected title is not echoed back as the agent's identity", func(t *testing.T) {
+		got := buildReincarnationLaunchPrompt("", "", 3, handoff, 2000)
+		assert.Contains(t, got, "you are a fresh reincarnation:",
+			"an unnamed successor still gets the orientation, just no name")
+	})
+}
+
+// A self-reincarnation needs no attribution; a cross-agent one names the
+// manager that triggered it.
+func TestReincarnationHandoffAuthor(t *testing.T) {
+	assert.Equal(t, "", reincarnationHandoffAuthor("same", "same"), "self-reincarnation")
+	assert.Equal(t, "", reincarnationHandoffAuthor("", "target"), "human-triggered")
 }

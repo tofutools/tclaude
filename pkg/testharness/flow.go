@@ -180,6 +180,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
 	cc.SessionID = label
+	// Model a pane whose TUI is not reading input yet, when the test asked for
+	// one. Set before Start so the very first injected submit is swallowed.
+	cc.SetInputUnreadyForEnters(s.w.SpawnInputUnreadyEnters)
 	if err := cc.Start(); err != nil {
 		return err
 	}
@@ -253,6 +256,15 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		if err := recordLaunchPosture(label, args); err != nil {
 			return err
 		}
+	}
+	// SpawnPaneDiesAtLaunch is the inverse case: the row (above) landed, but the
+	// harness exited on startup, so no pane survives to register. Production
+	// writes the row before it creates the tmux session, so this ordering is
+	// faithful — the row exists and, on the launch-enrollment path, already
+	// carries the preset conv-id, while nothing is actually running.
+	if s.w.SpawnPaneDiesAtLaunch {
+		cc.Shutdown()
+		return nil
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)

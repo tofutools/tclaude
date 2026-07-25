@@ -11,11 +11,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -151,13 +154,17 @@ func waitForConvAlive(newConv string) bool {
 //
 // Sequence:
 //  1. Snapshot old conv state from SQLite + sessions table.
-//  2. Spawn a fresh tclaude session in the same cwd; poll for new
-//     conv-id (mirrors handleGroupSpawn).
+//  2. Resolve the successor / archive titles, then spawn a fresh tclaude
+//     session in the same cwd. For a harness that supports launch
+//     enrollment (Claude Code) the successor's conv-id is minted here and
+//     its title + handoff ride in as launch args; otherwise (Codex) the
+//     conv-id is polled for, as before (mirrors handleGroupSpawn).
 //  3. Migrate memberships / permissions / ownerships old → new.
-//  4. Optionally enqueue follow-up as an agent_messages row addressed
-//     to the new conv. Background goroutine waits for the new pane to
-//     come online and runs flush() to deliver via the existing nudge
-//     pipeline, including solo agents via direct group_id 0 mail.
+//  4. Settle the handoff's agent_messages row addressed to the new conv.
+//     Launch-enrolled it was inserted pre-fork and is consumed at birth;
+//     on the legacy path a background goroutine waits for the new pane to
+//     come online, renames it, and runs flush() to deliver via the existing
+//     nudge pipeline, including solo agents via direct group_id 0 mail.
 //  5. Soft-stop the old pane via /exit.
 //
 // Identity is preserved; task state is *not* migrated — the agent is
@@ -413,7 +420,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		}
 	}
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
-	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
+	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:       effectiveSandbox,
 		Label:                  label,
 		Cwd:                    cwd,
@@ -429,27 +436,191 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AutoMemory:             relaunch.AutoMemory,
 		ContextFeatures:        relaunch.ContextFeatures,
 		AutoCompactWindow:      relaunch.AutoCompactWindow,
-	}); err != nil {
+	}
+
+	// 2b. Compute the two generation titles (JOH-319). The living successor
+	// keeps the plain base name; the retiring predecessor gets the `-x` archive
+	// marker (`<prev>-x`, or `<prev>-x-<N>` on a repeat). Resolved BEFORE the
+	// launch for two reasons: the launch-enrollment path below hands the
+	// successor's name to the harness as a launch arg, and uniqueArchiveTitle's
+	// scan of the titles in use must run while the predecessor is still the only
+	// holder of the base name — `claude --name` claims it the moment the
+	// successor's pane starts.
+	//
+	// FreshConvRowAt scans the parent's .jsonl when conv_index has no row for it
+	// — required for back-to-back reincarnations where the parent itself was
+	// just spawned and never indexed yet (otherwise prevTitle would be "" and
+	// the successor would come up unnamed / the predecessor un-archived). A
+	// non-CC harness (Codex) keeps its title in its own store (threads.title),
+	// not the conv_index the CC path reads — source it through the harness
+	// ConvStore so the carry survives.
+	prevTitle := ""
+	if t, ok := harnessNativeTitle(target); ok {
+		prevTitle = t
+	} else if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
+		prevTitle = agent.DisplayTitle(row)
+	}
+	// successorTitle is the stable base name the living generation keeps
+	// (any legacy `-r-<N>` on prevTitle is stripped); retiredTitle /
+	// retiredRename describe the archive rename of the outgoing pane.
+	successorTitle := reincarnateBase(prevTitle)
+	retiredTitle, retiredRename := retiredGenerationTitle(prevTitle)
+
+	// 2c. Launch-enrollment path (TCL-731) — Claude Code, unless the operator
+	// reverted it with the same agent.spawn_legacy_injection escape hatch spawn
+	// honours. The successor's conv-id can be PRESET, so its title and its first
+	// turn ride in as LAUNCH ARGS (`claude --session-id/--name/[prompt]`) rather
+	// than as two tmux send-keys streams into a pane whose input readiness the
+	// daemon cannot observe. That is the whole bug: a pre-TUI tty buffers the
+	// literal text but drops the Enter keypresses, so `/rename <title>` and the
+	// handoff nudge replay as ONE merged line — the successor ends up titled
+	// after its own handoff, and the handoff is never delivered as a turn (it
+	// was consumed as rename argument text) yet is durably stamped delivered.
+	//
+	// Harnesses that cannot preset a conv-id (Codex generates it at first turn
+	// and renames out-of-band through ConvStore) keep the inject-after-connect
+	// flow in runReincarnatePostSpawn below, unchanged.
+	successorHarness, _ := harness.Resolve(relaunch.Harness)
+	launchEnroll := successorHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	var preConvID string
+	var handoffMsgID int64
+	// handoffInlined records whether the launch prompt baked the whole handoff
+	// inline rather than pointing at the inbox copy. When it did, the inbox copy
+	// is inserted already delivered AND read — the agent has the text, so it must
+	// never enter the nudge queue. Mirrors spawn's briefingInlined.
+	var handoffInlined bool
+	if launchEnroll {
+		preConvID = convops.GenerateUUID()
+		// Route the handoff through the first group the agent belongs to. Read
+		// off the PREDECESSOR: every identity-bearing table is agent-keyed, so
+		// the successor inherits exactly this set when RotateAgentConv links it
+		// below — and unlike the successor conv, it already resolves here, before
+		// the fork. group_id 0 — a solo agent with no groups — is a direct
+		// message, the universal-inbox transport.
+		var handoffGroupID int64
+		if groups, err := db.ListGroupsForConv(target); err == nil && len(groups) > 0 {
+			handoffGroupID = groups[0].ID
+		}
+		// Read the inline cap ONCE and thread it through both the bookkeeping
+		// decision and the prompt build (spawn does the same): config.Load is
+		// uncached, so two reads could disagree and leave a row born
+		// delivered+read whose launch prompt only pointed at the inbox.
+		inlineCap := spawnInlineMaxChars()
+		// Same strictness as spawn: an empty body has nothing to inline.
+		// decodeReincarnateBody already guarantees followUp != "", so this only
+		// ever falls to the pointer form on an over-long handoff.
+		handoffInlined = followUp != "" && spawnBriefingFitsLaunch(followUp, inlineCap)
+		handoffMsgID = insertReincarnationHandoff(handoffGroupID, caller, preConvID, followUp, handoffInlined)
+		spawnArgs.SessionID = preConvID
+		// Match the spawn path's title gate: a base name that isn't a valid
+		// rename title is not applied as the launch --name (claude records it as
+		// the conversation title). RotateAgentConv still carries the display name
+		// onto the actor, so the dashboard shows the intended name either way.
+		if successorTitle != "" && isValidRenameTitle(successorTitle) {
+			spawnArgs.Name = successorTitle
+		} else if successorTitle != "" {
+			slog.Warn("reincarnate: successor title not a valid rename title; skipping launch --name",
+				"conv", preConvID, "title", successorTitle)
+		}
+		// The prompt names the successor by the title it was ACTUALLY launched
+		// with (spawnArgs.Name), not the raw base name — a title the gate above
+		// rejected must not be echoed back at the agent as its own identity.
+		spawnArgs.InitialPrompt = buildReincarnationLaunchPrompt(spawnArgs.Name,
+			reincarnationHandoffAuthor(caller, target), handoffMsgID, followUp, inlineCap)
+	}
+	// rollbackHandoff removes the pre-fork handoff row when the launch never
+	// happened, so a failed reincarnation cannot strand an orphan inbox message
+	// addressed to a conv-id that will never exist.
+	rollbackHandoff := func() {
+		if handoffMsgID <= 0 {
+			return
+		}
+		if _, err := db.DeleteAgentMessagesByIDs([]int64{handoffMsgID}); err != nil {
+			slog.Warn("reincarnate: rollback of pre-fork handoff message failed",
+				"msg_id", handoffMsgID, "error", err)
+		}
+		handoffMsgID = 0
+	}
+	// A wrapper that dies AFTER the fork can't report through the return value
+	// (the proofless launch path is fire-and-forget), so it signals here. Unlike
+	// spawn, reincarnate is destructive — it archives and /exit-s the
+	// predecessor — so mistaking a dead wrapper for a slow one costs the human a
+	// live agent. Register before the launch, drain in the poll below.
+	wrapperFailure := registerWrapperFailureSignal(label)
+	defer unregisterWrapperFailureSignal(label)
+	launchFailed := func(err error) {
+		rollbackHandoff()
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: "+err.Error())
+	}
+	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+		launchFailed(err)
 		return
 	}
 
-	// 3. Poll the sessions table for the new conv-id (the hook
-	// callback writes it once CC starts inside tmux).
+	// 3. Wait for the successor to actually be UP.
+	//
+	// Two things are needed before the predecessor can be decommissioned: the
+	// successor's conv-id, and its tmux session name (switchTmuxClients carries
+	// the human's attached client onto it before the /exit, and a reincarnation
+	// that cannot do that hands the human a dead terminal).
+	//
+	// Legacy path: poll for the conv-id, which the SessionStart hook writes once
+	// the harness is running — so the id doubles as proof it booted.
+	//
+	// Launch-enrollment path: the conv-id was preset, so it is NOT proof of
+	// anything, and neither is the session row. `tclaude session new` writes
+	// that row BEFORE it creates the tmux session, and with --session-id the row
+	// is born carrying the conv-id — so a successor whose harness dies on
+	// startup (expired auth, a broken install, a failing MCP server) would look
+	// identical to a healthy one, deterministically. Require the PANE to be
+	// alive instead, and take the wrapper-failure signal as the other half:
+	// together they cover a wrapper that never got as far as tmux and a harness
+	// that exited immediately (its pane closes with it). A harness that dies
+	// after this check still slips through — that residual is the same one the
+	// hook-based gate always had.
 	deadline := time.Now().Add(reincarnateSpawnTimeout)
 	var newConv, newTmux string
 	for time.Now().Before(deadline) {
+		select {
+		case werr := <-wrapperFailure:
+			launchFailed(werr)
+			return
+		default:
+		}
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
 			newTmux = s.TmuxSession
-			if s.ConvID != "" {
+			if launchEnroll {
+				if newTmux != "" && isConvOnline(preConvID) {
+					// preConvID is authoritative: it is what `claude --session-id`
+					// was told to use, so it IS the pane's conversation. The row's
+					// own id should agree (the forked `session new` stamps it from
+					// the same arg); a disagreement means the label resolved to a
+					// row this launch did not write, which is worth a log even
+					// though the launch arg still decides.
+					if s.ConvID != "" && s.ConvID != preConvID {
+						slog.Warn("reincarnate: successor session row carries an unexpected conv-id",
+							"label", label, "row_conv", s.ConvID, "launch_conv", preConvID)
+					}
+					newConv = preConvID
+					break
+				}
+			} else if s.ConvID != "" {
 				newConv = s.ConvID
 				break
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+	// One last drain: a wrapper failure reported during the final poll interval
+	// must not be read as the slow-pane case the timeout branch below handles.
+	select {
+	case werr := <-wrapperFailure:
+		launchFailed(werr)
+		return
+	default:
 	}
 	if newConv == "" {
 		tmuxToKill := newTmux
@@ -459,9 +630,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxToKill)).Run(); err != nil {
 			slog.Warn("reincarnate: timed-out successor kill failed", "session", tmuxToKill, "error", err)
 		}
+		rollbackHandoff()
 		rollbackSandbox(true)
+		missing := "conv-id"
+		if launchEnroll {
+			missing = "a live pane"
+		}
 		writeError(w, http.StatusGatewayTimeout, "timeout",
-			"spawned session "+label+" but conv-id never materialised within "+
+			"spawned session "+label+" but "+missing+" never materialised within "+
 				reincarnateSpawnTimeout.String()+"; the timed-out successor was stopped and the target policy was restored")
 		return
 	}
@@ -518,67 +694,89 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// response is the fallback.
 	switchedClients := switchTmuxClients(oldSess.TmuxSession, newTmux)
 
-	// 6. Compute the two generation titles (JOH-319). The living
-	// successor keeps the plain base name; the retiring predecessor gets
-	// the `-x` archive marker (`<prev>-x`, or `<prev>-x-<N>` on a repeat).
-	// Done here (before /exit on the old pane below) so the lookup of
-	// prevTitle still resolves cleanly. FreshConvRowAt scans the parent's
-	// .jsonl when conv_index has no row for it — required for back-to-back
-	// reincarnations where the parent itself was just spawned and never
-	// indexed yet (otherwise prevTitle would be "" and the successor would
-	// come up unnamed / the predecessor un-archived).
-	// A non-CC harness (Codex) keeps its title in its own store
-	// (threads.title), not the conv_index the CC path reads — source it
-	// through the harness ConvStore so the carry survives. CC falls through
-	// to the existing FreshConvRowAt scan, unchanged.
-	prevTitle := ""
-	if t, ok := harnessNativeTitle(target); ok {
-		prevTitle = t
-	} else if row := agent.FreshConvRowAt(target, oldSess.Cwd); row != nil {
-		prevTitle = agent.DisplayTitle(row)
-	}
-	// successorTitle is the stable base name the living generation keeps
-	// (any legacy `-r-<N>` on prevTitle is stripped); retiredTitle /
-	// retiredRename describe the archive rename of the outgoing pane.
-	successorTitle := reincarnateBase(prevTitle)
-	retiredTitle, retiredRename := retiredGenerationTitle(prevTitle)
-
-	// 7. Queue the follow-up as an agent_messages row BEFORE the
-	// post-spawn goroutine runs — the row is written so the rename can
-	// land first and the flush delivery picks the message up next. A
-	// solo (groupless) successor still gets a row: group_id 0 is a
-	// direct message, the universal-inbox transport. (decodeReincarnate
-	// FollowUp guarantees followUp != "".)
-	// Route the handoff through the first group the migrated agent now
-	// belongs to (post-migration, newConv is the member). group_id 0 —
-	// a solo successor with no groups — is a direct message, the
-	// universal-inbox transport.
-	var handoffGroupID int64
-	if groups, err := db.ListGroupsForConv(newConv); err == nil && len(groups) > 0 {
-		handoffGroupID = groups[0].ID
-	}
+	// 6. Settle the handoff's inbox row.
+	//
+	// Launch-enrollment path: the row was inserted BEFORE the fork (its id is
+	// named by the launch prompt) and the successor's very first turn already
+	// carried it — inline, or as the read-it-from-your-inbox pointer. So it is
+	// consumed at birth and must never enter the nudge queue: an inlined copy
+	// was born delivered AND read, a pointer copy is stamped delivered here,
+	// exactly mirroring spawn's markBriefingConsumed. Re-derive the actor
+	// companions too: the row predates RotateAgentConv, so it landed with
+	// to_agent ” and would drop out of the actor-keyed inbox at the NEXT
+	// rotation without this.
+	//
+	// Legacy path (Codex, or the config revert): queue the follow-up as an
+	// agent_messages row BEFORE the post-spawn goroutine runs — the row is
+	// written so the rename can land first and the flush delivery picks the
+	// message up next. A solo (groupless) successor still gets a row: group_id 0
+	// is a direct message, the universal-inbox transport. (decodeReincarnateBody
+	// guarantees followUp != "".) Routed through the first group the migrated
+	// agent now belongs to (post-migration, newConv is the member).
 	var msgID int64
-	if id, err := db.InsertAgentMessage(&db.AgentMessage{
-		GroupID:  handoffGroupID,
-		FromConv: caller,
-		ToConv:   newConv,
-		Subject:  db.ReincarnationHandoffSubject,
-		Body:     followUp,
-	}); err != nil {
-		slog.Warn("reincarnate: insert handoff message failed", "error", err)
+	if launchEnroll {
+		msgID = handoffMsgID
+		if msgID > 0 {
+			if !handoffInlined {
+				if err := db.MarkAgentMessageDelivered(msgID); err != nil {
+					slog.Warn("reincarnate: failed to mark launch-delivered handoff",
+						"conv", newConv, "msg_id", msgID, "error", err)
+				}
+			}
+			if err := db.RederiveAgentMessageActorRefs(msgID); err != nil {
+				slog.Warn("reincarnate: failed to re-derive handoff actor refs",
+					"conv", newConv, "msg_id", msgID, "error", err)
+			}
+		}
+		// The handoff itself needs no nudge, but OTHER head-following actor mail
+		// may have been queued to this agent across the rotation. The legacy
+		// path drains it as the tail of runReincarnatePostSpawn; without this
+		// the launch-enrolled successor would wait for its own first `tclaude
+		// agent` call or the periodic reaper to pick that mail up.
+		//
+		// Take waitForConvAlive's settle sleep first. The poll above only
+		// established that the PANE exists — which is true the moment tmux
+		// new-session returns, i.e. inside the very pre-TUI window this change
+		// is about. Any nudge is still send-keys, so firing it here would land
+		// buffered text and a dropped Enter, and flushQueue would count it
+		// delivered regardless. This is the parity the legacy path got for free.
+		goBackground(func() {
+			if !waitForConvAlive(newConv) {
+				slog.Warn("reincarnate: successor never came online; queued mail left for the next drain",
+					"conv", newConv)
+				return
+			}
+			enqueueDeliveryForConv(newConv)
+		})
 	} else {
-		msgID = id
+		var handoffGroupID int64
+		if groups, err := db.ListGroupsForConv(newConv); err == nil && len(groups) > 0 {
+			handoffGroupID = groups[0].ID
+		}
+		if id, err := db.InsertAgentMessage(&db.AgentMessage{
+			GroupID:  handoffGroupID,
+			FromConv: caller,
+			ToConv:   newConv,
+			Subject:  db.ReincarnationHandoffSubject,
+			Body:     followUp,
+		}); err != nil {
+			slog.Warn("reincarnate: insert handoff message failed", "error", err)
+		} else {
+			msgID = id
+		}
+
+		// 7. Post-spawn injection: wait for alive → /rename → flush the
+		// handoff. Single goroutine so ordering is deterministic — without
+		// this, the rename and the handoff nudge race and the user briefly
+		// sees the wrong title in the new pane. Skipped entirely on the
+		// launch-enrollment path, where both already rode in as launch args and
+		// typing them again would double the greeting (TCL-731).
+		goBackground(func() {
+			runReincarnatePostSpawn(newConv, successorTitle)
+		})
 	}
 
-	// 8. Post-spawn injection: wait for alive → /rename → flush the
-	// handoff. Single goroutine so ordering is deterministic — without
-	// this, the rename and the handoff nudge race and the user briefly
-	// sees the wrong title in the new pane.
-	goBackground(func() {
-		runReincarnatePostSpawn(newConv, successorTitle)
-	})
-
-	// 9. Archive-rename the retiring predecessor, then soft-stop it.
+	// 8. Archive-rename the retiring predecessor, then soft-stop it.
 	//
 	// Inject `/rename <prev>-x` (or `<prev>-x-<N>`) into the old pane,
 	// writing a custom-title record to the .jsonl before /exit closes
@@ -593,10 +791,16 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// returns ok=false when there is nothing to base a name on (empty
 	// title) or the predecessor is already `-x`-marked; rename is skipped.
 	//
-	// Renaming the predecessor BEFORE the successor's async base-name
-	// rename (step 8 runs after wait-for-alive) is also what keeps the
-	// base title unambiguous: the predecessor sheds `<base>` for
-	// `<base>-x` here, well before the successor claims `<base>`.
+	// On the legacy path, renaming the predecessor BEFORE the successor's
+	// async base-name rename (that goroutine runs after wait-for-alive) is
+	// also what keeps the base title unambiguous: the predecessor sheds
+	// `<base>` for `<base>-x` here, well before the successor claims
+	// `<base>`. The launch-enrollment path cannot order it that way — the
+	// successor is named by `claude --name` at launch — so the two titles
+	// can overlap for as long as this archive rename takes to land. That is
+	// cosmetic: retiredTitle was resolved from the title set as it stood
+	// BEFORE the launch (step 2b), so the successor holding `<base>` can
+	// never push the predecessor onto a different archive name.
 	//
 	// The rename failing is non-fatal. The predecessor is now a past
 	// GENERATION of the still-active actor (db.RotateAgentConv advanced
@@ -669,16 +873,126 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if successorTitle != "" {
 		renamedTo = fmt.Sprintf("%q", successorTitle)
 	}
+	// On the launch-enrollment path spawnArgs.Name is the truth: a title the
+	// rename charset gate rejected was never passed as --name, so the note must
+	// not claim the successor came up under it. Only when there WAS a base name
+	// to reject — an untitled predecessor yields no name for an unrelated
+	// reason, and blaming the charset gate for it would be a false lead.
+	if launchEnroll && successorTitle != "" && spawnArgs.Name == "" {
+		renamedTo = "no launch name (the base name failed the rename charset gate)"
+	}
 	resp["follow_up"] = followUp
+	// Describe how the successor actually got its name + first turn: baked into
+	// the launch command (launch enrollment) or typed into the pane afterwards
+	// (the legacy inject-after-connect path Codex and the config revert keep).
+	named, receives := "will be /renamed to", "then receive"
+	if launchEnroll {
+		named, receives = "launched named", "with"
+	}
 	if msgID > 0 {
 		resp["message_id"] = msgID
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane will be /renamed to %s then receive message #%d",
-			short8(target), keptAs, carry, renamedTo, msgID)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane %s %s %s message #%d",
+			short8(target), keptAs, carry, named, renamedTo, receives, msgID)
 	} else {
-		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane will be /renamed to %s; WARNING: the handoff message failed to queue (see daemon logs)",
-			short8(target), keptAs, carry, renamedTo)
+		resp["note"] = fmt.Sprintf("old %s soft-stopped via /exit%s; %s; new pane %s %s; WARNING: the handoff message failed to queue (see daemon logs)",
+			short8(target), keptAs, carry, named, renamedTo)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// insertReincarnationHandoff writes the successor's handoff into its inbox
+// BEFORE the fork, so the launch prompt can name the message id. Returns the
+// row id, or 0 when the insert failed — the caller then carries the handoff
+// inline-only, which is a degraded but working reincarnation rather than a
+// failed one.
+//
+// inlined says the launch prompt carries the whole handoff verbatim: the inbox
+// copy is then archival from birth, so delivered_at + read_at are stamped in the
+// INSERT itself. A follow-up UPDATE would leave a window where the online or
+// health flush can claim the still-unread row and inject a duplicate nudge —
+// the same race spawn's briefingInlined path is written to avoid.
+func insertReincarnationHandoff(groupID int64, fromConv, toConv, body string, inlined bool) int64 {
+	m := &db.AgentMessage{
+		GroupID:  groupID,
+		FromConv: fromConv,
+		ToConv:   toConv,
+		Subject:  db.ReincarnationHandoffSubject,
+		Body:     body,
+	}
+	if inlined {
+		consumedAt := time.Now()
+		m.CreatedAt = consumedAt
+		m.DeliveredAt = consumedAt
+		m.ReadAt = consumedAt
+	}
+	id, err := db.InsertAgentMessage(m)
+	if err != nil {
+		slog.Warn("reincarnate: insert handoff message failed", "conv", toConv, "error", err)
+		return 0
+	}
+	return id
+}
+
+// reincarnationHandoffAuthor resolves who WROTE the handoff, for the successor's
+// launch prompt. A self-reincarnation ("" here) needs no attribution — the
+// prompt already frames the text as the agent's own previous generation. A
+// cross-agent reincarnation names the manager that triggered it, resolved
+// through the same display-name path the spawn welcome uses.
+func reincarnationHandoffAuthor(caller, target string) string {
+	if caller == "" || caller == target {
+		return ""
+	}
+	return resolveSpawnerTitle(caller, "")
+}
+
+// buildReincarnationLaunchPrompt builds the positional launch prompt a
+// reincarnated Claude Code successor submits as its FIRST turn (TCL-731). It is
+// the reincarnation twin of buildSpawnLaunchPrompt: it rides in as a single
+// shell-quoted argv positional, so — unlike the send-keys nudge it replaces —
+// it can be multi-line and cannot be dropped, merged, or mistimed by a pane
+// that is not reading input yet.
+//
+// The handoff body is inlined right after the [system: ...] orientation when it
+// fits inlineMaxChars runes, so the successor acts on its first turn with no
+// `tclaude agent inbox read` round-trip. A longer handoff keeps the inbox
+// pointer form, where it is scrollable and doesn't balloon the launch command;
+// both forms name the inbox copy by id.
+//
+// msgID <= 0 means the inbox copy could not be written. The prompt then never
+// claims a message that doesn't exist, and it inlines the handoff REGARDLESS of
+// length: a reincarnation whose successor gets no handoff comes up idle, which
+// is the whole failure this path exists to prevent, and the follow-up is capped
+// at agent.MaxInitialMessageBytes so it always fits in argv.
+func buildReincarnationLaunchPrompt(title, handoffAuthor string, msgID int64, followUp string, inlineMaxChars int) string {
+	body := strings.TrimSpace(followUp)
+	welcome := "you are a fresh reincarnation"
+	if title != "" {
+		welcome += " of " + strconv.Quote(title)
+	}
+	welcome += ": a new instance that inherits the previous generation's identity" +
+		" (groups, permissions, ownerships) but none of its context window."
+	if handoffAuthor != "" {
+		welcome += " The handoff was written by " + handoffAuthor + "."
+	}
+	welcome += " Use `tclaude agent` commands (whoami / --help / inbox ls) to introspect and coordinate."
+
+	if body == "" {
+		welcome += " Your predecessor left no handoff — run `tclaude agent inbox ls`," +
+			" then continue its work from there."
+		return "[system: " + welcome + "]"
+	}
+	fits := inlineMaxChars > 0 && utf8.RuneCountInString(body) <= inlineMaxChars
+	if msgID > 0 && !fits {
+		welcome += fmt.Sprintf(" Your predecessor's handoff is waiting in your inbox as message #%d"+
+			" — read it with `tclaude agent inbox read %d`, then act on it.", msgID, msgID)
+		return "[system: " + welcome + "]"
+	}
+	inboxNote := ""
+	if msgID > 0 {
+		inboxNote = fmt.Sprintf(" (also saved to your inbox as message #%d)", msgID)
+	}
+	welcome += " Your predecessor's handoff is below" + inboxNote + "; act on it."
+	return "[system: " + welcome + "]\n\n" + body
 }
 
 // runReincarnatePostSpawn is the single goroutine that handles
@@ -687,6 +1001,14 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 // title shows the proper base name (JOH-319: the living successor keeps
 // the plain `<base>` name) immediately, before any work output starts
 // streaming.
+//
+// This is the LEGACY inject-after-connect path, kept for harnesses that cannot
+// preset a conv-id (Codex) and for the agent.spawn_legacy_injection revert. A
+// launch-enrolled successor never reaches it: both the title and the handoff
+// are launch args there, precisely because this path cannot observe whether the
+// pane is reading input yet — a pre-TUI tty buffers the literal text and drops
+// the Enter keypresses, merging the two streams into one line (TCL-731). The
+// settle gap below narrows that window; it does not close it.
 //
 // The handoff follow-up was already written as an agent_messages row
 // before this goroutine fired (group_id 0 for a solo successor); flush

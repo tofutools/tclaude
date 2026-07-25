@@ -1010,3 +1010,39 @@ func TestAgentMessageAudienceAgentsPersistAndSurvivePruning(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, []string{cc1}, got.CcRecipientAgents, "stored audience agent survives recipient-generation pruning")
 }
+
+// TCL-731: reincarnation's launch-enrollment path must insert the successor's
+// handoff BEFORE the successor conv is linked to an actor (the launch prompt
+// names the message id), so the row lands with to_agent = ”. Once
+// RotateAgentConv has linked it, RederiveAgentMessageActorRefs re-runs the
+// same derivation the INSERT uses, so the row rejoins the actor-keyed inbox.
+func TestRederiveAgentMessageActorRefs_FillsCompanionAfterEnrollment(t *testing.T) {
+	setupTestDB(t)
+
+	const successor = "bbbb1111-2222-3333-4444-555555555555"
+	id, err := InsertAgentMessage(&AgentMessage{
+		FromConv: "peer", ToConv: successor, Subject: ReincarnationHandoffSubject, Body: "handoff",
+	})
+	require.NoError(t, err, "insert pre-enrollment handoff")
+	pre, err := GetAgentMessage(id)
+	require.NoError(t, err)
+	require.Empty(t, pre.ToAgent, "precondition: the recipient conv has no actor yet")
+
+	_, _, err = EnsureAgentForConv(successor, "reincarnate")
+	require.NoError(t, err, "EnsureAgentForConv")
+	agentID, err := AgentIDForConv(successor)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+
+	require.NoError(t, RederiveAgentMessageActorRefs(id))
+	got, err := GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.Equal(t, agentID, got.ToAgent, "companion re-derived from the conv column")
+
+	// Idempotent, and never rewrites a companion that already resolved: a
+	// later rotation must not retarget settled history.
+	require.NoError(t, RederiveAgentMessageActorRefs(id))
+	again, err := GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.Equal(t, agentID, again.ToAgent, "re-run is a no-op")
+}

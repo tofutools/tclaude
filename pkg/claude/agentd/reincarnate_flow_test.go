@@ -19,7 +19,8 @@ import (
 //
 // Expected:
 //   - The new instance KEEPS the base name "worker" (new_title == "worker");
-//     the successor pane is renamed to "worker", not a "-r-N" form.
+//     the successor is NAMED "worker" at launch (`claude --name`, TCL-731),
+//     not a "-r-N" form.
 //   - The old pane is archive-renamed to "worker-x" and receives `/exit`.
 //   - Group membership moves old -> new; the live member shows as "worker".
 func TestReincarnate_SuccessorKeepsBaseName_PredecessorArchived(t *testing.T) {
@@ -36,9 +37,9 @@ func TestReincarnate_SuccessorKeepsBaseName_PredecessorArchived(t *testing.T) {
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
-	// The successor keeps the base name.
+	// The successor keeps the base name, applied as a launch arg.
 	f.AssertReincarnateTitle(r, "worker")
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 10*time.Second)
+	f.AssertSpawnName(r.NewConv, "worker", 10*time.Second)
 
 	// The retiring predecessor is archive-renamed to "worker-x" and exits.
 	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-x", 10*time.Second),
@@ -107,9 +108,9 @@ func TestReincarnate_LegacyLivingNameShedsSuffix(t *testing.T) {
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
-	// Successor falls back to the plain base name.
+	// Successor falls back to the plain base name, applied as a launch arg.
 	f.AssertReincarnateTitle(r, "worker")
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 10*time.Second)
+	f.AssertSpawnName(r.NewConv, "worker", 10*time.Second)
 
 	// Predecessor keeps its legacy full title, archive-marked.
 	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 10*time.Second),

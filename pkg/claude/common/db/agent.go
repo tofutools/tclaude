@@ -2434,6 +2434,37 @@ func MarkAgentMessageDeliveredState(id int64, consumed bool) error {
 	return err
 }
 
+// RederiveAgentMessageActorRefs re-runs the from_agent / to_agent dual-write
+// for one message against the CURRENT agent_conversations mapping. The derived
+// columns are stamped at insert (see insertAgentMessage), so a row written
+// while its recipient conv was not yet linked to an actor lands with to_agent =
+// ” and drops out of the actor-keyed inbox once that actor rotates again.
+//
+// Reincarnation's launch-enrollment path is exactly that case (TCL-731): the
+// successor's handoff row must exist BEFORE the fork — the launch prompt names
+// its message id — but the successor conv is only linked onto the predecessor's
+// actor by RotateAgentConv afterwards. Calling this once the rotation has
+// committed re-derives the companions from the same subquery the INSERT used,
+// so the conv columns stay the single source of truth.
+//
+// Only empty companions are filled: a row that already resolved keeps what it
+// has, so a later conv rotation can never rewrite settled history. Idempotent.
+func RederiveAgentMessageActorRefs(id int64) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE agent_messages SET
+		from_agent = CASE WHEN from_agent = '' THEN
+			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = agent_messages.from_conv), '')
+			ELSE from_agent END,
+		to_agent = CASE WHEN to_agent = '' THEN
+			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = agent_messages.to_conv), '')
+			ELSE to_agent END
+		WHERE id = ?`, id)
+	return err
+}
+
 // ListUndeliveredAgentMessagesFor returns messages addressed to toConv
 // whose delivered_at is still empty, oldest first. Used by the flush-
 // on-online path so messages queued while the recipient was offline

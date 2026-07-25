@@ -34,6 +34,9 @@ import (
 //     "evil" / "rm -rf" payload fragments — deliverRename's
 //     length-exempt charset gate (isValidRenameSink) rejects the title
 //     before it reaches the pane.
+//   - The successor's launch args carry no hostile name either: post-TCL-731
+//     it is named via `claude --name`, gated on isValidRenameTitle, so a
+//     rejected title simply omits the flag.
 //   - The old pane still receives `/exit` (soft-stop is independent of
 //     the cosmetic archive rename).
 func TestReincarnate_RejectsControlCharTitleAtSendKeysSink(t *testing.T) {
@@ -54,11 +57,14 @@ func TestReincarnate_RejectsControlCharTitleAtSendKeysSink(t *testing.T) {
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start handoff")
 
-	// The successor's handoff nudge landing on the new pane is the
-	// signal that the post-spawn goroutine ran to completion (it fires
-	// AFTER the new-pane deliverRename attempt + flush), so by the time
-	// we see it the new-pane rename decision has already been made.
-	f.AssertSentContains(r.TmuxTarget(), "new agent message", 10*time.Second)
+	// The handoff still reaches the successor — as its launch prompt, which
+	// is also the point at which the launch-name decision was made.
+	f.AssertSpawnInitialPrompt(r.NewConv, "fresh start handoff", 10*time.Second)
+
+	// The hostile title was rejected before it could become a launch --name.
+	if name, _ := f.World.SpawnName(r.NewConv); name != "" {
+		t.Fatalf("hostile predecessor title must not become a launch --name; got %q", name)
+	}
 
 	// The old-pane sequence is synchronous in the handler, so /exit has
 	// already been injected by the time Reincarnate() returned.
