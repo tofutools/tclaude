@@ -2921,11 +2921,23 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 // terminal hook. Pointer notifications remain pending until inbox read marks
 // their row processed.
 //
-// read_at is deliberately the only delivery predicate here. On a regular_send
-// row it is set solely by inline delivery — either the daemon's post-send
-// completion stamp or the inline branch of MarkRegularAgentMessageStarted — so
-// it already means "the body was put in the pane"; pointer nudges leave it
-// empty. Requiring started_at as well used to wedge the recipient permanently
+// read_at is deliberately the only delivery predicate here, which rests on an
+// invariant worth stating explicitly: on a regular_send row, read_at != '' with
+// processed_at == '' can only mean inline pane delivery. Exactly three writers
+// produce that state, and all three put the full body in the pane:
+//
+//   - MarkAgentMessageDeliveredState (the direct-send twin), consumed only
+//   - CompleteAgentMessageNudgeState (the daemon's post-send stamp), consumed only
+//   - the inline branch of MarkRegularAgentMessageStarted
+//
+// Every explicit-read path — MarkAgentMessageRead, SetAgentMessagesRead,
+// MarkAgentMailboxRead — stamps read_at and processed_at together on a regular
+// row, so it never lands here. Pointer nudges leave read_at empty entirely.
+// TestExplicitReadPathsNeverLeaveRegularMailReadButUnprocessed pins that
+// coupling: a future path that marks a regular row read without processing it
+// would make this sweep silently acknowledge mail the agent never fetched.
+//
+// Requiring started_at as well used to wedge the recipient permanently
 // (TCL-737): an inline turn that missed its UserPromptSubmit correlation, or
 // whose Stop hook never fired, left a row read-but-unprocessed. Nothing showed
 // it as unread, the backlog gate counted it, and the only self-heal — the

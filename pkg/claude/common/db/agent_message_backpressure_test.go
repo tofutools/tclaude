@@ -271,6 +271,57 @@ func TestTerminalHookProcessesReadInlineMailWithoutStartedCorrelation(t *testing
 	require.ErrorAs(t, err, &full, "unread pointer mail keeps counting against the bound")
 }
 
+// MarkReadRegularAgentMessagesProcessed treats read_at on a regular_send row as
+// proof the body reached the pane, which is only sound while every
+// explicit-read path stamps read_at and processed_at together. A future path
+// that marked a regular row read without processing it would make the sweep
+// silently acknowledge pointer mail the agent never fetched — the contract
+// TestMessageBackpressureTerminalHookLeavesPointerMailPending protects. This
+// pins the coupling at each explicit-read entry point.
+func TestExplicitReadPathsNeverLeaveRegularMailReadButUnprocessed(t *testing.T) {
+	setupTestDB(t)
+	const target = "read-coupling-target"
+	_, _, err := EnsureAgentForConv(target, "test")
+	require.NoError(t, err)
+
+	seedUnreadPointer := func(t *testing.T) int64 {
+		t.Helper()
+		id, _, err := InsertAgentMessageBounded(&AgentMessage{ToConv: target, Body: "pointer"}, 10)
+		require.NoError(t, err)
+		require.NoError(t, MarkAgentMessageDelivered(id))
+		message, err := GetAgentMessage(id)
+		require.NoError(t, err)
+		require.True(t, message.ReadAt.IsZero())
+		require.True(t, message.ProcessedAt.IsZero())
+		return id
+	}
+
+	for name, markRead := range map[string]func(t *testing.T, id int64){
+		"MarkAgentMessageRead": func(t *testing.T, id int64) {
+			require.NoError(t, MarkAgentMessageRead(id))
+		},
+		"SetAgentMessagesRead": func(t *testing.T, id int64) {
+			_, err := SetAgentMessagesRead([]int64{id}, true)
+			require.NoError(t, err)
+		},
+		"MarkAgentMailboxRead": func(t *testing.T, _ int64) {
+			_, err := MarkAgentMailboxRead(target)
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := seedUnreadPointer(t)
+			markRead(t, id)
+			message, err := GetAgentMessage(id)
+			require.NoError(t, err)
+			require.False(t, message.ReadAt.IsZero(), "%s marks the row read", name)
+			assert.False(t, message.ProcessedAt.IsZero(),
+				"%s must acknowledge a regular row in the same write, or the terminal-hook sweep "+
+					"would later treat this row as inline mail that reached the pane", name)
+		})
+	}
+}
+
 func backpressureAgentIDForConv(t *testing.T, convID string) string {
 	t.Helper()
 	agentID, err := AgentIDForConv(convID)
