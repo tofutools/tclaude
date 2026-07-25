@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -36,6 +37,88 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 	writeError(w, e.Status, e.Code, e.Msg)
 }
 
+// cloneSpawnParams collects cloneSpawnOnce's inputs. It replaces a positional
+// signature that had grown to ten arguments — long past the point where a call
+// site could be read without counting commas — for the same reason the spawn
+// path threads clcommon.SpawnArgs.
+//
+// Title, FollowUp, HandoffFrom and HandoffGroupID drive launch enrollment (see
+// cloneSpawnOnce); every other field is launch authority the clone inherits
+// from its source.
+type cloneSpawnParams struct {
+	// SourceConv is the conversation being cloned; Cwd is where the clone runs.
+	SourceConv string
+	Cwd        string
+	// NoCopyConv skips the jsonl fork, so the clone inherits identity only.
+	NoCopyConv bool
+	// Effort and Model are conservative standalone-conversation fallbacks.
+	// Managed clones resolve their launch flags from durable agent intent
+	// inside cloneSpawnOnce; "" omits the flag.
+	Effort string
+	Model  string
+	// ProofToken, ProofCwd and ProofDirs carry the write-proof-verified cwd
+	// and/or repository roots. cloneSpawnOnce re-asserts they are still
+	// canonical immediately before each fork, closing the verify→launch window
+	// the same way executeSpawn does.
+	ProofToken string
+	ProofCwd   bool
+	ProofDirs  []string
+	// CodexGitCommonDir and GitWriteDirs are the Codex worktree write grants.
+	CodexGitCommonDir string
+	GitWriteDirs      []string
+
+	// Title is the clone's display name (`<base>-c-<N>`). Each caller derives
+	// it its own way — per-conv clone reads the harness-native title, groups
+	// clone reads the member's fresh title, export uses its own throwaway
+	// naming — so it is supplied rather than computed here. On the
+	// launch-enrollment path it rides in as `--name`; otherwise the caller
+	// still injects it post-connect.
+	Title string
+	// FollowUp is the clone's first-turn handoff, "" for none. It is also what
+	// makes a clone eligible for launch enrollment at all (see cloneSpawnOnce).
+	// When the clone is enrolled, cloneSpawnOnce inserts the inbox row BEFORE
+	// the fork — so the launch prompt can name it by id — and reports that id
+	// in the result; the caller must not enqueue it a second time.
+	FollowUp string
+	// HandoffFrom is the conv that authored FollowUp: the source itself for a
+	// self-clone, a manager for a cross-clone.
+	HandoffFrom string
+	// HandoffGroupID routes the handoff through a group the clone belongs to.
+	// 0 — a solo clone with no groups — is a direct message, the universal-
+	// inbox transport.
+	HandoffGroupID int64
+}
+
+// cloneSpawnResult is cloneSpawnOnce's success value.
+type cloneSpawnResult struct {
+	// NewConv is the clone's conversation id, NewTmux its tmux session.
+	NewConv string
+	NewTmux string
+	// Label may be empty in the copy path when the session row's id field
+	// hasn't materialised within the deadline; that's not an error, since the
+	// conv-id is already known.
+	Label string
+	// Warn is non-empty when the spawn succeeded but the tmux session never
+	// registered within the polling deadline (copy path only) — the caller
+	// surfaces it as an HTTP response `warning` field so the dashboard can show
+	// "started but not online yet" instead of a generic success toast.
+	Warn string
+
+	// LaunchEnrolled reports that the clone was born named (and, when a
+	// FollowUp was given, briefed) from its own launch argv. Callers MUST skip
+	// their post-connect rename and handoff injection when it is true —
+	// re-sending either would double the clone's greeting.
+	LaunchEnrolled bool
+	// HandoffMsgID is the pre-fork handoff row's id, 0 when there was no
+	// follow-up, the insert failed, or the launch was not enrolled.
+	HandoffMsgID int64
+	// HandoffInlined records whether the launch prompt baked the whole handoff
+	// inline rather than pointing at the inbox copy. When it did, the inbox
+	// copy was inserted already delivered AND read — the agent has the text, so
+	// it must never enter the nudge queue.
+	HandoffInlined bool
+}
+
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
 // Two branches:
 //   - copy: use convops to fork the existing jsonl onto a fresh
@@ -44,30 +127,19 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 //   - no-copy: spawn `tclaude session new --label <label>` and poll
 //     for whatever conv-id CC mints, same as reincarnate.
 //
-// Returns (newConv, newTmux, label, warn, nil) on success. label may
-// be empty in the copy path when the session row's id field hasn't
-// materialised within the deadline; that's not an error since the
-// conv-id is already known. warn is a non-empty string when the spawn
-// succeeded but the tmux session never registered within the polling
-// deadline (copy path only) — the caller surfaces it as a HTTP
-// response `warning` field so the dashboard can show "started but not
-// online yet" instead of a generic success toast.
-//
-// effort and model are retained as conservative standalone-conversation
-// fallbacks. Managed clones resolve their launch flags from durable agent
-// intent inside this function; "" omits the flag.
-//
-// Extracted from runCloneOrchestration so groups-clone can reuse the
-// same race handling without duplicating it.
-// proofDirs, when non-empty, are the write-proof-verified cwd and/or repository
-// roots. cloneSpawnOnce re-asserts they are still canonical immediately before
-// each fork, closing the verify→launch window the same way executeSpawn does.
-func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofCwd bool, proofDirs []string, codexGitCommonDir string, gitWriteDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+// Extracted from runCloneOrchestration so groups-clone and the export clone can
+// reuse the same race handling without duplicating it.
+func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
+	sourceConv, cwd, noCopyConv := p.SourceConv, p.Cwd, p.NoCopyConv
+	effort, model := p.Effort, p.Model
+	proofToken, proofCwd, proofDirs := p.ProofToken, p.ProofCwd, p.ProofDirs
+	codexGitCommonDir, gitWriteDirs := p.CodexGitCommonDir, p.GitWriteDirs
+	var newConv, newTmux, label, warn string
 	relaunch, err := durableRelaunchConfigForConv(sourceConv)
 	if err != nil {
 		state, stateErr := db.AgentState(sourceConv)
 		if stateErr != nil || state != db.AgentStateNone {
-			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "relaunch_profile", Msg: err.Error()}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "relaunch_profile", Msg: err.Error()}
 		}
 		// Standalone export/conv cloning predates agent enrollment and may have
 		// only a harness-native conversation. Preserve that plain CLI surface
@@ -83,16 +155,16 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	effort, model = relaunch.Effort, relaunch.Model
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	if err != nil {
-		return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
+		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
 	}
 	if effectiveSandbox != nil {
 		validated, err := ensureAgentDirectoriesForRelaunch(*effectiveSandbox)
 		if err != nil {
-			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}
 		}
 		effectiveSandbox = &validated
 		if _, launchErr := sandboxpolicy.FilesystemForLaunch(validated.Effective); launchErr != nil {
-			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: launchErr.Error()}
 		}
 	}
 	reassertFail := func() *cloneSpawnError {
@@ -128,7 +200,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	var grantFail *spawnFailure
 	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, proofDirs, proofToken)
 	if grantFail != nil {
-		return "", "", "", "", &cloneSpawnError{Status: grantFail.Status, Code: grantFail.Kind, Msg: grantFail.Msg}
+		return cloneSpawnResult{}, &cloneSpawnError{Status: grantFail.Status, Code: grantFail.Kind, Msg: grantFail.Msg}
 	}
 	exactGrantPinned := codexGitCommonDirPinned && proofToken != ""
 	if !exactGrantPinned {
@@ -141,13 +213,93 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// that recorded none (a non-Claude or pre-column source).
 	askTimeout := relaunch.AskUserQuestionTimeout
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
+
+	// Launch enrollment (TCL-732) — the clone twin of TCL-731's reincarnation
+	// fix. A Claude Code clone can be born named, and (when the caller gave a
+	// follow-up) briefed, from its own launch argv, so neither has to be
+	// send-keys'd into a pane whose input readiness the daemon cannot observe.
+	// A pre-TUI tty buffers the literal text but drops the Enter keypresses, so
+	// the post-connect `/rename <title>` and the handoff nudge can replay as ONE
+	// merged line: the clone ends up titled after its own handoff, and the
+	// handoff is never delivered as a turn yet is durably stamped delivered.
+	// The settle gap in runClonePostInit narrows that window; it does not close
+	// it.
+	//
+	// Both branches can enroll. The no-copy branch presets the conv-id with
+	// `--session-id` exactly as reincarnate does. The copy branch resumes a
+	// forked jsonl whose id it already knows, and `claude --resume <id> --name
+	// <n> '<prompt>'` submits the positional as a turn on the resumed
+	// conversation and records the name as a custom-title turn without forking
+	// the id (verified against claude 2.1.220).
+	//
+	// Harnesses that cannot preset a conv-id or take a launch prompt — Codex
+	// mints its id at first turn and renames out-of-band through ConvStore —
+	// keep the inject-after-connect flow in runClonePostInit, unchanged, as
+	// does the agent.spawn_legacy_injection revert.
+	//
+	// A follow-up is REQUIRED to enroll, and that is load-bearing rather than
+	// incidental. `claude --session-id <id> --name <n>` with no positional
+	// prompt applies the name to the running TUI but writes no transcript at
+	// all (verified against claude 2.1.220): the conversation materialises on
+	// its FIRST TURN. A name-only enrollment would therefore leave a clone with
+	// no .jsonl — showing as "(unknown)" and unrecoverable when never used —
+	// which is the very trap runClonePostInit's /rename exists to avoid. It
+	// also costs nothing to require: with no follow-up there is only ONE
+	// injected stream, so the two-streams-merge-into-one-line bug this fixes
+	// cannot arise in the first place.
+	cloneHarness, _ := harness.Resolve(srcHarness)
+	launchEnroll := cloneHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection() && p.FollowUp != ""
+	res := cloneSpawnResult{LaunchEnrolled: launchEnroll}
+	// enrollLaunch stamps the clone's name and first-turn handoff onto the
+	// launch args once its conv-id is known — preset by the caller on the
+	// no-copy branch, minted by the jsonl fork on the copy branch.
+	enrollLaunch := func(args *clcommon.SpawnArgs, convID string) {
+		if !launchEnroll {
+			return
+		}
+		// Match the spawn path's title gate: a name that isn't a valid rename
+		// title is not applied as the launch `--name`, since Claude Code records
+		// it verbatim as the conversation title.
+		if p.Title != "" && isValidRenameTitle(p.Title) {
+			args.Name = p.Title
+		} else if p.Title != "" {
+			slog.Warn("clone: title not a valid rename title; skipping launch --name",
+				"conv", convID, "title", p.Title)
+		}
+		// Read the inline cap ONCE and thread it through both the bookkeeping
+		// decision and the prompt build (spawn and reincarnate do the same):
+		// config.Load is uncached, so two reads could disagree and leave a row
+		// born delivered+read whose launch prompt only pointed at the inbox.
+		inlineCap := spawnInlineMaxChars()
+		res.HandoffInlined = spawnBriefingFitsLaunch(p.FollowUp, inlineCap)
+		res.HandoffMsgID = insertCloneHandoff(p.HandoffGroupID, p.HandoffFrom, convID, p.FollowUp, res.HandoffInlined)
+		// The prompt names the clone by the title it was ACTUALLY launched with
+		// (args.Name), not the raw one — a title the gate above rejected must
+		// not be echoed back at the agent as its own identity.
+		args.InitialPrompt = buildCloneLaunchPrompt(args.Name,
+			cloneHandoffAuthor(p.HandoffFrom, sourceConv), res.HandoffMsgID, p.FollowUp, inlineCap)
+	}
+	// rollbackHandoff removes the pre-fork handoff row when the launch never
+	// happened, so a failed clone cannot strand an orphan inbox message
+	// addressed to a conv-id that will never exist.
+	rollbackHandoff := func() {
+		if res.HandoffMsgID <= 0 {
+			return
+		}
+		if _, err := db.DeleteAgentMessagesByIDs([]int64{res.HandoffMsgID}); err != nil {
+			slog.Warn("clone: rollback of pre-fork handoff message failed",
+				"msg_id", res.HandoffMsgID, "error", err)
+		}
+		res.HandoffMsgID = 0
+	}
+
 	if noCopyConv {
 		label = generateSpawnLabel()
 		agentDirectoryCleanup := func() {}
 		if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
 			materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, label)
 			if materializeErr != nil {
-				return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
+				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 			}
 			effectiveSandbox = &materialized
 			agentDirectoryCleanup = cleanup
@@ -157,7 +309,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		// fresh-spawn opt-in).
 		if fail := reassertFail(); fail != nil {
 			agentDirectoryCleanup()
-			return "", "", "", "", fail
+			return cloneSpawnResult{}, fail
 		}
 		proofArgs := clcommon.SpawnArgs{
 			DirWriteProof:    proofToken,
@@ -185,34 +337,83 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.AutoMemory = autoMemory
 		proofArgs.ContextFeatures = contextFeatures
 		proofArgs.AutoCompactWindow = autoCompactWindow
+		// A launch-enrolled no-copy clone presets its conv-id so the name and
+		// handoff can ride the same argv, exactly as reincarnate's successor
+		// does. Without enrollment the id is whatever the harness mints, and the
+		// poll below discovers it.
+		if launchEnroll {
+			newConv = convops.GenerateUUID()
+			proofArgs.SessionID = newConv
+		}
+		enrollLaunch(&proofArgs, newConv)
+		// A wrapper that dies before the pane exists (a bad executable, a
+		// rejected launch flag) would otherwise only surface as the poll
+		// timeout below. Watch for it so a failed launch rolls its pre-fork
+		// handoff row back promptly instead of stranding it.
+		wrapperFailure := registerWrapperFailureSignal(label)
+		defer unregisterWrapperFailureSignal(label)
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
 			agentDirectoryCleanup()
-			return "", "", "", "", &cloneSpawnError{
+			rollbackHandoff()
+			return cloneSpawnResult{}, &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "spawn",
 				Msg: "failed to launch tclaude session new: " + err.Error(),
 			}
 		}
 		deadline := time.Now().Add(reincarnateSpawnTimeout)
 		for time.Now().Before(deadline) {
+			select {
+			case werr := <-wrapperFailure:
+				rollbackHandoff()
+				return cloneSpawnResult{}, &cloneSpawnError{
+					Status: http.StatusInternalServerError, Code: "spawn",
+					Msg: "the clone's session wrapper exited before its pane came up: " + werr.Error(),
+				}
+			default:
+			}
 			s, err := db.LoadSession(label)
 			if err == nil && s != nil {
 				newTmux = s.TmuxSession
-				if s.ConvID != "" {
+				// Without enrollment the session row IS the discovery channel for
+				// the harness-minted conv-id, so a non-empty ConvID is proof
+				// enough. With enrollment the row is born already carrying the
+				// preset id — `session new` writes it BEFORE it creates the tmux
+				// session — so the id alone proves nothing. Wait for the pane to
+				// actually register instead, the same gate reincarnate uses.
+				if launchEnroll {
+					if newTmux != "" && isConvOnline(newConv) {
+						if s.ConvID != "" && s.ConvID != newConv {
+							slog.Warn("clone: session row reports a different conv-id than the preset one",
+								"label", label, "preset", newConv, "row", s.ConvID)
+						}
+						if remoteControl {
+							armRemoteControlOnNewRow(label)
+						}
+						res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
+						return res, nil
+					}
+				} else if s.ConvID != "" {
 					// Tag the sibling row's best-known remote-control ON (JOH-261);
 					// the --remote-control launch flag already armed its pane.
 					if remoteControl {
 						armRemoteControlOnNewRow(label)
 					}
-					return s.ConvID, newTmux, label, "", nil
+					res.NewConv, res.NewTmux, res.Label = s.ConvID, newTmux, label
+					return res, nil
 				}
 			}
 			time.Sleep(250 * time.Millisecond)
 		}
-		slog.Warn("clone: no-copy poll timed out; conv-id never appeared",
-			"label", label, "deadline", reincarnateSpawnTimeout)
-		return "", newTmux, label, "", &cloneSpawnError{
+		missing := "conv-id"
+		if launchEnroll {
+			missing = "a live pane"
+		}
+		slog.Warn("clone: no-copy poll timed out; clone never came up",
+			"label", label, "missing", missing, "deadline", reincarnateSpawnTimeout)
+		rollbackHandoff()
+		return cloneSpawnResult{NewTmux: newTmux, Label: label}, &cloneSpawnError{
 			Status: http.StatusGatewayTimeout, Code: "timeout",
-			Msg: "spawned session " + label + " but conv-id never materialised within " +
+			Msg: "spawned session " + label + " but " + missing + " never materialised within " +
 				reincarnateSpawnTimeout.String() +
 				" — the session may still come up; check `tclaude session attach " + label + "`",
 		}
@@ -220,7 +421,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// Copy path: fork the jsonl first, then resume into it.
 	copyResult, err := convops.CopyConversationToPath(sourceConv, cwd, true /* global */)
 	if err != nil {
-		return "", "", "", "", &cloneSpawnError{
+		return cloneSpawnResult{}, &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "copy",
 			Msg: "failed to copy conversation jsonl: " + err.Error(),
 		}
@@ -230,14 +431,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
 		materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, newConv)
 		if materializeErr != nil {
-			return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 		}
 		effectiveSandbox = &materialized
 		agentDirectoryCleanup = cleanup
 	}
 	if fail := reassertFail(); fail != nil {
 		agentDirectoryCleanup()
-		return "", "", "", "", fail
+		return cloneSpawnResult{}, fail
 	}
 	proofArgs := clcommon.SpawnArgs{
 		DirWriteProof:    proofToken,
@@ -265,9 +466,13 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.AutoMemory = autoMemory
 	proofArgs.ContextFeatures = contextFeatures
 	proofArgs.AutoCompactWindow = autoCompactWindow
+	// The forked jsonl already fixes the clone's conv-id, so the copy path needs
+	// no --session-id: the name and handoff ride the resume argv directly.
+	enrollLaunch(&proofArgs, newConv)
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
 		agentDirectoryCleanup()
-		return "", "", "", "", &cloneSpawnError{
+		rollbackHandoff()
+		return cloneSpawnResult{}, &cloneSpawnError{
 			Status: http.StatusInternalServerError, Code: "spawn",
 			Msg: "failed to launch tclaude session new -r: " + err.Error(),
 		}
@@ -282,7 +487,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			persistErr = db.SetAgentEffectiveSandboxConfig(agentID, effectiveSandbox)
 		}
 		if persistErr != nil {
-			return "", "", "", "", &cloneSpawnError{
+			return cloneSpawnResult{}, &cloneSpawnError{
 				Status: http.StatusInternalServerError, Code: "io",
 				Msg: "persist clone sandbox snapshot: " + persistErr.Error(),
 			}
@@ -302,7 +507,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 			if remoteControl && label != "" {
 				armRemoteControlOnNewRow(label)
 			}
-			return newConv, newTmux, label, "", nil
+			res.NewConv, res.NewTmux, res.Label = newConv, newTmux, label
+			return res, nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -316,7 +522,103 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		short8(newConv), reincarnateSpawnTimeout)
 	slog.Warn("clone: copy-path poll timed out; tmux session never registered",
 		"new_conv", newConv, "deadline", reincarnateSpawnTimeout)
-	return newConv, newTmux, label, warn, nil
+	res.NewConv, res.NewTmux, res.Label, res.Warn = newConv, newTmux, label, warn
+	return res, nil
+}
+
+// CloneHandoffSubject is the subject stamped on the follow-up a clone is born
+// with. Shared by the launch-enrollment path — where the row is written BEFORE
+// the fork so the launch prompt can name it by id — and the legacy
+// inject-after-connect path, so the two never drift apart. Exported so flow
+// tests can find the row without re-spelling the literal.
+const CloneHandoffSubject = "clone handoff"
+
+// insertCloneHandoff writes the clone's follow-up as an inbox row and returns
+// its id. 0 on failure: a missing handoff row is logged, never fatal, because
+// the clone itself already exists either way.
+//
+// inlined marks the row consumed at birth — the launch prompt carried the whole
+// body, so the copy must never enter the nudge queue. Mirrors
+// insertReincarnationHandoff.
+func insertCloneHandoff(groupID int64, fromConv, toConv, body string, inlined bool) int64 {
+	m := &db.AgentMessage{
+		GroupID:  groupID,
+		FromConv: fromConv,
+		ToConv:   toConv,
+		Subject:  CloneHandoffSubject,
+		Body:     body,
+	}
+	if inlined {
+		consumedAt := time.Now()
+		m.CreatedAt = consumedAt
+		m.DeliveredAt = consumedAt
+		m.ReadAt = consumedAt
+	}
+	id, err := db.InsertAgentMessage(m)
+	if err != nil {
+		slog.Warn("clone: insert handoff message failed", "conv", toConv, "error", err)
+		return 0
+	}
+	return id
+}
+
+// cloneHandoffAuthor resolves who WROTE the follow-up, for the clone's launch
+// prompt. A self-clone ("" here) needs no attribution — the prompt already
+// frames the text as the agent's own instruction to itself. A cross-agent clone
+// names the manager that triggered it, resolved through the same display-name
+// path the spawn welcome uses.
+func cloneHandoffAuthor(caller, sourceConv string) string {
+	if caller == "" || caller == sourceConv {
+		return ""
+	}
+	return resolveSpawnerTitle(caller, "")
+}
+
+// buildCloneLaunchPrompt builds the positional launch prompt a launch-enrolled
+// Claude Code clone submits as its FIRST turn (TCL-732). It is the clone twin of
+// buildReincarnationLaunchPrompt: it rides in as a single shell-quoted argv
+// positional, so — unlike the send-keys nudge it replaces — it can be multi-line
+// and cannot be dropped, merged, or mistimed by a pane that is not reading input
+// yet.
+//
+// Unlike a reincarnation, a clone gets a prompt ONLY when the caller supplied a
+// follow-up: a clone with nothing to do stays idle (as it does today) rather
+// than being woken by an orientation turn it never needed. Callers rely on the
+// empty return for that, so keep it.
+//
+// The body is inlined right after the [system: ...] orientation when it fits
+// inlineMaxChars runes, so the clone acts on its first turn with no `tclaude
+// agent inbox read` round-trip. A longer follow-up keeps the inbox pointer form,
+// where it is scrollable and doesn't balloon the launch command; both forms name
+// the inbox copy by id.
+func buildCloneLaunchPrompt(title, handoffAuthor string, msgID int64, followUp string, inlineMaxChars int) string {
+	body := strings.TrimSpace(followUp)
+	if body == "" {
+		return ""
+	}
+	welcome := "you are a fresh clone"
+	if title != "" {
+		welcome += " named " + strconv.Quote(title)
+	}
+	welcome += " of another agent: a sibling that inherits its identity" +
+		" (groups, permissions, ownerships) and now runs alongside it, independently."
+	if handoffAuthor != "" {
+		welcome += " The follow-up below was written by " + handoffAuthor + "."
+	}
+	welcome += " Use `tclaude agent` commands (whoami / --help / inbox ls) to introspect and coordinate."
+
+	fits := inlineMaxChars > 0 && utf8.RuneCountInString(body) <= inlineMaxChars
+	if msgID > 0 && !fits {
+		welcome += fmt.Sprintf(" Your follow-up is waiting in your inbox as message #%d"+
+			" — read it with `tclaude agent inbox read %d`, then act on it.", msgID, msgID)
+		return "[system: " + welcome + "]"
+	}
+	inboxNote := ""
+	if msgID > 0 {
+		inboxNote = fmt.Sprintf(" (also saved to your inbox as message #%d)", msgID)
+	}
+	welcome += " Your follow-up is below" + inboxNote + "; act on it."
+	return "[system: " + welcome + "]\n\n" + body
 }
 
 // defaultCloneCooldown is the built-in fallback for CloneCooldown when
@@ -753,17 +1055,59 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		return
 	}
 
+	// Resolve the original's display title so the clone's title can be
+	// derived as `<base>-c-<N>`. Best-effort — an empty originalTitle
+	// just means uniqueCloneTitle falls back to a bare `c-<N>`.
+	// A non-CC harness (Codex) keeps its title in its own store
+	// (threads.title); read it through the harness ConvStore so the clone
+	// inherits the source's name. CC falls through to the conv_index path
+	// unchanged.
+	//
+	// Computed BEFORE the spawn: on the launch-enrollment path the title is a
+	// launch argument, so it has to exist before the fork rather than being
+	// injected once the pane answers.
+	originalTitle := ""
+	if t, ok := harnessNativeTitle(target); ok {
+		originalTitle = t
+	} else if row := agent.FreshConvRowResolved(target); row != nil {
+		originalTitle = agent.DisplayTitle(row)
+	}
+	newTitle := uniqueCloneTitle(originalTitle)
+	// Route the handoff through the first group the source belongs to; the
+	// clone joins exactly that set below. group_id 0 — a solo clone with no
+	// groups — is a direct message, the universal-inbox transport.
+	var handoffGroupID int64
+	if len(oldMembers) > 0 {
+		handoffGroupID = oldMembers[0].GroupID
+	}
+
 	// 2. Mint the clone's conv-id (and optionally its jsonl). The
 	// branching logic + race-handling lives in cloneSpawnOnce so the
 	// groups-clone orchestration can reuse the same code path without
 	// duplicating it. The clone is launched with the source agent's durable
 	// model + effort; "" falls back to the harness default.
 	effort, model := relaunch.Effort, relaunch.Model
-	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofToken != "", proofDirs, codexGitCommonDir, gitWriteDirs)
+	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+		SourceConv:        target,
+		Cwd:               cwd,
+		NoCopyConv:        noCopyConv,
+		Effort:            effort,
+		Model:             model,
+		ProofToken:        proofToken,
+		ProofCwd:          proofToken != "",
+		ProofDirs:         proofDirs,
+		CodexGitCommonDir: codexGitCommonDir,
+		GitWriteDirs:      gitWriteDirs,
+		Title:             newTitle,
+		FollowUp:          followUp,
+		HandoffFrom:       caller,
+		HandoffGroupID:    handoffGroupID,
+	})
 	if spawnErr != nil {
 		spawnErr.write(w)
 		return
 	}
+	newConv, newTmux, label, warn := spawned.NewConv, spawned.NewTmux, spawned.Label, spawned.Warn
 
 	// A clone is an agent in its own right. The identity copy below
 	// registers it via the group/grant DB hooks when the original had
@@ -776,6 +1120,16 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// the source's.
 	if _, _, err := db.EnsureAgentForConv(newConv, "clone"); err != nil {
 		slog.Warn("clone: ensure new actor failed", "conv", newConv, "error", err)
+	}
+	// A launch-enrolled handoff row was written BEFORE the clone's actor
+	// existed, so it landed with to_agent "" and would drop out of the
+	// actor-keyed inbox at the next rotation. Re-derive its companions now that
+	// EnsureAgentForConv has minted one.
+	if spawned.HandoffMsgID > 0 {
+		if err := db.RederiveAgentMessageActorRefs(spawned.HandoffMsgID); err != nil {
+			slog.Warn("clone: failed to re-derive handoff actor refs",
+				"conv", newConv, "msg_id", spawned.HandoffMsgID, "error", err)
+		}
 	}
 	if err := inheritEffectiveSandboxSnapshot(target, newConv); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "persist clone sandbox snapshot: "+err.Error())
@@ -795,70 +1149,67 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		// tie the new conv's grants back to the elevation window.
 		granter = fmt.Sprintf("system:clone:via-sudo:grant-id=%d", grantID)
 	}
-	// Resolve the original's display title so the clone's title can be
-	// derived as `<base>-c-<N>`. Best-effort — an empty originalTitle
-	// just means uniqueCloneTitle falls back to a bare `c-<N>`.
-	// A non-CC harness (Codex) keeps its title in its own store
-	// (threads.title); read it through the harness ConvStore so the clone
-	// inherits the source's name. CC falls through to the conv_index path
-	// unchanged.
-	originalTitle := ""
-	if t, ok := harnessNativeTitle(target); ok {
-		originalTitle = t
-	} else if row := agent.FreshConvRowResolved(target); row != nil {
-		originalTitle = agent.DisplayTitle(row)
-	}
-	newTitle := uniqueCloneTitle(originalTitle)
-
 	copied := applyClonedIdentity(newConv, granter, oldMembers, oldPerms, oldOwnedIDs)
 
-	// 4. Optional follow-up. Same shape as reincarnate: enqueue an
-	// agent_messages row and let the flush pipeline deliver it. A solo
-	// (groupless) clone still gets a row — group_id 0 is a direct
-	// message, the universal-inbox transport. FromConv is the caller
-	// (original for self-clone, manager for cross-clone), so the new
-	// clone sees who asked it to pick up work.
+	// 4. Settle the follow-up's inbox row, then run post-init.
 	//
-	// Enqueued BEFORE the post-init goroutine fires (step 5) so that one
-	// goroutine can deliver it — via flush, AFTER the /rename has settled.
-	// The row must already exist when the flush runs.
+	// Launch-enrollment path: the row was inserted BEFORE the fork (its id is
+	// named by the launch prompt) and the clone's very first turn already
+	// carried it — inline, or as the read-it-from-your-inbox pointer. So it is
+	// consumed at birth and must never enter the nudge queue: an inlined copy
+	// was born delivered AND read, a pointer copy is stamped delivered here,
+	// exactly mirroring reincarnate. The name rode the same argv, so there is
+	// no /rename to inject and runClonePostInit is skipped entirely — typing
+	// either again would double the clone's greeting.
+	//
+	// Legacy path (Codex, the config revert, or a clone with no follow-up to
+	// launch on): enqueue the row and let the single ordered post-init
+	// goroutine deliver it — wait-for-alive → /rename → settle gap → flush.
+	// The rename and the handoff nudge MUST run in that order inside ONE
+	// goroutine. They were once two racing goroutines that both woke when the
+	// pane came alive and send-keys'd into it concurrently, so the nudge text
+	// landed inside the still-unsubmitted /rename line and baked itself into
+	// the clone's title ("worker-c-1[system: new agent message #N for you.
+	// ...]"). The settle gap narrows that window; only launch enrollment
+	// closes it.
+	//
+	// A solo (groupless) clone still gets a row either way — group_id 0 is a
+	// direct message, the universal-inbox transport. FromConv is the caller
+	// (the original for a self-clone, a manager for a cross-clone), so the new
+	// clone sees who asked it to pick up work. Renaming likewise happens
+	// regardless of group membership: without that startup write a
+	// never-messaged clone ends up an orphan, the same trap that bit `tclaude
+	// agent spawn` before bc7ec81.
 	var msgID int64
-	if followUp != "" {
-		var handoffGroupID int64
-		if len(oldMembers) > 0 {
-			handoffGroupID = oldMembers[0].GroupID
+	if spawned.LaunchEnrolled {
+		msgID = spawned.HandoffMsgID
+		if msgID > 0 && !spawned.HandoffInlined {
+			if err := db.MarkAgentMessageDelivered(msgID); err != nil {
+				slog.Warn("clone: failed to mark launch-delivered handoff",
+					"conv", newConv, "msg_id", msgID, "error", err)
+			}
 		}
-		id, err := db.InsertAgentMessage(&db.AgentMessage{
-			GroupID:  handoffGroupID,
-			FromConv: caller,
-			ToConv:   newConv,
-			Subject:  "clone handoff",
-			Body:     followUp,
+		// The handoff itself needs no nudge, but other mail may already be
+		// queued to this agent. Take waitForConvAlive's settle sleep first: the
+		// spawn poll only established that the PANE exists, which is true the
+		// moment tmux new-session returns — i.e. inside the very pre-TUI window
+		// this change is about — and any nudge is still send-keys.
+		goBackground(func() {
+			if !waitForConvAlive(newConv) {
+				slog.Warn("clone: new conv never came online; queued mail left for the next drain",
+					"conv", newConv)
+				return
+			}
+			enqueueDeliveryForConv(newConv)
 		})
-		if err != nil {
-			slog.Warn("clone: insert handoff message failed", "error", err)
-		} else {
-			msgID = id
+	} else {
+		if followUp != "" {
+			msgID = insertCloneHandoff(handoffGroupID, caller, newConv, followUp, false)
 		}
+		goBackground(func() {
+			runClonePostInit(newConv, newTitle, target, caller)
+		})
 	}
-
-	// 5. Single ordered post-init goroutine: wait-for-alive → /rename →
-	// settle gap → flush the handoff nudge. The rename and the handoff
-	// nudge MUST run in this order inside ONE goroutine. Previously they
-	// were two racing goroutines (runClonePostInit + deliverHandoffViaFlush)
-	// that both woke when the pane came alive and send-keys'd into the same
-	// pane concurrently — so the nudge text landed inside the still-
-	// unsubmitted /rename line, baking the nudge into the clone's title
-	// (e.g. "worker-c-1[system: new agent message #N for you. ...]").
-	// Mirrors reincarnate's runReincarnatePostSpawn.
-	//
-	// Renaming is done regardless of group membership — the clone has a
-	// title whether or not it joined a group; without this startup write a
-	// never-messaged clone ends up an orphan, the same trap that bit
-	// `tclaude agent spawn` before bc7ec81.
-	goBackground(func() {
-		runClonePostInit(newConv, newTitle, target, caller)
-	})
 
 	// NB: no /exit on the original — that's the whole difference vs
 	// reincarnate.
@@ -882,10 +1233,17 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	if followUp != "" {
 		resp["follow_up"] = followUp
+		// Say which way the follow-up actually reached the clone: a launch-
+		// enrolled clone already took it as its first turn, so "queued" would
+		// misdescribe a message that is done.
+		delivery := "queued as message"
+		if spawned.LaunchEnrolled {
+			delivery = "launched with the clone as its first turn; saved as message"
+		}
 		if msgID > 0 {
 			resp["message_id"] = msgID
-			resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; follow-up queued as message #%d",
-				short8(newConv), short8(target), msgID)
+			resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; follow-up %s #%d",
+				short8(newConv), short8(target), delivery, msgID)
 		} else {
 			resp["note"] = fmt.Sprintf("clone %s spawned alongside original %s; follow-up will be injected into the new pane once it's ready",
 				short8(newConv), short8(target))
