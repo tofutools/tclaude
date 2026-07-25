@@ -69,8 +69,13 @@ only once.
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.clone`, `self.schedule`,
   `self.remote-control`, `self.task`, `self.pr`, `self.tags`,
-  `self.dir-repair`) as agent
+  `self.dir-repair`), plus the read-only `process.templates.read` the
+  bundled process-template scribe skill needs, as agent
   defaults. Self-reincarnation needs no slug. Idempotent; only adds missing slugs.
+  Nothing else `process.*` is a default: `process.templates.manage` and both
+  `process.runs.*` slugs stay off the default list (group owners get
+  `process.runs.read` structurally instead — see
+  [Permission model](#permission-model)).
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
   down — that's deliberate, so the auth model can't be bypassed by
@@ -1720,9 +1725,14 @@ has [classified the caller](#identity), it decides:
    slugs: owning a group confers, for that group, the `agent.*`
    manager-pattern checks against its members, the group-lifecycle
    verbs (`groups.spawn` / `groups.stop` / `groups.retire` /
-   `groups.resume`), and `human.notify` (owning any group). These owner
+   `groups.resume`), and — for owning *any* group — `human.notify` plus
+   `process.runs.read`. These owner
    defaults fill only the *undecided* gap — an explicit **deny** override
    is always authoritative and suppresses them, read or write.
+   Ownership confers no *mutation* authority it does not already imply:
+   in particular it never grants `process.runs.manage` or
+   `process.templates.manage`, which stay on an explicit grant or a
+   one-shot `--ask-human` approval.
 3. **Neither?** Refused fail-closed — see [Identity](#identity).
 
 ### Storage split
@@ -1759,6 +1769,7 @@ gate group, messaging, template, and permission administration.
 | `message.*`   | `message.direct` |
 | `templates.*` | `templates.manage`, `templates.instantiate` |
 | `process.templates.*` | `process.templates.read`, `process.templates.manage` |
+| `process.runs.*` | `process.runs.read`, `process.runs.manage` |
 | `human.*`     | `human.notify`, `human.clipboard` |
 
 Run `tclaude agent permissions slugs` for the live registry with

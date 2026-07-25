@@ -67,13 +67,13 @@ func assertOwnerImpliedShape(t *testing.T, m map[string]bool) {
 	t.Helper()
 	for _, owner := range []string{
 		agentd.PermGroupsSpawn, agentd.PermGroupsRetire, agentd.PermAgentReincarnate,
-		agentd.PermHumanNotify, agentd.PermGroupsLinkAdd,
+		agentd.PermHumanNotify, agentd.PermGroupsLinkAdd, agentd.PermProcessRunsRead,
 	} {
 		assert.Truef(t, m[owner], "slug %q must be marked owner_implied", owner)
 	}
 	for _, plain := range []string{
 		agentd.PermGroupsCreate, agentd.PermPermissionsGrant, agentd.PermMemberAdd,
-		agentd.PermSelfRename,
+		agentd.PermSelfRename, agentd.PermProcessRunsManage, agentd.PermProcessTemplatesManage,
 	} {
 		assert.Falsef(t, m[plain], "slug %q must NOT be marked owner_implied", plain)
 	}

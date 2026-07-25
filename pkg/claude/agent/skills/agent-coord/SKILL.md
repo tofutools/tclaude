@@ -363,8 +363,11 @@ generates no approval request for the reviewer to decide.
   `groups.resume`, `groups.retire`, `member.add`, `member.remove`,
   `member.redesignate`. A **group owner gets the lifecycle verbs for
   its own group by default** — `groups.spawn` / `groups.stop` /
-  `groups.retire` / `groups.resume`, plus `human.notify` — without an
+  `groups.retire` / `groups.resume`, plus — for owning any group at all —
+  `human.notify` and the read-only `process.runs.read` — without an
   explicit grant (an explicit deny override still suppresses them).
+  Ownership confers no process *mutation* authority: `process.runs.manage`
+  and `process.templates.manage` still need a grant or `--ask-human`.
 
   Permissions live in three durable places:
   - **Defaults** — `agent.default_permissions` in

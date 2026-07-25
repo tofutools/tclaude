@@ -27,7 +27,9 @@ A scribe needs both independent slugs:
 - `process.templates.manage` for `save`. It is not default-granted. Ask the
   human to grant it, or use `save --ask-human 30s` for one-shot approval.
 
-Manage does not imply read. Do not request execution, group-template, or other
+Manage does not imply read. Owning a group does not imply either one — group
+ownership confers only the read-only `process.runs.read`, never template
+authoring. Do not request execution, group-template, or other
 permissions for authoring. A 403 names the missing slug; do not loop on it.
 
 ## Safe workflow

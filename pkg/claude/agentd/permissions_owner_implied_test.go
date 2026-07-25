@@ -16,6 +16,7 @@ import (
 //     agent.{reincarnate,compact,rename,clone,context-info,task,pr,tags,
 //     schedule,stop,resume,delete,promote,retire}
 //   - requireNotifyHumanPermission → human.notify
+//   - requireProcessRunReadPermission → process.runs.read
 //
 // If you add/remove an owner-bypass call site, update both the registry
 // flag AND this list — a drift here means the UI lies about what an owner
@@ -46,6 +47,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsLinkRm,
 		PermGroupsNest,
 		PermProcessAdvance,
+		PermProcessRunsRead,
 		PermHumanNotify,
 	}
 	sort.Strings(want)
@@ -71,8 +73,17 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 			t.Errorf("IsOwnerImpliedSlug(%q) = false, want true", s)
 		}
 	}
-	// A clearly-not-owner-implied slug stays false.
-	if IsOwnerImpliedSlug(PermGroupsCreate) {
-		t.Errorf("IsOwnerImpliedSlug(%q) = true, want false (no owner bypass)", PermGroupsCreate)
+	// Clearly-not-owner-implied slugs stay false. The process mutation slugs
+	// are listed explicitly: ownership confers the process.runs.read READ,
+	// and must never widen into template authoring or run execution.
+	for _, s := range []string{
+		PermGroupsCreate,
+		PermProcessRunsManage,
+		PermProcessTemplatesRead,
+		PermProcessTemplatesManage,
+	} {
+		if IsOwnerImpliedSlug(s) {
+			t.Errorf("IsOwnerImpliedSlug(%q) = true, want false (no owner bypass)", s)
+		}
 	}
 }
