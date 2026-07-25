@@ -131,12 +131,16 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	// dashboard.html: the harness selector, the catalog Model row, its fallback
 	// free-text row, and the sandbox selector row exist.
 	must(`id="agent-spawn-harness"`, "spawn dialog has a harness selector")
-	must(`class="spawn-inline-fields"`, "spawn dialog compacts Model and Effort onto one row")
+	must(`class="spawn-inline-fields"`, "spawn dialog compacts Model, Effort and the auto-compaction window onto one row")
 	must(`id="agent-spawn-model-claude-row"`, "the catalog model row is identifiable for toggling")
 	must(`id="agent-spawn-model-codex"`, "spawn dialog has a no-suggestions fallback model input")
 	must(`id="agent-spawn-effort" aria-label="Effort"`, "compact Effort select keeps an accessible label")
 	must(`id="agent-spawn-sandbox"`, "spawn dialog has a sandbox selector")
 	must(`#agent-spawn-modal .spawn-inline-fields`, "spawn dialog has scoped CSS for the compact launch row")
+	must(`id="agent-spawn-auto-compact-window" type="text" aria-label="Auto-compact window (tokens)"`,
+		"the compact auto-compaction window input keeps an accessible label")
+	must(`id="agent-spawn-auto-compact-window-row"`,
+		"the auto-compaction window row is identifiable, so the CSS can widen the launch row only when it is shown")
 
 	// The state snapshots the catalog, while the pure model derives capability
 	// visibility and the component renders the active model control.

@@ -15,6 +15,14 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
+import { autoCompactWindowHintFor } from './agent-spawn-model.js';
+
+// Shared with the spawn dialog's own copy of this control: the two consequences
+// an operator has to know are the cap and the status-line decoupling.
+const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s auto-compaction '
+  + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
+  + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
+  + 'Capped at the model\'s actual context window.';
 
 const html = htm.bind(h);
 
@@ -202,6 +210,13 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
   const sandboxHelp = hEntry?.sandbox_mode_help?.[draft.sandbox] || '';
   const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';
   const askTimeoutHelp = hEntry?.ask_timeout_mode_help?.[draft.ask_user_question_timeout] || '';
+  const autoCompactWindowHint = autoCompactWindowHintFor(
+    { autoCompactWindow: draft.auto_compact_window },
+    {
+      autoCompactWindowMin: Number(hEntry?.auto_compact_window_min) || 0,
+      autoCompactWindowMax: Number(hEntry?.auto_compact_window_max) || 0,
+    },
+  );
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
@@ -243,6 +258,17 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
       onChange=${(event) => change(setDraft, 'ask_user_question_timeout', event.currentTarget.value)}
       help=${askTimeoutHelp} open=${helpOpen === 'profile-editor-ask-timeout'} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_ask_timeout} />`}
+    ${profile && hEntry?.can_auto_compact_window && html`<${Row} label="Compact at"
+      title=${AUTO_COMPACT_WINDOW_TITLE}>
+      <div class="cron-create-target">
+        <input id="profile-editor-auto-compact-window" type="text" aria-label="Auto-compact window (tokens)"
+          value=${draft.auto_compact_window}
+          onInput=${(event) => change(setDraft, 'auto_compact_window', event.currentTarget.value)}
+          placeholder="blank = model default; e.g. 450k" autocomplete="off" spellcheck="false" inputmode="numeric" />
+        ${autoCompactWindowHint && html`<div
+          class=${`spawn-field-hint${autoCompactWindowHint.warn ? ' warn' : ''}`}>${autoCompactWindowHint.text}</div>`}
+      </div>
+    </${Row}>`}
   `;
 }
 

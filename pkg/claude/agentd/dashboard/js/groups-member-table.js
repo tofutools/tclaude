@@ -262,13 +262,20 @@ function ContextMeter({ state }) {
   const known = pct > 0 || Number(state?.context_window_size || 0) > 0;
   const filled = pct > 0 ? Math.min(5, Math.max(1, Math.round(pct / 20))) : 0;
   const total = Number(state?.tokens_input || 0) + Number(state?.tokens_output || 0);
+  // The window here is already the EFFECTIVE one — min(model window, pinned
+  // auto-compaction window) — and context_pct is measured against it, so the
+  // meter shows how close the agent is to its next compaction rather than to a
+  // model limit it may never reach. Name the pin when there is one, otherwise
+  // the smaller number looks like a bug.
   const win = Number(state?.context_window_size || 0);
+  const pinned = Number(state?.auto_compact_window || 0);
+  const pinNote = pinned > 0 && pinned <= win ? ` (auto-compacts at ${fmtTokens(pinned)})` : '';
   const regularTitle = !known ? 'context window: usage not reported yet'
-    : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens — ${Math.round(pct)}%`
-      : `context: ${Math.round(pct)}% full`;
+    : win > 0 && total > 0 ? `context: ${fmtTokens(total)} / ${fmtTokens(win)} tokens — ${Math.round(pct)}%${pinNote}`
+      : `context: ${Math.round(pct)}% full${pinNote}`;
   const wizardTitle = !known ? '🔮 Mana reserves: not yet divined'
-    : win > 0 && total > 0 ? `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled — ${Math.round(pct)}%`
-      : `🔮 Mana: ${Math.round(pct)}% channeled`;
+    : win > 0 && total > 0 ? `🔮 Mana: ${fmtTokens(total)} / ${fmtTokens(win)} channeled — ${Math.round(pct)}%${pinNote}`
+      : `🔮 Mana: ${Math.round(pct)}% channeled${pinNote}`;
   const segments = [...Array(5)].map((_, i) => {
     const band = i >= 4 ? 'red' : i >= 2 ? 'yellow' : 'green';
     return html`<span key=${i} class=${`ctx-seg${i < filled ? ` lit-${band}` : ''}`}></span>`;

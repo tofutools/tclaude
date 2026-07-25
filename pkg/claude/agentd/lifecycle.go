@@ -1345,6 +1345,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		RemoteControl:              remoteControl,
 		AutoMemory:                 launchConfig.AutoMemory,
 		ContextFeatures:            launchConfig.ContextFeatures,
+		AutoCompactWindow:          launchConfig.AutoCompactWindow,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1433,7 +1434,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		SandboxMode: &empty, ApprovalPolicy: &approval,
 		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
 		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
-		RemoteControl: &no, AutoMemory: &no,
+		RemoteControl: &no, AutoMemory: &no, AutoCompactWindow: &empty,
 	}
 	profile := db.ConversationResumeProfile{
 		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: observed.Cwd.Path, ResumeProvenance: encoded,
@@ -2763,6 +2764,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	// The auto-compaction window rides the same tier stack as effort. The
+	// validator both gates it on the harness and NORMALIZES the spelling, so a
+	// profile saved as "450k" and a spawn body carrying "450000" resolve to the
+	// same canonical value before anything downstream compares them.
+	var autoCompactWindowNote string
+	body.AutoCompactWindow, _, autoCompactWindowNote, fieldFail = resolveStringLaunchField(
+		"auto_compact_window", body.AutoCompactWindow, h.Name, profileTiers,
+		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
+		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	var autoReviewSet, trustDirSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
@@ -2813,7 +2827,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3058,6 +3072,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 
+	// Same gate for the auto-compaction window, already normalized and overlaid
+	// from the profile tiers above. Re-resolving here keeps this boundary
+	// self-sufficient rather than trusting the earlier pass, exactly as the
+	// ask-timeout re-resolve does.
+	autoCompactWindow, acwErr := harness.ResolveAutoCompactWindow(h, body.AutoCompactWindow)
+	if acwErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_auto_compact_window", acwErr.Error())
+		return
+	}
+
 	// Gate the opt-in dir-trust request: it is Codex-only (pre-trusting the
 	// cwd in ~/.codex/config.toml) and, unlike sandbox/approval, edits the
 	// user's config — so requesting it for a harness with no trust modal
@@ -3193,6 +3217,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		RemoteControl:              remoteControl,
 		AutoMemory:                 autoMemory,
 		ContextFeatures:            contextFeatures,
+		AutoCompactWindow:          autoCompactWindow,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
@@ -3417,6 +3442,13 @@ type spawnParams struct {
 	// there; a harness with no steerable startup context (Codex) rejects a
 	// non-empty map. See TCL-597.
 	ContextFeatures map[string]string
+	// AutoCompactWindow is the resolved auto-compaction context capacity in
+	// tokens, forwarding `--auto-compact-window <tokens>` to `tclaude session
+	// new`; "" omits it so the model's own default threshold decides. A canonical
+	// decimal string, resolved down the profile tier stack at the spawn boundary
+	// (handleGroupSpawn → harness.ResolveAutoCompactWindow) and harness-gated
+	// there; a harness with no such knob (Codex, OpenCode) rejects a value.
+	AutoCompactWindow string
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -3922,6 +3954,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.AutoCompactWindow, _, _, fail = resolveStringLaunchField("auto_compact_window", p.AutoCompactWindow, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.AutoCompactWindow },
+		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
+	if fail != nil {
+		return fail
+	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
 		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
 		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -3953,6 +3991,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	if p.AskUserQuestionTimeout, err = harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
+	}
+	if p.AutoCompactWindow, err = harness.ResolveAutoCompactWindow(h, p.AutoCompactWindow); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_auto_compact_window", err.Error()}
 	}
 	if p.AutoReview, err = harness.ResolveAutoReview(h, p.AutoReview); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -4165,6 +4206,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		RemoteControl:              p.RemoteControl,
 		AutoMemory:                 p.AutoMemory,
 		ContextFeatures:            p.ContextFeatures,
+		AutoCompactWindow:          p.AutoCompactWindow,
 	}
 
 	var openCodeLaunch *openCodeLaunch
@@ -5934,7 +5976,21 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
+	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendAutoCompactWindowFlag adds `--auto-compact-window <tokens>` to a
+// `tclaude session new` argv when the launch pinned Claude Code's
+// auto-compaction capacity. "" omits it, leaving the model's own threshold in
+// charge. The value is already canonical decimal by this point; the forked
+// `session new` re-validates and re-normalizes it, and rejects it for a harness
+// with no such knob.
+func appendAutoCompactWindowFlag(args []string, window string) []string {
+	if window = strings.TrimSpace(window); window != "" {
+		args = append(args, "--auto-compact-window", window)
+	}
 	return args
 }
 
@@ -6046,6 +6102,10 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// `session new -r` inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
+	// Preserve the SOURCE conv's pinned auto-compaction window across the
+	// relaunch — otherwise the successor to an agent deliberately compacting at
+	// 450K comes back running to the model's full window.
+	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	return args
 }
 

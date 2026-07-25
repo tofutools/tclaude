@@ -745,6 +745,12 @@ type templateAgentLaunch struct {
 	// mergeSnapshotInlineProfile — mirroring AutoReviewSet.
 	ContextFeaturesSet     bool
 	AskUserQuestionTimeout string
+	// AutoCompactWindow is the auto-compaction context capacity (in tokens) a
+	// template-deployed agent launches with, resolved from the profile tiers like
+	// AskUserQuestionTimeout. "" leaves the model's own threshold in charge.
+	// There is no template-LOCAL spelling for it: a template pins the window by
+	// referencing a spawn profile that carries one.
+	AutoCompactWindow string
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
 	// instantiate result so template launches have the same least-surprise
@@ -1093,6 +1099,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	autoCompactWindow, _, note, fail := resolveStringLaunchField("auto_compact_window", "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.AutoCompactWindow },
+		func(raw string) (string, error) { return harness.ResolveAutoCompactWindow(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
 
 	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
@@ -1202,6 +1217,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AutoMemory:             autoMemory,
 		ContextFeatures:        contextFeatures,
 		AskUserQuestionTimeout: askTimeout,
+		AutoCompactWindow:      autoCompactWindow,
 		Notes:                  notes,
 	}, nil
 }

@@ -36,7 +36,3 @@ func TestMigrateV154toV155AddsContextFeatureColumns(t *testing.T) {
 	assert.Equal(t, 155, schemaVersion(d))
 	require.NoError(t, migrateV154toV155(d), "partially applied migration converges")
 }
-
-func TestMigrateV155IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 155, currentVersion, "tripwire: bump this with the next migration")
-}

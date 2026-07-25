@@ -190,6 +190,17 @@ type NewParams struct {
 	// its descriptions inline).
 	HelpContextFeatures bool `long:"help-context-features" help:"List the startup-context features --context-features can trim, then exit"`
 
+	// AutoCompactWindow pins the context capacity Claude Code's auto-compaction
+	// calculations run against (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Unset leaves the
+	// model's own default threshold in charge. The point is long-lived agents: on
+	// a 1M model Claude Code compacts near the very top of the window, well after
+	// answer quality has started to slide, so pinning it lower keeps the agent
+	// sharp without anyone babysitting `/compact`. The daemon spawn path forwards
+	// the resolved profile/spawn value here; a direct human `session new` may set
+	// it too. Claude-Code-only; a value for a harness without the knob is an error
+	// rather than a silent drop.
+	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for Claude Code's auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window to compact earlier, while the agent is still sharp. Capped at the model's actual window; also decouples the compaction threshold from the status line's percentage. Unset uses the model default. Not applicable to codex"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -618,6 +629,16 @@ func runNew(params *NewParams) error {
 	}
 	params.ContextFeatures = harness.FormatContextFeatures(contextFeatures)
 
+	// Gate --auto-compact-window the same way, with one extra job: the resolve
+	// also NORMALIZES the operator's spelling ("450k" → "450000"), and params is
+	// written back so everything downstream — the env injection, the recorded
+	// session row, the durable relaunch profile — agrees on one canonical form.
+	autoCompactWindow, err := harness.ResolveAutoCompactWindow(h, params.AutoCompactWindow)
+	if err != nil {
+		return err
+	}
+	params.AutoCompactWindow = autoCompactWindow
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -817,6 +838,11 @@ func runNew(params *NewParams) error {
 	// nothing. Settings-only trims ride the `--settings` payload the spec builds
 	// below instead. See ApplyContextFeaturesEnv.
 	ApplyContextFeaturesEnv(h, contextFeatures, additionalEnv)
+	// Pin where Claude Code's auto-compaction fires. Unset injects nothing and
+	// the model's own threshold decides; a pinned window makes a long-lived agent
+	// compact while it is still sharp. No-op for harnesses with no such knob.
+	// See ApplyAutoCompactWindowEnv.
+	ApplyAutoCompactWindowEnv(h, autoCompactWindow, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 	openCodeServerURL := ""
 	if h.UsesAuthoritativeServer() {
@@ -1152,6 +1178,18 @@ func runNew(params *NewParams) error {
 			slog.Warn("failed to record session context features",
 				"session_id", sessionID,
 				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
+		}
+	}
+	if h.SupportsAutoCompactWindow() {
+		// Same discipline for the auto-compaction window: record what this launch
+		// resolved to so a resume / clone / reincarnation keeps compacting at the
+		// same point. Written unconditionally (including "") so the row
+		// distinguishes "known: nothing pinned" from a legacy unknown. Best-effort
+		// for the same reason as the writes above — a lost write costs a future
+		// relaunch its pinned window, not this session's.
+		if err := db.SetSessionAutoCompactWindow(sessionID, autoCompactWindow); err != nil {
+			slog.Warn("failed to record session auto-compact window",
+				"session_id", sessionID, "auto_compact_window", autoCompactWindow, "error", err)
 		}
 	}
 	if h.Name == harness.CodexName {

@@ -50,6 +50,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
+    auto_compact_window: seed?.auto_compact_window || '',
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
@@ -79,6 +80,11 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   const reviewer = h?.can_auto_review ? readReviewer(draft.approval_reviewer) : null;
   if (reviewer != null) body.auto_review = reviewer;
   if (h?.can_ask_timeout && h.ask_timeout_modes?.length && draft.ask_user_question_timeout) body.ask_user_question_timeout = draft.ask_user_question_timeout;
+  // Blank means "no window pinned", which is the column default — so an empty
+  // field simply omits the key rather than sending "".
+  if ((!h || h.can_auto_compact_window) && String(draft.auto_compact_window || '').trim()) {
+    body.auto_compact_window = String(draft.auto_compact_window).trim();
+  }
   const trust = draft.harness === 'codex' ? readTri(draft.trust_dir) : null;
   if (trust != null) body.trust_dir = trust;
   const remote = (!h || h.can_remote_control) ? readTri(draft.remote_control) : null;

@@ -15,6 +15,7 @@
 // here so there is one fetch path and one cache.
 
 import { dashPrefs } from './prefs.js';
+import { formatTokenWindow } from './agent-spawn-model.js';
 
 const API = '/api/spawn-profiles';
 
@@ -218,6 +219,7 @@ function profileSummary(p) {
   if (p.harness && p.harness !== 'claude') parts.push(p.harness);
   if (p.model) parts.push(p.model);
   if (p.effort) parts.push(`effort ${p.effort}`);
+  if (p.auto_compact_window) parts.push(`compact at ${formatTokenWindow(Number(p.auto_compact_window))}`);
   // 'inherit' is the recommended default (no per-session override), so — like an
   // absent toggle — it isn't worth a chip; only a real override (on/off) shows.
   if (p.sandbox && p.sandbox !== 'inherit') parts.push(`sandbox ${p.sandbox}`);
@@ -269,6 +271,7 @@ function profileDetailChips(p) {
   text('sandbox', p.sandbox);
   text('approval', p.approval);
   text('ask-timeout', p.ask_user_question_timeout);
+  text('compact at', formatTokenWindow(Number(p.auto_compact_window)));
   text('tools', p.tools);
   toggle('auto-review', p.auto_review);
   toggle('trust-dir', p.trust_dir);

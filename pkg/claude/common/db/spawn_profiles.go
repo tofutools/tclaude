@@ -51,6 +51,14 @@ type SpawnProfile struct {
 	// `--settings`; "" = unset (the agent uses the operator's settings.json). A
 	// Claude-Code-only launch field, validated against the profile's harness.
 	AskUserQuestionTimeout string
+	// AutoCompactWindow is the profile's CLAUDE_CODE_AUTO_COMPACT_WINDOW default
+	// — the context capacity in tokens Claude Code's auto-compaction
+	// calculations run against, as a canonical decimal string ("450000"); "" =
+	// unset (the model's own default threshold decides). Pinning it below the
+	// model's real window makes a long-lived agent compact while it is still
+	// sharp. Claude-Code-only, validated against the profile's harness through
+	// harness.ResolveAutoCompactWindow.
+	AutoCompactWindow string
 	// AutoReview / TrustDir are launch toggles; nil = unset.
 	AutoReview *bool
 	TrustDir   *bool
@@ -147,13 +155,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, disabled, disabled_reason, harness, model, effort, sandbox, approval, tools, ask_user_question_timeout,
+		    auto_compact_window,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
+		p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -204,7 +214,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, disabled = ?, disabled_reason = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?, tools = ?,
-		   ask_user_question_timeout = ?,
+		   ask_user_question_timeout = ?, auto_compact_window = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
@@ -213,7 +223,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance,
-		p.AskUserQuestionTimeout,
+		p.AskUserQuestionTimeout, p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -460,7 +470,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 }
 
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, harness, model, effort, sandbox, approval,
-	tools, ask_user_question_timeout,
+	tools, ask_user_question_timeout, auto_compact_window,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 	is_owner, permission_overrides, context_features, created_at, updated_at
@@ -472,7 +482,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, isOwner sql.NullInt64
 	var permOverrides, contextFeatures, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
-		&p.ToolGovernance, &p.AskUserQuestionTimeout,
+		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory,
 		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {

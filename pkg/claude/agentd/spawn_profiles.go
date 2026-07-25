@@ -65,9 +65,15 @@ type spawnProfileJSON struct {
 	// per-spawn via `--settings`. Claude-Code-only — a value on a Codex profile
 	// is a 400 (buildProfileFromJSON gates it on the profile's harness).
 	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
-	AutoReview             *bool  `json:"auto_review,omitempty"`
-	TrustDir               *bool  `json:"trust_dir,omitempty"`
-	AutoMemory             *bool  `json:"auto_memory,omitempty"`
+	// AutoCompactWindow is the profile's auto-compaction context capacity in
+	// tokens ("450000"; "" = unset, the model's own threshold decides). Accepts
+	// "450k" / "0.5M" on the way in and normalizes to plain digits. Claude-Code-only
+	// — a value on a Codex profile is a 400 (buildProfileFromJSON gates it on the
+	// profile's harness).
+	AutoCompactWindow string `json:"auto_compact_window,omitempty"`
+	AutoReview        *bool  `json:"auto_review,omitempty"`
+	TrustDir          *bool  `json:"trust_dir,omitempty"`
+	AutoMemory        *bool  `json:"auto_memory,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -115,6 +121,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Approval:                   p.Approval,
 		ToolGovernance:             p.ToolGovernance,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
+		AutoCompactWindow:          p.AutoCompactWindow,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
@@ -252,6 +259,13 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
 	}
+	// Validate (+ harness-gate + normalize) the auto-compaction window: a value on
+	// a non-Claude profile is a 400, an unparseable or out-of-range token count is
+	// rejected, and "450k" is stored as "450000" so every reader sees one form.
+	autoCompactWindow, err := harness.ResolveAutoCompactWindow(h, body.AutoCompactWindow)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_compact_window", err.Error()}
+	}
 	if body.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *body.AutoReview); err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_review", err.Error()}
@@ -330,6 +344,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Approval:                   approval,
 		ToolGovernance:             toolGovernance,
 		AskUserQuestionTimeout:     askTimeout,
+		AutoCompactWindow:          autoCompactWindow,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,

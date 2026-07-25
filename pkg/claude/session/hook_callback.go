@@ -1725,7 +1725,16 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer)
 			"error", err, "session_id", envSessionID, "module", "hooks")
 		return nil
 	}
-	window := snap.ContextWindowSize
+	// Measure against the window compaction ACTUALLY fires at. The stored
+	// ContextPct is already re-based onto it by the status line, so pairing it
+	// with the model's full window here would overstate used tokens by exactly
+	// the ratio between the two — a 1M agent pinned to 450K would look more than
+	// twice as full as it is, and the guard would wave through compactions it
+	// exists to refuse. The pin is read from this hook's own environment for the
+	// same reason the status line does: the hook runs inside the agent's pane, so
+	// it sees the variable Claude Code is actually acting on.
+	window := harness.EffectiveContextWindow(snap.ContextWindowSize,
+		harness.AutoCompactWindowTokens(os.Getenv(harness.AutoCompactWindowEnvVar)))
 	if window <= 0 || snap.ContextPct <= 0 {
 		return nil // no usable usage data yet → allow
 	}

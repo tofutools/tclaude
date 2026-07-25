@@ -115,6 +115,9 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// inherits the source's startup-context shape too — a lean source must not
 	// produce a fat sibling.
 	contextFeatures := relaunch.ContextFeatures
+	// Same reasoning for the auto-compaction window: a source pinned to compact
+	// at 450K must not produce a sibling that runs to the model's full window.
+	autoCompactWindow := relaunch.AutoCompactWindow
 	cloneSandbox := relaunch.Sandbox
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
@@ -181,6 +184,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.RemoteControl = remoteControl
 		proofArgs.AutoMemory = autoMemory
 		proofArgs.ContextFeatures = contextFeatures
+		proofArgs.AutoCompactWindow = autoCompactWindow
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
 			agentDirectoryCleanup()
 			return "", "", "", "", &cloneSpawnError{
@@ -260,6 +264,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.RemoteControl = remoteControl
 	proofArgs.AutoMemory = autoMemory
 	proofArgs.ContextFeatures = contextFeatures
+	proofArgs.AutoCompactWindow = autoCompactWindow
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
 		agentDirectoryCleanup()
 		return "", "", "", "", &cloneSpawnError{

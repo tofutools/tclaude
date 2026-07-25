@@ -56,6 +56,7 @@ type World struct {
 	spawnRemoteControl map[string]bool
 	spawnAutoMemory    map[string]bool
 	spawnContextTrims  map[string]map[string]string
+	spawnCompactWindow map[string]string
 	spawnCwdProofs     map[string]string
 	spawnDirProofs     map[string]string
 	spawnGitCommonDirs map[string]string
@@ -99,6 +100,7 @@ func New(t *testing.T) *World {
 		spawnRemoteControl:  map[string]bool{},
 		spawnAutoMemory:     map[string]bool{},
 		spawnContextTrims:   map[string]map[string]string{},
+		spawnCompactWindow:  map[string]string{},
 		spawnCwdProofs:      map[string]string{},
 		spawnDirProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
@@ -357,6 +359,26 @@ func (w *World) RecordSpawnContextFeatures(convID string, features map[string]st
 		copied[slug] = state
 	}
 	w.spawnContextTrims[convID] = copied
+}
+
+// RecordSpawnAutoCompactWindow captures the auto-compaction window a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert what the spawn path resolved. The empty string is
+// recorded too: "nothing pinned" is a real, assertable outcome, distinct from a
+// conv the spawner never saw.
+func (w *World) RecordSpawnAutoCompactWindow(convID, window string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnCompactWindow[convID] = window
+}
+
+// SpawnAutoCompactWindow returns the auto-compaction window recorded for a
+// spawned conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnAutoCompactWindow(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	window, ok := w.spawnCompactWindow[convID]
+	return window, ok
 }
 
 // SpawnContextFeatures returns the startup-context trim map recorded for a

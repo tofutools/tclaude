@@ -2291,6 +2291,13 @@ func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap
 		// (no-op for other harnesses and for a picked row that already has data).
 		snap = openCodeContextSnapshotFallback(sess, s)
 	}
+	// Report the window compaction ACTUALLY fires at, so `tclaude agent
+	// context-info` and the group listing agree with the dashboard meter and the
+	// status line. ContextPct already arrives re-based; this makes the token
+	// denominator match it. The stored snapshot keeps the model's real window —
+	// the relaunch layer reads that one to re-derive a 1M model's [1m] suffix.
+	snap.ContextWindowSize = harness.EffectiveContextWindow(
+		snap.ContextWindowSize, harness.AutoCompactWindowTokens(sess.AutoCompactWindow))
 	return snap, sess.ID, true
 }
 
