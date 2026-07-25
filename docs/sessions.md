@@ -85,7 +85,11 @@ Only postures that make the launch differ from a fresh one are listed. Most
 conversations pin nothing on most axes, and a resume that reproduces a recorded
 "nothing pinned" is byte-identical to one without the carryover — announcing
 those would put the line on every ordinary resume, which is how a line stops
-being read.
+being read. That includes `inherit`, which is the recorded spelling of "nothing
+pinned" for `--sandbox`, `--ask-for-approval` and
+`--ask-user-question-timeout`: it is still carried, because keeping it distinct
+from *unrecorded* is what stops a profile or group default from silently winning
+on the next hop, but it changes nothing about this launch.
 
 A recorded value the relaunch harness cannot honour — a Claude-only posture on a
 Codex resume, or a startup-context feature since retired from the catalog — is

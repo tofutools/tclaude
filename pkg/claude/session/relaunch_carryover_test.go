@@ -266,6 +266,35 @@ func TestApplyRecordedLaunchPosture_SaysNothingWhenNothingWasPinned(t *testing.T
 	assert.Empty(t, params.AutoCompactWindow)
 }
 
+// TestApplyRecordedLaunchPosture_InheritIsNotAPinnedPosture is the same rule at
+// the other spelling of "nothing pinned", and it is the COMMON path rather than
+// an edge case: the daemon spawn path resolves a blank sandbox through
+// harness.ResolveSandboxMode, which applies claudeSandbox.DefaultMode() =
+// inherit, so every agentd-spawned Claude agent that did not explicitly choose
+// containment has sandbox_mode=inherit recorded against it. A human then typing
+// `tclaude session new -r <that conv>` — the headline scenario for TCL-730 —
+// must not be told that --sandbox came back, because it did not change anything.
+func TestApplyRecordedLaunchPosture_InheritIsNotAPinnedPosture(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version:                db.RelaunchProfileVersion,
+		SandboxMode:            ptr(harness.ClaudeSandboxInherit),
+		ApprovalPolicy:         ptr(harness.ClaudePermissionInherit),
+		AskUserQuestionTimeout: ptr(harness.ClaudeAskTimeoutInherit),
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	out := captureCarryoverStderr(t, params, explicitLaunchFields{})
+
+	assert.Empty(t, out, "inherit on all three axes is a launch identical to a fresh one")
+	// Carried all the same: `inherit` is a first-class sentinel precisely so it
+	// stays distinguishable from unrecorded, and dropping it here would let a
+	// profile or group default win on the next hop.
+	assert.Equal(t, harness.ClaudeSandboxInherit, params.Sandbox)
+	assert.Equal(t, harness.ClaudePermissionInherit, params.Approval)
+	assert.Equal(t, harness.ClaudeAskTimeoutInherit, params.AskUserQuestionTimeout)
+}
+
 // TestLaunchCarryoverDropsValuesTheHarnessCannotHonour pins the fail-soft rule:
 // a recorded value the relaunch harness has no switch for is dropped, never
 // turned into a launch error. Losing a Claude-only posture on a Codex relaunch
@@ -278,7 +307,7 @@ func TestLaunchCarryoverDropsValuesTheHarnessCannotHonour(t *testing.T) {
 	params := &NewParams{}
 	dropped := map[string]bool{}
 	for _, field := range launchCarryoverFields {
-		if field.carry(codex, recorded, params) == carryDropped {
+		if field.classify(field.carry(codex, recorded, params)) == carryDropped {
 			dropped[field.flag] = true
 		}
 	}
@@ -315,11 +344,11 @@ func TestLaunchCarryoverReadsTheFieldItDeclares(t *testing.T) {
 			require.False(t, value.IsNil(), "fullClaudePosture must set %s for this test to mean anything", field.recorded)
 			reflect.ValueOf(&only).Elem().FieldByName(field.recorded).Set(value)
 
-			assert.Equal(t, carryApplied, field.carry(h, &only, &NewParams{}),
+			assert.Equal(t, carryApplied, field.classify(field.carry(h, &only, &NewParams{})),
 				"--%s must carry when only %s is recorded", field.flag, field.recorded)
 
 			empty := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
-			assert.Equal(t, carryUnrecorded, field.carry(h, &empty, &NewParams{}),
+			assert.Equal(t, carryUnrecorded, field.classify(field.carry(h, &empty, &NewParams{})),
 				"--%s must read %s, and report unknown when it is unset", field.flag, field.recorded)
 		})
 	}
@@ -330,22 +359,47 @@ func TestLaunchCarryoverReadsTheFieldItDeclares(t *testing.T) {
 // must never be announced. Without this, one new row returning carryApplied
 // unconditionally is enough to put the banner back on every ordinary resume,
 // where it stops being read — and the `--sandbox off` line goes with it.
+//
+// It drives EVERY spelling of unpinned, not just the Go type's zero. Three axes
+// have a first-class `inherit` sentinel that deliberately survives validation,
+// and a guard that could only reach "" would have been structurally incapable of
+// catching the case that actually needed it — which is what happened: sandbox
+// and ask-user-question-timeout both announced `inherit` until the sentinel
+// became a declared property of the row.
 func TestLaunchCarryoverReportsAnAssertedEmptyAsADefault(t *testing.T) {
 	for _, field := range launchCarryoverFields {
 		t.Run(field.flag, func(t *testing.T) {
 			h := carryoverHarness(t, field.flag)
-			// Set exactly this field to a pointer-to-zero: recorded, and recorded
-			// as nothing.
-			pinned := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
-			slot := reflect.ValueOf(&pinned).Elem().FieldByName(field.recorded)
-			require.True(t, slot.IsValid(), "no such profile field")
-			slot.Set(reflect.New(slot.Type().Elem()))
+			// The type's zero, plus whatever else this row declares unpinned.
+			zero := reflect.New(reflect.TypeOf(db.AgentRelaunchProfile{}).
+				Field(profileFieldIndex(t, field.recorded)).Type.Elem())
+			spellings := []reflect.Value{zero}
+			for _, sentinel := range field.unpinned {
+				spellings = append(spellings, reflect.ValueOf(&sentinel))
+			}
 
-			assert.Equal(t, carryAppliedDefault, field.carry(h, &pinned, &NewParams{}),
-				"an asserted-empty %s resolves to the same launch as an omitted --%s, "+
-					"so it must not be disclosed", field.recorded, field.flag)
+			for _, spelling := range spellings {
+				pinned := db.AgentRelaunchProfile{Version: db.RelaunchProfileVersion}
+				slot := reflect.ValueOf(&pinned).Elem().FieldByName(field.recorded)
+				require.True(t, slot.IsValid(), "no such profile field")
+				require.Equal(t, slot.Type(), spelling.Type(),
+					"unpinned values must have the type of the field they are unpinned for")
+				slot.Set(spelling)
+
+				assert.Equal(t, carryAppliedDefault,
+					field.classify(field.carry(h, &pinned, &NewParams{})),
+					"%s recorded as %q resolves to the same launch as an omitted --%s, "+
+						"so it must not be disclosed", field.recorded, spelling.Elem(), field.flag)
+			}
 		})
 	}
+}
+
+func profileFieldIndex(t *testing.T, name string) int {
+	t.Helper()
+	f, ok := reflect.TypeOf(db.AgentRelaunchProfile{}).FieldByName(name)
+	require.True(t, ok, "db.AgentRelaunchProfile has no field %s", name)
+	return f.Index[0]
 }
 
 // TestApplyRecordedLaunchPosture_SkipsNonResumeAndManagedLaunches pins the two

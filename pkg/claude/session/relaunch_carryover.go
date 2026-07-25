@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -39,11 +40,46 @@ type launchCarryoverField struct {
 	// substitute: a bool flag explicitly set to false is indistinguishable from
 	// an omitted one here, which is exactly why `explicit` exists.
 	supplied func(*NewParams) bool
-	// carry writes the recorded value onto params and reports what happened.
-	// carryUnrecorded means the posture holds nothing for this field (nil =
-	// unknown, and unknown must stay unknown); carryDropped means a value WAS
-	// recorded but the harness this relaunch will use cannot honour it.
-	carry func(*harness.Harness, *db.AgentRelaunchProfile, *NewParams) carryOutcome
+	// unpinned lists the values that mean "nothing pinned" for this parameter
+	// BEYOND its type's zero. Three axes carry a first-class `inherit` sentinel
+	// that survives validation precisely so an explicit inherit stays
+	// distinguishable from an omitted flag — and then collapses to "emit no
+	// flag" at the last layer. It is a property of the axis, not of the Go type,
+	// so it is declared here rather than hand-written into each carry closure:
+	// that is what lets classify and its structural guard enumerate every
+	// spelling instead of depending on someone remembering a fourth one.
+	unpinned []string
+	// carry writes the recorded value onto params and reports the value it
+	// applied together with what happened. carryUnrecorded means the posture
+	// holds nothing for this field (nil = unknown, and unknown must stay
+	// unknown); carryDropped means a value WAS recorded but the harness this
+	// relaunch will use cannot honour it. Deciding whether an applied value is
+	// worth disclosing is classify's job, not the closure's.
+	carry func(*harness.Harness, *db.AgentRelaunchProfile, *NewParams) (any, carryOutcome)
+}
+
+// classify refines what carry reported: an applied value that means "nothing
+// pinned" — the type's zero, or one of this row's sentinel spellings — produces
+// the same launch as an omitted flag, so it is carried but not disclosed.
+//
+// It lives here rather than in each carry closure so there is exactly one place
+// the rule exists, and so the structural guard can drive every spelling of
+// unpinned through it.
+func (f launchCarryoverField) classify(applied any, outcome carryOutcome) carryOutcome {
+	if outcome != carryApplied {
+		return outcome
+	}
+	switch v := applied.(type) {
+	case string:
+		if v == "" || slices.Contains(f.unpinned, v) {
+			return carryAppliedDefault
+		}
+	case bool:
+		if !v {
+			return carryAppliedDefault
+		}
+	}
+	return carryApplied
 }
 
 // carryOutcome is what one launchCarryoverField did with the recorded posture.
@@ -67,18 +103,6 @@ const (
 	carryAppliedDefault
 	carryDropped
 )
-
-// carriedValue classifies what a carry actually put on params: its type's zero
-// value means the record asserts "nothing pinned", which is not a change worth
-// reporting. Fields with a non-zero spelling of "unset" (approval's `inherit`)
-// normalize before calling this.
-func carriedValue[T comparable](applied T) carryOutcome {
-	var unpinned T
-	if applied == unpinned {
-		return carryAppliedDefault
-	}
-	return carryApplied
-}
 
 // launchCarryoverExcused names the db.AgentRelaunchProfile fields `session new
 // -r` deliberately does NOT carry, with the reason. Together with
@@ -104,134 +128,131 @@ var launchCarryoverFields = []launchCarryoverField{
 		flag:        "sandbox",
 		recorded:    "SandboxMode",
 		containment: true,
+		unpinned:    []string{harness.ClaudeSandboxInherit},
 		// --permission-profile is the same decision spelled differently (and is
 		// mutually exclusive with --sandbox), so a caller who passed it owns the
 		// containment posture and must not have a recorded --sandbox added under it.
 		supplied: func(p *NewParams) bool {
 			return strings.TrimSpace(p.Sandbox) != "" || strings.TrimSpace(p.PermissionProfile) != ""
 		},
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.SandboxMode == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			mode, err := harness.ValidateSandboxMode(h, strings.TrimSpace(*rec.SandboxMode))
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.Sandbox = mode
-			return carriedValue(mode)
+			return mode, carryApplied
 		},
 	},
 	{
 		flag:        "ask-for-approval",
 		recorded:    "ApprovalPolicy",
 		containment: true,
+		unpinned:    []string{harness.ClaudePermissionInherit},
 		supplied:    func(p *NewParams) bool { return strings.TrimSpace(p.Approval) != "" },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.ApprovalPolicy == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			policy, err := harness.ValidateApprovalPolicy(h, strings.TrimSpace(*rec.ApprovalPolicy))
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.Approval = policy
-			// `inherit` is Claude Code's first-class spelling of "no
-			// --permission-mode flag", so it is this field's unpinned value even
-			// though it is not the empty string.
-			if policy == harness.ClaudePermissionInherit {
-				return carryAppliedDefault
-			}
-			return carriedValue(policy)
+			return policy, carryApplied
 		},
 	},
 	{
 		flag:     "auto-review",
 		recorded: "ApprovalAutoReview",
 		supplied: func(p *NewParams) bool { return p.AutoReview },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.ApprovalAutoReview == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			autoReview, err := harness.ResolveAutoReview(h, *rec.ApprovalAutoReview)
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.AutoReview = autoReview
-			return carriedValue(autoReview)
+			return autoReview, carryApplied
 		},
 	},
 	{
 		flag:     "tools",
 		recorded: "ToolGovernance",
 		supplied: func(p *NewParams) bool { return strings.TrimSpace(p.ToolGovernance) != "" },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.ToolGovernance == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			governance, err := harness.ValidateToolGovernance(h, strings.TrimSpace(*rec.ToolGovernance))
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.ToolGovernance = governance
-			return carriedValue(governance)
+			return governance, carryApplied
 		},
 	},
 	{
 		flag:     "ask-user-question-timeout",
 		recorded: "AskUserQuestionTimeout",
+		unpinned: []string{harness.ClaudeAskTimeoutInherit},
 		supplied: func(p *NewParams) bool { return strings.TrimSpace(p.AskUserQuestionTimeout) != "" },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.AskUserQuestionTimeout == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			timeout, err := harness.ResolveAskTimeoutMode(h, strings.TrimSpace(*rec.AskUserQuestionTimeout))
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.AskUserQuestionTimeout = timeout
-			return carriedValue(timeout)
+			return timeout, carryApplied
 		},
 	},
 	{
 		flag:     "remote-control",
 		recorded: "RemoteControl",
 		supplied: func(p *NewParams) bool { return p.RemoteControl },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.RemoteControl == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			remoteControl, err := harness.ResolveRemoteControl(h, *rec.RemoteControl)
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.RemoteControl = remoteControl
-			return carriedValue(remoteControl)
+			return remoteControl, carryApplied
 		},
 	},
 	{
 		flag:     "auto-memory",
 		recorded: "AutoMemory",
 		supplied: func(p *NewParams) bool { return p.AutoMemory },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.AutoMemory == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			autoMemory, err := harness.ResolveAutoMemory(h, rec.AutoMemory)
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.AutoMemory = autoMemory
-			return carriedValue(autoMemory)
+			return autoMemory, carryApplied
 		},
 	},
 	{
 		flag:     "context-features",
 		recorded: "ContextFeatures",
 		supplied: func(p *NewParams) bool { return strings.TrimSpace(p.ContextFeatures) != "" },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.ContextFeatures == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			// Re-resolve against the harness this relaunch will use, dropping
 			// entries a catalog change has retired. Losing a trim costs context,
@@ -248,26 +269,26 @@ var launchCarryoverFields = []launchCarryoverField{
 			}
 			resolved, err := harness.ResolveContextFeatures(h, kept)
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.ContextFeatures = harness.FormatContextFeatures(resolved)
-			return carriedValue(p.ContextFeatures)
+			return p.ContextFeatures, carryApplied
 		},
 	},
 	{
 		flag:     "auto-compact-window",
 		recorded: "AutoCompactWindow",
 		supplied: func(p *NewParams) bool { return strings.TrimSpace(p.AutoCompactWindow) != "" },
-		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) carryOutcome {
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
 			if rec.AutoCompactWindow == nil {
-				return carryUnrecorded
+				return nil, carryUnrecorded
 			}
 			window, err := harness.ResolveAutoCompactWindow(h, strings.TrimSpace(*rec.AutoCompactWindow))
 			if err != nil {
-				return carryDropped
+				return nil, carryDropped
 			}
 			p.AutoCompactWindow = window
-			return carriedValue(window)
+			return window, carryApplied
 		},
 	},
 }
@@ -329,7 +350,7 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 		if explicit.has(field.flag) || field.supplied(params) {
 			continue
 		}
-		switch field.carry(h, recorded, params) {
+		switch field.classify(field.carry(h, recorded, params)) {
 		case carryApplied:
 			carried = append(carried, "--"+field.flag)
 		case carryDropped:
