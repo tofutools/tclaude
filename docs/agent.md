@@ -1227,6 +1227,21 @@ suffix. A **reincarnate**
 migrates identity onto a fresh conv-id and soft-stops the old one; the
 follow-up prompt is mandatory so the successor isn't left idle.
 
+**How a successor is named + handed off.** A Claude Code reincarnation takes
+the same launch-enrollment path as a spawn: the daemon presets the successor's
+conversation id and launches it already named and briefed —
+`claude --session-id <uuid> --name <base-name> "<handoff>"`. Nothing is typed
+into the new pane. That matters because a pane whose TUI has not started
+reading input yet buffers keystroke *text* but drops the `Enter`s: the older
+flow's `/rename` and handoff nudge could replay as one merged line, leaving a
+successor titled after its own handoff with the handoff never delivered as a
+turn. Launch args cannot merge. The handoff is also saved to the successor's
+inbox, inlined into the launch prompt when it fits
+`agent.spawn_inline_max_chars` and referenced by message id when it doesn't —
+the same rule spawn briefings follow. A **Codex** successor keeps the older
+post-connect flow (Codex cannot preset a conv-id and renames out-of-band), as
+does Claude Code under the `agent.spawn_legacy_injection` revert.
+
 ### remote-control
 
 Arm Claude Code's built-in Remote Access (claude.ai/code + the mobile

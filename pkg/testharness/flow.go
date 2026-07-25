@@ -180,6 +180,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// The session row's ID is the agent's TCLAUDE_SESSION_ID — the
 	// stable key the hook callback tracks conv-id rotations against.
 	cc.SessionID = label
+	// Model a pane whose TUI is not reading input yet, when the test asked for
+	// one. Set before Start so the very first injected submit is swallowed.
+	cc.SetInputUnreadyForEnters(s.w.SpawnInputUnreadyEnters)
 	if err := cc.Start(); err != nil {
 		return err
 	}

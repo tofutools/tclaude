@@ -33,6 +33,10 @@ import (
 //     to process this command" — the asynchrony catches bugs where
 //     prod assumes send-keys success ⇒ turn already on disk.
 //
+//   - SetInputUnreadyForEnters models the startup window BEFORE the TUI
+//     reads input, where the bare tty buffers literal text but silently
+//     swallows Enter. Off by default (an always-ready pane).
+//
 // What it deliberately does NOT model:
 //   - Assistant responses / tool use. Scenarios that need these can
 //     register a handler that calls AppendTurn for the assistant turn
@@ -66,6 +70,13 @@ type CCSim struct {
 	buf      strings.Builder
 	handlers []handlerEntry
 	delays   []delayEntry
+
+	// unreadyEnters models the window between the harness process starting
+	// and its TUI actually reading stdin: that many incoming Enter
+	// keypresses are swallowed before the pane starts submitting lines. See
+	// SetInputUnreadyForEnters. Zero = always ready, the historical
+	// behaviour every other test relies on.
+	unreadyEnters int
 
 	// Remote-control (CC's /remote-control) state machine. remoteOn is the
 	// modeled live state: a /remote-control toggle while OFF turns it on with
@@ -182,6 +193,41 @@ func (c *CCSim) Start() error {
 	return nil
 }
 
+// SetInputUnreadyForEnters makes the pane behave like a real Claude Code pane
+// during startup: until n Enter keypresses have arrived, the TUI is not reading
+// input yet, so the bare tty BUFFERS every literal text chunk sent to it but
+// silently SWALLOWS those Enters. Once it starts reading, everything buffered
+// replays into a single input line and the next Enter submits it — as one
+// merged command.
+//
+// That is the real failure mode behind TCL-731: two injected send-keys streams
+// (`/rename <title>` then the handoff nudge) merge into
+// `/rename <title>[system: new agent message …] …`, so the successor is named
+// after its own handoff and the handoff is never delivered as a turn. Any
+// injection path that cannot observe pane readiness is exposed to it; the
+// launch-arg path (`--session-id` / `--name` / positional prompt) is not,
+// because argv cannot be dropped or merged.
+//
+// Production's unreadiness is a TIME window — measured at 0.50–0.72s between
+// Claude Code's SessionStart hook firing and its input box accepting
+// keystrokes, against a ~1s injection margin. It is counted in Enters here
+// because flow tests shrink every settle gap to milliseconds, which would make
+// a wall-clock knob a race rather than a scenario. One injectTextAndSubmit call
+// sends two Enters (the belt-and-braces submit), so n=2 models "the pane was
+// not ready for the first injection"; a large n models one that never becomes
+// ready at all.
+//
+// Set it BEFORE Start (World.SpawnInputUnreadyEnters does that for panes the
+// spawner creates). n <= 0 restores the default always-ready pane.
+func (c *CCSim) SetInputUnreadyForEnters(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n < 0 {
+		n = 0
+	}
+	c.unreadyEnters = n
+}
+
 // Receive is the tmux send-keys entry point. Plain text accumulates;
 // "Enter" flushes the buffer through the registered handlers (with
 // any configured per-prefix delay).
@@ -227,6 +273,15 @@ func (c *CCSim) Receive(text string) {
 	}
 	if text != "Enter" {
 		c.buf.WriteString(text)
+		c.mu.Unlock()
+		return
+	}
+	// Pre-TUI window (SetInputUnreadyForEnters): the tty has been collecting
+	// the literal text above, but nothing is reading the Enter — so swallow it
+	// and leave the buffer intact. Whatever arrives next concatenates onto the
+	// same line, exactly as a real not-yet-ready pane does.
+	if c.unreadyEnters > 0 {
+		c.unreadyEnters--
 		c.mu.Unlock()
 		return
 	}

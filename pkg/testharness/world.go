@@ -29,6 +29,16 @@ type World struct {
 	// the preset id and keep the enrollment, never roll back a live pane).
 	SkipSpawnRow bool
 
+	// SpawnInputUnreadyEnters, when > 0, is applied to every CCSim the
+	// simSpawner builds via CCSim.SetInputUnreadyForEnters: the pane buffers
+	// literal send-keys text but swallows that many Enters before it starts
+	// submitting, exactly as a Claude Code pane does before its TUI reads
+	// input. It is the only way a flow test can reach a pane the daemon
+	// creates on its behalf, so it is the knob for exercising injection paths
+	// against a not-yet-ready pane (TCL-731). Zero (the default) keeps every
+	// existing test on an always-ready pane.
+	SpawnInputUnreadyEnters int
+
 	// Codexes is the Codex analog of CCs: conv-id → CodexSim, so the
 	// simSpawner's `--harness codex` branch can stash the sim it built and
 	// the resume branch can re-attach it. Kept as a parallel registry (not

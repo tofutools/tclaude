@@ -304,9 +304,9 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	assert.Equal(t, "worker", resp.NewTitle, "the living successor keeps the base name")
 	assert.Equal(t, "worker-r-3-x", resp.RetiredTitle, "the predecessor is archive-renamed")
 
-	// The successor pane is renamed to the base name; the old pane is
-	// archive-renamed and soft-exited.
-	f.AssertSentContains(resp.TmuxSession+":0.0", "/rename worker", 10*time.Second)
+	// The successor is named to the base name at launch (`claude --name`,
+	// TCL-731); the old pane is archive-renamed and soft-exited over tmux.
+	f.AssertSpawnName(resp.NewConv, "worker", 10*time.Second)
 	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 10*time.Second),
 		"old pane archive-renamed; sent=%+v", f.World.Tmux.Sent())
 	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 10*time.Second),
