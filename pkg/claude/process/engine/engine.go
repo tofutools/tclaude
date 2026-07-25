@@ -177,6 +177,33 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			if err := completeAndSettle(&next, definition, index, arrivesAtEveryBranch()); err != nil {
 				return Checkpoint{}, err
 			}
+		case definitionCompound:
+			// Activating a compound starts its local stage sequence. The parent
+			// becomes Running for as long as any stage is live and settles NO edge
+			// here: its authored outgoing route belongs to the done stage below, so
+			// downstream work cannot start while stages are still in flight.
+			if len(node.children) == 0 {
+				return invalid("compound node %q has no prepared stages", node.id)
+			}
+			first := definition.nodes[node.children[0]]
+			if status := next.Nodes[first.id]; status != NodePending {
+				return invalid("compound %q cannot start stage %q from %q", node.id, first.id, status)
+			}
+			next.Nodes[node.id] = NodeRunning
+			next.Nodes[first.id] = NodeReady
+		case definitionStageDone:
+			// The engine-owned last stage is the ONE path that completes a compound
+			// parent. Settling the parent from here — rather than from the last work
+			// stage — is what makes "the parent's authored edge settles exactly once"
+			// a property of the prepared shape instead of a rule to remember.
+			parent := definition.nodes[node.parent]
+			if status := next.Nodes[parent.id]; status != NodeRunning {
+				return invalid("done stage %q requires a running compound parent; got %q", node.id, status)
+			}
+			next.Nodes[node.id] = NodeDone
+			if err := completeAndSettle(&next, definition, node.parent, arrivesAt(soleOutcome(definition, parent))); err != nil {
+				return Checkpoint{}, err
+			}
 		case definitionEnd:
 			if err := requireNoWorkRemains(next, definition, node.id); err != nil {
 				return Checkpoint{}, err
@@ -249,7 +276,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			// Per-entry removal only: sibling branches' commands are untouched.
 			removeCommand(&next, outstanding.NodeID)
-			if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
+			// A successful compound stage advances its parent's local sequence; an
+			// authored task settles its own authored route. Both are one reducer
+			// transition, so no intermediate state is ever durable.
+			if node.parent >= 0 {
+				if err := advanceStage(&next, definition, index); err != nil {
+					return Checkpoint{}, err
+				}
+			} else if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
 				return Checkpoint{}, err
 			}
 			// A branch that succeeded after a sibling already failed still
@@ -386,6 +420,36 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		return invalid("unknown transition kind %q", transition.Kind)
 	}
 	return next, nil
+}
+
+// advanceStage completes one successful work stage of a compound parent and
+// readies the next stage in prepared order.
+//
+// There is no edge to settle and no closure to propagate: a compound's stages
+// are sequenced by the parent's ordered child list, which the prepared
+// definition already holds, so this is a step along that list. The last child is
+// always the engine-owned done stage, so a WORK stage always has a successor —
+// and the parent is completed only through that done stage, never here.
+func advanceStage(next *Checkpoint, definition *Definition, childIndex int) error {
+	child := definition.nodes[childIndex]
+	parent := definition.nodes[child.parent]
+	if status := next.Nodes[parent.id]; status != NodeRunning {
+		return fmt.Errorf("%w: stage %q requires a running compound parent; got %q",
+			ErrInvalidTransition, child.id, status)
+	}
+	position := slices.Index(parent.children, childIndex)
+	if position < 0 || position+1 >= len(parent.children) {
+		return fmt.Errorf("%w: stage %q has no next stage in compound %q",
+			ErrInvalidTransition, child.id, parent.id)
+	}
+	successor := definition.nodes[parent.children[position+1]]
+	if status := next.Nodes[successor.id]; status != NodePending {
+		return fmt.Errorf("%w: compound %q cannot ready stage %q from %q",
+			ErrInvalidTransition, parent.id, successor.id, status)
+	}
+	next.Nodes[child.id] = NodeDone
+	next.Nodes[successor.id] = NodeReady
+	return nil
 }
 
 // requireNoWorkRemains refuses to terminate a run while any other work is still
@@ -557,6 +621,13 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		switch {
 		case counts.arrived == 0:
 			next.Nodes[target.id] = NodeSkipped
+			// A compound parent that will never activate can never start its
+			// stages, and the stages have no edges for closure to travel along, so
+			// they are skipped here with their parent. Without this they would sit
+			// pending forever in a run that is otherwise finished.
+			for _, childIndex := range target.children {
+				next.Nodes[definition.nodes[childIndex].id] = NodeSkipped
+			}
 			for _, edgeIndex := range target.outgoing {
 				if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
 					return err
@@ -773,11 +844,12 @@ func AdvanceUntilQuiescent(checkpoint Checkpoint, definition *Definition) (Check
 }
 
 // transitionBudget bounds one settlement pass by the prepared graph size. Every
-// engine-owned advance completes exactly one distinct node, and the monotonic
-// guard forbids completing a node twice, so an acyclic prepared graph can never
-// need more advances than it has nodes. Deriving the bound this way is what
-// lets wide fan-out run at all — the old constant was sized for a single
-// sequential token.
+// engine-owned advance moves exactly one distinct node OUT of ready — a start,
+// fork, or end node completes, a compound parent starts running, a done stage
+// completes with its parent — and no advance ever returns a node to ready, so an
+// acyclic prepared graph can never need more advances than it has nodes.
+// Deriving the bound this way is what lets wide fan-out run at all — the old
+// constant was sized for a single sequential token.
 func transitionBudget(definition *Definition) int {
 	return len(definition.nodes)
 }
@@ -819,7 +891,7 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 			continue
 		}
 		switch node.kind {
-		case definitionStart, definitionParallel:
+		case definitionStart, definitionParallel, definitionCompound, definitionStageDone:
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
 		case definitionEnd:
 			// A join: any winner reaches the end while its losing branches are

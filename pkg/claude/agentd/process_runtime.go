@@ -1251,11 +1251,32 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 		allowed[profile] = struct{}{}
 	}
 	missingSet := make(map[string]struct{})
+	require := func(performer *model.Performer) {
+		if performer == nil || performer.Kind != model.PerformerProgram {
+			return
+		}
+		if _, ok := allowed[performer.Profile]; !ok {
+			missingSet[performer.Profile] = struct{}{}
+		}
+	}
 	for _, node := range tmpl.Nodes {
-		if node.Type == model.NodeTypeTask && node.Performer != nil && node.Performer.Kind == model.PerformerProgram {
-			if _, ok := allowed[node.Performer.Profile]; !ok {
-				missingSet[node.Performer.Profile] = struct{}{}
-			}
+		if node.Type != model.NodeTypeTask {
+			continue
+		}
+		// A compound task dispatches one program per derived stage, not just the
+		// parent's do performer, so every stage profile has to be authorized
+		// before the run exists. Missing one would otherwise surface as a stage
+		// that cannot be claimed halfway through a run the operator already
+		// believed they had approved.
+		require(node.Performer)
+		if node.Plan != nil {
+			require(&node.Plan.Performer)
+		}
+		for index := range node.Checks {
+			require(&node.Checks[index].Performer)
+		}
+		if node.Review != nil {
+			require(&node.Review.Performer)
 		}
 	}
 	missing := make([]string, 0, len(missingSet))

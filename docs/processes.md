@@ -126,12 +126,34 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
   recovery sweep, and a parked branch keeps the run open — an end node will not
   complete around a resolution that is still on offer.
 
+- Compound tasks. A task that declares `plan`, `checks`, or `review` runs its
+  stages in order: `<id>.plan`, `<id>.do`, `<id>.test.<step>`, `<id>.review`,
+  and finally the engine-owned `<id>.done`. The stages are ordinary nodes —
+  each is dispatched, observed, reconciled, and shown exactly like a plain
+  program task, under the derived id — so nothing about a compound is a special
+  case for an operator. They are derived once from the pinned template when the
+  run is created, and re-derived identically on every load; no expansion is
+  stored, so there is nothing that can drift from the template.
+
+  The parent stays `running` for as long as any stage is live and settles its
+  single authored route exactly once, when its `done` stage completes, so
+  downstream work never starts early. A failed stage fails the run the same way
+  a plain fail-fast task does; the parent is left `running` while the doomed run
+  drains, because only the `done` stage ever completes it. If an exclusive
+  decision routes around a compound, every derived stage is skipped with its
+  parent. Because each stage is a real program, **every stage profile has to be
+  authorized when the run is created**, not just the parent's `performer`.
+
+  In this slice each stage performer must be a program with no `contact`
+  schedule, `plan.approval` must be absent or `auto`, and stage-level `retry` /
+  `approvalRetry` are not executable yet.
+
 Not executable yet: agent deciders, agent or human task performers, retry
 backoff waits, same-session retry feedback (`retry.onFail:
-feedback-same-session`), retries on compound stages, poison handling, wait
-nodes, captures, and compound plan/check/review stages. Template validation and
-run creation both refuse these with a path-specific diagnostic rather than
-failing later.
+feedback-same-session`), retries on compound stages, human plan approval gates,
+human or agent stage performers, poison handling, wait nodes, and captures.
+Template validation and run creation both refuse these with a path-specific
+diagnostic rather than failing later.
 
 ## Crashes and reconciliation
 
