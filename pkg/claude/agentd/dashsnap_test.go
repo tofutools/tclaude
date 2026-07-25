@@ -3218,6 +3218,7 @@ func spawnContextFeaturesJS(showGroups, expandGroups string) string {
 func profileContextFeaturesJS() string {
 	return `return (async function(){
   var module = await import('/static/js/modal-profiles.js');
+  if (typeof module.openProfileEditor !== 'function') throw new Error('profile-context-features: openProfileEditor is gone');
   module.openProfileEditor(null);
   var deadline = Date.now() + 4000;
   while (!document.querySelector('#profile-editor-context-features') && Date.now() < deadline) {
