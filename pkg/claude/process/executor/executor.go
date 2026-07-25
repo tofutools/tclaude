@@ -322,8 +322,11 @@ func Prepare(run *Run) (*Dispatch, error) {
 		// is nothing to commit and a resume must not bump the state version.
 		return nil, nil
 	}
-	events := append(advanceEvidence(run.checkpoint, next, command),
-		joinEvidence(run.definition, run.checkpoint, next)...)
+	// An advance has no triggering input of its own: the settlement it commits
+	// is what wins a join, and everything advanceEvidence reports — a parked
+	// branch, a planned command — is downstream of that.
+	events := commitEvidence(run.definition, run.checkpoint, next,
+		nil, advanceEvidence(run.checkpoint, next, command))
 	if err := persistEvents(run, next, events); err != nil {
 		return nil, err
 	}
@@ -382,8 +385,8 @@ func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) er
 		Observation engine.ProgramObservation `json:"observation"`
 		Note        string                    `json:"note,omitempty"`
 	}{Decision: "record_outcome", Observation: observation, Note: outcome.Note}
-	events := append([]db.ProcessRunEvent{event("program_outcome_recorded", &command, actor, payload)},
-		joinEvidence(run.definition, run.checkpoint, next)...)
+	events := commitEvidence(run.definition, run.checkpoint, next,
+		[]db.ProcessRunEvent{event("program_outcome_recorded", &command, actor, payload)}, nil)
 	return persistEvents(run, next, events)
 }
 
@@ -418,8 +421,8 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 		Evidence   string            `json:"evidence,omitempty"`
 		ChosenEdge engine.ChosenEdge `json:"chosenEdge"`
 	}{Verdict: input.Verdict, Evidence: input.Evidence, ChosenEdge: chosen}
-	events := append([]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)},
-		joinEvidence(run.definition, run.checkpoint, next)...)
+	events := commitEvidence(run.definition, run.checkpoint, next,
+		[]db.ProcessRunEvent{eventForNode("decision_recorded", input.NodeID, actor, payload)}, nil)
 	return persistEvents(run, next, events)
 }
 
@@ -646,14 +649,27 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 	return events
 }
 
-// maxJoinEvidenceEvents bounds how many join arrivals one commit records
-// individually. A settlement pass can settle an authored fork's whole branch
-// set at once — up to the normalized degree ceiling — and a transaction accepts
-// at most db.MaxProcessRunEventsPerTransition events, so an unbounded row per
-// arrival would refuse the very transition it is evidence for. Past the cap the
-// exact counts are still recorded, so the truncation is visible rather than
-// silent. Ordinary runs settle one arrival per commit and never reach it.
-const maxJoinEvidenceEvents = 32
+// commitEvidence assembles one transaction's evidence in the order a reader
+// needs it to make sense, and keeps the whole batch inside the store's
+// per-transition limit.
+//
+// Causal order: the input that caused the transition, then what that settled at
+// the run's join: any reducers, then the downstream effects the engine advanced
+// and planned. Emitting the join rows last would have the public history claim
+// a downstream command was prepared before the join it depends on was won.
+//
+// The budget is what the rest of the commit leaves. Join history is optional —
+// it must never be the reason an otherwise valid state transition is refused —
+// so it is the part that yields, and it says so when it does.
+func commitEvidence(definition *engine.Definition, before, after engine.Checkpoint,
+	input, advance []db.ProcessRunEvent) []db.ProcessRunEvent {
+	joins := joinEvidence(definition, before, after,
+		db.MaxProcessRunEventsPerTransition-len(input)-len(advance))
+	events := make([]db.ProcessRunEvent, 0, len(input)+len(joins)+len(advance))
+	events = append(events, input...)
+	events = append(events, joins...)
+	return append(events, advance...)
+}
 
 // joinEvidence is the human-facing record of what one committed transition did
 // to the run's join: any reducers: which branch won a reducer, and which
@@ -664,13 +680,27 @@ const maxJoinEvidenceEvents = 32
 // checkpoints is the same seam advanceEvidence already uses for a newly parked
 // decision; the walk itself is the definition's prepared join: any edge index,
 // so a template without one costs a nil check.
-func joinEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+//
+// budget is how many rows the rest of the commit left. A settlement pass can
+// settle an authored fork's whole branch set at once — up to the normalized
+// degree ceiling — beside one row per branch the same pass parked on a human,
+// so the arrivals are what gets truncated rather than what pushes the
+// transaction over db.MaxProcessRunEventsPerTransition and refuses it. As many
+// deterministic arrival rows as fit are recorded; when any are omitted, the last
+// remaining slot carries the exact counts, so a truncated history says so
+// instead of quietly looking complete.
+func joinEvidence(definition *engine.Definition, before, after engine.Checkpoint, budget int) []db.ProcessRunEvent {
 	arrivals := definition.JoinArrivals(before, after)
-	if len(arrivals) == 0 {
+	if len(arrivals) == 0 || budget <= 0 {
 		return nil
 	}
-	recorded := min(len(arrivals), maxJoinEvidenceEvents)
-	events := make([]db.ProcessRunEvent, 0, recorded+1)
+	recorded := len(arrivals)
+	if recorded > budget {
+		// The last slot goes to the summary, so a budget of one buys either one
+		// arrival or the honest statement that there were more.
+		recorded = budget - 1
+	}
+	events := make([]db.ProcessRunEvent, 0, min(len(arrivals), budget))
 	won, late := 0, 0
 	for index, arrival := range arrivals {
 		if arrival.Winner {

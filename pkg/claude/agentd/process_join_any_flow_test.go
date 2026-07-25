@@ -103,6 +103,20 @@ func TestProcessRuntimeJoinAnyWinnerRunsDownstreamOnceAndWaitsForLosers(t *testi
 	assert.Equal(t, []string{"task-01"}, won2, "exactly one branch is recorded as the winner")
 	assert.ElementsMatch(t, []string{"task-02", "task-03"}, late,
 		"losers are recorded in whatever order they finish")
+
+	// And it reads in causal order: the winning branch reported, that won the
+	// join, and only then was the reducer's own command prepared. The public
+	// sequence is the human-facing history, so it must not claim the downstream
+	// command existed before the join it depends on was decided.
+	sequence := processRunEventSequence(t, f, run.ID)
+	observedWinner := indexOfEvent(sequence, "program_observed", "task-01")
+	joinWon := indexOfEvent(sequence, "join_won", "join")
+	joinPrepared := indexOfEvent(sequence, "program_prepared", "join")
+	require.NotEqual(t, -1, observedWinner)
+	require.NotEqual(t, -1, joinWon)
+	require.NotEqual(t, -1, joinPrepared)
+	assert.Less(t, observedWinner, joinWon, "the arrival is recorded after the input that caused it")
+	assert.Less(t, joinWon, joinPrepared, "the downstream command is recorded after the join it needed")
 }
 
 // TestProcessRuntimeJoinAnySimultaneousArrivalsElectOneWinner releases two
@@ -238,6 +252,43 @@ func TestProcessRuntimeJoinAnyRestartPreservesTheWinnerAndInventsNoWork(t *testi
 	won, late := joinArrivalEvidence(t, f, run.ID)
 	assert.Equal(t, []string{"task-01"}, won)
 	assert.ElementsMatch(t, []string{"task-02", "task-03"}, late)
+}
+
+// processRunEvent is one row of the public evidence stream, reduced to what an
+// ordering assertion needs.
+type processRunEvent struct {
+	Kind   string
+	NodeID string
+}
+
+// processRunEventSequence reads the whole public evidence stream in sequence
+// order, through the same paged API an operator would use.
+func processRunEventSequence(t *testing.T, f *testharness.Flow, runID string) []processRunEvent {
+	t.Helper()
+	var sequence []processRunEvent
+	for cursor := int64(0); ; {
+		url := fmt.Sprintf("/v1/process/runs/%s/events?limit=16&after=%d", runID, cursor)
+		response := processRuntimeRequest(t, f, http.MethodGet, url, nil)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var page processRuntimeEventPage
+		testharness.DecodeJSON(t, response, &page)
+		for _, event := range page.Events {
+			sequence = append(sequence, processRunEvent{Kind: event.Kind, NodeID: event.NodeID})
+		}
+		if len(page.Events) == 0 || page.Next <= cursor {
+			return sequence
+		}
+		cursor = page.Next
+	}
+}
+
+func indexOfEvent(sequence []processRunEvent, kind, nodeID string) int {
+	for index, event := range sequence {
+		if event.Kind == kind && event.NodeID == nodeID {
+			return index
+		}
+	}
+	return -1
 }
 
 // joinArrivalEvidence reads the run's public evidence stream and returns which
