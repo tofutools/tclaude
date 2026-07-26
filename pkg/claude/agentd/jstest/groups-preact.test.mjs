@@ -1184,6 +1184,85 @@ test('member editor preserves dirty, IME, busy, stacked overlay and field-level 
   host.remove();
 });
 
+test('inline rename refreshes immediately and retries after Claude title indexing', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const member = {
+    agent_id: 'agt-stable',
+    conv_id: 'conv-1',
+    title: 'Worker old',
+  };
+  const state = {
+    snapshot: { value: snapshot([{ name: 'alpha', members: [member] }]) },
+  };
+  const sequence = [];
+  const actions = createGroupsActions({
+    state,
+    fetchImpl: async (url, options) => {
+      sequence.push(['rename', url, JSON.parse(options.body)]);
+      return { ok: true, text: async () => '' };
+    },
+    refresh: async () => {
+      const attempt = sequence.filter(([kind]) => kind === 'refresh').length + 1;
+      sequence.push(['refresh', attempt]);
+      if (attempt === 2) {
+        state.snapshot.value = snapshot([{
+          name: 'alpha',
+          members: [{ ...member, title: 'Worker new' }],
+        }]);
+      }
+    },
+    wait: async (ms) => { sequence.push(['wait', ms]); },
+  });
+
+  assert.equal(await actions.renameAgent(member, '  Worker new  '), true);
+  assert.deepEqual(sequence, [
+    ['rename', '/api/agents/agt-stable/rename', { title: 'Worker new' }],
+    ['refresh', 1],
+    ['wait', 600],
+    ['refresh', 2],
+  ], 'the retry follows the immediate stale refresh instead of waiting for the 2s dashboard cadence');
+});
+
+test('inline rename skips its delayed retry when the first refresh has the new title', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const member = {
+    agent_id: 'agt-stable',
+    conv_id: 'conv-1',
+    title: 'Codex old',
+  };
+  const state = {
+    snapshot: { value: snapshot([{ name: 'alpha', members: [member] }]) },
+  };
+  let refreshes = 0;
+  let waits = 0;
+  const actions = createGroupsActions({
+    state,
+    fetchImpl: async () => ({ ok: true, text: async () => '' }),
+    refresh: async () => {
+      refreshes++;
+      state.snapshot.value = snapshot([{
+        name: 'alpha',
+        members: [{ ...member, title: 'Codex new' }],
+      }]);
+    },
+    wait: async () => { waits++; },
+  });
+
+  assert.equal(await actions.renameAgent(member, 'Codex new'), true);
+  assert.equal(refreshes, 1);
+  assert.equal(waits, 0, 'direct-store harnesses do not pay the Claude retry delay');
+});
+
 test('member editor actions keep independent endpoint and stable-selector boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ saveMemberEditorRequests }, { memberEditorChanges }] = await Promise.all([
