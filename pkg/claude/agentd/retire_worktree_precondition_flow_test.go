@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -397,11 +396,13 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 				cwd: {Root: cwd, Branch: "feature-a", Kind: "linked"},
 			})
 
-			// A slow /exit keeps the pane alive past the response, so removal is
-			// deferred to the waiter — the production shape of this race.
+			// Hold /exit until the branch drift is installed. A wall-clock delay
+			// here would race the test setup against the deferred cleanup.
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			cc.SetCommandDelay("/exit", 200*time.Millisecond)
+			cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
+				return true
+			})
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{
@@ -421,6 +422,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			fw.setDir(cwd, worktree.WorktreeStatus{
 				Root: cwd, Branch: "feature-b", Kind: "linked",
 			})
+			cc.MarkDead()
 			agentd.WaitForBackgroundForTest()
 
 			assert.False(t, fw.wasRemoved(cwd),
@@ -450,7 +452,9 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 
 			cc := f.World.CCs.GetByConvID(conv)
 			require.NotNil(t, cc, "no CCSim registered for %s", conv)
-			cc.SetCommandDelay("/exit", 200*time.Millisecond)
+			cc.OnInput("/exit", func(*testharness.CCSim, string) bool {
+				return true
+			})
 
 			mux := agentd.BuildDashboardHandlerForTest()
 			query := url.Values{
@@ -468,6 +472,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f.HaveConvWithTitle(other, "newcomer-worker")
 			f.HaveAliveSession(other, "spwn-rwpo", "tmux-rwpo", cwd)
 			f.HaveEnrolledAgent(other)
+			cc.MarkDead()
 			agentd.WaitForBackgroundForTest()
 
 			assert.False(t, fw.wasRemoved(cwd),
