@@ -15,7 +15,18 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
-import { autoCompactWindowHintFor } from './agent-spawn-model.js';
+import { autoCompactWindowHintFor, sandboxImplHintFor } from './agent-spawn-model.js';
+
+// Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
+// framing, and the platform requirement stated rather than implied. A profile
+// may pin the layer on a host that cannot run it — that is legitimate authoring
+// — so the editor discloses instead of refusing.
+const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for agents launched from this '
+  + 'profile. harness-builtin is the current behavior. tclaude-layer is EXPERIMENTAL: it runs the '
+  + "whole harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
+  + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — a '
+  + 'host without them refuses the launch instead of falling back. '
+  + 'Unset leaves the choice to the spawn-time profile chain.';
 
 // Shared with the spawn dialog's own copy of this control: the two consequences
 // an operator has to know are the cap and the status-line decoupling.
@@ -165,7 +176,7 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
 function Select({ value, onChange, options, ...props }) { return html`<select ...${props} value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>${options.map(([key, label]) => html`<option key=${key} value=${key}>${label}</option>`)}</select>`; }
 function Row({ label, hidden = false, title = '', children }) { return html`<label class="cron-create-row" hidden=${hidden} title=${title}><span class="cron-create-label">${label}</span>${children}</label>`; }
 
-function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
+function HarnessFields({ draft, setDraft, catalog, actions, profile = false, sandboxImpl = {} }) {
   const hEntry = harnessByName(catalog, draft.harness);
   const models = hEntry?.models || [];
   const hasModelList = models.length > 0;
@@ -202,6 +213,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
       ...current, harness, model: '', effort: '', ...defaults,
       trust_dir: '', remote_control: '', auto_memory: '',
       ssh_workaround: !!h?.can_ssh_workaround,
+      // A harness that cannot host the layer must not keep a tclaude-layer pin
+      // across the switch — saving it would be a 400 the operator never typed.
+      sandbox_implementation: h?.can_tclaude_layer ? current.sandbox_implementation : '',
     }));
   };
   const [helpOpen, setHelpOpen] = useState('');
@@ -221,6 +235,16 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
       autoCompactWindowMax: Number(hEntry?.auto_compact_window_max) || 0,
     },
   );
+  const sandboxImplOptions = Array.isArray(sandboxImpl?.options) ? sandboxImpl.options : [];
+  const sandboxImplHint = sandboxImplHintFor(
+    { sandboxImpl: draft.sandbox_implementation },
+    {
+      showSandboxImpl: !!hEntry?.can_tclaude_layer,
+      sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
+      sandboxImplHostAvailable: sandboxImpl?.host_available !== false,
+      sandboxImplHostReason: sandboxImpl?.host_unavailable_reason || '',
+    },
+  );
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
@@ -233,6 +257,17 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
       help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_sandbox} />
+    ${profile && hEntry?.can_tclaude_layer && html`<${Row} label="Sandbox impl"
+      title=${SANDBOX_IMPL_TITLE}>
+      <div class="cron-create-target">
+        <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}
+          onChange=${(value) => change(setDraft, 'sandbox_implementation', value)}
+          options=${[['', 'Unset (inherit at spawn)'],
+    ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
+        ${sandboxImplHint && html`<div
+          class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>`}
+      </div>
+    </${Row}>`}
     <${HelpField} id=${approvalID} label=${approvalLabel} title="Controls when the harness requests approval; it does not change the sandbox."
       value=${draft.approval}
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, hEntry.default_approval) }))}
@@ -297,7 +332,8 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Disabled" hidden=${local} title="Keep this profile visible and editable, but block every spawn that would use it."><input id="profile-editor-disabled" type="checkbox" checked=${draft.disabled} onChange=${(event) => change(setDraft, 'disabled', event.currentTarget.checked)} /></${Row}>
     <${Row} label="Disable reason" hidden=${local} title="Required while disabled. Retained when enabled so it can be reviewed or reused later."><textarea id="profile-editor-disabled-reason" value=${draft.disabled_reason} onInput=${(event) => change(setDraft, 'disabled_reason', event.currentTarget.value)} rows="2" placeholder="required when disabled — retained after re-enabling" spellcheck="true" /></${Row}>
-    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions} profile />
+    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}
+      sandboxImpl=${descriptor.sandboxImpl} profile />
     <${Row} label="Trust dir" hidden=${hEntry && !hEntry.can_dir_trust} title=${`Pre-trust the launch directory so the agent doesn't freeze on the harness's trust-folder dialog${hEntry?.dir_trust_store ? ` (edits ${hEntry.dir_trust_store})` : ''}.`}><${Select} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>

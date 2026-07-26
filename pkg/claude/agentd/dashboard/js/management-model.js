@@ -51,6 +51,8 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',
+    // "" = unset, so the profile stays silent and lower spawn tiers still speak.
+    sandbox_implementation: seed?.sandbox_implementation || '',
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
@@ -85,6 +87,13 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   // field simply omits the key rather than sending "".
   if ((!h || h.can_auto_compact_window) && String(draft.auto_compact_window || '').trim()) {
     body.auto_compact_window = String(draft.auto_compact_window).trim();
+  }
+  // Blank omits the key: an untouched row must leave the profile silent rather
+  // than pinning harness-builtin over whatever a lower spawn tier would supply.
+  // Gated on the harness capability so a value cannot outlive a harness switch
+  // that made it invalid.
+  if ((!h || h.can_tclaude_layer) && String(draft.sandbox_implementation || '').trim()) {
+    body.sandbox_implementation = String(draft.sandbox_implementation).trim();
   }
   const trust = (!h || h.can_dir_trust) ? readTri(draft.trust_dir) : null;
   if (trust != null) body.trust_dir = trust;

@@ -38,6 +38,7 @@ import {
   syncSpawnWorktree,
   validateSpawnDraft,
   autoCompactWindowHintFor,
+  sandboxImplHintFor,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
@@ -53,11 +54,21 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
+// Names WHO enforces the wall, which the Sandbox row above does not: that row
+// picks a mode within whatever sandbox is in force, this one picks which
+// sandbox that is. The experimental caveat and the platform requirement are
+// stated rather than implied — a launch that cannot have them refuses.
+const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
+  + 'harness-builtin is the current behavior. tclaude-layer is EXPERIMENTAL: it runs the whole '
+  + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
+  + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
+  + 'a host without them refuses the launch instead of falling back. '
+  + 'Blank inherits from the spawn-profile chain.';
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow',
+  'contextFeatures', 'autoCompactWindow', 'sandboxImpl',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -123,6 +134,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const context = useMemo(() => ({
     groups: current.groups,
     harnesses: current.harnesses,
+    sandboxImpl: current.sandboxImpl,
     userDefaultModel: current.userDefaultModel,
     normalizeNames: current.normalizeNames,
   }), [current]);
@@ -685,6 +697,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const toolsHelp = view.tools.help[draft.tools] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
+  const sandboxImplHint = sandboxImplHintFor(draft, view);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -882,6 +895,23 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.sandbox.visible} busy=${busy} />
+    <label class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
+      title=${SANDBOX_IMPL_TITLE}>
+      <span class="cron-create-label">Sandbox impl</span>
+      <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+        onChange=${(event) => update('sandboxImpl', event.currentTarget.value)}>
+        <option value="">— inherit (profile chain, then ${view.sandboxImplDefault}) —</option>
+        ${(view.sandboxImplOptions || []).map((option) => html`
+          <option key=${option.value} value=${option.value}>${option.label}</option>`)}
+      </select>
+    </label>
+    ${view.showSandboxImpl && sandboxImplHint && html`
+      <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target">
+          <div class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>
+        </div>
+      </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
       title="Choose inherited profiles, omit every tclaude sandbox-profile value, or compose an explicit profile after the global and group profiles."
       value=${view.sandboxProfilesDisabled ? SANDBOX_PROFILE_NONE : draft.sandboxProfile}

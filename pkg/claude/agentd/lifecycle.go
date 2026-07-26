@@ -2823,6 +2823,31 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	// The sandbox IMPLEMENTATION rides the same tier stack, but only its HARNESS
+	// applicability is validated inside the validator. That placement is the
+	// whole design: a lower-tier profile pinned to a different harness is
+	// ambient configuration, so it is skipped, disclosed, and falls through —
+	// while an explicit request, or a profile that claims this harness, fails
+	// loudly. Whether the HOST can run the layer is a separate gate below,
+	// because tier fallthrough would turn "no bwrap on this box" into a silent
+	// downgrade to harness-builtin. See sandbox_implementation.go.
+	var sandboxImplNote string
+	var sandboxImplSource string
+	body.SandboxImplementation, sandboxImplSource, sandboxImplNote, fieldFail = resolveStringLaunchField(
+		sandboxImplementationField, body.SandboxImplementation, h.Name, profileTiers,
+		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
+		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
+	// falls through; refuses naming the missing capability. Probed live, so an
+	// operator who just installed bwrap is not refused by a stale answer.
+	if fail := sandboxImplementationHostFailure(body.SandboxImplementation); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
 	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
@@ -2884,7 +2909,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
+	resolvedLaunch.SandboxImpl = agent.ResolvedField{
+		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, sandboxImplNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3284,6 +3311,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		SSHWorkaroundSet:           true,
 		SandboxMode:                sandboxMode,
 		SandboxModeSource:          sandboxSource,
+		SandboxImplementation:      body.SandboxImplementation,
 		AskUserQuestionTimeout:     askTimeout,
 		ApprovalPolicy:             approvalPolicy,
 		ToolGovernance:             toolGovernance,
@@ -3476,6 +3504,14 @@ type spawnParams struct {
 	// so the dashboard badge can attribute the containment to the profile that
 	// imposed it instead of to an operator who never chose one. "" omits it.
 	SandboxModeSource string
+	// SandboxImplementation is the resolved owner of OS-level containment:
+	// "tclaude-layer" for the experimental tclaude-owned bubblewrap wrapper, or
+	// "" / "harness-builtin" for the legacy harness-owned path. It forwards to
+	// `tclaude session new --sandbox-impl`, but only when non-default — that is
+	// what keeps the feature's default-off invariant visible in the argv itself
+	// (see appendSandboxImplementationFlag). Resolved and host-gated at the
+	// spawn boundary before the params are built.
+	SandboxImplementation string
 	// ApprovalPolicy is the resolved launch approval policy for a harness that
 	// takes one (Codex: "never" by default — non-escalating so the unattended
 	// pane can't deadlock), or "" to omit the flag (Claude Code, or no
@@ -4051,6 +4087,22 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.SandboxImplementation, _, _, fail = resolveStringLaunchField(
+		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
+		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	if fail != nil {
+		return fail
+	}
+	// The host gate belongs here too, not only at the HTTP boundary. This
+	// function is the safety net every non-HTTP caller passes through — the
+	// template deploy path builds spawnParams directly — so a group or global
+	// default profile carrying tclaude-layer would otherwise reach a spawner on
+	// a host that cannot run it without ever meeting a refusal. Same predicate,
+	// second call site: an unbypassable gate, not a second opinion.
+	if fail := sandboxImplementationHostFailure(p.SandboxImplementation); fail != nil {
+		return fail
+	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
 		p.AutoReviewSet || p.AutoReview, h.Name, tiers, func(prof *db.SpawnProfile) *bool { return prof.AutoReview },
 		func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -4308,6 +4360,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Harness:                    p.Harness,
 		Sandbox:                    p.SandboxMode,
 		SandboxChosenBy:            p.SandboxModeSource,
+		SandboxImplementation:      p.SandboxImplementation,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		Approval:                   p.ApprovalPolicy,
 		ToolGovernance:             p.ToolGovernance,

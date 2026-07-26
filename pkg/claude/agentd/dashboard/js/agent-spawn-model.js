@@ -132,6 +132,60 @@ export function launchSetting(harness, key) {
   };
 }
 
+// SANDBOX_IMPL_DEFAULT mirrors sandboxpolicy.ImplementationHarnessBuiltin. It is
+// the value a launch resolves to when nothing pins one, and the only value this
+// dialog ever sends when the row is hidden.
+export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
+export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
+
+// sandboxImplView answers the two halves of "can this launch use the tclaude
+// layer?" from the two places that own them: the HARNESS half from the harness
+// catalog entry (never a harness-name switch here), and the HOST half from the
+// snapshot-level catalog.
+//
+// The row is shown only when the selected harness can host the layer, because
+// with one implementation left there is no choice to render. Host availability
+// deliberately does NOT hide or disable anything: it only adds a warning. The
+// launch-time refusal is the authority on what may run, and a dialog that
+// quietly removed the option would have replaced that authority with itself —
+// besides making it impossible to author a profile that pins the layer on a
+// machine where bwrap is not installed yet.
+function sandboxImplView(harness, context) {
+  const catalog = context?.sandboxImpl || {};
+  const options = Array.isArray(catalog.options) ? catalog.options : [];
+  return {
+    showSandboxImpl: harness ? !!harness.can_tclaude_layer : false,
+    sandboxImplOptions: options,
+    sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
+    sandboxImplHostAvailable: catalog.host_available !== false,
+    sandboxImplHostReason: text(catalog.host_unavailable_reason),
+  };
+}
+
+// sandboxImplHintFor renders the note under the sandbox-implementation row.
+// Two truths, in the order an operator needs them: what the selected
+// implementation actually is, and — when they have selected the experimental
+// one on a host that cannot run it — that the launch will REFUSE rather than
+// quietly fall back. Saying "will refuse" is the whole point: an operator who
+// picks it anyway is choosing a failed launch, not an unnoticed downgrade.
+export function sandboxImplHintFor(draft, view) {
+  if (!view.showSandboxImpl) return null;
+  const value = text(draft.sandboxImpl) || view.sandboxImplDefault;
+  if (value !== SANDBOX_IMPL_TCLAUDE_LAYER) return null;
+  if (view.sandboxImplHostAvailable) {
+    return {
+      warn: false,
+      text: 'Experimental. Wraps the whole harness process in a tclaude-owned bubblewrap '
+        + "namespace and turns the harness's own sandbox off inside it.",
+    };
+  }
+  const reason = view.sandboxImplHostReason || 'this host cannot create the namespace';
+  return {
+    warn: true,
+    text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`,
+  };
+}
+
 export function spawnCapabilityView(draft, context) {
   const harness = findSpawnHarness(context.harnesses, draft.harness);
   const models = Array.isArray(harness?.models) ? harness.models : [];
@@ -170,6 +224,7 @@ export function spawnCapabilityView(draft, context) {
     sshWorkaroundAvailable,
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
+    ...sandboxImplView(harness, context),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
@@ -287,6 +342,9 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     autoMemory: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
+    // "" = unset, so the daemon's profile tier stack still speaks. Sending
+    // harness-builtin here instead would pin it and silence every lower tier.
+    sandboxImpl: '',
     sandboxProfile: '',
   };
 }
@@ -368,6 +426,9 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // Likewise a harness with no auto-compaction knob: keeping a typed window
     // would send a value the daemon rejects with a 400.
     autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
+    // A harness that cannot host the layer must not carry a tclaude-layer
+    // selection across the switch: it would be a 400 the operator never typed.
+    sandboxImpl: harness?.can_tclaude_layer ? draft.sandboxImpl : '',
   };
 }
 
@@ -442,6 +503,11 @@ export function applySpawnProfile(
   // silently ride along onto a profile that never asked for it.
   next.autoCompactWindow = view.showAutoCompactWindow && profile.auto_compact_window
     ? text(profile.auto_compact_window) : '';
+  // Same rule again: a profile that pins nothing clears whatever the previously
+  // selected profile put here, rather than letting an implementation ride along
+  // onto a profile that never asked for it.
+  next.sandboxImpl = view.showSandboxImpl && profile.sandbox_implementation
+    ? text(profile.sandbox_implementation) : '';
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
   if (profile.descr) next.descr = text(profile.descr);
@@ -493,6 +559,7 @@ export function clearSpawnProfileFields(draft, context, {
     autoMemory: false,
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
+    sandboxImpl: defaults.sandboxImpl,
     owner: false,
     permissionOverrides: {},
     contextFeatures: {},
@@ -630,13 +697,20 @@ export function spawnProfileSeed(draft, context) {
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
   }
+  // Seed only an explicit selection. Leaving it unset keeps the profile silent
+  // so lower tiers still speak — and a profile that pinned harness-builtin
+  // merely because the operator never touched the row would be an override
+  // nobody asked for.
+  if (view.showSandboxImpl && text(draft.sandboxImpl)) {
+    seed.sandbox_implementation = text(draft.sandboxImpl);
+  }
   return seed;
 }
 
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'sandboxImpl', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -727,6 +801,13 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // daemon normalizes "450k" to plain digits, so the raw field text is sent.
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     body.auto_compact_window = text(draft.autoCompactWindow);
+  }
+  // Blank omits the key, so an untouched row leaves the daemon's profile tier
+  // stack in charge and the launch stays default-off. An explicit selection —
+  // including harness-builtin — is sent, because pinning the legacy layer
+  // against a group default that would have flipped it is a real intent.
+  if (view.showSandboxImpl && text(draft.sandboxImpl)) {
+    body.sandbox_implementation = text(draft.sandboxImpl);
   }
   if (draft.owner) body.is_owner = true;
   if (Object.keys(draft.permissionOverrides || {}).length) {

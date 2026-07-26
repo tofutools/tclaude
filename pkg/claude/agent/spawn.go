@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -54,13 +55,23 @@ type SpawnResponse struct {
 // ResolvedLaunch is the resolved launch shape echoed in a spawn response — the
 // harness/model/effort that actually took effect, each tagged with the tier of
 // the resolution chain it came from. See ResolvedField.Source for the tier
-// vocabulary. Kept to the three vendor-carrying fields the TCL-304 incident
-// turned on; add more here (and in resolveLaunchProvenance) if a future
-// silently-defaulted field needs surfacing.
+// vocabulary. Started as the three vendor-carrying fields the TCL-304 incident
+// turned on, plus the sandbox implementation (TCL-769); add more here (and in
+// resolveLaunchProvenance) if a future silently-defaulted field needs
+// surfacing.
 type ResolvedLaunch struct {
 	Harness ResolvedField `json:"harness"`
 	Model   ResolvedField `json:"model"`
 	Effort  ResolvedField `json:"effort"`
+	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
+	// tier chose it. It is echoed rather than left to Notes because a spawn that
+	// silently inherited the experimental tclaude-layer from a group or global
+	// default profile is exactly the surprise the echo exists to prevent — an
+	// operator must be able to see that the wall around their agent was picked
+	// by a profile they did not name. A blank Value is the legacy
+	// harness-builtin path, echoed as "(harness default)" like any unpinned
+	// field. See TCL-769.
+	SandboxImpl ResolvedField `json:"sandbox_impl"`
 	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
 	// environment names. Environment values remain private in the snapshot.
 	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`
@@ -250,6 +261,25 @@ type SpawnRequest struct {
 	// Claude Code (settings.json-driven), which rejects a non-empty value. See
 	// JOH-192 / JOH-207.
 	SandboxMode string `json:"sandbox,omitempty"`
+
+	// SandboxImplementation picks WHO OWNS OS-level containment for the new
+	// agent, independently of the per-harness SandboxMode above: "harness-builtin"
+	// (the current behavior — the harness's own sandbox) or the EXPERIMENTAL
+	// "tclaude-layer", which runs the whole harness process inside a
+	// tclaude-owned bubblewrap mount namespace and disables the harness's own
+	// sandbox inside it.
+	//
+	// Empty = unspecified, so the daemon's profile tier stack fills it; unset
+	// everywhere means harness-builtin, which is what every spawn did before this
+	// field existed. An explicit "harness-builtin" is not the same as empty: it
+	// PINS the legacy implementation so a lower-tier profile cannot flip it.
+	//
+	// tclaude-layer is Linux-only and needs `bwrap` plus unprivileged user
+	// namespaces. A host that cannot provide them REFUSES the spawn naming the
+	// missing capability; it never falls back. Likewise a harness whose
+	// tool-executing process lives outside the wrapped pane (OpenCode) is a 400.
+	// Forwarded to `tclaude session new --sandbox-impl`. See TCL-769.
+	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
 
 	// AskUserQuestionTimeout is the Claude Code AskUserQuestion idle-timeout
 	// override for the new agent (never|60s|5m|10m). Empty = inherit (no
@@ -622,6 +652,8 @@ type SpawnParams struct {
 	// AutoCompactWindow pins where Claude Code auto-compacts for the new agent.
 	// A plain string flag (unlike the opt-in-only bools above), so a blank still
 	// defers to the profile chain and an explicit value overrides it.
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL who owns OS-level containment for the new agent: harness-builtin (default; current behavior) | tclaude-layer (runs the whole harness process in a tclaude-owned bubblewrap namespace and disables the harness's own sandbox inside it). Linux only; needs bwrap and unprivileged user namespaces, and refuses the spawn naming the missing capability if the host lacks them. Unset = filled by the profile chain, then harness-builtin"`
+
 	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for the new agent's Claude Code auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window so a long-lived agent compacts while it is still sharp. Capped at the model's actual window. Unset = filled by the profile chain, then the model default. Not applicable to codex"`
 }
 
@@ -656,7 +688,7 @@ func spawnCmd() *cobra.Command {
 			"welcome message. " +
 			"\n\n" +
 			"Default resolution. Each launch field (--harness, --model, --effort, " +
-			"--sandbox, --ask-for-approval, --ask-user-question-timeout) is resolved " +
+			"--sandbox, --sandbox-impl, --ask-for-approval, --ask-user-question-timeout) is resolved " +
 			"independently through this precedence, highest first:\n" +
 			"  1. the explicit flag\n" +
 			"  2. --profile (a saved spawn profile you name)\n" +
@@ -709,6 +741,7 @@ type resolvedSpawnFields struct {
 	Model                  string
 	Effort                 string
 	Sandbox                string
+	SandboxImpl            string
 	AskUserQuestionTimeout string
 	AutoCompactWindow      string
 	Approval               string
@@ -822,6 +855,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
 		out.AskUserQuestionTimeout = pick(p.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
 		out.AutoCompactWindow = pick(p.AutoCompactWindow, prof.AutoCompactWindow)
+		out.SandboxImpl = pick(p.SandboxImpl, prof.SandboxImplementation)
 		out.Approval = pick(p.Approval, prof.Approval)
 		out.ToolGovernance = pick(p.ToolGovernance, prof.ToolGovernance)
 		if !out.AutoReview && prof.AutoReview != nil {
@@ -837,6 +871,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = strings.TrimSpace(p.Sandbox)
 		out.AskUserQuestionTimeout = strings.TrimSpace(p.AskUserQuestionTimeout)
 		out.AutoCompactWindow = strings.TrimSpace(p.AutoCompactWindow)
+		out.SandboxImpl = strings.TrimSpace(p.SandboxImpl)
 		out.Approval = strings.TrimSpace(p.Approval)
 		out.ToolGovernance = strings.TrimSpace(p.ToolGovernance)
 	}
@@ -891,6 +926,30 @@ func validateSpawnModel(h *harness.Harness, model string) (string, error) {
 	}
 	return "", fmt.Errorf("model %q is not valid for %s; pass --harness %s or a matching --model: %w",
 		strings.TrimSpace(model), h.Name, other, err)
+}
+
+// validateSpawnSandboxImplementation checks the two things a CLIENT can know
+// about --sandbox-impl: that the value names a real implementation, and that
+// the resolved harness can host it. Blank stays blank so the daemon's profile
+// tier stack can still speak — normalizing it to harness-builtin here would
+// turn an unset flag into a pin that silences every lower tier.
+//
+// Host capability is deliberately absent. The daemon owns that gate and runs
+// it live at the spawn boundary; see the call site.
+func validateSpawnSandboxImplementation(h *harness.Harness, raw string) (string, error) {
+	implementation, err := sandboxpolicy.NormalizeImplementation(raw)
+	if err != nil {
+		return "", err
+	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	return string(implementation), nil
 }
 
 // RunSpawn drives `tclaude agent spawn`. Returns the daemon's response
@@ -1018,6 +1077,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
 	autoCompactWindow := strings.TrimSpace(p.AutoCompactWindow)
+	sandboxImpl := strings.TrimSpace(p.SandboxImpl)
 	autoReview := p.AutoReview
 	trustDir := false
 	remoteControl := p.RemoteControl
@@ -1061,6 +1121,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
 			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
 			AutoCompactWindow:      p.AutoCompactWindow,
+			SandboxImpl:            p.SandboxImpl,
 			AutoReview:             p.AutoReview,
 		}
 		if validateMergedProfile {
@@ -1115,6 +1176,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// unparseable or out-of-range token count. The daemon re-validates and
 		// re-normalizes server-side.
 		if _, err = harness.ResolveAutoCompactWindow(h, validationFields.AutoCompactWindow); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		// Fail fast on a --sandbox-impl the value enum or this harness rejects.
+		// Only those two: whether the HOST can run tclaude-layer is deliberately
+		// not asked here. The daemon owns that gate, runs it live at the spawn
+		// boundary, and refuses naming the missing capability — a client-side
+		// probe would answer for a machine that need not be this one, and a
+		// second opinion that can disagree with the authority is worse than none.
+		if _, err = validateSpawnSandboxImplementation(h, validationFields.SandboxImpl); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
@@ -1187,6 +1258,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Model:                  model,
 		Harness:                clientHarness,
 		SandboxMode:            sandboxMode,
+		SandboxImplementation:  sandboxImpl,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
 		ApprovalPolicy:         approvalPolicy,
@@ -1354,6 +1426,11 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	fmt.Fprintf(stdout, "  Harness: %s\n", formatResolvedField(rl.Harness))
 	fmt.Fprintf(stdout, "  Model:   %s\n", formatResolvedField(rl.Model))
 	fmt.Fprintf(stdout, "  Effort:  %s\n", formatResolvedField(rl.Effort))
+	// Echoed only when something actually pinned it, so a default-off launch
+	// prints exactly the three lines it printed before this field existed.
+	if strings.TrimSpace(rl.SandboxImpl.Value) != "" {
+		fmt.Fprintf(stdout, "  Sandbox impl: %s\n", formatResolvedField(rl.SandboxImpl))
+	}
 	if policy := rl.SandboxPolicy; policy != nil {
 		profiles := make([]string, 0, len(policy.Applied))
 		for _, applied := range policy.Applied {

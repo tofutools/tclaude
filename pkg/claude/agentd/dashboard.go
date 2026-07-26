@@ -953,6 +953,12 @@ type snapshotPayload struct {
 	// agent's harness can_rename (JOH-162). Built from the harness registry
 	// so a newly-registered harness appears with no dashboard edit.
 	Harnesses []dashboardHarness `json:"harnesses"`
+	// SandboxImpl is the sandbox-IMPLEMENTATION catalog: which layer owns
+	// OS-level containment for a launch. Host-wide rather than per-harness,
+	// because whether this machine can run the tclaude layer has nothing to do
+	// with which harness was selected — the per-harness half of the question is
+	// dashboardHarness.CanTclaudeLayer.
+	SandboxImpl dashboardSandboxImpl `json:"sandbox_impl"`
 	PopupBase string             `json:"popup_base"` // for tray-shareable display
 	// NotificationsEnabled mirrors config.notifications.enabled — the
 	// master OS-notification switch above the per-group / per-agent
@@ -1192,6 +1198,15 @@ type dashboardHarness struct {
 	// harness whose auto-compaction capacity tclaude can pin (Claude Code). The
 	// spawn dialog and profile editor gate their token-window input on it.
 	CanAutoCompactWindow bool `json:"can_auto_compact_window"`
+	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
+	// implementation can wrap this harness — false for a harness whose
+	// tool-executing process lives outside the pane the layer wraps (OpenCode).
+	// Read through the capability path (session.ValidateTclaudeLayerHarness),
+	// never a harness-name switch in the dialog, so a later workstream that
+	// teaches the layer a new topology flips this with no dashboard edit. The
+	// spawn dialog and profile editor gate their sandbox-implementation row on
+	// it: with only one implementation left there is no choice to render.
+	CanTclaudeLayer bool `json:"can_tclaude_layer"`
 	// AutoCompactWindowMin / Max are the accepted bounds, so the dialog can set
 	// the input's own min/max and reject a slipped digit before the round trip.
 	// Both 0 for a harness that cannot pin a window.
@@ -1251,6 +1266,7 @@ func buildHarnessCatalog() []dashboardHarness {
 
 			CanContextFeatures:   h.CanContextFeatures(),
 			CanAutoCompactWindow: h.CanAutoCompactWindow(),
+			CanTclaudeLayer:      session.ValidateTclaudeLayerHarness(h.Name) == nil,
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow
@@ -2431,6 +2447,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     readUserDefaultModel(),
 		Harnesses:            buildHarnessCatalog(),
+		SandboxImpl:          buildSandboxImplCatalog(),
 		NotificationsEnabled: cfg != nil && cfg.Notifications != nil && cfg.Notifications.Enabled,
 		SpawnNameNormalize:   cfg.SpawnNameNormalizeEnabled(),
 		VegasInRegularMode:   cfg.ShowVegasInRegularMode(),

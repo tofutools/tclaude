@@ -757,6 +757,12 @@ type templateAgentLaunch struct {
 	// mergeSnapshotInlineProfile — mirroring AutoReviewSet.
 	ContextFeaturesSet     bool
 	AskUserQuestionTimeout string
+	// SandboxImplementation is the resolved owner of OS-level confinement for a
+	// template-deployed agent ("" = unset, so the spawn boundary's own default
+	// applies). Resolved from the profile tiers like AskUserQuestionTimeout and
+	// handed to the spawn as an explicit request, so a host that cannot run the
+	// layer refuses the deploy loudly instead of degrading it.
+	SandboxImplementation string
 	// AutoCompactWindow is the auto-compaction context capacity (in tokens) a
 	// template-deployed agent launches with, resolved from the profile tiers like
 	// AskUserQuestionTimeout. "" leaves the model's own threshold in charge.
@@ -905,6 +911,9 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	}
 	if _, err := harness.ValidateSandboxMode(h, p.Sandbox); err != nil {
 		return wrap("invalid_sandbox", err.Error())
+	}
+	if _, err := validateSandboxImplementationForHarness(h, p.SandboxImplementation); err != nil {
+		return wrap("invalid_"+sandboxImplementationField, err.Error())
 	}
 	if _, err := harness.ValidateApprovalPolicy(h, p.Approval); err != nil {
 		return wrap("invalid_approval", err.Error())
@@ -1125,6 +1134,19 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	// The sandbox IMPLEMENTATION rides the same tier stack. Only the harness gate
+	// runs here; the host-capability gate belongs to the launch, which the deploy
+	// reaches by handing this value to the spawn boundary as an explicit request.
+	sandboxImplementation, _, note, fail := resolveStringLaunchField(
+		sandboxImplementationField, "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
+		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
 
 	if sandbox, err = harness.ResolveSandboxMode(h, sandbox); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
@@ -1260,6 +1282,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		ContextFeatures:        contextFeatures,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
+		SandboxImplementation:  sandboxImplementation,
 		Notes:                  notes,
 	}, nil
 }
@@ -1338,6 +1361,17 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 		if resolved, err := harness.ResolveAutoCompactWindow(h, window); err == nil {
 			out.AutoCompactWindow = resolved
 		}
+	}
+	// The sandbox implementation this member launched under, recorded ONLY when
+	// it differs from the default — the same rule the harness uses a few lines
+	// above, and for the same reason. Every session row carries an explicit
+	// harness-builtin (that is what migrate v160 backfilled), so tracing it
+	// verbatim would stamp an explicit PIN into every from-group snapshot and
+	// quietly convert templates that previously fell through into templates that
+	// override their lower tiers.
+	if resolved, err := validateSandboxImplementationForHarness(h, prof.SandboxImplementation); err == nil &&
+		resolved != string(sandboxpolicy.ImplementationHarnessBuiltin) {
+		out.SandboxImplementation = resolved
 	}
 	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
 		durable != nil && durable.SSHWorkaround != nil {
@@ -3771,6 +3805,13 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.AutoCompactWindow == "" {
 		out.AutoCompactWindow = prev.AutoCompactWindow
 	}
+	// The implementation is observable, but only a non-default one is traced (see
+	// traceMemberLaunch), so "" is ambiguous here the same way the window's is:
+	// a harness-builtin member and an untraceable one both read "". Fall back to
+	// the template's previous value rather than silently clearing a pin.
+	if out.SandboxImplementation == "" {
+		out.SandboxImplementation = prev.SandboxImplementation
+	}
 	for slug, effect := range prev.PermissionOverrides {
 		if effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
@@ -3783,7 +3824,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
-		out.AutoCompactWindow == "" &&
+		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.SSHWorkaround == nil &&
 		len(out.ContextFeatures) == 0 &&
@@ -3840,7 +3881,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || launch.SandboxImplementation != "" || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3850,8 +3891,9 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				Model:               launch.Model,
 				Effort:              launch.Effort,
 				Sandbox:             launch.Sandbox,
-				Approval:            launch.Approval,
-				AutoCompactWindow:   launch.AutoCompactWindow,
+				Approval:              launch.Approval,
+				AutoCompactWindow:     launch.AutoCompactWindow,
+				SandboxImplementation: launch.SandboxImplementation,
 				PermissionOverrides: po,
 				ContextFeatures:     launch.ContextFeatures,
 			}

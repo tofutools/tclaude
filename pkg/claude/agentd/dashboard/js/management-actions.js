@@ -344,6 +344,9 @@ export function createManagementActions({
       seed,
       options,
       catalog: getSnapshot()?.harnesses || [],
+      // Host-wide sandbox-implementation catalog, so the editor can label the
+      // experimental layer and disclose whether this host can run it.
+      sandboxImpl: getSnapshot()?.sandbox_impl || {},
     });
   }
   function openRoleEditor(seed = null) {

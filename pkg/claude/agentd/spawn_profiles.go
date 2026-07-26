@@ -58,8 +58,18 @@ type spawnProfileJSON struct {
 	Model          string `json:"model,omitempty"`
 	Effort         string `json:"effort,omitempty"`
 	Sandbox        string `json:"sandbox,omitempty"`
-	Approval       string `json:"approval,omitempty"`
-	ToolGovernance string `json:"tools,omitempty"`
+	// SandboxImplementation pins who owns OS-level confinement:
+	// "harness-builtin" (the legacy default) or the EXPERIMENTAL
+	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next
+	// precedence tier at spawn — distinct from an explicit "harness-builtin",
+	// which pins the legacy implementation against a lower tier. A
+	// tclaude-layer value on a profile whose harness cannot host the layer
+	// (OpenCode) is a 400 at save. Host capability is NOT checked at save:
+	// pinning it before bwrap is installed is legitimate authoring, and the
+	// launch refuses loudly if the host still cannot run it. See TCL-769.
+	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
+	Approval              string `json:"approval,omitempty"`
+	ToolGovernance        string `json:"tools,omitempty"`
 	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
 	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
 	// per-spawn via `--settings`. Claude-Code-only — a value on a Codex profile
@@ -119,6 +129,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Model:                      p.Model,
 		Effort:                     p.Effort,
 		Sandbox:                    p.Sandbox,
+		SandboxImplementation:      p.SandboxImplementation,
 		Approval:                   p.Approval,
 		ToolGovernance:             p.ToolGovernance,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
@@ -246,6 +257,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
+	// Validate (+ harness-gate) the sandbox IMPLEMENTATION the same way, but
+	// note what is deliberately absent: no host-capability probe. A profile
+	// pinning tclaude-layer is authoring intent, and pinning it before bwrap is
+	// installed is legitimate; the launch boundary refuses loudly if the host
+	// still cannot run it. Blank stays blank so it falls through at spawn.
+	sandboxImplementation, err := validateSandboxImplementationForHarness(h, body.SandboxImplementation)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_" + sandboxImplementationField, err.Error()}
+	}
 	approval, err := harness.ValidateApprovalPolicy(h, body.Approval)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
@@ -359,6 +379,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Model:                      model,
 		Effort:                     effort,
 		Sandbox:                    sandbox,
+		SandboxImplementation:      sandboxImplementation,
 		Approval:                   approval,
 		ToolGovernance:             toolGovernance,
 		AskUserQuestionTimeout:     askTimeout,

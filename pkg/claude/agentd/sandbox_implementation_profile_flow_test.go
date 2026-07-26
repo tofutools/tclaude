@@ -1,0 +1,214 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// errNoBwrap stands in for the real host-capability failure. The production
+// text comes from resolveBwrapBinary and names the missing capability; what the
+// tests assert is that whatever it says is carried through to the operator
+// verbatim rather than collapsed into a generic "unavailable".
+var errNoBwrap = errors.New("tclaude-layer requires bubblewrap (`bwrap`) on PATH: exec: \"bwrap\": not found")
+
+// Scenario (TCL-769): the profile side of the spawn-implementation surface —
+// saving, reading back, and moving a pinned implementation between machines.
+//
+// The rule that governs every test here: a profile records AUTHORING INTENT,
+// not a launch. So the save boundary validates the value and the harness, but
+// deliberately does NOT probe the host — pinning tclaude-layer on a laptop
+// where bwrap is not installed yet is legitimate, and the launch is what
+// refuses.
+
+// TestSpawnProfile_SandboxImplementationRoundTrips: the basic CRUD contract.
+func TestSpawnProfile_SandboxImplementationRoundTrips(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+
+	got := readProfile(t, f, "layered")
+	assert.Equal(t, "tclaude-layer", got["sandbox_implementation"])
+
+	// Update clears it back to unset. The key disappears entirely (omitempty),
+	// which is what "this profile pins nothing" looks like on the wire.
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/spawn-profiles/layered",
+		map[string]any{"name": "layered", "harness": "claude", "sandbox_implementation": ""}))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equalf(t, http.StatusOK, rec.Code, "update profile body=%s", rec.Body.String())
+
+	got = readProfile(t, f, "layered")
+	_, present := got["sandbox_implementation"]
+	assert.False(t, present, "a cleared implementation must read back as absent, not as harness-builtin")
+}
+
+// TestSpawnProfile_UnsetSandboxImplementationIsNotAPin: the invariant the
+// migration is built around. A profile that never mentions the field must stay
+// silent so lower precedence tiers still speak; if saving normalized "" to
+// harness-builtin, every profile in existence would quietly become an override.
+func TestSpawnProfile_UnsetSandboxImplementationIsNotAPin(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{"name": "plain", "harness": "claude"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+
+	got := readProfile(t, f, "plain")
+	_, present := got["sandbox_implementation"]
+	assert.False(t, present,
+		"a profile that never mentioned the field must not read back as pinning harness-builtin")
+}
+
+// TestSpawnProfile_RejectsUnknownSandboxImplementation: a typo is caught at
+// save, where the operator is looking, rather than at some later spawn.
+func TestSpawnProfile_RejectsUnknownSandboxImplementation(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "typo", "harness": "claude", "sandbox_implementation": "bubblewrap",
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code,
+		"an unknown implementation must be refused at save; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid sandbox implementation")
+}
+
+// TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness: a profile carries its
+// OWN harness, so the harness gate is checkable at save — and a profile that
+// could never launch is worth refusing before it is saved.
+func TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "oc-layered", "harness": "opencode", "sandbox_implementation": "tclaude-layer",
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code,
+		"tclaude-layer on an OpenCode profile must be refused at save; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "OpenCode")
+}
+
+// TestSpawnProfile_SandboxImplementationSavesOnHostWithoutCapability: the
+// deliberate asymmetry. Authoring is not launching, so a host that cannot run
+// the layer must still be able to author a profile that pins it — for a
+// different machine, or for after bwrap is installed. The save boundary
+// therefore runs no host probe at all; a failing one here would be a bug.
+func TestSpawnProfile_SandboxImplementationSavesOnHostWithoutCapability(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return errNoBwrap }))
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "for-the-other-box", "harness": "claude", "sandbox_implementation": "tclaude-layer",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code,
+		"authoring a profile must not require the host to be able to run the layer; body=%s", rec.Body.String())
+
+	got := readProfile(t, f, "for-the-other-box")
+	assert.Equal(t, "tclaude-layer", got["sandbox_implementation"])
+}
+
+// TestSpawnProfile_SandboxImplementationSurvivesExportImport: the field rides
+// the export envelope, so a pinned implementation moves between machines with
+// the rest of the profile instead of being silently dropped on import.
+func TestSpawnProfile_SandboxImplementationSurvivesExportImport(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/spawn-profiles/export?name=layered", nil))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+
+	var envelope map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	profiles, _ := envelope["profiles"].([]any)
+	require.Len(t, profiles, 1, "export should carry the one requested profile")
+	exported, _ := profiles[0].(map[string]any)
+	require.Equal(t, "tclaude-layer", exported["sandbox_implementation"],
+		"the export must carry the pinned implementation")
+
+	// Re-import under a new name and confirm the pin survived the round trip.
+	exported["name"] = "layered-copy"
+	envelope["profiles"] = []any{exported}
+	r = agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/spawn-profiles/import", envelope))
+	rec = testharness.Serve(f.Mux, r)
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+
+	got := readProfile(t, f, "layered-copy")
+	assert.Equal(t, "tclaude-layer", got["sandbox_implementation"],
+		"an imported profile must keep the implementation it was exported with")
+}
+
+// TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability: the dialog
+// gets its answer from the snapshot, and the answer has to be honest in both
+// directions — including naming the concrete missing capability, so the
+// operator can act on it rather than guess.
+func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testing.T) {
+	t.Run("unavailable", func(t *testing.T) {
+		f := newFlow(t)
+		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return errNoBwrap }))
+
+		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, false, catalog["host_available"])
+		assert.Equal(t, errNoBwrap.Error(), catalog["host_unavailable_reason"],
+			"the disclosure must name the concrete missing capability")
+	})
+
+	t.Run("available", func(t *testing.T) {
+		f := newFlow(t)
+		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
+
+		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, true, catalog["host_available"])
+		_, present := catalog["host_unavailable_reason"]
+		assert.False(t, present, "an available host must carry no reason")
+	})
+
+	t.Run("options label the experimental layer", func(t *testing.T) {
+		f := newFlow(t)
+		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
+
+		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, "harness-builtin", catalog["default"],
+			"the default must remain the legacy implementation")
+		options, _ := catalog["options"].([]any)
+		require.Len(t, options, 2)
+		var sawExperimental bool
+		for _, raw := range options {
+			option, _ := raw.(map[string]any)
+			if option["value"] != "tclaude-layer" {
+				continue
+			}
+			sawExperimental = true
+			assert.Equal(t, true, option["experimental"])
+			assert.Contains(t, option["label"], "experimental",
+				"the label itself must carry the caveat, not only the flag")
+			assert.Contains(t, option["descr"], "Linux only",
+				"the platform caveat must be stated, not implied")
+		}
+		assert.True(t, sawExperimental, "the catalog must offer the tclaude layer")
+	})
+}
+
+// snapshotSandboxImpl reads the catalog off the real dashboard snapshot. /api/*
+// lives on the dashboard mux, not the /v1 Unix-socket mux.
+func snapshotSandboxImpl(t *testing.T, _ *testharness.Flow) map[string]any {
+	t.Helper()
+	dash := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/snapshot", nil))
+	require.Equalf(t, http.StatusOK, rec.Code, "snapshot body=%s", rec.Body.String())
+	var snapshot map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snapshot))
+	catalog, ok := snapshot["sandbox_impl"].(map[string]any)
+	require.True(t, ok, "the snapshot must carry the sandbox-implementation catalog")
+	return catalog
+}
