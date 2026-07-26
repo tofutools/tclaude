@@ -1,0 +1,121 @@
+name: "[PROBE — DO NOT MERGE] TCL-766 userns feasibility"
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcl-766-userns-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-userns-probe:
+    name: Probe only — Ubuntu userns and real bwrap smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout probe branch
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-utils bubblewrap
+
+      - name: Record runner and AppArmor diagnostics
+        run: |
+          echo "=== image ==="
+          echo "ImageOS=${ImageOS:-<unset>}"
+          echo "ImageVersion=${ImageVersion:-<unset>}"
+          uname -a
+          cat /etc/os-release
+
+          echo "=== user namespace controls ==="
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          sysctl kernel.apparmor_restrict_unprivileged_unconfined || true
+          sysctl kernel.unprivileged_userns_clone || true
+          sysctl user.max_user_namespaces || true
+
+          echo "=== AppArmor ==="
+          cat /sys/module/apparmor/parameters/enabled || true
+          sudo aa-status || true
+
+          echo "=== identity and capabilities ==="
+          id
+          capsh --print || true
+
+      - name: Run baseline bubblewrap probe
+        id: baseline
+        shell: bash
+        run: |
+          set +e
+          bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true 2>&1 | tee "$RUNNER_TEMP/bwrap-baseline.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          echo "baseline bwrap exit code: $status"
+
+      - name: Disable the Ubuntu AppArmor userns restriction
+        id: unlock
+        shell: bash
+        run: |
+          before=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo unavailable)
+          echo "before: kernel.apparmor_restrict_unprivileged_userns=$before"
+          if sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
+          after=$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo unavailable)
+          echo "after: kernel.apparmor_restrict_unprivileged_userns=$after"
+
+      - name: Re-run bubblewrap probe after sysctl
+        id: after-sysctl
+        shell: bash
+        run: |
+          set +e
+          bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true 2>&1 | tee "$RUNNER_TEMP/bwrap-after-sysctl.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -eq 0 ]; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "post-sysctl bwrap exit code: $status"
+
+      - name: Build tclaude for the real smoke
+        if: steps.after-sysctl.outputs.supported == 'true'
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run the unchanged real sandbox v2 host smoke
+        if: steps.after-sysctl.outputs.supported == 'true'
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+
+      - name: Summarize probe
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## TCL-766 probe — do not treat as a landing candidate"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Baseline bwrap exit | \`${{ steps.baseline.outputs.exit_code }}\` |"
+            echo "| AppArmor sysctl write | \`${{ steps.unlock.outputs.applied }}\` |"
+            echo "| Post-sysctl bwrap exit | \`${{ steps.after-sysctl.outputs.exit_code }}\` |"
+            echo
+            echo "This workflow exists only to collect runner evidence for TCL-766."
+          } >> "$GITHUB_STEP_SUMMARY"
