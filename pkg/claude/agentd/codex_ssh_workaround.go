@@ -173,7 +173,7 @@ func populateCodexSSHWorkaround(snapshot sandboxpolicy.Snapshot) (sandboxpolicy.
 		}
 	}
 	if configDir == "." || filepath.Base(configDir) != codexSSHAgentDirectory {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("Codex SSH workaround directory binding is missing or malformed")
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("codex SSH workaround directory binding is missing or malformed")
 	}
 	parent := filepath.Dir(configDir)
 	if _, err := removeDirAtNoFollow(parent, filepath.Base(configDir)); err != nil {

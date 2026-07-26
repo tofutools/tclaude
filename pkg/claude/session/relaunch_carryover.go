@@ -121,6 +121,8 @@ var launchCarryoverExcused = map[string]string{
 	"ContextWindowSize": "an OBSERVED statusline value, not operator intent; carrying " +
 		"it would mean re-deriving Claude's \"[1m]\" model suffix rather than replaying " +
 		"a decision",
+	"SSHWorkaround": "agentd materializes this internal Codex sandbox capability from " +
+		"the effective sandbox snapshot; it is not a session-new launch flag",
 }
 
 // launchCarryoverFields is the relaunch contract for `session new -r`: the
