@@ -329,11 +329,11 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	}
 	aliasesByLink := map[string]MountAlias{}
 	for _, spelling := range observableFilesystemSpellings {
-		canonical, missing, err := canonicalDirectory(spelling, true)
+		canonical, _, err := canonicalDirectory(spelling, true)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("discover mount aliases for effective filesystem path %q: %w", spelling, err)
 		}
-		if missing || !activeCanonicalPaths[canonical] {
+		if !activeCanonicalPaths[canonical] {
 			continue
 		}
 		aliases, err := mountAliasesForPath(spelling)

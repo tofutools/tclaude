@@ -229,6 +229,39 @@ func TestRevalidateSnapshotAllowsMissingPathBeforeAndAfterCreation(t *testing.T)
 	assert.Equal(t, validated.Effective.Filesystem, launchFilesystem, "created rule activates on a later launch")
 }
 
+func TestRevalidateSnapshotAllowsMissingPathThroughSymlinkAncestorBeforeAndAfterCreation(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(root, "real")
+	link := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	require.NoError(t, os.Symlink(target, link))
+	spelledMissing := filepath.Join(link, "future", "cache")
+	canonicalMissing := filepath.Join(target, "future", "cache")
+
+	effective, err := Resolve(Scopes{Global: &Profile{
+		Name: "base", Filesystem: []FilesystemGrant{{Path: spelledMissing, Access: AccessWrite}},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []MountAlias{{Link: link, Target: target}}, effective.MountAliases)
+	snapshot := NewSnapshot(effective, nil)
+
+	validated, err := RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	launchFilesystem, err := FilesystemForLaunch(validated.Effective)
+	require.NoError(t, err)
+	assert.Empty(t, launchFilesystem, "missing rule must be inactive for this launch")
+
+	require.NoError(t, os.MkdirAll(canonicalMissing, 0o755))
+	validated, err = RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	launchFilesystem, err = FilesystemForLaunch(validated.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{Path: canonicalMissing, Access: AccessWrite}}, launchFilesystem,
+		"created rule activates through the preserved alias on a later launch")
+	assert.Equal(t, []MountAlias{{Link: link, Target: target}}, validated.Effective.MountAliases)
+}
+
 func TestFilesystemForLaunchFailsClosedForMissingDeny(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
