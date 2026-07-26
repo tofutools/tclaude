@@ -36,20 +36,44 @@ import (
 // # What the plan does NOT contain
 //
 // The plan carries the POLICY's own authority and nothing else. In particular
-// it does not carry the protected-root baseline — the denies over
-// ~/.tclaude/data, ~/.claude/sessions and the agentd control socket directory
-// that today's harness adapters inject at their own rendering seams. Those are
-// not part of EffectiveProfile, so they cannot appear here, and deriving them
-// would require the filesystem access this renderer deliberately does without.
+// it does not carry the protected-root baseline — the denies over exactly
+// ProtectedPaths(), that is ~/.tclaude/data and ~/.claude/sessions, which
+// today's harness adapters inject at their own rendering seams. Those are not
+// part of EffectiveProfile, so they cannot appear here, and deriving them would
+// require the filesystem access this renderer deliberately does without.
+//
+// ~/.tclaude/api is NOT part of that baseline and must stay visible: it is the
+// agent-reachable directory holding the agentd control socket (see
+// common.TclaudeAPIDir), and hiding it would cut the agent off from
+// coordination. Only the private state under ~/.tclaude/data is protected. The
+// distinction matters here because per-socket allowlisting — binding exactly
+// that socket and nothing else — is the capability this IR is meant to grow
+// into.
 //
 // That makes them a contract on the applier, not an oversight, and the contract
-// has an ORDER requirement: the applier must establish its baseline — including
-// every protected-root deny — BEFORE replaying these entries. Break-glass
-// grants then reopen their narrower paths by the same most-specific-wins
-// ordering as everything else. An applier that replayed the plan first and
-// applied its baseline afterwards would silently revoke the operator's
-// acknowledged break-glass authority; one that omitted the baseline entirely
-// would expose tclaude's own control state to the agent.
+// has an ORDER requirement — three phases, in which placement is what carries
+// the meaning:
+//
+//  1. Hide ProtectedPaths() BEFORE replaying these entries. Break-glass grants
+//     then reopen their narrower paths by the same most-specific-wins ordering
+//     as everything else. An applier that replayed the plan first and applied
+//     this baseline afterwards would silently revoke the operator's
+//     acknowledged break-glass authority; one that omitted it entirely would
+//     expose tclaude's own private state to the agent.
+//  2. Replay the plan.
+//  3. Hide the strictly-unreachable class AFTER replaying — today the tmux
+//     socket directory, which the Codex adapter already treats as host-control
+//     authority, a more severe class than protected state and deliberately not
+//     reachable through break-glass. It must come last precisely BECAUSE it is
+//     not in ProtectedPaths(): an ordinary rw row at that path passes profile
+//     validation, since it intersects no protected root, so a before-plan hide
+//     could be shadowed by an innocent-looking grant. Applying it after the
+//     replay is what encodes "not reachable through break-glass, or anything
+//     else" — most-specific-wins governs the policy, and this class sits
+//     outside the policy rather than at the top of it.
+//
+// (Phase 3 per the TCL-750 applier ruling; the renderer emits nothing for
+// either phase 1 or phase 3.)
 //
 // # How the plan grows (settled TCL-751 decision, epic requirement 3)
 //
