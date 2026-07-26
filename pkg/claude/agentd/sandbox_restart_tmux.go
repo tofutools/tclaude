@@ -16,7 +16,10 @@ type sandboxRestartTmuxHandoff struct {
 	holdingSession string
 }
 
-const sandboxRestartHoldingCommand = "printf '\\033[2J\\033[HRestarting agent with updated sandbox settings...\\n'; while :; do sleep 3600; done"
+// Five minutes comfortably covers the normal 10-second shutdown grace and
+// synchronous resume, but bounds the unmanaged bridge if agentd exits after
+// parking clients or its explicit kill-session cleanup fails.
+const sandboxRestartHoldingCommand = "printf '\\033[2J\\033[HRestarting agent with updated sandbox settings...\\n'; sleep 300"
 
 // beginSandboxRestartTmuxHandoff moves clients attached to oldTmux onto a
 // temporary bridge session. It is best-effort, matching reincarnation's client

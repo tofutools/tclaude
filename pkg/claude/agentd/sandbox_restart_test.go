@@ -87,6 +87,12 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	assert.False(t, w.Tmux.IsAlive(holding), "the bridge must not leak")
 }
 
+func TestSandboxRestartTmuxBridgeHasSelfExpiry(t *testing.T) {
+	assert.Contains(t, sandboxRestartHoldingCommand, "sleep 300")
+	assert.NotContains(t, sandboxRestartHoldingCommand, "while :",
+		"the bridge must not outlive a crashed handler forever")
+}
+
 func TestSandboxRestartTmuxHandoffSkipsBridgeWithoutAttachedClients(t *testing.T) {
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
