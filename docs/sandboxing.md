@@ -233,8 +233,13 @@ The daemon identifies the calling session from host pids it recorded at
 spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the
 request is accepted only as a cross-check and a disagreement is refused.
 For the status line that resolved identity also replaces the environment
-variable the direct path trusts, so the brokered attribution gate is
-strictly stronger than the unbrokered one.
+variable the direct path trusts, so which *session row* a brokered render
+may write is decided by evidence the caller cannot assert. The second half
+of the gate — whether the *conversation* the render names is one that row
+tracks — is unchanged from the direct path, including its deliberate
+fail-soft when the payload names no conversation at all. That fail-soft is
+not an escalation: the only row reachable is the caller's own, which its
+legitimate status line already writes.
 
 A status line re-renders several times a second, so it is not brokered
 per render. A render whose payload is byte-identical to the last one sent

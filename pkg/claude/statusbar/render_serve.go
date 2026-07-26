@@ -73,29 +73,37 @@ func ApplyBrokeredRender(req BrokeredRenderRequest, sessionID, rowConvID string)
 	resp.PinnedWindow = resolved
 	resp.SandboxOff = temporarySandboxOff(workspaceConv)
 
-	derived := deriveRender(input, observed, resolved)
-	hasLimits := hasSubscriptionLimits(input)
-	if req.ApplyWrites {
-		// Written before it is read, as on the direct path — see
-		// updateUsageCacheFromRender.
-		updateUsageCacheFromRender(input)
+	writes := renderWrites{
+		Input:         input,
+		Payload:       req.Payload,
+		Git:           req.Git,
+		Derived:       deriveRender(input, observed, resolved),
+		Owned:         owned,
+		WorkspaceConv: workspaceConv,
 	}
+
+	// Same order as the direct path, for the same reasons — see
+	// directHostState. The read here is the non-refreshing peek.
+	applied := true
+	if req.ApplyWrites {
+		updateUsageCacheFromRender(input)
+		applied = applyRenderWrites(writes)
+	}
+
+	hasLimits := hasSubscriptionLimits(input)
 	if !hasLimits && req.WantUsage {
-		usage, stale := cachedUsage()
+		usage, stale := peekUsage()
 		resp.Usage, resp.UsageStale, resp.UsagePresent = usage, stale, true
 		hasLimits = usageHasLimits(usage)
 	}
-
-	if req.ApplyWrites {
-		applyRenderWrites(renderWrites{
-			Input:         input,
-			Payload:       req.Payload,
-			Git:           req.Git,
-			Derived:       derived,
-			Owned:         owned,
-			WorkspaceConv: workspaceConv,
-			HasLimits:     hasLimits,
-		})
+	if req.ApplyWrites && !applyCostWrite(writes, hasLimits) {
+		applied = false
 	}
+
+	// Applied is what stops the change gate from turning a transient
+	// database failure into permanent data loss. The pane will not
+	// re-send a payload it believes landed, so a write the daemon merely
+	// warned about has to be reported rather than swallowed.
+	resp.Applied = applied
 	return resp, nil
 }

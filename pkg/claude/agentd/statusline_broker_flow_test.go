@@ -333,3 +333,75 @@ func TestStatuslineBroker_RateLimitIsShadowUntilTheOperatorEnablesIt(t *testing.
 	assert.True(t, refused,
 		"with broker.enforce_limits on, a caller past the ceiling must actually be refused")
 }
+
+// The 10 MiB body cap, driven through the real endpoint. The previous
+// version of this test asserted a constant against its own literal, which
+// would have survived deleting the guard entirely.
+func TestStatuslineBroker_RefusesAnOverCapBody(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBrokerLimiterForTest())
+
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+
+	// A payload past the ceiling. It is the request BODY that is capped,
+	// and the statusline payload is the only field that can grow, so
+	// oversizing it is the honest way in.
+	huge := make([]byte, (10<<20)+4096)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	code, _ := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      huge,
+		ApplyWrites:  true,
+	})
+	assert.Equal(t, http.StatusRequestEntityTooLarge, code,
+		"a body past the cap must be refused, and refused whatever enforcement says: "+
+			"the reader has already truncated it, so there is nothing left to apply")
+}
+
+// A payload that names NO conversation is accepted as the resolved row's
+// own. This pins a deliberate fail-soft rather than an oversight: Claude
+// Code versions predating session_id emit exactly this, and refusing them
+// would cost real agents their telemetry to guard against a case there is
+// no evidence for.
+//
+// It is not an escalation, and the reason is worth stating because the
+// identity half of the gate makes it true: the only row a brokered render
+// can reach is the one the daemon resolved from the caller's OWN process
+// ancestry, which that caller's legitimate status line already writes.
+// A caller gains nothing by omitting the field that it does not already
+// have by sending the field correctly.
+func TestStatuslineBroker_PayloadWithNoConversationWritesTheCallersOwnRow(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	f.HaveAliveSession(slVictimConv, slVictimLabel, "tmux-sl-victim", f.World.HomeDir)
+
+	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: "",
+		Payload:      statuslinePayload("", "Opus 5", "claude-opus-5", "high", 33, 66000, 500, 200000, 0),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.True(t, resp.Owned, "an old payload with no conversation is fail-soft, as on the direct path")
+
+	own, err := db.GetContextSnapshot(slLayerLabel)
+	require.NoError(t, err)
+	assert.Equal(t, "Opus 5", own.Model, "it writes the caller's OWN resolved row")
+
+	victim, err := db.GetContextSnapshot(slVictimLabel)
+	require.NoError(t, err)
+	assert.Empty(t, victim.Model,
+		"and reaches no other row — identity, not the payload, chose the target")
+
+	// The workspace key falls back to the row's own conversation rather
+	// than to the empty string the caller sent.
+	ws, err := db.GetAgentWorkspace(slLayerConv)
+	require.NoError(t, err)
+	assert.Equal(t, slLayerConv, ws.ConvID)
+}

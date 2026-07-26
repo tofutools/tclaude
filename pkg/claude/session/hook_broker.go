@@ -70,6 +70,10 @@ func brokerHookEvents() bool {
 	// could not complete a task even if the rest went through. Running the
 	// task runner inside a tclaude-layer pane is not a supported
 	// combination; say so once, loudly, rather than half-working.
+	//
+	// This carve-out is HOOK-SPECIFIC and deliberately not part of
+	// BrokerHostWrites: nothing else brokered touches the signal file, and
+	// declining to broker there would only mean failing in a second place.
 	if _, inTaskMode := taskSignalPath(); inTaskMode {
 		if os.Getenv(HookBrokerEnvVar) == HookBrokerAgentd {
 			slog.Warn("hook broker: `tclaude task run` inside a tclaude-layer pane is not supported; "+
@@ -78,6 +82,23 @@ func brokerHookEvents() bool {
 		}
 		return false
 	}
+	return BrokerHostWrites()
+}
+
+// BrokerHostWrites reports whether this process must hand its
+// host-touching writes to agentd rather than perform them itself.
+//
+// It is the shared answer to "is the conversation database reachable from
+// in here", and every brokered surface must ask it rather than testing
+// the marker alone. A launch cannot be half inside the wall: an agent
+// whose hooks broker but whose status line writes directly would lose its
+// context snapshot, model, effort, cost and location — and, downstream,
+// the pre-compact guard — silently, into a read-only mount, with the
+// warning going to a log under the hidden root.
+//
+// That case is not hypothetical. It is exactly what the probe below the
+// marker exists for: a layer launch that arrived without the marker.
+func BrokerHostWrites() bool {
 	if os.Getenv(HookBrokerEnvVar) == HookBrokerAgentd {
 		return true
 	}

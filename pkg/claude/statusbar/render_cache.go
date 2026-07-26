@@ -42,14 +42,52 @@ type renderCache struct {
 
 	// Reads is the daemon's last answer.
 	Reads BrokeredRenderResponse `json:"reads"`
+
+	// FailedAt stamps the last round trip that did not complete, and is
+	// the backoff the digest cannot provide.
+	//
+	// A failed attempt deliberately leaves Digest alone, so the write
+	// stays owed — but that also means the change gate still reads as
+	// "changed" and would retry on the very next render. For an agent the
+	// daemon can never place, that is a socket connect and a refusal
+	// several times a second for the rest of its life. This suppresses
+	// the attempt, not the obligation: once it lapses the write is
+	// re-sent, because Digest still does not match.
+	FailedAt time.Time `json:"failed_at,omitempty"`
 }
+
+// renderCacheDir is the directory the pane-local caches live in.
+//
+// It is the literal "/tmp" rather than os.TempDir(), and that is the
+// point: the sandbox mounts a private tmpfs at /tmp specifically, while
+// os.TempDir() honours $TMPDIR — which the launch inherits from the
+// operator's shell and does not clear. An operator with TMPDIR set to a
+// directory under $HOME would silently move these files somewhere the
+// launch contract binds writable, where they are host-visible and outlive
+// the pane. Nothing here is secret or authoritative, so that would be a
+// staleness bug rather than a leak, but the header above makes an
+// argument from the placement and the code should be the placement it
+// argues from.
+//
+// Overridable only from tests.
+var renderCacheDir = "/tmp"
 
 // renderCachePath names this pane's cache file. It is keyed by session so
 // that a launch mode where /tmp is NOT private (anything outside the
 // sandbox that ever reaches this path) still cannot cross agents.
 func renderCachePath(sessionID string) string {
+	return filepath.Join(renderCacheDir, "tclaude-statusline-"+sessionKeyHash(sessionID)+".json")
+}
+
+// renderRefusalStampPath names the pane-local mtime stamp that
+// rate-limits the refusal log across render processes.
+func renderRefusalStampPath(sessionID string) string {
+	return filepath.Join(renderCacheDir, "tclaude-statusline-refused-"+sessionKeyHash(sessionID))
+}
+
+func sessionKeyHash(sessionID string) string {
 	sum := sha256.Sum256([]byte(sessionID))
-	return filepath.Join(os.TempDir(), "tclaude-statusline-"+hex.EncodeToString(sum[:8])+".json")
+	return hex.EncodeToString(sum[:8])
 }
 
 func loadRenderCache(sessionID string) *renderCache {
@@ -98,7 +136,7 @@ func saveRenderCache(sessionID string, c renderCache) {
 // moves into the pane's /tmp alongside the render cache.
 
 func gitCachePath(key string) string {
-	return filepath.Join(os.TempDir(), "tclaude-gitcache-"+key+".json")
+	return filepath.Join(renderCacheDir, "tclaude-gitcache-"+key+".json")
 }
 
 func loadLocalGitCache(key string) *GitSnapshot {

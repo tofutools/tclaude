@@ -10,10 +10,27 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-// The marker decides the route, and nothing else does. A launch cannot be
-// half inside the wall: if the database is unreachable for hooks it is
-// unreachable for the status line too.
-func TestBrokerRenders_MarkerDecides(t *testing.T) {
+// withTempCacheDir points the pane-local caches somewhere a test can
+// write. Production uses the literal /tmp on purpose — see renderCacheDir.
+func withTempCacheDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	prev := renderCacheDir
+	renderCacheDir = dir
+	t.Cleanup(func() { renderCacheDir = prev })
+	return dir
+}
+
+// The status line and the hooks must reach the SAME verdict about whether
+// the database is reachable. A launch that brokered its hooks but wrote
+// its status line directly would lose the context snapshot into a
+// read-only mount — silently, since the warning goes to a log under the
+// hidden root — and take the pre-compact guard down with it.
+func TestBrokerRenders_AgreesWithTheHookBroker(t *testing.T) {
+	// No HOME → no resolvable database path → the probe cannot fire, so
+	// the marker alone is under test here.
+	t.Setenv("HOME", "")
+
 	t.Run("marker set routes to the broker", func(t *testing.T) {
 		t.Setenv(session.HookBrokerEnvVar, session.HookBrokerAgentd)
 		assert.True(t, brokerRenders())
@@ -26,6 +43,16 @@ func TestBrokerRenders_MarkerDecides(t *testing.T) {
 		t.Setenv(session.HookBrokerEnvVar, "yes")
 		assert.False(t, brokerRenders(),
 			"only the exact %q value routes", session.HookBrokerAgentd)
+	})
+	t.Run("it is the hook broker's own predicate", func(t *testing.T) {
+		// Pinning the shared predicate rather than a duplicated marker
+		// test: the defect this guards against is the two drifting, which
+		// a pair of independent marker tests would not catch.
+		for _, marker := range []string{"", session.HookBrokerAgentd, "yes"} {
+			t.Setenv(session.HookBrokerEnvVar, marker)
+			assert.Equal(t, session.BrokerHostWrites(), brokerRenders(),
+				"marker %q: the two halves must not disagree about the wall", marker)
+		}
 	})
 }
 
@@ -47,12 +74,14 @@ func TestRenderDigest_ChangesWithEverythingRecorded(t *testing.T) {
 	})
 
 	for name, mutate := range map[string]func(*renderRequest){
-		"payload":  func(r *renderRequest) { r.Payload = []byte(`{"model":{"display_name":"Haiku 4.5"}}`) },
-		"conv":     func(r *renderRequest) { r.RenderConvID = "conv-2" },
-		"pin":      func(r *renderRequest) { r.EnvPinnedWindow = "200k" },
-		"branch":   func(r *renderRequest) { r.Git = &GitSnapshot{Branch: "feature", RepoURL: "https://x/y"} },
-		"no git":   func(r *renderRequest) { r.Git = nil },
-		"pr state": func(r *renderRequest) { r.Git = &GitSnapshot{Branch: "main", RepoURL: "https://x/y", PRState: "merged"} },
+		"payload": func(r *renderRequest) { r.Payload = []byte(`{"model":{"display_name":"Haiku 4.5"}}`) },
+		"conv":    func(r *renderRequest) { r.RenderConvID = "conv-2" },
+		"pin":     func(r *renderRequest) { r.EnvPinnedWindow = "200k" },
+		"branch":  func(r *renderRequest) { r.Git = &GitSnapshot{Branch: "feature", RepoURL: "https://x/y"} },
+		"no git":  func(r *renderRequest) { r.Git = nil },
+		"pr state": func(r *renderRequest) {
+			r.Git = &GitSnapshot{Branch: "main", RepoURL: "https://x/y", PRState: "merged"}
+		},
 	} {
 		t.Run(name+" changes the digest", func(t *testing.T) {
 			mutated := base
@@ -79,7 +108,7 @@ func TestRenderDigest_ChangesWithEverythingRecorded(t *testing.T) {
 // The cache is what remembers the gate's state between two short-lived
 // render processes, so a round trip has to survive the process boundary.
 func TestRenderCache_RoundTripsThroughThePanesTmp(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	withTempCacheDir(t)
 	const sessionID = "spwn-cache"
 
 	assert.Nil(t, loadRenderCache(sessionID), "nothing cached yet")
@@ -102,7 +131,7 @@ func TestRenderCache_RoundTripsThroughThePanesTmp(t *testing.T) {
 // already private per pane, but the keying is what makes that true
 // anywhere else the path is reached.
 func TestRenderCache_IsPerSession(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	withTempCacheDir(t)
 	saveRenderCache("spwn-a", renderCache{Digest: "a-digest", ReadsAt: time.Now()})
 	saveRenderCache("spwn-b", renderCache{Digest: "b-digest", ReadsAt: time.Now()})
 
@@ -117,7 +146,7 @@ func TestRenderCache_IsPerSession(t *testing.T) {
 // A clock that jumped backwards would otherwise make a cache look
 // indefinitely fresh.
 func TestRenderCache_RejectsAFutureStamp(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	withTempCacheDir(t)
 	saveRenderCache("spwn-clock", renderCache{
 		Digest:  "d",
 		ReadsAt: time.Now().Add(time.Hour),

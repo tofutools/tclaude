@@ -25,8 +25,9 @@ import (
 //   - renderDerived is pure. Given the payload and the resolved pin, it
 //     produces every number the bar renders AND every number the writes
 //     record. Both callers derive it identically.
-//   - applyRenderWrites is the whole write set, in the order the inline
-//     code performed it. Nothing it writes affects what the bar shows.
+//   - applyRenderWrites plus applyCostWrite are the whole write set, in
+//     the order the inline code performed it, with the usage read between
+//     them where it has always been. Nothing they write affects the bar.
 //   - renderFacts is the whole read set. Everything the bar needs from the
 //     database and nothing else.
 //
@@ -157,19 +158,26 @@ type renderWrites struct {
 	// WorkspaceConv is the conversation id the workspace snapshot is
 	// keyed by. Empty means no workspace write.
 	WorkspaceConv string
-
-	// HasLimits is the FINAL limits verdict, after the usage-cache
-	// fallback, because that is what decides real cost from virtual cost.
-	HasLimits bool
 }
 
 // applyRenderWrites performs every host-touching write one statusline
-// render implies, in the order the statusbar has always performed them.
+// render implies EXCEPT the cost column, in the order the statusbar has
+// always performed them. See applyCostWrite for why cost is separate.
 //
-// Every failure is a warning and never an error: a statusline that exits
-// non-zero is a visible defect in the agent's pane, and no telemetry
-// write is worth that.
-func applyRenderWrites(w renderWrites) {
+// It reports whether every write it attempted succeeded. Locally that
+// answer is ignored, because the very next render — a fraction of a
+// second later — retries anyway. Brokered it is load-bearing: the change
+// gate means a caller that believes a write landed will not re-send it
+// until the payload changes again, so a failure the daemon swallowed
+// would be a snapshot lost until the agent's next token tick. The gate
+// removes the direct path's automatic retry, so the failure has to travel
+// back instead.
+//
+// Every failure is still a warning and never an error: a statusline that
+// exits non-zero is a visible defect in the agent's pane, and no
+// telemetry write is worth that.
+func applyRenderWrites(w renderWrites) (ok bool) {
+	ok = true
 	if w.WorkspaceConv != "" {
 		ws := db.AgentWorkspace{
 			ConvID:    w.WorkspaceConv,
@@ -186,6 +194,7 @@ func applyRenderWrites(w renderWrites) {
 		}
 		if err := db.UpsertAgentWorkspace(ws); err != nil {
 			slog.Warn("status-bar: failed to upsert agent_workspace", "error", err, "module", "hooks")
+			ok = false
 		}
 	}
 
@@ -195,12 +204,14 @@ func applyRenderWrites(w renderWrites) {
 		if err := db.UpdateContextSnapshot(w.Owned, float64(w.Derived.CtxPct),
 			w.Derived.TokensIn, w.Derived.TokensOut, w.Derived.RawWindow); err != nil {
 			slog.Warn("status-bar: failed to update context snapshot", "error", err, "module", "hooks")
+			ok = false
 		}
 	}
 
 	if w.Owned != "" {
 		if err := db.UpdateSessionModel(w.Owned, w.Input.Model.DisplayName); err != nil {
 			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
+			ok = false
 		}
 		// Gated on the environment-OBSERVED value rather than the resolved
 		// one so a window read from the row is not written straight back.
@@ -208,13 +219,16 @@ func applyRenderWrites(w renderWrites) {
 			if err := db.UpdateSessionAutoCompactWindow(w.Owned,
 				strconv.FormatInt(w.Derived.EnvPinnedWindow, 10)); err != nil {
 				slog.Warn("status-bar: failed to update session auto-compact window", "error", err, "module", "hooks")
+				ok = false
 			}
 		}
 		if err := db.UpdateSessionModelID(w.Owned, w.Input.Model.ID); err != nil {
 			slog.Warn("status-bar: failed to update session model id", "error", err, "module", "hooks")
+			ok = false
 		}
 		if err := db.UpdateSessionEffort(w.Owned, w.Input.Effort.Level); err != nil {
 			slog.Warn("status-bar: failed to update session effort", "error", err, "module", "hooks")
+			ok = false
 		}
 	}
 
@@ -228,20 +242,42 @@ func applyRenderWrites(w renderWrites) {
 	if w.Input.RateLimits != nil && w.Owned != "" {
 		if err := db.UpdateStatuslineSnapshot(w.Owned, string(w.Payload)); err != nil {
 			slog.Warn("status-bar: failed to update statusline snapshot", "error", err, "module", "hooks")
+			ok = false
 		}
 	}
+	return ok
+}
 
-	if w.Owned != "" && w.Input.Cost.TotalCostUSD > 0 {
-		if w.HasLimits {
-			// Subscription plan: the figure is what this WOULD have cost
-			// per-token, kept for the dashboard's WHAT-IF view.
-			if err := db.UpdateSessionVirtualCost(w.Owned, w.Input.Cost.TotalCostUSD); err != nil {
-				slog.Warn("status-bar: failed to update session virtual cost", "error", err, "module", "hooks")
-			}
-		} else if err := db.UpdateSessionCost(w.Owned, w.Input.Cost.TotalCostUSD); err != nil {
-			slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
-		}
+// applyCostWrite records the session's cost, real or hypothetical.
+//
+// It is separate from the rest of the write set, and runs after them,
+// because it is the ONE write whose target column depends on the
+// usage-cache read: a render carrying no rate-limit buckets of its own
+// only learns it is on a subscription plan from the fallback. The inline
+// code had exactly this shape — every other write, then the usage read,
+// then cost — and preserving it matters beyond tidiness: folding cost in
+// with the others would put the usage read (which on the direct path can
+// make a network call) in front of all eight writes, so a render killed
+// by the harness's statusline timeout would record nothing at all instead
+// of everything but its cost.
+func applyCostWrite(w renderWrites, hasLimits bool) (ok bool) {
+	if w.Owned == "" || w.Input.Cost.TotalCostUSD <= 0 {
+		return true
 	}
+	if hasLimits {
+		// Subscription plan: the figure is what this WOULD have cost
+		// per-token, kept for the dashboard's WHAT-IF view.
+		if err := db.UpdateSessionVirtualCost(w.Owned, w.Input.Cost.TotalCostUSD); err != nil {
+			slog.Warn("status-bar: failed to update session virtual cost", "error", err, "module", "hooks")
+			return false
+		}
+		return true
+	}
+	if err := db.UpdateSessionCost(w.Owned, w.Input.Cost.TotalCostUSD); err != nil {
+		slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
+		return false
+	}
+	return true
 }
 
 // updateUsageCacheFromRender publishes this render's rate-limit buckets

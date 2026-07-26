@@ -149,14 +149,17 @@ func TestBrokerLimits_EnforcementFlagIsCached(t *testing.T) {
 }
 
 // The size ceiling has no shadow mode, and that is a property of what it
-// is: the daemon reads through a LimitReader, so an over-cap body has
-// already been truncated by the time anyone could decide to allow it.
-// What the shadow-mode discipline buys there is that the rejection is
-// never silent.
-func TestBrokerBodyCap_IsAlwaysEnforcedAndNeverSilent(t *testing.T) {
+// is rather than a policy choice: the daemon reads through a LimitReader,
+// so an over-cap body has already been truncated by the time anyone could
+// decide to allow it. What the shadow-mode discipline buys there is that
+// the rejection is never silent.
+//
+// The value itself is pinned because it is an operator decision (large
+// tool payloads should normally travel whole), and because the client's
+// trim budget in pkg/claude/session sits just under it — the two drifting
+// apart would mean every large event is trimmed by one side and rejected
+// by the other.
+func TestBrokerBodyCap_MatchesTheOperatorSetting(t *testing.T) {
 	assert.Equal(t, 10<<20, brokerMaxBody,
 		"the operator-set cap: large tool payloads should normally fit whole")
-	// The call is the log; a nil-safe smoke of it here keeps a refactor
-	// that drops the logging from passing unnoticed.
-	logBrokerBodyOverCap("/v1/whoami/hook", "spwn-a", brokerMaxBody+1)
 }

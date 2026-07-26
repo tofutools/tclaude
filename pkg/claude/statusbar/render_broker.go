@@ -55,6 +55,13 @@ import (
 // idle agent's bar costs no traffic at all.
 const renderReadTTL = 5 * time.Second
 
+// renderRetryBackoff is how long a failed round trip suppresses the next
+// attempt. Same order as the read TTL — long enough that a permanently
+// refused agent costs a socket every few seconds rather than every frame,
+// short enough that a daemon restart is picked up while the operator is
+// still watching.
+const renderRetryBackoff = 5 * time.Second
+
 // renderBrokerTimeout bounds one brokered render. Far shorter than the
 // hook broker's: a hook can afford to wait because the agent's turn is
 // already paused for it, whereas a status line that blocks is a visibly
@@ -64,11 +71,14 @@ const renderBrokerTimeout = 3 * time.Second
 // brokerRenders reports whether this process must hand its statusline
 // writes to agentd instead of performing them itself.
 //
-// It rides the same launch-seam marker the hook broker uses, because it
-// answers the same question — "is the conversation database reachable
-// from in here" — and a launch cannot be half inside the wall.
+// It asks the SAME predicate the hook broker asks — marker first, the
+// database-absent-but-daemon-reachable probe behind it — rather than
+// testing the marker alone. Testing only the marker would leave a layer
+// launch that arrived without it brokering its hooks while writing its
+// status line into a read-only mount, which is precisely the half-inside
+// state this must not have.
 func brokerRenders() bool {
-	return os.Getenv(session.HookBrokerEnvVar) == session.HookBrokerAgentd
+	return session.BrokerHostWrites()
 }
 
 // BrokeredRenderRequest is the body a sandboxed statusline render POSTs
@@ -117,6 +127,18 @@ type BrokeredRenderResponse struct {
 	// render as the resolved session's own.
 	Owned bool `json:"owned,omitempty"`
 
+	// Applied reports that every write this render asked for actually
+	// landed. It exists because the change gate removes the direct path's
+	// automatic retry: a pane that believes its writes landed sends
+	// nothing more until its payload changes, so a database failure the
+	// daemon merely logged would cost a snapshot until the next token
+	// tick — long enough for the pre-compact guard to judge from it.
+	// False leaves the digest unadvanced, so the next render re-sends.
+	//
+	// A reads-only render sets it too: it asked for no writes, so all of
+	// them landed.
+	Applied bool `json:"applied,omitempty"`
+
 	// PinnedWindow is the resolved auto-compaction pin in tokens.
 	PinnedWindow int64 `json:"pinned_window,omitempty"`
 
@@ -139,6 +161,16 @@ func brokeredHostState(req renderRequest) renderFacts {
 	cache := loadRenderCache(req.EnvSessionID)
 	digest := renderDigest(req)
 
+	// A recent failure suppresses the ATTEMPT, never the obligation. The
+	// digest is left unadvanced by a failure, so the change gate still
+	// reads as "changed" and would otherwise retry on the very next
+	// render — a socket connect and a refusal several times a second for
+	// an agent the daemon cannot place. Once the backoff lapses the write
+	// goes out, because the digest still does not match.
+	if cache != nil && !cache.FailedAt.IsZero() && time.Since(cache.FailedAt) < renderRetryBackoff {
+		return factsFromBroker(req, cache.Reads)
+	}
+
 	writesChanged := cache == nil || cache.Digest != digest
 	readsStale := cache == nil || time.Since(cache.ReadsAt) > renderReadTTL ||
 		(req.WantUsage && !cache.Reads.UsagePresent)
@@ -159,10 +191,23 @@ func brokeredHostState(req renderRequest) renderFacts {
 	if err != nil {
 		// Fail soft, and keep coasting on whatever was last known. A
 		// status bar that errors out is a visible defect in the agent's
-		// pane; a status bar missing its cosmetic extras is not. The
-		// digest is deliberately NOT advanced here, so the next render
-		// retries the write rather than believing it landed.
-		logRenderBrokerFailure(err)
+		// pane; a status bar missing its cosmetic extras is not.
+		//
+		// The digest is deliberately NOT advanced, so the next attempt
+		// retries the write rather than believing it landed. What IS
+		// recorded is the attempt time, which backs the retry off to the
+		// read TTL. Without that a permanently refused agent — an
+		// ancestry the daemon can no longer place — would open a socket,
+		// be refused, and log, several times a second for the rest of its
+		// life: a per-render round trip in exactly the case where there
+		// is nothing to deliver.
+		logRenderBrokerFailure(req.EnvSessionID, err)
+		backoff := renderCache{ReadsAt: time.Now(), FailedAt: time.Now()}
+		if cache != nil {
+			backoff.Digest = cache.Digest
+			backoff.Reads = cache.Reads
+		}
+		saveRenderCache(req.EnvSessionID, backoff)
 		if cache != nil {
 			return factsFromBroker(req, cache.Reads)
 		}
@@ -173,6 +218,17 @@ func brokeredHostState(req renderRequest) renderFacts {
 	if !writesChanged && cache != nil {
 		// A reads-only refresh must not claim the writes were re-sent.
 		newCache.Digest = cache.Digest
+	} else if !resp.Applied {
+		// The daemon answered, but a write it attempted did not land.
+		// Leaving the digest unadvanced is what restores the retry the
+		// change gate would otherwise have removed.
+		if cache != nil {
+			newCache.Digest = cache.Digest
+		} else {
+			newCache.Digest = ""
+		}
+		slog.Warn("statusline broker: agentd could not record this render; will retry",
+			"module", "hooks")
 	}
 	saveRenderCache(req.EnvSessionID, newCache)
 	return factsFromBroker(req, resp)
@@ -234,12 +290,25 @@ var errRenderBrokerRefused = errors.New("agentd refused the brokered statusline 
 // self-correcting and must not be logged at every render.
 var errRenderBrokerThrottled = errors.New("agentd throttled the brokered statusline render")
 
+// renderRefusalLogInterval throttles the one loud failure log.
+//
+// A refusal never self-corrects, so it has to reach an operator — but the
+// thing being refused runs several times a second forever, and an
+// unthrottled ERROR would pour identical lines into the log the
+// dashboard's Logs tab reads until the agent dies. Once a minute names
+// the condition without becoming the condition.
+const renderRefusalLogInterval = time.Minute
+
 // logRenderBrokerFailure keeps the three failure modes distinguishable.
-// The statusline runs several times a second, so only the one that never
-// self-corrects is allowed to be loud.
-func logRenderBrokerFailure(err error) {
+// Only the one that never self-corrects is loud, and even that one is
+// rate-limited — the daemon's own excess log is throttled for exactly the
+// same reason, and a client-side log has no better claim.
+func logRenderBrokerFailure(sessionID string, err error) {
 	switch {
 	case errors.Is(err, errRenderBrokerRefused):
+		if !shouldLogRefusal(sessionID) {
+			return
+		}
 		slog.Error("statusline broker: agentd refused this session's renders; "+
 			"the dashboard's context, model, cost and location for this agent will not update",
 			"error", err, "module", "hooks")
@@ -248,6 +317,25 @@ func logRenderBrokerFailure(err error) {
 	default:
 		slog.Debug("statusline broker: agentd unreachable", "error", err, "module", "hooks")
 	}
+}
+
+// shouldLogRefusal rate-limits the refusal log across render processes.
+//
+// Each render is a fresh process, so the throttle cannot live in memory;
+// it rides the same pane-local file the render cache uses, as a stamp
+// nothing else reads. A pane that cannot write its own /tmp logs every
+// time, which is the safe direction: the message still gets out.
+func shouldLogRefusal(sessionID string) bool {
+	path := renderRefusalStampPath(sessionID)
+	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < renderRefusalLogInterval {
+		return false
+	}
+	now := time.Now()
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		return true
+	}
+	_ = os.Chtimes(path, now, now)
+	return true
 }
 
 func postRenderToDaemon(req BrokeredRenderRequest) (BrokeredRenderResponse, error) {
