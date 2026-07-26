@@ -66,10 +66,54 @@ func ListActiveSpoolBindings() ([]SpoolBinding, error) {
 	return out, rows.Err()
 }
 
+// ListRevokedSpoolBindings returns every revoked binding still on record.
+// The daemon's spool consumer sweeps each one — removes the directory,
+// then deletes the row via DeleteSpoolBinding — so revocation reliably
+// destroys the on-disk capability even when the revoker crashed before
+// cleaning up.
+func ListRevokedSpoolBindings() ([]SpoolBinding, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT spool_id, conv_id, dir, created_at
+		FROM agent_spool_bindings WHERE revoked_at IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SpoolBinding
+	for rows.Next() {
+		var b SpoolBinding
+		var createdAt string
+		if err := rows.Scan(&b.SpoolID, &b.ConvID, &b.Dir, &createdAt); err != nil {
+			return nil, err
+		}
+		b.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSpoolBinding removes one binding row outright. Only the consumer's
+// sweep calls this, after the bound directory is gone.
+func DeleteSpoolBinding(spoolID string) error {
+	spoolID = strings.TrimSpace(spoolID)
+	if spoolID == "" {
+		return errors.New("DeleteSpoolBinding: spool_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`DELETE FROM agent_spool_bindings WHERE spool_id = ?`, spoolID)
+	return err
+}
+
 // RevokeSpoolBindingsForConv marks every binding for a conv revoked. The
-// consumer stops serving a revoked directory on its next rescan; the
-// directory itself is swept separately. Returns the number of bindings
-// revoked.
+// consumer stops serving a revoked directory on its next rescan and then
+// sweeps the directory and row (see ListRevokedSpoolBindings). Returns the
+// number of bindings revoked.
 func RevokeSpoolBindingsForConv(convID string) (int64, error) {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {

@@ -35,15 +35,34 @@ import (
 // not from a process credential.
 const spoolPeerPID = -1
 
-// spoolStaleAfter bounds how long consumed-but-orphaned artifacts (claim
-// files from a crash mid-request, response envelopes an agent never
-// collected) survive before the sweeper removes them. Well above every
-// client timeout, so a slow-but-alive exchange is never swept.
+// spoolStaleAfter bounds both directions of staleness. Requests older than
+// this are refused (swept, never served): a SIGKILL'd client cannot
+// withdraw its envelope, and executing a mutation days later under the
+// agent's identity has no socket-path analog — a socket request dies with
+// its connection. In the other direction it bounds how long orphaned
+// artifacts (claim files from a crash mid-request, response envelopes an
+// agent never collected) survive before the sweeper removes them. Well
+// above every client timeout, so a slow-but-alive exchange is never
+// affected.
 const spoolStaleAfter = 15 * time.Minute
 
-// spoolProcessingSlots caps concurrently served spool requests, mirroring
-// the natural bound the HTTP server gets from its connection handling.
-const spoolProcessingSlots = 8
+// spoolProcessingSlots caps concurrently EXECUTING spool handlers. Note
+// this is a global cap the socket path does not have (net/http runs one
+// goroutine per connection): handlers that legitimately block in-request —
+// the human-approval popup can hold a request for minutes — each occupy a
+// slot for their whole wait, so the cap is sized generously. Workers
+// waiting for a slot are parked goroutines holding no claim, so a stalled
+// slot never wedges the consumer loop and clients can still withdraw
+// unclaimed requests.
+const spoolProcessingSlots = 32
+
+// spoolServingMarker is a heartbeat file the consumer maintains at the
+// spool root (touched every rescan tick). Clients use its freshness as a
+// fast liveness probe (see the agent package's spoolConsumerLikelyUp): a
+// provisioned agent whose daemon runs WITHOUT the feature flag (or died)
+// would otherwise discover it only by waiting out a full request timeout
+// per call.
+const spoolServingMarker = ".serving"
 
 type spoolConsumer struct {
 	handler http.Handler
@@ -53,6 +72,7 @@ type spoolConsumer struct {
 	mu       sync.Mutex
 	bindings map[string]db.SpoolBinding // by spool id
 	byReqDir map[string]db.SpoolBinding // by watched req/ dir
+	inflight map[string]struct{}        // req paths with a worker spawned
 
 	sem     chan struct{}
 	watcher *fsnotify.Watcher // nil when fsnotify is unavailable; rescan covers
@@ -60,10 +80,11 @@ type spoolConsumer struct {
 }
 
 // startSpoolConsumer begins serving spool requests against handler (the
-// bare /v1 mux — identity is stamped here per binding, not by the socket's
-// withIdentity middleware). Returns a stop function. root is created if
-// missing; rescan is the fallback poll interval that also discovers new
-// bindings, with fsnotify providing low latency when available.
+// bare /v1 mux — identity is stamped here per directory binding, not by the
+// socket's withIdentity middleware). Returns a stop function. root is
+// created if missing; rescan is the fallback poll interval that also
+// discovers new bindings, with fsnotify providing low latency when
+// available.
 func startSpoolConsumer(handler http.Handler, root string, rescan time.Duration) (stop func()) {
 	c := &spoolConsumer{
 		handler:  handler,
@@ -71,6 +92,7 @@ func startSpoolConsumer(handler http.Handler, root string, rescan time.Duration)
 		rescan:   rescan,
 		bindings: map[string]db.SpoolBinding{},
 		byReqDir: map[string]db.SpoolBinding{},
+		inflight: map[string]struct{}{},
 		sem:      make(chan struct{}, spoolProcessingSlots),
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -93,7 +115,10 @@ func startSpoolConsumer(handler http.Handler, root string, rescan time.Duration)
 		if c.watcher != nil {
 			_ = c.watcher.Close()
 		}
+		// In-flight handlers observe the cancelled ctx through their request
+		// context (a blocked approval wait unwinds), so this returns promptly.
 		c.wg.Wait()
+		_ = os.Remove(filepath.Join(c.root, spoolServingMarker))
 	}
 }
 
@@ -101,8 +126,9 @@ func (c *spoolConsumer) run(ctx context.Context) {
 	defer c.wg.Done()
 	// Startup pass first: requests written while the daemon was down are
 	// served before we start waiting on events.
+	c.touchMarker()
 	c.refreshBindings()
-	c.scanAll()
+	c.scanAll(ctx)
 	ticker := time.NewTicker(c.rescan)
 	defer ticker.Stop()
 	var events chan fsnotify.Event
@@ -116,8 +142,9 @@ func (c *spoolConsumer) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			c.touchMarker()
 			c.refreshBindings()
-			c.scanAll()
+			c.scanAll(ctx)
 		case ev, ok := <-events:
 			if !ok {
 				events = nil
@@ -132,6 +159,19 @@ func (c *spoolConsumer) run(ctx context.Context) {
 	}
 }
 
+// touchMarker maintains the .serving heartbeat clients use as a fast
+// liveness probe.
+func (c *spoolConsumer) touchMarker() {
+	path := filepath.Join(c.root, spoolServingMarker)
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err == nil {
+		return
+	}
+	if err := os.WriteFile(path, []byte("agentd file-spool consumer heartbeat\n"), 0o600); err != nil {
+		slog.Debug("spool: cannot write serving marker", "path", path, "error", err)
+	}
+}
+
 // handleEvent reacts to one fsnotify event: a new directory under the
 // spool root means a fresh binding may exist; a new envelope in a watched
 // req/ dir is served immediately.
@@ -142,7 +182,7 @@ func (c *spoolConsumer) handleEvent(ctx context.Context, ev fsnotify.Event) {
 	dir := filepath.Dir(ev.Name)
 	if filepath.Clean(dir) == filepath.Clean(c.root) {
 		c.refreshBindings()
-		c.scanAll()
+		c.scanAll(ctx)
 		return
 	}
 	c.mu.Lock()
@@ -151,13 +191,13 @@ func (c *spoolConsumer) handleEvent(ctx context.Context, ev fsnotify.Event) {
 	if !ok || !agentipc.SpoolEnvelopeFile(filepath.Base(ev.Name)) {
 		return
 	}
-	c.claimAndServe(ctx, b, ev.Name)
+	c.maybeServe(ctx, b, ev.Name)
 }
 
-// refreshBindings reloads the active binding set from SQLite and (un)wires
-// fsnotify watches to match. SQLite is the authority: a binding created by
-// a spawn in another process appears here on the next refresh even if the
-// root watch missed it.
+// refreshBindings reloads the active binding set from SQLite, (un)wires
+// fsnotify watches to match, and sweeps revoked bindings' directories.
+// SQLite is the authority: a binding created by a spawn in another process
+// appears here on the next refresh even if the root watch missed it.
 func (c *spoolConsumer) refreshBindings() {
 	list, err := db.ListActiveSpoolBindings()
 	if err != nil {
@@ -175,19 +215,45 @@ func (c *spoolConsumer) refreshBindings() {
 	c.bindings = fresh
 	c.byReqDir = freshDirs
 	c.mu.Unlock()
-	if c.watcher == nil {
-		return
-	}
-	for dir := range freshDirs {
-		if _, had := prevDirs[dir]; !had {
-			if err := c.watcher.Add(dir); err != nil {
-				slog.Debug("spool: watch req dir failed; rescan will cover it", "dir", dir, "error", err)
+	if c.watcher != nil {
+		for dir := range freshDirs {
+			if _, had := prevDirs[dir]; !had {
+				if err := c.watcher.Add(dir); err != nil {
+					slog.Debug("spool: watch req dir failed; rescan will cover it", "dir", dir, "error", err)
+				}
+			}
+		}
+		for dir := range prevDirs {
+			if _, still := freshDirs[dir]; !still {
+				_ = c.watcher.Remove(dir)
 			}
 		}
 	}
-	for dir := range prevDirs {
-		if _, still := freshDirs[dir]; !still {
-			_ = c.watcher.Remove(dir)
+	c.sweepRevoked()
+}
+
+// sweepRevoked destroys the on-disk capability of every revoked binding
+// (retire revokes; see retireAgentConv) and then drops the row. Running it
+// on every refresh makes revocation converge even if the revoker crashed
+// right after the UPDATE.
+func (c *spoolConsumer) sweepRevoked() {
+	revoked, err := db.ListRevokedSpoolBindings()
+	if err != nil {
+		slog.Warn("spool: list revoked bindings failed", "error", err)
+		return
+	}
+	for _, b := range revoked {
+		// Only remove directories that live under this consumer's root — a
+		// corrupted row must not turn into an arbitrary RemoveAll.
+		if filepath.Dir(filepath.Clean(b.Dir)) != filepath.Clean(c.root) {
+			slog.Warn("spool: revoked binding dir outside spool root; row dropped, dir untouched",
+				"spool_id", b.SpoolID, "dir", b.Dir)
+		} else if err := os.RemoveAll(b.Dir); err != nil {
+			slog.Warn("spool: remove revoked spool dir failed", "dir", b.Dir, "error", err)
+			continue // keep the row so the next refresh retries
+		}
+		if err := db.DeleteSpoolBinding(b.SpoolID); err != nil {
+			slog.Warn("spool: delete revoked binding row failed", "spool_id", b.SpoolID, "error", err)
 		}
 	}
 }
@@ -195,7 +261,7 @@ func (c *spoolConsumer) refreshBindings() {
 // scanAll serves every pending envelope across all bound req/ dirs and
 // sweeps stale artifacts. This is the fsnotify-free correctness path; the
 // watcher only improves latency.
-func (c *spoolConsumer) scanAll() {
+func (c *spoolConsumer) scanAll(ctx context.Context) {
 	c.mu.Lock()
 	bindings := make([]db.SpoolBinding, 0, len(c.bindings))
 	for _, b := range c.bindings {
@@ -212,7 +278,7 @@ func (c *spoolConsumer) scanAll() {
 			name := e.Name()
 			full := filepath.Join(reqDir, name)
 			if agentipc.SpoolEnvelopeFile(name) {
-				c.claimAndServe(context.Background(), b, full)
+				c.maybeServe(ctx, b, full)
 			} else {
 				sweepStale(full)
 			}
@@ -221,29 +287,55 @@ func (c *spoolConsumer) scanAll() {
 	}
 }
 
-// claimAndServe atomically claims one request envelope (rename to a dotted
-// claim file scanners ignore) and serves it on a bounded worker. The
-// rename is the mutual exclusion between the fsnotify path, the rescan
-// path, and any concurrent duplicate event: exactly one claimer wins.
-func (c *spoolConsumer) claimAndServe(ctx context.Context, b db.SpoolBinding, reqPath string) {
-	claimPath := filepath.Join(filepath.Dir(reqPath), "."+filepath.Base(reqPath)+".work")
-	if err := os.Rename(reqPath, claimPath); err != nil {
-		return // already claimed, withdrawn by the client, or gone
-	}
-	select {
-	case c.sem <- struct{}{}:
-	case <-ctx.Done():
-		// Consumer shutting down: leave the claim file; the post-restart
-		// sweeper removes it and the client's retry re-submits.
+// maybeServe spawns a worker for one request envelope, unless one is
+// already in flight for it. The worker acquires an execution slot BEFORE
+// claiming, so a saturated consumer leaves envelopes unclaimed on disk —
+// where their clients can still withdraw them on timeout — instead of
+// claiming work it cannot start. The claim rename remains the mutual
+// exclusion: however many paths noticed the file, exactly one claimer
+// wins. The inflight set only bounds goroutine buildup across rescans.
+func (c *spoolConsumer) maybeServe(ctx context.Context, b db.SpoolBinding, reqPath string) {
+	// Refuse stale requests outright rather than executing them arbitrarily
+	// late under the agent's identity (see spoolStaleAfter).
+	if info, err := os.Stat(reqPath); err != nil {
+		return
+	} else if time.Since(info.ModTime()) > spoolStaleAfter {
+		slog.Warn("spool: refusing stale request envelope", "path", reqPath, "age", time.Since(info.ModTime()).Round(time.Second))
+		_ = os.Remove(reqPath)
 		return
 	}
+	c.mu.Lock()
+	if _, busy := c.inflight[reqPath]; busy {
+		c.mu.Unlock()
+		return
+	}
+	c.inflight[reqPath] = struct{}{}
+	c.mu.Unlock()
 	c.wg.Go(func() {
+		defer func() {
+			c.mu.Lock()
+			delete(c.inflight, reqPath)
+			c.mu.Unlock()
+		}()
+		select {
+		case c.sem <- struct{}{}:
+		case <-ctx.Done():
+			return // never claimed; served after restart or withdrawn by its client
+		}
 		defer func() { <-c.sem }()
-		c.serveClaimed(b, claimPath)
+		claimPath := filepath.Join(filepath.Dir(reqPath), "."+filepath.Base(reqPath)+".work")
+		if err := os.Rename(reqPath, claimPath); err != nil {
+			return // already claimed, withdrawn by the client, or gone
+		}
+		// Stamp the claim time: the rename preserves the envelope's write
+		// mtime, but the crash-orphan sweep window must start now.
+		now := time.Now()
+		_ = os.Chtimes(claimPath, now, now)
+		c.serveClaimed(ctx, b, claimPath)
 	})
 }
 
-func (c *spoolConsumer) serveClaimed(b db.SpoolBinding, claimPath string) {
+func (c *spoolConsumer) serveClaimed(ctx context.Context, b db.SpoolBinding, claimPath string) {
 	defer func() { _ = os.Remove(claimPath) }()
 	base := filepath.Base(claimPath)
 	id := strings.TrimSuffix(strings.TrimPrefix(base, "."), ".json.work")
@@ -253,7 +345,7 @@ func (c *spoolConsumer) serveClaimed(b db.SpoolBinding, claimPath string) {
 		slog.Warn("spool: read claimed request failed", "path", claimPath, "error", err)
 		return
 	}
-	status, header, body := c.dispatch(b, data)
+	status, header, body := c.dispatch(ctx, b, data)
 	respData, err := agentipc.EncodeSpoolResponse(agentipc.SpoolResponse{
 		Status: status, Header: header, Body: body,
 	})
@@ -270,13 +362,27 @@ func (c *spoolConsumer) serveClaimed(b db.SpoolBinding, claimPath string) {
 // with the binding's identity stamped. Malformed envelopes get a 400
 // response rather than silence, so a broken client fails fast instead of
 // timing out.
-func (c *spoolConsumer) dispatch(b db.SpoolBinding, data []byte) (int, http.Header, []byte) {
+func (c *spoolConsumer) dispatch(ctx context.Context, b db.SpoolBinding, data []byte) (status int, header http.Header, body []byte) {
+	// The socket path gets per-request panic recovery from net/http's
+	// connection goroutines; the spool path must provide its own, or one
+	// bad handler takes down the daemon for everyone — and the client's
+	// retry would crash-loop it through the startup scan.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("spool: handler panic recovered", "conv", b.ConvID, "panic", r)
+			status = http.StatusInternalServerError
+			header = http.Header{"Content-Type": []string{"application/json"}}
+			body = []byte(`{"error":"internal error"}`)
+		}
+	}()
 	env, err := agentipc.DecodeSpoolRequest(data)
 	if err != nil || env.Method == "" || !strings.HasPrefix(env.RequestURI, "/") {
 		return http.StatusBadRequest, http.Header{"Content-Type": []string{"application/json"}},
 			[]byte(`{"error":"malformed spool request envelope"}`)
 	}
-	req, err := http.NewRequest(env.Method, "http://_"+env.RequestURI, bytes.NewReader(env.Body))
+	// The consumer ctx is the request ctx: daemon shutdown unwinds even a
+	// handler blocked in a long in-request wait (human-approval popup).
+	req, err := http.NewRequestWithContext(ctx, env.Method, "http://_"+env.RequestURI, bytes.NewReader(env.Body))
 	if err != nil {
 		return http.StatusBadRequest, http.Header{"Content-Type": []string{"application/json"}},
 			[]byte(`{"error":"invalid spool request"}`)

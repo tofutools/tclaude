@@ -120,7 +120,16 @@ only plain filesystem operations:
   error at all.
 
 Human/operator-token commands are not carried over the spool; it is an
-agent-class transport only.
+agent-class transport only. An agent's spool identity is revoked at
+retirement, and the daemon sweeps revoked directories.
+
+Experimental caveats (why the flag): sandbox profiles do not yet
+read-deny the spool root with a per-agent carve-out, so while the flag is
+on, sandboxed agents on the same host can read each other's envelopes —
+request/response bodies also touch disk, which the socket never does.
+Both daemon and spawner must run with the flag; a provisioned agent whose
+daemon lacks it fails fast via the `.serving` heartbeat the consumer
+maintains at the spool root.
 
 By default `agentd serve` also adds a system tray icon (Open
 dashboard, Reinstall agent skills, Open config, pending-approvals

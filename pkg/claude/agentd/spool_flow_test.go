@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -28,9 +29,10 @@ func provisionSpool(t *testing.T, conv string) string {
 	t.Helper()
 	t.Setenv(agentipc.FileTransportFlagEnv, "1")
 	env := map[string]string{}
-	require.NoError(t, session.ApplyAgentSpoolEnv(conv, env))
-	dir := env[agentipc.SpoolEnv]
-	require.NotEmpty(t, dir, "provisioning must export %s", agentipc.SpoolEnv)
+	dir, err := session.ApplyAgentSpoolEnv(conv, env)
+	require.NoError(t, err)
+	require.Equal(t, dir, env[agentipc.SpoolEnv], "provisioning must export %s", agentipc.SpoolEnv)
+	require.NotEmpty(t, dir)
 	return dir
 }
 
@@ -141,4 +143,89 @@ func TestSpool_UnboundDirectoryGetsNoIdentity(t *testing.T) {
 	respPath := agentipc.SpoolEnvelopePath(agentipc.SpoolRespDir(dir), "rogue-req")
 	_, err = os.Stat(respPath)
 	assert.True(t, os.IsNotExist(err), "an unbound spool directory must never be served")
+}
+
+// Scenario: retirement kills the spool credential. After the binding is
+// revoked, the consumer stops serving the directory and sweeps it away
+// entirely — the on-disk capability is destroyed, not just ignored.
+func TestSpool_RevokedBindingStopsBeingServedAndIsSwept(t *testing.T) {
+	f := newFlow(t)
+	const conv = "spool-9999-aaaa-bbbb-cccc"
+	f.HaveConvWithTitle(conv, "spool-revoked")
+	dir := provisionSpool(t, conv)
+
+	stop := agentd.StartSpoolConsumerForTest(agentipc.SpoolRoot(), 25*time.Millisecond)
+	defer stop()
+
+	// Serving works while the binding is active.
+	status, _ := spoolGet(t, dir, "/v1/info")
+	require.Equal(t, http.StatusOK, status)
+
+	n, err := db.RevokeSpoolBindingsForConv(conv)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+
+	// The consumer's refresh destroys the directory outright.
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(dir)
+		return os.IsNotExist(err)
+	}, 5*time.Second, 10*time.Millisecond, "revoked spool dir must be swept")
+}
+
+// Scenario: a malformed envelope gets a 400 response envelope rather than
+// silence, so a broken client fails fast instead of timing out.
+func TestSpool_MalformedEnvelopeGetsBadRequest(t *testing.T) {
+	f := newFlow(t)
+	const conv = "spool-dddd-eeee-ffff-0000"
+	f.HaveConvWithTitle(conv, "spool-malformed")
+	dir := provisionSpool(t, conv)
+
+	stop := agentd.StartSpoolConsumerForTest(agentipc.SpoolRoot(), 25*time.Millisecond)
+	defer stop()
+
+	reqPath := agentipc.SpoolEnvelopePath(agentipc.SpoolReqDir(dir), "broken-req")
+	require.NoError(t, agentipc.WriteSpoolFile(reqPath, []byte("this is not json")))
+
+	respPath := agentipc.SpoolEnvelopePath(agentipc.SpoolRespDir(dir), "broken-req")
+	var respData []byte
+	require.Eventually(t, func() bool {
+		b, err := os.ReadFile(respPath)
+		if err != nil {
+			return false
+		}
+		respData = b
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
+	resp, err := agentipc.DecodeSpoolResponse(respData)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.Status)
+}
+
+// Scenario: a request envelope old enough to be certainly orphaned (its
+// client is long gone and could not withdraw it) is refused and removed,
+// never executed under the agent's identity.
+func TestSpool_StaleRequestIsRefusedNotServed(t *testing.T) {
+	f := newFlow(t)
+	const conv = "spool-1212-3434-5656-7878"
+	f.HaveConvWithTitle(conv, "spool-stale")
+	dir := provisionSpool(t, conv)
+
+	env := agentipc.SpoolRequest{Method: http.MethodGet, RequestURI: "/v1/info"}
+	data, err := agentipc.EncodeSpoolRequest(env)
+	require.NoError(t, err)
+	reqPath := agentipc.SpoolEnvelopePath(agentipc.SpoolReqDir(dir), "ancient-req")
+	require.NoError(t, agentipc.WriteSpoolFile(reqPath, data))
+	ancient := time.Now().Add(-time.Hour)
+	require.NoError(t, os.Chtimes(reqPath, ancient, ancient))
+
+	stop := agentd.StartSpoolConsumerForTest(agentipc.SpoolRoot(), 25*time.Millisecond)
+	defer stop()
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(reqPath)
+		return os.IsNotExist(err)
+	}, 5*time.Second, 10*time.Millisecond, "stale request must be removed")
+	respPath := agentipc.SpoolEnvelopePath(agentipc.SpoolRespDir(dir), "ancient-req")
+	_, err = os.Stat(respPath)
+	assert.True(t, os.IsNotExist(err), "stale request must never be served")
 }

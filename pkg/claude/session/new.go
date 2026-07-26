@@ -846,10 +846,20 @@ func runNew(params *NewParams) error {
 	}
 	// Experimental file-spool transport: provision a per-session envelope
 	// directory as a socket-free fallback channel to agentd. No-op unless
-	// TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT is set. See ApplyAgentSpoolEnv.
-	if err := ApplyAgentSpoolEnv(sessionID, additionalEnv); err != nil {
+	// TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT is set. Mirrors the launch-profile
+	// cleanup pattern: any launch failure between here and the pane owning
+	// its lifecycle revokes the binding and removes the directory, so a
+	// session that never existed leaves no identity capability behind.
+	spoolDir, err := ApplyAgentSpoolEnv(sessionID, additionalEnv)
+	if err != nil {
 		return err
 	}
+	spoolOwnedBySession := false
+	defer func() {
+		if !spoolOwnedBySession {
+			CleanupAgentSpool(sessionID, spoolDir)
+		}
+	}()
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
@@ -1177,6 +1187,9 @@ func runNew(params *NewParams) error {
 	// The pane shell now owns normal profile cleanup after Codex exits. Until
 	// this point any launch/readiness failure is cleaned by the parent defer.
 	launchProfileOwnedByPane = launchProfilePath != ""
+	// Likewise the spool provisioning now belongs to the live session; its
+	// lifecycle ends at retirement (retireAgentConv revokes the binding).
+	spoolOwnedBySession = true
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 

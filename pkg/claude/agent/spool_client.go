@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -141,10 +142,32 @@ func spoolTransportDir() string {
 	return spoolChoiceDir
 }
 
-// spoolReachable probes daemon liveness over the spool: a real /v1/info
-// round trip with a short deadline. Costs one envelope file; used only by
-// availability checks, not per request.
+// spoolMarkerStaleAfter mirrors the daemon-side constant: the consumer
+// touches a ".serving" heartbeat at the spool root every rescan tick, so a
+// marker this old means no consumer is running (daemon down, or up without
+// the feature flag).
+const spoolMarkerStaleAfter = 60 * time.Second
+
+// spoolConsumerLikelyUp is the fast half of the liveness probe: heartbeat
+// freshness. Without it, a provisioned agent whose daemon lacks the
+// feature flag would discover that only by waiting out a full request
+// timeout per call.
+func spoolConsumerLikelyUp(dir string) bool {
+	info, err := os.Stat(filepath.Join(filepath.Dir(dir), spoolMarkerFile))
+	return err == nil && time.Since(info.ModTime()) < spoolMarkerStaleAfter
+}
+
+// spoolMarkerFile matches the daemon's spoolServingMarker.
+const spoolMarkerFile = ".serving"
+
+// spoolReachable probes daemon liveness over the spool: heartbeat first
+// (fast negative), then a real /v1/info round trip with a short deadline.
+// Costs one envelope file; used only by availability checks, not per
+// request.
 func spoolReachable(dir string) bool {
+	if !spoolConsumerLikelyUp(dir) {
+		return false
+	}
 	client := NewSpoolHTTPClient(dir, 2*time.Second)
 	req, err := http.NewRequest(http.MethodGet, "http://_/v1/info", nil)
 	if err != nil {

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,6 +80,13 @@ func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, err
 	out.SudoRevoked = retired.SudoRevoked
 	out.CronDisabled = retired.CronDisabled
 	out.Retired = retired.Retired
+	// A retired agent's file-spool directory is a standing credential for
+	// its conv (unlike socket identity, which dies with the process tree),
+	// so revoke it with the rest of the authorization state. The spool
+	// consumer sweeps the directory itself on its next refresh.
+	if _, err := db.RevokeSpoolBindingsForConv(convID); err != nil {
+		slog.Warn("retire: revoke spool bindings failed", "conv", convID, "error", err)
+	}
 	return out, retired.OwnerGroupIDs, nil
 }
 

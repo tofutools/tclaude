@@ -28,11 +28,18 @@ import (
 //
 // Possession of the bound directory IS the caller identity: the daemon
 // stamps the binding's conv-id on every request consumed from it. The
-// directory name is an unguessable random id and the sandbox grants the
-// agent exactly its own directory. Note the same-UID caveat: unlike
-// SO_PEERCRED, any unsandboxed same-UID process that reads the directory
-// can speak as that agent — accepted, because a same-UID process can
-// already impersonate any agent via its tmux pane or /proc/<pid>/mem.
+// directory name is an unguessable random id, INTENDED to be paired with
+// sandbox profiles that deny the spool root and allow-carve only the
+// agent's own directory. That carve-out does not exist yet — it is part
+// of the sandbox-profile follow-up (TCL-748) — so today, while the flag
+// is on, any process that can read ~/.tclaude/api can enumerate spool
+// directories and read other agents' envelopes; request/response bodies
+// also touch disk, which the socket transport never does. That is the
+// central reason this transport is gated behind an experimental flag.
+// The same-UID caveat is separate and permanent: unlike SO_PEERCRED, any
+// unsandboxed same-UID process that reads the directory can speak as that
+// agent — accepted, because a same-UID process can already impersonate
+// any agent via its tmux pane or /proc/<pid>/mem.
 
 // SpoolEnv points an agent's tclaude CLI at its private spool directory.
 // Set at spawn by session.ApplyAgentSpoolEnv; absolute paths only.
@@ -145,7 +152,11 @@ func SpoolEnvelopePath(dir, id string) string {
 
 // WriteSpoolFile publishes data at path atomically: write to a dotted tmp
 // file in the same directory, then rename into place. Readers therefore
-// only ever observe complete envelopes.
+// only ever observe complete envelopes. Deliberately no fsync: a HOST
+// crash may surface a torn/empty envelope on some filesystems, which the
+// daemon answers with a 400 (request) or the client rejects on decode
+// (response) — acceptable for an experimental transport whose callers
+// already own retry behaviour.
 func WriteSpoolFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
