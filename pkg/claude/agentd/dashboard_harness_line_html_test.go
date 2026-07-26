@@ -30,7 +30,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 
 	// MemberCell wires it into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("<${HarnessLine} member=${member} /><${SandboxBadge} member=${member} />", "HarnessLine renders in the agent-ctl cell")
+	must("<${HarnessLine} member=${member} /></td>", "HarnessLine renders in the agent-ctl cell")
 
 	// The always-visible label is shortModel()-compressed; the FULL name
 	// stays in the tooltip (the title attr / the status-dot tip).
@@ -88,12 +88,16 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// (Claude Code) no-model row stays clean UNLESS Remote Access is armed,
 	// in which case the bare 📱 indicator still earns a minimal line.
 	must("if (!harness || harness === 'claude')", "no-model Claude Code rows stay clean; Codex still badges")
-	must("return member.online && state.remote_control ? html`<div class=\"agent-harness\">${remote}</div>` : null;", "an armed remote indicator still shows on a live pre-tick CC row")
+	must("const indicated = (member.online && state.remote_control) || !!sandboxIndicator(member);",
+		"an armed remote or a recorded sandbox verdict still earns a minimal line on a pre-tick CC row")
+	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}</div>` : null;",
+		"the pre-tick line carries both indicators")
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.
 	must("export function SandboxBadge({ member })", "SandboxBadge component is defined")
-	must("member.state?.sandbox_mode", "SandboxBadge reads the launch sandbox off the agent's state")
+	must("function sandboxIndicator(member)", "the sandbox posture decision is separable from its rendering")
+	must("member.state?.sandbox_mode", "the sandbox indicator reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
 
 	// TCL-729: the mode is only the launch REQUEST. Where the row carries a
@@ -109,9 +113,12 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
 
-	// MemberCell: the sandbox chip renders in the agent control cell, next
-	// to the harness line.
-	must("<${HarnessLine} member=${member} /><${SandboxBadge} member=${member} />", "SandboxBadge renders beside the harness line")
+	// The sandbox indicator rides INSIDE the harness line, trailing the effort
+	// token next to the 📱 remote indicator, rather than owning a second line
+	// under the control cell.
+	must("const sandbox = html`<${SandboxBadge} member=${member} />`;",
+		"HarnessLine builds the sandbox indicator alongside the remote one")
+	must("</span>${sandbox}${remote}", "both indicators trail the harness metadata text, tightly packed")
 
 	// MemberName: the rename affordance is gated on the harness capability —
 	// a non-renameable harness gets a fixed (non-editable) name.
@@ -120,10 +127,25 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("harnessCanRename(snapshot, state.harness)", "the name cell gates rename on the agent's harness")
 	must("rowname-fixed", "a non-renameable harness gets a fixed-name span")
 
-	// CSS: the sandbox chip + its danger variant + the fixed-name tweak are
+	// CSS: the sandbox glyph + its danger variant + the fixed-name tweak are
 	// styled.
-	must(".sandbox-badge", "sandbox chip has a style rule")
-	must(".sandbox-badge.sandbox-danger", "the full-access sandbox chip is styled distinctly")
+	must(".sandbox-badge {", "the sandbox indicator has a style rule")
+	must(".sandbox-badge.sandbox-danger", "the unconfined/unverified glyph is styled distinctly")
+	// The glyph is frameless: a border or padding would rebuild the chip this
+	// replaced, so assert their ABSENCE rather than freezing the exact block.
+	found := false
+	for _, rule := range dashboardCSSRules(t) {
+		if strings.TrimSpace(rule.selectors) != ".sandbox-badge" {
+			continue
+		}
+		if strings.Contains(rule.declarations, "border") || strings.Contains(rule.declarations, "padding") {
+			t.Errorf(".sandbox-badge reintroduces the chip framing this indicator replaced: %q", rule.declarations)
+		}
+		found = true
+	}
+	if !found {
+		t.Error("dashboard.css has no bare .sandbox-badge rule to check for chip framing")
+	}
 	must(".rowname-text.rowname-fixed", "the non-renameable name drops the click-to-edit affordance")
 }
 

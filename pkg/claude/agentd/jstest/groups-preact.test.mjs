@@ -931,9 +931,14 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(dot.dataset.conv, 'conv-rich');
   assert.match(dot.title, /Claude Code · Opus 4\.8/);
   const harnessLine = richRow.querySelector('.agent-harness');
-  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42📱/);
+  // The sandbox and remote indicators are the tail of this one line — bare
+  // glyphs, sandbox first — not a second line under the control cell.
+  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42🔒📱/);
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
-  assert.equal(richRow.querySelector('.sandbox-badge').textContent, '🔒 workspace-write');
+  const sandboxGlyph = harnessLine.querySelector('.sandbox-badge');
+  assert.equal(sandboxGlyph.textContent, '🔒');
+  assert.match(sandboxGlyph.title, /^Sandbox: workspace-write —/,
+    'the mode moved from the chip into the tooltip');
   assert.equal(richRow.querySelector('.remote-badge').dataset.act, 'web-open-window');
 
   assert.equal(richRow.querySelector('.state-pill').textContent, 'online');
