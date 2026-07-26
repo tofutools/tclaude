@@ -36,23 +36,27 @@ const hookBrokerTimeout = 20 * time.Second
 // brokerHookEvents reports whether this process must hand its hook events
 // to agentd rather than apply them itself.
 //
-// The marker is the load-bearing signal. The probe below it is a backstop
-// only, and it is deliberately not the primary: inside the sandbox
-// `~/.tclaude/data` is an EMPTY WRITABLE tmpfs (the mount plan hides a
-// protected root with --tmpfs), so db.Open() happily creates and migrates
-// a complete phantom database there. Nothing fails; reads just come back
-// empty and writes evaporate when the pane exits. That is why the dual
-// path cannot be "try the database, fall back on error" — there is no
-// error to catch — and why the absence of the database file, not a failed
-// write, is what the probe looks at.
+// The marker is the load-bearing signal, and the probe below it is a
+// backstop for the one case the marker cannot cover: a launch that
+// reached the sandbox without it.
 //
-// The probe's own blind spot, stated plainly: any in-sandbox tclaude
-// command that opens the database creates the phantom file, after which
-// the probe reports "reachable" for the rest of the pane's life. It
-// therefore covers only the narrow case of a launch that reached the
-// sandbox without the marker, and it covers it only until something else
-// opens the database. TCL-758 (protected roots remounted read-only) makes
-// the hidden path reject writes outright and retires the guesswork.
+// The probe looks at the ABSENCE OF THE DATABASE FILE rather than at a
+// failed write, and that shape is worth keeping even though the reason
+// for it has changed. It was originally the only workable test: the mount
+// plan hid `~/.tclaude/data` behind a bwrap --tmpfs, which is EMPTY but
+// WRITABLE, so db.Open() would happily create and migrate a complete
+// phantom database inside the wall — nothing failed, reads just came back
+// empty and writes evaporated with the pane. There was no error for a
+// "try the database, fall back on failure" design to catch.
+//
+// TCL-758 has since made hidden protected roots read-only (the mount plan
+// now emits --remount-ro over each hide), so a write inside the wall
+// fails outright and no phantom database can be created. That closes the
+// probe's old blind spot — an in-sandbox command opening the database
+// used to create the file and make the probe report "reachable" for the
+// rest of the pane's life — rather than making the probe wrong. Testing
+// for absence remains the cheaper and more direct question, and it does
+// not depend on which errno a future mount posture produces.
 //
 // Neither signal is a security boundary. Claiming to be brokered only
 // routes the event to a daemon that authenticates the caller from its own
@@ -181,9 +185,14 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 	return nil
 }
 
-// hookBrokerBodyBudget is the client's own ceiling, kept below the
+// hookBrokerBodyBudget is the client's own ceiling, kept just below the
 // daemon's so a trim happens here rather than as a rejection there.
-const hookBrokerBodyBudget = (1 << 20) - 4096
+//
+// The daemon's cap is 10 MiB by operator direction: large tool payloads
+// and messages should normally travel WHOLE, and trimming is meant to be
+// the rare last resort that keeps a pathological event deliverable rather
+// than a routine part of the path.
+const hookBrokerBodyBudget = (10 << 20) - 4096
 
 // trimOversizedHookBody keeps a large event deliverable instead of losing
 // it whole.

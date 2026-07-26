@@ -468,6 +468,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken-keychain" /> explicitly use the OS keychain instead (same as <code>--persist-operator-token-keychain</code>; implies persistence)</label>
         <span class="cfg-hint">Default off: a fresh token is minted every <code>agentd serve</code>. File persistence stores it at <code>0600 ~/.tclaude/data/operator_token</code>, which the human CLI reads automatically and agent sandboxes deny. Keychain storage is an explicit opt-in because keychain access is platform-dependent and may prompt; the CLI does not retrieve it automatically. Existing tokens are not copied between stores. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Broker limits</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-broker-enforce" /> actually reject callers over the limit</label>
+        <span class="cfg-hint">Ceilings on the brokered endpoints a sandboxed (<code>tclaude-layer</code>) agent uses to reach the database — <strong>20 requests/second per agent</strong> and <strong>10 MiB per request</strong>. Default off is <em>shadow mode</em>: excess is still measured and logged (saying what it <em>would</em> have refused) but nothing is refused, so you can see real traffic against the ceilings before enforcing. A denial-of-service backstop, not traffic shaping.</span>
+      </div>
     </div>
 
     <div class="cfg-section">

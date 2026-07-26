@@ -32,6 +32,12 @@ type Config struct {
 	RateLimit       *RateLimitConfig       `json:"ratelimit,omitempty"`
 	Agent           *AgentConfig           `json:"agent,omitempty"`
 
+	// Broker configures agentd's brokered hook/statusline endpoints —
+	// the path a `tclaude-layer` agent uses to reach the conversation
+	// database its mount namespace hides. Absent → limits measured and
+	// logged but not enforced. See BrokerConfig.
+	Broker *BrokerConfig `json:"broker,omitempty"`
+
 	// Terminal names the terminal emulator the agentd dashboard's
 	// spawn auto-focus / shell-attach feature should open — "ghostty",
 	// "kitty", "wezterm", "alacritty", "foot", "iterm2", "konsole",
@@ -1854,6 +1860,34 @@ func (c *Config) ResolvedRetiredCleanup() (enabled bool, afterDays int) {
 // guard fails OPEN: when it is disabled, or the data needed to judge
 // (the session's stored context snapshot) is missing, or no threshold
 // matches the conversation's window, compaction is allowed.
+// BrokerConfig controls agentd's brokered endpoints — the path by which
+// an agent whose mount namespace hides the conversation database
+// (`tclaude-layer`) applies its hook events and statusline writes through
+// the daemon instead.
+//
+// The limits it governs are a denial-of-service backstop, not traffic
+// shaping. Real traffic is a statusline that re-renders several times a
+// second plus a tool-use burst on top, and the ceilings sit far above
+// that; a caller reaching them is malfunctioning or hostile, not busy.
+//
+// Enforcement is deliberately OPT-IN. With this block absent the limiter
+// still measures every caller and logs anything over the line, saying
+// what it WOULD have refused — so an operator can see real traffic
+// against the ceilings before deciding to turn rejection on, rather than
+// discovering the sizing was wrong by having a working agent cut off.
+type BrokerConfig struct {
+	// EnforceLimits turns rejection on. Off (the default) is shadow
+	// mode: measured, logged, never refused.
+	EnforceLimits bool `json:"enforce_limits,omitempty"`
+}
+
+// BrokerLimitsEnforced reports whether the brokered endpoints should
+// actually refuse a caller over the line, as opposed to logging what they
+// would have refused.
+func (c *Config) BrokerLimitsEnforced() bool {
+	return c != nil && c.Broker != nil && c.Broker.EnforceLimits
+}
+
 type PreCompactGuardConfig struct {
 	// Enabled turns the guard on. Off (the default) installs the
 	// PreCompact hook but always allows compaction, so toggling this

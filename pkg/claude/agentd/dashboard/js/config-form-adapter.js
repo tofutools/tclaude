@@ -387,6 +387,9 @@ function populateConfigForm(cfg) {
 
   $('#cfg-record-hooks').checked = !!cfg.record_hooks;
 
+  // broker.enforce_limits — off (shadow mode) unless explicitly set.
+  $('#cfg-broker-enforce').checked = !!(cfg.broker || {}).enforce_limits;
+
   // tui.color_scheme — the interactive watch views' palette. Absent/unknown
   // resolves to 'default'; only 'dark-high-contrast' is the non-default choice.
   setSelectValue($('#cfg-tui-color-scheme'), (cfg.tui && cfg.tui.color_scheme === 'dark-high-contrast')
@@ -634,6 +637,13 @@ function assembleConfig() {
   if (ccdRaw !== '') cfg.claude_cleanup_period_days = cfgInt('cfg-claude-cleanup-days', 0); else delete cfg.claude_cleanup_period_days;
 
   cfg.record_hooks = $('#cfg-record-hooks').checked;
+
+  // broker. Clone the existing block so a future sub-field with no widget
+  // round-trips; drop the whole block when nothing is left, so an
+  // all-default config doesn't marshal a spurious "broker": {} diff.
+  const brk = (cfg.broker && typeof cfg.broker === 'object') ? cfg.broker : {};
+  if ($('#cfg-broker-enforce').checked) brk.enforce_limits = true; else delete brk.enforce_limits;
+  if (Object.keys(brk).length) cfg.broker = brk; else delete cfg.broker;
 
   // tui is an optional block. Clone the existing one so a future sub-field
   // with no widget round-trips, then set the one form-owned key. 'default' is

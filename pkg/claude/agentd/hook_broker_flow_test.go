@@ -343,13 +343,11 @@ func TestHookBroker_PreCompactDecisionIsRelayed(t *testing.T) {
 	// the 200K boundary of a 1M window — the headline case the guard
 	// exists to refuse.
 	//
-	// Scope note: this proves the DECISION SURVIVES THE ROUND TRIP, not
-	// that a real wrapped agent keeps the guard. The snapshot the guard
-	// judges from is written only by the status line, which is not
-	// brokered yet, so a live tclaude-layer agent has no snapshot for the
-	// daemon to read and compaction is always allowed. Seeding it here is
-	// what isolates the relay from that gap; when the status line lands,
-	// this test keeps holding and the gap closes on its own.
+	// Scope note: this proves the DECISION SURVIVES THE ROUND TRIP, and
+	// nothing about how the snapshot got there. The snapshot the guard
+	// judges from is written only by the status line, which is brokered
+	// through its own endpoint; seeding it directly here keeps this test
+	// about the relay rather than about that path.
 	cfg := config.DefaultConfig()
 	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: true}
 	require.NoError(t, config.Save(cfg))

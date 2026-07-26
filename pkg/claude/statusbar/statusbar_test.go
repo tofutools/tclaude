@@ -48,14 +48,14 @@ func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
 	}))
 	override := "off"
 	require.NoError(t, db.SetTemporarySandboxModeForConv(oldConv, normal, "test", &override))
-	assert.Contains(t, temporarySandboxWarning(oldConv), "⚠ SB-OFF")
+	assert.True(t, temporarySandboxOff(oldConv), "the override must raise the SB-OFF badge")
 
 	_, err = db.RotateAgentConv(oldConv, newConv, "clear")
 	require.NoError(t, err)
-	assert.Contains(t, temporarySandboxWarning(newConv), "⚠ SB-OFF")
+	assert.True(t, temporarySandboxOff(newConv), "the badge must follow the stable agent across a /clear rotation")
 
 	require.NoError(t, db.SetTemporarySandboxModeForConv(newConv, "", "", nil))
-	assert.Empty(t, temporarySandboxWarning(newConv))
+	assert.False(t, temporarySandboxOff(newConv), "clearing the override must drop the badge")
 }
 
 // TestStatusLineInput_ParsesModelID pins the model.id field path — the
