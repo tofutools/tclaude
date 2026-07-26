@@ -144,7 +144,8 @@ func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
 }
 
 func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	claudeRoot := filepath.Join(home, ".claude")
 	claudeSessions := filepath.Join(claudeRoot, "sessions")
