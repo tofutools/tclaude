@@ -41,6 +41,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 				"--ro-bind", readPath, readPath,
 				"--bind", writePath, writePath,
 				"--tmpfs", root + "/secret",
+				"--remount-ro", root + "/secret",
 			},
 		},
 		{
@@ -52,6 +53,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 			want: []string{
 				"--bind", writePath, writePath,
 				"--tmpfs", privatePath,
+				"--remount-ro", privatePath,
 			},
 		},
 		{
@@ -63,15 +65,14 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 			want: []string{
 				"--tmpfs", projectPath,
 				"--bind", reopenPath, reopenPath,
+				"--remount-ro", projectPath,
 			},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := bwrapArgs(nil, nil, tc.plan)
 			require.NoError(t, err)
-			require.GreaterOrEqual(t, len(got), len(tc.want))
-			tmuxHide := len(got) - 2
-			assert.Equal(t, tc.want, got[tmuxHide-len(tc.want):tmuxHide],
+			assert.Equal(t, tc.want, bwrapFilesystemArgsWithin(got, root),
 				"the builder must preserve MountPlan order verbatim")
 			assert.NotContains(t, got, "--unshare-net")
 			assert.NotContains(t, got, "--unshare-pid")
@@ -88,7 +89,11 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 		{Path: missing + "-hide", Mode: sandboxpolicy.MountHide},
 	}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--tmpfs", missing + "-hide"}, got[len(got)-4:len(got)-2])
+	hide := indexOfBwrapTriplet(got, "--tmpfs", missing+"-hide")
+	remount := indexOfBwrapTriplet(got, "--remount-ro", missing+"-hide")
+	require.NotEqual(t, -1, hide)
+	require.NotEqual(t, -1, remount)
+	assert.Less(t, hide, remount)
 	assert.NotContains(t, got, missing+"-ro")
 	assert.NotContains(t, got, missing+"-rw")
 }
@@ -120,6 +125,10 @@ func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
 	require.NotEqual(t, -1, reopen1)
 	assert.Less(t, hide0, reopen0, "baseline hide must precede the acknowledged read reopen")
 	assert.Less(t, hide1, reopen1, "baseline hide must precede the acknowledged write reopen")
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", protected[0]),
+		"an exact read reopen replaces the hidden mount and carries its own mode")
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", protected[1]),
+		"an exact write reopen must not be downgraded by the deferred flush")
 }
 
 func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
@@ -138,12 +147,76 @@ func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
 	parentGrant := indexOfBwrapTriplet(got, "--bind", tmuxBase)
 	exactGrant := indexOfBwrapTriplet(got, "--bind", tmuxSocketDir)
 	hide := indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir)
+	remount := indexOfBwrapTriplet(got, "--remount-ro", tmuxSocketDir)
 	require.NotEqual(t, -1, parentGrant)
 	require.NotEqual(t, -1, exactGrant)
 	require.NotEqual(t, -1, hide)
+	require.NotEqual(t, -1, remount)
 	assert.Less(t, parentGrant, hide)
 	assert.Less(t, exactGrant, hide, "host-control hide must be unshadowable by any plan entry")
-	assert.Equal(t, len(got)-2, hide, "tmux socket hide must be the final applier phase")
+	assert.Equal(t, len(got)-4, hide, "tmux socket hide must be the final applier phase")
+	assert.Equal(t, len(got)-2, remount, "tmux socket read-only hardening must be the final operation")
+}
+
+func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T) {
+	tmuxBase := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
+	require.NoError(t, err)
+
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
+		Path: tmuxBase, Mode: sandboxpolicy.MountHide,
+	}}})
+	require.NoError(t, err)
+
+	parentHide := indexOfBwrapTriplet(got, "--tmpfs", tmuxBase)
+	mountpoint := indexOfBwrapTriplet(got, "--dir", tmuxSocketDir)
+	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", tmuxBase)
+	finalHide := indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir)
+	require.NotEqual(t, -1, parentHide)
+	require.NotEqual(t, -1, mountpoint)
+	require.NotEqual(t, -1, parentRemount)
+	require.NotEqual(t, -1, finalHide)
+	assert.Less(t, parentHide, mountpoint)
+	assert.Less(t, mountpoint, parentRemount,
+		"the final class-4 destination must exist before its hidden ancestor becomes read-only")
+	assert.Less(t, parentRemount, finalHide)
+}
+
+func TestBwrapArgsDeferredRemountTracksTopmostExactMount(t *testing.T) {
+	path := t.TempDir()
+	for _, tc := range []struct {
+		name        string
+		entries     []sandboxpolicy.MountEntry
+		wantRemount bool
+	}{
+		{
+			name: "later exact bind cancels hide remount",
+			entries: []sandboxpolicy.MountEntry{
+				{Path: path, Mode: sandboxpolicy.MountHide},
+				{Path: path, Mode: sandboxpolicy.MountRW},
+			},
+		},
+		{
+			name: "final exact hide restores pending remount",
+			entries: []sandboxpolicy.MountEntry{
+				{Path: path, Mode: sandboxpolicy.MountHide},
+				{Path: path, Mode: sandboxpolicy.MountRW},
+				{Path: path, Mode: sandboxpolicy.MountHide},
+			},
+			wantRemount: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: tc.entries})
+			require.NoError(t, err)
+			if tc.wantRemount {
+				assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--remount-ro", path))
+			} else {
+				assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", path))
+			}
+		})
+	}
 }
 
 func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
@@ -175,13 +248,16 @@ func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	workspaceBind := indexOfBwrapTriplet(got, "--bind", workspace)
 	agentBind := indexOfBwrapTriplet(got, "--bind", agentDir)
 	protectedHide := indexOfBwrapTriplet(got, "--tmpfs", claudeSessions)
+	protectedRemount := indexOfBwrapTriplet(got, "--remount-ro", claudeSessions)
 	require.NotEqual(t, -1, stateBind)
 	require.NotEqual(t, -1, workspaceBind)
 	require.NotEqual(t, -1, agentBind)
 	require.NotEqual(t, -1, protectedHide)
+	require.NotEqual(t, -1, protectedRemount)
 	assert.Less(t, stateBind, protectedHide, "protected state must stay hidden above the writable harness root")
 	assert.Less(t, workspaceBind, protectedHide)
 	assert.Less(t, agentBind, protectedHide)
+	assert.Less(t, protectedHide, protectedRemount)
 }
 
 func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
@@ -205,15 +281,23 @@ func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
 	stateBinds := indicesOfBwrapTriplet(got, "--bind", stateRoot)
 	protectedHides := indicesOfBwrapTriplet(got, "--tmpfs", protectedRoot)
 	breakGlassReopen := indexOfBwrapTriplet(got, "--ro-bind", breakGlass)
+	homeRemount := indexOfBwrapTriplet(got, "--remount-ro", home)
+	protectedRemount := indexOfBwrapTriplet(got, "--remount-ro", protectedRoot)
 	require.NotEqual(t, -1, homeHide)
 	require.Len(t, stateBinds, 2, "the state root must be rebound after an ordinary ancestor deny")
 	require.Len(t, protectedHides, 2, "repairing the state root must restore its protected child hide")
 	require.NotEqual(t, -1, breakGlassReopen)
+	require.NotEqual(t, -1, homeRemount)
+	require.NotEqual(t, -1, protectedRemount)
 	assert.Less(t, stateBinds[0], homeHide)
 	assert.Less(t, homeHide, stateBinds[1])
 	assert.Less(t, stateBinds[1], protectedHides[1])
 	assert.Less(t, protectedHides[1], breakGlassReopen,
 		"acknowledged break-glass must remain the only plan authority that beats a protected hide")
+	assert.Less(t, breakGlassReopen, protectedRemount,
+		"the child reopen mountpoint must exist before its hidden parent becomes read-only")
+	assert.Less(t, breakGlassReopen, homeRemount,
+		"the ancestor hide must remain mutable until all narrower repairs have landed")
 }
 
 func TestBwrapArgsGeneratedHomeWriteRehidesProtectedRoots(t *testing.T) {
@@ -239,12 +323,18 @@ func TestBwrapArgsGeneratedHomeWriteRehidesProtectedRoots(t *testing.T) {
 	homeBinds := indicesOfBwrapTriplet(got, "--bind", home)
 	claudeHides := indicesOfBwrapTriplet(got, "--tmpfs", claudeProtected)
 	tclaudeHides := indicesOfBwrapTriplet(got, "--tmpfs", tclaudeProtected)
+	claudeRemount := indexOfBwrapTriplet(got, "--remount-ro", claudeProtected)
+	tclaudeRemount := indexOfBwrapTriplet(got, "--remount-ro", tclaudeProtected)
 	require.Len(t, homeBinds, 2, "the generated plan contains the workspace/Home reopen")
 	require.Len(t, claudeHides, 2)
 	require.Len(t, tclaudeHides, 2)
+	require.NotEqual(t, -1, claudeRemount)
+	require.NotEqual(t, -1, tclaudeRemount)
 	assert.Less(t, homeBinds[1], claudeHides[1])
 	assert.Less(t, homeBinds[1], tclaudeHides[1],
 		"generated launch grants must not acquire protected authority")
+	assert.Less(t, claudeHides[1], claudeRemount)
+	assert.Less(t, tclaudeHides[1], tclaudeRemount)
 }
 
 func TestBwrapArgsRefusesLaunchContractInsideProtectedRoot(t *testing.T) {
@@ -360,17 +450,22 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 		"constructed root must expose the static /usr surface")
 
 	homeHide := indexOfBwrapTriplet(got, "--tmpfs", home)
+	homeRemount := indexOfBwrapTriplet(got, "--remount-ro", home)
 	stateRepairs := indicesOfBwrapTriplet(got, "--bind", stateRoot)
 	socketBinds := indicesOfBwrapTriplet(got, "--ro-bind", socket)
 	require.NotEqual(t, -1, homeHide)
+	require.NotEqual(t, -1, homeRemount)
 	require.Len(t, stateRepairs, 2, "class-1 state root must survive an ordinary ancestor deny")
 	require.Len(t, socketBinds, 2, "agentd socket must be rebound after an ordinary ancestor deny")
 	assert.Less(t, homeHide, stateRepairs[1])
 	assert.Less(t, homeHide, socketBinds[1])
+	assert.Less(t, stateRepairs[1], homeRemount)
+	assert.Less(t, socketBinds[1], homeRemount,
+		"the child socket bind must land before its hidden parent becomes read-only")
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
-	assert.Equal(t, len(got)-2, indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir),
+	assert.Equal(t, len(got)-4, indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir),
 		"class-4 tmux hide remains final under the constructed root")
 }
 
@@ -405,6 +500,23 @@ func indicesOfBwrapTriplet(args []string, flag, path string) []int {
 	return indices
 }
 
+func bwrapFilesystemArgsWithin(args []string, root string) []string {
+	var filtered []string
+	for i, arg := range args {
+		switch arg {
+		case "--bind", "--ro-bind":
+			if i+2 < len(args) && sandboxpolicy.PathContainsOrEqual(root, args[i+2]) {
+				filtered = append(filtered, args[i:i+3]...)
+			}
+		case "--tmpfs", "--remount-ro", "--dir":
+			if i+1 < len(args) && sandboxpolicy.PathContainsOrEqual(root, args[i+1]) {
+				filtered = append(filtered, args[i:i+2]...)
+			}
+		}
+	}
+	return filtered
+}
+
 func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "relative", Mode: sandboxpolicy.MountRW},
@@ -423,7 +535,11 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 		{Path: path},
 	}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"--tmpfs", path}, got[len(got)-4:len(got)-2])
+	hide := indexOfBwrapTriplet(got, "--tmpfs", path)
+	remount := indexOfBwrapTriplet(got, "--remount-ro", path)
+	require.NotEqual(t, -1, hide)
+	require.NotEqual(t, -1, remount)
+	assert.Less(t, hide, remount)
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
