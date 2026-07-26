@@ -496,7 +496,7 @@ func TestLegacySnapshotVersionsUpgradeToCurrent(t *testing.T) {
 	workspace := filepath.Join(home, "workspace")
 	require.NoError(t, os.Mkdir(workspace, 0o755))
 
-	for _, version := range []int{1, 2, 3, 4, SnapshotVersion} {
+	for _, version := range []int{1, 2, 3, 4, 5, SnapshotVersion} {
 		// Decode from real persisted JSON, not a hand-built struct, so this
 		// exercises the same path a stored row takes.
 		raw := `{"version":` + itoa(version) + `,"effective":{` +

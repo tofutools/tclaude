@@ -8,12 +8,13 @@ import (
 	"time"
 )
 
-// SnapshotVersion 5 drops the separate read-baseline/read-exclusion mechanism
-// (TCL-623): strictness is now expressed entirely through ordinary filesystem
-// rows (a broad deny plus narrower reopens), so those fields no longer exist.
-// The bump keeps the fail-closed downgrade property of earlier versions — an
-// older binary rejects v5 rather than reinterpreting it.
-const SnapshotVersion = 5
+// SnapshotVersion 6 adds ProfilesOmitted, a lifecycle-significant launch
+// contract that prevents ambient sandbox-profile tiers from reappearing on
+// resume/reincarnation. The bump preserves the fail-closed downgrade property:
+// an older binary rejects v6 rather than ignoring the marker and reapplying
+// global/group profile values. Version 5 removed the retired read-baseline
+// mechanism (TCL-623).
+const SnapshotVersion = 6
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -258,15 +259,15 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	switch in.Version {
 	// v1 and v2 are structurally compatible: they simply carry neither TCL-609
 	// field, which decodes to the zero value that means "today's behavior".
-	// v2 is what current main persists, so rejecting it here would break every
-	// existing session, actor, and pending spawn on upgrade.
 	// v3/v4 additionally carried read_baseline and read_baseline_exclusions.
 	// TCL-623 removed that mechanism outright, so those fields simply do not
 	// decode any more and the restriction is dropped rather than reinterpreted.
 	// That is the deliberate operator decision — the feature had no users, and
 	// silently claiming to enforce a mechanism this binary no longer implements
-	// would be worse than dropping it.
-	case 1, 2, 3, 4, SnapshotVersion:
+	// would be worse than dropping it. v5 is the immediately prior shape and
+	// carries no ProfilesOmitted marker, so false preserves its ambient-resolution
+	// behavior when upgraded to v6.
+	case 1, 2, 3, 4, 5, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
