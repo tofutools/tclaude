@@ -74,6 +74,25 @@ func TestInjectTextAndSubmit_MultilineUsesBracketedPaste(t *testing.T) {
 	assert.Equal(t, commands[2], commands[3])
 }
 
+func TestInjectBracketedTextAndSubmit_SingleLineUsesBracketedPaste(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Cleanup(SetInjectSettleDelayForTest(0))
+	rt := &commandRecordingTmux{}
+	prev := clcommon.Default
+	clcommon.Default = rt
+	t.Cleanup(func() { clcommon.Default = prev })
+
+	const text = "[system: new agent message #42; delivery: inline] hello"
+	require.NoError(t, injectBracketedTextAndSubmit("pane-message:0.0", text))
+	commands := rt.snapshot()
+	require.Len(t, commands, 4)
+	assert.Equal(t, "set-buffer", commands[0][0])
+	assert.Equal(t, text, commands[0][len(commands[0])-1])
+	assert.Equal(t, "paste-buffer", commands[1][0])
+	assert.True(t, slices.Contains(commands[1], "-p"),
+		"single-line nudge must arrive as a Bubble Tea paste event: %v", commands[1])
+}
+
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {
 	last := args[len(args)-1]
 	r.mu.Lock()

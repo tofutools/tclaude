@@ -39,6 +39,10 @@ type Options struct {
 	SettleDelaySet bool
 	LockTimeout    time.Duration
 	LockRetry      time.Duration
+	// ForceBracketedPaste keeps even single-line text in one terminal paste
+	// event. This is useful when the foreground application must distinguish
+	// programmatic injection from ordinary key presses.
+	ForceBracketedPaste bool
 	// LockID overrides the serialization identity the advisory file lock is
 	// keyed on (the send target still routes the tmux commands). A caller
 	// that types into an exact pane ID but knows the pane's session must pass
@@ -127,13 +131,14 @@ func ExactInputTarget(tmuxTarget string) string {
 }
 
 // InjectTextAndSubmit delivers one complete prompt turn. Multiline/tabbed
-// content uses tmux bracketed paste so its bytes remain one input submission;
-// single-line content uses the smaller send-keys path. The two settled Enter
-// presses preserve the long-standing paste-coalescing workaround.
+// content (or any content with ForceBracketedPaste) uses tmux bracketed paste
+// so its bytes remain one input submission; other single-line content uses the
+// smaller send-keys path. The two settled Enter presses preserve the
+// long-standing paste-coalescing workaround.
 func InjectTextAndSubmit(tmuxTarget, text string, opts Options) error {
 	opts = opts.resolved()
 	return WithLock(tmuxTarget, opts, func(run Runner, target string) error {
-		if strings.ContainsAny(text, "\n\t") {
+		if opts.ForceBracketedPaste || strings.ContainsAny(text, "\n\t") {
 			buffer := fmt.Sprintf("tclaude-inject-%d-%d", os.Getpid(), pasteBufferSequence.Add(1))
 			if err := run("set-buffer", "-b", buffer, text); err != nil {
 				return fmt.Errorf("set-buffer text: %w", err)

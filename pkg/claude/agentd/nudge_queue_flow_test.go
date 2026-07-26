@@ -162,18 +162,18 @@ func TestRegularNudge_IndeterminateLivenessProbeRemainsRetryable(t *testing.T) {
 	assert.True(t, message.NudgeDiscardedAt.IsZero())
 }
 
-// TestNudgeQueue_HungSendKeysIsRetriedByReaper is the exact live TCL-281
-// shape. The first row is durably claimed, its tmux send-keys never returns,
+// TestNudgeQueue_HungPaneInputIsRetriedByReaper is the exact live TCL-281
+// shape. The first row is durably claimed, its tmux paste never returns,
 // and a second row arrives behind the target's running latch. The command
 // deadline must release the latch, failed delivery must release only its own
 // durable claim, the second row may proceed, and the regular reaper cadence
 // must retry the first after its per-message backoff.
-func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
+func TestNudgeQueue_HungPaneInputIsRetriedByReaper(t *testing.T) {
 	f := newFlow(t)
 	// One second, not 25ms: the healthy has-session probe BEFORE the hung
-	// send-keys is a real subprocess spawn, and a loaded CI runner can blow
+	// paste-buffer is a real subprocess spawn, and a loaded CI runner can blow
 	// a 25ms deadline on that alone — delivery then fails into the minute
-	// backoff below and send-keys is never reached (observed flake).
+	// backoff below and pane input is never reached (observed flake).
 	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
 	// Keep the coalesced `again` pass from retrying #1 before we can assert
 	// the failed state. The test switches backoff off explicitly when it is
@@ -191,11 +191,11 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	f.HaveMember("team", recipient)
 	f.HaveAliveSession(recipient, "spwn-nq06-r", tmux, f.TestCwd("work"))
 
-	f.World.Tmux.HangNextCommand("send-keys", 30*time.Second)
+	f.World.Tmux.HangNextCommand("paste-buffer", 30*time.Second)
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
 	require.Eventually(t, func() bool {
-		return f.World.Tmux.CommandCount("send-keys") >= 1
-	}, 10*time.Second, time.Millisecond, "first worker reaches the hung send-keys")
+		return f.World.Tmux.CommandCount("paste-buffer") >= 1
+	}, 10*time.Second, time.Millisecond, "first worker reaches the hung paste-buffer")
 	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
 	assert.Equal(t, 2, r2.Pending, "in-flight-but-unconfirmed #1 remains part of the durable queue")
 

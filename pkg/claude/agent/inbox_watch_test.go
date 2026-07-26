@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -44,6 +45,46 @@ func TestInboxWatch_LoadErrorPreservesEntries(t *testing.T) {
 	mm := m2.(*inboxWatchModel)
 	assert.Equal(t, "daemon down", mm.loadErr)
 	assert.Len(t, mm.entries, 1, "entries should be preserved on load error")
+}
+
+func TestInboxWatch_InlineNudgeQuitsAndPreservesMessage(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 10, Unread: true})
+	nudge := "[system: new agent message #42 from agt_sender; delivery: inline; subject: review] Please review this."
+
+	m2, cmd := m.Update(tea.PasteMsg{Content: nudge})
+	mm := m2.(*inboxWatchModel)
+
+	assert.Equal(t, nudge, mm.inlineNudge)
+	require.NotNil(t, cmd)
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+
+	var out bytes.Buffer
+	writeInboxWatchInlineNudge(&out, mm)
+	assert.Equal(t, nudge+"\n", out.String(),
+		"the complete inline body must return as command output after the watcher exits")
+}
+
+func TestInboxWatch_OrdinaryPasteDoesNotQuit(t *testing.T) {
+	m := newInboxWatchModel(&inboxWatchParams{Limit: 50})
+	m.searchFocused = true
+	m.searchInput.Focus()
+
+	m2, _ := m.Update(tea.PasteMsg{Content: "notes about delivery: inline"})
+	mm := m2.(*inboxWatchModel)
+
+	assert.Empty(t, mm.inlineNudge)
+	assert.Equal(t, "notes about delivery: inline", mm.searchInput.Value())
+}
+
+func TestIsInlineAgentMessageNudge_HeaderOnly(t *testing.T) {
+	assert.True(t, isInlineAgentMessageNudge(
+		"[system: new agent message #7; delivery: inline] body"))
+	assert.False(t, isInlineAgentMessageNudge(
+		"[system: new agent message #7 for you. fetch with: tclaude agent inbox read 7]"))
+	assert.False(t, isInlineAgentMessageNudge(
+		"ordinary paste ] body says ; delivery: inline"))
+	assert.False(t, isInlineAgentMessageNudge(
+		"[system: something else; delivery: inline] body"))
 }
 
 // Up/down navigation respects bounds.

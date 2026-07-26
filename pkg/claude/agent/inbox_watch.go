@@ -43,7 +43,7 @@ func inboxWatchCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runInboxWatch(p *inboxWatchParams, _, stderr io.Writer) int {
+func runInboxWatch(p *inboxWatchParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -53,12 +53,20 @@ func runInboxWatch(p *inboxWatchParams, _, stderr io.Writer) int {
 	applyTUIColorScheme(cfg.TUIColorScheme())
 
 	m := newInboxWatchModel(p)
-	prog := tea.NewProgram(m)
-	if _, err := prog.Run(); err != nil {
+	prog := tea.NewProgram(m, tea.WithOutput(stdout))
+	finalModel, err := prog.Run()
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure
 	}
+	writeInboxWatchInlineNudge(stdout, finalModel)
 	return rcOK
+}
+
+func writeInboxWatchInlineNudge(w io.Writer, finalModel tea.Model) {
+	if fm, ok := finalModel.(*inboxWatchModel); ok && fm.inlineNudge != "" {
+		fmt.Fprintln(w, fm.inlineNudge)
+	}
 }
 
 // --- Model ---
@@ -126,6 +134,12 @@ type inboxWatchModel struct {
 	// cursor. Set by `del` / `backspace` on a non-empty selection;
 	// cleared by `y` (POSTs the delete) or any other key.
 	deleteConfirmID int64
+
+	// An inline agent-message nudge arrives through the same bracketed-paste
+	// terminal path the harness normally reads. If inbox watch owns the pane,
+	// Bubble Tea receives that paste instead. Preserve it so runInboxWatch can
+	// return the complete message as command output after quitting.
+	inlineNudge string
 }
 
 func newInboxWatchModel(p *inboxWatchParams) *inboxWatchModel {
@@ -349,6 +363,12 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// optimistic removal already hides the row from the user.
 		return m, m.loadCmd()
 
+	case tea.PasteMsg:
+		if isInlineAgentMessageNudge(msg.Content) {
+			m.inlineNudge = msg.Content
+			return m, tea.Quit
+		}
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -372,6 +392,20 @@ func (m *inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// isInlineAgentMessageNudge recognises the server-authored envelope used by
+// messageInlineText. Check only the bracket header: a regular user paste whose
+// body happens to mention "delivery: inline" must keep flowing into the active
+// search/reply input.
+func isInlineAgentMessageNudge(text string) bool {
+	end := strings.IndexByte(text, ']')
+	if end < 0 {
+		return false
+	}
+	header := text[:end]
+	return strings.HasPrefix(header, "[system: new agent message #") &&
+		strings.Contains(header, "; delivery: inline")
 }
 
 func (m *inboxWatchModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
