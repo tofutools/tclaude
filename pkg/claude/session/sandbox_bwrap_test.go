@@ -307,10 +307,10 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
 	require.ErrorContains(t, ValidateTclaudeLayerNetwork(claude, closed), "requires hosted model traffic")
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), OfflineModelEnv+"=1")
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
 
-	closed.Environment = []sandboxpolicy.EnvironmentEntry{{Name: OfflineModelEnv, Value: "0"}}
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), OfflineModelEnv+"=1")
+	closed.Environment = []sandboxpolicy.EnvironmentEntry{{Name: sandboxpolicy.OfflineModelTransportEnv, Value: "0"}}
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
 	closed.Environment[0].Value = "1"
 	require.NoError(t, ValidateTclaudeLayerNetwork(codex, closed))
 

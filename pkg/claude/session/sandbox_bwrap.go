@@ -12,8 +12,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-const OfflineModelEnv = "TCLAUDE_OFFLINE_MODEL"
-
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
@@ -72,13 +70,13 @@ func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.Eff
 		)
 	}
 	for _, entry := range effective.Environment {
-		if entry.Name == OfflineModelEnv && entry.Value == "1" {
+		if entry.Name == sandboxpolicy.OfflineModelTransportEnv && entry.Value == "1" {
 			return nil
 		}
 	}
 	return fmt.Errorf(
 		"unsupported_sandbox_profile_network: network_access none requires %s=1 in the resolved sandbox profile, asserting a model transport that functions inside the isolated namespace; see docs/sandboxing.md#isolated-with-agentd-network-posture",
-		OfflineModelEnv,
+		sandboxpolicy.OfflineModelTransportEnv,
 	)
 }
 

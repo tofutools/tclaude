@@ -224,6 +224,12 @@ func TestNormalizeEnvironmentCanonicalAndConflicts(t *testing.T) {
 	assert.Equal(t, []EnvironmentEntry{{Name: "ALPHA", Value: "a"}, {Name: "ZED", Value: "line one\n'$HOME`"}}, got.Environment)
 	assert.Len(t, in.Environment, 3, "caller input must not be mutated")
 
+	offline, err := Normalize(Profile{Name: "p", Environment: []EnvironmentEntry{{
+		Name: OfflineModelTransportEnv, Value: "1",
+	}}})
+	require.NoError(t, err)
+	assert.Equal(t, []EnvironmentEntry{{Name: OfflineModelTransportEnv, Value: "1"}}, offline.Environment)
+
 	_, err = Normalize(Profile{Name: "p", Environment: []EnvironmentEntry{{Name: "A", Value: "1"}, {Name: "A", Value: "2"}}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "conflicting values")
