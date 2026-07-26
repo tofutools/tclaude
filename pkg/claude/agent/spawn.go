@@ -164,6 +164,11 @@ type SpawnRequest struct {
 	// Only a daemon-boundary-classified human may set it; agent callers may
 	// inherit the group's/global policy but cannot select an escalation.
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	// OmitSandboxProfiles explicitly suppresses every tclaude sandbox-profile
+	// tier for this launch: global, group, and explicit. It is distinct from a
+	// blank SandboxProfile, which still inherits the ambient tiers, and is
+	// human-only because dropping inherited denies can widen authority.
+	OmitSandboxProfiles bool `json:"omit_sandbox_profiles,omitempty"`
 	// BreakGlassAcknowledged is the transient operator acknowledgement required
 	// when the RESOLVED sandbox policy for this spawn carries break-glass
 	// protected access. It is gated on the resolved snapshot rather than on
@@ -521,6 +526,7 @@ type SpawnParams struct {
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
 	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
 	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for this spawn"`
+	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
 	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"Acknowledge that the resolved sandbox policy grants break-glass access to protected tclaude/harness state"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
@@ -893,6 +899,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg
 	}
+	if p.OmitSandboxProfiles && strings.TrimSpace(p.SandboxProfile) != "" {
+		fmt.Fprintln(stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
+		return nil, rcInvalidArg
+	}
 	// --worktree-base / --worktree-repo are modifiers of --worktree;
 	// rejecting them up front beats silently ignoring a flag the user
 	// expected to take effect.
@@ -1157,6 +1167,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	req := SpawnRequest{
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
+		OmitSandboxProfiles:    p.OmitSandboxProfiles,
 		BreakGlassAcknowledged: p.IUnderstandBreakGlassRisk,
 		Name:                   name,
 		Role:                   merged.Role,

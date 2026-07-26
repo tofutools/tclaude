@@ -1,6 +1,6 @@
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
 import { BREAK_GLASS_WARNING, describeBreakGlassEntries } from './sandbox-break-glass.js';
-import { WT_NEW } from './agent-spawn-model.js';
+import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
@@ -148,6 +148,14 @@ export function createAgentSpawnActions({
 
     async loadSandboxPolicy(groupName, selected = '') {
       const profiles = await loadSandboxProfiles();
+      if (selected === SANDBOX_PROFILE_NONE) {
+        return {
+          profiles,
+          selected,
+          preview: 'No tclaude sandbox-profile values will be applied for this launch. Global, group, and explicit profile tiers are all omitted.',
+          breakGlass: [],
+        };
+      }
       const [globalDefault, groupDefault] = await Promise.all([
         jsonRequest(fetchImpl, '/api/sandbox-profile-default'),
         groupName

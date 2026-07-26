@@ -62,3 +62,26 @@ func TestResolveResumeSandboxPolicyDoesNotInferLegacyGroupFromStaleProfileID(t *
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
+
+func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T) {
+	setupTestDB(t)
+	const convID = "omitted-profile-resume-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	omitted := sandboxpolicy.OmittedProfilesSnapshot()
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &omitted))
+
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "ambient", Environment: []db.SandboxEnvironmentEntry{{Name: "AMBIENT", Value: "yes"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("ambient"))
+
+	resolved, err := resolveResumeSandboxPolicy(convID)
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	require.NotNil(t, resolved.Snapshot)
+	assert.True(t, resolved.Snapshot.ProfilesOmitted)
+	assert.Empty(t, resolved.Snapshot.Applied)
+	assert.Empty(t, resolved.Snapshot.Effective.Environment)
+}

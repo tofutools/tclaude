@@ -864,6 +864,7 @@ preview the result and explicitly save it through the ordinary editor.
 tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR]
                             [--initial-message MSG | --file PATH] [--reply-to SEL]
                             [--worktree BRANCH [--worktree-base B] [--worktree-repo DIR]]
+                            [--sandbox-profile P | --omit-sandbox-profiles]
                             [--auto-focus] [--no-group-context] [--timeout DUR]
 ```
 
@@ -899,6 +900,11 @@ to the new agent once it lands (off by default for the CLI — spawns are
 usually programmatic — whereas the dashboard modal defaults it on).
 `--no-group-context` opts the new agent out of the group's shared
 startup context (delivered by default, like every other spawn path).
+`--sandbox-profile P` composes an explicit sandbox profile after the ambient
+global and group tiers. `--omit-sandbox-profiles` instead suppresses every tier
+for this launch, including environment values and agent-owned directories.
+Both are human-only and mutually exclusive; leaving both unset inherits the
+ambient tiers.
 
 **How the agent is named + greeted.** For a Claude Code spawn the daemon
 preps the conversation id, then launches the agent already named and

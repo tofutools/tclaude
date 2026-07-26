@@ -72,6 +72,19 @@ func TestRunSpawn_FileAndFlagMutuallyExclusive(t *testing.T) {
 	assert.Contains(t, stderr.String(), "not both")
 }
 
+func TestRunSpawn_SandboxProfileAndOmissionMutuallyExclusive(t *testing.T) {
+	stderr := new(bytes.Buffer)
+	resp, rc := RunSpawn(
+		&SpawnParams{
+			Group: "alpha", SandboxProfile: "strict", OmitSandboxProfiles: true,
+		},
+		new(bytes.Buffer), stderr, new(bytes.Buffer),
+	)
+	assert.Nil(t, resp)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "mutually exclusive")
+}
+
 // The spawn command's long help must state the default-resolution chain once,
 // and the --harness flag help must warn that an unset value is NOT forced to
 // claude — the TCL-304 documentation fix.

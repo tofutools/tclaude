@@ -154,6 +154,10 @@ func HasCapabilities(snapshot Snapshot) bool {
 // interpreted as an empty-but-authorized policy.
 type Snapshot struct {
 	Version int `json:"version"`
+	// ProfilesOmitted records an explicit launch contract that suppresses every
+	// tclaude sandbox-profile tier. It keeps resume/reincarnate from later
+	// reapplying newly assigned global or group values to an opted-out agent.
+	ProfilesOmitted bool `json:"profiles_omitted,omitempty"`
 	// ResolutionGroupID is the launch group whose sandbox assignment supplied
 	// the group tier. It is recorded even when that group had no profile, so a
 	// later resume can pick up a new assignment without guessing among an
@@ -180,6 +184,14 @@ func EmptySnapshot() Snapshot {
 	return NewSnapshot(effective, nil)
 }
 
+// OmittedProfilesSnapshot is an explicit resolved policy whose launch contract
+// suppresses all ambient and explicit sandbox-profile tiers.
+func OmittedProfilesSnapshot() Snapshot {
+	out := EmptySnapshot()
+	out.ProfilesOmitted = true
+	return out
+}
+
 // RevalidateSnapshot checks a frozen payload immediately before use. It
 // re-runs canonical path, protected-root, environment, and aggregate checks.
 // Missing paths remain valid and may later become ordinary directories at the
@@ -191,6 +203,14 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	in, err = NormalizeSnapshotVersion(in)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if in.ProfilesOmitted && (len(in.Applied) > 0 ||
+		len(in.Effective.Filesystem) > 0 ||
+		len(in.Effective.BreakGlassFilesystem) > 0 ||
+		len(in.Effective.Environment) > 0 ||
+		len(in.Effective.AgentDirectories) > 0 ||
+		in.Effective.NetworkAccess != NetworkAccessInherit) {
+		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:                 "effective-sandbox-snapshot",
@@ -226,6 +246,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
+	out.ProfilesOmitted = in.ProfilesOmitted
 	return out, nil
 }
 

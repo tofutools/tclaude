@@ -8,6 +8,7 @@ import {
 import { shortCwd } from './helpers.js';
 import {
   MODEL_CUSTOM_VALUE,
+  SANDBOX_PROFILE_NONE,
   WT_NEW,
   applySpawnProfile,
   attachKey,
@@ -882,15 +883,21 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.sandbox.visible} busy=${busy} />
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
-      title="Optional explicit sandbox profile. Composes after the global and group sandbox profiles."
-      value=${draft.sandboxProfile}
-      options=${[
-        { value: '', label: '— global + group defaults only —' },
+      title="Choose inherited profiles, omit every tclaude sandbox-profile value, or compose an explicit profile after the global and group profiles."
+      value=${view.sandboxProfilesDisabled ? SANDBOX_PROFILE_NONE : draft.sandboxProfile}
+      options=${view.sandboxProfilesDisabled ? [
+        { value: SANDBOX_PROFILE_NONE, label: '— none (required by this sandbox mode) —' },
+      ] : [
+        { value: '', label: '— inherit global + group profiles —' },
+        { value: SANDBOX_PROFILE_NONE, label: '— none (omit all tclaude profile values) —' },
         ...(sandboxPolicy.profiles || []).map((profile) => ({ value: profile.name, label: profile.name })),
       ]}
       onChange=${(event) => update('sandboxProfile', event.currentTarget.value)}
-      help=${sandboxPolicy.preview} open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
-      disabled=${view.sandboxProfilesDisabled} busy=${busy} />
+      help=${view.sandboxProfilesDisabled
+        ? 'This sandbox mode cannot carry tclaude sandbox-profile filesystem, environment, network, or agent-directory values.'
+        : sandboxPolicy.preview}
+      open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
+      busy=${busy || view.sandboxProfilesDisabled} />
     <${HelpField} id="agent-spawn-approval" label=${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}
       title="Controls when the new agent requests approval; it does not change the sandbox."
       value=${draft.approval}

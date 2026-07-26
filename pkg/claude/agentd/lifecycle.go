@@ -2468,9 +2468,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		}
 	}
 	body.SandboxProfile = strings.TrimSpace(body.SandboxProfile)
-	if body.SandboxProfile != "" && classify(peerFromContext(r.Context())) != classHuman {
+	if body.OmitSandboxProfiles && body.SandboxProfile != "" {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile",
+			"sandbox_profile and omit_sandbox_profiles are mutually exclusive")
+		return
+	}
+	if (body.SandboxProfile != "" || body.OmitSandboxProfiles) &&
+		classify(peerFromContext(r.Context())) != classHuman {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-			"only the human operator may select an explicit sandbox profile; agents may inherit existing policy")
+			"only the human operator may select or omit sandbox profiles; agents may only inherit existing policy")
 		return
 	}
 
@@ -2915,11 +2921,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// carry the managed permission profile that represents tclaude filesystem
 	// policy, so omit every sandbox-profile tier (global, group, and explicit)
 	// instead of resolving a policy that must fail capability validation later.
-	// The dashboard mirrors this by hiding and clearing its explicit selector;
-	// this server-side rule also covers CLI callers and older dashboard tabs.
-	effectiveSandbox := sandboxpolicy.EmptySnapshot()
+	// The dashboard mirrors this by forcing its selector to the visible "none"
+	// state; this server-side rule also covers CLI callers and older tabs.
+	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
-	if !sandboxProfilesDisabled(h.Name, sandboxMode) {
+	if !sandboxProfilesDisabled(h.Name, sandboxMode) && !body.OmitSandboxProfiles {
 		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
 	}
 	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
@@ -4069,8 +4075,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// global/group policy even though this agent explicitly selects Codex's raw
 	// no-sandbox mode.
 	if sandboxProfilesDisabled(p.Harness, p.SandboxMode) {
-		empty := sandboxpolicy.EmptySnapshot()
-		p.EffectiveSandbox = &empty
+		omitted := sandboxpolicy.OmittedProfilesSnapshot()
+		p.EffectiveSandbox = &omitted
 	}
 	if spawnUsesPinnedGitCommonDir(p.Harness, p.SandboxMode) && !p.CodexGitCommonDirPinned {
 		gitCommonDir, err := spawnGitCommonDir(p.Harness, p.SandboxMode, p.Cwd)
