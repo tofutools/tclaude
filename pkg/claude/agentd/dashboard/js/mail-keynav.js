@@ -146,13 +146,15 @@ export function leaveFirstRow({ event, rowSelector, wrapSelector, filter }) {
   return true;
 }
 
-// focusPaneRows enters another pane on its selected row, falling back to the
-// first painted row when the pane has no visible selection.
-export function focusPaneRows(container, rowSelector) {
+// focusPaneRows enters another pane on its selected row. When the pane has no
+// visible selection, its first painted row becomes both focused and selected:
+// focus styling alone must not make a row look open while the pane consuming
+// that selection (the Messages reader) remains empty.
+export function focusPaneRows(container, rowSelector, select) {
   const rows = paneRows(container, rowSelector);
-  const target = rows.find((row) => row.classList.contains('active')) || rows[0];
+  const selected = rows.find((row) => row.classList.contains('active'));
+  const target = selected || rows[0];
   if (!target) return false;
-  focusRow(target);
-  revealRow(target);
+  activateRow(target, selected ? undefined : select);
   return true;
 }
