@@ -1186,6 +1186,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		if refreshErr != nil {
 			res.Action = "error"
 			res.Detail = "prepare Codex SSH workaround: " + refreshErr.Error()
+			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(resumePolicy); cleanupErr != nil {
+				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
 			return res
 		}
 		resumePolicy.Snapshot = &refreshed

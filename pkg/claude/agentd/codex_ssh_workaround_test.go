@@ -32,10 +32,10 @@ func TestCodexSSHWorkaroundCopiesSystemConfigAndPinsGit(t *testing.T) {
 	proxySource := filepath.Join(systemRoot, "systemd-proxy.conf")
 	require.NoError(t, os.WriteFile(proxySource, []byte(
 		"Host git.example.test\n  Port 2201\n  ProxyCommand /usr/lib/systemd/systemd-ssh-proxy unix %h %p\n"+
-			"  Include nested/common.conf\n"), 0o644))
+			"  Include = nested/common.conf\n"), 0o644))
 	require.NoError(t, os.Symlink(proxySource, filepath.Join(dropInSource, "20-systemd-ssh-proxy.conf")))
 	require.NoError(t, os.WriteFile(systemConfig, []byte(
-		"Include ssh_config.d/*.conf\nHost *\n  SendEnv LANG\n"), 0o644))
+		"Include=ssh_config.d/*.conf\nHost *\n  SendEnv LANG\n"), 0o644))
 
 	oldSystemConfig, oldUserConfig, oldLookPath := codexSSHSystemConfig, codexSSHUserConfig, codexSSHLookPath
 	codexSSHSystemConfig = systemConfig
@@ -104,6 +104,22 @@ func TestCodexSSHWorkaroundCopiesSystemConfigAndPinsGit(t *testing.T) {
 	for _, entry := range disabled.Effective.Environment {
 		assert.NotEqual(t, codexSSHAgentDirectory, entry.Name)
 		assert.NotEqual(t, codexSSHCommandEnv, entry.Name)
+	}
+}
+
+func TestParseSSHIncludePatternsAcceptsEqualsSeparator(t *testing.T) {
+	for _, line := range []string{
+		"Include=/etc/ssh/example.conf",
+		"Include =/etc/ssh/example.conf",
+		"Include= /etc/ssh/example.conf",
+		"Include = /etc/ssh/example.conf",
+	} {
+		t.Run(strings.ReplaceAll(line, " ", "_"), func(t *testing.T) {
+			patterns, include, err := parseSSHIncludePatterns(line)
+			require.NoError(t, err)
+			assert.True(t, include)
+			assert.Equal(t, []string{"/etc/ssh/example.conf"}, patterns)
+		})
 	}
 }
 

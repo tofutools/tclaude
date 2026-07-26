@@ -14,6 +14,16 @@ type resumeSandboxPolicy struct {
 	Previous *sandboxpolicy.Snapshot
 }
 
+// cleanupUncommittedResumeSandboxPolicy removes generation-specific roots
+// materialized while preparing a relaunch that will not be attempted.
+func cleanupUncommittedResumeSandboxPolicy(policy *resumeSandboxPolicy) error {
+	if policy == nil || policy.Snapshot == nil || policy.Previous == nil {
+		return nil
+	}
+	_, err := removeSupersededMaterializedAgentDirectories(*policy.Snapshot, *policy.Previous)
+	return err
+}
+
 // resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
 // current global/group/explicit registry state. The previous snapshot supplies
 // only stable provenance and private agent-directory bindings; its ordinary

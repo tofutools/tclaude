@@ -297,6 +297,31 @@ func TestRemoveSupersededMaterializedAgentDirectoriesDeletesReplacedRoot(t *test
 	assert.DirExists(t, newRoot)
 }
 
+func TestCleanupUncommittedResumeSandboxPolicyDeletesNewRoot(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	previous, previousCleanup, err := materializeAgentDirectories(
+		sandboxpolicy.NewSnapshot(effective, nil), "spwn-original")
+	require.NoError(t, err)
+	t.Cleanup(previousCleanup)
+	current, currentCleanup, err := materializeAgentDirectories(
+		sandboxpolicy.NewSnapshot(effective, nil), "spwn-relaunch")
+	require.NoError(t, err)
+	t.Cleanup(currentCleanup)
+	previousRoot := filepath.Dir(previous.Effective.Environment[0].Value)
+	currentRoot := filepath.Dir(current.Effective.Environment[0].Value)
+
+	require.NoError(t, cleanupUncommittedResumeSandboxPolicy(&resumeSandboxPolicy{
+		Snapshot: &current,
+		Previous: &previous,
+	}))
+	assert.DirExists(t, previousRoot)
+	assert.NoDirExists(t, currentRoot)
+}
+
 func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	withAgentDirsMountParent(t, false)

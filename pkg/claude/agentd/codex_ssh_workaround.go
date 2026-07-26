@@ -366,11 +366,14 @@ func parseSSHIncludePatterns(line string) ([]string, bool, error) {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return nil, false, nil
 	}
-	keywordEnd := strings.IndexAny(line, " \t")
+	keywordEnd := strings.IndexAny(line, " \t=")
 	if keywordEnd < 0 || !strings.EqualFold(line[:keywordEnd], "Include") {
 		return nil, false, nil
 	}
 	line = strings.TrimSpace(line[keywordEnd:])
+	if strings.HasPrefix(line, "=") {
+		line = strings.TrimSpace(line[1:])
+	}
 	var patterns []string
 	for len(line) > 0 {
 		line = strings.TrimLeft(line, " \t")

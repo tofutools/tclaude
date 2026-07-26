@@ -360,8 +360,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
 			*relaunchPolicy.Snapshot, relaunch.SSHWorkaround)
 		if refreshErr != nil {
+			detail := "prepare Codex SSH workaround: " + refreshErr.Error()
+			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
+				detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
 			writeError(w, http.StatusInternalServerError, "spawn",
-				"prepare Codex SSH workaround: "+refreshErr.Error())
+				detail)
 			return
 		}
 		relaunchPolicy.Snapshot = &refreshed
