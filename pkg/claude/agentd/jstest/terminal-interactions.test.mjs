@@ -219,6 +219,7 @@ test('terminal wiring yields only claimed Ctrl/Cmd-K chords to dashboard chrome'
     const paletteEvent = key({
       key: 'k', code: 'KeyK', metaKey: true,
       preventDefault() { prevented = true; },
+      stopPropagation() {},
     });
     assert.equal(harness.key(paletteEvent), false, 'a claimed palette chord never reaches the PTY');
     assert.equal(prevented, true);
@@ -243,6 +244,7 @@ test('terminal keeps Ctrl-K when no surrounding command palette claims it', () =
     const event = key({
       key: 'k', code: 'KeyK', ctrlKey: true,
       preventDefault() { prevented = true; },
+      stopPropagation() {},
     });
     assert.equal(harness.key(event), true, 'standalone xterm retains Ctrl-K');
     assert.equal(prevented, false);

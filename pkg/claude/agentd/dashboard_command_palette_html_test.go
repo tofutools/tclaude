@@ -49,9 +49,11 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the global trigger yields to inputs and embedded editors")
 	must("requestPalette = requestCommandPalette",
 		"xterm defaults to asking its surrounding dashboard to open the command palette")
-	must("if (isCommandPaletteShortcut(event) && requestPalette(ownerDocument))",
+	must("claimCommandPaletteShortcut(event, ownerDocument, requestPalette)",
 		"only a claimed xterm palette chord is withheld from the remote PTY")
-	must("event.preventDefault();\n      return false;",
+	must("event.stopPropagation();",
+		"the claimed xterm chord cannot bubble to the palette toggle and close it")
+	must("if (claimCommandPaletteShortcut(event, ownerDocument, requestPalette)) return false;",
 		"the claimed xterm palette chord does not reach the remote PTY")
 	must("command.enabled === false", "disabled contextual commands do not execute")
 	must(`aria-disabled=${command.enabled === false ? 'true' : 'false'}`,

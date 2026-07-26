@@ -75,10 +75,11 @@ test('palette state rebuilds from the injected snapshot, ranks, navigates, and c
 
 test('palette island preserves markup, keyboard/mouse behavior, theme copy, focus, and cleanup', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createPaletteState }, island, registry] = await Promise.all([
+  const [{ createPaletteState }, island, registry, terminalInteractions] = await Promise.all([
     harness.importDashboardModule('js/palette-state.js'),
     harness.importDashboardModule('js/palette-island.js'),
     harness.importDashboardModule('js/command-registry.js'),
+    harness.importDashboardModule('js/terminal-interactions.js'),
   ]);
   const snapshot = harness.signals.signal({ count: 12 });
   const runs = [];
@@ -139,6 +140,28 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(terminalRequestClaimed, true, 'the mounted dashboard claims an xterm palette request');
   assert.equal(state.open.value, true, 'the global palette opens for the claimed request');
   await harness.act(() => state.close());
+
+  const xterm = harness.document.body.appendChild(harness.document.createElement('div'));
+  xterm.className = 'xterm';
+  const terminalInput = xterm.appendChild(harness.document.createElement('textarea'));
+  const forwardedTerminalKeys = [];
+  terminalInput.addEventListener('keydown', (event) => {
+    if (terminalInteractions.claimCommandPaletteShortcut(event, harness.document)) return;
+    forwardedTerminalKeys.push(event.key);
+  });
+  let terminalHotkey;
+  await harness.act(() => {
+    terminalHotkey = harness.fireEvent(terminalInput, 'keydown', { key: 'k', ctrlKey: true });
+  });
+  assert.equal(terminalHotkey.defaultPrevented, true);
+  assert.equal(state.open.value, true,
+    'the claimed xterm keydown does not bubble to the global toggle and close the palette');
+  assert.deepEqual(forwardedTerminalKeys, [], 'the palette chord is not forwarded to the PTY');
+  await harness.act(() => state.close());
+  await harness.act(() => harness.fireEvent(terminalInput, 'keydown', { key: 'l', ctrlKey: true }));
+  assert.deepEqual(forwardedTerminalKeys, ['l'], 'unrelated terminal chords remain untouched');
+  assert.equal(state.open.value, false);
+  xterm.remove();
 
   button.focus();
   let openEvent;

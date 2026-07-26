@@ -64,6 +64,19 @@ export function isComposeMessageShortcut(event) {
   return m && Boolean(event.ctrlKey || event.metaKey);
 }
 
+export function claimCommandPaletteShortcut(
+  event,
+  documentRef,
+  requestPalette = requestCommandPalette,
+) {
+  if (!isCommandPaletteShortcut(event) || !requestPalette(documentRef)) return false;
+  event.preventDefault();
+  // The palette opens synchronously. Do not let this same keydown bubble to
+  // its global toggle handler and immediately close it again.
+  event.stopPropagation();
+  return true;
+}
+
 // OSC 52 payloads have the form "selection;base64-data". tmux emits one when
 // copy-mode creates a paste buffer while set-clipboard is external/on (external
 // is the default). xterm exposes the payload without the OSC identifier.
@@ -408,10 +421,7 @@ export function attachTerminalInteractions({
     // deliberately treats it like ordinary text input. Ask the surrounding
     // document synchronously instead: the integrated dashboard claims the
     // request, while the standalone terminal has no listener and keeps Ctrl-K.
-    if (isCommandPaletteShortcut(event) && requestPalette(ownerDocument)) {
-      event.preventDefault();
-      return false;
-    }
+    if (claimCommandPaletteShortcut(event, ownerDocument, requestPalette)) return false;
     if (onComposeMessage && isComposeMessageShortcut(event)) {
       event.preventDefault();
       onComposeMessage();
