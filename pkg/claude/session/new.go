@@ -921,7 +921,11 @@ func runNew(params *NewParams) error {
 	// choice. A managed launch with nothing passed stays unattributed rather
 	// than claiming "explicit" on the daemon's behalf — an older agentd that
 	// does not send the tier is unknown, not explicit.
-	sandboxChosenBy := strings.TrimSpace(params.SandboxChosenBy)
+	// Bounded and scrubbed HERE, at the point of record: this value is written
+	// to sessions.sandbox_mode_source, projected into the durable relaunch
+	// profile, and replayed into a child argv on every later relaunch. Cleaning
+	// only the derived os_sandbox_source would leave the raw label in all three.
+	sandboxChosenBy := harness.SanitizeSandboxChosenBy(params.SandboxChosenBy)
 	if sandboxChosenBy == "" && sandboxMode != "" && !params.ManagedLaunch {
 		sandboxChosenBy = harness.SandboxChosenExplicitly
 	}

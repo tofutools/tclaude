@@ -192,6 +192,7 @@ type dashState struct {
 	ExitReason          string  `json:"exit_reason,omitempty"`
 	Harness             string  `json:"harness,omitempty"`
 	SandboxMode         string  `json:"sandbox_mode,omitempty"`
+	SandboxModeSource   string  `json:"sandbox_mode_source,omitempty"`
 	OSSandboxState      string  `json:"os_sandbox_state,omitempty"`
 	OSSandboxSource     string  `json:"os_sandbox_source,omitempty"`
 	OSSandboxUnverified bool    `json:"os_sandbox_unverified,omitempty"`

@@ -1338,6 +1338,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		Model:                      launchConfig.Model,
 		Harness:                    harnessName,
 		Sandbox:                    relaunchSandbox,
+		SandboxChosenBy:            launchConfig.SandboxModeSource,
 		Approval:                   approval,
 		AutoReview:                 autoReview,
 		AskUserQuestionTimeout:     launchConfig.AskUserQuestionTimeout,

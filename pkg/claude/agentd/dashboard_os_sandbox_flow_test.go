@@ -381,6 +381,39 @@ func TestSandboxModeAttributionSurvivesTheDurableProjection(t *testing.T) {
 		"and so is who chose it — a resume that dropped this would go anonymous")
 }
 
+// The projection above is only half the contract. A DAEMON relaunch — a resume,
+// a crash recovery, a reincarnation, a clone — does not read that projection at
+// spawn time; it builds a fresh argv from the durable relaunch config. A path
+// that carries the MODE but not its attribution mints a session row with an
+// empty sandbox_mode_source, and the projection then asserts that emptiness as
+// intent, permanently erasing who chose the containment. The badge would be
+// back to crediting "this launch" — the exact misattribution this surface
+// exists to remove, now arrived at by way of a restart.
+func TestSandboxModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("relaunch")
+	const convID = "sbxd-1111-2222-3333-4444"
+	f.HaveAliveSession(convID, "spwn-sbxd", "tmux-sbxd", f.TestCwd("sbxd"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxd", TmuxSession: "tmux-sbxd", ConvID: convID, Cwd: f.TestCwd("sbxd"),
+		Status: "running", Harness: "claude",
+		SandboxMode: "on", SandboxModeSource: `group default profile "squad"`,
+	}), "stamp an attributed launch")
+	f.HaveMember("relaunch", convID)
+
+	f.MarkOffline("tmux-sbxd")
+	f.AssertResumeSpawned(f.Resume(convID))
+
+	state := requireDashMemberState(t, fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "relaunch", convID)
+	assert.Equal(t, "on", state.SandboxMode, "the relaunch preserved the mode")
+	assert.Equal(t, `group default profile "squad"`, state.SandboxModeSource,
+		"and the tier that chose it — a relaunch that dropped this re-credits the operator")
+	assert.Contains(t, state.OSSandboxSource, `group default profile "squad"`,
+		"the replayed attribution reaches the verdict the badge actually renders")
+}
+
 // A launch mode can discard the profile tiers outright — a Codex
 // danger-full-access spawn takes the raw --sandbox opt-out, which cannot carry
 // the managed permission profile that renders filesystem rules. That is not the

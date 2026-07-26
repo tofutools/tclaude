@@ -121,17 +121,24 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("member.state?.sandbox_profiles", "the clause reads the applied profiles off the agent's state")
 	must("member.state?.sandbox_profiles_recorded", "a row that recorded no policy is distinguished from one that resolved to none")
 	must("global: 'global default'", "the assignment tier is named in operator vocabulary")
-	must("Its filesystem rules are not in force", "a profile whose rules were withheld does not read as containment")
-	// A launch that requested `off` never had its profile's filesystem rules
-	// emitted at all, so managed policy forcing the sandbox ON over it enforces
-	// the operator's settings — not the profile.
-	must("rulesInForce: mode !== 'off' && !unverified",
-		"an `off` launch's withheld rules, and an unproven verdict, are not reported as in force")
+	must("filesystem rules are not in force", "a profile whose rules were withheld does not read as containment")
+	// ProfilesOmitted covers both "the launch mode discards the tiers" and "the
+	// caller asked for none", so the clause re-derives which one applies instead
+	// of blaming the mode for an operator's own choice.
+	must("function sandboxProfilesUnsupported(member)",
+		"the omitted clause distinguishes a mode that discards profiles from a caller who omitted them")
 
 	// The mode's own provenance: `sandbox: on` can come from an explicit flag or
 	// from a spawn profile the operator never opened, and the badge used to call
 	// both "this launch".
 	must("forced ON by ${source || 'this launch'}", "the badge names whatever forced the sandbox on")
+	// The same applies to `off`: a default profile can opt an agent out of
+	// containment, and "Explicit opt-in" credited a human with having done it.
+	must("forced OFF by ${source || 'this launch'}", "the badge names whatever forced the sandbox off")
+	// A harness whose mode IS its posture (Codex) records no verdict, so its
+	// attribution has to come off the mode's own recorded source.
+	must("member.state?.sandbox_mode_source",
+		"a mode-driven row names the tier that chose its mode")
 
 	// The sandbox indicator rides INSIDE the harness line, trailing the effort
 	// token next to the 📱 remote indicator, rather than owning a second line

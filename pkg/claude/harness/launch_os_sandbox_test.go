@@ -213,13 +213,13 @@ func TestSanitizeSandboxChosenBy(t *testing.T) {
 		{"leaves an ordinary name alone", `group default profile "team-x"`, `group default profile "team-x"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sanitizeSandboxChosenBy(tc.in); got != tc.want {
+			if got := SanitizeSandboxChosenBy(tc.in); got != tc.want {
 				t.Fatalf("sanitize(%q): got %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
 
-	long := sanitizeSandboxChosenBy(`profile "` + strings.Repeat("x", 400) + `"`)
+	long := SanitizeSandboxChosenBy(`profile "` + strings.Repeat("x", 400) + `"`)
 	if len([]rune(long)) != maxSandboxChosenByLen+1 {
 		t.Fatalf("bounded label: got %d runes, want %d", len([]rune(long)), maxSandboxChosenByLen+1)
 	}

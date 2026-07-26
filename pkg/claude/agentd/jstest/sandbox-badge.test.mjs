@@ -289,6 +289,39 @@ const CASES = [
     titleNot: [/No tclaude sandbox profile applied/],
   },
   {
+    // The OTHER producer of the same flag, and the one that is far more common:
+    // the operator picked sandbox profile "none" in the spawn dialog (or passed
+    // --omit-sandbox-profiles). Blaming the launch MODE there tells them their
+    // mode overrode a choice they made themselves — under `on`, a mode that
+    // supports profiles perfectly well.
+    name: 'a caller who omitted the profiles is not told the mode did it',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      os_sandbox_source: 'this launch (sandbox `on`)',
+      sandbox_profiles_recorded: true, sandbox_profiles_omitted: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/No tclaude sandbox profile — this launch omitted them\./],
+    titleNot: [/under this launch mode/],
+  },
+  {
+    // Two applied tiers, rules withheld: "Its filesystem rules" reads as one
+    // profile's when the clause just named two.
+    name: 'two withheld profiles read as plural',
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'off', os_sandbox_source: 'this launch (sandbox `off`)',
+      sandbox_profiles: [
+        { scope: 'global', name: 'tclaude-agent' },
+        { scope: 'group', name: 'squad-tight' },
+      ],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/Their filesystem rules are not in force/, /any environment entries they define still apply/],
+    titleNot: [/Its filesystem rules/],
+  },
+  {
     // The inverted failure: managed policy forces the sandbox ON over a launch
     // that asked for `off`. The sandbox IS on — but tclaude emitted
     // {"sandbox":{"enabled":false}} for that launch and, with it, none of the
@@ -340,6 +373,39 @@ const CASES = [
     glyph: '🔒', danger: false,
     title: [/forced ON by global default profile "agents" \(sandbox `on`\)/],
     titleNot: [/forced ON by this launch/],
+  },
+  {
+    // The mirror image, and the one that matters more: a default profile can
+    // opt an agent OUT of containment just as silently. "Explicit opt-in" told
+    // the operator a human had decided that.
+    name: 'a sandbox forced off by a default spawn profile names that profile',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      os_sandbox_source: 'group default profile "loose" (sandbox `off`)',
+    },
+    glyph: '⚠', danger: true,
+    title: [/forced OFF by group default profile "loose" \(sandbox `off`\)/],
+    titleNot: [/Explicit opt-in/],
+  },
+  {
+    // A harness whose MODE is its posture records no verdict, so there is no
+    // os_sandbox_source to fold the chooser into — sandbox_mode_source is the
+    // only place its attribution can come from.
+    name: 'a mode-driven row names the tier that chose its mode',
+    state: {
+      harness: 'codex', sandbox_mode: 'danger-full-access',
+      sandbox_mode_source: 'global default profile "wide-open"',
+    },
+    glyph: '⚠', danger: true,
+    title: [/Chosen by global default profile "wide-open"\./],
+    titleNot: [/Explicit opt-in/],
+  },
+  {
+    // Nothing recorded stays silent rather than crediting anyone.
+    name: 'a mode-driven row with no recorded chooser credits nobody',
+    state: { harness: 'codex', sandbox_mode: 'danger-full-access' },
+    glyph: '⚠', danger: true,
+    titleNot: [/Chosen by/, /Explicit opt-in/],
   },
   {
     name: 'an offline agent labels its verdict as last-used',

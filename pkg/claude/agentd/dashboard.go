@@ -1728,6 +1728,17 @@ type agentState struct {
 	// Code: on / off — its `inherit` default normalizes to "" and records
 	// nothing). "" renders no sandbox badge. Surfaced regardless of liveness.
 	SandboxMode string `json:"sandbox_mode,omitempty"`
+	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// explicit flag, a named spawn profile, the group default, or the global
+	// default. "" is "nothing recorded" (a pre-v158 row, or a launch with no
+	// attribution to make), never "the operator chose it".
+	//
+	// OSSandboxSource below already carries this for a Claude Code launch that
+	// recorded a verdict, folded into the deciding tier's name. This field is
+	// what a harness whose MODE is its posture (Codex) has instead: without it
+	// the badge could only say "this launch", which is exactly the misattribution
+	// the column exists to remove.
+	SandboxModeSource string `json:"sandbox_mode_source,omitempty"`
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the OS sandbox ACTUALLY confined this agent ("on" / "off" /
 	// "unconfigured") and what decided it — the settings file that won the
@@ -1766,12 +1777,16 @@ type agentState struct {
 	// sandbox policy at all, so an empty SandboxProfiles above is a genuine
 	// "nothing applied" rather than a row from before the snapshot existed.
 	SandboxProfilesRecorded bool `json:"sandbox_profiles_recorded,omitempty"`
-	// SandboxProfilesOmitted reports a launch whose MODE suppresses the profile
-	// tiers outright — today, a Codex `danger-full-access` spawn, whose raw
-	// --sandbox opt-out cannot be combined with the managed permission profile
-	// that renders filesystem rules. It is a different fact from "no profile was
-	// assigned", and the operator-facing difference matters: one says nobody
-	// configured one, the other says the launch mode threw them away.
+	// SandboxProfilesOmitted reports a launch that carried NO profile tier at
+	// all, for either of the two reasons the daemon collapses into one flag: the
+	// launch MODE cannot combine with the managed permission profile that
+	// renders filesystem rules (a Codex `danger-full-access` spawn), or the
+	// caller asked for none (the spawn dialog's "none", `--omit-sandbox-profiles`).
+	// It is a different fact from "the tiers resolved to nothing", and the
+	// operator-facing difference matters: one says nobody configured a profile,
+	// the other says this launch never consulted the ones that exist. The
+	// dashboard re-derives which of the two applies from the harness and mode
+	// (sandboxProfilesUnsupported) rather than guessing.
 	SandboxProfilesOmitted bool `json:"sandbox_profiles_omitted,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
@@ -1861,6 +1876,7 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// exited override below only touches Status/StatusDetail.
 		Harness:             pick.Harness,
 		SandboxMode:         pick.SandboxMode,
+		SandboxModeSource:   pick.SandboxModeSource,
 		OSSandboxState:      pick.OSSandboxState,
 		OSSandboxSource:     pick.OSSandboxSource,
 		OSSandboxUnverified: pick.OSSandboxUnverified,

@@ -243,7 +243,7 @@ const maxSandboxChosenByLen = 120
 // the caller typed the flag. An explicit choice is left as "this launch": it IS
 // this launch, and naming the tier would add a word without adding a fact.
 func attributeLaunchSandboxSource(source, chosenBy string) string {
-	chosenBy = sanitizeSandboxChosenBy(chosenBy)
+	chosenBy = SanitizeSandboxChosenBy(chosenBy)
 	if chosenBy == "" || chosenBy == SandboxChosenExplicitly {
 		return source
 	}
@@ -253,12 +253,18 @@ func attributeLaunchSandboxSource(source, chosenBy string) string {
 	return chosenBy + strings.TrimPrefix(source, launchDecidedActor)
 }
 
-// sanitizeSandboxChosenBy makes an attribution safe to persist and display. The
+// SanitizeSandboxChosenBy makes an attribution safe to persist and display. The
 // spawn-profile name inside it is operator free text that reaches an argv, a DB
 // column, a log line, and the dashboard, so control characters (which would
 // forge line structure in a log) are dropped and the whole label is bounded.
 // Truncation is marked, so a clipped label never reads as a complete name.
-func sanitizeSandboxChosenBy(chosenBy string) string {
+//
+// Exported because the bound has to be applied where the value is RECORDED, not
+// only where it is rendered: `session new` writes it to sessions, the durable
+// relaunch profile projects it, and every later relaunch replays it into an
+// argv. Scrubbing only the derived source would leave the unbounded original in
+// all three.
+func SanitizeSandboxChosenBy(chosenBy string) string {
 	chosenBy = strings.TrimSpace(chosenBy)
 	if chosenBy == "" {
 		return ""
