@@ -21,6 +21,9 @@
 //                          Shutdown/Power-on buttons and status dots make
 //   - retire             → the per-agent / per-group demote-to-conversation
 //                          flows
+//   - global managers    → opens the same import, cleanup, profile, template,
+//                          role, sandbox, harness-policy, and links surfaces as
+//                          the Groups toolbar's global cog
 //
 // So the palette only adds a fast keyboard entry point to the window
 // hide/show, power control, retire + navigation the dashboard already
@@ -43,7 +46,7 @@ import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
   openWindowModal,
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
-  openWorktreeCleanup,
+  openWorktreeCleanup, openCleanupModal,
   shutdownScope, powerOnScope, resumeAgentReq,
 } from './dashboard-operations.js';
 import {
@@ -52,6 +55,10 @@ import {
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 import { openProfilesManageModal } from './modal-profiles.js';
 import { openRolesManageModal } from './modal-roles.js';
+import { openGroupImport, openTemplatesManageModal } from './modal-templates.js';
+import { openSandboxProfilesManageModal } from './sandbox-profiles.js';
+import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
+import { openLinksManager } from './links-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import { toggleSlop, isSlopActive, toggleWizard, isWizardActive } from './slop.js';
 import { recordGroupInteraction, lastInteractedGroup } from './last-group.js';
@@ -250,7 +257,44 @@ export function buildCommands(snapshot) {
     });
   }
 
-  // 1c) Global delete-retired — "Delete retired agents…". The human-driven
+  // 1c) Create a new group. Opens the very dialog the Groups-tab
+  //     "+ new group" button opens (openGroupCreateModal → POST
+  //     /api/groups on submit) — a thin surface over the existing flow,
+  //     no new behaviour. It comes before the archive importer so the broad
+  //     "group" / "party" queries keep their established create-group default.
+  cmds.push({
+    icon: wiz('＋', '⚔'), label: wiz('Create new group…', 'Form a party…'),
+    hint: wiz('open the new-group dialog',
+      'gather a fresh band — muster a new adventuring party'),
+    keywords: 'new group create make add team squad'
+      + ' party form fellowship warband adventuring muster gather assemble guild',
+    run: () => openGroupCreateModal(),
+  });
+
+  // 1d) The unconditional global Groups-cog actions. Every entry delegates to
+  //     the same controller/modal opener as its menu twin, keeping Ctrl/Cmd-K a
+  //     complete keyboard route to the global menu rather than a second
+  //     implementation. General cleanup precedes the narrower conditional
+  //     cleanup actions below so a broad "cleanup" / "tidy" query opens the
+  //     all-categories tool.
+  cmds.push({
+    icon: wiz('⤒', '📜'), label: wiz('Import a group archive…', 'Unseal a party archive…'),
+    hint: wiz('recreate an exported group, its agents, permissions, messages, and conversations',
+      'unseal an exported party archive with its familiars, wards, missives, and scrolls'),
+    keywords: 'import group archive zip restore recreate upload'
+      + ' unseal party archive familiar wards missives scrolls',
+    run: () => openGroupImport(),
+  });
+  cmds.push({
+    icon: '🧹', label: wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…'),
+    hint: wiz('open the all-categories cleanup tool to unjoin, retire, delete, or reinstate',
+      'open the tower-wide tidying tool to release, banish, dispel, or restore'),
+    keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate'
+      + ' tidy familiars and scrolls release banish dispel restore',
+    run: () => openCleanupModal({ mode: 'agents' }),
+  });
+
+  // 1e) Global delete-retired — "Delete retired agents…". The human-driven
   //     sibling of the timed agent.retired_cleanup auto-sweep (JOH-269):
   //     opens a PREVIEW modal (openDeleteRetiredPreview) listing every
   //     retired agent, all ticked, with live title/age filters and a
@@ -274,7 +318,7 @@ export function buildCommands(snapshot) {
     });
   }
 
-  // 1d) Global retire-ungrouped — "Retire ungrouped agents…". The
+  // 1f) Global retire-ungrouped — "Retire ungrouped agents…". The
   //     cross-group cleanup twin of the per-group retire (section 8):
   //     ungrouped agents belong to no group, so there is no group retire
   //     command to reach them. Opens a PREVIEW modal
@@ -297,24 +341,6 @@ export function buildCommands(snapshot) {
       run: () => openRetireUngroupedPreview(),
     });
   }
-
-  // 1e) Create a new group. Opens the very dialog the Groups-tab
-  //     "+ new group" button opens (openGroupCreateModal → POST
-  //     /api/groups on submit) — a thin surface over the existing flow,
-  //     no new behaviour. A headline "create" action that pairs with the
-  //     spawn commands just below: a fresh group is where you then summon
-  //     familiars. Unconditional — you can always form a new group. In 🧙
-  //     mode the group-create dialog already titles itself "⚔ Form a
-  //     party", so the command reads the same (icon ⚔ / label "Form a
-  //     party…") to match the button it fronts.
-  cmds.push({
-    icon: wiz('＋', '⚔'), label: wiz('Create new group…', 'Form a party…'),
-    hint: wiz('open the new-group dialog',
-      'gather a fresh band — muster a new adventuring party'),
-    keywords: 'new group create make add team squad'
-      + ' party form fellowship warband adventuring muster gather assemble guild',
-    run: () => openGroupCreateModal(),
-  });
 
   // 2) Spawn a new agent. The plain command DEFAULTS the dialog's group
   //    picker to the group the operator last interacted with (folded /
@@ -342,28 +368,63 @@ export function buildCommands(snapshot) {
   //     palette just adds a keyboard entry point, owning no state of its own.
   //     In 🧙 mode the whole profiles vocabulary re-letters to "patterns"
   //     (a saved spawn recipe is a "familiar pattern"), so it presents as
-  //     "Edit familiar patterns…"; the plain words stay searchable in the
+  //     "Manage familiar patterns…"; the plain words stay searchable in the
   //     keywords.
   cmds.push({
-    icon: wiz('⧉', '📜'), label: wiz('Edit profiles…', 'Edit familiar patterns…'),
+    icon: wiz('⧉', '📜'), label: wiz('Manage spawn profiles…', 'Manage familiar patterns…'),
     hint: wiz('open the spawn-profiles manager — view, edit, or add reusable spawn recipes',
       'open the familiar-pattern grimoire — inscribe, revise, or weave summoning recipes'),
-    keywords: 'profiles profile edit manage spawn recipe recipes bundle preset presets defaults'
-      + ' patterns pattern familiar weave inscribe grimoire loom blueprint',
+    keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults'
+      + ' familiar patterns pattern weave inscribe grimoire loom blueprint',
     run: () => openProfilesManageModal(),
   });
-  // 2c) Manage the role library — the named, reusable agent-role defaults a
+  // 2c) Manage group templates — reusable team blueprints, called summoning
+  //     circles throughout wizard mode. Reuses the Groups-cog overlay.
+  cmds.push({
+    icon: wiz('⧉', '🕯'), label: wiz('Manage group templates…', 'Manage summoning circles…'),
+    hint: wiz('open the template library — create, edit, import, or deploy reusable team blueprints',
+      'open the circle library — chalk, revise, unseal, or cast reusable party circles'),
+    keywords: 'group templates template manage team blueprint blueprints roster deploy import library'
+      + ' summoning circles circle party chalk trace cast unseal rite',
+    run: () => openTemplatesManageModal(),
+  });
+  // 2d) Manage the role library — the named, reusable agent-role defaults a
   //     template roster agent references (a canonical brief + a default launch
   //     shape + a default permission set). Reuses the overlay the Groups cog's
   //     "⧉ roles…" entry opens (openRolesManageModal). In 🧙 mode roles are the
   //     party's "classes".
   cmds.push({
-    icon: wiz('⧉', '🎭'), label: wiz('Edit roles…', 'Edit classes…'),
+    icon: wiz('⧉', '🎭'), label: wiz('Manage role library…', 'Manage class library…'),
     hint: wiz('open the role library — view, edit, or add reusable agent-role defaults',
       'open the class library — inscribe, revise, or add familiar classes'),
-    keywords: 'roles role edit manage library brief defaults permission permissions class classes'
+    keywords: 'roles role library edit manage brief defaults permission permissions class library classes'
       + ' reviewer tester lead dev designer po party',
     run: () => openRolesManageModal(),
+  });
+  // 2e) The policy/library managers that round out the global Groups cog.
+  cmds.push({
+    icon: '🛡', label: wiz('Manage sandbox profiles…', 'Manage wards…'),
+    hint: wiz('open the sandbox-profile library for filesystem, environment, and network launch policy',
+      'open the ward library for filesystem, environment, and realm-boundary protections'),
+    keywords: 'sandbox profiles profile manage policy filesystem environment network launch security'
+      + ' wards ward protections boundaries realm',
+    run: () => openSandboxProfilesManageModal(),
+  });
+  cmds.push({
+    icon: '⇄', label: wiz('Manage cross-harness spawns…', 'Manage cross-realm summons…'),
+    hint: wiz('edit the global source-to-target harness spawn policy',
+      'inscribe which source realms may summon familiars into other realms'),
+    keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation'
+      + ' cross-realm summons realm realms summon wards familiar',
+    run: () => openSpawnHarnessPolicy(),
+  });
+  cmds.push({
+    icon: '🔗', label: wiz('Manage inter-group links…', 'Manage arcane channels between parties…'),
+    hint: wiz('open the directed communication-link manager for all groups',
+      'open the directed missive-channel manager for all parties'),
+    keywords: 'inter-group links inter group link manage communication directed edge message groups'
+      + ' arcane channels channel parties missive whisper weave',
+    run: () => openLinksManager(),
   });
   // One pinned spawn per group, so the operator can launch straight into a
   // named group without first picking it in the dialog.
