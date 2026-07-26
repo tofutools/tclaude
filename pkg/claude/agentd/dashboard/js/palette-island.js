@@ -2,7 +2,10 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { isWizardActive } from './slop.js';
-import { COMMAND_PALETTE_OPEN_EVENT } from './command-registry.js';
+import {
+  COMMAND_PALETTE_OPEN_EVENT,
+  isCommandPaletteShortcut,
+} from './command-registry.js';
 import { visiblePageSize } from './list-viewport.js';
 
 const html = htm.bind(h);
@@ -28,8 +31,7 @@ export function isCommandPaletteShortcutTarget(target) {
 export function PaletteLauncher({ state, documentRef = document }) {
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.repeat || !(event.ctrlKey || event.metaKey)) return;
-      if ((event.key || '').toLowerCase() !== 'k') return;
+      if (!isCommandPaletteShortcut(event)) return;
       // An anchored graph chooser is dialog state even though it deliberately
       // does not use the full-screen modal overlay. Claim the shortcut there
       // so the browser and global palette cannot steal it from the chooser.
@@ -52,9 +54,12 @@ export function PaletteLauncher({ state, documentRef = document }) {
       if (documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) return;
       state.show();
     };
-    const onOpenRequest = () => {
+    const onOpenRequest = (event) => {
       if (state.open.value) return;
       if (documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) return;
+      // A cancelable request comes from xterm's custom-key hook. Claiming it
+      // tells that hook not to forward Ctrl-K to the PTY.
+      event.preventDefault();
       state.show();
     };
     documentRef.addEventListener('keydown', onKeyDown);

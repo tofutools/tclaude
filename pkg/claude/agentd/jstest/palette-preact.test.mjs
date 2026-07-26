@@ -75,9 +75,10 @@ test('palette state rebuilds from the injected snapshot, ranks, navigates, and c
 
 test('palette island preserves markup, keyboard/mouse behavior, theme copy, focus, and cleanup', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createPaletteState }, island] = await Promise.all([
+  const [{ createPaletteState }, island, registry] = await Promise.all([
     harness.importDashboardModule('js/palette-state.js'),
     harness.importDashboardModule('js/palette-island.js'),
+    harness.importDashboardModule('js/command-registry.js'),
   ]);
   const snapshot = harness.signals.signal({ count: 12 });
   const runs = [];
@@ -130,6 +131,14 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(ownedEvent.defaultPrevented, false, 'an input keeps Ctrl/Cmd-K');
   assert.equal(state.open.value, false, 'the global palette does not open over a typing field');
   ownedInput.remove();
+
+  let terminalRequestClaimed;
+  await harness.act(() => {
+    terminalRequestClaimed = registry.requestCommandPalette(harness.document);
+  });
+  assert.equal(terminalRequestClaimed, true, 'the mounted dashboard claims an xterm palette request');
+  assert.equal(state.open.value, true, 'the global palette opens for the claimed request');
+  await harness.act(() => state.close());
 
   button.focus();
   let openEvent;

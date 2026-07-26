@@ -1,6 +1,11 @@
 // terminal-interactions.js — shared native-terminal affordances for every
 // dashboard xterm surface: selection/copy, safe links, and clipboard images.
 
+import {
+  isCommandPaletteShortcut,
+  requestCommandPalette,
+} from './command-registry.js';
+
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
@@ -226,6 +231,7 @@ async function uploadImages(files, signal) {
 export function attachTerminalInteractions({
   term, host, copyButton, setStatus, baseStatus = () => '',
   onComposeMessage = null, onSelectionChange = () => {},
+  requestPalette = requestCommandPalette,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -398,6 +404,14 @@ export function attachTerminalInteractions({
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    // xterm owns a hidden textarea, so the dashboard's global launcher
+    // deliberately treats it like ordinary text input. Ask the surrounding
+    // document synchronously instead: the integrated dashboard claims the
+    // request, while the standalone terminal has no listener and keeps Ctrl-K.
+    if (isCommandPaletteShortcut(event) && requestPalette(ownerDocument)) {
+      event.preventDefault();
+      return false;
+    }
     if (onComposeMessage && isComposeMessageShortcut(event)) {
       event.preventDefault();
       onComposeMessage();

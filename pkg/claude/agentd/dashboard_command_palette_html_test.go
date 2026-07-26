@@ -43,10 +43,16 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// The Ctrl/Cmd-K trigger: a modifier + the "k" key, claimed with
 	// preventDefault. Pressing it again toggles closed.
-	must(`(event.key || '').toLowerCase() !== 'k'`, "the trigger is the K key")
+	must(`(event.key || '').toLowerCase() === 'k'`, "the trigger is the K key")
 	must("event.ctrlKey || event.metaKey", "the trigger requires Ctrl or Cmd")
 	must("isCommandPaletteShortcutTarget(event.target)",
 		"the global trigger yields to inputs and embedded editors")
+	must("requestPalette = requestCommandPalette",
+		"xterm defaults to asking its surrounding dashboard to open the command palette")
+	must("if (isCommandPaletteShortcut(event) && requestPalette(ownerDocument))",
+		"only a claimed xterm palette chord is withheld from the remote PTY")
+	must("event.preventDefault();\n      return false;",
+		"the claimed xterm palette chord does not reach the remote PTY")
 	must("command.enabled === false", "disabled contextual commands do not execute")
 	must(`aria-disabled=${command.enabled === false ? 'true' : 'false'}`,
 		"disabled command context is exposed to assistive technology")

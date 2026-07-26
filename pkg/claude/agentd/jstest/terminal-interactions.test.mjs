@@ -202,6 +202,55 @@ test('terminal wiring reserves Ctrl+V without canceling the browser paste event'
   }
 });
 
+test('terminal wiring yields only claimed Ctrl/Cmd-K chords to dashboard chrome', () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const requests = [];
+  const interactions = attachTerminalInteractions({
+    term: harness.term,
+    host: harness.host,
+    requestPalette: (documentRef) => {
+      requests.push(documentRef);
+      return true;
+    },
+  });
+  try {
+    let prevented = false;
+    const paletteEvent = key({
+      key: 'k', code: 'KeyK', metaKey: true,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(harness.key(paletteEvent), false, 'a claimed palette chord never reaches the PTY');
+    assert.equal(prevented, true);
+    assert.deepEqual(requests, [doc]);
+
+    assert.equal(harness.key(key({ key: 'a', code: 'KeyA' })), true);
+    assert.equal(harness.key(key({ key: 'l', code: 'KeyL', ctrlKey: true })), true);
+    assert.deepEqual(requests, [doc], 'all non-palette terminal keys bypass the dashboard bridge');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('terminal keeps Ctrl-K when no surrounding command palette claims it', () => {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const interactions = attachTerminalInteractions({
+    term: harness.term, host: harness.host, requestPalette: () => false,
+  });
+  try {
+    let prevented = false;
+    const event = key({
+      key: 'k', code: 'KeyK', ctrlKey: true,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(harness.key(event), true, 'standalone xterm retains Ctrl-K');
+    assert.equal(prevented, false);
+  } finally {
+    interactions.dispose();
+  }
+});
+
 function drag(harness, ownerDocument) {
   const plain = { button: 0, detail: 1, altKey: false, shiftKey: false, ctrlKey: false, metaKey: false };
   harness.host.dispatch('mousedown', { ...plain, clientX: 1, clientY: 1 });
