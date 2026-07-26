@@ -677,15 +677,17 @@ func TestDispatchPermissionIsSingleUseUnderConcurrentPerform(t *testing.T) {
 
 	// The performer holds every entrant until the test releases them, so a
 	// second entry cannot be missed by finishing too quickly to overlap.
+	const attempts = 16
 	var entries atomic.Int32
+	entered := make(chan struct{}, attempts)
 	release := make(chan struct{})
 	t.Cleanup(SetProgramPerformForTest(func(context.Context, string, engine.Command) (Result, error) {
 		entries.Add(1)
+		entered <- struct{}{}
 		<-release
 		return Result{}, nil
 	}))
 
-	const attempts = 16
 	var wg sync.WaitGroup
 	refused := make(chan error, attempts)
 	for range attempts {
@@ -697,10 +699,21 @@ func TestDispatchPermissionIsSingleUseUnderConcurrentPerform(t *testing.T) {
 			}
 		}()
 	}
-	// Every loser must be refused without waiting for the winner to finish.
-	for range attempts - 1 {
-		assert.ErrorIs(t, <-refused, ErrStaleDispatch)
+	// Account for every entrant without waiting for the winner to finish.
+	// Receiving only the losers is insufficient: the winner may not have been
+	// scheduled far enough to enter the external program yet.
+	var enteredCount, refusedCount int
+	for range attempts {
+		select {
+		case <-entered:
+			enteredCount++
+		case err := <-refused:
+			assert.ErrorIs(t, err, ErrStaleDispatch)
+			refusedCount++
+		}
 	}
+	assert.Equal(t, 1, enteredCount, "exactly one goroutine entered the external program")
+	assert.Equal(t, attempts-1, refusedCount, "every losing goroutine was refused")
 	assert.Equal(t, int32(1), entries.Load(), "exactly one goroutine reached the external program")
 	close(release)
 	wg.Wait()
