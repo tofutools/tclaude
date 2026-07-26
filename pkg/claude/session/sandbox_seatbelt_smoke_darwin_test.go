@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -43,6 +44,8 @@ const (
 	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
+	darwinSmokeHelperPIDFileEnv     = "TCLAUDE_SANDBOX_V2_HELPER_PID_FILE"
+	darwinSmokeHelperGateFDEnv      = "TCLAUDE_SANDBOX_V2_HELPER_GATE_FD"
 	darwinSmokeHelperTestExpression = "^TestTclaudeLayerDarwinSmokeHelper$"
 )
 
@@ -300,7 +303,14 @@ func runDarwinSeatbeltSmokeHelper(
 	)
 	require.NoError(t, err)
 	defer func() { _ = inherited.Close() }()
-	cmd.ExtraFiles = []*os.File{inherited}
+	gateReader, gateWriter, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = gateReader.Close() }()
+	defer func() { _ = gateWriter.Close() }()
+	helperPIDFile := filepath.Join(allowed, ".tclaude-seatbelt-helper.pid")
+	_ = os.Remove(helperPIDFile)
+	defer func() { _ = os.Remove(helperPIDFile) }()
+	cmd.ExtraFiles = []*os.File{inherited, gateReader}
 	cmd.Env = append(os.Environ(),
 		darwinSmokeHelperEnv+"=1",
 		darwinSmokeAllowedEnv+"="+allowed,
@@ -319,14 +329,48 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeExpectedAgentIDEnv+"="+expectedAgentID,
 		darwinSmokeRuntimeTempDirEnv+"="+runtimeTempDir,
 		darwinSmokeInheritedFDEnv+"=3",
+		darwinSmokeHelperPIDFileEnv+"="+helperPIDFile,
+		darwinSmokeHelperGateFDEnv+"=4",
 		HookBrokerEnvVar+"="+HookBrokerAgentd,
 		"TCLAUDE_SESSION_ID="+darwinSmokeSessionID,
 	)
-	output, err := cmd.CombinedOutput()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	require.NoError(t, cmd.Start())
+	require.NoError(t, gateReader.Close())
+
+	// This copied test binary stands in for the real harness process. Register
+	// its exact live PID before letting it call agentd: production session
+	// launches record the harness/pane PID, while keying this synthetic row to
+	// the outer go-test PID makes Darwin's ps-based ancestry walk depend on
+	// incidental sandbox-exec shell hops. The gate keeps the identity proof
+	// deterministic and, crucially, makes the isolated whoami assertion test
+	// the Seatbelt socket path instead of a malformed fixture identity.
+	var helperPID int
+	require.Eventually(t, func() bool {
+		raw, readErr := os.ReadFile(helperPIDFile)
+		if readErr != nil {
+			return false
+		}
+		helperPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
+		return readErr == nil && helperPID > 1
+	}, 5*time.Second, 10*time.Millisecond,
+		"darwin smoke helper did not publish its PID; output: %s", output.String())
+	row, err := db.LoadSession(darwinSmokeSessionID)
+	require.NoError(t, err)
+	row.PID = helperPID
+	row.UpdatedAt = time.Now()
+	require.NoError(t, db.SaveSession(row))
+	_, err = gateWriter.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, gateWriter.Close())
+
+	err = cmd.Wait()
 	if ctx.Err() != nil {
 		t.Fatal("darwin tclaude-layer smoke timed out")
 	}
-	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output)
+	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output.String())
 }
 
 func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
@@ -349,6 +393,21 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	expectedAgentID := os.Getenv(darwinSmokeExpectedAgentIDEnv)
 	runtimeTempDir := os.Getenv(darwinSmokeRuntimeTempDirEnv)
 	inheritedFD := os.Getenv(darwinSmokeInheritedFDEnv)
+	helperPIDFile := os.Getenv(darwinSmokeHelperPIDFileEnv)
+	helperGateFD := os.Getenv(darwinSmokeHelperGateFDEnv)
+
+	require.NoError(t, os.WriteFile(
+		helperPIDFile,
+		[]byte(strconv.Itoa(os.Getpid())),
+		0o600,
+	))
+	gateFD, err := strconv.Atoi(helperGateFD)
+	require.NoError(t, err)
+	gate := os.NewFile(uintptr(gateFD), "darwin-smoke-helper-gate")
+	require.NotNil(t, gate)
+	_, err = io.ReadFull(gate, make([]byte, 1))
+	require.NoError(t, err)
+	require.NoError(t, gate.Close())
 
 	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600),
 		"launch-contract write root must survive an ordinary ancestor hide")
@@ -358,7 +417,7 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 
 	assertSeatbeltEPERM(t, os.WriteFile(filepath.Join(readonly, "blocked"), []byte("no"), 0o600),
 		"RO region write")
-	_, err := os.ReadFile(filepath.Join(hidden, "private"))
+	_, err = os.ReadFile(filepath.Join(hidden, "private"))
 	assertSeatbeltEPERM(t, err, "hidden region read")
 	assertSeatbeltEPERM(t, os.WriteFile(filepath.Join(hidden, "phantom"), []byte("no"), 0o600),
 		"hidden region phantom write")
