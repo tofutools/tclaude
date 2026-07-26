@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -163,17 +164,20 @@ func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *te
 	agentID, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
 	normalMode := harness.ClaudeSandboxOn
+	implementation := string(sandboxpolicy.ImplementationTclaudeLayer)
 	normalSource := `group default profile "confined"`
 	approval := "default"
 	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
 		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
-		SandboxModeSource: &normalSource, ApprovalPolicy: &approval,
+		SandboxImplementation: &implementation,
+		SandboxModeSource:     &normalSource, ApprovalPolicy: &approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "temporary-relaunch-session", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
-		SandboxMode: normalMode, SandboxModeSource: normalSource,
-		ApprovalPolicy: approval, ResumeProvenance: "test-proof",
+		SandboxMode: normalMode, SandboxImplementation: implementation,
+		SandboxModeSource: normalSource,
+		ApprovalPolicy:    approval, ResumeProvenance: "test-proof",
 	}))
 	override := harness.ClaudeSandboxOff
 	require.NoError(t, db.SetTemporarySandboxModeForConv(
@@ -187,6 +191,7 @@ func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *te
 	assert.Equal(t, "temporary dashboard unlock", got.SandboxModeSource)
 	assert.Equal(t, harness.ClaudeSandboxOn, got.NormalSandbox)
 	assert.Equal(t, normalSource, got.NormalSandboxSource)
+	assert.Equal(t, implementation, got.SandboxImplementation)
 }
 
 func TestDurableRelaunchKeepsNormalCodexSSHPostureDuringUnlock(t *testing.T) {

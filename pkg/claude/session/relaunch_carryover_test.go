@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -53,6 +54,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 	return &db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
 		SandboxMode:            ptr(harness.ClaudeSandboxOn),
+		SandboxImplementation:  ptr(string(sandboxpolicy.ImplementationTclaudeLayer)),
 		ApprovalPolicy:         ptr("plan"),
 		ApprovalAutoReview:     ptr(true),
 		AskUserQuestionTimeout: ptr("5m"),

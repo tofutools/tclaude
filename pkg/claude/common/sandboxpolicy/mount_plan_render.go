@@ -50,30 +50,28 @@ import (
 // that socket and nothing else — is the capability this IR is meant to grow
 // into.
 //
-// That makes them a contract on the applier, not an oversight, and the contract
-// has an ORDER requirement — three phases, in which placement is what carries
-// the meaning:
+// That makes them a contract on the applier, not an oversight. Four precedence
+// classes carry the meaning; they are not merely a literal mount sequence:
 //
-//  1. Hide ProtectedPaths() BEFORE replaying these entries. Break-glass grants
-//     then reopen their narrower paths by the same most-specific-wins ordering
-//     as everything else. An applier that replayed the plan first and applied
-//     this baseline afterwards would silently revoke the operator's
-//     acknowledged break-glass authority; one that omitted it entirely would
-//     expose tclaude's own private state to the agent.
-//  2. Replay the plan.
-//  3. Hide the strictly-unreachable class AFTER replaying — today the tmux
-//     socket directory, which the Codex adapter already treats as host-control
-//     authority, a more severe class than protected state and deliberately not
-//     reachable through break-glass. It must come last precisely BECAUSE it is
-//     not in ProtectedPaths(): an ordinary rw row at that path passes profile
-//     validation, since it intersects no protected root, so a before-plan hide
-//     could be shadowed by an innocent-looking grant. Applying it after the
-//     replay is what encodes "not reachable through break-glass, or anything
-//     else" — most-specific-wins governs the policy, and this class sits
-//     outside the policy rather than at the top of it.
+//  1. Launch-contract binds keep the harness state, workspace/Git
+//     administration and agent directories writable. They survive an ordinary
+//     plan deny on an ancestor (an applier may repair the narrower bind after
+//     applying that deny), but lose to protected-root hides. An ordinary rule
+//     at or below the harness state root must be refused rather than silently
+//     launching a harness that cannot persist.
+//  2. Plan entries replay exactly in order. Most-specific-wins remains the
+//     policy rule, and acknowledged break-glass entries ride in this class.
+//  3. ProtectedPaths() hides beat launch-contract repairs and every ordinary
+//     rule. They are established before replay and restored after any repair;
+//     only a later acknowledged break-glass entry may reopen beneath them.
+//  4. The strictly-unreachable class — today the tmux socket directory — beats
+//     everything, including break-glass. It must come last precisely BECAUSE
+//     it is not in ProtectedPaths(): an ordinary rw row at that path passes
+//     profile validation, so a before-plan hide could be shadowed by an
+//     innocent-looking grant.
 //
-// (Phase 3 per the TCL-750 applier ruling; the renderer emits nothing for
-// either phase 1 or phase 3.)
+// The renderer emits only class 2. The other classes belong to the launch
+// contract and applier.
 //
 // # How the plan grows (settled TCL-751 decision, epic requirement 3)
 //

@@ -129,6 +129,11 @@ type SpawnArgs struct {
 	// daemon-owned Codex agent runs sandboxed by default (JOH-192/JOH-207).
 	Sandbox string
 
+	// SandboxImplementation replays the durable owner of OS-level confinement.
+	// Empty and harness-builtin both preserve the default argv; tclaude-layer
+	// forwards the experimental --sandbox-impl opt-in on relaunch.
+	SandboxImplementation string
+
 	// SandboxChosenBy names the resolution tier that supplied Sandbox — an
 	// explicit request field, or the named / group-default / global-default
 	// spawn profile that carried it. The daemon is the only party with the tier

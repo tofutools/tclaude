@@ -216,6 +216,9 @@ func ownedSessionID(envSessionID, renderConvID string) string {
 }
 
 func run() error {
+	if os.Getenv("TCLAUDE_IGNORE_HOOKS") != "" {
+		return nil
+	}
 
 	// Read JSON from stdin (only if piped, not a terminal)
 	var stdinData []byte

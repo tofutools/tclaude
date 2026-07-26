@@ -52,6 +52,9 @@ type SessionRow struct {
 	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
 	// — never coalesced.
 	SandboxMode string
+	// SandboxImplementation selects whether the harness's built-in sandbox or
+	// tclaude's outer OS layer owns confinement for this launch (schema v160).
+	SandboxImplementation string
 	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
 	// explicit flag, or the named / group-default / global-default spawn profile
 	// that carried it (schema v158). The mode alone cannot say: an operator who
@@ -72,11 +75,10 @@ type SessionRow struct {
 	// renders no badge, exactly as before the columns existed.
 	OSSandboxState  string
 	OSSandboxSource string
-	// OSSandboxUnverified marks a verdict a settings file OUTRANKING the deciding
-	// tier could have overturned, had tclaude been able to read it. The badge
-	// hedges rather than asserting containment: a padlock on an agent nothing
-	// confines is worse than no padlock at all. Persisted with the verdict —
-	// gated on the same non-empty OSSandboxState, so it can never outlive it.
+	// OSSandboxUnverified marks a verdict tclaude could not fully establish,
+	// either because an outranking settings tier was unreadable or because an
+	// experimental outer layer records a known partial enforcement boundary in
+	// OSSandboxSource. The badge hedges rather than asserting containment.
 	OSSandboxUnverified bool
 	// ApprovalPolicy and ApprovalAutoReview are the resolved launch-time
 	// approval posture. Together they let the daemon prevent an agent from
@@ -192,6 +194,10 @@ func SaveSession(s *SessionRow) error {
 	if err != nil {
 		return err
 	}
+	sandboxImplementation := strings.TrimSpace(s.SandboxImplementation)
+	if sandboxImplementation == "" {
+		sandboxImplementation = string(sandboxpolicy.ImplementationHarnessBuiltin)
+	}
 
 	// agent_id is dual-written from conv_id. A session row is often created
 	// before its conv enrolls (the hook registers the agent slightly later), so
@@ -208,10 +214,10 @@ func SaveSession(s *SessionRow) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
 		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
 		 ?, '', '', NULL, '', '', '', NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
@@ -229,6 +235,7 @@ func SaveSession(s *SessionRow) error {
 			last_hook = excluded.last_hook,
 			harness = excluded.harness,
 			sandbox_mode = excluded.sandbox_mode,
+			sandbox_implementation = excluded.sandbox_implementation,
 			sandbox_mode_source = excluded.sandbox_mode_source,
 			os_sandbox_state = CASE WHEN excluded.os_sandbox_state <> '' THEN excluded.os_sandbox_state ELSE sessions.os_sandbox_state END,
 			os_sandbox_source = CASE WHEN excluded.os_sandbox_state <> '' THEN excluded.os_sandbox_source ELSE sessions.os_sandbox_source END,
@@ -249,7 +256,7 @@ func SaveSession(s *SessionRow) error {
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, sandboxImplementation, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	if err != nil {
 		return err
@@ -302,7 +309,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -341,7 +348,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +366,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -384,7 +391,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -408,6 +415,9 @@ type SessionLaunchProfile struct {
 	ModelID     string
 	Effort      string
 	SandboxMode string
+	// SandboxImplementation records who owns OS-level confinement. Empty is
+	// legacy evidence and normalizes to harness-builtin at a launch boundary.
+	SandboxImplementation string
 	// SandboxModeSource is the recorded attribution for SandboxMode — which
 	// resolution tier chose it. A relaunch replays it alongside the mode so the
 	// badge keeps naming the spawn profile that forced the sandbox rather than
@@ -450,6 +460,9 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		if durable.SandboxMode != nil {
 			p.SandboxMode = *durable.SandboxMode
 		}
+		if durable.SandboxImplementation != nil {
+			p.SandboxImplementation = *durable.SandboxImplementation
+		}
 		if durable.SandboxModeSource != nil {
 			p.SandboxModeSource = *durable.SandboxModeSource
 		}
@@ -471,9 +484,9 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 	}
 	var p SessionLaunchProfile
 	err = d.QueryRow(
-		`SELECT harness, model_id, effort_level, sandbox_mode, approval_policy, approval_auto_review FROM sessions
+		`SELECT harness, model_id, effort_level, sandbox_mode, sandbox_implementation, approval_policy, approval_auto_review FROM sessions
 		 WHERE conv_id = ? ORDER BY updated_at DESC LIMIT 1`, convID).
-		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.SandboxMode, &p.ApprovalPolicy, &p.ApprovalAutoReview)
+		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.SandboxMode, &p.SandboxImplementation, &p.ApprovalPolicy, &p.ApprovalAutoReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionLaunchProfile{}, nil
 	}
@@ -492,7 +505,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -573,7 +586,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview, osSandboxUnverified int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.SandboxImplementation, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0

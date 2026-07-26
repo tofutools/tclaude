@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -712,7 +713,10 @@ var (
 //     case where the pane shell exec'd into the harness, so pane_pid IS the
 //     harness pid, plus any hook-corrected row keyed by FindClaudePID().
 //  3. agentd's sessions table keyed by the ancestor's PARENT host pid.
-//  4. For an OpenCode ancestor only, agentd's opencode_runtimes table keyed
+//  4. For a recorded tclaude-layer launch, the ancestor chain above the
+//     harness's parent. The bubblewrap + inner shell wrappers add hops between
+//     the harness and the tmux pane PID recorded in sessions.
+//  5. For an OpenCode ancestor only, agentd's opencode_runtimes table keyed
 //     by the ancestor's own pid, then its parent's pid.
 //
 // Step 3 is the load-bearing one for Codex (JOH-206). The spawn row is keyed
@@ -758,6 +762,9 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 			if id := sessionConvByPID(parent); id != "" {
 				return id, true
 			}
+			if id := tclaudeLayerSessionConvByAncestor(parent); id != "" {
+				return id, true
+			}
 			// OpenCode is server-authoritative: agentd owns `opencode serve`
 			// outside the attach pane and records that process in
 			// opencode_runtimes, not sessions.pid. Gate these extra probes on
@@ -775,6 +782,27 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 		cur = parent
 	}
 	return "", hasAncestor
+}
+
+// tclaudeLayerSessionConvByAncestor crosses only wrapper processes between a
+// harness and a sessions row that explicitly records tclaude-layer. The
+// implementation check is the trust boundary: harness-builtin launches retain
+// their exact/one-parent identity rule, while the outer layer can account for
+// its known bwrap -> sh ancestry without trusting caller-controlled env.
+func tclaudeLayerSessionConvByAncestor(pid int) string {
+	const maxWrapperHops = 16
+	for range maxWrapperHops {
+		if pid <= 1 {
+			return ""
+		}
+		if row, err := db.FindSessionByPID(pid); err == nil && row != nil &&
+			row.ConvID != "" &&
+			row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+			return row.ConvID
+		}
+		pid = procParent(pid)
+	}
+	return ""
 }
 
 // sessionConvByPID returns the conv-id of the most-recently-updated sessions

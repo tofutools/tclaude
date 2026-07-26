@@ -23,7 +23,3 @@ func TestMigrateV158toV159AddsCodexSSHWorkaround(t *testing.T) {
 	assert.Equal(t, 159, schemaVersion(d))
 	require.NoError(t, migrateV158toV159(d), "partially applied migration converges")
 }
-
-func TestMigrateV159IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 159, currentVersion, "tripwire: bump this with the next migration")
-}

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -46,9 +47,10 @@ func resumeHop(t *testing.T, convID, cwd string, hop int) *NewParams {
 	created := time.Now().Add(time.Duration(hop) * time.Minute)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: convID, ConvID: convID, Cwd: cwd, Status: "idle", Harness: h.Name,
-		SandboxMode: sandboxMode, AskUserQuestionTimeout: askTimeout,
-		ApprovalPolicy: harness.ClaudePermissionInherit,
-		CreatedAt:      created, UpdatedAt: created,
+		SandboxMode: sandboxMode, SandboxImplementation: params.SandboxImpl,
+		AskUserQuestionTimeout: askTimeout,
+		ApprovalPolicy:         harness.ClaudePermissionInherit,
+		CreatedAt:              created, UpdatedAt: created,
 	}))
 	RecordLaunchPosture(convID, h, LaunchPosture{
 		AutoMemory:        autoMemory,
@@ -76,6 +78,8 @@ func TestRecordedLaunchPostureSurvivesRepeatedFlaglessResumes(t *testing.T) {
 			assert.Equal(t, "bundled-skills=off", params.ContextFeatures, "a lean agent must come back lean")
 			assert.Equal(t, "5m", params.AskUserQuestionTimeout, "the auto-continue timeout must survive")
 			assert.Equal(t, harness.ClaudeSandboxOn, params.Sandbox, "the recorded containment must survive")
+			assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), params.SandboxImpl,
+				"the outer sandbox implementation must survive")
 			assert.True(t, params.RemoteControl, "an agent reachable from the app must come back reachable")
 		})
 	}
@@ -92,6 +96,8 @@ func TestRecordedLaunchPostureSurvivesRepeatedFlaglessResumes(t *testing.T) {
 	assert.Equal(t, "5m", *posture.AskUserQuestionTimeout)
 	require.NotNil(t, posture.RemoteControl, "RecordLaunchPosture must give RemoteControl a write-side twin")
 	assert.True(t, *posture.RemoteControl)
+	require.NotNil(t, posture.SandboxImplementation)
+	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), *posture.SandboxImplementation)
 }
 
 // TestFlaglessResumeOfAnUnrecordedConvChangesNothing pins that the carryover

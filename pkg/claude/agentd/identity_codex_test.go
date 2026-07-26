@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // fakeProcTree stands in for the /proc readers convIDForPID walks. It
@@ -83,6 +84,64 @@ func TestConvIDForPID_CodexAncestorResolvesViaPaneShPID(t *testing.T) {
 	// surface whoami / inbox gate on.
 	p := &peer{PID: peerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}
 	assert.Equal(t, classAgent, classify(p))
+}
+
+func TestConvIDForPID_TclaudeLayerTraversesWrapperAncestry(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID   = 8101
+		claudePID = 8050
+		innerSh   = 8040
+		bwrapPID  = 8030
+		paneSh    = 8020
+		convID    = "75000000-0000-4000-8000-000000000750"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    "sandbox-v2",
+		PID:                   paneSh,
+		ConvID:                convID,
+		Harness:               "claude",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Status:                "working",
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			peerPID: "tclaude", claudePID: "claude", innerSh: "sh",
+			bwrapPID: "bwrap", paneSh: "sh",
+		},
+		parent: map[int]int{
+			peerPID: claudePID, claudePID: innerSh, innerSh: bwrapPID, bwrapPID: paneSh,
+		},
+	}.install(t)
+
+	got, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Equal(t, convID, got, "outer-layer identity must reach the recorded pane through bwrap wrappers")
+}
+
+func TestConvIDForPID_HarnessBuiltinDoesNotGainDeepAncestorFallback(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID = 9101
+		codex   = 9050
+		innerSh = 9040
+		paneSh  = 9030
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "builtin", PID: paneSh, ConvID: "victim", Harness: "codex", Status: "working",
+	}))
+	fakeProcTree{
+		name: map[int]string{peerPID: "tclaude", codex: "codex", innerSh: "sh", paneSh: "sh"},
+		parent: map[int]int{
+			peerPID: codex, codex: innerSh, innerSh: paneSh,
+		},
+	}.install(t)
+
+	got, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Empty(t, got, "deep fallback must remain exclusive to an explicitly recorded outer layer")
 }
 
 // TestConvIDForPID_CodexAncestorResolvesViaOwnPID covers the variant where

@@ -1365,6 +1365,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		Model:                      launchConfig.Model,
 		Harness:                    harnessName,
 		Sandbox:                    relaunchSandbox,
+		SandboxImplementation:      launchConfig.SandboxImplementation,
 		SandboxChosenBy:            launchConfig.SandboxModeSource,
 		Approval:                   approval,
 		AutoReview:                 autoReview,
@@ -6076,6 +6077,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendSandboxImplementationFlag(args, a.SandboxImplementation)
 	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
@@ -6209,6 +6211,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendSandboxImplementationFlag(args, a.SandboxImplementation)
 	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
@@ -6315,6 +6318,16 @@ func appendSandboxArgs(args []string, h, sandbox string) []string {
 func appendSandboxFlag(args []string, mode string) []string {
 	if mode != "" {
 		args = append(args, "--sandbox", mode)
+	}
+	return args
+}
+
+// appendSandboxImplementationFlag preserves the feature's default-off
+// invariant: the legacy harness-owned implementation changes no argv, while a
+// durable tclaude-layer opt-in is explicit on every relaunch.
+func appendSandboxImplementationFlag(args []string, implementation string) []string {
+	if strings.TrimSpace(implementation) == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		args = append(args, "--sandbox-impl", string(sandboxpolicy.ImplementationTclaudeLayer))
 	}
 	return args
 }

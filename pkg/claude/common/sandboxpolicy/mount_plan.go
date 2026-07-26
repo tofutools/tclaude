@@ -4,17 +4,19 @@ package sandboxpolicy
 type MountMode int
 
 const (
-	MountRO MountMode = iota
+	// MountHide is the zero value so a partially initialized MountEntry fails
+	// closed instead of silently granting read access.
+	MountHide MountMode = iota
+	MountRO
 	MountRW
-	MountHide
 )
 
 // MountEntry is one ordered entry in an OS-sandbox mount plan.
 //
 // The entry is intentionally a small intermediate representation rather than
-// a bubblewrap-specific argument. Later sandbox-policy work can extend the
-// entry with kinds for non-filesystem resources without changing consumers of
-// the ordered plan.
+// a bubblewrap-specific argument. Future non-filesystem policy classes belong
+// in sibling MountPlan fields, leaving this ordered filesystem entry contract
+// unchanged.
 type MountEntry struct {
 	Path string
 	Mode MountMode

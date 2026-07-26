@@ -25,6 +25,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.SandboxMode != nil {
 		merged.SandboxMode = overlay.SandboxMode
 	}
+	if overlay.SandboxImplementation != nil {
+		merged.SandboxImplementation = overlay.SandboxImplementation
+	}
 	if overlay.SandboxModeSource != nil {
 		merged.SandboxModeSource = overlay.SandboxModeSource
 	}
@@ -127,7 +130,8 @@ func RecordedLaunchPostureForConv(convID string) (*AgentRelaunchProfile, error) 
 // recordedPostureIsComplete reports whether every field the legacy session tier
 // could contribute is already known, so that tier can be skipped.
 func recordedPostureIsComplete(p *AgentRelaunchProfile) bool {
-	return p.SandboxMode != nil && p.ApprovalPolicy != nil && p.ApprovalAutoReview != nil &&
+	return p.SandboxMode != nil && p.SandboxImplementation != nil &&
+		p.ApprovalPolicy != nil && p.ApprovalAutoReview != nil &&
 		p.AskUserQuestionTimeout != nil && p.RemoteControl != nil && p.AutoMemory != nil &&
 		p.ContextFeatures != nil && p.AutoCompactWindow != nil
 }
@@ -143,6 +147,9 @@ func legacySessionLaunchPosture(convID string) (*AgentRelaunchProfile, error) {
 	p := &AgentRelaunchProfile{Version: RelaunchProfileVersion}
 	if mode := strings.TrimSpace(s.SandboxMode); mode != "" {
 		p.SandboxMode = stringPtr(mode)
+	}
+	if implementation := strings.TrimSpace(s.SandboxImplementation); implementation != "" {
+		p.SandboxImplementation = stringPtr(implementation)
 	}
 	if policy := strings.TrimSpace(s.ApprovalPolicy); policy != "" {
 		p.ApprovalPolicy = stringPtr(policy)

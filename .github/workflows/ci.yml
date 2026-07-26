@@ -37,6 +37,50 @@ jobs:
         with:
           version: v2.12.2
 
+  sandbox-v2-smoke:
+    name: Sandbox v2 host smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
+      - name: Probe bubblewrap user namespace support
+        id: bwrap-probe
+        run: |
+          if bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::sandbox v2 host smoke skipped: this runner cannot create the bubblewrap user/mount namespace"
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        if: steps.bwrap-probe.outputs.supported == 'true'
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run sandbox v2 host smoke
+        if: steps.bwrap-probe.outputs.supported == 'true'
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+
+      - name: Report unavailable host smoke
+        if: steps.bwrap-probe.outputs.supported != 'true'
+        run: |
+          echo "### Sandbox v2 host smoke skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "The runner could not create bubblewrap's user/mount namespace; run the documented smoke on a compatible Linux host." >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

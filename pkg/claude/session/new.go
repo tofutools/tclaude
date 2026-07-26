@@ -110,6 +110,11 @@ type NewParams struct {
 	// JOH-192 / JOH-207.
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
+	// SandboxImplementation selects who owns OS-level containment. The default
+	// is the legacy harness-owned path; tclaude-layer is an experimental Linux
+	// bubblewrap wrapper around the complete harness process.
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default; current behavior) | tclaude-layer (Linux bubblewrap outer layer)"`
+
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`
 	// alongside the sandbox block. inherit/unset omits it, so the agent uses the
@@ -449,6 +454,18 @@ func runNew(params *NewParams) error {
 	}
 	params.Sandbox = sandboxMode
 
+	sandboxImplementation, err := sandboxpolicy.NormalizeImplementation(params.SandboxImpl)
+	if err != nil {
+		return err
+	}
+	params.SandboxImpl = string(sandboxImplementation)
+	tclaudeLayer := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	if tclaudeLayer {
+		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return err
+		}
+	}
+
 	// Normalize the managed-profile pseudo-mode. SandboxManagedProfile is the
 	// dashboard/daemon way of selecting `codex -p tclaude-agent` through the one
 	// sandbox dropdown, but it is the profile name, not a real Codex --sandbox
@@ -467,15 +484,15 @@ func runNew(params *NewParams) error {
 		sandboxMode = ""
 		params.Sandbox = ""
 	}
-	if len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !tclaudeLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+	if !tclaudeLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !tclaudeLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && sandboxMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -494,12 +511,16 @@ func runNew(params *NewParams) error {
 		effectiveSandboxMode = harness.SandboxManagedProfile
 	}
 	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode, launchFilesystem); err != nil {
-		return err
+	if !tclaudeLayer {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode, launchFilesystem); err != nil {
+			return err
+		}
 	}
 	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, effectiveSandboxMode, breakGlass, launchFilesystem); err != nil {
-			return err
+		if !tclaudeLayer {
+			if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, effectiveSandboxMode, breakGlass, launchFilesystem); err != nil {
+				return err
+			}
 		}
 		// A missing protected path fails the launch closed: the operator
 		// acknowledged access to something specific, so silently launching
@@ -510,6 +531,9 @@ func runNew(params *NewParams) error {
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	if networkAccess != sandboxpolicy.NetworkAccessInherit {
+		if tclaudeLayer {
+			return fmt.Errorf("unsupported_sandbox_profile_network: tclaude-layer is filesystem-only in this experimental slice; network posture must inherit")
+		}
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {
@@ -547,6 +571,23 @@ func runNew(params *NewParams) error {
 		if h.Name != harness.CodexName {
 			return fmt.Errorf("--permission-profile is a Codex launch option; harness %q has no permission profiles", h.Name)
 		}
+	}
+
+	// Interim TCL-750 decision: while tclaude owns the outer OS wall, disable
+	// the harness-native sandbox instead of stacking nested sandboxes. The
+	// per-harness disable-vs-stack policy belongs to the nested-sandbox
+	// workstream and will replace this switch.
+	if tclaudeLayer {
+		params.PermissionProfile = ""
+		switch h.Name {
+		case harness.DefaultName:
+			sandboxMode = harness.ClaudeSandboxOff
+		case harness.CodexName:
+			sandboxMode = harness.SandboxDangerFull
+		default:
+			return fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
+		}
+		params.Sandbox = sandboxMode
 	}
 
 	// Validate --ask-for-approval up front WITHOUT defaulting it, for the same
@@ -830,6 +871,14 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
+	if tclaudeLayer {
+		// Hook callbacks currently write private SQLite state directly. Until
+		// TCL-754 brokers them through agentd, make installed hooks inherit the
+		// existing soft-disable switch rather than fail every harness event.
+		// Apply after profile environment so policy cannot disable this safety
+		// behavior for an outer-layer launch.
+		additionalEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
+	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
@@ -905,8 +954,10 @@ func runNew(params *NewParams) error {
 	// found nothing that confines it; applyRecordedLaunchPosture separately
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
-	for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
-		fmt.Fprintf(os.Stderr, "%s\n", warning)
+	if !tclaudeLayer {
+		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
+			fmt.Fprintf(os.Stderr, "%s\n", warning)
+		}
 	}
 
 	// Record what the warning check just resolved: whether the OS sandbox will
@@ -930,6 +981,11 @@ func runNew(params *NewParams) error {
 		sandboxChosenBy = harness.SandboxChosenExplicitly
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, sandboxChosenBy, cwd)
+	bwrapBinary := ""
+	var bwrapCapabilityErr error
+	if tclaudeLayer {
+		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer()
+	}
 
 	// Ensure the managed profile file exists before launch (self-healing —
 	// works even if `tclaude setup` was never run). This lives after cwd
@@ -985,6 +1041,7 @@ func runNew(params *NewParams) error {
 		Status:                 StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
+		SandboxImplementation:  string(sandboxImplementation),
 		SandboxModeSource:      sandboxChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
@@ -1028,6 +1085,11 @@ func runNew(params *NewParams) error {
 	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
 		return fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
+	// Save the off/unavailable verdict before refusing so a resume of an
+	// existing conversation cannot leave a stale "on" badge behind.
+	if bwrapCapabilityErr != nil {
+		return bwrapCapabilityErr
+	}
 
 	if launchCodexSplitCapability != nil {
 		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*launchCodexSplitCapability); err != nil {
@@ -1044,11 +1106,19 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
+	if tclaudeLayer {
+		// The inner sandbox is off, so derive the repository grants for the
+		// outer wall independently of the harness-native mode.
+		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
+	}
 	if sandboxDenyCoversPath(launchSandbox, cwd) {
 		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
 	}
 	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
 	launchWriteDirs := append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
+	if tclaudeLayer {
+		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
+	}
 	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
@@ -1056,9 +1126,11 @@ func runNew(params *NewParams) error {
 	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
-	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode,
-		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
-		return err
+	if !tclaudeLayer {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode,
+			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
+			return err
+		}
 	}
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:             executablePath,
@@ -1086,6 +1158,22 @@ func runNew(params *NewParams) error {
 		RemoteControl:              remoteControl,
 		InitialPrompt:              params.InitialPrompt,
 	})
+	if tclaudeLayer {
+		effective := sandboxpolicy.EffectiveProfile{}
+		if launchSandbox != nil {
+			effective = launchSandbox.Effective
+		}
+		profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
+		effective.Filesystem = sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)
+		harnessCmd, err = WrapTclaudeLayer(bwrapBinary, effective, TclaudeLayerLaunchContract{
+			HarnessName:       h.Name,
+			WriteDirs:         append(append([]string{}, launchGitWriteDirs...), cwd),
+			ProfileFilesystem: profileFilesystem,
+		}, harnessCmd)
+		if err != nil {
+			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
+		}
+	}
 	if launchProfilePath != "" {
 		// The launch-specific profile must remain present until Codex exits: it
 		// may not have loaded the file when tmux reports the pane ready. Keeping

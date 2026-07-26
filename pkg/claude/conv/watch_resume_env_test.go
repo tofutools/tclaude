@@ -234,6 +234,20 @@ func TestResumeLaunchCmd_NoResumeOverrideForCodex(t *testing.T) {
 		"a Codex resume must not get the Claude-specific resume override")
 }
 
+func TestResumeLaunchCmdRejectsRecordedTclaudeLayerForOpenCode(t *testing.T) {
+	setupTestDB(t)
+	const convID = "ses_sandboxv2opencode"
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    "source-session",
+		ConvID:                convID,
+		Harness:               harness.OpenCodeName,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+
+	_, _, _, err := resumeLaunchCmd(harness.OpenCodeName, "resume-session", convID, nil)
+	require.ErrorContains(t, err, "tool-executing server runs outside the wrapped pane")
+}
+
 // With no claude_resume block configured, a Claude resume stays on Claude
 // Code's own defaults — tclaude injects nothing.
 func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {

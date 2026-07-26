@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -255,7 +256,15 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// operator may have changed settings.json since (TCL-729).
 	resumeMode := resumeSandboxMode(rc.ConvID)
 	resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
+	resumeImplementation, err := resumeSandboxImplementation(rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
+	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox()
+	}
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -265,6 +274,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            resumeMode,
+		SandboxImplementation:  string(resumeImplementation),
 		SandboxModeSource:      resumeChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
