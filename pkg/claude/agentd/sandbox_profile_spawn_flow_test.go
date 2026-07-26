@@ -293,8 +293,9 @@ func TestSandboxProfileSpawnMaterializesUniqueAgentDirectories(t *testing.T) {
 		snapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
 		require.True(t, ok)
 		require.NotNil(t, snapshot)
-		assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE", "TCL_CODEX_SSH_CONFIG_DIR"}, snapshot.Effective.AgentDirectories)
-		require.Len(t, snapshot.Effective.Environment, 4)
+		assert.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE", "GOLANGCI_LINT_CACHE"),
+			snapshot.Effective.AgentDirectories)
+		require.Len(t, snapshot.Effective.Environment, expectedManagedCodexEnvironmentCount(2))
 		require.Len(t, snapshot.Effective.Filesystem, 1)
 		paths := map[string]string{}
 		for _, entry := range snapshot.Effective.Environment {
@@ -342,7 +343,8 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	parentSnapshot, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, parentSnapshot)
-	require.Equal(t, []string{"GOCACHE", "TCL_CODEX_SSH_CONFIG_DIR"}, parentSnapshot.Effective.AgentDirectories)
+	require.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE"),
+		parentSnapshot.Effective.AgentDirectories)
 
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
 		Name: "child-caches", AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
@@ -358,9 +360,10 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	childSnapshot, ok := f.World.SpawnSandboxPolicy(child.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, childSnapshot)
-	assert.Equal(t, []string{"GOCACHE", "GOTMPDIR", "TCL_CODEX_SSH_CONFIG_DIR"}, childSnapshot.Effective.AgentDirectories)
+	assert.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE", "GOTMPDIR"),
+		childSnapshot.Effective.AgentDirectories)
 	require.Len(t, childSnapshot.Effective.Filesystem, 1)
-	require.Len(t, childSnapshot.Effective.Environment, 4)
+	require.Len(t, childSnapshot.Effective.Environment, expectedManagedCodexEnvironmentCount(2))
 
 	var parentGOCACHE string
 	for _, entry := range parentSnapshot.Effective.Environment {

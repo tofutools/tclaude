@@ -78,7 +78,8 @@ func TestLifecycleInheritedAuthority_AgentOwnedDirectoriesNeedNoCallerProof(t *t
 			before, err := db.AgentEffectiveSandboxConfigForConv(target.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, before)
-			require.Equal(t, []string{"GOCACHE", "TCL_CODEX_SSH_CONFIG_DIR"}, before.Effective.AgentDirectories)
+			require.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE"),
+				before.Effective.AgentDirectories)
 			var privateDir string
 			for _, entry := range before.Effective.Environment {
 				if entry.Name == "GOCACHE" {

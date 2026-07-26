@@ -13,6 +13,21 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
+func expectedManagedCodexAgentDirectories(base ...string) []string {
+	got := append([]string(nil), base...)
+	if runtime.GOOS == "linux" {
+		got = append(got, "TCL_CODEX_SSH_CONFIG_DIR")
+	}
+	return got
+}
+
+func expectedManagedCodexEnvironmentCount(baseAgentDirectories int) int {
+	if runtime.GOOS == "linux" {
+		return baseAgentDirectories + 2 // config directory plus GIT_SSH_COMMAND
+	}
+	return baseAgentDirectories
+}
+
 func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the Codex managed-sandbox SSH workaround is Linux-only")
