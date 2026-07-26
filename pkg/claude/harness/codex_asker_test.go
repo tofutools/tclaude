@@ -40,6 +40,39 @@ func TestCodexAsker_BuildAskArgv(t *testing.T) {
 		[]string{"codex", "exec", "resume", "rid-1", "--skip-git-repo-check",
 			"-c", `sandbox_mode="read-only"`, "--", "follow up"})
 
+	// A daemon-brokered capture layers the predecessor's generated managed
+	// profile and approval posture before `exec`, and keeps the turn ephemeral.
+	posture := SpawnSpec{
+		PermissionProfile: "tclaude-agent-0123456789abcdef",
+		ApprovalPolicy:    ApprovalNever,
+		AutoReview:        true,
+		ShellEnvironment:  map[string]string{"POLICY_OWNER": "predecessor"},
+	}
+	eq("recorded resume posture",
+		codexAsker{}.BuildAskArgv(AskSpec{
+			Print: true, Ephemeral: true, LaunchPosture: &posture,
+			ResumeID: "rid-safe", Prompt: "remember?",
+		}),
+		[]string{"codex",
+			"-p", "tclaude-agent-0123456789abcdef",
+			"--ask-for-approval", "never",
+			"-c", `approvals_reviewer="auto_review"`,
+			"-c", `shell_environment_policy.set.POLICY_OWNER="predecessor"`,
+			"exec", "resume", "rid-safe", "--skip-git-repo-check", "--ephemeral",
+			"--", "remember?"})
+
+	// A non-nil posture with no concrete sandbox/profile is under-specified.
+	// Keep capture fail-safe by falling back to read-only rather than inheriting
+	// a potentially writable Codex default.
+	emptyPosture := SpawnSpec{}
+	eq("empty recorded posture falls back to read-only",
+		codexAsker{}.BuildAskArgv(AskSpec{
+			Print: true, LaunchPosture: &emptyPosture,
+			ResumeID: "rid-empty", Prompt: "remember?",
+		}),
+		[]string{"codex", "exec", "resume", "rid-empty", "--skip-git-repo-check",
+			"-c", `sandbox_mode="read-only"`, "--", "remember?"})
+
 	// Interactive fresh: the `codex` TUI, no sandbox/skip-git (human present),
 	// no `--` (it can suppress submit-at-launch), prompt trailing.
 	eq("interactive fresh",

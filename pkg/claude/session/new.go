@@ -1291,6 +1291,59 @@ func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string,
 	return name, path, err
 }
 
+// EnsureCodexManagedOneShotProfile materializes the same launch-unique
+// permission profile a managed Codex session would receive, for an agentd-owned
+// headless resume. The caller owns path and must remove it after the child
+// exits. capability, when non-nil, must be revalidated immediately before the
+// exec boundary just like runNew does for a normal session launch.
+func EnsureCodexManagedOneShotProfile(
+	cwd, launchID string,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+) (name, path string, capability *harness.CodexSplitPolicyCapability, err error) {
+	return ensureCodexManagedProfileWithSnapshot(&NewParams{
+		PermissionProfile: harness.CodexAgentProfile,
+	}, cwd, launchID, effectiveSandbox)
+}
+
+// OneShotLaunchPosture renders the sandbox-profile fields a normal session
+// launch would place on SpawnSpec, without starting a tmux session. Agentd uses
+// it when a headless resume must run with the same recorded containment as the
+// predecessor instead of the generic read-only `tclaude ask` posture.
+func OneShotLaunchPosture(
+	cwd, harnessName, sandboxMode, approvalPolicy string,
+	autoReview bool,
+	effectiveSandbox *sandboxpolicy.Snapshot,
+) (harness.SpawnSpec, error) {
+	params := &NewParams{}
+	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, sandboxMode, cwd)
+	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
+		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, "", launchGitWriteDirs)
+	}
+	launchContractReadDirs := sandboxLaunchContractReadDirs(
+		effectiveSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
+	launchWriteDirs := append(launchGitWriteDirs,
+		sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
+	launchReadDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead),
+		launchContractReadDirs...)
+	launchDenyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	if err := harness.ValidateSandboxReopenUnderDeny(harnessName, sandboxMode,
+		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
+		return harness.SpawnSpec{}, err
+	}
+	return harness.SpawnSpec{
+		Cwd:                        cwd,
+		SandboxMode:                sandboxMode,
+		SandboxWriteDirs:           launchWriteDirs,
+		SandboxReadDirs:            launchReadDirs,
+		SandboxDenyDirs:            launchDenyDirs,
+		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
+		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
+		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
+		ApprovalPolicy:             approvalPolicy,
+		AutoReview:                 autoReview,
+	}, nil
+}
+
 func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, *harness.CodexSplitPolicyCapability, error) {
 	var writeDirs []string
 	gitCommonDir := params.CodexGitCommonDir
@@ -1617,6 +1670,23 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 	out.Effective = snapshot.Effective
 	out.Effective.Filesystem = filesystem
 	return &out, nil
+}
+
+// SandboxSnapshotForOneShotLaunch freezes the exact active filesystem and
+// break-glass rules for a brokered one-shot launch. It is the exported twin of
+// runNew's launch preparation: missing ordinary grants become inactive, while
+// missing denies or acknowledged protected grants fail closed.
+func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
+	out, err := sandboxSnapshotForLaunch(snapshot)
+	if err != nil || out == nil {
+		return out, err
+	}
+	breakGlass, err := sandboxpolicy.BreakGlassForLaunch(out.Effective)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+	}
+	out.Effective.BreakGlassFilesystem = breakGlass
+	return out, nil
 }
 
 func commandWithFileCleanup(cmd, path string) string {

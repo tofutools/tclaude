@@ -60,6 +60,7 @@ type auditCtx struct {
 // middleware after a command succeeds. It deliberately cannot carry request
 // request bodies.
 type auditResult struct {
+	targetConv  string
 	targetLabel string
 	eventID     string
 	detail      string
@@ -70,6 +71,12 @@ type auditResultContextKey struct{}
 func setAuditTargetLabel(r *http.Request, label string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.targetLabel = auditClip(label, 120)
+	}
+}
+
+func setAuditTargetConv(r *http.Request, conv string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.targetConv = auditClip(conv, 120)
 	}
 }
 
@@ -143,6 +150,11 @@ var auditRoutes = []auditRoute{
 	// reads, never audited) and the target stays blank — the actor column
 	// already names the agent acting on itself.
 	{segs: []string{"whoami", "{verb}"}, describe: describeWhoamiVerb},
+	// A séance plan is a free read-like POST and remains outside the audit
+	// allowlist. The /run child route is billable daemon-owned execution, so it
+	// gets an explicit row; the handler supplies only predecessor + harness as
+	// safe detail and never records the prompt or subprocess output.
+	{method: http.MethodPost, segs: []string{"whoami", "seance", "run"}, verb: "seance"},
 
 	// Per-agent lifecycle verbs. The CLI is /v1/agent/{sel}/{verb}; the
 	// dashboard is /api/agents/{conv}/{verb} (canonicalised agents→agent).
@@ -437,6 +449,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 	if result != nil && result.detail != "" {
 		fields.Detail = result.detail
+	}
+	if result != nil && result.targetConv != "" {
+		fields.TargetConv = result.targetConv
 	}
 	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
 		fields.TargetLabel = result.targetLabel

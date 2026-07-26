@@ -72,6 +72,47 @@ func TestSandboxSnapshotDirsOmitsMissingRuleUntilLaterLaunch(t *testing.T) {
 		"the same frozen rule becomes active on a later launch")
 }
 
+func TestSandboxSnapshotForOneShotLaunchFreezesActiveRules(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	existing := filepath.Join(root, "existing")
+	require.NoError(t, os.Mkdir(existing, 0o700))
+	missing := filepath.Join(root, "missing")
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
+		{Path: existing, Access: sandboxpolicy.AccessWrite},
+		{Path: missing, Access: sandboxpolicy.AccessRead},
+	}
+
+	launch, err := SandboxSnapshotForOneShotLaunch(&snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{
+		Path: existing, Access: sandboxpolicy.AccessWrite,
+	}}, launch.Effective.Filesystem,
+		"a missing ordinary grant is inactive for this one-shot launch")
+
+	snapshot.Effective.Filesystem = append(snapshot.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: missing, Access: sandboxpolicy.AccessDeny})
+	_, err = SandboxSnapshotForOneShotLaunch(&snapshot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deny rule")
+	assert.Contains(t, err.Error(), "cannot be enforced")
+}
+
+func TestSandboxSnapshotForOneShotLaunchFailsClosedForMissingBreakGlass(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
+		Path: filepath.Join(root, "missing-protected"), Access: sandboxpolicy.AccessRead,
+	}}
+
+	_, err = SandboxSnapshotForOneShotLaunch(&snapshot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "break-glass")
+	assert.Contains(t, err.Error(), "does not exist")
+}
+
 func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

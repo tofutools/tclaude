@@ -38,6 +38,23 @@ import (
 // every existing session/conv row keeps resolving to Claude Code.
 const DefaultName = "claude"
 
+// OneShotReplayStrategy describes how a harness can replay a recorded
+// long-lived launch posture for a brokered, headless one-shot turn. Zero is
+// deliberately unsupported so a newly registered harness fails closed until
+// its replay semantics have been reviewed.
+type OneShotReplayStrategy uint8
+
+const (
+	OneShotReplayUnsupported OneShotReplayStrategy = iota
+	// OneShotReplayDirect means the Asker can render every recorded posture
+	// field itself (Claude Code's settings and permission-mode arguments).
+	OneShotReplayDirect
+	// OneShotReplayCodex means the Asker renders Codex's native posture, while
+	// agentd must materialize and pin a split-home managed profile when the
+	// recorded sandbox mode requests one.
+	OneShotReplayCodex
+)
+
 // Harness is a descriptor composing the segregated per-harness contracts
 // plus capability flags. A nil sub-contract means "this harness does not
 // provide that capability"; the Supports* helpers fold those into simple
@@ -56,6 +73,11 @@ type Harness struct {
 	// thread). nil = this harness can't answer ad-hoc questions yet; callers
 	// gate on SupportsAsk and degrade with a clear message. See JOH-250.
 	Ask Asker
+	// OneShotReplay declares whether and how Ask can reproduce a recorded
+	// session launch posture. It is separate from SupportsAsk: OpenCode can
+	// answer an ordinary ad-hoc question, but cannot yet reproduce its
+	// daemon-managed server permission posture for a séance.
+	OneShotReplay OneShotReplayStrategy
 	// Models validates/normalizes model + effort for this harness.
 	Models ModelCatalog
 	// Life names the lifecycle slash commands this harness understands
@@ -263,6 +285,26 @@ func ResolveRemoteControl(h *Harness, requested bool) (bool, error) {
 // command. See Harness.Ask / JOH-250.
 func (h *Harness) SupportsAsk() bool {
 	return h != nil && h.Ask != nil
+}
+
+// CanReplayOneShotLaunchPosture reports whether a brokered headless resume can
+// reproduce this harness's recorded sandbox and approval posture. The default
+// is false so adding an Asker alone never silently enables a billable séance.
+func (h *Harness) CanReplayOneShotLaunchPosture() bool {
+	return h != nil && h.Ask != nil &&
+		(h.OneShotReplay == OneShotReplayDirect || h.OneShotReplay == OneShotReplayCodex)
+}
+
+// UsesCodexOneShotReplay reports whether replay needs Codex's cwd-safety guard
+// and optional split-home profile materialization.
+func (h *Harness) UsesCodexOneShotReplay() bool {
+	return h != nil && h.OneShotReplay == OneShotReplayCodex
+}
+
+// NeedsManagedProfileForOneShot reports whether this recorded posture needs a
+// launch-unique managed profile before the Asker can render it.
+func (h *Harness) NeedsManagedProfileForOneShot(sandboxMode string) bool {
+	return h.UsesCodexOneShotReplay() && sandboxMode == SandboxManagedProfile
 }
 
 // PreMintsAskConvID reports whether a FRESH `tclaude ask` can pin its conv-id

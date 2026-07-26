@@ -50,6 +50,22 @@ type AskSpec struct {
 	// answer whole regardless, so it keeps the simpler buffered path). Harnesses
 	// that don't implement StreamAsker ignore it.
 	Stream bool
+	// LaunchPosture replays the containment-relevant portion of a recorded
+	// long-lived launch for a brokered one-shot resume. nil keeps ordinary
+	// `tclaude ask` behavior (including its intentionally read-only capture
+	// default). A non-nil posture is authoritative: askers must emit its
+	// sandbox, approval, and effective sandbox-profile fields instead of
+	// inventing a generic capture posture.
+	//
+	// SpawnSpec is reused deliberately. The stopped-agent resume path and this
+	// headless path must not grow parallel representations that silently drop a
+	// newly-added sandbox field.
+	LaunchPosture *SpawnSpec
+	// Ephemeral prevents the one-shot consultation from appending another turn
+	// to the resumed conversation. It is a séance lifecycle property, separate
+	// from LaunchPosture: the predecessor keeps its recorded authority while
+	// remaining retired.
+	Ephemeral bool
 	// Prompt is the question, already assembled by the caller (it folds in
 	// any piped stdin payload). The Asker emits it as the harness's single
 	// positional prompt argument, shell-quoted, so it is never split into

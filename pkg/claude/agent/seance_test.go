@@ -14,7 +14,7 @@ import (
 func stubSeanceDaemon(
 	t *testing.T,
 	resp seanceResolveResp,
-	request func(map[string]any),
+	request func(string, map[string]any, DaemonOpts),
 	requestErr error,
 ) {
 	t.Helper()
@@ -23,19 +23,30 @@ func stubSeanceDaemon(
 		DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq
 	})
 	DaemonAvailableImpl = func() bool { return true }
-	DaemonRequestImpl = func(method, path string, in, out any, _ DaemonOpts) error {
+	DaemonRequestImpl = func(method, path string, in, out any, opts DaemonOpts) error {
 		require.Equal(t, http.MethodPost, method)
-		require.Equal(t, "/v1/whoami/seance", path)
 		body, ok := in.(map[string]any)
 		require.True(t, ok, "request body type = %T", in)
 		if request != nil {
-			request(body)
+			request(path, body, opts)
 		}
 		if requestErr != nil {
 			return requestErr
 		}
-		*(out.(*seanceResolveResp)) = resp
-		return nil
+		switch path {
+		case "/v1/whoami/seance":
+			*(out.(*seanceResolveResp)) = resp
+			return nil
+		case "/v1/whoami/seance/run":
+			*(out.(*seanceRunResp)) = seanceRunResp{
+				Answer:      "It was a nil session token on resume.\n",
+				Predecessor: resp.Predecessor,
+				Harness:     resp.Harness,
+			}
+			return nil
+		default:
+			return &DaemonError{Status: http.StatusNotFound, Code: "not_found", Msg: path}
+		}
 	}
 }
 
@@ -87,7 +98,10 @@ func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
 		Cwd:         cwd,
 		Hops:        2,
 		Requested:   3,
-	}, func(body map[string]any) {
+		Sandbox:     "off",
+		Approval:    "auto",
+	}, func(path string, body map[string]any, _ DaemonOpts) {
+		assert.Equal(t, "/v1/whoami/seance", path)
 		assert.Equal(t, "agt_deadbeef", body["target"])
 		assert.Equal(t, 3, body["back"])
 	}, nil)
@@ -104,32 +118,33 @@ func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
 	out := stdout.String()
 	assert.Contains(t, out, "--resume "+dead, "resumes the dead conv")
 	assert.Contains(t, out, "-p", "headless print mode")
+	assert.Contains(t, out, "--no-session-persistence", "does not mutate the dead conversation")
+	assert.Contains(t, out, "--permission-mode auto", "shows the recorded approval posture")
+	assert.Contains(t, out, `"enabled":false`, "shows the recorded sandbox posture")
 	assert.Contains(t, out, "cwd:         "+cwd, "resumes from the predecessor's launch dir")
 	assert.Contains(t, out, "what was the auth bug", "carries the question")
 	assert.Contains(t, stderr.String(), "chain is only 2 generation(s) deep")
 }
 
-// The actual-run path builds the right plan and hands the captured
-// answer back to the caller's stdout — verified through the swappable
-// seanceRun boundary so no real harness is spawned.
-func TestSeance_Run_InvokesRunnerWithResumePlan(t *testing.T) {
+// The actual-run path pins execution to the exact planned generation and asks
+// agentd to cross the managed-sandbox boundary. No local harness subprocess is
+// spawned by this CLI.
+func TestSeance_Run_InvokesDaemonWithPinnedResumePlan(t *testing.T) {
 	const dead = "99999999-1111-1111-1111-111111111111"
 	cwd := t.TempDir()
+	var runBody map[string]any
+	var runOpts DaemonOpts
 	stubSeanceDaemon(t, seanceResolveResp{
 		Predecessor: dead,
 		Harness:     "claude",
 		Cwd:         cwd,
 		Exact:       true,
-	}, nil, nil)
-
-	var captured seancePlan
-	prev := seanceRun
-	seanceRun = func(p seancePlan) error {
-		captured = p
-		_, _ = p.Stdout.Write([]byte("It was a nil session token on resume.\n"))
-		return nil
-	}
-	t.Cleanup(func() { seanceRun = prev })
+	}, func(path string, body map[string]any, opts DaemonOpts) {
+		if path == "/v1/whoami/seance/run" {
+			runBody = body
+			runOpts = opts
+		}
+	}, nil)
 
 	var stdout, stderr bytes.Buffer
 	rc := runSeance(&seanceParams{
@@ -139,9 +154,11 @@ func TestSeance_Run_InvokesRunnerWithResumePlan(t *testing.T) {
 	}, strings.NewReader(""), &stdout, &stderr)
 	require.Equal(t, rcOK, rc, "rc; stderr=%s", stderr.String())
 
-	assert.Equal(t, cwd, captured.Cwd, "runs in the predecessor's launch dir")
-	assert.Equal(t, 30*time.Second, captured.Timeout, "honours --timeout")
-	assert.Contains(t, strings.Join(captured.Argv, " "), "--resume "+dead, "resume argv")
+	require.NotNil(t, runBody, "billable run request was sent")
+	assert.Equal(t, dead, runBody["target"], "execution is pinned to the planned exact generation")
+	assert.Equal(t, "what did you learn?", runBody["question"])
+	assert.Equal(t, int64((30 * time.Second).Milliseconds()), runBody["timeout_ms"])
+	assert.Equal(t, 30*time.Second+30*time.Second, runOpts.Timeout, "HTTP deadline outlives harness timeout")
 	assert.Contains(t, stdout.String(), "nil session token", "answer reaches the successor")
 }
 
