@@ -228,11 +228,16 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "blocked"), []byte("no"), 0o600); err == nil {
 		t.Fatal("write outside the allowed root unexpectedly succeeded")
 	}
+	deniedRootWrite := filepath.Join(filepath.Dir(outside), "blocked-at-denied-root")
+	err := os.WriteFile(deniedRootWrite, []byte("must-fail"), 0o600)
+	require.Error(t, err, "the topmost denied-root tmpfs must reject writes")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"denied-root tmpfs write must fail with EROFS, got %v", err)
 	// The parent of the smoke fixture is auto-created in the isolated
 	// posture's constructed tmpfs root but is not itself an explicit mount.
 	// It must be read-only rather than accepting another throwaway write.
 	unboundRootWrite := filepath.Join(filepath.Dir(filepath.Dir(outside)), "tclaude-sandbox-v2-phantom")
-	err := os.WriteFile(unboundRootWrite, []byte("must-fail"), 0o600)
+	err = os.WriteFile(unboundRootWrite, []byte("must-fail"), 0o600)
 	require.Error(t, err, "the constructed root must reject writes to unbound paths")
 	assert.True(t, errors.Is(err, syscall.EROFS),
 		"constructed-root write must fail with EROFS, got %v", err)
@@ -249,8 +254,14 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	hiddenWrite := filepath.Join(filepath.Dir(protectedFile), "phantom")
 	err = os.WriteFile(hiddenWrite, []byte("must-fail"), 0o600)
 	require.Error(t, err, "a hidden path must reject writes instead of accepting phantom state")
-	assert.True(t, errors.Is(err, syscall.EROFS),
-		"hidden-path write must fail with EROFS, got %v", err)
+	assert.True(t, errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.EROFS),
+		"hidden-path write must fail with ENOENT or EROFS, got %v", err)
+	if !protectedReadable {
+		err = os.MkdirAll(filepath.Dir(protectedFile), 0o700)
+		require.Error(t, err, "an ancestor-denied protected path must not be creatable")
+		assert.True(t, errors.Is(err, syscall.EROFS),
+			"ancestor-denied protected path creation must fail with EROFS, got %v", err)
+	}
 	if conn, err := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); err == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite the final applier hide")
