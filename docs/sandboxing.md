@@ -136,12 +136,14 @@ is disabled inside the wrapper for now; a later workstream will define when
 nested sandboxes may be stacked.
 
 The layer starts with a read-only view of the host root, gives `/dev`, `/proc`,
-and `/tmp` fresh sandbox views, then applies the resolved profile's ordered
-mount plan. Later entries shadow earlier entries, so a more-specific allow can
-reopen beneath a deny and a more-specific deny can hide beneath an allow.
-Missing read/write bind sources are skipped without creating anything on the
-host; hide entries are still applied. A profile with a non-inherited network
-posture is refused in this filesystem-only slice.
+and `/tmp` fresh sandbox views, then hides tclaude's protected state roots
+before applying the resolved profile's ordered mount plan. The plan may contain
+an acknowledged break-glass reopen, so this order is load-bearing. Later
+entries shadow earlier entries, allowing a more-specific allow to reopen
+beneath a deny and a more-specific deny to hide beneath an allow. Missing
+read/write bind sources are skipped without creating anything on the host; hide
+entries are still applied. A profile with a non-inherited network posture is
+refused in this filesystem-only slice.
 
 ## The shape that does the work: deny + reopen
 

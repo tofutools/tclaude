@@ -23,6 +23,7 @@ const (
 	smokeOutsideEnv            = "TCLAUDE_SANDBOX_V2_OUTSIDE"
 	smokeSocketEnv             = "TCLAUDE_SANDBOX_V2_SOCKET"
 	smokeAliasFileEnv          = "TCLAUDE_SANDBOX_V2_ALIAS_FILE"
+	smokeProtectedFileEnv      = "TCLAUDE_SANDBOX_V2_PROTECTED_FILE"
 )
 
 func TestTclaudeLayerHostSmoke(t *testing.T) {
@@ -45,10 +46,18 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	outside := filepath.Join(root, "outside")
 	realTools := filepath.Join(root, "real-tools")
 	aliasTools := filepath.Join(root, "alias-tools")
-	socket := filepath.Join(root, "home", ".tclaude", "api", "agentd.sock")
-	for _, dir := range []string{allowed, outside, realTools, filepath.Dir(socket)} {
+	smokeHome := filepath.Join(root, "home")
+	socket := filepath.Join(smokeHome, ".tclaude", "api", "agentd.sock")
+	protectedDir := filepath.Join(smokeHome, ".tclaude", "data")
+	protectedFile := filepath.Join(protectedDir, "private")
+	for _, dir := range []string{
+		allowed, outside, realTools, filepath.Dir(socket), protectedDir,
+		filepath.Join(smokeHome, ".claude", "sessions"),
+	} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
+	t.Setenv("HOME", smokeHome)
+	require.NoError(t, os.WriteFile(protectedFile, []byte("must-stay-hidden"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(realTools, "probe"), []byte("alias-ok"), 0o600))
 	require.NoError(t, os.Symlink(realTools, aliasTools))
 	// `go test` normally places its executable under /tmp, which this layer
@@ -103,6 +112,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		smokeOutsideEnv+"="+outside,
 		smokeSocketEnv+"="+socket,
 		smokeAliasFileEnv+"="+filepath.Join(aliasTools, "probe"),
+		smokeProtectedFileEnv+"="+protectedFile,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -125,6 +135,7 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	outside := os.Getenv(smokeOutsideEnv)
 	socket := os.Getenv(smokeSocketEnv)
 	aliasFile := os.Getenv(smokeAliasFileEnv)
+	protectedFile := os.Getenv(smokeProtectedFileEnv)
 
 	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600))
 	if err := os.WriteFile(filepath.Join(outside, "blocked"), []byte("no"), 0o600); err == nil {
@@ -133,6 +144,9 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	got, err := os.ReadFile(aliasFile)
 	require.NoError(t, err, "symlink alias must remain usable through the read-only base root")
 	assert.Equal(t, "alias-ok", string(got))
+	if _, err := os.ReadFile(protectedFile); err == nil {
+		t.Fatal("protected tclaude state unexpectedly remained readable")
+	}
 
 	conn, err := net.DialTimeout("unix", socket, 5*time.Second)
 	require.NoErrorf(t, err, "connect to agentd-style socket %s", socket)

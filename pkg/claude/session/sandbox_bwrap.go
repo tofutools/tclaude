@@ -50,6 +50,18 @@ func bwrapArgs(plan sandboxpolicy.MountPlan) ([]string, error) {
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	}
+	// EffectiveProfile deliberately excludes the protected-root baseline:
+	// ordinary rules may never name these paths, while acknowledged
+	// break-glass reopens arrive later in the plan. Establish the hides first
+	// so normal launches cannot read private control/harness state and the
+	// ordered plan can still reopen exactly what was acknowledged.
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
+	}
+	for _, root := range protectedRoots {
+		args = append(args, "--tmpfs", root)
+	}
 	for i, entry := range plan.Entries {
 		path := filepath.Clean(entry.Path)
 		if path == "." || !filepath.IsAbs(path) {

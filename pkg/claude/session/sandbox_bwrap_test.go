@@ -87,6 +87,44 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 	assert.NotContains(t, got, missing+"-rw")
 }
 
+func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, relative := range []string{filepath.Join(".tclaude", "data"), filepath.Join(".claude", "sessions")} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.Len(t, protected, 2)
+
+	plan := sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+		{Path: protected[0], Mode: sandboxpolicy.MountRO},
+		{Path: protected[1], Mode: sandboxpolicy.MountRW},
+	}}
+	got, err := bwrapArgs(plan)
+	require.NoError(t, err)
+
+	hide0 := indexOfBwrapTriplet(got, "--tmpfs", protected[0])
+	hide1 := indexOfBwrapTriplet(got, "--tmpfs", protected[1])
+	reopen0 := indexOfBwrapTriplet(got, "--ro-bind", protected[0])
+	reopen1 := indexOfBwrapTriplet(got, "--bind", protected[1])
+	require.NotEqual(t, -1, hide0)
+	require.NotEqual(t, -1, hide1)
+	require.NotEqual(t, -1, reopen0)
+	require.NotEqual(t, -1, reopen1)
+	assert.Less(t, hide0, reopen0, "baseline hide must precede the acknowledged read reopen")
+	assert.Less(t, hide1, reopen1, "baseline hide must precede the acknowledged write reopen")
+}
+
+func indexOfBwrapTriplet(args []string, flag, path string) int {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == path {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 	_, err := bwrapArgs(sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "relative", Mode: sandboxpolicy.MountRW},
