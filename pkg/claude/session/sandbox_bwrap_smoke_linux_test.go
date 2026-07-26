@@ -154,7 +154,11 @@ func runTclaudeLayerSmokeHelper(
 	allowed, outside, aliasFile, protectedFile, tmuxSocket, tclaudeBinary string,
 ) {
 	t.Helper()
-	args, err := bwrapArgs(phase0WriteDirs, plan)
+	var breakGlassPaths []string
+	if protectedReadable {
+		breakGlassPaths = []string{filepath.Dir(protectedFile)}
+	}
+	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()

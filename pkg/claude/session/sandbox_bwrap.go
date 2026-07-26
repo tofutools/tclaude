@@ -65,13 +65,20 @@ func WrapTclaudeLayer(
 	); err != nil {
 		return "", err
 	}
-	return bwrapCommand(binary, phase0WriteDirs, plan, harnessCommand)
+	breakGlassPaths := make([]string, 0, len(effective.BreakGlassFilesystem))
+	for _, grant := range effective.BreakGlassFilesystem {
+		breakGlassPaths = append(breakGlassPaths, grant.Path)
+	}
+	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
 }
 
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed
 // bubblewrap hygiene. Policy/profile interpretation belongs before this
 // boundary.
-func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string, error) {
+func bwrapArgs(
+	phase0WriteDirs, breakGlassPaths []string,
+	plan sandboxpolicy.MountPlan,
+) ([]string, error) {
 	args := []string{
 		"--die-with-parent",
 		// Give the wrapped process a new terminal session so a copied tmux
@@ -117,8 +124,23 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
 	}
+	for _, writeDir := range phase0WriteDirs {
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.PathContainsOrEqual(protected, writeDir) {
+				return nil, fmt.Errorf(
+					"tclaude-layer launch-contract path %q is at or below protected root %q",
+					writeDir,
+					protected,
+				)
+			}
+		}
+	}
 	for _, root := range protectedRoots {
 		args = append(args, "--tmpfs", root)
+	}
+	breakGlass := make(map[string]bool, len(breakGlassPaths))
+	for _, path := range breakGlassPaths {
+		breakGlass[filepath.Clean(path)] = true
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
 	// reorder or deduplicate plan entries; they preserve the higher-precedence
@@ -138,6 +160,9 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 				continue
 			}
 			args = append(args, "--ro-bind", path, path)
+			if !breakGlass[path] {
+				args = appendTclaudeLayerProtectedRehides(args, path, protectedRoots)
+			}
 		case sandboxpolicy.MountRW:
 			exists, err := bwrapBindSourceExists(path)
 			if err != nil {
@@ -147,6 +172,9 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 				continue
 			}
 			args = append(args, "--bind", path, path)
+			if !breakGlass[path] {
+				args = appendTclaudeLayerProtectedRehides(args, path, protectedRoots)
+			}
 		case sandboxpolicy.MountHide:
 			args = append(args, "--tmpfs", path)
 			args = appendTclaudeLayerContractRepairs(
@@ -169,6 +197,20 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 	}
 	args = append(args, "--tmpfs", tmuxSocketDir)
 	return args, nil
+}
+
+func appendTclaudeLayerProtectedRehides(
+	args []string,
+	mountedPath string,
+	protectedRoots []string,
+) []string {
+	for _, protected := range protectedRoots {
+		if sandboxpolicy.PathContainsOrEqual(mountedPath, protected) ||
+			sandboxpolicy.PathContainsOrEqual(protected, mountedPath) {
+			args = append(args, "--tmpfs", protected)
+		}
+	}
+	return args
 }
 
 func appendTclaudeLayerContractRepairs(
@@ -296,8 +338,13 @@ func bwrapBindSourceExists(path string) (bool, error) {
 	}
 }
 
-func bwrapCommand(binary string, phase0WriteDirs []string, plan sandboxpolicy.MountPlan, harnessCommand string) (string, error) {
-	args, err := bwrapArgs(phase0WriteDirs, plan)
+func bwrapCommand(
+	binary string,
+	phase0WriteDirs, breakGlassPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+) (string, error) {
+	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan)
 	if err != nil {
 		return "", err
 	}

@@ -64,7 +64,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := bwrapArgs(nil, tc.plan)
+			got, err := bwrapArgs(nil, nil, tc.plan)
 			require.NoError(t, err)
 			require.GreaterOrEqual(t, len(got), len(tc.want))
 			tmuxHide := len(got) - 2
@@ -79,7 +79,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 
 func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-created")
-	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: missing + "-ro", Mode: sandboxpolicy.MountRO},
 		{Path: missing + "-rw", Mode: sandboxpolicy.MountRW},
 		{Path: missing + "-hide", Mode: sandboxpolicy.MountHide},
@@ -104,7 +104,7 @@ func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
 		{Path: protected[0], Mode: sandboxpolicy.MountRO},
 		{Path: protected[1], Mode: sandboxpolicy.MountRW},
 	}}
-	got, err := bwrapArgs(nil, plan)
+	got, err := bwrapArgs(nil, protected, plan)
 	require.NoError(t, err)
 
 	hide0 := indexOfBwrapTriplet(got, "--tmpfs", protected[0])
@@ -126,7 +126,7 @@ func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(tmuxSocketDir, 0o700))
 
-	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: tmuxBase, Mode: sandboxpolicy.MountRW},
 		{Path: tmuxSocketDir, Mode: sandboxpolicy.MountRW},
 	}})
@@ -166,7 +166,7 @@ func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	}, effective)
 	require.NoError(t, err)
 
-	got, err := bwrapArgs(phase0, sandboxpolicy.MountPlan{})
+	got, err := bwrapArgs(phase0, nil, sandboxpolicy.MountPlan{})
 	require.NoError(t, err)
 	stateBind := indexOfBwrapTriplet(got, "--bind", claudeRoot)
 	workspaceBind := indexOfBwrapTriplet(got, "--bind", workspace)
@@ -190,7 +190,7 @@ func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
 	breakGlass := filepath.Join(protectedRoot, "approved")
 	require.NoError(t, os.MkdirAll(breakGlass, 0o700))
 
-	got, err := bwrapArgs([]string{stateRoot}, sandboxpolicy.MountPlan{
+	got, err := bwrapArgs([]string{stateRoot}, []string{breakGlass}, sandboxpolicy.MountPlan{
 		Entries: []sandboxpolicy.MountEntry{
 			{Path: home, Mode: sandboxpolicy.MountHide},
 			{Path: breakGlass, Mode: sandboxpolicy.MountRO},
@@ -211,6 +211,51 @@ func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
 	assert.Less(t, stateBinds[1], protectedHides[1])
 	assert.Less(t, protectedHides[1], breakGlassReopen,
 		"acknowledged break-glass must remain the only plan authority that beats a protected hide")
+}
+
+func TestBwrapArgsGeneratedHomeWriteRehidesProtectedRoots(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".claude")
+	claudeProtected := filepath.Join(stateRoot, "sessions")
+	tclaudeProtected := filepath.Join(home, ".tclaude", "data")
+	for _, path := range []string{claudeProtected, tclaudeProtected} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+
+	got, err := bwrapArgs(
+		[]string{stateRoot, home},
+		nil,
+		sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
+			Path: home, Mode: sandboxpolicy.MountRW,
+		}}},
+	)
+	require.NoError(t, err)
+
+	homeBinds := indicesOfBwrapTriplet(got, "--bind", home)
+	claudeHides := indicesOfBwrapTriplet(got, "--tmpfs", claudeProtected)
+	tclaudeHides := indicesOfBwrapTriplet(got, "--tmpfs", tclaudeProtected)
+	require.Len(t, homeBinds, 2, "the generated plan contains the workspace/Home reopen")
+	require.Len(t, claudeHides, 2)
+	require.Len(t, tclaudeHides, 2)
+	assert.Less(t, homeBinds[1], claudeHides[1])
+	assert.Less(t, homeBinds[1], tclaudeHides[1],
+		"generated launch grants must not acquire protected authority")
+}
+
+func TestBwrapArgsRefusesLaunchContractInsideProtectedRoot(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".claude")
+	protectedRoot := filepath.Join(stateRoot, "sessions")
+	workspace := filepath.Join(protectedRoot, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+
+	_, err = bwrapArgs([]string{stateRoot, workspace}, nil, sandboxpolicy.MountPlan{})
+	require.ErrorContains(t, err, workspace)
+	require.ErrorContains(t, err, protectedRoot)
 }
 
 func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
@@ -271,12 +316,12 @@ func indicesOfBwrapTriplet(args []string, flag, path string) []int {
 }
 
 func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
-	_, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "relative", Mode: sandboxpolicy.MountRW},
 	}})
 	require.ErrorContains(t, err, "non-absolute")
 
-	_, err = bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	_, err = bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "/work", Mode: sandboxpolicy.MountMode(99)},
 	}})
 	require.ErrorContains(t, err, "invalid mode")
@@ -284,7 +329,7 @@ func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 
 func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "uninitialized-entry")
-	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: path},
 	}})
 	require.NoError(t, err)
@@ -292,7 +337,7 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
-	got, err := bwrapCommand("/usr/bin/bwrap", nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
+	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")

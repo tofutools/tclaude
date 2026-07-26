@@ -175,6 +175,18 @@ Two limitations are explicit in this experimental slice:
   coordination through the separate `~/.tclaude/api/agentd.sock` remains
   available and is covered by the Linux host smoke.
 
+The CI smoke reports a visible skip when its runner cannot create an
+unprivileged user/mount namespace. Run the fallback on a compatible Linux host
+with `bwrap` installed:
+
+```bash
+mkdir -p "$HOME/.cache/tclaude"
+go build -o "$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" .
+TCLAUDE_SANDBOX_V2_SMOKE=1 \
+  TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
+  go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+```
+
 ## The shape that does the work: deny + reopen
 
 There is exactly one mechanism, the profile's `filesystem` table. Strictness is
