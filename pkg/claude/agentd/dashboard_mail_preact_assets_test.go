@@ -90,3 +90,19 @@ func TestDashboardViewMessagesOpensFirstMessage(t *testing.T) {
 		t.Fatalf("openMailbox selection steps are out of order:\n%s", openMailbox)
 	}
 }
+
+func TestDashboardMessagesScrollbarsThemed(t *testing.T) {
+	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
+
+	for _, want := range []string{
+		"scrollbar-color: #3a4553 #161b22;",
+		".mail-sidebar::-webkit-scrollbar-thumb,",
+		".mail-reader::-webkit-scrollbar-thumb:hover { background: #4d5866; }",
+		"body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }",
+		"body.wizard .mail-reader::-webkit-scrollbar-corner { background: #140f28; }",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("Messages scrollbar theming missing %q", want)
+		}
+	}
+}
