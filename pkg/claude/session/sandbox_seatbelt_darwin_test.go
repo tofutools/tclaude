@@ -60,6 +60,35 @@ func TestResolveTclaudeLayerDarwinRefusesMissingOrBrokenSeatbelt(t *testing.T) {
 	require.ErrorContains(t, err, "deny-write capability")
 }
 
+func TestTclaudeLayerHostAvailabilityDarwinUsesSeatbeltCapability(t *testing.T) {
+	oldStat := statDarwinSeatbelt
+	oldProbe := probeDarwinSeatbelt
+	t.Cleanup(func() {
+		statDarwinSeatbelt = oldStat
+		probeDarwinSeatbelt = oldProbe
+	})
+
+	executable, err := os.Stat(os.Args[0])
+	require.NoError(t, err)
+	statDarwinSeatbelt = func(path string) (os.FileInfo, error) {
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return executable, nil
+	}
+	probed := false
+	probeDarwinSeatbelt = func(path string) error {
+		probed = true
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return nil
+	}
+	require.NoError(t, TclaudeLayerHostAvailability())
+	assert.True(t, probed, "availability must execute the same deny-write probe as launch")
+
+	probeDarwinSeatbelt = func(string) error {
+		return errors.New("deny probe failed")
+	}
+	require.ErrorContains(t, TclaudeLayerHostAvailability(), "deny-write capability")
+}
+
 func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) {
 	got := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", got.State)

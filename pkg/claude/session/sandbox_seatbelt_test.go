@@ -111,6 +111,9 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
     (require-not (literal (param "READ_DENY_4_REOPEN_0")))
     (require-not (subpath (param "READ_DENY_4_REOPEN_0")))
   ))
+
+(deny network-outbound
+  (remote unix-socket (subpath (param "TMUX_SOCKET_DENY_0"))))
 `
 	if got != want {
 		t.Fatalf("Seatbelt profile golden mismatch\nparams: %#v\nprofile:\n%s", params, got)

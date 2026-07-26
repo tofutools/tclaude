@@ -29,6 +29,7 @@ type seatbeltRegion struct {
 	path   string
 	mode   sandboxpolicy.MountMode
 	policy bool
+	tmux   bool
 }
 
 type seatbeltRegionNode struct {
@@ -172,6 +173,7 @@ func renderSeatbeltProfile(
 	ordered = append(ordered, seatbeltRegion{
 		path: tmuxSocketDir,
 		mode: sandboxpolicy.MountHide,
+		tmux: true,
 	})
 
 	ordered, err = expandSeatbeltAliasRegions(ordered, plan.Aliases)
@@ -373,6 +375,7 @@ func expandSeatbeltAliasRegions(
 				path:   path,
 				mode:   region.mode,
 				policy: region.policy,
+				tmux:   region.tmux,
 			})
 		}
 	}
@@ -527,6 +530,26 @@ func compileSeatbeltDenyRegions(
 			false,
 			runtimeTempDir,
 		)
+	}
+	tmuxSocketRules := make([]int, 0, 1)
+	for i, node := range nodes {
+		if node.tmux {
+			tmuxSocketRules = append(tmuxSocketRules, i)
+		}
+	}
+	sort.Slice(tmuxSocketRules, func(i, j int) bool {
+		return nodes[tmuxSocketRules[i]].path < nodes[tmuxSocketRules[j]].path
+	})
+	for index, nodeIndex := range tmuxSocketRules {
+		name := fmt.Sprintf("TMUX_SOCKET_DENY_%d", index)
+		params = append(params, seatbeltProfileParam{
+			name: name,
+			path: nodes[nodeIndex].path,
+		})
+		profile.WriteString("\n(deny network-outbound\n")
+		profile.WriteString("  (remote unix-socket (subpath (param \"")
+		profile.WriteString(name)
+		profile.WriteString("\"))))\n")
 	}
 	return profile.String(), params
 }
