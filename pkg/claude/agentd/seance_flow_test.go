@@ -800,13 +800,18 @@ func TestSeanceRun_ConcurrencyIsBounded(t *testing.T) {
 		body   string
 	}
 	done := make(chan outcome, 2)
+	requests := make([]*http.Request, 0, 2)
 	for range 2 {
-		go func() {
-			_, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		requests = append(requests, agentd.AsAgentPeer(testharness.JSONRequest(t,
+			http.MethodPost, "/v1/whoami/seance/run", map[string]any{
 				"target": oldConv, "question": "hold",
-			})
-			done <- outcome{status: status, body: body}
-		}()
+			}), newConv))
+	}
+	for _, req := range requests {
+		go func(req *http.Request) {
+			rec := testharness.Serve(f.Mux, req)
+			done <- outcome{status: rec.Code, body: rec.Body.String()}
+		}(req)
 	}
 	<-entered
 	<-entered

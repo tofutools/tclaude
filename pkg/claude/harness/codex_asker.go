@@ -38,6 +38,7 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 	argv := []string{"codex"}
 
 	if spec.Print {
+		hasLaunchContainment := false
 		if posture := spec.LaunchPosture; posture != nil {
 			// These are top-level Codex options, so they must precede `exec`.
 			// `exec resume` lacks its own --sandbox/--ask-for-approval/-p
@@ -45,8 +46,10 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 			// the interactive resume used for a stopped agent.
 			if posture.PermissionProfile != "" {
 				argv = append(argv, "-p", posture.PermissionProfile)
+				hasLaunchContainment = true
 			} else if posture.SandboxMode != "" {
 				argv = append(argv, "--sandbox", posture.SandboxMode)
+				hasLaunchContainment = true
 			}
 			if posture.ApprovalPolicy != "" {
 				argv = append(argv, "--ask-for-approval", posture.ApprovalPolicy)
@@ -76,10 +79,12 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 		// anywhere). exec/exec-resume both accept this; the TUI handles a
 		// non-git cwd interactively instead.
 		argv = append(argv, "--skip-git-repo-check")
-		if spec.LaunchPosture == nil {
+		if !hasLaunchContainment {
 			// Ordinary capture keeps its historical read-only posture. A
-			// brokered resume instead supplied the predecessor's recorded
-			// posture above.
+			// brokered resume instead supplies the predecessor's concrete
+			// recorded posture above. An accidentally empty-but-present
+			// posture narrows to the same safe fallback rather than inheriting
+			// potentially writable Codex defaults.
 			if spec.ResumeID != "" {
 				argv = append(argv, "-c", `sandbox_mode="`+SandboxReadOnly+`"`)
 			} else {

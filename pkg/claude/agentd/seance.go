@@ -209,9 +209,13 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 			"the resolved harness cannot execute a séance")
 		return
 	}
-	if h.Name == harness.OpenCodeName {
+	if !h.CanReplayOneShotLaunchPosture() {
+		detail := fmt.Sprintf("harness %q cannot yet reproduce a predecessor's launch posture in a one-shot headless resume", h.Name)
+		if h.ServerAuthoritative {
+			detail = fmt.Sprintf("harness %q cannot yet reproduce a predecessor's managed-server permission posture in a one-shot headless resume", h.Name)
+		}
 		writeError(w, http.StatusConflict, "unsupported_harness",
-			"OpenCode cannot yet reproduce a predecessor's managed-server permission posture in a one-shot headless resume")
+			detail)
 		return
 	}
 	model, err := h.Models.ValidateModel(req.Model)
@@ -236,7 +240,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	posture := resolved.launchPosture
 	profilePath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if h.Name == harness.CodexName {
+	if h.UsesCodexOneShotReplay() {
 		guardMode := posture.SandboxMode
 		if guardMode == harness.SandboxManagedProfile {
 			guardMode = harness.SandboxWorkspaceWrite
@@ -256,7 +260,7 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
+	if h.NeedsManagedProfileForOneShot(posture.SandboxMode) {
 		profileName, path, capability, profileErr := EnsureSeanceCodexProfile(
 			resolved.Cwd, session.GenerateSessionID(), resolved.effectiveSandbox)
 		if profileErr != nil {

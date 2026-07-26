@@ -61,6 +61,18 @@ func TestCodexAsker_BuildAskArgv(t *testing.T) {
 			"exec", "resume", "rid-safe", "--skip-git-repo-check", "--ephemeral",
 			"--", "remember?"})
 
+	// A non-nil posture with no concrete sandbox/profile is under-specified.
+	// Keep capture fail-safe by falling back to read-only rather than inheriting
+	// a potentially writable Codex default.
+	emptyPosture := SpawnSpec{}
+	eq("empty recorded posture falls back to read-only",
+		codexAsker{}.BuildAskArgv(AskSpec{
+			Print: true, LaunchPosture: &emptyPosture,
+			ResumeID: "rid-empty", Prompt: "remember?",
+		}),
+		[]string{"codex", "exec", "resume", "rid-empty", "--skip-git-repo-check",
+			"-c", `sandbox_mode="read-only"`, "--", "remember?"})
+
 	// Interactive fresh: the `codex` TUI, no sandbox/skip-git (human present),
 	// no `--` (it can suppress submit-at-launch), prompt trailing.
 	eq("interactive fresh",

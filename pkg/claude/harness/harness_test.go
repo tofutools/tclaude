@@ -69,12 +69,45 @@ func TestRegister_Roundtrip(t *testing.T) {
 // panicking — the safety property the injection call sites rely on.
 func TestSupports_NilContracts(t *testing.T) {
 	var h *Harness
-	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() {
+	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() ||
+		h.CanReplayOneShotLaunchPosture() {
 		t.Fatalf("nil harness must report no capabilities")
 	}
 	bare := &Harness{Name: "bare"}
-	if bare.SupportsRename() || bare.SupportsCompact() || bare.SupportsSoftExit() {
+	if bare.SupportsRename() || bare.SupportsCompact() || bare.SupportsSoftExit() ||
+		bare.CanReplayOneShotLaunchPosture() {
 		t.Fatalf("harness with nil Lifecycle must report no capabilities")
+	}
+	unknown := &Harness{Ask: codexAsker{}, OneShotReplay: OneShotReplayStrategy(255)}
+	if unknown.CanReplayOneShotLaunchPosture() {
+		t.Fatal("unknown one-shot replay strategies must fail closed")
+	}
+}
+
+func TestOneShotReplayCapabilityMatrix(t *testing.T) {
+	claude, err := Resolve(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex, err := Resolve(CodexName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opencode, err := Resolve(OpenCodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !claude.CanReplayOneShotLaunchPosture() || claude.UsesCodexOneShotReplay() {
+		t.Fatalf("unexpected Claude one-shot capability: %+v", claude)
+	}
+	if !codex.CanReplayOneShotLaunchPosture() || !codex.UsesCodexOneShotReplay() ||
+		!codex.NeedsManagedProfileForOneShot(SandboxManagedProfile) ||
+		codex.NeedsManagedProfileForOneShot(SandboxReadOnly) {
+		t.Fatalf("unexpected Codex one-shot capability: %+v", codex)
+	}
+	if opencode.CanReplayOneShotLaunchPosture() || opencode.UsesCodexOneShotReplay() {
+		t.Fatalf("OpenCode must fail closed until managed-server replay is implemented: %+v", opencode)
 	}
 }
 

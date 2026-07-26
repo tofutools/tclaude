@@ -24,13 +24,14 @@ import (
 // behavior change.
 func init() {
 	Register(&Harness{
-		Name:        DefaultName,
-		DisplayName: "Claude Code",
-		Spawn:       claudeSpawner{},
-		Ask:         claudeAsker{},
-		Models:      claudeModels{},
-		Life:        claudeLifecycle{},
-		Convs:       claudeConvStore{},
+		Name:          DefaultName,
+		DisplayName:   "Claude Code",
+		Spawn:         claudeSpawner{},
+		Ask:           claudeAsker{},
+		OneShotReplay: OneShotReplayDirect,
+		Models:        claudeModels{},
+		Life:          claudeLifecycle{},
+		Convs:         claudeConvStore{},
 		// Claude Code's OS sandbox lives in settings.json, not a launch flag;
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the
