@@ -499,7 +499,8 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 }
 
 func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
-	home := agentipctest.ShortSocketDir(t)
+	home, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	socket := agentipc.CanonicalSocketPath()
@@ -561,7 +562,8 @@ func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
 }
 
 func TestBwrapArgsProtectedHideBeatsAliasRepair(t *testing.T) {
-	home := agentipctest.ShortSocketDir(t)
+	home, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	socket := agentipc.CanonicalSocketPath()
