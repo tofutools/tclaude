@@ -178,9 +178,12 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
   // the operator reading this badge is deciding whether to trust the agent, and
   // a padlock on something nothing confines is worse than no padlock at all.
   const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
+  const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
   const partialLinuxTclaudeLayer = unverified
     && source.includes('ambient host Unix sockets reachable');
-  const caveat = partialDarwinTclaudeLayer
+  const caveat = partialDarwinIsolated
+    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem and network operations, but there is no PID isolation or constructed root, and hidden paths remain enumerable.`
+    : partialDarwinTclaudeLayer
     ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but hidden paths remain enumerable and the host network plus ambient Unix sockets remain reachable.`
     : partialLinuxTclaudeLayer
       ? ` ⚠ Partial fidelity: filesystem mounts are enforced, but ambient host Unix sockets remain connectable.`

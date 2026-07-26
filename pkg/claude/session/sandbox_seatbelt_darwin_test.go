@@ -30,10 +30,39 @@ func TestResolveTclaudeLayerDarwinRefusesUnsupportedNetworkBeforeProbe(t *testin
 		return nil
 	}
 
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
-	require.ErrorContains(t, err, "does not yet support network_access none")
+	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	require.ErrorContains(t, err, "does not support reserved filtered networking")
 	assert.Equal(t, "off", verdict.State)
 	assert.Equal(t, "tclaude-layer unavailable", verdict.Source)
+}
+
+func TestResolveTclaudeLayerDarwinAcceptsIsolatedNetwork(t *testing.T) {
+	oldStat := statDarwinSeatbelt
+	oldProbe := probeDarwinSeatbelt
+	t.Cleanup(func() {
+		statDarwinSeatbelt = oldStat
+		probeDarwinSeatbelt = oldProbe
+	})
+
+	executable, err := os.Stat(os.Args[0])
+	require.NoError(t, err)
+	statDarwinSeatbelt = func(path string) (os.FileInfo, error) {
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return executable, nil
+	}
+	probed := false
+	probeDarwinSeatbelt = func(path string) error {
+		probed = true
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return nil
+	}
+
+	binary, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
+	require.NoError(t, err)
+	assert.Equal(t, darwinSeatbeltExecutable, binary)
+	assert.True(t, probed)
+	assert.Equal(t, "on", verdict.State)
+	assert.Contains(t, verdict.Source, "isolated network")
 }
 
 func TestResolveTclaudeLayerDarwinRefusesMissingOrBrokenSeatbelt(t *testing.T) {
@@ -114,16 +143,26 @@ func TestDarwinSeatbeltCapabilityProbeHasDeadline(t *testing.T) {
 }
 
 func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) {
-	got := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
-	assert.Equal(t, "on", got.State)
+	hostOpen := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
+	assert.Equal(t, "on", hostOpen.State)
 	assert.Equal(t,
 		"tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; "+
 			"host network and ambient Unix sockets reachable; no mount namespace; "+
 			"hidden paths remain enumerable)",
-		got.Source,
+		hostOpen.Source,
 	)
-	assert.True(t, got.Unverified)
-	assert.NotContains(t, got.Source, "bubblewrap")
+	assert.True(t, hostOpen.Unverified)
+	assert.NotContains(t, hostOpen.Source, "bubblewrap")
+
+	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
+	assert.Equal(t, "on", isolated.State)
+	assert.Equal(t,
+		"tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; "+
+			"isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; "+
+			"no PID isolation; no constructed root; hidden paths remain enumerable)",
+		isolated.Source,
+	)
+	assert.True(t, isolated.Unverified)
 }
 
 func TestDarwinSeatbeltRuntimeTempDirRefusesNonstandardCarveout(t *testing.T) {

@@ -26,10 +26,11 @@ type seatbeltProfileParam struct {
 }
 
 type seatbeltRegion struct {
-	path         string
-	mode         sandboxpolicy.MountMode
-	policy       bool
-	unshadowable bool
+	path             string
+	mode             sandboxpolicy.MountMode
+	policy           bool
+	networkException bool
+	unshadowable     bool
 }
 
 type seatbeltRegionNode struct {
@@ -50,16 +51,23 @@ type seatbeltRegionNode struct {
 // narrower profile RO/hide still produces its own deny without those
 // exceptions, so runtime compatibility can never reopen an operator policy.
 func renderSeatbeltProfile(
-	phase0WriteDirs, requiredReadPaths, breakGlassPaths []string,
+	phase0WriteDirs, requiredAgentdSocketPaths, breakGlassPaths []string,
 	plan sandboxpolicy.MountPlan,
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam, error) {
-	if plan.NetworkPosture != sandboxpolicy.NetworkHostOpen {
+	switch plan.NetworkPosture {
+	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
+	case sandboxpolicy.NetworkFiltered:
 		return "", nil, fmt.Errorf(
-			"darwin tclaude-layer supports only host-open networking; network posture %s "+
-				"requires network/PID isolation, a constructed root, and per-socket allowlisting",
+			"darwin tclaude-layer does not support reserved filtered networking: "+
+				"network posture %s requires a proxy-backed network applier",
+			plan.NetworkPosture,
+		)
+	default:
+		return "", nil, fmt.Errorf(
+			"darwin tclaude-layer has invalid network posture %d",
 			plan.NetworkPosture,
 		)
 	}
@@ -102,12 +110,19 @@ func renderSeatbeltProfile(
 	for _, path := range contract {
 		ordered = append(ordered, seatbeltRegion{path: path, mode: sandboxpolicy.MountRW})
 	}
-	requiredRead, err := cleanSeatbeltPaths("required read", requiredReadPaths)
+	requiredAgentdSockets, err := cleanSeatbeltPaths(
+		"required agentd socket",
+		requiredAgentdSocketPaths,
+	)
 	if err != nil {
 		return "", nil, err
 	}
-	for _, path := range requiredRead {
-		ordered = append(ordered, seatbeltRegion{path: path, mode: sandboxpolicy.MountRO})
+	for _, path := range requiredAgentdSockets {
+		ordered = append(ordered, seatbeltRegion{
+			path:             path,
+			mode:             sandboxpolicy.MountRO,
+			networkException: true,
+		})
 	}
 	for _, path := range protected {
 		ordered = append(ordered, seatbeltRegion{path: path, mode: sandboxpolicy.MountHide})
@@ -151,16 +166,17 @@ func renderSeatbeltProfile(
 					)
 				}
 			}
-			for _, readPath := range requiredRead {
-				if !seatbeltSamePath(path, readPath, identity) &&
-					seatbeltPathContains(path, readPath, identity) {
+			for _, agentdSocket := range requiredAgentdSockets {
+				if !seatbeltSamePath(path, agentdSocket, identity) &&
+					seatbeltPathContains(path, agentdSocket, identity) {
 					ordered = append(ordered, seatbeltRegion{
-						path: readPath,
-						mode: sandboxpolicy.MountRO,
+						path:             agentdSocket,
+						mode:             sandboxpolicy.MountRO,
+						networkException: true,
 					})
 					ordered = appendSeatbeltProtectedRehides(
 						ordered,
-						readPath,
+						agentdSocket,
 						protected,
 						identity,
 					)
@@ -181,7 +197,12 @@ func renderSeatbeltProfile(
 		return "", nil, err
 	}
 	nodes := buildSeatbeltRegionTree(ordered, identity)
-	profile, params := compileSeatbeltDenyRegions(nodes, runtimeTempDir, identity)
+	profile, params := compileSeatbeltDenyRegions(
+		nodes,
+		runtimeTempDir,
+		plan.NetworkPosture,
+		identity,
+	)
 	return profile, params, nil
 }
 
@@ -372,10 +393,11 @@ func expandSeatbeltAliasRegions(
 		})
 		for _, path := range paths {
 			out = append(out, seatbeltRegion{
-				path:         path,
-				mode:         region.mode,
-				policy:       region.policy,
-				unshadowable: region.unshadowable,
+				path:             path,
+				mode:             region.mode,
+				policy:           region.policy,
+				networkException: region.networkException,
+				unshadowable:     region.unshadowable,
 			})
 		}
 	}
@@ -393,6 +415,10 @@ func buildSeatbeltRegionTree(
 		replaced := false
 		for i := range regions {
 			if seatbeltSamePath(regions[i].path, candidate.path, identity) {
+				if candidate.mode != sandboxpolicy.MountHide {
+					candidate.networkException = candidate.networkException ||
+						regions[i].networkException
+				}
 				regions[i] = candidate
 				replaced = true
 				break
@@ -446,6 +472,7 @@ func buildSeatbeltRegionTree(
 func compileSeatbeltDenyRegions(
 	nodes []seatbeltRegionNode,
 	runtimeTempDir string,
+	networkPosture sandboxpolicy.NetworkPosture,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
 	var profile strings.Builder
@@ -456,6 +483,9 @@ func compileSeatbeltDenyRegions(
 	profile.WriteString("; by a later allow rule.\n")
 
 	params := []seatbeltProfileParam{}
+	if networkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+		params = appendSeatbeltIsolatedNetworkRules(&profile, params, nodes)
+	}
 	writeRules := seatbeltDenyStarts(nodes, func(mode sandboxpolicy.MountMode) bool {
 		return mode != sandboxpolicy.MountRW
 	})
@@ -546,6 +576,63 @@ func compileSeatbeltDenyRegions(
 		)
 	}
 	return profile.String(), params
+}
+
+// appendSeatbeltIsolatedNetworkRules blocks every connection, listener, and
+// inbound flow except connect(2) to the parameterized agentd Unix socket
+// spellings. The exception belongs inside the deny predicate because a broad
+// Seatbelt deny cannot be reopened by a later allow.
+//
+// Do not replace these operations with network* or deny system-socket.
+// Creating an AF_UNIX socket descriptor is a pathless system-socket operation,
+// but socket creation is not connectivity; Linux isolated permits it too. A
+// network* deny would block the descriptor agentd needs and could not be
+// carved back open. network-outbound/network-bind/network-inbound are the
+// operations that enforce the actual boundary.
+func appendSeatbeltIsolatedNetworkRules(
+	profile *strings.Builder,
+	params []seatbeltProfileParam,
+	nodes []seatbeltRegionNode,
+) []seatbeltProfileParam {
+	exceptions := make([]int, 0, 1)
+	for index, node := range nodes {
+		if node.networkException && node.mode != sandboxpolicy.MountHide {
+			exceptions = append(exceptions, index)
+		}
+	}
+	sort.Slice(exceptions, func(i, j int) bool {
+		left := seatbeltFoldedPath(nodes[exceptions[i]].path)
+		right := seatbeltFoldedPath(nodes[exceptions[j]].path)
+		if left != right {
+			return left < right
+		}
+		return nodes[exceptions[i]].path < nodes[exceptions[j]].path
+	})
+
+	profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
+	profile.WriteString("; Only the parameterized agentd Unix socket spellings are excepted.\n")
+	profile.WriteString("(deny network-bind)\n")
+	profile.WriteString("(deny network-inbound)\n")
+	if len(exceptions) == 0 {
+		profile.WriteString("(deny network-outbound)\n")
+		return params
+	}
+	profile.WriteString("(deny network-outbound\n")
+	profile.WriteString("  (require-all\n")
+	for index, exception := range exceptions {
+		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
+		params = append(params, seatbeltProfileParam{
+			name: name,
+			path: nodes[exception].path,
+		})
+		profile.WriteString("    (require-not\n")
+		profile.WriteString("      (remote unix-socket\n")
+		profile.WriteString("        (literal (param \"")
+		profile.WriteString(name)
+		profile.WriteString("\"))))\n")
+	}
+	profile.WriteString("  ))\n")
+	return params
 }
 
 func seatbeltRuntimePolicyDenies(

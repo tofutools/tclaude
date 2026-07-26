@@ -38,6 +38,8 @@ const (
 	darwinSmokeTclaudeBinaryEnv     = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	darwinSmokeRestrictBaselineEnv  = "TCLAUDE_SANDBOX_V2_RESTRICT_BASELINE"
 	darwinSmokeExerciseBrokerEnv    = "TCLAUDE_SANDBOX_V2_EXERCISE_BROKER"
+	darwinSmokeNetworkIsolatedEnv   = "TCLAUDE_SANDBOX_V2_NETWORK_ISOLATED"
+	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
 	darwinSmokeHelperTestExpression = "^TestTclaudeLayerDarwinSmokeHelper$"
@@ -97,6 +99,9 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	policyListener, err := net.Listen("unix", policySocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = policyListener.Close() })
+	hostListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = hostListener.Close() })
 
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
@@ -165,6 +170,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		plan,
 		false,
 		true,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -175,6 +181,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
+		hostListener.Addr().String(),
 	)
 
 	state, err := LoadSessionState(darwinSmokeSessionID)
@@ -188,6 +195,30 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	assert.Equal(t, "Opus 5", snapshot.Model,
 		"the brokered status line must update the host context snapshot")
 	assert.Equal(t, "claude-opus-5", snapshot.ModelID)
+
+	isolatedPlan := plan
+	isolatedPlan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
+	runDarwinSeatbeltSmokeHelper(
+		t,
+		binary,
+		helperBinary,
+		phase0,
+		isolatedPlan,
+		false,
+		true,
+		true,
+		allowed,
+		outside,
+		readonly,
+		hidden,
+		filepath.Join(aliasTools, "probe"),
+		protectedFile,
+		policySocket,
+		tmuxSocket,
+		runtimeTempDir,
+		tclaudeBinary,
+		hostListener.Addr().String(),
+	)
 
 	// The compatibility paths pierce only the baseline deny. Adding explicit
 	// RO plan entries for /dev and TMPDIR must make the same writes fail.
@@ -210,6 +241,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		restrictedPlan,
 		true,
 		false,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -220,6 +252,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
+		hostListener.Addr().String(),
 	)
 }
 
@@ -228,9 +261,9 @@ func runDarwinSeatbeltSmokeHelper(
 	binary, helperBinary string,
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
-	restrictBaseline, exerciseBroker bool,
+	restrictBaseline, exerciseBroker, networkIsolated bool,
 	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, tmuxSocket,
-	runtimeTempDir, tclaudeBinary string,
+	runtimeTempDir, tclaudeBinary, hostListener string,
 ) {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
@@ -267,6 +300,8 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeTclaudeBinaryEnv+"="+tclaudeBinary,
 		darwinSmokeRestrictBaselineEnv+"="+boolString(restrictBaseline),
 		darwinSmokeExerciseBrokerEnv+"="+boolString(exerciseBroker),
+		darwinSmokeNetworkIsolatedEnv+"="+boolString(networkIsolated),
+		darwinSmokeHostListenerEnv+"="+hostListener,
 		darwinSmokeRuntimeTempDirEnv+"="+runtimeTempDir,
 		darwinSmokeInheritedFDEnv+"=3",
 		HookBrokerEnvVar+"="+HookBrokerAgentd,
@@ -294,6 +329,8 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	tclaudeBinary := os.Getenv(darwinSmokeTclaudeBinaryEnv)
 	restrictBaseline := os.Getenv(darwinSmokeRestrictBaselineEnv) == "1"
 	exerciseBroker := os.Getenv(darwinSmokeExerciseBrokerEnv) == "1"
+	networkIsolated := os.Getenv(darwinSmokeNetworkIsolatedEnv) == "1"
+	hostListener := os.Getenv(darwinSmokeHostListenerEnv)
 	runtimeTempDir := os.Getenv(darwinSmokeRuntimeTempDirEnv)
 	inheritedFD := os.Getenv(darwinSmokeInheritedFDEnv)
 
@@ -328,6 +365,33 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	if conn, dialErr := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); dialErr == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite class-4 deny")
+	}
+
+	require.NotEmpty(t, hostListener)
+	hostConn, hostDialErr := net.DialTimeout("tcp4", hostListener, 500*time.Millisecond)
+	if networkIsolated {
+		if hostDialErr == nil {
+			_ = hostConn.Close()
+			t.Fatal("darwin isolated posture reached a host-loopback listener")
+		}
+		assertSeatbeltEPERM(t, hostDialErr, "host-loopback TCP connect")
+
+		publicConn, publicDialErr := net.DialTimeout("tcp4", "1.1.1.1:53", 500*time.Millisecond)
+		if publicDialErr == nil {
+			_ = publicConn.Close()
+			t.Fatal("darwin isolated posture reached a public DNS endpoint")
+		}
+		assertSeatbeltEPERM(t, publicDialErr, "public-DNS TCP connect")
+
+		localListener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		if listenErr == nil {
+			_ = localListener.Close()
+			t.Fatal("darwin isolated posture created a host-loopback listener")
+		}
+		assertSeatbeltEPERM(t, listenErr, "host-loopback TCP bind")
+	} else {
+		require.NoError(t, hostDialErr, "host-open posture must retain host-loopback connectivity")
+		require.NoError(t, hostConn.Close())
 	}
 
 	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)

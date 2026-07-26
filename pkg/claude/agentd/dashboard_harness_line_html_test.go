@@ -120,6 +120,8 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("member.state?.os_sandbox_unverified", "the badge reads whether the verdict could be verified")
 	must("source.includes('Seatbelt/sandbox-exec')",
 		"the Darwin tclaude layer gets its own fidelity explanation")
+	must("source.includes('isolated network')",
+		"the Darwin isolated verdict does not reuse the host-open network caveat")
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
 

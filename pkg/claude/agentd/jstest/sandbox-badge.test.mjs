@@ -111,6 +111,18 @@ const CASES = [
     titleNot: [/filesystem mounts are enforced/, /could not read a settings file/],
   },
   {
+    name: 'the Darwin isolated tclaude layer reports its platform deltas without claiming host network access',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; no PID isolation; no constructed root; hidden paths remain enumerable)',
+      os_sandbox_unverified: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem and network operations/,
+      /no PID isolation or constructed root/, /hidden paths remain enumerable/],
+    titleNot: [/host network plus ambient Unix sockets remain reachable/, /could not read a settings file/],
+  },
+  {
     name: 'the experimental tclaude layer exposes its partial socket fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',

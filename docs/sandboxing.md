@@ -212,10 +212,13 @@ deny-only read/write regions whose predicates carve out the final narrower
 reopens. This is how a writable child beneath a hidden ancestor keeps the same
 later-shadows-earlier meaning as the Linux mount plan.
 
-The profile otherwise uses `allow default`: host networking, Mach services,
-and ambient Unix sockets retain their host behavior. The filesystem baseline is
-read-only, with narrow launch-contract write roots plus the Darwin process
-runtime paths (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical
+The profile otherwise uses `allow default`. In the host-open posture, host
+networking and ambient Unix sockets retain their host behavior. In the isolated
+posture, deny rules block outbound connections, listeners, and inbound network
+operations, with only the canonical agentd Unix socket and its surviving alias
+spellings excepted. Mach services remain outside this slice. The filesystem
+baseline is read-only, with narrow launch-contract write roots plus the Darwin
+process runtime paths (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical
 `$TMPDIR` beneath `/private/var/folders`). Those runtime exceptions apply only
 to the baseline; an operator-authored read-only or hidden region over one of
 them still wins. Protected tclaude/harness state and the tmux socket are denied
@@ -240,11 +243,12 @@ profiles may already have discarded their operator spelling; that separate
 limitation remains tracked by TCL-762.
 
 The launch badge deliberately reports the Darwin-specific partial boundary as
-unverified: Seatbelt filesystem policy is active, paths remain enumerable, and
-there is no mount namespace or socket/network isolation. `sandbox-exec` is
-deprecated but still functional and is the mechanism for this experimental
-slice. A future replacement would call libsandbox/`sandbox_init` directly; the
-fallback is not part of this slice.
+unverified. Seatbelt filesystem policy is active and paths remain enumerable.
+Host-open retains the host network and ambient Unix sockets; isolated blocks
+network operations except the agentd socket but still has no PID isolation or
+constructed root. `sandbox-exec` is deprecated but still functional and is the
+mechanism for this experimental slice. A future replacement would call
+libsandbox/`sandbox_init` directly; the fallback is not part of this slice.
 
 ### Isolated-with-agentd network posture
 
@@ -267,6 +271,20 @@ wraps the whole harness process, not only its tool executions:
   Home paths exist only where the launch contract or ordered profile plan binds
   them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
   launch-contract path.
+
+The isolated posture has an explicit platform delta:
+
+| Property | Linux (`bubblewrap`) | macOS (`Seatbelt`) |
+| --- | --- | --- |
+| Public and host-loopback connectivity | Unavailable outside the private network namespace | Refused by Seatbelt network operations |
+| Harness-internal localhost server | Works on the private namespace's own loopback | Refused: Darwin loopback is host loopback, so reopening it would also reopen the IDE-bridge/host-service surface |
+| Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
+| Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
+
+The stricter Darwin localhost behavior is deliberate. If a real harness later
+requires an internal localhost server, the remedy is a harness-descriptor
+capability plus launch-time refusal for Darwin isolated mode. It must not gain a
+loopback exception that silently reopens host services.
 
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep
