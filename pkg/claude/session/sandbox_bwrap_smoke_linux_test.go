@@ -227,6 +227,14 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "blocked"), []byte("no"), 0o600); err == nil {
 		t.Fatal("write outside the allowed root unexpectedly succeeded")
 	}
+	// The parent of the smoke fixture is auto-created in the isolated
+	// posture's constructed tmpfs root but is not itself an explicit mount.
+	// It must be read-only rather than accepting another throwaway write.
+	unboundRootWrite := filepath.Join(filepath.Dir(filepath.Dir(outside)), "tclaude-sandbox-v2-phantom")
+	err := os.WriteFile(unboundRootWrite, []byte("must-fail"), 0o600)
+	require.Error(t, err, "the constructed root must reject writes to unbound paths")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"constructed-root write must fail with EROFS, got %v", err)
 	got, err := os.ReadFile(aliasFile)
 	require.NoError(t, err, "symlink alias must remain usable through the read-only base root")
 	assert.Equal(t, "alias-ok", string(got))

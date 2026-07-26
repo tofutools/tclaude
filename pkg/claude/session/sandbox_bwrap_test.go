@@ -77,6 +77,8 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 			assert.NotContains(t, got, "--unshare-net")
 			assert.NotContains(t, got, "--unshare-pid")
 			assert.NotContains(t, got, "--unshare-ipc")
+			assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", "/"),
+				"host-open already inherits a read-only host root")
 		})
 	}
 }
@@ -440,7 +442,9 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	assert.NotContains(t, got, "--as-pid-1",
 		"bubblewrap must remain PID 1 so orphaned harness subprocesses are reaped")
 	rootTmpfs := indexOfBwrapTriplet(got, "--tmpfs", "/")
+	rootRemount := indexOfBwrapTriplet(got, "--remount-ro", "/")
 	require.NotEqual(t, -1, rootTmpfs)
+	require.NotEqual(t, -1, rootRemount)
 	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/"),
 		"isolated posture must not blanket-bind the host root")
 	for _, forbidden := range []string{"/run", "/var", "/srv", "/media", "/mnt", "/boot", "/root"} {
@@ -459,6 +463,8 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	require.Len(t, socketBinds, 2, "agentd socket must be rebound after an ordinary ancestor deny")
 	assert.Less(t, homeHide, stateRepairs[1])
 	assert.Less(t, homeHide, socketBinds[1])
+	assert.Less(t, socketBinds[1], rootRemount,
+		"all explicit child mounts must land before the constructed root becomes read-only")
 	assert.Less(t, stateRepairs[1], homeRemount)
 	assert.Less(t, socketBinds[1], homeRemount,
 		"the child socket bind must land before its hidden parent becomes read-only")

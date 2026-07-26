@@ -121,8 +121,10 @@ func WrapTclaudeLayer(
 // most-specific-wins mounts from landing. The deferred tracker records whether
 // a hide is still the topmost mount at its exact path; a later exact bind
 // cancels its pending remount, while child mounts survive because
-// --remount-ro is non-recursive. Class 4 is materialized and hardened only
-// after that flush, so host control remains the final, unshadowable phase.
+// --remount-ro is non-recursive. The isolated posture's constructed tmpfs root
+// joins the same flush so unbound paths cannot accept throwaway writes. Class 4
+// is materialized and hardened only after that flush, so host control remains
+// the final, unshadowable phase.
 func bwrapArgs(
 	phase0WriteDirs, breakGlassPaths []string,
 	plan sandboxpolicy.MountPlan,
@@ -147,7 +149,8 @@ func bwrapArgs(
 		// bubblewrap as PID 1 (do not use --as-pid-1) so it reaps orphaned
 		// harness subprocesses and host processes cannot reopen the host mount
 		// namespace through /proc/<pid>/root.
-		args = append(args, "--unshare-net", "--unshare-pid", "--tmpfs", "/")
+		args = append(args, "--unshare-net", "--unshare-pid")
+		args = hideRemounts.appendHide(args, "/")
 		var err error
 		args, err = appendTclaudeLayerStaticOSRoot(args)
 		if err != nil {
