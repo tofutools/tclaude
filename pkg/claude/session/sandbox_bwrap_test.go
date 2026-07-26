@@ -181,6 +181,58 @@ func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	assert.Less(t, agentBind, protectedHide)
 }
 
+func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".claude")
+	protectedRoot := filepath.Join(stateRoot, "sessions")
+	breakGlass := filepath.Join(protectedRoot, "approved")
+	require.NoError(t, os.MkdirAll(breakGlass, 0o700))
+
+	got, err := bwrapArgs([]string{stateRoot}, sandboxpolicy.MountPlan{
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: home, Mode: sandboxpolicy.MountHide},
+			{Path: breakGlass, Mode: sandboxpolicy.MountRO},
+		},
+	})
+	require.NoError(t, err)
+
+	homeHide := indexOfBwrapTriplet(got, "--tmpfs", home)
+	stateBinds := indicesOfBwrapTriplet(got, "--bind", stateRoot)
+	protectedHides := indicesOfBwrapTriplet(got, "--tmpfs", protectedRoot)
+	breakGlassReopen := indexOfBwrapTriplet(got, "--ro-bind", breakGlass)
+	require.NotEqual(t, -1, homeHide)
+	require.Len(t, stateBinds, 2, "the state root must be rebound after an ordinary ancestor deny")
+	require.Len(t, protectedHides, 2, "repairing the state root must restore its protected child hide")
+	require.NotEqual(t, -1, breakGlassReopen)
+	assert.Less(t, stateBinds[0], homeHide)
+	assert.Less(t, homeHide, stateBinds[1])
+	assert.Less(t, stateBinds[1], protectedHides[1])
+	assert.Less(t, protectedHides[1], breakGlassReopen,
+		"acknowledged break-glass must remain the only plan authority that beats a protected hide")
+}
+
+func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+	offending := sandboxpolicy.FilesystemGrant{
+		Path: stateRoot, Access: sandboxpolicy.AccessDeny,
+	}
+
+	_, err = WrapTclaudeLayer("/usr/bin/bwrap", sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{offending},
+	}, TclaudeLayerLaunchContract{
+		HarnessName:       harness.DefaultName,
+		ProfileFilesystem: []sandboxpolicy.FilesystemGrant{offending},
+	}, "agent")
+	require.ErrorContains(t, err, stateRoot)
+	require.ErrorContains(t, err, "cannot persist harness state")
+}
+
 func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
 	require.ErrorContains(t, ValidateTclaudeLayerHarness(harness.OpenCodeName), "runs outside the wrapped pane")
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.DefaultName))
@@ -206,6 +258,16 @@ func indexOfBwrapTriplet(args []string, flag, path string) int {
 		}
 	}
 	return -1
+}
+
+func indicesOfBwrapTriplet(args []string, flag, path string) []int {
+	var indices []int
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == path {
+			indices = append(indices, i)
+		}
+	}
+	return indices
 }
 
 func TestBwrapArgsRejectInvalidEntry(t *testing.T) {

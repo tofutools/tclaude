@@ -2541,14 +2541,19 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
 	if tclaudeLayer {
+		profileFilesystem := append(
+			[]sandboxpolicy.FilesystemGrant(nil),
+			effectiveProfile.Filesystem...,
+		)
 		effectiveProfile.Filesystem = renderedGrants
 		binary, _, resolveErr := session.ResolveTclaudeLayer()
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
 		cmd, err = session.WrapTclaudeLayer(binary, effectiveProfile, session.TclaudeLayerLaunchContract{
-			HarnessName: h.Name,
-			WriteDirs:   tclaudeLayerContractWriteDirs,
+			HarnessName:       h.Name,
+			WriteDirs:         tclaudeLayerContractWriteDirs,
+			ProfileFilesystem: profileFilesystem,
 		}, cmd)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)

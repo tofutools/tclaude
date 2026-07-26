@@ -138,15 +138,18 @@ is disabled inside the wrapper for now; a later workstream will define when
 nested sandboxes may be stacked.
 
 The layer starts with a read-only view of the host root and gives `/dev`,
-`/proc`, and `/tmp` fresh sandbox views. It then applies four load-bearing
-phases:
+`/proc`, and `/tmp` fresh sandbox views. It then enforces four load-bearing
+precedence classes:
 
 1. Reopen the launched harness's state root, workspace/Git administration
-   paths, and declared agent directories for writing.
-2. Hide `sandboxpolicy.ProtectedPaths()` on top, so `~/.tclaude/data` and
-   `~/.claude/sessions` stay private despite the harness-state reopen.
-3. Replay the resolved profile's ordered mount plan exactly. An acknowledged
-   break-glass entry may reopen a protected path here.
+   paths, and declared agent directories for writing. These launch-contract
+   paths survive an ordinary deny on an ancestor such as Home.
+2. Replay the resolved profile's ordered mount plan exactly. An ordinary rule
+   at or below the selected harness's state root is refused rather than
+   launching a harness that cannot persist.
+3. Keep `sandboxpolicy.ProtectedPaths()` hidden above launch-contract repairs,
+   so `~/.tclaude/data` and `~/.claude/sessions` stay private. Only an
+   acknowledged break-glass plan entry may reopen beneath a protected root.
 4. Hide the tclaude tmux socket directory last, so no ordinary or break-glass
    rule can grant host tmux control.
 

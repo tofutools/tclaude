@@ -14,8 +14,9 @@ import (
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
-	HarnessName string
-	WriteDirs   []string
+	HarnessName       string
+	WriteDirs         []string
+	ProfileFilesystem []sandboxpolicy.FilesystemGrant
 }
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
@@ -58,6 +59,12 @@ func WrapTclaudeLayer(
 	if err != nil {
 		return "", err
 	}
+	if err := validateTclaudeLayerHarnessStateRules(
+		phase0WriteDirs[0],
+		contract.ProfileFilesystem,
+	); err != nil {
+		return "", err
+	}
 	return bwrapCommand(binary, phase0WriteDirs, plan, harnessCommand)
 }
 
@@ -79,10 +86,12 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	}
-	// Phase 0: the harness process itself runs inside this wall, unlike the
-	// harness-native sandboxes which confine only tools. Reopen only its
+	// Class 1 baseline: the harness process itself runs inside this wall,
+	// unlike the harness-native sandboxes which confine only tools. Reopen only its
 	// launch-contract state/workspace paths here; protected children are hidden
-	// on top in phase 1.
+	// on top next. An ordinary ancestor hide triggers a narrower repair during
+	// plan replay.
+	existingPhase0WriteDirs := make([]string, 0, len(phase0WriteDirs))
 	for i, path := range phase0WriteDirs {
 		path = filepath.Clean(path)
 		if path == "." || !filepath.IsAbs(path) {
@@ -94,9 +103,11 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 		}
 		if exists {
 			args = append(args, "--bind", path, path)
+			existingPhase0WriteDirs = append(existingPhase0WriteDirs, path)
 		}
 	}
-	// Phase 1: protected state is hidden after the harness root is writable.
+	// Class 3 baseline: protected state is hidden after the harness root is
+	// writable.
 	// EffectiveProfile deliberately excludes the protected-root baseline:
 	// ordinary rules may never name these paths, while acknowledged
 	// break-glass reopens arrive later in the plan. Establish the hides first
@@ -109,7 +120,9 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 	for _, root := range protectedRoots {
 		args = append(args, "--tmpfs", root)
 	}
-	// Phase 2: replay the policy plan exactly as rendered.
+	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
+	// reorder or deduplicate plan entries; they preserve the higher-precedence
+	// launch contract after an ordinary ancestor hide.
 	for i, entry := range plan.Entries {
 		path := filepath.Clean(entry.Path)
 		if path == "." || !filepath.IsAbs(path) {
@@ -136,11 +149,17 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 			args = append(args, "--bind", path, path)
 		case sandboxpolicy.MountHide:
 			args = append(args, "--tmpfs", path)
+			args = appendTclaudeLayerContractRepairs(
+				args,
+				path,
+				existingPhase0WriteDirs,
+				protectedRoots,
+			)
 		default:
 			return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}
 	}
-	// Phase 3: host tmux control is never profile- or break-glass-reachable.
+	// Class 4: host tmux control is never profile- or break-glass-reachable.
 	// This hide must be last: unlike ProtectedPaths, an ordinary profile may
 	// grant a parent of the socket directory, and a later bind would otherwise
 	// reopen the host tmux server.
@@ -150,6 +169,54 @@ func bwrapArgs(phase0WriteDirs []string, plan sandboxpolicy.MountPlan) ([]string
 	}
 	args = append(args, "--tmpfs", tmuxSocketDir)
 	return args, nil
+}
+
+func appendTclaudeLayerContractRepairs(
+	args []string,
+	hide string,
+	existingWriteDirs, protectedRoots []string,
+) []string {
+	repaired := make([]string, 0, len(existingWriteDirs))
+	for _, writeDir := range existingWriteDirs {
+		// An exact or narrower policy row wins. The launch seam refuses an
+		// ordinary profile row at/below the harness state root separately;
+		// workspace and agent-directory rows retain normal plan precedence.
+		if hide != writeDir && sandboxpolicy.PathContainsOrEqual(hide, writeDir) {
+			args = append(args, "--bind", writeDir, writeDir)
+			repaired = append(repaired, writeDir)
+		}
+	}
+	// A repaired parent bind would cover an earlier protected child hide.
+	// Restore every overlapping protected root after all repairs so protected
+	// state still outranks launch-contract authority. A later break-glass plan
+	// entry remains able to reopen its acknowledged path.
+	for _, protected := range protectedRoots {
+		for _, writeDir := range repaired {
+			if sandboxpolicy.PathContainsOrEqual(writeDir, protected) ||
+				sandboxpolicy.PathContainsOrEqual(protected, writeDir) {
+				args = append(args, "--tmpfs", protected)
+				break
+			}
+		}
+	}
+	return args
+}
+
+func validateTclaudeLayerHarnessStateRules(
+	stateRoot string,
+	profileFilesystem []sandboxpolicy.FilesystemGrant,
+) error {
+	for _, grant := range profileFilesystem {
+		if sandboxpolicy.PathContainsOrEqual(stateRoot, grant.Path) {
+			return fmt.Errorf(
+				"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q; refusing a launch that cannot persist harness state",
+				grant.Path,
+				grant.Access,
+				stateRoot,
+			)
+		}
+	}
+	return nil
 }
 
 func tclaudeLayerPhase0WriteDirs(
