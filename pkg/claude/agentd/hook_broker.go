@@ -40,11 +40,6 @@ import (
 // injection machinery, since ApplyHook can inject `/rename` after a
 // /clear. That is handled explicitly below.
 
-// hookBrokerMaxBody bounds a brokered hook payload. Hook inputs carry the
-// user's prompt and the assistant's last message, so they are not tiny,
-// but they are nowhere near this. Anything larger is malformed or hostile.
-const hookBrokerMaxBody = 1 << 20 // 1 MiB
-
 // hookBrokerApplyTimeout bounds how long one brokered event may occupy a
 // daemon goroutine. Deliberately under the client's own 20s give-up, so
 // the daemon frees the goroutine while the client is still listening.
@@ -81,6 +76,8 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return
 	}
+	const endpoint = "/v1/whoami/hook"
+
 	p := peerFromContext(r.Context())
 	switch classify(p) {
 	case classAgent, classAgentUnknown:
@@ -91,6 +88,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		// recorded host pids either way — the conv-id is not what
 		// identifies the caller.
 	case classUnidentified:
+		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
+			return
+		}
 		writeUnidentified(w)
 		return
 	default:
@@ -102,28 +103,39 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, hookBrokerMaxBody+1))
+	// Identity first: the row comes from the caller's recorded host pids,
+	// never from the request, and it is also what the per-agent rate limit
+	// is keyed on — so one agent in excess cannot starve its peers. A
+	// caller-supplied TCLAUDE_SESSION_ID is accepted only as a
+	// cross-check, below.
+	row, harnessPID := hookSessionRowForPID(p.PID)
+	if row == nil {
+		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
+			return
+		}
+		writeError(w, http.StatusForbidden, "auth",
+			"could not resolve a session row for this caller; refusing to apply its hook")
+		return
+	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, brokerMaxBody+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "body", "could not read request body")
 		return
 	}
-	if len(body) > hookBrokerMaxBody {
+	if len(body) > brokerMaxBody {
+		logBrokerBodyOverCap(endpoint, row.ID, len(body))
 		writeError(w, http.StatusRequestEntityTooLarge, "body", "hook payload too large")
 		return
 	}
 	var req session.BrokeredHookRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "body", "malformed hook payload")
-		return
-	}
-
-	// Identity: the row comes from the caller's recorded host pids, never
-	// from the request. A caller-supplied TCLAUDE_SESSION_ID is accepted
-	// only as a cross-check.
-	row, harnessPID := hookSessionRowForPID(p.PID)
-	if row == nil {
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
 	}
 	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {

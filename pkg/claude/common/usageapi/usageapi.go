@@ -923,6 +923,13 @@ func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
 	saveCache(cached, "statusline", historyWindows)
 }
 
+// CacheTTL is how long cached usage data is considered fresh. Exported so
+// a consumer that reads the cache WITHOUT refreshing it (Peek) can decide
+// for itself whether what it got is current — the statusline broker reads
+// this way deliberately, since a daemon serving a sandboxed agent must not
+// make that agent's network call for it.
+const CacheTTL = cacheTTL
+
 // Peek returns whatever usage data is cached in SQLite, regardless of
 // age, or nil if nothing is cached or the cached blob is corrupt.
 // Unlike GetCached it never makes a network call — it is the cheap

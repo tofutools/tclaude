@@ -224,33 +224,58 @@ The remaining limitation in the host-open posture is explicit:
   partial fidelity instead of presenting a verified padlock. The open posture
   deliberately does not maintain a misleading dangerous-socket blocklist.
 
-## Hook callbacks under the layer
+## Hook and status-line callbacks under the layer
 
-Installed hook processes write the tclaude database, which the layer's
-baseline necessarily hides. A `tclaude-layer` launch therefore exports
-`TCLAUDE_HOOK_BROKER=agentd`, and the hook callback POSTs each parsed event
-to the daemon over `~/.tclaude/api/agentd.sock` instead of writing state
-itself. agentd applies the event host-side by calling the same function a
-direct callback would, so a wrapped agent's status, sub-agent ledger,
-directory tracking and desktop notifications behave as they do for any
-other launch. Every other launch still writes directly and is byte-for-byte
+Installed hook processes and the status line both write the tclaude
+database, which the layer's baseline necessarily hides. A `tclaude-layer`
+launch therefore exports `TCLAUDE_HOOK_BROKER=agentd`, and both callbacks
+POST to the daemon over `~/.tclaude/api/agentd.sock` instead of writing
+state themselves — hook events to `/v1/whoami/hook`, status-line renders to
+`/v1/whoami/statusline`. agentd applies each one host-side by calling the
+same function a direct callback would, so a wrapped agent's status,
+sub-agent ledger, directory tracking, desktop notifications, context meter,
+model, effort, cost and dashboard location behave as they do for any other
+launch. Every other launch still writes directly and is byte-for-byte
 unaffected.
-
-The status line is not yet brokered. Anything that reads what it records
-therefore still degrades under the layer — in particular the pre-compact
-guard, which decides from the context snapshot the status line is the only
-writer of, and so allows every compaction until that follow-up lands.
 
 The daemon identifies the calling session from host pids it recorded at
 spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the
 request is accepted only as a cross-check and a disagreement is refused.
+For the status line that resolved identity also replaces the environment
+variable the direct path trusts, so which *session row* a brokered render
+may write is decided by evidence the caller cannot assert. The second half
+of the gate — whether the *conversation* the render names is one that row
+tracks — is unchanged from the direct path, including its deliberate
+fail-soft when the payload names no conversation at all. That fail-soft is
+not an escalation: the only row reachable is the caller's own, which its
+legitimate status line already writes.
 
-Note that the hidden `~/.tclaude/data` is an empty tmpfs rather than an
-unwritable path, so a hook that wrote it directly from inside the wall would
-silently populate a throwaway database instead of failing. That is why the
-routing is driven by the launch marker rather than by catching a write
-error, and why the fallback probe looks for the absence of the database file
-rather than for a failure.
+A status line re-renders several times a second, so it is not brokered
+per render. A render whose payload is byte-identical to the last one sent
+records nothing, because it would record exactly what is already there; a
+render whose payload differs goes out immediately, with no minimum
+interval in front of it — the pre-compact guard reads the context snapshot
+this path writes, so throttling the write side would hand the guard stale
+evidence. The two cosmetic reads it needs back (the auto-compaction pin
+and the temporary-sandbox badge) are cached for a few seconds in the
+pane's own `/tmp`, which inside the layer is a private tmpfs that dies
+with the pane. Nothing correctness-bearing reads from that cache.
+
+Both endpoints share a per-agent ceiling — 20 requests per second, 10 MiB
+per request — keyed on the resolved session row, so one agent in excess
+cannot starve its peers. Enforcement is opt-in via `broker.enforce_limits`
+in `config.json` (or the dashboard's config tab). With it off, which is the
+default, excess is still measured and logged saying what it *would* have
+refused. These are denial-of-service ceilings, not traffic shaping.
+
+The routing is driven by the launch marker rather than by catching a write
+error, and the fallback probe for a launch that arrived without the marker
+looks for the absence of the database file rather than for a failure. That
+was originally the only workable test: the hidden `~/.tclaude/data` used to
+be an empty *writable* tmpfs, so a direct write from inside the wall
+silently populated a throwaway database instead of failing. Hidden
+protected roots are now remounted read-only, so such a write fails
+outright and no throwaway database can appear.
 
 The CI smoke reports a visible skip when its runner cannot create an
 unprivileged user/mount namespace. Run the fallback on a compatible Linux host

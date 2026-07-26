@@ -12,14 +12,12 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
-	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 	"golang.org/x/term"
@@ -89,11 +87,11 @@ type RateLimitBucket struct {
 	ResetsAt       int64   `json:"resets_at"` // unix timestamp
 }
 
-// cachedGitData holds cached results from git/gh commands. Extra PR
+// GitSnapshot holds cached results from git/gh commands. Extra PR
 // fields (Number, State) ride the same cache entry so the dashboard's
 // agent_workspace row can store the full PR snapshot — the statusbar
 // itself only renders the URL.
-type cachedGitData struct {
+type GitSnapshot struct {
 	RepoURL       string    `json:"repo_url"`
 	Branch        string    `json:"branch"`
 	DefaultBranch string    `json:"default_branch"`
@@ -132,16 +130,22 @@ func gitCacheKey() string {
 	return hex.EncodeToString(h[:8])
 }
 
-func loadGitCache() *cachedGitData {
+func loadGitCache() *GitSnapshot {
 	key := gitCacheKey()
 	if key == "" {
 		return nil
+	}
+	// Inside the sandbox the database is not writable, and this snapshot
+	// is pure cache the pane can regather for itself — so it moves to the
+	// pane's own /tmp rather than through the broker. See render_cache.go.
+	if brokerRenders() {
+		return loadLocalGitCache(key)
 	}
 	row, err := db.LoadGitCache(key)
 	if err != nil || row == nil {
 		return nil
 	}
-	var cached cachedGitData
+	var cached GitSnapshot
 	if err := json.Unmarshal(row.Data, &cached); err != nil {
 		return nil
 	}
@@ -151,13 +155,17 @@ func loadGitCache() *cachedGitData {
 	return &cached
 }
 
-func saveGitCache(g *cachedGitData) {
+func saveGitCache(g *GitSnapshot) {
 	data, err := json.Marshal(g)
 	if err != nil {
 		return
 	}
 	key := gitCacheKey()
 	if key == "" {
+		return
+	}
+	if brokerRenders() {
+		saveLocalGitCache(key, g)
 		return
 	}
 	if err := db.SaveGitCache(key, data, g.FetchedAt); err != nil {
@@ -241,18 +249,13 @@ func run() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
-	// Which tclaude session row — if any — this render is allowed to
-	// write. Every per-session write below keys off THIS, never the raw
-	// environment variable. See ownedSessionID.
 	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
-	ownedSession := ownedSessionID(envSessionID, input.SessionID)
 
 	// Short model label for the head of the context line. Prefers CC's
 	// display name ("Opus 4.6" -> "o4.6"); when that's missing or a lone
 	// token it falls back to the requested full model ID so a model CC
 	// doesn't recognise yet (e.g. `--model claude-opus-5`) shows "opus-5"
 	// instead of an "unknown model" placeholder.
-	model := input.Model.DisplayName
 	modelLabel := shortModelLabel(input.Model.DisplayName, input.Model.ID)
 
 	// === Line 1: git-links ===
@@ -279,48 +282,28 @@ func run() error {
 		}
 	}
 
-	// Publish the live workspace snapshot (cwd + branch + repo/PR) to
-	// agent_workspace, keyed by the session-id Claude Code is using
-	// *right now*. Drives the dashboard's "where is this agent" cells on
-	// CC's render cadence — independent of agent activity — so a plain
-	// `git checkout` in an idle session's launch dir reaches the dashboard
-	// within the next statusline render rather than after the next turn.
-	// SessionID from CC's stdin tracks /clear rotations; fall back to
-	// TCLAUDE_SESSION_ID when CC is too old to emit it. This row is keyed
-	// by CONV id, so a render carrying session_id is self-attributing: a
-	// foreign child writes only its own (possibly otherwise unreferenced)
-	// workspace row, never the parent's. With an old payload that omits
-	// session_id there is no conversation evidence to distinguish a
-	// foreign child, so this fallback deliberately follows the same
-	// fail-soft policy as ownedSessionID.
-	sessionID := input.SessionID
-	if sessionID == "" {
-		sessionID = envSessionID
-	}
-	if sessionID != "" {
-		ws := db.AgentWorkspace{
-			ConvID:    sessionID,
-			Cwd:       input.Workspace.CurrentDir,
-			UpdatedAt: time.Now(),
-		}
-		if gitData != nil {
-			ws.Branch = gitData.Branch
-			ws.RepoURL = gitData.RepoURL
-			ws.DefaultBranch = gitData.DefaultBranch
-			ws.PRNumber = gitData.PRNumber
-			ws.PRURL = gitData.PRURL
-			ws.PRState = gitData.PRState
-		}
-		if err := db.UpsertAgentWorkspace(ws); err != nil {
-			slog.Warn("status-bar: failed to upsert agent_workspace", "error", err, "module", "hooks")
-		}
-	}
+	// Everything host-touching this render implies — the write-authority
+	// gate, the eleven writes (workspace snapshot, context snapshot,
+	// model, pin, model id, effort, usage cache, verbatim payload, cost)
+	// and the four reads the bar needs back — happens in this one call.
+	//
+	// That consolidation is what lets a `tclaude-layer` agent, whose
+	// mount namespace puts the conversation database out of reach, swap
+	// the whole lot for a single brokered round trip to agentd without
+	// any of the rendering below knowing the difference. See
+	// render_host.go; the write set itself is render_shared.go.
+	facts := hostState(renderRequest{
+		EnvSessionID:    envSessionID,
+		RenderConvID:    input.SessionID,
+		EnvPinnedWindow: os.Getenv(harness.AutoCompactWindowEnvVar),
+		Payload:         stdinData,
+		Input:           input,
+		Git:             gitData,
+		WantUsage:       !hasSubscriptionLimits(input),
+	})
 
 	// === Line 2: model+context bar | limit bars with reset timers | cost ===
-	rawCtxPct := 0.0
-	if input.ContextWindow.UsedPercentage != nil {
-		rawCtxPct = *input.ContextWindow.UsedPercentage
-	}
+	//
 	// Re-base the percentage onto the window compaction ACTUALLY fires at.
 	// Claude Code's used_percentage is always measured against the model's full
 	// context window, even when CLAUDE_CODE_AUTO_COMPACT_WINDOW pins compaction
@@ -328,95 +311,17 @@ func run() error {
 	// agent pinned to 450K of a 1M window would read "21% used" while sitting
 	// nearly half-way to its next compaction, which is the opposite of what the
 	// bar is for.
-	rawWindow := int64(0)
-	if input.ContextWindow.ContextWindowSize != nil {
-		rawWindow = *input.ContextWindow.ContextWindowSize
-	}
-	// The row lookup rides the ownership guard too: a foreign render must
+	//
+	// The pin came back through the ownership guard: a foreign render must
 	// not re-base its own bar against the pin recorded for somebody else's
-	// agent. Its own environment (the first argument) still governs it.
-	envPinnedWindow, pinnedWindow := resolvePinnedWindow(
-		os.Getenv(harness.AutoCompactWindowEnvVar), ownedSession)
-	effectiveWindow := harness.EffectiveContextWindow(rawWindow, pinnedWindow)
-	ctxPct := int(harness.RebaseContextPercentage(rawCtxPct, rawWindow, effectiveWindow))
-
-	// Store context-window snapshot in DB for the context nudge + the
-	// agent context-info CLI + the dashboard meter. Only write when the
-	// statusline actually carried context data: Claude Code emits
-	// renders whose context_window block is empty (e.g. before a
-	// turn's first API response), and writing those all-zero values
-	// would clobber a good snapshot — the dashboard-meter flicker bug.
-	// db.UpdateContextSnapshot also guards against an all-zero write as
-	// a backstop; this skip just avoids the pointless DB round-trip.
-	cw := input.ContextWindow
-	hasContextData := cw.UsedPercentage != nil || cw.TotalInputTokens != nil ||
-		cw.TotalOutputTokens != nil || cw.ContextWindowSize != nil
-	if sessionID := ownedSession; sessionID != "" && hasContextData {
-		var tokIn, tokOut, winSize int64
-		if cw.TotalInputTokens != nil {
-			tokIn = *cw.TotalInputTokens
-		}
-		if cw.TotalOutputTokens != nil {
-			tokOut = *cw.TotalOutputTokens
-		}
-		if cw.ContextWindowSize != nil {
-			winSize = *cw.ContextWindowSize
-		}
-		// The stored window stays the model's REAL one — the relaunch layer reads
-		// it back to re-derive a 1M model's [1m] suffix, so re-basing it here would
-		// cost a resumed agent its extended context. The stored PERCENTAGE is the
-		// re-based one, which is what makes every downstream reader (the dashboard
-		// meter, `tclaude agent context-info`, the context nudge) measure against
-		// the window compaction actually fires at without each having to know the
-		// pin exists.
-		if err := db.UpdateContextSnapshot(sessionID, float64(ctxPct), tokIn, tokOut, winSize); err != nil {
-			slog.Warn("status-bar: failed to update context snapshot", "error", err, "module", "hooks")
-		}
-	}
-
-	// Record the model the agent is running on so the dashboard can show
-	// it per-agent. Keyed by TCLAUDE_SESSION_ID (the stable tclaude
-	// session id == the sessions-row id the dashboard reads back via
-	// GetContextSnapshot) — NOT input.SessionID. Written every render
-	// regardless of hasContextData: model.display_name is present even
-	// before a turn's first API response, and UpdateSessionModel no-ops
-	// on an empty string, so we never blank a good value.
-	if sessionID := ownedSession; sessionID != "" {
-		if err := db.UpdateSessionModel(sessionID, model); err != nil {
-			slog.Warn("status-bar: failed to update session model", "error", err, "module", "hooks")
-		}
-		// Record the pin OBSERVED IN THIS PANE'S ENVIRONMENT, so the dashboard
-		// renders the same effective window this bar does. A no-op on the empty
-		// string, so it can only ever ADD a window an operator exported by hand —
-		// never erase one a tclaude launch deliberately recorded. See
-		// UpdateSessionAutoCompactWindow. Gated on the environment-observed value
-		// rather than the resolved one so a window READ from the row is not written
-		// straight back to it.
-		if envPinnedWindow > 0 {
-			if err := db.UpdateSessionAutoCompactWindow(sessionID, strconv.FormatInt(envPinnedWindow, 10)); err != nil {
-				slog.Warn("status-bar: failed to update session auto-compact window", "error", err, "module", "hooks")
-			}
-		}
-		// The full model ID rides the same cadence as the display name.
-		// It's what reincarnate/clone/resume feed back to `claude
-		// --model` so a successor keeps the predecessor's model; an
-		// empty ID (older CC) is a no-op inside UpdateSessionModelID.
-		if err := db.UpdateSessionModelID(sessionID, input.Model.ID); err != nil {
-			slog.Warn("status-bar: failed to update session model id", "error", err, "module", "hooks")
-		}
-		// Reasoning-effort level rides on the same write cadence as the
-		// model — present in (almost) every render, recorded onto the
-		// session row so the dashboard can append it to the model line.
-		// An empty level (model without effort support, or a pre-first-
-		// response render) is a no-op inside UpdateSessionEffort.
-		if err := db.UpdateSessionEffort(sessionID, input.Effort.Level); err != nil {
-			slog.Warn("status-bar: failed to update session effort", "error", err, "module", "hooks")
-		}
-	}
+	// agent. Its own environment still governs it.
+	derived := deriveRender(input, observedPinnedWindow(os.Getenv(harness.AutoCompactWindowEnvVar)), facts.PinnedWindow)
+	effectiveWindow := derived.EffectiveWindow
+	ctxPct := derived.CtxPct
 
 	var line2 []string
-	if warning := temporarySandboxWarning(sessionID); warning != "" {
-		line2 = append(line2, warning)
+	if facts.SandboxOff {
+		line2 = append(line2, colorRed+"⚠ SB-OFF"+colorReset)
 	}
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
 	line2 = append(line2, fmt.Sprintf("%s%s %s %s",
@@ -448,45 +353,18 @@ func run() error {
 				resetTimer(time.Unix(rl.SevenDaySonnet.ResetsAt, 0))))
 		}
 
-		// Update SQLite cache so other sessions/consumers see fresh data
-		var fh, sd, sds *usageapi.CachedBucket
-		if rl.FiveHour != nil {
-			fh = &usageapi.CachedBucket{Pct: rl.FiveHour.UsedPercentage, ResetsAt: time.Unix(rl.FiveHour.ResetsAt, 0)}
-		}
-		if rl.SevenDay != nil {
-			sd = &usageapi.CachedBucket{Pct: rl.SevenDay.UsedPercentage, ResetsAt: time.Unix(rl.SevenDay.ResetsAt, 0)}
-		}
-		if rl.SevenDaySonnet != nil {
-			sds = &usageapi.CachedBucket{Pct: rl.SevenDaySonnet.UsedPercentage, ResetsAt: time.Unix(rl.SevenDaySonnet.ResetsAt, 0)}
-		}
-		usageapi.UpdateFromStatusLine(fh, sd, sds)
-
-		// Persist the VERBATIM statusline payload (latest snapshot, one
-		// column, overwritten each render) so the full rate-limit picture
-		// can be inspected off the DB — including buckets StatusLineInput
-		// doesn't name yet (Go drops unknown JSON keys), e.g. Fable 5's
-		// separate usage limit. Gated on rate_limits being present: those
-		// renders carry the data we're after, and skipping the empty
-		// start-of-turn renders keeps a hollow payload from clobbering a
-		// good snapshot. Keyed by the stable tclaude session id (the
-		// sessions-row id), same as the model/cost writes above.
-		if sessionID := ownedSession; sessionID != "" {
-			if err := db.UpdateStatuslineSnapshot(sessionID, string(stdinData)); err != nil {
-				slog.Warn("status-bar: failed to update statusline snapshot", "error", err, "module", "hooks")
-			}
-		}
 	}
 
 	// Fallback: use Anthropic usage API cache when statusline input has no rate limits
 	if !hasLimits {
-		if usage, err := usageapi.GetCached(); usage != nil {
-			if err != nil {
-				slog.Warn("status-bar: using stale usage cache", "error", err, "module", "hooks")
+		if usage, stale := facts.Usage, facts.UsageStale; usage != nil {
+			if stale {
+				slog.Warn("status-bar: using stale usage cache", "module", "hooks")
 			}
 			if usage.FiveHour != nil {
 				hasLimits = true
 				label := "5h"
-				if err != nil {
+				if stale {
 					label = "~5h"
 				}
 				line2 = append(line2, fmt.Sprintf("%s %s %.0f%% %s",
@@ -498,7 +376,7 @@ func run() error {
 			if usage.SevenDay != nil {
 				hasLimits = true
 				label := "7d"
-				if err != nil {
+				if stale {
 					label = "~7d"
 				}
 				line2 = append(line2, fmt.Sprintf("%s %s %.0f%% %s",
@@ -519,31 +397,6 @@ func run() error {
 	// Cost only shown on API plan (no rate limit buckets available)
 	if !hasLimits && input.Cost.TotalCostUSD > 0 {
 		line2 = append(line2, fmt.Sprintf("$%.2f", input.Cost.TotalCostUSD))
-		// Persist it on the same gate, keyed by the stable tclaude
-		// session id (the sessions-row id the dashboard reads back via
-		// GetContextSnapshot — same keying as UpdateSessionModel), so the
-		// dashboard's status column can show the per-agent cost. On a
-		// subscription plan hasLimits is true and this never fires: the
-		// column stays 0 and the dashboard renders no cost badge.
-		if sessionID := ownedSession; sessionID != "" {
-			if err := db.UpdateSessionCost(sessionID, input.Cost.TotalCostUSD); err != nil {
-				slog.Warn("status-bar: failed to update session cost", "error", err, "module", "hooks")
-			}
-		}
-	} else if hasLimits && input.Cost.TotalCostUSD > 0 {
-		// Subscription plan: Claude Code still computes cost.total_cost_usd
-		// (token counts × model list prices) even though it isn't a real
-		// charge — the dashboard's WHAT-IF view shows it as "what this would
-		// have cost on pay-per-token". Capture it into the virtual_cost_usd
-		// column (never displayed in the statusline — the sub line shows rate
-		// limits, not cost), so the data is already there the moment the human
-		// opts into the WHAT-IF view via cost.show_on_subscription. Keyed by
-		// the same stable tclaude session id as the real-cost write above.
-		if sessionID := ownedSession; sessionID != "" {
-			if err := db.UpdateSessionVirtualCost(sessionID, input.Cost.TotalCostUSD); err != nil {
-				slog.Warn("status-bar: failed to update session virtual cost", "error", err, "module", "hooks")
-			}
-		}
 	}
 
 	// Reasoning-effort level (🧠 high) trails the first line, far right.
@@ -563,22 +416,6 @@ func run() error {
 	}
 
 	return nil
-}
-
-// temporarySandboxWarning resolves the current conversation generation to its
-// stable agent and reads the reversible override from that agent-owned record.
-// It therefore survives /clear and reincarnation even though Claude Code's
-// statusline payload rotates conversation IDs.
-func temporarySandboxWarning(convID string) string {
-	agentID, err := db.AgentIDForConv(strings.TrimSpace(convID))
-	if err != nil || agentID == "" {
-		return ""
-	}
-	_, active, err := db.TemporarySandboxModeForAgent(agentID)
-	if err != nil || !active {
-		return ""
-	}
-	return colorRed + "⚠ SB-OFF" + colorReset
 }
 
 // shortModelLabel derives the compact model tag shown at the head of the
@@ -655,19 +492,7 @@ func shortModelLabel(displayName, id string) string {
 // that came FROM the row back to it proves nothing and only muddies which writer
 // last spoke.
 func resolvePinnedWindow(envValue, sessionID string) (observed, resolved int64) {
-	// Route the environment through the SAME parser the spawn boundary uses, so
-	// this pane's bar is governed by a value the rest of the feature would accept:
-	// it applies the 10k–10M bounds and understands the `450k` spelling. Reading
-	// the raw integer instead would let a typo'd `=500` in the operator's shell
-	// re-base every percentage against a 500-token window — clamping the bar to
-	// 100%, storing that, firing the context nudge on every render, and (because
-	// the value is recorded durably by the caller) re-injecting itself on every
-	// later resume. An unparseable value is ignored, leaving Claude Code's own
-	// default threshold in charge, which is the same fail-soft direction
-	// durableRelaunchConfigForConv takes.
-	if parsed, err := harness.ParseAutoCompactWindow(envValue); err == nil {
-		observed = harness.AutoCompactWindowTokens(parsed)
-	}
+	observed = observedPinnedWindow(envValue)
 	if observed > 0 {
 		return observed, observed
 	}
@@ -759,14 +584,14 @@ func getRepoHTTPS() string {
 // shared git_cache table, keyed by a hash of the repo root) to avoid
 // hammering git/gh on every statusline render. Returns nil when we
 // aren't in a git repo.
-func getGitData() *cachedGitData {
+func getGitData() *GitSnapshot {
 	if cached := loadGitCache(); cached != nil {
 		return cached
 	}
 	if gitCmd("rev-parse", "--git-dir") == "" {
 		return nil
 	}
-	data := &cachedGitData{
+	data := &GitSnapshot{
 		RepoURL:       getRepoHTTPS(),
 		Branch:        gitCmd("branch", "--show-current"),
 		DefaultBranch: getDefaultBranch(),
@@ -781,7 +606,7 @@ func getGitData() *cachedGitData {
 }
 
 // buildGitLinksFromData renders git link text from cached data.
-func buildGitLinksFromData(data *cachedGitData) string {
+func buildGitLinksFromData(data *GitSnapshot) string {
 	if data.RepoURL == "" {
 		return ""
 	}

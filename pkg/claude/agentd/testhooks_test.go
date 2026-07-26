@@ -1180,3 +1180,21 @@ func (h *dashTestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.inner.ServeHTTP(w, r)
 }
+
+// ResetBrokerLimiterForTest clears the process-wide broker rate-limiter
+// state, including the memoised enforcement flag. The limiter is
+// deliberately global (one daemon, one set of ceilings), so a flow test
+// that drives an endpoint hard has to start from a clean slate or it
+// inherits whatever the previous test left in the bucket.
+func ResetBrokerLimiterForTest() func() {
+	defaultBrokerLimiter.mu.Lock()
+	defaultBrokerLimiter.buckets = map[string]*brokerBucket{}
+	defaultBrokerLimiter.mu.Unlock()
+	resetBrokerEnforcementForTest()
+	return func() {
+		defaultBrokerLimiter.mu.Lock()
+		defaultBrokerLimiter.buckets = map[string]*brokerBucket{}
+		defaultBrokerLimiter.mu.Unlock()
+		resetBrokerEnforcementForTest()
+	}
+}

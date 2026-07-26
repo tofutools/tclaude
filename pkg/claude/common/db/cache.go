@@ -292,7 +292,7 @@ func TryClaimUsageFetch(ttl time.Duration) (bool, error) {
 
 // GitCacheRow represents cached git/PR data for a repository.
 type GitCacheRow struct {
-	Data      json.RawMessage // full cachedGitData JSON blob
+	Data      json.RawMessage // full GitSnapshot JSON blob
 	FetchedAt time.Time
 }
 
