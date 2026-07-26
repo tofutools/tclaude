@@ -409,26 +409,39 @@ body.mail-col-resizing, body.mail-col-resizing * { user-select: none; }
 .mail-sidebar, .mail-list, .mail-reader {
   background: #161b22; border: 1px solid #2a3340; border-radius: 6px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #3a4553 #161b22;
+}
+/* Firefox has no ::-webkit-scrollbar surface. Keep its standardized fallback
+   out of WebKit/Blink, where a non-auto scrollbar-color would suppress the
+   richer pseudo-element hover and wizard treatments below. */
+@supports not selector(::-webkit-scrollbar) {
+  .mail-sidebar, .mail-list, .mail-reader {
+    scrollbar-width: thin;
+    scrollbar-color: #6e7681 #0d1117;
+  }
+  body.wizard .mail-sidebar,
+  body.wizard .mail-list,
+  body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }
 }
 .mail-sidebar::-webkit-scrollbar,
 .mail-list::-webkit-scrollbar,
 .mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }
 .mail-sidebar::-webkit-scrollbar-track,
 .mail-list::-webkit-scrollbar-track,
-.mail-reader::-webkit-scrollbar-track,
+.mail-reader::-webkit-scrollbar-track { background: #0d1117; }
 .mail-sidebar::-webkit-scrollbar-corner,
 .mail-list::-webkit-scrollbar-corner,
 .mail-reader::-webkit-scrollbar-corner { background: #161b22; }
 .mail-sidebar::-webkit-scrollbar-thumb,
 .mail-list::-webkit-scrollbar-thumb,
 .mail-reader::-webkit-scrollbar-thumb {
-  background: #3a4553; border-radius: 6px;
+  background: #6e7681; border-radius: 6px;
 }
 .mail-sidebar::-webkit-scrollbar-thumb:hover,
 .mail-list::-webkit-scrollbar-thumb:hover,
-.mail-reader::-webkit-scrollbar-thumb:hover { background: #4d5866; }
+.mail-reader::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.mail-sidebar::-webkit-scrollbar-thumb:active,
+.mail-list::-webkit-scrollbar-thumb:active,
+.mail-reader::-webkit-scrollbar-thumb:active { background: #b1bac4; }
 .mail-sidebar, .mail-list { flex: 1 1 auto; min-height: 0; }
 .mail-sidebar { padding: 6px; }
 .mail-list { padding: 6px; }
@@ -11074,9 +11087,6 @@ body.wizard .mail-list {
   background: linear-gradient(180deg, #1a1233 0%, #140f28 100%);
   border-color: #4a3a6b;
 }
-body.wizard .mail-sidebar,
-body.wizard .mail-list,
-body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }
 body.wizard .mail-sidebar::-webkit-scrollbar,
 body.wizard .mail-list::-webkit-scrollbar,
 body.wizard .mail-reader::-webkit-scrollbar { width: 10px; height: 10px; }

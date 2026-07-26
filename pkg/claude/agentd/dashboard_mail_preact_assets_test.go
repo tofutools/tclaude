@@ -94,15 +94,40 @@ func TestDashboardViewMessagesOpensFirstMessage(t *testing.T) {
 func TestDashboardMessagesScrollbarsThemed(t *testing.T) {
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
 
+	fallbackStart := strings.Index(css, "@supports not selector(::-webkit-scrollbar) {")
+	webkitStart := strings.Index(css, ".mail-sidebar::-webkit-scrollbar,")
+	if fallbackStart < 0 || webkitStart <= fallbackStart {
+		t.Fatal("Messages standard scrollbar fallback must precede the WebKit scrollbar rules")
+	}
+	fallback := css[fallbackStart:webkitStart]
 	for _, want := range []string{
-		"scrollbar-color: #3a4553 #161b22;",
-		".mail-sidebar::-webkit-scrollbar-thumb,",
-		".mail-reader::-webkit-scrollbar-thumb:hover { background: #4d5866; }",
+		"scrollbar-color: #6e7681 #0d1117;",
 		"body.wizard .mail-reader { scrollbar-color: #7a5db0 #140f28; }",
+	} {
+		if !strings.Contains(fallback, want) {
+			t.Errorf("Messages non-WebKit scrollbar fallback missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		".mail-reader::-webkit-scrollbar-thumb {\n  background: #6e7681;",
+		".mail-reader::-webkit-scrollbar-thumb:hover { background: #8b949e; }",
+		".mail-reader::-webkit-scrollbar-thumb:active { background: #b1bac4; }",
 		"body.wizard .mail-reader::-webkit-scrollbar-corner { background: #140f28; }",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("Messages scrollbar theming missing %q", want)
 		}
+	}
+
+	normal := cssContrastRatio(t, "#6e7681", "#0d1117")
+	hover := cssContrastRatio(t, "#8b949e", "#0d1117")
+	active := cssContrastRatio(t, "#b1bac4", "#0d1117")
+	for state, ratio := range map[string]float64{"normal": normal, "hover": hover, "active": active} {
+		if ratio < 3 {
+			t.Errorf("Messages %s scrollbar thumb contrast is %.2f:1, want at least 3:1", state, ratio)
+		}
+	}
+	if !(normal < hover && hover < active) {
+		t.Errorf("Messages scrollbar thumb contrast must increase normal < hover < active; got %.2f < %.2f < %.2f", normal, hover, active)
 	}
 }
