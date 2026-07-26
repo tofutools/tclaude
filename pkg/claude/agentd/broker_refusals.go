@@ -44,6 +44,10 @@ import (
 // visible condition. Long enough to survive an idle agent's quiet
 // stretch, short enough that a condition an operator has fixed stops
 // being shown without needing a daemon restart.
+//
+// The dashboard notice names this figure in prose ("in the last 15
+// minutes", groups-island.js) because a count with no window is not
+// interpretable. Change one, change the other.
 const brokerRefusalWindow = 15 * time.Minute
 
 // brokerRefusalPruneEvery bounds how often the recorder sweeps expired
@@ -141,39 +145,32 @@ func (r *brokerRefusalRecorder) forSession(sessionID string) *brokerRefusal {
 	return &cp
 }
 
-// unplaceableCount reports refusals with no row to attribute to, or 0
-// once the run has aged out. The snapshot handler wants only this, and it
+// counts reports every refusal inside the window, and the unplaceable
+// subset of it. The snapshot handler wants only these two numbers, and it
 // runs on the dashboard's 2s poll — no reason to copy the per-session map
-// every tick to read one number.
-func (r *brokerRefusalRecorder) unplaceableCount() int {
+// every tick.
+//
+// total exists because a per-agent badge can be recorded and then rendered
+// nowhere: the row a refusal is attributed to is by construction sometimes
+// a dead one, and an operator who hides offline agents (or whose conv was
+// never grouped) would see no badge and no counter, i.e. exactly the
+// silence this feature exists to break. A machine-level total cannot say
+// WHICH agent — that would need the attribution the rulings forbid — but
+// it can say the condition is happening, which is enough to go looking.
+func (r *brokerRefusalRecorder) counts() (total, unplaceable int) {
 	now := r.clock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.unplaceable.Count == 0 || now.Sub(r.unplaceable.Last) > brokerRefusalWindow {
-		return 0
-	}
-	return r.unplaceable.Count
-}
-
-// snapshot returns the whole recorder state for the dashboard: the
-// per-session records still inside the window, and the unplaceable
-// count.
-func (r *brokerRefusalRecorder) snapshot() (map[string]brokerRefusal, brokerRefusal) {
-	now := r.clock()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	out := make(map[string]brokerRefusal, len(r.bySession))
-	for k, e := range r.bySession {
+	for _, e := range r.bySession {
 		if now.Sub(e.Last) <= brokerRefusalWindow {
-			out[k] = *e
+			total += e.Count
 		}
 	}
-	unplaceable := r.unplaceable
-	if unplaceable.Count > 0 && now.Sub(unplaceable.Last) > brokerRefusalWindow {
-		unplaceable = brokerRefusal{}
+	if r.unplaceable.Count > 0 && now.Sub(r.unplaceable.Last) <= brokerRefusalWindow {
+		unplaceable = r.unplaceable.Count
+		total += unplaceable
 	}
-	return out, unplaceable
+	return total, unplaceable
 }
 
 // resetForTest clears recorded refusals. The recorder is process-wide

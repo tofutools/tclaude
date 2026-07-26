@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -410,7 +411,18 @@ func FindSessionsByPID(pid int) ([]*SessionRow, error) {
 	for rows.Next() {
 		s, err := scanSessionRow(rows)
 		if err != nil {
-			return nil, err
+			// Skip the bad row rather than failing the query, matching
+			// the batch loader. Scanning can fail on ONE row's own
+			// column (an effective_sandbox_config written by a newer
+			// tclaude, say), and this is a multi-row read feeding
+			// identity resolution: aborting would let an unrelated
+			// sibling row make a live agent unplaceable — the exact
+			// silent-total-telemetry-loss failure TCL-761 exists to
+			// remove. A caller reading one row (FindSessionByPID) never
+			// saw its siblings' decode errors either.
+			slog.Warn("db: skipping undecodable session row in pid lookup",
+				"pid", pid, "error", err, "module", "db")
+			continue
 		}
 		out = append(out, s)
 	}

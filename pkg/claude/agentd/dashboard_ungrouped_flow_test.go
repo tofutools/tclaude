@@ -36,6 +36,7 @@ type dashSnapshot struct {
 	TerminalPaletteShortcut   bool               `json:"terminal_command_palette_shortcut_enabled"`
 	RetiredTotal              int                `json:"retired_total"`
 	RemoteAccess              dashRemoteAccess   `json:"remote_access"`
+	BrokerRefusalsTotal       int                `json:"broker_refusals_total,omitempty"`
 	BrokerRefusalsUnplaceable int                `json:"broker_refusals_unplaceable,omitempty"`
 }
 

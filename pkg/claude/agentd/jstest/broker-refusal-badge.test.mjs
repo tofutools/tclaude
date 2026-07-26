@@ -79,8 +79,7 @@ test('the refusal badge marks an agent whose telemetry agentd is dropping', asyn
       assert.equal(el.getAttribute('aria-label'), el.title);
       assert.equal(el.getAttribute('role'), 'note');
       // Singular: "1 brokered callbacks" is the kind of detail that makes an
-      // operator trust the surface less than they should.
-      assert.match(el.title, /refused 1 brokered callback,|refused 1 brokered callback\b/);
+      // operator trust a surface less than they should.
       assert.doesNotMatch(el.title, /1 brokered callbacks/);
     } finally {
       await mounted.unmount();
@@ -145,7 +144,7 @@ test('the refusal badge marks an agent whose telemetry agentd is dropping', asyn
   });
 });
 
-test('the unplaceable notice reports the refusals that have no row to land on', async (t) => {
+test('the machine-level notice reports refusals a badge may not show', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `
     export const lastSnapshot = { groups: [], ungrouped: [] };
@@ -156,7 +155,7 @@ test('the unplaceable notice reports the refusals that have no row to land on', 
     harness.mount(harness.html`<${BrokerRefusalNotice} snapshot=${snapshot} />`);
 
   await t.test('it appears once the daemon has refused an unplaceable caller', async () => {
-    const mounted = await mount({ broker_refusals_unplaceable: 7 });
+    const mounted = await mount({ broker_refusals_total: 7, broker_refusals_unplaceable: 7 });
     try {
       const el = mounted.container.querySelector('.broker-refusal-notice');
       assert.ok(el, 'expected the notice');
@@ -170,27 +169,78 @@ test('the unplaceable notice reports the refusals that have no row to land on', 
     }
   });
 
-  await t.test('it never prints an identifier the refused caller supplied', async () => {
-    // The refusal happened precisely because the caller could not be
-    // identified. Echoing the session id it claimed would put an
-    // unauthenticated string from that caller onto the operator's screen —
-    // the same reason it is not allowed to decide which row gets a badge.
-    const mounted = await mount({
-      broker_refusals_unplaceable: 1,
-      // A hostile claim, present in the snapshot's sibling fields only in
-      // spirit: the component takes exactly one number and nothing else.
-    });
+  await t.test('it reports refusals that DID resolve to a row, because that row may be invisible', async () => {
+    // The reason the notice is not just an unplaceable counter. A badge is
+    // attached to the row the daemon resolved, which in the pid-reuse case
+    // is a dead session — so it can be recorded and drawn nowhere at all
+    // (offline agents hidden, or a conv that was never grouped). If the
+    // notice went quiet whenever every refusal was attributable, it would
+    // go quiet in precisely the scenario this feature exists for.
+    const mounted = await mount({ broker_refusals_total: 5, broker_refusals_unplaceable: 0 });
     try {
       const el = mounted.container.querySelector('.broker-refusal-notice');
-      assert.match(el.textContent, /refused 1 brokered callback\b/);
-      assert.doesNotMatch(el.textContent, /1 brokered callbacks/);
+      assert.ok(el, 'expected the notice with zero unplaceable refusals');
+      assert.match(el.textContent, /refused 5 brokered callbacks/);
+      assert.doesNotMatch(el.textContent, /could not place/,
+        'nothing was unplaceable here; saying so would be wrong');
+      // It has to tell the operator where to look, including the case
+      // where the badge is real but off-screen.
+      assert.match(el.textContent, /hidden|Look for/);
     } finally {
       await mounted.unmount();
     }
   });
 
+  await t.test('a mixed window separates the unplaceable subset from the total', async () => {
+    const mounted = await mount({ broker_refusals_total: 9, broker_refusals_unplaceable: 2 });
+    try {
+      const text = mounted.container.querySelector('.broker-refusal-notice').textContent;
+      assert.match(text, /refused 9 brokered callbacks/);
+      assert.match(text, /\(2 from callers it could not place at all\)/,
+        'the subset must be named as a subset, not conflated with the total');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('it prints nothing but numbers — no identifier from the refused caller', async () => {
+    // The refusal happened precisely because the caller could not be
+    // trusted. Echoing anything it sent would put an unauthenticated string
+    // on the operator's screen — the same reason it is not allowed to
+    // decide which row gets a badge. A snapshot carrying hostile-looking
+    // siblings must change nothing about what is rendered.
+    const clean = { broker_refusals_total: 1, broker_refusals_unplaceable: 1 };
+    const hostile = {
+      ...clean,
+      claimed_session_id: 'spwn-PEER-VICTIM',
+      broker_refusal_detail: '<img src=x onerror=alert(1)>',
+      groups: [{ name: 'spwn-PEER-VICTIM' }],
+    };
+    const render = async (snapshot) => {
+      const mounted = await mount(snapshot);
+      try {
+        return mounted.container.querySelector('.broker-refusal-notice').innerHTML;
+      } finally {
+        await mounted.unmount();
+      }
+    };
+    const cleanHTML = await render(clean);
+    assert.equal(await render(hostile), cleanHTML,
+      'nothing outside the two counters may reach the notice');
+    assert.doesNotMatch(cleanHTML, /PEER-VICTIM|onerror/);
+    assert.match(cleanHTML, /refused 1 brokered callback\b/);
+    assert.doesNotMatch(cleanHTML, /1 brokered callbacks/);
+  });
+
   await t.test('a quiet daemon shows nothing', async () => {
-    for (const snapshot of [{ broker_refusals_unplaceable: 0 }, {}, null, undefined]) {
+    for (const snapshot of [
+      { broker_refusals_total: 0, broker_refusals_unplaceable: 0 },
+      // An unplaceable count with no total is not a state the daemon
+      // produces, and the notice keys on the total; pin that it stays
+      // silent rather than rendering "refused 0".
+      { broker_refusals_unplaceable: 3 },
+      {}, null, undefined,
+    ]) {
       const mounted = await mount(snapshot);
       try {
         assert.equal(mounted.container.querySelector('.broker-refusal-notice'), null);

@@ -110,13 +110,20 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	// cross-check, below.
 	row, harnessPID := hookSessionRowForPID(p.PID)
 	if row == nil {
+		// No row resolved, so there is nothing trustworthy to attribute
+		// this to — counted only. See broker_refusals.go.
+		//
+		// Recorded BEFORE the rate check, because a throttled request is
+		// still a refused one and the pre-identity limiter is a single
+		// shared bucket: leaving it after would let one noisy unplaceable
+		// caller suppress a genuinely starving agent's contribution to
+		// the only number the operator can see. Recording is a mutex and
+		// a few field writes — cheaper than the writeError below it.
+		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
-		// No row resolved, so there is nothing trustworthy to attribute
-		// this to — counted only. See broker_refusals.go.
-		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return

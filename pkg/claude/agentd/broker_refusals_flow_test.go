@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -287,6 +288,9 @@ func TestBrokerRefusals_BadgeTheResolvedRowNeverTheClaimedOne(t *testing.T) {
 		"a peer the refused request merely NAMED must stay unmarked")
 	assert.Zero(t, snap.BrokerRefusalsUnplaceable,
 		"a placeable refusal is not also counted as unplaceable")
+	assert.Equal(t, 3, snap.BrokerRefusalsTotal,
+		"but it does count towards the machine-level total, which is what the "+
+			"operator sees when the badged row is one the dashboard is not showing")
 }
 
 // TestBrokerRefusals_UnplaceableIsCountedNotAttributed pins the asymmetry.
@@ -325,4 +329,125 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 	require.NotNil(t, row)
 	assert.Zero(t, row.State.BrokerRefusals,
 		"the session the unplaceable caller claimed must not be badged for it")
+}
+
+// TestBrokerIdentity_ANamelessIncumbentIsNotDemoted guards the one case
+// where the preference could quietly become a re-ranking. A row with no
+// recorded tmux session — what auto-registration writes for a harness not
+// started under tmux — cannot be shown alive OR dead. Ranking it below an
+// older row that merely HAS a live name would resolve differently from
+// FindSessionByPID with no evidence that the older row is the right
+// answer, which is the invariant the ruling protects.
+func TestBrokerIdentity_ANamelessIncumbentIsNotDemoted(t *testing.T) {
+	f := newFlow(t)
+	callerPID := pidReuseProcTree(t)
+
+	// The older row keeps a live tmux session. The newer one — the
+	// incumbent, and the agent actually making the request — has none.
+	haveLayerSession(t, f, pidReuseDeadConv, pidReuseDeadLabel, "tmux-pidreuse-dead", pidReuseSharedPanePID)
+	haveLayerSession(t, f, pidReuseLiveConv, pidReuseLiveLabel, "tmux-pidreuse-live", pidReuseSharedPanePID)
+	nameless, err := db.LoadSession(pidReuseLiveLabel)
+	require.NoError(t, err)
+	require.NotNil(t, nameless)
+	nameless.TmuxSession = ""
+	require.NoError(t, db.SaveSession(nameless))
+
+	now := time.Now()
+	stampUpdatedAt(t, pidReuseDeadLabel, now.Add(-2*time.Minute))
+	stampUpdatedAt(t, pidReuseLiveLabel, now.Add(-1*time.Minute))
+
+	incumbent, err := db.FindSessionByPID(pidReuseSharedPanePID)
+	require.NoError(t, err)
+	require.Equal(t, pidReuseLiveLabel, incumbent.ID, "fixture: the nameless row is the incumbent")
+
+	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		Input: session.HookCallbackInput{
+			ConvID:        pidReuseLiveConv,
+			HookEventName: "UserPromptSubmit",
+			Prompt:        "do the thing",
+			Cwd:           f.World.HomeDir,
+		},
+		ClaimedSessionID: pidReuseLiveLabel,
+	})
+	assert.Equal(t, http.StatusOK, code,
+		"an incumbent with no tmux name must keep the pid; absence of a name is not evidence of death")
+}
+
+// TestBrokerRefusals_BadgeSurvivesAConvWithSeveralRows pins the read path
+// against the shape that produces this condition in the first place. The
+// broker keys a refusal on the row its pid walk resolved; the dashboard
+// renders a conv from the row IT picked, preferring a live one. Those are
+// not the same row for a conv that has both — which is exactly the
+// multi-row conv pid reuse creates. Looking only at the rendered pick
+// would drop the badge in the headline case.
+func TestBrokerRefusals_BadgeSurvivesAConvWithSeveralRows(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+
+	// One conversation, two session rows: an older dead one the caller's
+	// ancestry resolves to, and a live one the dashboard renders from.
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	f.HaveAliveSession(brokerLayerConv, "spwn-broker-layer-2", "tmux-broker-layer-2", f.World.HomeDir)
+	f.MarkOffline("tmux-broker-layer")
+
+	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		Input: session.HookCallbackInput{
+			ConvID:        pidReuseOtherConv,
+			HookEventName: "Stop",
+			Cwd:           f.World.HomeDir,
+		},
+		ClaimedSessionID: pidReuseOtherLabel,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+
+	f.HaveGroup("refusalsquad")
+	f.HaveMember("refusalsquad", brokerLayerConv)
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	row := findDashMember(snap, "refusalsquad", brokerLayerConv)
+	require.NotNil(t, row)
+	assert.Equal(t, 1, row.State.BrokerRefusals,
+		"the badge must survive the dashboard rendering the conv from a different row")
+}
+
+// TestBrokerRefusals_StatuslineRefusalsAreRecordedToo: the status line is
+// the endpoint whose loss is most visible (model, cost, context all stop),
+// and it has its own copy of the refusal path. A recorder wired into only
+// one of the two endpoints would leave that half silent.
+func TestBrokerRefusals_StatuslineRefusalsAreRecordedToo(t *testing.T) {
+	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	haveLayerSession(t, f, pidReuseOtherConv, pidReuseOtherLabel, "tmux-pidreuse-other", brokerVictimPanePID)
+
+	code, _ := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		ClaimedSessionID: pidReuseOtherLabel,
+		RenderConvID:     pidReuseOtherConv,
+		Payload:          statuslinePayload(pidReuseOtherConv, "Haiku 4.5", "claude-haiku-4-5", "low", 99, 1, 1, 200000, 0),
+		ApplyWrites:      true,
+	})
+	require.Equal(t, http.StatusForbidden, code)
+
+	f.HaveGroup("refusalsquad")
+	f.HaveMember("refusalsquad", brokerLayerConv)
+	f.HaveMember("refusalsquad", pidReuseOtherConv)
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	resolved := findDashMember(snap, "refusalsquad", brokerLayerConv)
+	require.NotNil(t, resolved)
+	assert.Equal(t, 1, resolved.State.BrokerRefusals,
+		"a refused render must mark the resolved row, like a refused hook")
+	assert.Contains(t, resolved.State.BrokerRefusalDetail, "statusline",
+		"and say which endpoint it came from, so the operator knows what is missing")
+
+	named := findDashMember(snap, "refusalsquad", pidReuseOtherConv)
+	require.NotNil(t, named)
+	assert.Zero(t, named.State.BrokerRefusals,
+		"the peer the render named must stay unmarked here too")
 }

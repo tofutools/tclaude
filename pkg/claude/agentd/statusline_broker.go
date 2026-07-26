@@ -72,11 +72,15 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	// than on anything the caller controls.
 	row, _ := hookSessionRowForPID(p.PID)
 	if row == nil {
+		// Before the rate check, for the reason spelled out at the same
+		// point in hook_broker.go: a throttled request is still a refused
+		// one, and this limiter's bucket is shared across every
+		// unplaceable caller.
+		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
-		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return

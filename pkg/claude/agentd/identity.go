@@ -868,17 +868,26 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 // being refused, so its updated_at never catches up and the stale row
 // keeps winning. TCL-761.
 //
-// Liveness is a PREFERENCE AMONG CANDIDATES, never a filter. It can only
-// ever change WHICH row is returned, not whether one is:
+// Liveness is a REPAIR OF A DEMONSTRABLY DEAD WINNER, never a filter and
+// never a re-ranking. The incumbent — the first candidate, exactly what
+// FindSessionByPID would have returned — is displaced only when tmux
+// positively reports its session gone AND some other candidate's session
+// is positively reported alive. Everything else keeps the incumbent:
 //
-//   - no candidate is alive → the first candidate, which is exactly what
-//     FindSessionByPID would have returned;
+//   - the incumbent's tmux session is alive → keep it;
+//   - the incumbent has no recorded tmux session at all → keep it. Absence
+//     of a name is not evidence of death, and a row auto-registered
+//     outside tmux legitimately has none. Ranking it below an older row
+//     that merely HAS a live name would break the invariant below in the
+//     one case where nothing is actually known;
+//   - no other candidate is alive → keep it;
 //   - the liveness probe fails, or the cache is cold and tmux is
-//     unreachable → the same, because an empty alive set makes every
-//     candidate equally unpreferred rather than equally disqualified.
+//     unreachable → keep it, because an empty alive set proves nothing
+//     about anybody.
 //
 // So this may resolve better than before; it can never resolve nothing
-// where the old code resolved something. Nothing here touches the
+// where the old code resolved something, and it never moves off a row
+// without positive evidence in both directions. Nothing here touches the
 // refusal semantics at the call sites: a caller that cannot be placed is
 // still refused.
 func sessionRowByPID(hostPID int) *db.SessionRow {
@@ -887,8 +896,7 @@ func sessionRowByPID(hostPID int) *db.SessionRow {
 
 // preferLiveRowAtPID is the shared body of the pid → row lookup: read
 // every row recorded against hostPID in FindSessionByPID's order, keep the
-// ones `accept` allows, and return the first whose tmux session is still
-// alive — falling back to the first candidate.
+// ones `accept` allows, and repair the incumbent per the rule above.
 //
 // A nil accept keeps every non-empty row. The layer walk passes one so the
 // tclaude-layer implementation check happens BEFORE the liveness
@@ -913,10 +921,11 @@ func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.Sessi
 	if len(candidates) == 0 {
 		return nil
 	}
-	if len(candidates) == 1 {
-		// The overwhelmingly common case: one row, no ambiguity, and no
-		// reason to ask tmux anything.
-		return candidates[0]
+	incumbent := candidates[0]
+	if len(candidates) == 1 || incumbent.TmuxSession == "" {
+		// One row means no ambiguity; a nameless incumbent means no
+		// evidence. Either way there is nothing to ask tmux.
+		return incumbent
 	}
 
 	// Only now is liveness worth a probe. The error is deliberately
@@ -924,7 +933,10 @@ func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.Sessi
 	// cache treats a failed probe as an empty alive set, and here that
 	// degrades precisely to the old behaviour.
 	alive, _ := cachedLiveTmuxSessions()
-	for _, row := range candidates {
+	if _, ok := alive[incumbent.TmuxSession]; ok {
+		return incumbent
+	}
+	for _, row := range candidates[1:] {
 		if row.TmuxSession == "" {
 			continue
 		}
@@ -932,7 +944,7 @@ func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.Sessi
 			return row
 		}
 	}
-	return candidates[0]
+	return incumbent
 }
 
 func isTclaudeLayerRow(row *db.SessionRow) bool {

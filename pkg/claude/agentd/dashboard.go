@@ -1033,16 +1033,27 @@ type snapshotPayload struct {
 	// chooses real versus WHAT-IF per row; this flag reveals hypothetical
 	// per-agent badges even when real spend also exists.
 	CostTabWhatIf bool `json:"cost_tab_whatif"`
-	// BrokerRefusalsUnplaceable counts brokered hook/statusline requests
-	// the daemon refused because it could not place the caller at all,
-	// inside the refusal recorder's window.
+	// BrokerRefusalsTotal counts EVERY brokered hook/statusline request
+	// the daemon refused inside the refusal recorder's window, including
+	// the ones a per-agent badge already reports.
+	//
+	// The overlap is deliberate. A badge is attached to the row the daemon
+	// resolved, and in the pid-reuse case that row is a dead session — so
+	// the badge can be recorded and then rendered nowhere at all (offline
+	// agents hidden, or a conv that was never grouped). A machine-level
+	// total cannot say which agent is affected without the attribution the
+	// design forbids, but it can say the condition exists, which is what
+	// makes it worth looking.
+	BrokerRefusalsTotal int `json:"broker_refusals_total,omitempty"`
+	// BrokerRefusalsUnplaceable is the subset of BrokerRefusalsTotal the
+	// daemon could not place on any row at all.
 	//
 	// It is a COUNT and not an attribution on purpose: with no resolved
 	// row there is nothing trustworthy to attribute to, and the only
 	// identifier such a request carries is the caller-chosen session id
-	// the refusal already declined to trust. A non-zero value means some
-	// agent is losing telemetry; which one has to be found from the
-	// daemon log, and that is the honest limit of what this can say.
+	// the refusal already declined to trust. Which agent is affected has
+	// to be found from the daemon log, and that is the honest limit of
+	// what this can say.
 	BrokerRefusalsUnplaceable int `json:"broker_refusals_unplaceable,omitempty"`
 	// UsageTabVisible is true while either subscription provider has retained
 	// quota samples or OpenCode has retained provider activity that needs a
@@ -2072,9 +2083,21 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 				"session", pick.ID, "error", err)
 		}
 	}
-	// Brokered-request refusals recorded against THIS row. Purely
-	// daemon-derived; see the field comments and broker_refusals.go.
-	if refusal := brokerRefusals.forSession(pick.ID); refusal != nil {
+	// Brokered-request refusals recorded against any of this conv's rows.
+	// Purely daemon-derived; see the field comments and broker_refusals.go.
+	//
+	// Deliberately EVERY row, not just `pick`. The broker keys refusals on
+	// the row its pid walk resolved, which for a conv with more than one
+	// row need not be the one the dashboard chose to render from — and the
+	// pid-reuse case this exists for produces exactly such a conv. Looking
+	// only at `pick` would drop the badge on the floor in the headline
+	// scenario, which is the failure mode being fixed, not a cosmetic miss.
+	// The rows are already in hand, so the scan is free.
+	for _, r := range rows {
+		refusal := brokerRefusals.forSession(r.ID)
+		if refusal == nil || refusal.Count <= out.BrokerRefusals {
+			continue
+		}
 		out.BrokerRefusals = refusal.Count
 		out.BrokerRefusalDetail = refusal.Reason
 		out.BrokerRefusalSince = refusal.First.UTC().Format(time.RFC3339)
@@ -2856,7 +2879,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = showOnSub
-	out.BrokerRefusalsUnplaceable = brokerRefusals.unplaceableCount()
+	out.BrokerRefusalsTotal, out.BrokerRefusalsUnplaceable = brokerRefusals.counts()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles
