@@ -439,6 +439,15 @@ as the warning above, and records it on the session row. The badge then reads:
 | `⚠` | `Sandbox: off — this launch asked for the OS sandbox to be ON, but …` | The launch asked for the sandbox to be **on** and did not get it — only managed policy settings can do this. The agent is unconfined despite what was requested. |
 | `⚠` | `Sandbox: on (unverified)` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
 
+Experimental `tclaude-layer` verdicts also use the unverified warning for a
+known partial boundary. The Linux host-open tooltip says that filesystem mounts
+are enforced while ambient host Unix sockets remain connectable. The macOS
+tooltip is deliberately different: Seatbelt enforces filesystem operations,
+but hidden paths remain enumerable and the host network plus ambient Unix
+sockets remain reachable. Do not read either warning as the generic
+"unreadable settings file" case; the tooltip names the actual platform
+boundary.
+
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
 something is off; hover for which of the three it is. The one exception to
 purely informational warnings is an active temporary sandbox override: its

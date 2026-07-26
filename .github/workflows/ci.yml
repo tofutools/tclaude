@@ -81,6 +81,52 @@ jobs:
           echo "### Sandbox v2 host smoke skipped" >> "$GITHUB_STEP_SUMMARY"
           echo "The runner could not create bubblewrap's user/mount namespace; run the documented smoke on a compatible Linux host." >> "$GITHUB_STEP_SUMMARY"
 
+  sandbox-v2-seatbelt-smoke:
+    name: Sandbox v2 Seatbelt smoke
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Probe Seatbelt deny-write support
+        id: seatbelt-probe
+        run: |
+          probe="$RUNNER_TEMP/tclaude-seatbelt-probe"
+          rm -f "$probe"
+          profile='(version 1)
+          (allow default)
+          (deny file-write* (literal (param "TCLAUDE_PROBE")))'
+          if TCLAUDE_PROBE="$probe" /usr/bin/sandbox-exec \
+            -p "$profile" "-DTCLAUDE_PROBE=$probe" -- /bin/sh -c \
+            'test ! -e "$TCLAUDE_PROBE" && ! touch "$TCLAUDE_PROBE"'; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::sandbox v2 Seatbelt smoke skipped: sandbox-exec could not enforce the deny-write probe"
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        if: steps.seatbelt-probe.outputs.supported == 'true'
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run sandbox v2 Seatbelt smoke
+        if: steps.seatbelt-probe.outputs.supported == 'true'
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s
+
+      - name: Report unavailable Seatbelt smoke
+        if: steps.seatbelt-probe.outputs.supported != 'true'
+        run: |
+          echo "### Sandbox v2 Seatbelt smoke skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "The runner's sandbox-exec could not enforce the required deny-write probe; the Darwin filesystem slice was not verified." >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

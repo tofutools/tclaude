@@ -118,6 +118,8 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("member.state?.os_sandbox_source", "the badge can name whatever decided the verdict")
 	// A verdict tclaude could not prove must not render as a plain padlock.
 	must("member.state?.os_sandbox_unverified", "the badge reads whether the verdict could be verified")
+	must("source.includes('Seatbelt/sandbox-exec')",
+		"the Darwin tclaude layer gets its own fidelity explanation")
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
 
