@@ -23,7 +23,7 @@ type TclaudeLayerLaunchContract struct {
 // ResolveTclaudeLayer verifies the host capability before a launch is
 // committed. Callers record the returned verdict even when verification fails.
 func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.LaunchOSSandbox, error) {
-	binary, err := resolveBwrapBinary()
+	binary, err := resolveBwrapBinary(posture)
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
 			State:  "off",
@@ -41,7 +41,7 @@ func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		return harness.LaunchOSSandbox{
 			State:  "on",
-			Source: "tclaude-layer (bubblewrap; isolated network; constructed root; agentd socket allowlisted)",
+			Source: "tclaude-layer (bubblewrap; isolated network; isolated PIDs; constructed root; agentd socket allowlisted)",
 		}
 	default:
 		return harness.LaunchOSSandbox{
@@ -131,8 +131,11 @@ func bwrapArgs(
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		// Bubblewrap brings loopback up in the newly created namespace. Start
 		// from a fresh root so filesystem AF_UNIX sockets are absent unless a
-		// later launch-contract or policy bind explicitly exposes them.
-		args = append(args, "--unshare-net", "--tmpfs", "/")
+		// later launch-contract or policy bind explicitly exposes them. Keep
+		// bubblewrap as PID 1 (do not use --as-pid-1) so it reaps orphaned
+		// harness subprocesses and host processes cannot reopen the host mount
+		// namespace through /proc/<pid>/root.
+		args = append(args, "--unshare-net", "--unshare-pid", "--tmpfs", "/")
 		var err error
 		args, err = appendTclaudeLayerStaticOSRoot(args)
 		if err != nil {

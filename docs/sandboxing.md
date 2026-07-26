@@ -132,9 +132,10 @@ It supports Claude Code and Codex; OpenCode is refused because its
 tool-executing server runs outside the attach pane this slice wraps. It requires Linux,
 `bwrap` on `PATH`, and working unprivileged user namespaces. If any capability
 is missing, tclaude refuses the launch instead of silently falling back. It
-does not unshare PID or IPC namespaces. The harness's own sandbox is disabled
-inside the wrapper for now; a later workstream will define when nested
-sandboxes may be stacked.
+does not unshare the IPC namespace. The host-open posture also retains the host
+PID namespace; the isolated posture unshares PIDs as part of closing ambient
+socket access. The harness's own sandbox is disabled inside the wrapper for
+now; a later workstream will define when nested sandboxes may be stacked.
 
 The host-open posture starts with a read-only view of the host root; the
 isolated posture uses the constructed root described below. Both give `/dev`,
@@ -171,21 +172,25 @@ wraps the whole harness process, not only its tool executions:
   tool-only Internet switch; the launch badge says `host network` rather than
   repeating the profile word.
 - `none` requests **isolated-with-agentd**. Bubblewrap creates a fresh network
-  namespace (with loopback up) and a constructed filesystem root. There is no
-  blanket bind of `/`: the static OS surface is read-only (`/usr`, `/bin`,
-  `/sbin`, `/lib*`, `/etc`, and `/opt`, accounting for merged-usr symlinks);
-  `/dev` and `/proc` are fresh, `/tmp` is tmpfs, and `/run`, `/var`, `/srv`,
-  `/media`, `/mnt`, `/boot`, and `/root` are absent. Home paths exist only
-  where the launch contract or ordered profile plan binds them. The canonical
-  `~/.tclaude/api/agentd.sock` is bound read-only as a launch-contract path.
+  namespace (with loopback up), a fresh PID namespace, and a constructed
+  filesystem root. Bubblewrap remains PID 1 so orphaned harness subprocesses
+  are reaped. There is no blanket bind of `/`: the static OS surface is
+  read-only (`/usr`, `/bin`, `/sbin`, `/lib*`, `/etc`, and `/opt`, accounting
+  for merged-usr symlinks); `/dev` and `/proc` are fresh, `/tmp` is tmpfs, and
+  `/run`, `/var`, `/srv`, `/media`, `/mnt`, `/boot`, and `/root` are absent.
+  Home paths exist only where the launch contract or ordered profile plan binds
+  them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
+  launch-contract path.
 
 The isolated posture blocks TCP egress and host-loopback TCP. It also closes
-the Linux abstract Unix-socket namespace. A filesystem Unix socket is visible
-only when it was explicitly bound, or when an operator-authored filesystem
-grant re-exposes a parent directory under the normal most-specific-wins policy.
-The badge therefore reports full socket fidelity for the constructed-root
-posture. The reserved `filtered` posture will eventually cover proxy-backed
-host/domain and host-loopback allowlists; no proxy is implemented today.
+the Linux abstract Unix-socket namespace. PID isolation prevents the harness
+from escaping the constructed root through a host process's
+`/proc/<pid>/root`. A filesystem Unix socket is visible only when it was
+explicitly bound, or when an operator-authored filesystem grant re-exposes a
+parent directory under the normal most-specific-wins policy. The badge
+therefore reports full socket fidelity for the constructed-root posture. The
+reserved `filtered` posture will eventually cover proxy-backed host/domain and
+host-loopback allowlists; no proxy is implemented today.
 
 `network_access: none` also isolates the harness's own model transport.
 Claude Code and other hosted-only harnesses are refused because they would be

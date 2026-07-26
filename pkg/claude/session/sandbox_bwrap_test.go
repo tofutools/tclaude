@@ -296,6 +296,7 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
 	assert.Equal(t, "on", isolated.State)
 	assert.Contains(t, isolated.Source, "isolated network")
+	assert.Contains(t, isolated.Source, "isolated PIDs")
 	assert.Contains(t, isolated.Source, "agentd socket allowlisted")
 	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
 }
@@ -344,6 +345,9 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, got, "--unshare-net")
+	assert.Contains(t, got, "--unshare-pid")
+	assert.NotContains(t, got, "--as-pid-1",
+		"bubblewrap must remain PID 1 so orphaned harness subprocesses are reaped")
 	rootTmpfs := indexOfBwrapTriplet(got, "--tmpfs", "/")
 	require.NotEqual(t, -1, rootTmpfs)
 	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/"),

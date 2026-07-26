@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ const (
 	smokeProtectedReadableEnv  = "TCLAUDE_SANDBOX_V2_PROTECTED_READABLE"
 	smokeTmuxSocketEnv         = "TCLAUDE_SANDBOX_V2_TMUX_SOCKET"
 	smokeRuntimeSocketEnv      = "TCLAUDE_SANDBOX_V2_RUNTIME_SOCKET"
+	smokeHostPIDEnv            = "TCLAUDE_SANDBOX_V2_HOST_PID"
 	smokeLoopbackAddrEnv       = "TCLAUDE_SANDBOX_V2_LOOPBACK_ADDR"
 	smokeTclaudeBinaryEnv      = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 )
@@ -146,7 +148,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	require.NoError(t, err)
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, false, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
-		hostLoopback.Addr().String(), tclaudeBinary)
+		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary)
 
 	breakGlassEffective := effective
 	breakGlassEffective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
@@ -156,7 +158,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	require.NoError(t, err)
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, breakGlassPlan, true, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
-		hostLoopback.Addr().String(), tclaudeBinary)
+		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary)
 }
 
 func runTclaudeLayerSmokeHelper(
@@ -166,7 +168,7 @@ func runTclaudeLayerSmokeHelper(
 	plan sandboxpolicy.MountPlan,
 	protectedReadable bool,
 	allowed, outside, aliasFile, protectedFile, tmuxSocket, runtimeSocket,
-	hostLoopbackAddr, tclaudeBinary string,
+	hostPID, hostLoopbackAddr, tclaudeBinary string,
 ) {
 	t.Helper()
 	var breakGlassPaths []string
@@ -188,6 +190,7 @@ func runTclaudeLayerSmokeHelper(
 		smokeProtectedReadableEnv+"="+boolEnv(protectedReadable),
 		smokeTmuxSocketEnv+"="+tmuxSocket,
 		smokeRuntimeSocketEnv+"="+runtimeSocket,
+		smokeHostPIDEnv+"="+hostPID,
 		smokeLoopbackAddrEnv+"="+hostLoopbackAddr,
 		smokeTclaudeBinaryEnv+"="+tclaudeBinary,
 	)
@@ -209,6 +212,7 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	protectedReadable := os.Getenv(smokeProtectedReadableEnv) == "1"
 	tmuxSocket := os.Getenv(smokeTmuxSocketEnv)
 	runtimeSocket := os.Getenv(smokeRuntimeSocketEnv)
+	hostPID := os.Getenv(smokeHostPIDEnv)
 	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
 	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
 
@@ -234,6 +238,11 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("ambient runtime socket remained reachable inside the constructed root")
 	}
+	procRootSocket := filepath.Join("/proc", hostPID, "root", strings.TrimPrefix(runtimeSocket, "/"))
+	if conn, err := net.DialTimeout("unix", procRootSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("ambient runtime socket remained reachable through a host process's /proc/<pid>/root")
+	}
 	if conn, err := net.DialTimeout("tcp4", hostLoopbackAddr, 250*time.Millisecond); err == nil {
 		_ = conn.Close()
 		t.Fatal("host-loopback TCP remained reachable across the isolated network namespace")
@@ -249,10 +258,30 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	require.NoError(t, err, "namespace-local loopback round trip")
 	_ = conn.Close()
 
+	assertTclaudeLayerReapsOrphan(t)
+
 	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
 		"agentd must resolve a stable managed identity through bwrap ancestry; got %q", whoami)
+}
+
+func assertTclaudeLayerReapsOrphan(t *testing.T) {
+	t.Helper()
+	output, err := exec.Command(
+		"/bin/sh",
+		"-c",
+		"sleep 0.2 </dev/null >/dev/null 2>&1 & echo $!",
+	).Output()
+	require.NoError(t, err, "launch orphan-reaping probe")
+	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	require.NoError(t, err, "parse orphan-reaping probe PID")
+	procPath := filepath.Join("/proc", strconv.Itoa(pid))
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(procPath)
+		return os.IsNotExist(err)
+	}, 3*time.Second, 25*time.Millisecond,
+		"bubblewrap PID 1 must reap orphaned harness subprocesses")
 }
 
 func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {

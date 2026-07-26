@@ -44,9 +44,39 @@ func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
 		probeBwrap = oldProbe
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string) error { return errors.New("operation not permitted") }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error {
+		return errors.New("operation not permitted")
+	}
 
 	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
 	require.ErrorContains(t, err, "unprivileged user namespaces may be unavailable")
 	assert.Equal(t, "off", verdict.State)
+}
+
+func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
+	oldLookPath := lookPathBwrap
+	oldProbe := probeBwrap
+	t.Cleanup(func() {
+		lookPathBwrap = oldLookPath
+		probeBwrap = oldProbe
+	})
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	var probed []sandboxpolicy.NetworkPosture
+	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
+		probed = append(probed, posture)
+		if posture == sandboxpolicy.NetworkIsolatedWithAgentd {
+			return errors.New("operation not permitted")
+		}
+		return nil
+	}
+
+	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	require.NoError(t, err)
+	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
+	require.ErrorContains(t, err, "mount, network, and PID namespaces required by isolated-with-agentd")
+	assert.Equal(t, "off", verdict.State)
+	assert.Equal(t, []sandboxpolicy.NetworkPosture{
+		sandboxpolicy.NetworkHostOpen,
+		sandboxpolicy.NetworkIsolatedWithAgentd,
+	}, probed)
 }

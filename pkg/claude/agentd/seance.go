@@ -545,12 +545,7 @@ func resolveSeancePlan(
 			"the predecessor's recorded sandbox is no longer valid: "+err.Error())
 		return seanceResolveResp{}, false
 	}
-	if fail := sandboxProfileCapabilityFailure(
-		h.Name,
-		sandboxMode,
-		effectiveSandbox,
-		sourceRow.SandboxImplementation,
-	); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, effectiveSandbox); fail != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+fail.Msg)
 		return seanceResolveResp{}, false
