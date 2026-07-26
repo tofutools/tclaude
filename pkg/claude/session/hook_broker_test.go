@@ -1,6 +1,7 @@
 package session
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,7 +48,7 @@ func TestLocalHookAmbient_ReadsTheLaunchEnvironment(t *testing.T) {
 	assert.Equal(t, "gen-abc123", amb.ExitGeneration)
 	assert.Equal(t, "450000", amb.AutoCompactWindow)
 	assert.False(t, amb.InTaskRunnerHook(), "no signal path means no task mode")
-	assert.NotEmpty(t, amb.FallbackCwd, "the working directory is the auto-registration fallback")
+	assert.NotEmpty(t, amb.FallbackCwd(), "the working directory is the auto-registration fallback")
 }
 
 // A task signal outside CacheDir must neither be honoured as a write
@@ -58,11 +59,60 @@ func TestLocalHookAmbient_RejectsOutOfBoundsTaskSignal(t *testing.T) {
 		"an out-of-bounds signal path must not enable task mode")
 }
 
+// The expensive ambient lookups must stay lazy and memoised.
+// GetCurrentTmuxSession execs `tmux display-message` and FindClaudePID
+// walks /proc; before this seam they ran only on the two rare paths that
+// needed them. Resolving them for every event would put a subprocess
+// spawn on the critical path of every PreToolUse/PostToolUse of every
+// harness-builtin agent — a change to the launch mode required not to
+// change.
+func TestLocalHookAmbient_ExpensiveLookupsAreLazyAndMemoised(t *testing.T) {
+	var pidCalls, tmuxCalls, cwdCalls int
+	amb := HookAmbient{
+		harnessPID:  countingOnce(&pidCalls, func() int { return 7 }),
+		tmuxSession: countingOnce(&tmuxCalls, func() string { return "pane" }),
+		fallbackCwd: countingOnce(&cwdCalls, func() string { return "/w" }),
+	}
+
+	assert.Zero(t, pidCalls, "constructing the ambient must not resolve the harness pid")
+	assert.Zero(t, tmuxCalls, "constructing the ambient must not shell out to tmux")
+	assert.Zero(t, cwdCalls, "constructing the ambient must not stat the working directory")
+
+	for range 3 {
+		assert.Equal(t, 7, amb.HarnessPID())
+		assert.Equal(t, "pane", amb.TmuxSession())
+		assert.Equal(t, "/w", amb.FallbackCwd())
+	}
+	assert.Equal(t, 1, pidCalls, "repeated reads within one event must not re-walk /proc")
+	assert.Equal(t, 1, tmuxCalls, "repeated reads within one event must not re-exec tmux")
+	assert.Equal(t, 1, cwdCalls)
+}
+
+// A zero HookAmbient must be inert rather than a nil-dereference, so a
+// caller that forgets to build one degrades the way "not in tmux, pid
+// unknown" already degrades.
+func TestHookAmbient_ZeroValueIsInert(t *testing.T) {
+	var amb HookAmbient
+	assert.Zero(t, amb.HarnessPID())
+	assert.Empty(t, amb.TmuxSession())
+	assert.Empty(t, amb.FallbackCwd())
+	assert.False(t, amb.InTaskRunnerHook())
+}
+
+func countingOnce[T any](calls *int, fn func() T) func() T {
+	var once sync.Once
+	var val T
+	return func() T {
+		once.Do(func() { *calls++; val = fn() })
+		return val
+	}
+}
+
 // The brokered context takes its pane, cwd and pid from the session row
 // the daemon resolved, and deliberately never enters task mode: the signal
 // path is a host-side file write whose target the sandbox would otherwise
-// choose, and `tclaude task run` soft-disables hooks anyway, so nothing
-// legitimate reaches the broker in task mode.
+// choose. brokerHookEvents also refuses to broker at all while a task
+// signal is set, so this is the second of two lines.
 func TestBrokeredHookAmbient_UsesRowFactsAndNeverTaskMode(t *testing.T) {
 	t.Setenv("TCLAUDE_TASK_SIGNAL", "")
 
@@ -74,11 +124,11 @@ func TestBrokeredHookAmbient_UsesRowFactsAndNeverTaskMode(t *testing.T) {
 		AutoCompactWindow: "200000",
 	})
 
-	assert.Equal(t, "tmux-row", amb.TmuxSession,
+	assert.Equal(t, "tmux-row", amb.TmuxSession(),
 		"the pane must come from the resolved row, not the daemon's own (absent) $TMUX")
-	assert.Equal(t, "/home/u/proj", amb.FallbackCwd,
+	assert.Equal(t, "/home/u/proj", amb.FallbackCwd(),
 		"the cwd fallback must come from the row, not the daemon's working directory")
-	assert.Equal(t, 4242, amb.HarnessPID,
+	assert.Equal(t, 4242, amb.HarnessPID(),
 		"the harness pid must come from the resolved ancestry, not the daemon's parents")
 	assert.Equal(t, "gen-xyz", amb.ExitGeneration)
 	assert.Equal(t, "200000", amb.AutoCompactWindow)

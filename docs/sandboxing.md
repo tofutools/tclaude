@@ -223,9 +223,14 @@ baseline necessarily hides. A `tclaude-layer` launch therefore exports
 to the daemon over `~/.tclaude/api/agentd.sock` instead of writing state
 itself. agentd applies the event host-side by calling the same function a
 direct callback would, so a wrapped agent's status, sub-agent ledger,
-directory tracking, desktop notifications and pre-compact guard behave as
-they do for any other launch. Every other launch still writes directly and
-is byte-for-byte unaffected.
+directory tracking and desktop notifications behave as they do for any
+other launch. Every other launch still writes directly and is byte-for-byte
+unaffected.
+
+The status line is not yet brokered. Anything that reads what it records
+therefore still degrades under the layer — in particular the pre-compact
+guard, which decides from the context snapshot the status line is the only
+writer of, and so allows every compaction until that follow-up lands.
 
 The daemon identifies the calling session from host pids it recorded at
 spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the

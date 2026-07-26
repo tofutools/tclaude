@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -445,7 +446,7 @@ func runHookCallback() error {
 		return brokerHookEvent(input, os.Stdout)
 	}
 
-	return DispatchHookEvent(input, envSessionID, LocalHookAmbient(), os.Stdout)
+	return DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout)
 }
 
 // DispatchHookEvent applies one parsed hook event: the PreCompact gate
@@ -459,7 +460,7 @@ func runHookCallback() error {
 //
 // stdout receives any hook decision document; it is the hook's real stdout
 // on the direct path and a response buffer on the brokered one.
-func DispatchHookEvent(input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
+func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
 	// PreCompact is a gate, not a status transition: it may write a
 	// {"decision":"block"} back to Claude Code to refuse an early
 	// auto-compaction. Handle it on its own path (it does not flow
@@ -473,7 +474,7 @@ func DispatchHookEvent(input HookCallbackInput, envSessionID string, amb HookAmb
 			sessionKey = input.ConvID
 		}
 		if sessionKey != "" {
-			unlock, err := acquireHookLock(sessionKey)
+			unlock, err := acquireHookLockContext(ctx, sessionKey)
 			if err != nil {
 				return fmt.Errorf("failed to acquire PreCompact hook lock: %w", err)
 			}
@@ -485,7 +486,7 @@ func DispatchHookEvent(input HookCallbackInput, envSessionID string, amb HookAmb
 		return decidePreCompact(input, envSessionID, amb, stdout)
 	}
 
-	return applyHook(input, envSessionID, amb)
+	return applyHook(ctx, input, envSessionID, amb)
 }
 
 // ApplyHook applies a single parsed Claude Code hook event to session
@@ -504,10 +505,10 @@ func DispatchHookEvent(input HookCallbackInput, envSessionID string, amb HookAmb
 // broker does not; it goes through DispatchHookEvent with an explicit
 // HookAmbient instead.
 func ApplyHook(input HookCallbackInput, envSessionID string) error {
-	return applyHook(input, envSessionID, LocalHookAmbient())
+	return applyHook(context.Background(), input, envSessionID, LocalHookAmbient())
 }
 
-func applyHook(input HookCallbackInput, envSessionID string, amb HookAmbient) error {
+func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient) error {
 	// Acquire a per-session exclusive lock to prevent concurrent hook callbacks
 	// from racing on the read-modify-write of session state.
 	sessionKey := envSessionID
@@ -515,7 +516,7 @@ func applyHook(input HookCallbackInput, envSessionID string, amb HookAmbient) er
 		sessionKey = input.ConvID
 	}
 	if sessionKey != "" {
-		unlock, lockErr := acquireHookLock(sessionKey)
+		unlock, lockErr := acquireHookLockContext(ctx, sessionKey)
 		if lockErr != nil {
 			slog.Warn("failed to acquire hook lock", "error", lockErr, "module", "hooks")
 			return fmt.Errorf("failed to acquire hook lock: %w", lockErr)
@@ -1244,7 +1245,7 @@ func applyHook(input HookCallbackInput, envSessionID string, amb HookAmbient) er
 	// Keep the row keyed by the real harness process, not tmux's shell
 	// wrapper pane PID. Spawn records #{pane_pid}; hooks run under the
 	// harness, so FindClaudePID can correct wrapper-shaped rows.
-	if newPID := amb.HarnessPID; newPID > 0 && state.PID != newPID {
+	if newPID := amb.HarnessPID(); newPID > 0 && state.PID != newPID {
 		state.PID = newPID
 	}
 
@@ -1719,12 +1720,12 @@ func getOrCreateSessionState(input HookCallbackInput, envSessionID string, amb H
 // autoRegisterSessionFromHook creates a new session state for a Claude session
 // that wasn't started via tclaude
 func autoRegisterSessionFromHook(input HookCallbackInput, amb HookAmbient) *SessionState {
-	claudePID := amb.HarnessPID
+	claudePID := amb.HarnessPID()
 	if claudePID == 0 {
 		return nil
 	}
 
-	tmuxSession := amb.TmuxSession
+	tmuxSession := amb.TmuxSession()
 
 	// The session PK is the conversation's full UUID — never a truncation.
 	// Two conversations sharing an 8-char prefix would otherwise collide on
@@ -1733,7 +1734,7 @@ func autoRegisterSessionFromHook(input HookCallbackInput, amb HookAmbient) *Sess
 
 	cwd := input.Cwd
 	if cwd == "" {
-		cwd = amb.FallbackCwd
+		cwd = amb.FallbackCwd()
 	}
 
 	state := &SessionState{
@@ -2004,7 +2005,7 @@ func handleContextNudge(sessionID string, amb HookAmbient) {
 		return
 	}
 
-	tmuxSession := amb.TmuxSession
+	tmuxSession := amb.TmuxSession()
 	if tmuxSession == "" {
 		// No pane can receive this ephemeral hint. Stamp the threshold so a
 		// later hook does not deliver a stale reminder for the same climb.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -58,6 +59,21 @@ const hookBrokerTimeout = 20 * time.Second
 // recorded pids; declining to broker costs the caller nothing but its own
 // telemetry, which lands in a database no one else reads.
 func brokerHookEvents() bool {
+	// `tclaude task run` drives a SEQUENCE of conversations under one
+	// env-session and steers them through a signal file the runner watches.
+	// That file is a host-side write whose path the sandbox would choose,
+	// so the broker refuses to carry it — which means a brokered task hook
+	// could not complete a task even if the rest went through. Running the
+	// task runner inside a tclaude-layer pane is not a supported
+	// combination; say so once, loudly, rather than half-working.
+	if _, inTaskMode := taskSignalPath(); inTaskMode {
+		if os.Getenv(HookBrokerEnvVar) == HookBrokerAgentd {
+			slog.Warn("hook broker: `tclaude task run` inside a tclaude-layer pane is not supported; "+
+				"applying this hook directly, which cannot reach the real database",
+				"module", "hooks")
+		}
+		return false
+	}
 	if os.Getenv(HookBrokerEnvVar) == HookBrokerAgentd {
 		return true
 	}
@@ -124,19 +140,34 @@ type BrokeredHookResponse struct {
 // the interim behaviour it replaces, where a tclaude-layer launch dropped
 // every event unconditionally.
 func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
-	body, err := json.Marshal(BrokeredHookRequest{
+	req := BrokeredHookRequest{
 		Input:             input,
 		ClaimedSessionID:  os.Getenv("TCLAUDE_SESSION_ID"),
 		ExitGeneration:    os.Getenv("TCLAUDE_EXIT_GENERATION"),
 		AutoCompactWindow: os.Getenv(harness.AutoCompactWindowEnvVar),
-	})
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		slog.Warn("hook broker: failed to encode event", "error", err, "module", "hooks")
 		return nil
 	}
+	body = trimOversizedHookBody(req, body)
 
 	resp, err := postHookToDaemon(body)
 	if err != nil {
+		// A refusal is louder than a transport failure on purpose. An
+		// unreachable daemon is transient and self-corrects; a refusal
+		// means the daemon could not place this caller, or placed it on a
+		// different session than it claims — most plausibly a stale row
+		// whose recorded pid was reused. That does not self-correct: the
+		// agent silently loses ALL hook telemetry for its whole life, so
+		// the log has to be findable rather than blend into noise.
+		if errors.Is(err, errHookBrokerRefused) {
+			slog.Error("hook broker: agentd refused this session's hook events; "+
+				"the agent's status, ledgers and directory tracking will not update",
+				"event", input.HookEventName, "error", err, "module", "hooks")
+			return nil
+		}
 		slog.Warn("hook broker: agentd unreachable, dropping event",
 			"event", input.HookEventName, "error", err, "module", "hooks")
 		return nil
@@ -149,6 +180,64 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 	}
 	return nil
 }
+
+// hookBrokerBodyBudget is the client's own ceiling, kept below the
+// daemon's so a trim happens here rather than as a rejection there.
+const hookBrokerBodyBudget = (1 << 20) - 4096
+
+// trimOversizedHookBody keeps a large event deliverable instead of losing
+// it whole.
+//
+// ToolInput and ToolResponse are raw per-tool JSON, so a Read or Write of
+// a big file puts that file's content in the payload — well past any
+// sane request ceiling. The direct path applies such an event with no
+// size limit at all, so simply letting the daemon reject it would be a
+// real parity break: the session would lose the event's status
+// transition and last_hook stamp, not merely its tool detail.
+//
+// Dropping the two bulky fields costs only what reads them: the
+// background-shell ledger and the working-directory tracker, both of
+// which degrade to "no evidence from this event" — the same thing they
+// see for any tool call that is not a background Bash or a file edit.
+func trimOversizedHookBody(req BrokeredHookRequest, body []byte) []byte {
+	if len(body) <= hookBrokerBodyBudget {
+		return body
+	}
+	slog.Warn("hook broker: event exceeds the payload budget; dropping tool input/response to keep it deliverable",
+		"event", req.Input.HookEventName, "tool", req.Input.ToolName,
+		"bytes", len(body), "budget", hookBrokerBodyBudget, "module", "hooks")
+	req.Input.ToolInput = nil
+	req.Input.ToolResponse = nil
+	trimmed, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	if len(trimmed) > hookBrokerBodyBudget {
+		// Still too large: the free text itself is enormous. Clamp the two
+		// unbounded strings rather than surrender the event.
+		req.Input.Prompt = truncateForBroker(req.Input.Prompt)
+		req.Input.LastAssistantMessage = truncateForBroker(req.Input.LastAssistantMessage)
+		req.Input.Message = truncateForBroker(req.Input.Message)
+		if clamped, err := json.Marshal(req); err == nil {
+			return clamped
+		}
+	}
+	return trimmed
+}
+
+func truncateForBroker(s string) string {
+	const max = 8192
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "… [truncated by the hook broker]"
+}
+
+// errHookBrokerRefused marks a daemon REFUSAL (the caller could not be
+// placed, or claimed a session it does not own) as opposed to a transport
+// failure. The two want very different operator attention — see the
+// branch in brokerHookEvent.
+var errHookBrokerRefused = errors.New("agentd refused the brokered hook event")
 
 func postHookToDaemon(body []byte) (*BrokeredHookResponse, error) {
 	socks := agentipc.ClientSocketPaths()
@@ -184,7 +273,11 @@ func postHookToDaemon(body []byte) (*BrokeredHookResponse, error) {
 	defer func() { _ = httpResp.Body.Close() }()
 	if httpResp.StatusCode != http.StatusOK {
 		preview, _ := io.ReadAll(io.LimitReader(httpResp.Body, 512))
-		return nil, fmt.Errorf("agentd returned %d: %s", httpResp.StatusCode, bytes.TrimSpace(preview))
+		err := fmt.Errorf("agentd returned %d: %s", httpResp.StatusCode, bytes.TrimSpace(preview))
+		if httpResp.StatusCode == http.StatusForbidden || httpResp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("%w: %w", errHookBrokerRefused, err)
+		}
+		return nil, err
 	}
 	var out BrokeredHookResponse
 	if err := json.NewDecoder(io.LimitReader(httpResp.Body, 1<<20)).Decode(&out); err != nil {

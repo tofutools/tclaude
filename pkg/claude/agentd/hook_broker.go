@@ -2,12 +2,14 @@ package agentd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -42,6 +44,36 @@ import (
 // user's prompt and the assistant's last message, so they are not tiny,
 // but they are nowhere near this. Anything larger is malformed or hostile.
 const hookBrokerMaxBody = 1 << 20 // 1 MiB
+
+// hookBrokerApplyTimeout bounds how long one brokered event may occupy a
+// daemon goroutine. Deliberately under the client's own 20s give-up, so
+// the daemon frees the goroutine while the client is still listening.
+const hookBrokerApplyTimeout = 15 * time.Second
+
+// safeBrokeredConvID rejects a conversation id that is not a single
+// path-safe segment.
+//
+// The conv-id is caller-controlled and is not merely stored: the /clear
+// identity migration joins it into a filesystem path
+// (convops.ScanAndUpsertFile of "<project dir>/<conv-id>.jsonl"), and
+// filepath.Join cleans ".." segments, so a conv-id containing them walks
+// out of the projects directory. On the direct path that resolves inside
+// the agent's own sandbox and buys it nothing; brokered, the daemon
+// resolves it on the host, which turns an unvalidated field into a
+// host-side read of any uuid-shaped file the agent can name.
+//
+// The check is a path-segment rule rather than a uuid shape on purpose:
+// conv-id formats differ per harness, and this closes the traversal
+// without taking a bet on any of them.
+func safeBrokeredConvID(convID string) bool {
+	if convID == "" {
+		return true // absent is fine; the hook path handles it
+	}
+	if convID == "." || convID == ".." || strings.Contains(convID, "..") {
+		return false
+	}
+	return !strings.ContainsAny(convID, `/\`) && convID == strings.TrimSpace(convID)
+}
 
 // handleWhoamiHook applies one hook event on behalf of the calling agent.
 func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +135,12 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !safeBrokeredConvID(req.Input.ConvID) {
+		writeError(w, http.StatusBadRequest, "body",
+			"conversation id must be a single path-safe segment")
+		return
+	}
+
 	sanitizeBrokeredHookInput(&req.Input, row.ConvID)
 
 	amb := session.BrokeredHookAmbient(session.BrokeredHookContext{
@@ -113,18 +151,36 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		AutoCompactWindow: req.AutoCompactWindow,
 	})
 
+	// Bound the work this request may hold the daemon for. The hook path
+	// takes a per-session file lock, and that lock file is NOT inside a
+	// protected root, so a wrapped agent can hold it on purpose. Without a
+	// deadline each such request would park a daemon goroutine that no
+	// client disconnect can free — a sandbox could pin goroutines and file
+	// descriptors until agentd stops serving everyone. The hook callback's
+	// own client gives up at 20s; expiring first means we answer rather
+	// than write into a round trip nobody is reading.
+	ctx, cancel := context.WithTimeout(r.Context(), hookBrokerApplyTimeout)
+	defer cancel()
+
 	var stdout bytes.Buffer
-	if err := session.DispatchHookEvent(req.Input, row.ID, amb, &stdout); err != nil {
+	if err := session.DispatchHookEvent(ctx, req.Input, row.ID, amb, &stdout); err != nil {
 		slog.Warn("hook broker: applying brokered hook event failed",
 			"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
+		if ctx.Err() != nil {
+			writeError(w, http.StatusServiceUnavailable, "hook",
+				"timed out applying hook event; the session's hook lock is held")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "hook", "failed to apply hook event")
 		return
 	}
 	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{Stdout: stdout.String()})
 }
 
-// sanitizeBrokeredHookInput clamps the one payload field that becomes a
+// sanitizeBrokeredHookInput clamps the payload field that becomes a
 // host-side capability when the daemon acts on it instead of the agent.
+// (The other such field, ConvID, is rejected outright by
+// safeBrokeredConvID rather than clamped — see there.)
 //
 // TranscriptPath is a caller-supplied filesystem path that the Codex
 // telemetry projection opens and scans, and whose directory is stored as
