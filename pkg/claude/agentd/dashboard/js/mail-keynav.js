@@ -1,4 +1,4 @@
-// mail-keynav.js — ↑/↓ row navigation for the Messages tab's list panes.
+// mail-keynav.js — keyboard navigation for the Messages tab's list panes.
 //
 // The Messages tab reads like a desktop mail client, so it should be driven
 // like one: open a row, then walk the pane with the arrow keys instead of
@@ -14,10 +14,10 @@
 //   the pending/handled split. Rebuilding that order from the model would be a
 //   second source of truth, free to drift from the one the operator sees.
 //
-//   Movement clamps at the ends of the rendered page; it never pages. Paging
-//   is an explicit act with its own controls, and an arrow key that quietly
-//   loaded the next page would let a held-down key walk the operator through a
-//   whole mailbox — and, in the sidebar, through one folder fetch per row.
+//   Every row-navigation key clamps within the rendered page. Even PageDown is
+//   a viewport-sized row move, not a request for another server page.
+
+import { visiblePageSize } from './list-viewport.js';
 
 const STEPS = { ArrowUp: -1, ArrowDown: 1 };
 
@@ -25,8 +25,13 @@ const STEPS = { ArrowUp: -1, ArrowDown: 1 };
 // modifier disqualifies the key: those combinations belong to the browser and
 // the OS, and a pane with no equivalent of its own must not swallow them.
 export function arrowStep(event) {
-  if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return 0;
+  if (!plainKey(event)) return 0;
   return STEPS[event.key] || 0;
+}
+
+function plainKey(event) {
+  return !!event && !event.isComposing && event.keyCode !== 229
+    && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
 // rowEnabled keeps arrow keys away from what a click cannot reach either: a
@@ -71,21 +76,83 @@ export function focusRow(row) {
   if (typeof row?.focus === 'function') row.focus();
 }
 
-// moveRowSelection is a pane's whole keydown contract: read the key, find the
-// neighbouring row, take the focus there, and select it. Returns true when the
-// pane consumed the key.
+function revealRow(row) {
+  if (typeof row?.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' });
+}
+
+function activateRow(row, select) {
+  focusRow(row);
+  revealRow(row);
+  select?.(row);
+}
+
+function navigationTarget(event, rows, anchor, rowSelector) {
+  switch (event.key) {
+    case 'ArrowUp':
+    case 'ArrowDown':
+      return stepRow(rows, anchor, STEPS[event.key]);
+    case 'Home':
+      return rows[0];
+    case 'End':
+      return rows[rows.length - 1];
+    case 'PageUp':
+    case 'PageDown': {
+      if (!anchor) return event.key === 'PageDown' ? rows[0] : rows[rows.length - 1];
+      const direction = event.key === 'PageDown' ? 1 : -1;
+      const next = rows.indexOf(anchor)
+        + direction * visiblePageSize(event.currentTarget, rowSelector);
+      return rows[Math.max(0, Math.min(rows.length - 1, next))];
+    }
+    default:
+      return undefined;
+  }
+}
+
+// moveRowSelection handles ↑/↓, Home/End, and viewport-sized PageUp/PageDown.
+// All of them remain page-local. Returns true when the pane consumed the key.
 export function moveRowSelection({ event, rowSelector, wrapSelector, select }) {
-  const step = arrowStep(event);
-  if (!step) return false;
+  if (!plainKey(event)) return false;
   const rows = paneRows(event.currentTarget, rowSelector);
   if (!rows.length) return false;
+  const anchor = anchorRow(rows, event.target, rowSelector, wrapSelector);
+  const target = navigationTarget(event, rows, anchor, rowSelector);
+  if (target === undefined) return false;
   event.preventDefault();
-  const target = stepRow(rows, anchorRow(rows, event.target, rowSelector, wrapSelector), step);
   if (!target) return true;
+  activateRow(target, target === anchor ? undefined : select);
+  return true;
+}
+
+// enterFirstRow connects a filter to the rendered results below it.
+export function enterFirstRow({ event, container, rowSelector, select }) {
+  if (!plainKey(event) || event.key !== 'ArrowDown') return false;
+  const first = paneRows(container, rowSelector)[0];
+  if (!first) return false;
+  event.preventDefault();
+  activateRow(first, select);
+  return true;
+}
+
+// leaveFirstRow returns from the first rendered result to the pane's filter.
+// Escape is intentionally scoped to the first row too: deeper in the list it
+// remains available to future message-level interactions.
+export function leaveFirstRow({ event, rowSelector, wrapSelector, filter }) {
+  if (!plainKey(event) || !['ArrowUp', 'Escape'].includes(event.key)) return false;
+  const rows = paneRows(event.currentTarget, rowSelector);
+  if (!rows.length) return false;
+  if (anchorRow(rows, event.target, rowSelector, wrapSelector) !== rows[0]) return false;
+  event.preventDefault();
+  filter?.focus?.();
+  return true;
+}
+
+// focusPaneRows enters another pane on its selected row, falling back to the
+// first painted row when the pane has no visible selection.
+export function focusPaneRows(container, rowSelector) {
+  const rows = paneRows(container, rowSelector);
+  const target = rows.find((row) => row.classList.contains('active')) || rows[0];
+  if (!target) return false;
   focusRow(target);
-  // Selection moves with the keyboard, so the pane has to follow it; 'nearest'
-  // keeps the list from jumping when the row is already on screen.
-  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'nearest' });
-  select(target);
+  revealRow(target);
   return true;
 }

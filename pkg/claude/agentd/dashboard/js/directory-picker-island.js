@@ -2,18 +2,10 @@ import { h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { configureDirectoryPickerBridge } from './helpers.js';
+import { visiblePageSize } from './list-viewport.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 
 const html = htm.bind(h);
-const PAGE_FALLBACK = 10;
-
-function pageSize(list) {
-  const first = list?.querySelector('.directory-picker-entry');
-  const itemHeight = first?.offsetHeight || 0;
-  if (!itemHeight) return PAGE_FALLBACK;
-  return Math.max(1, Math.floor(list.clientHeight / itemHeight));
-}
-
 function withTrailingSlash(path) {
   if (!path || path === '/') return path;
   return `${path.replace(/\/+$/, '')}/`;
@@ -147,12 +139,13 @@ export function DirectoryPickerApp({ state, actions }) {
           } else if (event.key === 'PageDown') {
             event.preventDefault();
             setActiveIndex(Math.min(
-              selectedIndex + pageSize(listRef.current),
+              selectedIndex + visiblePageSize(listRef.current, '.directory-picker-entry'),
               visibleDirectories.length - 1,
             ));
           } else if (event.key === 'PageUp') {
             event.preventDefault();
-            setActiveIndex(Math.max(selectedIndex - pageSize(listRef.current), 0));
+            setActiveIndex(Math.max(
+              selectedIndex - visiblePageSize(listRef.current, '.directory-picker-entry'), 0));
           } else if (event.key === 'Tab' && filtering && !event.shiftKey && path !== activeDirectory.path) {
             event.preventDefault();
             setPath(activeDirectory.path);

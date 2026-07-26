@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { isWizardActive } from './slop.js';
 import { COMMAND_PALETTE_OPEN_EVENT } from './command-registry.js';
+import { visiblePageSize } from './list-viewport.js';
 
 const html = htm.bind(h);
 
@@ -11,7 +12,6 @@ export const DEFAULT_PLACEHOLDER =
 export const WIZARD_PLACEHOLDER =
   'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
 export const WIZARD_EMPTY = 'No such incantation in this tome';
-export const PAGE_FALLBACK = 10;
 export const PROCESS_NODE_CHOOSER_SELECTOR = '.process-node-chooser';
 export const PALETTE_BLOCKING_OVERLAY_SELECTOR =
   `.modal-overlay.show, .manage-overlay.show, ${PROCESS_NODE_CHOOSER_SELECTOR}`;
@@ -127,21 +127,15 @@ export function PaletteOverlay({
     if (wasOpenRef.current) restoreFocus();
   }, []);
 
-  const pageSize = () => {
-    const list = listRef.current;
-    const first = list?.querySelector('.palette-item');
-    const itemHeight = first?.offsetHeight || 0;
-    if (!itemHeight) return PAGE_FALLBACK;
-    return Math.max(1, Math.floor(list.clientHeight / itemHeight));
-  };
-
   const runSelected = () => state.runSelected({ beforeRun: restoreFocus });
   const onInputKeyDown = (event) => {
     switch (event.key) {
       case 'ArrowDown': event.preventDefault(); state.move(1); break;
       case 'ArrowUp': event.preventDefault(); state.move(-1); break;
-      case 'PageDown': event.preventDefault(); state.movePage(1, pageSize()); break;
-      case 'PageUp': event.preventDefault(); state.movePage(-1, pageSize()); break;
+      case 'PageDown': event.preventDefault(); state.movePage(1,
+        visiblePageSize(listRef.current, '.palette-item')); break;
+      case 'PageUp': event.preventDefault(); state.movePage(-1,
+        visiblePageSize(listRef.current, '.palette-item')); break;
       case 'Enter': event.preventDefault(); runSelected(); break;
       case 'Escape': event.preventDefault(); state.close(); break;
       default: break;

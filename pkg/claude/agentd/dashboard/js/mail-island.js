@@ -2,7 +2,13 @@ import { Fragment, h, render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
-import { focusRow, moveRowSelection } from './mail-keynav.js';
+import {
+  enterFirstRow,
+  focusPaneRows,
+  focusRow,
+  leaveFirstRow,
+  moveRowSelection,
+} from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 
@@ -14,6 +20,38 @@ const html = htm.bind(h);
 // row rather than restarting at the selection.
 const SIDEBAR_ROWS = { rowSelector: '.mailbox', wrapSelector: '.mailbox-row' };
 const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
+const MAIL_PANES = [
+  { selector: '#mail-sidebar', rows: SIDEBAR_ROWS },
+  { selector: '#mail-list', rows: LIST_ROWS },
+  { selector: '#mail-reader' },
+];
+
+// Bare ←/→ move between the three mail panes. Group expansion remains on the
+// dedicated caret button, which avoids overloading a folder row with two
+// meanings and keeps pane traversal consistent from every row in the sidebar.
+function movePaneFocus(event) {
+  if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+  const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+  if (!direction) return false;
+  const source = MAIL_PANES.findIndex(({ selector }) => event.target?.closest?.(selector));
+  if (source < 0) return false;
+  const client = event.currentTarget;
+  for (let index = source + direction; index >= 0 && index < MAIL_PANES.length; index += direction) {
+    const pane = client.querySelector(MAIL_PANES[index].selector);
+    if (!pane) continue;
+    let moved;
+    if (MAIL_PANES[index].rows) {
+      moved = focusPaneRows(pane, MAIL_PANES[index].rows.rowSelector);
+    } else {
+      pane.focus();
+      moved = true;
+    }
+    if (!moved) continue;
+    event.preventDefault();
+    return true;
+  }
+  return false;
+}
 
 function Progress({ progress }) {
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -52,6 +90,7 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
   return html`<div class=${cls}>${lead}<button
     class=${`mailbox${active ? ' active' : ''}${mailbox.unread ? ' has-unread' : ''}`}
     data-id=${mailbox.id} title=${controller.mailboxTitleAttr(mailbox)} disabled=${current.busy}
+    aria-current=${active ? 'true' : undefined}
     onClick=${(event) => { focusRow(event.currentTarget); controller.selectMailbox(mailbox.id); }}>
     <span class="mailbox-icon"><${MailboxIcon} mailbox=${mailbox} /></span>
     <span class="mailbox-name">${controller.mailboxLabel(mailbox)}</span>
@@ -86,9 +125,16 @@ function MailSidebar({ current, controller }) {
   // ↑/↓ walk the folders in painted order — pinned, then each group with its
   // expanded members, then the agent folders. Section headings and expand
   // carets are not folders, so they are simply not on the path.
-  const onKeyDown = (event) => moveRowSelection({
+  const moveRow = (event) => moveRowSelection({
     event, ...SIDEBAR_ROWS, select: (row) => { controller.selectMailbox(row.dataset.id); },
   });
+  const onKeyDown = (event) => {
+    const client = event.currentTarget.closest('.mail-client');
+    if (leaveFirstRow({
+      event, ...SIDEBAR_ROWS, filter: client?.querySelector('#filter-mailboxes'),
+    })) return;
+    moveRow(event);
+  };
   return html`<aside class="mail-sidebar" id="mail-sidebar" onKeyDown=${onKeyDown}>
     ${model.pinned.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} current=${current} controller=${controller} />`)}
     ${model.groups.length > 0 && html`<div class="mailbox-section">${wizard ? 'Parties' : 'Groups'}</div>`}
@@ -123,7 +169,7 @@ function AccessRow({ request, current, controller }) {
   return html`<div class=${`mail-row-wrap access-row-wrap${handled ? ' handled' : ''}`}
     data-key=${request.id} data-kind="decree">
     <button class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}
-      data-id=${request.id}
+      data-id=${request.id} aria-current=${active ? 'true' : undefined}
       onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(request.id); }}>
       <span class="mail-row-top">
         ${!handled && html`<span class="mail-row-dot" title="pending">●</span>`}
@@ -161,7 +207,7 @@ function MessageRow({ message, current, aggregate, controller }) {
       disabled=${current.busy} title="Select message"
       onChange=${(event) => controller.toggleMessageSelection(message.id, event.currentTarget.checked)} />
     <button class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
-      data-id=${message.id}
+      data-id=${message.id} aria-current=${active ? 'true' : undefined}
       onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(message.id); }}>
       <span class="mail-row-top">
         ${unread && html`<span class="mail-row-dot" title="unread">●</span>`}
@@ -197,9 +243,16 @@ function MessageList({ current, controller, model }) {
   // ↑/↓ move the open message one row up or down the page. The access folder's
   // "Recently handled" divider is not a row, so a move crosses it without a
   // wasted keypress.
-  const onKeyDown = (event) => moveRowSelection({
+  const moveRow = (event) => moveRowSelection({
     event, ...LIST_ROWS, select: (row) => controller.selectMessage(row.dataset.id),
   });
+  const onKeyDown = (event) => {
+    const client = event.currentTarget.closest('.mail-client');
+    if (leaveFirstRow({
+      event, ...LIST_ROWS, filter: client?.querySelector('#filter-messages'),
+    })) return;
+    moveRow(event);
+  };
   if (model.access) {
     if (model.allAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
       ? 'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.'
@@ -391,13 +444,16 @@ export function messageDeliveryState(message) {
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
-    if (model.allAccess.length === 0) return html`<div class="mail-reader" id="mail-reader"><div class="empty">${wizard
+    if (model.allAccess.length === 0) return html`<div class="mail-reader" id="mail-reader"
+      role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
       ? 'No petitions await judgement.' : 'No access requests to review.'}</div></div>`;
     const request = model.allAccess.find(item => item.id === String(current.selectedMsgId || ''));
-    return html`<div class="mail-reader" id="mail-reader" data-kind=${request ? 'decree' : undefined}><${AccessReader} request=${request} controller=${controller} /></div>`;
+    return html`<div class="mail-reader" id="mail-reader" data-kind=${request ? 'decree' : undefined}
+      role="region" aria-label="Message reader" tabindex="0"><${AccessReader} request=${request} controller=${controller} /></div>`;
   }
   const message = model.messages.find(item => item.id === current.selectedMsgId);
-  if (!message) return html`<div class="mail-reader" id="mail-reader"><div class="empty">${wizard
+  if (!message) return html`<div class="mail-reader" id="mail-reader"
+    role="region" aria-label="Message reader" tabindex="0"><div class="empty">${wizard
     ? 'Unfurl a scroll to read it.' : 'Select a message to read.'}</div></div>`;
   const when = message.created_at ? new Date(message.created_at).toLocaleString() : '';
   let to = message.to_recipients?.length ? html`<${RecipientNames} recipients=${message.to_recipients} />` : null;
@@ -409,7 +465,8 @@ function MessageReader({ current, controller, model }) {
   const human = current.selected === 'human';
   const fromTarget = message.from_agent || message.from_conv;
   const senderLive = controller.senderOnline(message.from_agent, message.from_conv);
-  return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}>
+  return html`<div class="mail-reader" id="mail-reader" data-kind=${controller.msgKind(message)}
+    role="region" aria-label="Message reader" tabindex="0">
     <div class="mail-reader-head"><div class="mail-subject">${message.subject || '(no subject)'} <span class="mail-id">#${message.id}</span></div>
       <div class="mail-headers">
         ${message.operator_authored
@@ -455,16 +512,32 @@ export function MailApp({ controller }) {
   const current = controller.state.view.value;
   const messages = controller.messageView();
   const wizard = document.body.classList.contains('wizard');
-  return html`<div class="mail-client">
+  const enterMailboxList = (event) => {
+    const client = event.currentTarget.closest('.mail-client');
+    enterFirstRow({
+      event, container: client?.querySelector('#mail-sidebar'), ...SIDEBAR_ROWS,
+      select: (row) => controller.selectMailbox(row.dataset.id),
+    });
+  };
+  const enterMessageList = (event) => {
+    const client = event.currentTarget.closest('.mail-client');
+    enterFirstRow({
+      event, container: client?.querySelector('#mail-list'), ...LIST_ROWS,
+      select: (row) => controller.selectMessage(row.dataset.id),
+    });
+  };
+  return html`<div class="mail-client" onKeyDown=${movePaneFocus}>
     <input id="filter-mailboxes" type="text" class="mail-sidebar-filter"
       placeholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
       autocomplete="off" spellcheck=${false} value=${current.boxQuery}
-      onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)} />
+      onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)}
+      onKeyDown=${enterMailboxList} />
     <div class="mail-list-filter">
       <input id="filter-messages" type="text"
         placeholder=${wizard ? 'Search the scrolls…' : 'Filter messages (sender / recipient / subject / body)'}
         autocomplete="off" spellcheck=${false} value=${current.messageQuery}
-        onInput=${(event) => controller.setMessageQuery(event.currentTarget.value)} />
+        onInput=${(event) => controller.setMessageQuery(event.currentTarget.value)}
+        onKeyDown=${enterMessageList} />
       <span class="filter-count" id="filter-messages-count">${controller.messageCountText()}</span>
       <button class="clear-filter" id="filter-messages-clear" title="Clear filter"
         aria-label="Clear message filter" onClick=${() => {

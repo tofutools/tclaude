@@ -563,12 +563,12 @@ button.tool:hover { border-color: #58a6ff; }
 }
 .mailbox:hover { background: #1c2330; border-color: #2a3340; }
 .mailbox.active { background: #1f6feb22; border-color: #1f6feb; }
-/* Keyboard focus ring for both list panes' rows. ↑/↓ move the selection AND
-   the focus (mail-keynav.js), so the ring is what tells a keyboard operator
-   which pane the next arrow key will move in — the .active tint alone reads
-   the same whether the pane has focus or not. :focus-visible keeps pointer
-   clicks ring-free even though a click focuses the row explicitly. */
-.mailbox:focus-visible, .mail-row:focus-visible {
+/* Keyboard focus ring for both list panes' rows and the reader. Keyboard
+   navigation moves both the selection and focus (mail-keynav.js), so the ring
+   tells an operator which pane owns the next key — the .active tint alone
+   reads the same whether the pane has focus or not. :focus-visible keeps
+   pointer clicks ring-free even though a click focuses the row explicitly. */
+.mailbox:focus-visible, .mail-row:focus-visible, .mail-reader:focus-visible {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
 .mailbox-icon { width: 16px; text-align: center; flex: 0 0 auto; }
