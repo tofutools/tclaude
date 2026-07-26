@@ -52,8 +52,20 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await harness.act(() => { accepted = feedback.confirm({ title: 'Proceed?', body: 'Careful', okLabel: 'Do it' }); });
   const ok = getByRole(mounted.container, 'button', { name: 'Do it' });
   assert.equal(harness.document.activeElement, ok);
-  await harness.act(() => harness.fireEvent(ok, 'click'));
+  let shortcut;
+  await harness.act(() => {
+    shortcut = harness.fireEvent(harness.document, 'keydown', { key: 'Enter', ctrlKey: true });
+  });
   assert.equal(await accepted, true);
+  assert.equal(shortcut.defaultPrevented, true);
+
+  let cmdAccepted;
+  await harness.act(() => { cmdAccepted = feedback.confirm({ title: 'Proceed on macOS?' }); });
+  await harness.act(() => {
+    shortcut = harness.fireEvent(harness.document, 'keydown', { key: 'Enter', metaKey: true });
+  });
+  assert.equal(await cmdAccepted, true);
+  assert.equal(shortcut.defaultPrevented, true);
 
   let cancelled;
   await harness.act(() => { cancelled = feedback.confirm({ title: 'Again?' }); });

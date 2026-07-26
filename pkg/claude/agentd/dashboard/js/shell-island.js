@@ -124,10 +124,17 @@ function Confirm({ feedback }) {
   useEffect(() => {
     if (!model) return undefined;
     const onKey = (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        feedback.resolveConfirmation(false);
+        return;
+      }
+      if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)
+        || event.isComposing || event.keyCode === 229) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      feedback.resolveConfirmation(false);
+      okRef.current?.click();
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);

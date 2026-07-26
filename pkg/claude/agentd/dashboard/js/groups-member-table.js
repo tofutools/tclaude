@@ -342,10 +342,26 @@ function sandboxIndicator(member) {
 export function SandboxBadge({ member }) {
   const badge = sandboxIndicator(member);
   if (!badge) return null;
-  const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}`;
+  const unlocked = !!member.state?.temporary_sandbox_mode;
+  // A warning can also mean a normally unconfined launch or an unverified
+  // verdict. Only the warning produced by this temporary override is a
+  // restore shortcut; otherwise clicking a warning would misleadingly offer
+  // to "unlock" an agent that is already unconfined.
+  const actionable = !!member.online && (unlocked || !badge.danger);
+  const action = unlocked ? 'restore' : 'unlock';
+  const actionHint = unlocked
+    ? ' Click to stop and restart this agent with its preserved normal sandbox configuration.'
+    : ' Click to stop and restart this agent with its sandbox temporarily disabled.';
+  const title = badge.title + (actionable ? actionHint : '');
+  const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
   // aria-label carries the same full text as the tooltip: a glyph-only
   // indicator whose whole meaning is the hover would otherwise be pointer-only.
-  return html`<span class=${className} role="note" aria-label=${badge.title} title=${badge.title}>${badge.danger ? '⚠' : '🔒'}</span>`;
+  return html`<span class=${className} role=${actionable ? 'button' : 'note'}
+    tabindex=${actionable ? '0' : null}
+    data-act=${actionable ? 'sandbox-restart' : null}
+    data-action=${actionable ? action : null}
+    ...${actionable ? memberAttrs(member) : {}}
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>`;
 }
 
 function statusInfo(state, online) {

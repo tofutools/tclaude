@@ -457,6 +457,97 @@ test('SandboxBadge describes what actually confines the agent', async (t) => {
   }
 });
 
+test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { SandboxBadge } = await harness.importDashboardModule('js/groups-member-table.js');
+  const mount = async (state, online = true) => harness.mount(harness.html`<${SandboxBadge} member=${{
+    agent_id: 'agt_shortcut', conv_id: 'conv-shortcut', title: 'worker', online, state,
+  }} />`);
+
+  await t.test('a live lock offers the temporary unlock action', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'button');
+      assert.equal(badge.getAttribute('tabindex'), '0');
+      assert.equal(badge.dataset.act, 'sandbox-restart');
+      assert.equal(badge.dataset.action, 'unlock');
+      assert.equal(badge.dataset.agent, 'agt_shortcut');
+      assert.match(badge.title, /Click to stop and restart this agent with its sandbox temporarily disabled/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('the temporary warning offers restoration', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'off', os_sandbox_source: 'temporary sandbox override',
+      temporary_sandbox_mode: 'off',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.textContent.trim(), '⚠');
+      assert.equal(badge.dataset.action, 'restore');
+      assert.match(badge.title, /preserved normal sandbox configuration/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a temporary override kept on by managed policy is still a restore lock', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'on',
+      os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
+      temporary_sandbox_mode: 'off',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.textContent.trim(), '🔒');
+      assert.equal(badge.dataset.action, 'restore');
+      assert.match(badge.title, /preserved normal sandbox configuration/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('an ordinary unconfined warning is information, not an unlock action', async () => {
+    const mounted = await mount({
+      harness: 'codex', sandbox_mode: 'danger-full-access',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
+      assert.equal(badge.hasAttribute('tabindex'), false);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('an offline lock remains non-actionable', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'on',
+      os_sandbox_state: 'on', os_sandbox_source: 'this launch',
+    }, false);
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.getAttribute('role'), 'note');
+      assert.equal(badge.hasAttribute('data-act'), false);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+});
+
 // Placement: the sandbox glyph rides on the harness line itself, packed with
 // the other trailing indicators, instead of the framed chip that used to own a
 // line under the control cell. A row that spends a second line per agent to
