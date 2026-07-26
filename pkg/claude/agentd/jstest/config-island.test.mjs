@@ -19,6 +19,28 @@ test('Config island owns the complete form markup and tracks dirty input', async
   await mounted.unmount();
 });
 
+test('Config island renders static HTML characters instead of entity source text', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'), harness.importDashboardModule('js/config-island.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} />`);
+  const text = mounted.container.textContent;
+  const headings = [...mounted.container.querySelectorAll('.cfg-section > h3')].map(node => node.textContent);
+
+  assert.ok(headings.includes('Terminals & windows'));
+  assert.ok(headings.includes('Usage, costs & rate limits'));
+  assert.ok(text.includes('keep the header & tabs pinned'));
+  assert.ok(text.includes('tclaude:<id>'));
+  assert.ok(text.includes('tclaude remote-access add-client <name>'));
+  assert.ok(text.includes('https://<host>:<port>'));
+  assert.ok(text.includes('*\u00a0→\u00a0state'));
+  assert.ok(text.includes('30\u00a0min'));
+  assert.doesNotMatch(text, /&(amp|lt|gt|nbsp);/i);
+  await mounted.unmount();
+});
+
 test('Config installs its lazy loader before initial route activation', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }] = await Promise.all([

@@ -139,7 +139,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     <div class="cfg-filter-empty" id="cfg-filter-empty" hidden>No settings match “<span id="cfg-filter-empty-q"></span>”.</div>
 
     <div class="cfg-section">
-      <h3>Terminals &amp; windows</h3>
+      <h3>Terminals & windows</h3>
       <div class="cfg-field">
         <span class="cfg-label">Terminal</span>
         <${ConfigInput} type="text" id="cfg-terminal" list="cfg-terminal-list" placeholder="(auto-detect)" aria-label="Terminal emulator" autocomplete="off" spellcheck="false" />
@@ -160,8 +160,8 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Window focus</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-focus-window-title" /> set the <code>tclaude:&lt;id&gt;</code> window/tab title</label>
-        <span class="cfg-hint">tclaude normally stamps a <code>tclaude:&lt;id&gt;</code> title on each agent's terminal window/tab. That title is how it finds an agent's <em>existing</em> window to <strong>raise</strong> it (window focus) and to <strong>auto-tile</strong>. On a plain desktop terminal some find it ugly — <strong>uncheck</strong> to leave the terminal's own tab title alone. Trade-off: focus/tiling then can't locate the window, so "focus" falls back to opening a <em>new</em> window instead of raising the existing one (affects WSL and native-Linux/X11; the explicit "open window" action still works). <strong>Leave on for WSL</strong>, where window focus depends on it. On (default). Stored as <code>focus.window_title</code> (the default is omitted; unchecked writes <code>false</code>).</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-focus-window-title" /> set the <code>tclaude:${'<id>'}</code> window/tab title</label>
+        <span class="cfg-hint">tclaude normally stamps a <code>tclaude:${'<id>'}</code> title on each agent's terminal window/tab. That title is how it finds an agent's <em>existing</em> window to <strong>raise</strong> it (window focus) and to <strong>auto-tile</strong>. On a plain desktop terminal some find it ugly — <strong>uncheck</strong> to leave the terminal's own tab title alone. Trade-off: focus/tiling then can't locate the window, so "focus" falls back to opening a <em>new</em> window instead of raising the existing one (affects WSL and native-Linux/X11; the explicit "open window" action still works). <strong>Leave on for WSL</strong>, where window focus depends on it. On (default). Stored as <code>focus.window_title</code> (the default is omitted; unchecked writes <code>false</code>).</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-focus-raiseonly" /> raise existing windows only (never open a fresh one)</label>
         <span class="cfg-hint">When on, focusing an agent that has no open window does nothing, instead of opening a new terminal attached to it. Use a row's "open window" action to open one explicitly. Off (default) = open-on-focus.</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-focus-tile" /> auto-tile windows after a bulk “focus”</label>
@@ -220,7 +220,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Horizontal scroll</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-hscroll-follow" /> keep the header &amp; tabs pinned while scrolled sideways (follow mode)</label>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-dashboard-hscroll-follow" /> keep the header & tabs pinned while scrolled sideways (follow mode)</label>
         <span class="cfg-hint">On a window too narrow for a wide member table, the page scrolls sideways. The full-bleed bars (header, tabs, slop marquee) always stretch to fill the width so they never look ragged — this controls their <em>content</em>. <strong>Follow</strong> (default, checked) pins the header controls and tab strip to the viewport and makes them sticky-left, so they stay put and usable while you're scrolled right. <strong>Static</strong> (unchecked) lets that content scroll off with the page — the bars still fill the width, but the controls aren't reachable until you scroll back. Stored as <code>dashboard.hscroll_follow</code> (the default is omitted; static writes <code>false</code>).</span>
       </div>
       <div class="cfg-field">
@@ -246,7 +246,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>Usage, costs &amp; rate limits</h3>
+      <h3>Usage, costs & rate limits</h3>
       <div class="cfg-field">
         <span class="cfg-label">Cost display multiplier</span>
         <${ConfigInput} type="number" id="cfg-cost-factor" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="min-width:120px" />
@@ -291,7 +291,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>Context &amp; compaction</h3>
+      <h3>Context & compaction</h3>
       <div class="cfg-field">
         <span class="cfg-label">Pre-compact guard</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-precompact-enabled" /> enabled</label>
@@ -366,7 +366,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <details class="cfg-advanced">
           <summary>Advanced: raw transition rules</summary>
-          <span class="cfg-hint" style="padding-left:0">The checklist above toggles <code>*&nbsp;→&nbsp;state</code> rules. Add from-specific or extra rules here (use <code>*</code> as a wildcard for any state). The checklist and this list edit the same setting; an empty list means no state change notifies.</span>
+          <span class="cfg-hint" style="padding-left:0">The checklist above toggles <code>*${'\u00a0'}→${'\u00a0'}state</code> rules. Add from-specific or extra rules here (use <code>*</code> as a wildcard for any state). The checklist and this list edit the same setting; an empty list means no state change notifies.</span>
           <${TransitionList} values=${lists['cfg-notif-transitions']} onChange=${onListChange} />
         </details>
       </div>
@@ -378,7 +378,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>Spawn &amp; clone policy</h3>
+      <h3>Spawn & clone policy</h3>
       <div class="cfg-field">
         <span class="cfg-label">Spawn restriction</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-spawnrestrict" /> agents may only spawn into groups they belong to</label>
@@ -414,7 +414,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>Ask &amp; scribe defaults</h3>
+      <h3>Ask & scribe defaults</h3>
       <div class="cfg-field">
         <span class="cfg-label">Ask — profile</span>
         <${ConfigSelect} id="ask-profile" aria-label="Ask default profile" style="min-width:160px"></${ConfigSelect}>
@@ -437,7 +437,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>agentd daemon &amp; server</h3>
+      <h3>agentd daemon & server</h3>
       <div class="cfg-field">
         <span class="cfg-label">Auto-launch dashboard</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-autolaunch" /> open the dashboard when <code>agentd serve</code> starts</label>
@@ -500,12 +500,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
     </div>
 
     <div class="cfg-section">
-      <h3>Retention &amp; cleanup</h3>
+      <h3>Retention & cleanup</h3>
       <div class="cfg-field">
         <span class="cfg-label">Transcript retention</span>
         <label class="cfg-inline">keep transcripts for
           <${ConfigInput} type="number" id="cfg-claude-cleanup-days" min="1" placeholder="30" aria-label="Claude Code transcript retention (days)" style="width:11em" /> days</label>
-        <span class="cfg-hint">Claude Code deletes a conversation transcript (and other stale session data / orphaned worktrees) once it's been <em>inactive</em> this many days — swept at Claude Code startup. Claude Code's own default is <strong>30 days</strong>, so transcripts you haven't touched in a month vanish. Raise this to keep them longer; set a large value like <code>99999</code> to effectively keep them forever (Claude Code rejects <code>0</code> and has no "never" option). Empty = leave Claude Code's default (or whatever you set by hand) untouched. Unlike the resume-threshold overrides under <em>Context &amp; compaction</em>, this <strong>is</strong> written to <code>~/.claude/settings.json</code> (as <code>cleanupPeriodDays</code>) on every session start, so it also protects transcripts from your own plain <code>claude</code> runs. Stored as <code>claude_cleanup_period_days</code>.</span>
+        <span class="cfg-hint">Claude Code deletes a conversation transcript (and other stale session data / orphaned worktrees) once it's been <em>inactive</em> this many days — swept at Claude Code startup. Claude Code's own default is <strong>30 days</strong>, so transcripts you haven't touched in a month vanish. Raise this to keep them longer; set a large value like <code>99999</code> to effectively keep them forever (Claude Code rejects <code>0</code> and has no "never" option). Empty = leave Claude Code's default (or whatever you set by hand) untouched. Unlike the resume-threshold overrides under <em>Context & compaction</em>, this <strong>is</strong> written to <code>~/.claude/settings.json</code> (as <code>cleanupPeriodDays</code>) on every session start, so it also protects transcripts from your own plain <code>claude</code> runs. Stored as <code>claude_cleanup_period_days</code>.</span>
       </div>
       <p class="cfg-hint" style="padding-left:0">
         Optional long-horizon housekeeping that <strong>permanently deletes</strong> agents/conversations
@@ -519,7 +519,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-retired-cleanup-enabled" /> delete agents retired longer than</label>
         <${ConfigInput} type="number" id="cfg-agent-retired-cleanup-days" min="1" max="36525" placeholder="365" aria-label="Days retired before deletion" style="min-width:90px" />
         <span>days</span>
-        <span class="cfg-hint">agentd sweeps every 30&nbsp;min (and at startup). Empty = built-in default (365 ≈ 1 year). Irreversible — choose a window long enough that anything still wanted has been reinstated.</span>
+        <span class="cfg-hint">agentd sweeps every 30${'\u00a0'}min (and at startup). Empty = built-in default (365 ≈ 1 year). Irreversible — choose a window long enough that anything still wanted has been reinstated.</span>
       </div>
     </div>
 
@@ -527,7 +527,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <h3>Slop mode 🎰</h3>
       <div class="cfg-field">
         <span class="cfg-label">Vegas music in regular mode</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-slop-vegas-regular" /> show the Vegas tab, volume controls &amp; play music outside slop mode</label>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-slop-vegas-regular" /> show the Vegas tab, volume controls & play music outside slop mode</label>
         <span class="cfg-hint">The dashboard's casino "slop" mode (the 🎰 in the header) bundles a <strong>Vegas</strong> tab with a lounge-radio player and a header volume mixer. Enable this to surface those — the tab, the 🔊 sound switch and 🎚️ volume sliders, and the music — on the <em>plain</em> dashboard too, without the slot machines, coins and sound FX. Music starts muted and plays on your first click (browsers block autoplay); the 🔊 button mutes it (remembered per browser). Off by default. Stored in the <code>slop</code> block of config.json alongside the volume/channel settings.</span>
       </div>
       <div class="cfg-field">
@@ -581,7 +581,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           writes the first device's <code>.p12</code> to install on your phone:
           <br /><code>tclaude remote-access setup --bind 0.0.0.0:8443</code><br />
           The toggle below only takes effect once that material exists; enabling without it
-          is a no-op. Add more devices later with <code>tclaude remote-access add-client &lt;name&gt;</code>.
+          is a no-op. Add more devices later with <code>tclaude remote-access add-client ${'<name>'}</code>.
         </span>
       </div>
       <div class="cfg-field">
@@ -601,7 +601,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">HTTPS port</span>
         <${ConfigInput} type="number" id="cfg-remote-port" min="1" max="65535" placeholder="8443" aria-label="Remote access HTTPS port" style="min-width:120px" />
-        <span class="cfg-hint">The port the remote dashboard listens on. Dial <code>https://&lt;host&gt;:&lt;port&gt;</code> from the device.</span>
+        <span class="cfg-hint">The port the remote dashboard listens on. Dial <code>https://${'<host>'}:${'<port>'}</code> from the device.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Status</span>

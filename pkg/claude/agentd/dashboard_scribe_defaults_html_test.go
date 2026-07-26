@@ -17,7 +17,7 @@ func TestDashboardAssets_ScribeDefaultsWired(t *testing.T) {
 		// HTML: the section heading + the profile select anchor. Ask and
 		// Scribe defaults share one section; the label carries the "Scribe"
 		// qualifier that the old dedicated heading used to.
-		"<h3>Ask &amp; scribe defaults</h3>",
+		"<h3>Ask & scribe defaults</h3>",
 		`<span class="cfg-label">Scribe — profile</span>`,
 		`id="scribe-profile"`,
 		// JS: options come from the saved spawn profiles; the value populates
