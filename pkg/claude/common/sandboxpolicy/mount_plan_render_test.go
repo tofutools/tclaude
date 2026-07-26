@@ -2,6 +2,8 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -46,12 +48,20 @@ func assertEntries(t *testing.T, got MountPlan, want []MountEntry) {
 // on: no entry may be preceded by one of its own descendants, because an
 // applier that let a descendant be shadowed by its ancestor would silently
 // invert most-specific-wins.
+//
+// Containment is checked on the FOLDED key, not on the raw path, so the
+// invariant is asserted the way a case-insensitive filesystem would see it.
+// That is strictly stronger than a byte-exact check, since a byte-exact
+// ancestor is also a folded one. Pairs whose folded keys are equal are excluded:
+// two spellings of one macOS directory cannot be ordered ancestor-first at all,
+// and the renderer deliberately orders such spellings without merging them.
 func assertAncestorsFirst(t *testing.T, plan MountPlan) {
 	t.Helper()
 	for i, earlier := range plan.Entries {
 		for j := i + 1; j < len(plan.Entries); j++ {
 			later := plan.Entries[j]
-			if earlier.Path != later.Path && pathContainsOrEqual(later.Path, earlier.Path) {
+			earlierKey, laterKey := mountOrderKey(earlier.Path), mountOrderKey(later.Path)
+			if earlierKey != laterKey && pathContainsOrEqual(laterKey, earlierKey) {
 				t.Fatalf("entry %d (%q) is a descendant of later entry %d (%q); plan is not ancestors-first\n%s",
 					i, earlier.Path, j, later.Path, plan)
 			}
@@ -415,6 +425,190 @@ func TestRenderMountPlanBreakGlassCollisionFailsClosed(t *testing.T) {
 	assertEntries(t, plan, []MountEntry{entry("/home/dev/.tclaude/data", MountHide)})
 }
 
+// modeForAccess is the test's OWN access→mode table, written out literally.
+// The tests must not route both sides of an assertion through the
+// implementation's mountModeForAccess, or an inverted mapping would satisfy
+// them.
+var modeForAccess = map[Access]MountMode{
+	AccessRead:  MountRO,
+	AccessWrite: MountRW,
+	AccessDeny:  MountHide,
+}
+
+// TestRenderMountPlanOrderingProperty drives the ordering invariant with
+// generated input instead of hand-picked fixtures. Components come from an
+// adversarial alphabet chosen around the path separator: characters that sort
+// either side of '/' (0x2f), case pairs, a backslash, a space, and both the NFC
+// and NFD spellings of the same accented letter. Hand-written cases cannot
+// cover the combinations where a descendant would sort ahead of its ancestor.
+//
+// The seed is fixed so a failure reproduces exactly.
+func TestRenderMountPlanOrderingProperty(t *testing.T) {
+	components := []string{
+		"a", "A", "b", "B", "z", "Z",
+		"a-", "a.", "a0", "a_", "a~", "a b", `a\b`,
+		"café", "café", "CAFÉ",
+		"0", "9", "~", "-", "_",
+	}
+	accesses := []Access{AccessRead, AccessWrite, AccessDeny}
+	rng := rand.New(rand.NewPCG(0x7c1, 0x751))
+
+	for round := range 4000 {
+		n := 1 + rng.IntN(6)
+		grants := make([]FilesystemGrant, 0, n)
+		var paths []string
+		for range n {
+			depth := 1 + rng.IntN(4)
+			// Half the time extend an existing path, so ancestor/descendant
+			// pairs actually occur instead of appearing only by chance.
+			path := ""
+			if len(paths) > 0 && rng.IntN(2) == 0 {
+				path = paths[rng.IntN(len(paths))]
+			}
+			for range depth {
+				path += "/" + components[rng.IntN(len(components))]
+			}
+			paths = append(paths, path)
+			grants = append(grants, grant(path, accesses[rng.IntN(len(accesses))]))
+		}
+
+		plan, err := RenderMountPlanFromGrants(grants)
+		if err != nil {
+			t.Fatalf("round %d: unexpected error for %+v: %v", round, grants, err)
+		}
+		assertAncestorsFirst(t, plan)
+
+		// Replaying the ordered plan must agree with the package's independent
+		// most-specific-wins model at every path in play, plus synthesized
+		// parents, children and near-misses.
+		var probes []string
+		for _, path := range paths {
+			probes = append(probes, path, path+"/leaf", path+"x", filepathDir(path))
+		}
+		probes = append(probes, "/", "/unrelated")
+		for _, probe := range probes {
+			wantAccess, wantCovered := EffectiveAccessAt(grants, probe)
+			gotMode, gotCovered := EffectiveMountModeAt(plan, probe)
+			if gotCovered != wantCovered {
+				t.Fatalf("round %d: %q: plan covered=%v, policy covered=%v\ngrants: %+v\n%s",
+					round, probe, gotCovered, wantCovered, grants, plan)
+			}
+			if !wantCovered {
+				if gotMode != MountHide {
+					t.Fatalf("round %d: %q: uncovered path reported %s, want the fail-closed hide", round, probe, gotMode)
+				}
+				continue
+			}
+			if want := modeForAccess[wantAccess]; gotMode != want {
+				t.Fatalf("round %d: %q: plan mode %s, policy access %s (want %s)\ngrants: %+v\n%s",
+					round, probe, gotMode, wantAccess, want, grants, plan)
+			}
+		}
+	}
+}
+
+func filepathDir(path string) string { return filepath.Dir(path) }
+
+// TestRenderMountPlanOrdersCaseAndNormalizationVariants pins the macOS hazard.
+// On a case-insensitive, normalization-insensitive filesystem the two spellings
+// in each case below are ONE directory, so if the allow sorted after the deny
+// the applier would rebind the very path the deny was meant to hide. Byte-wise
+// sorting gets both of these wrong; the folded key gets them right, and on a
+// case-sensitive filesystem the paths are unrelated so the order is free.
+func TestRenderMountPlanOrdersCaseAndNormalizationVariants(t *testing.T) {
+	tests := []struct {
+		name   string
+		grants []FilesystemGrant
+		want   []MountEntry
+	}{
+		{
+			// Byte-wise: "/Users/..." (0x55) sorts before "/users" (0x75), so
+			// the deny would land first and be undone by the later read.
+			name: "case-variant ancestor still sorts before its descendant",
+			grants: []FilesystemGrant{
+				grant("/Users/dev/.ssh", AccessDeny),
+				grant("/users/dev", AccessRead),
+			},
+			want: []MountEntry{
+				entry("/users/dev", MountRO),
+				entry("/Users/dev/.ssh", MountHide),
+			},
+		},
+		{
+			// Byte-wise: NFD "café" has 'e' (0x65) where NFC "café"
+			// has 0xc3, so the NFD descendant would sort before the NFC ancestor.
+			name: "NFD descendant still sorts after its NFC ancestor",
+			grants: []FilesystemGrant{
+				grant("/Users/café/keys", AccessDeny),
+				grant("/Users/café", AccessWrite),
+			},
+			want: []MountEntry{
+				entry("/Users/café", MountRW),
+				entry("/Users/café/keys", MountHide),
+			},
+		},
+		{
+			// Equal folded keys cannot be ordered ancestor-first; the renderer
+			// orders them deterministically by raw path and does not merge them.
+			// Documented behavior, pinned so a change is deliberate.
+			name: "two spellings of one directory are ordered, not merged",
+			grants: []FilesystemGrant{
+				grant("/srv/Data", AccessDeny),
+				grant("/srv/data", AccessWrite),
+			},
+			want: []MountEntry{
+				entry("/srv/Data", MountHide),
+				entry("/srv/data", MountRW),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := renderGrants(t, tt.grants)
+			assertEntries(t, plan, tt.want)
+			// Reversing the input must not change the result.
+			reversed := make([]FilesystemGrant, 0, len(tt.grants))
+			for _, g := range slices.Backward(tt.grants) {
+				reversed = append(reversed, g)
+			}
+			assertEntries(t, renderGrants(t, reversed), tt.want)
+		})
+	}
+}
+
+// TestRenderMountPlanErrorsNameTheOperatorsSection checks that an error points
+// at the profile field and index the operator actually wrote, rather than at an
+// index into whatever slice the renderer built internally.
+func TestRenderMountPlanErrorsNameTheOperatorsSection(t *testing.T) {
+	_, err := RenderMountPlan(EffectiveProfile{
+		Filesystem: []FilesystemGrant{
+			grant("/a", AccessRead), grant("/b", AccessRead), grant("/c", AccessRead),
+		},
+		BreakGlassFilesystem: []BreakGlassGrant{{Path: "   ", Access: AccessRead}},
+	})
+	if err == nil {
+		t.Fatalf("expected an error, got a plan")
+	}
+	if want := "break_glass_filesystem[0].path"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not name %q; an operator with a one-row break-glass list has nothing to look at", err, want)
+	}
+}
+
+// TestRenderMountPlanIsStricterThanGrantsFromDirs records which side is
+// authoritative when the two disagree. GrantsFromDirs does not clean its rows,
+// so a trailing-slash spelling reaches EffectiveAccessAt as a distinct, and by
+// its length heuristic MORE specific, path than the deny on the same directory.
+// The renderer cleans first, so the two rows fold and deny wins. The renderer
+// is the stricter side; pinned so a later change to either function has to be
+// deliberate.
+func TestRenderMountPlanIsStricterThanGrantsFromDirs(t *testing.T) {
+	grants := GrantsFromDirs(nil, []string{"/home/dev/work/"}, []string{"/home/dev/work"})
+	if access, _ := EffectiveAccessAt(grants, "/home/dev/work"); access != AccessWrite {
+		t.Fatalf("precondition changed: EffectiveAccessAt now reports %s for the uncleaned pair", access)
+	}
+	assertEntries(t, renderGrants(t, grants), []MountEntry{entry("/home/dev/work", MountHide)})
+}
+
 func TestRenderMountPlanRejectsMalformedGrants(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -440,6 +634,28 @@ func TestRenderMountPlanRejectsMalformedGrants(t *testing.T) {
 			name:    "home alias was never expanded",
 			grants:  []FilesystemGrant{grant("~/work", AccessRead)},
 			wantErr: "is not absolute",
+		},
+		{
+			// A NUL would otherwise survive to the exec boundary and fail there
+			// as something no operator can attribute to a rule.
+			name:    "embedded NUL",
+			grants:  []FilesystemGrant{grant("/home/dev/wo\x00rk", AccessRead)},
+			wantErr: "without control characters",
+		},
+		{
+			name:    "embedded newline",
+			grants:  []FilesystemGrant{grant("/home/dev/wo\nrk", AccessDeny)},
+			wantErr: "without control characters",
+		},
+		{
+			name:    "invalid UTF-8",
+			grants:  []FilesystemGrant{grant("/home/dev/\xff\xfe", AccessRead)},
+			wantErr: "valid UTF-8",
+		},
+		{
+			name:    "path beyond the profile layer's length bound",
+			grants:  []FilesystemGrant{grant("/"+strings.Repeat("a", MaxPathBytes), AccessRead)},
+			wantErr: "too long",
 		},
 	}
 	for _, tt := range tests {
