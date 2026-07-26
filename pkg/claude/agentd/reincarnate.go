@@ -1092,7 +1092,7 @@ func scheduleReincarnationDirectoryCleanup(oldConv, newConv string, previous san
 func switchTmuxClients(oldTmux, newTmux string) int {
 	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(oldTmux), "-F", "#{client_tty}").Output()
 	if err != nil {
-		slog.Warn("reincarnate: list-clients failed; skipping client switch", "tmux", oldTmux, "error", err)
+		slog.Warn("tmux client handoff: list-clients failed; skipping client switch", "tmux", oldTmux, "error", err)
 		return 0
 	}
 	n := 0
@@ -1101,7 +1101,7 @@ func switchTmuxClients(oldTmux, newTmux string) int {
 			continue
 		}
 		if err := clcommon.TmuxCommand("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
-			slog.Warn("reincarnate: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
+			slog.Warn("tmux client handoff: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
 			continue
 		}
 		n++

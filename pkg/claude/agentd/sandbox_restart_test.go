@@ -6,9 +6,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
@@ -51,6 +53,66 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 	}
 	assert.Empty(t, sandboxRestartIdleFailure(expired, now),
 		"expired ledger ghosts must not permanently wedge the transition")
+}
+
+func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	const (
+		oldTmux = "sandbox-old-pane"
+		newTmux = "sandbox-new-pane"
+		ttyOne  = "/dev/pts/41"
+		ttyTwo  = "/dev/pts/42"
+	)
+	w.Tmux.MarkAlive(oldTmux)
+	w.Tmux.AttachClient(ttyOne, oldTmux)
+	w.Tmux.AttachClient(ttyTwo, oldTmux)
+
+	handoff := beginSandboxRestartTmuxHandoff(oldTmux)
+	require.NotNil(t, handoff)
+	holding := handoff.holdingSession
+	require.NotEmpty(t, holding)
+	assert.Equal(t, holding, w.Tmux.ClientSession(ttyOne))
+	assert.Equal(t, holding, w.Tmux.ClientSession(ttyTwo))
+
+	// The same-name production resume cannot appear until the old pane is
+	// gone. A distinct name keeps this unit test's two phases explicit.
+	w.Tmux.MarkAlive(newTmux)
+	assert.Equal(t, 2, handoff.finish(newTmux))
+	assert.Equal(t, newTmux, w.Tmux.ClientSession(ttyOne))
+	assert.Equal(t, newTmux, w.Tmux.ClientSession(ttyTwo))
+	assert.False(t, w.Tmux.IsAlive(holding), "the bridge must not leak")
+}
+
+func TestSandboxRestartTmuxHandoffSkipsBridgeWithoutAttachedClients(t *testing.T) {
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	w.Tmux.MarkAlive("unattended-pane")
+	assert.Nil(t, beginSandboxRestartTmuxHandoff("unattended-pane"))
+	assert.Equal(t, 1, w.Tmux.CommandCount("new-session"))
+	assert.Len(t, w.Tmux.Sessions(), 1, "the unused bridge must be removed")
+}
+
+func TestSandboxRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	const oldTmux = "sandbox-old-pane"
+	w.Tmux.MarkAlive(oldTmux)
+	w.Tmux.AttachClient("/dev/pts/41", oldTmux)
+	w.Tmux.FailNextCommand("new-session")
+
+	assert.Nil(t, beginSandboxRestartTmuxHandoff(oldTmux))
+	assert.Equal(t, oldTmux, w.Tmux.ClientSession("/dev/pts/41"),
+		"a failed best-effort bridge must leave the existing client alone")
 }
 
 func TestRequireCurrentSandboxRestartGenerationRejectsSupersededConversation(t *testing.T) {

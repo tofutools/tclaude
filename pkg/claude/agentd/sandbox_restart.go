@@ -107,7 +107,8 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 			"the agent is already using its normal sandbox configuration")
 		return
 	}
-	if failure := sandboxRestartIdleFailure(pickAliveSession(convID), time.Now()); failure != "" {
+	liveSession := pickAliveSession(convID)
+	if failure := sandboxRestartIdleFailure(liveSession, time.Now()); failure != "" {
 		writeError(w, http.StatusConflict, "agent_not_idle", failure)
 		return
 	}
@@ -132,6 +133,15 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		override = &mode
 	}
 
+	// A same-conversation resume cannot create its replacement tmux session
+	// until the old same-named session has exited. Park attached clients on a
+	// short-lived bridge before /exit, then carry them onto the resumed pane.
+	// The deferred finish covers every error path: it switches back to a still
+	// live old pane when shutdown failed, or removes the bridge if no useful
+	// target survived.
+	clientHandoff := beginSandboxRestartTmuxHandoff(liveSession.TmuxSession)
+	defer clientHandoff.finishForConv(convID)
+
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
 	if stopped.Outcome == shutdownFailed {
 		writeError(w, http.StatusInternalServerError, "shutdown_failed",
@@ -149,6 +159,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		// The posture did not change, so restore availability under the old
 		// configuration before reporting the persistence failure.
 		resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+		clientHandoff.finishForConv(convID)
 		detail := "persist temporary sandbox mode: " + err.Error()
 		if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
 			detail += "; restoring the stopped agent also failed: " + resume.Detail
@@ -158,6 +169,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	}
 
 	resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
 		writeError(w, http.StatusInternalServerError, "restart_failed",
 			"sandbox posture was updated, but the agent could not be restarted: "+resume.Detail+
@@ -171,6 +183,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		"temporary_sandbox_mode": mode,
 		"sandbox_unlocked":       active,
 		"restart":                resume.Action,
+		"switched_clients":       switchedClients,
 	})
 }
 
