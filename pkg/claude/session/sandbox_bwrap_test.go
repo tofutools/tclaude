@@ -221,6 +221,29 @@ func TestBwrapArgsDeferredRemountTracksTopmostExactMount(t *testing.T) {
 	}
 }
 
+func TestBwrapArgsSkipsProtectedRemountsShadowedByAncestorHide(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+
+	got, err := bwrapArgs([]string{stateRoot}, nil, sandboxpolicy.MountPlan{
+		Entries: []sandboxpolicy.MountEntry{{Path: home, Mode: sandboxpolicy.MountHide}},
+	})
+	require.NoError(t, err)
+
+	require.NotEqual(t, -1, indexOfBwrapTriplet(got, "--remount-ro", home))
+	for _, protected := range protectedRoots {
+		require.NotEqual(t, -1, indexOfBwrapTriplet(got, "--tmpfs", protected),
+			"the protected baseline must still be established before plan replay")
+		assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", protected),
+			"the later home tmpfs shadows this exact mountpoint; the home remount hardens its view")
+	}
+}
+
 func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

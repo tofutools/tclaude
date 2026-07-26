@@ -332,6 +332,7 @@ func (r *tclaudeLayerHideRemounts) appendHide(args []string, path string) []stri
 	if r.active == nil {
 		r.active = make(map[string]bool)
 	}
+	r.noteAncestorReplacement(path)
 	if _, seen := r.active[path]; !seen {
 		r.order = append(r.order, path)
 	}
@@ -340,8 +341,21 @@ func (r *tclaudeLayerHideRemounts) appendHide(args []string, path string) []stri
 }
 
 func (r *tclaudeLayerHideRemounts) noteReplacement(path string) {
+	r.noteAncestorReplacement(path)
 	if _, tracked := r.active[path]; tracked {
 		r.active[path] = false
+	}
+}
+
+// noteAncestorReplacement deactivates child hides shadowed by a later mount.
+// A protected re-hide emitted after the replacement will reactivate its exact
+// path; a child left covered only by the new ancestor is not itself a visible
+// mountpoint and must not receive --remount-ro at flush time.
+func (r *tclaudeLayerHideRemounts) noteAncestorReplacement(path string) {
+	for candidate, active := range r.active {
+		if active && candidate != path && sandboxpolicy.PathContainsOrEqual(path, candidate) {
+			r.active[candidate] = false
+		}
 	}
 }
 
