@@ -209,8 +209,8 @@ test('terminal wiring yields only claimed Ctrl/Cmd-K chords to dashboard chrome'
   const interactions = attachTerminalInteractions({
     term: harness.term,
     host: harness.host,
-    requestPalette: (documentRef) => {
-      requests.push(documentRef);
+    requestPalette: (documentRef, detail) => {
+      requests.push([documentRef, detail]);
       return true;
     },
   });
@@ -223,11 +223,12 @@ test('terminal wiring yields only claimed Ctrl/Cmd-K chords to dashboard chrome'
     });
     assert.equal(harness.key(paletteEvent), false, 'a claimed palette chord never reaches the PTY');
     assert.equal(prevented, true);
-    assert.deepEqual(requests, [doc]);
+    assert.deepEqual(requests, [[doc, { source: 'terminal' }]]);
 
     assert.equal(harness.key(key({ key: 'a', code: 'KeyA' })), true);
     assert.equal(harness.key(key({ key: 'l', code: 'KeyL', ctrlKey: true })), true);
-    assert.deepEqual(requests, [doc], 'all non-palette terminal keys bypass the dashboard bridge');
+    assert.deepEqual(requests, [[doc, { source: 'terminal' }]],
+      'all non-palette terminal keys bypass the dashboard bridge');
   } finally {
     interactions.dispose();
   }

@@ -845,13 +845,20 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 }
 
 // TestDashboardAssets_FeatureFlagsWired guards the experimental feature flags
-// (currently features.processes) across their exact Preact markup and adapter
-// owners. The Go accessor + round-trip is covered separately by
-// config.TestProcessesEnabled / config.TestFeaturesConfig_RoundTrips.
+// across their exact Preact markup and adapter owners. The Go accessors +
+// round-trip are covered separately in common/config.
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
-		"js/config-form-markup.js":  {`id="cfg-feature-processes"`, `features.processes`},
-		"js/config-form-adapter.js": {"#cfg-feature-processes", "feats.processes = true"},
+		"js/config-form-markup.js": {
+			`id="cfg-feature-processes"`, `features.processes`,
+			`id="cfg-feature-terminal-command-palette-shortcut"`,
+			`features.terminal_command_palette_shortcut`,
+		},
+		"js/config-form-adapter.js": {
+			"#cfg-feature-processes", "feats.processes = true",
+			"#cfg-feature-terminal-command-palette-shortcut",
+			"feats.terminal_command_palette_shortcut = true",
+		},
 	}
 	for name, needles := range owners {
 		contents := string(mustReadFS(dashboardAssetsFS, name))

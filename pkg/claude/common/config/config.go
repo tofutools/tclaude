@@ -148,6 +148,11 @@ type FeaturesConfig struct {
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
 
+	// TerminalCommandPaletteShortcut lets Ctrl/Cmd+K open the dashboard command
+	// palette while focus is inside a web terminal. It defaults off because the
+	// harnesses use that chord to clear the current input line.
+	TerminalCommandPaletteShortcut bool `json:"terminal_command_palette_shortcut,omitempty"`
+
 	// AgentDirsMountParent switches how agent-owned directories are granted to
 	// the sandbox. On (the default): the shared parent root
 	// (agent-dirs/<launch-key>) is granted rw once, so the agent can create,
@@ -170,6 +175,14 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// TerminalCommandPaletteShortcutEnabled reports whether Ctrl/Cmd+K should be
+// claimed by the dashboard while focus is inside a web terminal. It defaults
+// off and is nil-safe so the chord continues to reach every harness unless the
+// operator explicitly opts in.
+func (c *Config) TerminalCommandPaletteShortcutEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.TerminalCommandPaletteShortcut
 }
 
 // AgentDirsMountParentEnabled reports whether agent-owned directories should be

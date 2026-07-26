@@ -81,6 +81,7 @@ const shellDescriptor = createIslandDescriptor({
           buttonHost: hosts.paletteButtonHost,
           modalHost: hosts.paletteModalHost,
           state: paletteState,
+          snapshot: dashboardState.snapshot,
           registerCleanup,
         });
       },

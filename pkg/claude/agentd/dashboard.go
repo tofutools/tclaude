@@ -935,6 +935,11 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// TerminalPaletteShortcut mirrors the opt-in feature switch. The palette
+	// island uses it only for requests originating inside xterm; Ctrl/Cmd+K
+	// elsewhere remains the normal dashboard shortcut. Re-read on every
+	// snapshot so a Config-tab change takes effect without restarting agentd.
+	TerminalPaletteShortcut bool `json:"terminal_command_palette_shortcut_enabled"`
 	// UserDefaultModel is the "model" key from the user-level
 	// ~/.claude/settings.json — what every claude launched without
 	// --model falls back to. "" = unset (claude's built-in default).
@@ -2442,6 +2447,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,

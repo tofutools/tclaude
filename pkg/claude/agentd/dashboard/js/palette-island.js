@@ -28,7 +28,9 @@ export function isCommandPaletteShortcutTarget(target) {
   return !!element.closest?.('[contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .monaco-editor');
 }
 
-export function PaletteLauncher({ state, documentRef = document }) {
+export function PaletteLauncher({ state, snapshot, documentRef = document }) {
+  const terminalShortcutEnabled =
+    !!snapshot?.value?.terminal_command_palette_shortcut_enabled;
   useEffect(() => {
     const onKeyDown = (event) => {
       if (!isCommandPaletteShortcut(event)) return;
@@ -55,6 +57,7 @@ export function PaletteLauncher({ state, documentRef = document }) {
       state.show();
     };
     const onOpenRequest = (event) => {
+      if (event.detail?.source === 'terminal' && !terminalShortcutEnabled) return;
       if (state.open.value) return;
       if (documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) return;
       // A cancelable request comes from xterm's custom-key hook. Claiming it
@@ -68,7 +71,7 @@ export function PaletteLauncher({ state, documentRef = document }) {
       documentRef.removeEventListener('keydown', onKeyDown);
       documentRef.removeEventListener(COMMAND_PALETTE_OPEN_EVENT, onOpenRequest);
     };
-  }, [documentRef, state]);
+  }, [documentRef, state, terminalShortcutEnabled]);
 
   return html`
     <button id="command-palette-btn" type="button"
@@ -193,6 +196,7 @@ export function mountPaletteIsland({
   buttonHost,
   modalHost,
   state,
+  snapshot,
   registerCleanup,
   documentRef = document,
   wizardActive = isWizardActive,
@@ -206,7 +210,8 @@ export function mountPaletteIsland({
     render(null, modalHost);
     render(null, buttonHost);
   });
-  render(html`<${PaletteLauncher} state=${state} documentRef=${documentRef} />`, buttonHost);
+  render(html`<${PaletteLauncher} state=${state} snapshot=${snapshot}
+    documentRef=${documentRef} />`, buttonHost);
   render(html`<${PaletteOverlay} state=${state} documentRef=${documentRef}
     wizardActive=${wizardActive} />`, modalHost);
 }

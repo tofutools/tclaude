@@ -941,6 +941,13 @@ size. After any text or attachment change, backdrop click, Escape, and Cancel
 ask before discarding the draft. Wizard mode gives the composer the same
 missive-themed purple-and-gold treatment as the rest of the dashboard.
 
+**Ctrl+K** / **Cmd+K** stays terminal-owned while a web terminal has focus, so
+the harness can use it to clear the current input line. To make that chord open
+the dashboard command palette from inside web terminals instead, opt into the
+experimental `features.terminal_command_palette_shortcut` setting in the
+config file or the Config tab. The shortcut continues to open the command
+palette normally when focus is outside a terminal.
+
 Every dashboard **Browse…** directory action uses one shared chooser. On a
 loopback/localhost dashboard it opens the host's native OS dialog by default.
 For a dashboard reached through any non-loopback hostname it automatically
