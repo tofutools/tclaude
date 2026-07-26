@@ -214,16 +214,21 @@ later-shadows-earlier meaning as the Linux mount plan.
 
 The profile otherwise uses `allow default`. In the host-open posture, host
 networking and ambient Unix sockets retain their host behavior. In the isolated
-posture, deny rules block outbound connections, listeners, and inbound network
-operations, with only the canonical agentd Unix socket and its surviving alias
-spellings excepted. Mach services remain outside this slice. The filesystem
-baseline is read-only, with narrow launch-contract write roots plus the Darwin
-process runtime paths (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical
-`$TMPDIR` beneath `/private/var/folders`). Those runtime exceptions apply only
-to the baseline; an operator-authored read-only or hidden region over one of
-them still wins. Protected tclaude/harness state and the tmux socket are denied
-for reads and writes, while the canonical agentd socket remains readable and
-connectable so hook/status-line brokering continues to work.
+posture, deny rules block outbound connections and listener binds, with only
+the canonical agentd Unix socket and its surviving alias spellings excepted
+from outbound denial. A `network-inbound` deny is intentionally absent:
+hardware testing showed that it blocks agentd replies and its remote-Unix path
+exception does not reopen them. Inbound listener prevention therefore rests on
+the bind deny. A listening descriptor passed through the trusted agentd daemon
+with `SCM_RIGHTS` is outside this boundary's threat model. Mach services remain
+outside this slice. The filesystem baseline is read-only, with narrow
+launch-contract write roots plus the Darwin process runtime paths
+(`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical `$TMPDIR` beneath
+`/private/var/folders`). Those runtime exceptions apply only to the baseline;
+an operator-authored read-only or hidden region over one of them still wins.
+Protected tclaude/harness state and the tmux socket are denied for reads and
+writes, while the canonical agentd socket remains readable and connectable so
+hook/status-line brokering continues to work.
 
 A hidden path remains present in the host directory tree. Seatbelt denies
 opens, writes, and Unix-socket connects at that path with `EPERM`; it does not

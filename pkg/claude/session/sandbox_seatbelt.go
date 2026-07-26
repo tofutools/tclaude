@@ -578,17 +578,22 @@ func compileSeatbeltDenyRegions(
 	return profile.String(), params
 }
 
-// appendSeatbeltIsolatedNetworkRules blocks every connection, listener, and
-// inbound flow except connect(2) and replies at the parameterized agentd Unix
-// socket spellings. The exceptions belong inside the deny predicates because
-// a broad Seatbelt deny cannot be reopened by a later allow.
+// appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)
+// to the parameterized agentd Unix socket spellings, and blocks creation of
+// every listener. The exception belongs inside the outbound deny predicate
+// because a broad Seatbelt deny cannot be reopened by a later allow.
 //
 // Do not replace these operations with network* or deny system-socket.
 // Creating an AF_UNIX socket descriptor is a pathless system-socket operation,
 // but socket creation is not connectivity; Linux isolated permits it too. A
 // network* deny would block the descriptor agentd needs and could not be
-// carved back open. network-outbound/network-bind/network-inbound are the
-// operations that enforce the actual boundary.
+// carved back open.
+//
+// network-inbound is deliberately absent. On real Darwin hardware it blocks
+// agentd replies, and a remote-unix exception parses but does not reopen them.
+// Listener prevention therefore rests on network-bind. A listening descriptor
+// handed in over SCM_RIGHTS would require cooperation from the trusted agentd
+// daemon and is outside this boundary's threat model.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
@@ -610,10 +615,9 @@ func appendSeatbeltIsolatedNetworkRules(
 	})
 
 	profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
-	profile.WriteString("; Only agentd replies/connects at the parameterized socket spellings are excepted.\n")
+	profile.WriteString("; Only agentd connects at the parameterized socket spellings are excepted.\n")
 	profile.WriteString("(deny network-bind)\n")
 	if len(exceptions) == 0 {
-		profile.WriteString("(deny network-inbound)\n")
 		profile.WriteString("(deny network-outbound)\n")
 		return params
 	}
@@ -624,7 +628,6 @@ func appendSeatbeltIsolatedNetworkRules(
 			path: nodes[exception].path,
 		})
 	}
-	appendSeatbeltNetworkDenyExceptAgentd(profile, "network-inbound", len(exceptions))
 	appendSeatbeltNetworkDenyExceptAgentd(profile, "network-outbound", len(exceptions))
 	return params
 }
