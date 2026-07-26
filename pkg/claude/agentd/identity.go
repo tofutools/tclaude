@@ -805,6 +805,78 @@ func tclaudeLayerSessionConvByAncestor(pid int) string {
 	return ""
 }
 
+// hookSessionRowForPID resolves the sessions row a brokered hook callback
+// from pid belongs to, plus the harness pid the walk crossed to reach it.
+//
+// It is convIDForPID's walk with the row kept instead of thrown away.
+// TCL-754 needs the row itself, not just its conv-id: the hook callback is
+// keyed by sessions.id, and the whole point of brokering is that the
+// caller's own TCLAUDE_SESSION_ID is caller-controlled compatibility state
+// rather than proof of anything. Resolving the row from recorded host pids
+// — facts the daemon wrote at spawn and a sandboxed caller cannot choose —
+// makes the brokered path strictly stronger than the direct one.
+//
+// Two deliberate differences from convIDForPID:
+//
+//   - The ~/.claude/sessions/<pid>.json probe is skipped. It yields a
+//     conv-id, not a row, and inside the layer the harness writes it into
+//     a tmpfs the daemon cannot see anyway.
+//   - A row with no conv-id yet still matches. A brokered SessionStart is
+//     frequently the event that ESTABLISHES the conv-id, so requiring one
+//     would lock out exactly the first hook of every agent. The row is
+//     still identified by recorded pid, and the layer walk still requires
+//     the recorded tclaude-layer implementation, so nothing about the
+//     trust boundary relaxes with it.
+//
+// The harness pid is returned so the brokered ambient context can carry
+// the same pid correction FindClaudePID performs on the direct path.
+func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
+	cur := pid
+	for cur > 1 {
+		name := procName(cur)
+		parent := procParent(cur)
+		if session.IsHarnessProcessName(name) {
+			if row := sessionRowByPID(cur); row != nil {
+				return row, cur
+			}
+			if row := sessionRowByPID(parent); row != nil {
+				return row, cur
+			}
+			if row := tclaudeLayerSessionRowByAncestor(parent); row != nil {
+				return row, cur
+			}
+		}
+		cur = parent
+	}
+	return nil, 0
+}
+
+func sessionRowByPID(hostPID int) *db.SessionRow {
+	if row, err := db.FindSessionByPID(hostPID); err == nil && row != nil && row.ID != "" {
+		return row
+	}
+	return nil
+}
+
+// tclaudeLayerSessionRowByAncestor is tclaudeLayerSessionConvByAncestor
+// returning the row. The recorded-implementation check is the same trust
+// boundary: only a launch the daemon itself recorded as tclaude-layer may
+// have its bwrap -> sh wrapper hops crossed.
+func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
+	const maxWrapperHops = 16
+	for range maxWrapperHops {
+		if pid <= 1 {
+			return nil
+		}
+		if row, err := db.FindSessionByPID(pid); err == nil && row != nil && row.ID != "" &&
+			row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+			return row
+		}
+		pid = procParent(pid)
+	}
+	return nil
+}
+
 // sessionConvByPID returns the conv-id of the most-recently-updated sessions
 // row whose recorded host pid is hostPID, or "" when none matches (or the
 // match has no conv-id yet). The sessions table is keyed by the tmux pane_pid

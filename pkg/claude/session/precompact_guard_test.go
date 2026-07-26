@@ -146,7 +146,7 @@ func TestDecidePreCompact(t *testing.T) {
 				ConvID:        "conv-" + c.envSession,
 				Trigger:       c.trigger,
 			}
-			require.NoError(t, decidePreCompact(input, c.envSession, &buf))
+			require.NoError(t, decidePreCompact(input, c.envSession, LocalHookAmbient(), &buf))
 
 			if c.wantBlock {
 				var dec preCompactDecision

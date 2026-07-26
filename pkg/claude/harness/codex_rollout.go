@@ -442,6 +442,56 @@ func IsCodexRolloutPath(path string) bool {
 	return codexIDFromRolloutName(filepath.Base(path)) != ""
 }
 
+// IsCodexRolloutPathForConv reports whether path is convID's OWN rollout
+// file, really resolving inside ~/.codex/sessions. It is the predicate for
+// accepting a rollout path that arrived from a less-trusted place than the
+// process doing the reading.
+//
+// IsCodexRolloutPath above validates the filename and nothing else, on the
+// stated reasoning that the file is opened read-only by a process the path
+// came from. That holds while the hook callback runs as a child of the
+// agent's own harness. It stops holding across TCL-754's agentd broker:
+// there the path crosses a sandbox boundary and the daemon opens it on the
+// HOST, so a filename check alone would let a wrapped agent have the daemon
+// read any file it can name — and a tree-only check would still let it read
+// a PEER's Codex transcript, a cross-agent leak the direct path never had.
+//
+// Three checks, each load-bearing:
+//
+//  1. Filename shape (the original predicate), kept as a cheap precondition.
+//  2. The session uuid embedded in the filename must be the caller's own
+//     conv-id. This is the ownership check; the tree check alone is not one.
+//  3. Containment, evaluated on the SYMLINK-RESOLVED path against the
+//     symlink-resolved sessions root. A prefix test on the unresolved path
+//     is bypassable by a symlink and does not count as containment.
+//
+// Resolution failure is a refusal: a path that cannot be resolved cannot be
+// read either, so failing closed costs nothing.
+func IsCodexRolloutPathForConv(home, convID, path string) bool {
+	if home == "" || convID == "" || path == "" {
+		return false
+	}
+	if !IsCodexRolloutPath(path) {
+		return false
+	}
+	if codexIDFromRolloutName(filepath.Base(path)) != convID {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(codexSessionsDir(home))
+	if err != nil {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(real))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
 // codexIDFromRolloutName extracts the session uuid from a rollout file
 // name `rollout-<ts>-<uuid>.jsonl[.zst]`. Both the timestamp and the uuid
 // contain '-', so the uuid is taken as the trailing 36 chars (8-4-4-4-12)
