@@ -111,6 +111,7 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
     buttonHost,
     modalHost,
     state,
+    snapshot,
     registerCleanup: (cleanup) => cleanups.push(cleanup),
     documentRef: harness.document,
     wizardActive: () => wizard,
@@ -135,9 +136,35 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
 
   let terminalRequestClaimed;
   await harness.act(() => {
-    terminalRequestClaimed = registry.requestCommandPalette(harness.document);
+    terminalRequestClaimed = registry.requestCommandPalette(
+      harness.document, { source: 'terminal' },
+    );
   });
-  assert.equal(terminalRequestClaimed, true, 'the mounted dashboard claims an xterm palette request');
+  assert.equal(terminalRequestClaimed, false,
+    'the default config leaves an xterm palette request unclaimed');
+  assert.equal(state.open.value, false, 'terminal Ctrl/Cmd-K stays PTY-owned by default');
+
+  let ordinaryRequestClaimed;
+  await harness.act(() => {
+    ordinaryRequestClaimed = registry.requestCommandPalette(harness.document);
+  });
+  assert.equal(ordinaryRequestClaimed, true,
+    'non-terminal palette requests are independent of the terminal shortcut flag');
+  assert.equal(state.open.value, true, 'a process-editor-style request still opens the palette');
+  await harness.act(() => state.close());
+
+  await harness.act(() => {
+    snapshot.value = {
+      ...snapshot.value,
+      terminal_command_palette_shortcut_enabled: true,
+    };
+  });
+  await harness.act(() => {
+    terminalRequestClaimed = registry.requestCommandPalette(
+      harness.document, { source: 'terminal' },
+    );
+  });
+  assert.equal(terminalRequestClaimed, true, 'the opt-in claims an xterm palette request');
   assert.equal(state.open.value, true, 'the global palette opens for the claimed request');
   await harness.act(() => state.close());
 
@@ -160,6 +187,23 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   await harness.act(() => state.close());
   await harness.act(() => harness.fireEvent(terminalInput, 'keydown', { key: 'l', ctrlKey: true }));
   assert.deepEqual(forwardedTerminalKeys, ['l'], 'unrelated terminal chords remain untouched');
+  assert.equal(state.open.value, false);
+
+  await harness.act(() => {
+    snapshot.value = {
+      ...snapshot.value,
+      terminal_command_palette_shortcut_enabled: false,
+    };
+  });
+  let defaultTerminalHotkey;
+  await harness.act(() => {
+    defaultTerminalHotkey = harness.fireEvent(
+      terminalInput, 'keydown', { key: 'k', ctrlKey: true },
+    );
+  });
+  assert.equal(defaultTerminalHotkey.defaultPrevented, false);
+  assert.deepEqual(forwardedTerminalKeys, ['l', 'k'],
+    'turning the opt-in off returns Ctrl-K to the PTY without a reload');
   assert.equal(state.open.value, false);
   xterm.remove();
 

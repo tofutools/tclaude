@@ -49,6 +49,10 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the global trigger yields to inputs and embedded editors")
 	must("requestPalette = requestCommandPalette",
 		"xterm defaults to asking its surrounding dashboard to open the command palette")
+	must("requestPalette(documentRef, { source: 'terminal' })",
+		"xterm identifies its request so the experimental shortcut can be gated")
+	must("event.detail?.source === 'terminal' && !terminalShortcutEnabled",
+		"the dashboard leaves terminal Ctrl/Cmd-K unclaimed unless explicitly enabled")
 	must("claimCommandPaletteShortcut(event, ownerDocument, requestPalette)",
 		"only a claimed xterm palette chord is withheld from the remote PTY")
 	must("event.stopPropagation();",

@@ -69,7 +69,8 @@ export function claimCommandPaletteShortcut(
   documentRef,
   requestPalette = requestCommandPalette,
 ) {
-  if (!isCommandPaletteShortcut(event) || !requestPalette(documentRef)) return false;
+  if (!isCommandPaletteShortcut(event) ||
+      !requestPalette(documentRef, { source: 'terminal' })) return false;
   event.preventDefault();
   // The palette opens synchronously. Do not let this same keydown bubble to
   // its global toggle handler and immediately close it again.
@@ -419,8 +420,9 @@ export function attachTerminalInteractions({
     if (event.type !== 'keydown') return true;
     // xterm owns a hidden textarea, so the dashboard's global launcher
     // deliberately treats it like ordinary text input. Ask the surrounding
-    // document synchronously instead: the integrated dashboard claims the
-    // request, while the standalone terminal has no listener and keeps Ctrl-K.
+    // document synchronously instead. The integrated dashboard claims the
+    // request only when its experimental terminal shortcut is enabled; the
+    // standalone terminal and default dashboard config both keep Ctrl-K.
     if (claimCommandPaletteShortcut(event, ownerDocument, requestPalette)) return false;
     if (onComposeMessage && isComposeMessageShortcut(event)) {
       event.preventDefault();

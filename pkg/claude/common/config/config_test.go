@@ -1110,17 +1110,33 @@ func TestProcessesEnabled(t *testing.T) {
 	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
 }
 
-// features.processes round-trips through the config file, and an absent
-// block stays absent (omitempty) so it never shows as a spurious diff.
+func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.TerminalCommandPaletteShortcutEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).TerminalCommandPaletteShortcutEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).TerminalCommandPaletteShortcutEnabled(),
+		"features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{TerminalCommandPaletteShortcut: true}}).
+		TerminalCommandPaletteShortcutEnabled(), "explicit true → true")
+}
+
+// features.processes and features.terminal_command_palette_shortcut round-trip
+// through the config file, and an absent block stays absent (omitempty) so it
+// never shows as a spurious diff.
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
-	in := &Config{Features: &FeaturesConfig{Processes: true}}
+	in := &Config{Features: &FeaturesConfig{
+		Processes:                      true,
+		TerminalCommandPaletteShortcut: true,
+	}}
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), `"features":{"processes":true}`)
+	assert.Contains(t, string(data),
+		`"features":{"processes":true,"terminal_command_palette_shortcut":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
+	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
 
 	// A default config marshals without a features key at all.
 	none, err := json.Marshal(&Config{})

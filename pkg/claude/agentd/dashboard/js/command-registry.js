@@ -33,8 +33,8 @@ export function isCommandPaletteShortcut(event) {
   return (event.key || '').toLowerCase() === 'k';
 }
 
-export function requestCommandPalette(documentRef = document) {
-  const event = new CustomEvent(COMMAND_PALETTE_OPEN_EVENT, { cancelable: true });
+export function requestCommandPalette(documentRef = document, detail = {}) {
+  const event = new CustomEvent(COMMAND_PALETTE_OPEN_EVENT, { cancelable: true, detail });
   documentRef.dispatchEvent(event);
   return event.defaultPrevented;
 }

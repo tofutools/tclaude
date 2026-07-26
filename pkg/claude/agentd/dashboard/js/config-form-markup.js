@@ -560,6 +560,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Command palette in terminals</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-terminal-command-palette-shortcut" /> let <strong>Ctrl/Cmd+K</strong> open the command palette while a web terminal has focus</label>
+        <span class="cfg-hint">Off by default because Ctrl/Cmd+K clears the current input line in the supported harnesses. When enabled, the dashboard claims that chord inside web terminals instead. Takes effect on the next dashboard refresh. Stored as <code>features.terminal_command_palette_shortcut</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Agent dirs: mount parent</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-agent-dirs-mount-parent" /> mount the shared parent root of <strong>agent-owned directories</strong> read-write</label>
         <span class="cfg-hint">On by default: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Uncheck to opt out and restore per-directory grants — the agent can write inside each directory but cannot delete it. Takes effect on the next launch/resume. Stored as <code>features.agent_dirs_mount_parent</code>.</span>
