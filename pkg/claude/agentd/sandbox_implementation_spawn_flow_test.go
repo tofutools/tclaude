@@ -232,6 +232,24 @@ func TestSpawn_IncompatibleTierSandboxImplementationFallsThroughDisclosed(t *tes
 		"the skip must be disclosed in the resolved-launch notes, got %v", parsed.Resolved.Notes)
 }
 
+// decodeFailure reads the daemon's error envelope. Asserting on the DECODED
+// message rather than the raw body matters here: a real capability error
+// carries quoted text (exec: "bwrap": not found), which JSON escapes — so a
+// substring check against the raw bytes would fail for exactly the messages
+// this feature must carry through verbatim.
+func decodeFailure(t *testing.T, raw []byte) struct {
+	Code  string `json:"code"`
+	Error string `json:"error"`
+} {
+	t.Helper()
+	var failure struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	require.NoErrorf(t, json.Unmarshal(raw, &failure), "decode failure body=%s", raw)
+	return failure
+}
+
 func hasNoteAbout(notes []string, field string) bool {
 	for _, note := range notes {
 		if strings.Contains(note, field) {
@@ -255,12 +273,12 @@ func TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.Code,
 		"a host that cannot run the layer must refuse the spawn; body=%s", resp.Raw)
-	body := string(resp.Raw)
-	assert.Contains(t, body, "sandbox_implementation_unavailable",
+	failure := decodeFailure(t, resp.Raw)
+	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code,
 		"the refusal kind must distinguish host-unavailable from an inapplicable value")
-	assert.Contains(t, body, errNoBwrap.Error(),
+	assert.Contains(t, failure.Error, errNoBwrap.Error(),
 		"the refusal must name the concrete missing capability")
-	assert.Contains(t, body, "rather than falling back",
+	assert.Contains(t, failure.Error, "rather than falling back",
 		"the refusal must say it is not degrading to harness-builtin")
 }
 
@@ -284,7 +302,9 @@ func TestSpawn_TclaudeLayerFromProfileStillRefusedWhenHostLacksCapability(t *tes
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{"name": "inherits-doom"})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.Code,
 		"a profile-supplied tclaude-layer must refuse just as loudly; body=%s", resp.Raw)
-	assert.Contains(t, string(resp.Raw), errNoBwrap.Error(),
+	failure := decodeFailure(t, resp.Raw)
+	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code)
+	assert.Contains(t, failure.Error, errNoBwrap.Error(),
 		"the refusal must name the concrete missing capability")
 }
 
