@@ -162,6 +162,41 @@ function sandboxImplView(harness, context) {
   };
 }
 
+// sandboxImplClearedNoticeFor renders the notice shown after a harness switch
+// discarded a sandbox-implementation selection.
+//
+// It exists because the row itself DISAPPEARS in that moment: the row is gated
+// on the new harness's can_tclaude_layer, so the one control that could have
+// shown the loss is gone at exactly the instant there is something to show. The
+// selection is dropped, the launch proceeds on harness-builtin, and nothing
+// anywhere says so.
+//
+// That is the dialog deciding by erasure. The server's loud refusal for an
+// explicitly incompatible request is unreachable precisely BECAUSE the dialog
+// cleared the value before submit, so the discloses-never-decides rule needs
+// this line to hold. It names both the implementation that was dropped and the
+// harness that dropped it, so the operator can act on it rather than wonder.
+//
+// It survives until the state it describes stops being true — an explicit
+// re-pick, or a switch back to a harness that can host the layer.
+export function sandboxImplClearedNoticeFor(draft) {
+  const cleared = draft?.sandboxImplCleared;
+  if (!cleared || !text(cleared.implementation)) return null;
+  const harnessLabel = text(cleared.harness) || 'the selected harness';
+  return {
+    warn: true,
+    text: `${text(cleared.implementation)} is not available for ${harnessLabel} — `
+      + 'the selection was cleared, so this agent launches with the harness-builtin sandbox.',
+  };
+}
+
+// setSpawnSandboxImpl records an EXPLICIT pick and retires any cleared-notice
+// with it: once the operator has spoken for this field again, the notice is
+// describing a state that no longer stands.
+export function setSpawnSandboxImpl(draft, value) {
+  return { ...draft, sandboxImpl: text(value), sandboxImplCleared: null };
+}
+
 // sandboxImplHintFor renders the note under the sandbox-implementation row.
 // Two truths, in the order an operator needs them: what the selected
 // implementation actually is, and — when they have selected the experimental
@@ -345,6 +380,9 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // "" = unset, so the daemon's profile tier stack still speaks. Sending
     // harness-builtin here instead would pin it and silence every lower tier.
     sandboxImpl: '',
+    // Set only by a harness switch that discarded a selection; see
+    // sandboxImplClearedNoticeFor. Never sent to the daemon.
+    sandboxImplCleared: null,
     sandboxProfile: '',
   };
 }
@@ -428,7 +466,13 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
     // A harness that cannot host the layer must not carry a tclaude-layer
     // selection across the switch: it would be a 400 the operator never typed.
+    // But dropping it silently is the dialog deciding by erasure, so record what
+    // was discarded and by which harness — the row is about to vanish, and this
+    // notice is the only surface left that can say so.
     sandboxImpl: harness?.can_tclaude_layer ? draft.sandboxImpl : '',
+    sandboxImplCleared: !harness?.can_tclaude_layer && text(draft.sandboxImpl)
+      ? { implementation: text(draft.sandboxImpl), harness: harness?.display_name || text(harnessName) }
+      : null,
   };
 }
 
@@ -508,6 +552,7 @@ export function applySpawnProfile(
   // onto a profile that never asked for it.
   next.sandboxImpl = view.showSandboxImpl && profile.sandbox_implementation
     ? text(profile.sandbox_implementation) : '';
+  next.sandboxImplCleared = null;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
   if (profile.descr) next.descr = text(profile.descr);
@@ -560,6 +605,7 @@ export function clearSpawnProfileFields(draft, context, {
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
     sandboxImpl: defaults.sandboxImpl,
+    sandboxImplCleared: null,
     owner: false,
     permissionOverrides: {},
     contextFeatures: {},

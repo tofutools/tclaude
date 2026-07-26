@@ -122,3 +122,82 @@ test('switching to a harness without the layer clears the selection', async (t) 
   );
   assert.equal(switched.sandboxImpl, '');
 });
+
+// A harness switch that discards a sandbox-implementation selection ALSO hides
+// the row that held it — so the one control that could show the loss is gone at
+// the instant there is something to show. Left silent, that is the dialog
+// deciding by erasure: the server's loud refusal for an explicitly incompatible
+// request is unreachable precisely because the value never reaches it.
+//
+// These three pin the notice that closes that hole.
+
+test('the notice appears when a harness switch clears a selection', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
+
+  const before = { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' };
+  assert.equal(model.sandboxImplClearedNoticeFor(before), null, 'nothing to disclose yet');
+
+  const after = model.selectSpawnHarness(before, 'opencode', context);
+  assert.equal(after.sandboxImpl, '', 'the incompatible value is still dropped');
+
+  // The row is gone, which is exactly why the notice has to exist.
+  const view = model.spawnCapabilityView(after, context);
+  assert.equal(view.showSandboxImpl, false);
+
+  const notice = model.sandboxImplClearedNoticeFor(after);
+  assert.ok(notice, 'the loss must be disclosed even though the row is hidden');
+  assert.equal(notice.warn, true);
+});
+
+test('the notice names the implementation that was dropped and the harness that dropped it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
+
+  const after = model.selectSpawnHarness(
+    { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' }, 'opencode', context,
+  );
+  const notice = model.sandboxImplClearedNoticeFor(after);
+
+  assert.match(notice.text, /tclaude-layer/, 'names the implementation that was dropped');
+  assert.match(notice.text, /OpenCode/, 'names the harness that dropped it (display name)');
+  assert.match(notice.text, /harness-builtin/, 'states what the agent will actually launch with');
+});
+
+test('the notice is gone after an explicit re-pick, and after switching back', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
+
+  const cleared = model.selectSpawnHarness(
+    { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' }, 'opencode', context,
+  );
+  assert.ok(model.sandboxImplClearedNoticeFor(cleared), 'precondition: the notice stands');
+
+  // Speaking for the field again retires it — the state it describes no longer holds.
+  const repicked = model.setSpawnSandboxImpl(cleared, 'harness-builtin');
+  assert.equal(repicked.sandboxImpl, 'harness-builtin');
+  assert.equal(model.sandboxImplClearedNoticeFor(repicked), null);
+
+  // So does an explicit clear back to "inherit" — still the operator speaking.
+  assert.equal(model.sandboxImplClearedNoticeFor(model.setSpawnSandboxImpl(cleared, '')), null);
+
+  // And so does returning to a harness that can host the layer.
+  const back = model.selectSpawnHarness(cleared, 'claude', context);
+  assert.equal(model.sandboxImplClearedNoticeFor(back), null);
+});
+
+test('a harness switch with nothing selected raises no notice', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
+
+  // Nothing was lost, so there is nothing to disclose — the notice must not
+  // become background noise on every harness change.
+  const after = model.selectSpawnHarness(
+    { group: 'crew', harness: 'claude', sandboxImpl: '' }, 'opencode', context,
+  );
+  assert.equal(model.sandboxImplClearedNoticeFor(after), null);
+});

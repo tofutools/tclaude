@@ -39,6 +39,8 @@ import {
   validateSpawnDraft,
   autoCompactWindowHintFor,
   sandboxImplHintFor,
+  sandboxImplClearedNoticeFor,
+  setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
@@ -68,7 +70,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
-  'contextFeatures', 'autoCompactWindow', 'sandboxImpl',
+  'contextFeatures', 'autoCompactWindow', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -698,6 +700,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
   const sandboxImplHint = sandboxImplHintFor(draft, view);
+  const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
   if (worktrees.phase === 'loading') worktreeEmptyLabel = 'loading…';
@@ -899,7 +902,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       title=${SANDBOX_IMPL_TITLE}>
       <span class="cron-create-label">Sandbox impl</span>
       <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
-        onChange=${(event) => update('sandboxImpl', event.currentTarget.value)}>
+        onChange=${(event) => {
+          const value = event.currentTarget.value;
+          touched.current.add('sandboxImpl');
+          setDraft((before) => setSpawnSandboxImpl(before, value));
+        }}>
         <option value="">— inherit (profile chain, then ${view.sandboxImplDefault}) —</option>
         ${(view.sandboxImplOptions || []).map((option) => html`
           <option key=${option.value} value=${option.value}>${option.label}</option>`)}
@@ -910,6 +917,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
           <div class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>
+        </div>
+      </div>`}
+    ${sandboxImplCleared && html`
+      <div class="cron-create-row" id="agent-spawn-sandbox-impl-cleared-row" role="alert">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target">
+          <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"

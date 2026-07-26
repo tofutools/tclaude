@@ -15,7 +15,9 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
-import { autoCompactWindowHintFor, sandboxImplHintFor } from './agent-spawn-model.js';
+import {
+  autoCompactWindowHintFor, sandboxImplHintFor, sandboxImplClearedNoticeFor,
+} from './agent-spawn-model.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
 // framing, and the platform requirement stated rather than implied. A profile
@@ -215,7 +217,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       ssh_workaround: !!h?.can_ssh_workaround,
       // A harness that cannot host the layer must not keep a tclaude-layer pin
       // across the switch — saving it would be a 400 the operator never typed.
+      // Dropping it silently would be the editor deciding by erasure, and the
+      // row vanishes with the value, so record what was discarded for the notice.
       sandbox_implementation: h?.can_tclaude_layer ? current.sandbox_implementation : '',
+      sandbox_implementation_cleared: !h?.can_tclaude_layer && String(current.sandbox_implementation || '').trim()
+        ? { implementation: String(current.sandbox_implementation).trim(), harness: h?.display_name || harness }
+        : null,
     }));
   };
   const [helpOpen, setHelpOpen] = useState('');
@@ -236,6 +243,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     },
   );
   const sandboxImplOptions = Array.isArray(sandboxImpl?.options) ? sandboxImpl.options : [];
+  const sandboxImplCleared = sandboxImplClearedNoticeFor(
+    { sandboxImplCleared: draft.sandbox_implementation_cleared },
+  );
   const sandboxImplHint = sandboxImplHintFor(
     { sandboxImpl: draft.sandbox_implementation },
     {
@@ -261,13 +271,22 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       title=${SANDBOX_IMPL_TITLE}>
       <div class="cron-create-target">
         <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}
-          onChange=${(value) => change(setDraft, 'sandbox_implementation', value)}
+          onChange=${(value) => setDraft((current) => ({
+    ...current, sandbox_implementation: value, sandbox_implementation_cleared: null,
+  }))}
           options=${[['', 'Unset (inherit at spawn)'],
     ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
         ${sandboxImplHint && html`<div
           class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>`}
       </div>
     </${Row}>`}
+    ${profile && sandboxImplCleared && html`<div class="cron-create-row"
+      id="profile-editor-sandbox-impl-cleared-row" role="alert">
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target">
+        <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
+      </div>
+    </div>`}
     <${HelpField} id=${approvalID} label=${approvalLabel} title="Controls when the harness requests approval; it does not change the sandbox."
       value=${draft.approval}
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, hEntry.default_approval) }))}

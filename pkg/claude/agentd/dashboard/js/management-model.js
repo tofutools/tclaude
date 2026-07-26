@@ -53,6 +53,9 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     auto_compact_window: seed?.auto_compact_window || '',
     // "" = unset, so the profile stays silent and lower spawn tiers still speak.
     sandbox_implementation: seed?.sandbox_implementation || '',
+    // Set only by a harness switch that discarded a selection. Editor-local —
+    // profilePayload never sends it.
+    sandbox_implementation_cleared: null,
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
