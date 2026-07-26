@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // bwrapProbeTimeout bounds the capability probe. The probe does trivial work
@@ -89,4 +90,29 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
 	return binary, nil
+}
+
+func tclaudeLayerCommand(
+	binary string,
+	phase0WriteDirs, breakGlassPaths []string,
+	plan sandboxpolicy.MountPlan,
+	harnessCommand string,
+) (string, error) {
+	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+}
+
+func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
+	switch posture {
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
+		return harness.LaunchOSSandbox{
+			State:  "on",
+			Source: "tclaude-layer (bubblewrap; isolated network; host loopback/IDE bridge unavailable; isolated PIDs; constructed root; agentd socket allowlisted)",
+		}
+	default:
+		return harness.LaunchOSSandbox{
+			State:      "on",
+			Source:     "tclaude-layer (bubblewrap; host network; ambient host Unix sockets reachable)",
+			Unverified: true,
+		}
+	}
 }

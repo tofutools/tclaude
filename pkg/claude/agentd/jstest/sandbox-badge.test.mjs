@@ -99,6 +99,18 @@ const CASES = [
     titleNot: [/Bash is confined/],
   },
   {
+    name: 'the Darwin tclaude layer exposes its Seatbelt-specific partial fidelity',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; host network and ambient Unix sockets reachable; no mount namespace; hidden paths remain enumerable)',
+      os_sandbox_unverified: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem operations/,
+      /hidden paths remain enumerable/, /host network plus ambient Unix sockets remain reachable/],
+    titleNot: [/filesystem mounts are enforced/, /could not read a settings file/],
+  },
+  {
     name: 'the experimental tclaude layer exposes its partial socket fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',

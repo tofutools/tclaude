@@ -34,9 +34,9 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 }
 
 // TclaudeLayerHostAvailability reports whether THIS HOST can create the
-// baseline tclaude-layer namespace: Linux, `bwrap` on PATH, and unprivileged
-// user namespaces that survive the read-only-remount probe. nil means
-// available. The returned error names the concrete missing capability.
+// baseline tclaude-layer boundary: bubblewrap on Linux or Seatbelt on macOS.
+// nil means available. The returned error names the concrete missing
+// capability.
 //
 // It shares one predicate with the launch boundary — both call
 // resolveBwrapBinary — so a pre-flight answer can never disagree with the
@@ -56,23 +56,11 @@ func TclaudeLayerHostAvailability() error {
 	return err
 }
 
-// TclaudeLayerLaunchOSSandbox records the resolved network posture and the
-// fidelity it actually enforces. Host-open deliberately retains the skeleton's
-// partial badge; the constructed isolated root has full socket fidelity.
+// TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
+// Partial host-open implementations stay visibly unverified; a constructed
+// isolated root can report the stronger boundary it actually enforces.
 func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
-	switch posture {
-	case sandboxpolicy.NetworkIsolatedWithAgentd:
-		return harness.LaunchOSSandbox{
-			State:  "on",
-			Source: "tclaude-layer (bubblewrap; isolated network; host loopback/IDE bridge unavailable; isolated PIDs; constructed root; agentd socket allowlisted)",
-		}
-	default:
-		return harness.LaunchOSSandbox{
-			State:      "on",
-			Source:     "tclaude-layer (bubblewrap; host network; ambient host Unix sockets reachable)",
-			Unverified: true,
-		}
-	}
+	return tclaudeLayerLaunchOSSandbox(posture)
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
@@ -129,7 +117,7 @@ func WrapTclaudeLayer(
 	for _, grant := range effective.BreakGlassFilesystem {
 		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
-	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
 }
 
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed

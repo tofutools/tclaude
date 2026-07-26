@@ -177,12 +177,16 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
   // policy tclaude never saw may say the opposite. Hedge rather than assert:
   // the operator reading this badge is deciding whether to trust the agent, and
   // a padlock on something nothing confines is worse than no padlock at all.
-  const partialTclaudeLayer = unverified && source.includes('ambient host Unix sockets reachable');
-  const caveat = partialTclaudeLayer
-    ? ` ⚠ Partial fidelity: filesystem mounts are enforced, but ambient host Unix sockets remain connectable.`
-    : unverified
-      ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
-      : '';
+  const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
+  const partialLinuxTclaudeLayer = unverified
+    && source.includes('ambient host Unix sockets reachable');
+  const caveat = partialDarwinTclaudeLayer
+    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but hidden paths remain enumerable and the host network plus ambient Unix sockets remain reachable.`
+    : partialLinuxTclaudeLayer
+      ? ` ⚠ Partial fidelity: filesystem mounts are enforced, but ambient host Unix sockets remain connectable.`
+      : unverified
+        ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
+        : '';
   if (state === 'on') {
     // `source` for a launch-decided verdict names the tier that CHOSE the mode
     // in place of the anonymous actor: `global default profile "agents"

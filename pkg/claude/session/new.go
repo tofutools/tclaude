@@ -111,9 +111,9 @@ type NewParams struct {
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
-	// is the legacy harness-owned path; tclaude-layer is an experimental Linux
-	// bubblewrap wrapper around the complete harness process.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default; current behavior) | tclaude-layer (Linux bubblewrap outer layer)"`
+	// is the legacy harness-owned path; tclaude-layer is an experimental
+	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS).
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default; current behavior) | tclaude-layer (Linux bubblewrap or macOS Seatbelt outer layer)"`
 
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`

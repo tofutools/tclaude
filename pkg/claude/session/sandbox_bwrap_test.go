@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -403,6 +404,9 @@ func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
 }
 
 func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux bubblewrap verdict; platform verdicts have build-tagged tests")
+	}
 	verdict := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", verdict.State)
 	assert.Contains(t, verdict.Source, "ambient host Unix sockets reachable")

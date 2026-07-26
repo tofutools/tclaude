@@ -120,10 +120,11 @@ through one.
 If MCP reachability matters to your threat model, control it where MCP servers
 are configured — not in the sandbox profile.
 
-## Experimental `tclaude-layer` on Linux
+## Experimental `tclaude-layer` on Linux and macOS
 
 `tclaude session new --sandbox-impl tclaude-layer` runs the complete harness
-process inside a tclaude-owned bubblewrap mount namespace. The default remains
+process inside a tclaude-owned operating-system sandbox: a bubblewrap mount
+namespace on Linux or a Seatbelt profile on macOS. The default remains
 `harness-builtin`, which preserves the current harness-native behavior exactly.
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
@@ -165,18 +166,24 @@ is deliberate:
   machine — or for after `bwrap` is installed — is legitimate.
 
 It supports Claude Code and Codex; OpenCode is refused because its
-tool-executing server runs outside the attach pane this slice wraps. It requires Linux,
-`bwrap` on `PATH`, and working unprivileged user namespaces. If any capability
-is missing, tclaude refuses the launch instead of silently falling back. It
-does not unshare the IPC namespace. The host-open posture also retains the host
-PID namespace; the isolated posture unshares PIDs as part of closing ambient
-socket access. The harness's own sandbox is disabled inside the wrapper for
-now; a later workstream will define when nested sandboxes may be stacked.
+tool-executing server runs outside the attach pane this slice wraps. Linux uses
+`bwrap` from `PATH` and requires working unprivileged user namespaces. macOS
+uses `/usr/bin/sandbox-exec` and currently supports filesystem confinement only:
+`network_access: none` and every non-host-open posture are refused because this
+slice cannot supply network/PID isolation, a constructed root, or per-socket
+allowlisting there. If any required capability is missing, tclaude refuses the
+launch instead of silently falling back.
 
-The host-open posture starts with a read-only view of the host root; the
+On Linux the layer does not unshare the IPC namespace. The host-open posture
+also retains the host PID namespace; the isolated posture unshares PIDs as part
+of closing ambient socket access. The harness's own sandbox is disabled inside
+the wrapper on both platforms for now; a later workstream will define when
+nested sandboxes may be stacked.
+
+The Linux host-open posture starts with a read-only view of the host root; the
 isolated posture uses the constructed root described below. Both give `/dev`,
-`/proc`, and `/tmp` fresh sandbox views and enforce four load-bearing
-precedence classes:
+`/proc`, and `/tmp` fresh sandbox views. Both platform appliers enforce four
+load-bearing precedence classes:
 
 1. Reopen the launched harness's state root, workspace/Git administration
    paths, and declared agent directories for writing. These launch-contract
@@ -195,6 +202,49 @@ reopen beneath a deny and a more-specific deny to hide beneath an allow.
 Missing read/write bind sources are skipped without creating anything on the
 host; hide entries are still applied. The wrapper also starts a new terminal
 session to prevent terminal-input injection.
+
+### macOS Seatbelt filesystem posture
+
+The Darwin applier compiles the final four-class result into a
+`sandbox-exec` profile. Seatbelt denies dominate allows, so it does not replay
+the plan as a textual sequence of deny then allow rules. Instead it emits
+deny-only read/write regions whose predicates carve out the final narrower
+reopens. This is how a writable child beneath a hidden ancestor keeps the same
+later-shadows-earlier meaning as the Linux mount plan.
+
+The profile otherwise uses `allow default`: host networking, Mach services,
+and ambient Unix sockets retain their host behavior. The filesystem baseline is
+read-only, with narrow launch-contract write roots plus the Darwin process
+runtime paths (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical
+`$TMPDIR` beneath `/private/var/folders`). Those runtime exceptions apply only
+to the baseline; an operator-authored read-only or hidden region over one of
+them still wins. Protected tclaude/harness state and the tmux socket are denied
+for reads and writes, while the canonical agentd socket remains readable and
+connectable so hook/status-line brokering continues to work.
+
+A hidden path remains present in the host directory tree. Seatbelt denies
+opens, writes, and Unix-socket connects at that path with `EPERM`; it does not
+make a directory listing omit the name. The same descendant reopens apply to
+reads and connects, which keeps the agentd socket reachable beneath an
+ordinary ancestor hide while the final tmux hide has no exception. This is the
+intended fail-loud behavior: a hidden database path cannot accept writes into
+phantom state even though its name may still be enumerated.
+
+Profile paths are passed through `sandbox-exec -D` parameters rather than
+interpolated into SBPL. Resolved symlink targets and any `MountPlan.Aliases`
+that survived profile resolution are both covered; no constructed-root symlink
+is created on Darwin. Case/NFC-equivalent spellings are merged only after
+Darwin `lstat` file identity confirms matching device and inode, so a
+case-sensitive APFS volume keeps distinct objects distinct. Persisted registry
+profiles may already have discarded their operator spelling; that separate
+limitation remains tracked by TCL-762.
+
+The launch badge deliberately reports the Darwin-specific partial boundary as
+unverified: Seatbelt filesystem policy is active, paths remain enumerable, and
+there is no mount namespace or socket/network isolation. `sandbox-exec` is
+deprecated but still functional and is the mechanism for this experimental
+slice. A future replacement would call libsandbox/`sandbox_init` directly; the
+fallback is not part of this slice.
 
 ### Isolated-with-agentd network posture
 
@@ -344,6 +394,16 @@ go build -o "$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" .
 TCLAUDE_SANDBOX_V2_SMOKE=1 \
   TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
   go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+```
+
+The Darwin smoke runs for real on the `macos-latest` CI job. To repeat it on a
+macOS host:
+
+```bash
+go build -o "$TMPDIR/tclaude-sandbox-v2-smoke" .
+TCLAUDE_SANDBOX_V2_SMOKE=1 \
+  TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$TMPDIR/tclaude-sandbox-v2-smoke" \
+  go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s
 ```
 
 ## The shape that does the work: deny + reopen
