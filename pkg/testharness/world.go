@@ -82,6 +82,7 @@ type World struct {
 	spawnAutoMemory    map[string]bool
 	spawnContextTrims  map[string]map[string]string
 	spawnCompactWindow map[string]string
+	spawnSandboxImpl   map[string]string
 	spawnCwdProofs     map[string]string
 	spawnDirProofs     map[string]string
 	spawnGitCommonDirs map[string]string
@@ -134,6 +135,7 @@ func New(t *testing.T) *World {
 		spawnAutoMemory:     map[string]bool{},
 		spawnContextTrims:   map[string]map[string]string{},
 		spawnCompactWindow:  map[string]string{},
+		spawnSandboxImpl:    map[string]string{},
 		spawnCwdProofs:      map[string]string{},
 		spawnDirProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
@@ -403,6 +405,25 @@ func (w *World) RecordSpawnAutoCompactWindow(convID, window string) {
 	w.spawnMu.Lock()
 	defer w.spawnMu.Unlock()
 	w.spawnCompactWindow[convID] = window
+}
+
+// RecordSpawnSandboxImplementation captures WHO OWNS OS-level containment for a
+// spawn, keyed by the new conv-id. The empty string is recorded too, and is the
+// assertion that matters most: it is what a default-off launch must produce, and
+// it is distinct from a conv the spawner never saw.
+func (w *World) RecordSpawnSandboxImplementation(convID, implementation string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnSandboxImpl[convID] = implementation
+}
+
+// SpawnSandboxImplementation returns the sandbox implementation recorded for a
+// spawned conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnSandboxImplementation(convID string) (string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	implementation, ok := w.spawnSandboxImpl[convID]
+	return implementation, ok
 }
 
 // SpawnAutoCompactWindow returns the auto-compaction window recorded for a

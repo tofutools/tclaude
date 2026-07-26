@@ -128,6 +128,42 @@ process inside a tclaude-owned bubblewrap mount namespace. The default remains
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
 
+### Selecting it per spawn
+
+The same choice is available wherever an agent is spawned, so the layer does not
+have to be driven through `session new` by hand:
+
+- `tclaude agent spawn --sandbox-impl tclaude-layer`
+- a spawn profile's **Sandbox impl** field, which every agent launched through
+  that profile inherits
+- the dashboard spawn dialog's **Sandbox impl** row
+
+Like every other launch field it resolves through one precedence chain, highest
+first: the explicit flag or dialog selection, then `--profile`, then the group's
+default spawn profile, then the global default profile, then the harness
+default. Leaving it unset everywhere means `harness-builtin`, so a spawn that
+says nothing behaves exactly as it did before the field existed.
+
+Unset and `harness-builtin` are different values on purpose. Unset falls through
+to the next tier; an explicit `harness-builtin` **pins** the legacy
+implementation, which is how one spawn opts out of a group default that would
+otherwise put it on the experimental layer.
+
+Two ways the layer can be unusable are handled differently, and the difference
+is deliberate:
+
+- A **harness** that cannot host it (OpenCode) is a per-harness fact. An
+  explicit request for it is a loud error, and a value inherited from a
+  lower-tier profile that names a *different* harness is skipped, disclosed in
+  the resolved-launch notes, and falls through to the next tier — the same
+  behavior every launch field has.
+- A **host** that cannot run it is not. It refuses the launch outright, from
+  whichever tier the value came from, naming the missing capability. It never
+  falls through to `harness-builtin`. The dashboard discloses availability up
+  front, but that disclosure never replaces the refusal: the option stays
+  selectable, because authoring a profile that pins the layer for another
+  machine — or for after `bwrap` is installed — is legitimate.
+
 It supports Claude Code and Codex; OpenCode is refused because its
 tool-executing server runs outside the attach pane this slice wraps. It requires Linux,
 `bwrap` on `PATH`, and working unprivileged user namespaces. If any capability

@@ -33,6 +33,29 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
 }
 
+// TclaudeLayerHostAvailability reports whether THIS HOST can create the
+// baseline tclaude-layer namespace: Linux, `bwrap` on PATH, and unprivileged
+// user namespaces that survive the read-only-remount probe. nil means
+// available. The returned error names the concrete missing capability.
+//
+// It shares one predicate with the launch boundary — both call
+// resolveBwrapBinary — so a pre-flight answer can never disagree with the
+// refusal that actually decides. What differs is only the posture, and
+// deliberately: this probes the LEAST demanding posture (host-open), because
+// the posture a launch really uses derives from the resolved sandbox profile's
+// network_access, and isolated-with-agentd needs strictly more (network + PID
+// namespaces). So a nil result here rules out an obviously-doomed launch; it
+// never claims an isolated launch will succeed. The posture-exact check at the
+// launch boundary remains the authority.
+//
+// Callers that REFUSE on this answer must call it live rather than caching:
+// an operator who has just installed bwrap must not be refused by a stale
+// negative. Caching is for disclosure only. See TCL-769.
+func TclaudeLayerHostAvailability() error {
+	_, err := resolveBwrapBinary(sandboxpolicy.NetworkHostOpen)
+	return err
+}
+
 // TclaudeLayerLaunchOSSandbox records the resolved network posture and the
 // fidelity it actually enforces. Host-open deliberately retains the skeleton's
 // partial badge; the constructed isolated root has full socket fidelity.

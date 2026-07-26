@@ -683,6 +683,28 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 	return func() { humanMessageAttachmentStartUploadTimer = old }
 }
 
+// SetTclaudeLayerHostAvailabilityForTest swaps the host-capability predicate
+// behind the sandbox-implementation gate, so a flow test can drive BOTH
+// branches deterministically. Neither is otherwise reachable on demand: a CI
+// runner has no unprivileged user namespaces and would only ever produce the
+// refusal, while a developer host with bwrap would only ever produce the
+// success — so without this seam half the contract is untestable wherever the
+// test happens to run.
+//
+// It also resets the dashboard's disclosure cache, since a test that changes
+// the answer must be able to observe the new one. Returns a restore function
+// for t.Cleanup (which resets the cache again, so tests cannot leak an answer
+// into each other).
+func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
+	prev := tclaudeLayerHostAvailability
+	tclaudeLayerHostAvailability = fn
+	resetSandboxImplHostProbeCache()
+	return func() {
+		tclaudeLayerHostAvailability = prev
+		resetSandboxImplHostProbeCache()
+	}
+}
+
 // SetClipboardWriterForTest swaps the platform clipboard-write seam so a
 // flow test can assert that handleClipboard reached the copy path with the
 // exact text — without execing a real wl-copy/xclip/pbcopy/clip.exe (which

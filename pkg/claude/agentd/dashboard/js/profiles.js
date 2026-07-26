@@ -223,6 +223,10 @@ function profileSummary(p) {
   // 'inherit' is the recommended default (no per-session override), so — like an
   // absent toggle — it isn't worth a chip; only a real override (on/off) shows.
   if (p.sandbox && p.sandbox !== 'inherit') parts.push(`sandbox ${p.sandbox}`);
+  // Only a non-default implementation earns a chip. An explicit harness-builtin
+  // pin does show: it is a real override that stops a lower tier flipping the
+  // agent onto the experimental layer, which is worth seeing at a glance.
+  if (p.sandbox_implementation) parts.push(`impl ${p.sandbox_implementation}`);
   if (p.agent_name) parts.push(`name ${p.agent_name}`);
   if (p.role) parts.push(p.role);
   // The *bool toggles read as on/off only when explicitly set (an absent
@@ -270,6 +274,7 @@ function profileDetailChips(p) {
   text('model', p.model);
   text('effort', p.effort);
   text('sandbox', p.sandbox);
+  text('sandbox impl', p.sandbox_implementation);
   text('approval', p.approval);
   text('ask-timeout', p.ask_user_question_timeout);
   text('compact at', formatTokenWindow(Number(p.auto_compact_window)));

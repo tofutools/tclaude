@@ -3,11 +3,24 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+// bwrapProbeTimeout bounds the capability probe. The probe does trivial work
+// (fork bwrap, stat one path, attempt one write), so anything approaching this
+// means the namespace setup itself is wedged — a hung LSM, a stuck /tmp — and
+// waiting longer cannot help.
+//
+// The deadline became load-bearing when the probe stopped being a once-per-
+// launch cost: TCL-769 put the same predicate behind the dashboard's polled
+// capability disclosure and the spawn boundary's refusal, so an unbounded exec
+// there would hang a poll loop rather than one launch.
+const bwrapProbeTimeout = 5 * time.Second
 
 var (
 	lookPathBwrap = exec.LookPath
@@ -16,7 +29,16 @@ var (
 		if err != nil {
 			return err
 		}
-		return exec.Command(binary, args...).Run()
+		ctx, cancel := context.WithTimeout(context.Background(), bwrapProbeTimeout)
+		defer cancel()
+		if err := exec.CommandContext(ctx, binary, args...).Run(); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("bubblewrap capability probe timed out after %s: %w",
+					bwrapProbeTimeout, ctx.Err())
+			}
+			return err
+		}
+		return nil
 	}
 )
 

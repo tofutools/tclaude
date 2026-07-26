@@ -186,6 +186,7 @@ type templateInlineProfileJSON struct {
 	Model                  string            `json:"model,omitempty"`
 	Effort                 string            `json:"effort,omitempty"`
 	Sandbox                string            `json:"sandbox,omitempty"`
+	SandboxImplementation  string            `json:"sandbox_implementation,omitempty"`
 	Approval               string            `json:"approval,omitempty"`
 	ToolGovernance         string            `json:"tools,omitempty"`
 	AskUserQuestionTimeout string            `json:"ask_user_question_timeout,omitempty"`
@@ -212,6 +213,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		Model:                  p.Model,
 		Effort:                 p.Effort,
 		Sandbox:                p.Sandbox,
+		SandboxImplementation:  p.SandboxImplementation,
 		Approval:               p.Approval,
 		ToolGovernance:         p.ToolGovernance,
 		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
@@ -247,6 +249,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		Model:                  j.Model,
 		Effort:                 j.Effort,
 		Sandbox:                j.Sandbox,
+		SandboxImplementation:  j.SandboxImplementation,
 		Approval:               j.Approval,
 		ToolGovernance:         j.ToolGovernance,
 		AskUserQuestionTimeout: j.AskUserQuestionTimeout,

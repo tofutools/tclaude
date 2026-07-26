@@ -46,12 +46,16 @@ type profileJSON struct {
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields.
-	Harness        string `json:"harness,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	Approval       string `json:"approval,omitempty"`
-	ToolGovernance string `json:"tools,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Sandbox string `json:"sandbox,omitempty"`
+	// SandboxImplementation is the profile's pinned owner of OS-level
+	// containment: "harness-builtin" or the experimental "tclaude-layer"
+	// ("" = unset, so it falls through to the next spawn precedence tier).
+	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
+	Approval              string `json:"approval,omitempty"`
+	ToolGovernance        string `json:"tools,omitempty"`
 	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
 	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
 	// per-spawn via `--settings`. Claude-Code-only.
@@ -679,6 +683,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		{"harness", p.Harness}, {"model", p.Model}, {"effort", p.Effort},
 		{"sandbox", p.Sandbox}, {"tools", p.ToolGovernance}, {"ask_user_question_timeout", p.AskUserQuestionTimeout},
 		{"approval", p.Approval}, {"auto_compact_window", harness.FormatAutoCompactWindow(p.AutoCompactWindow)},
+		{"sandbox_impl", p.SandboxImplementation},
 	} {
 		if kv.v != "" {
 			launch = append(launch, kv.k+"="+kv.v)
