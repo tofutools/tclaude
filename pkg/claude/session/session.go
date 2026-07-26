@@ -64,6 +64,8 @@ type SessionState struct {
 	// preserves it. Unlike Harness, "" is a genuine value (no sandbox) and
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
 	SandboxMode string `json:"sandboxMode,omitempty"`
+	// SandboxImplementation names the outer sandbox owner selected at launch.
+	SandboxImplementation string `json:"sandboxImplementation,omitempty"`
 	// SandboxModeSource names the resolution tier that CHOSE SandboxMode (an
 	// explicit flag, or the spawn profile that carried it). Carried through
 	// toRow/fromRow like SandboxMode so a hook callback's load→mutate→save
@@ -210,6 +212,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		LastHook:               s.LastHook,
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
+		SandboxImplementation:  s.SandboxImplementation,
 		OSSandboxState:         s.OSSandboxState,
 		SandboxModeSource:      s.SandboxModeSource,
 		OSSandboxSource:        s.OSSandboxSource,
@@ -240,6 +243,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		LastHook:               r.LastHook,
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
+		SandboxImplementation:  r.SandboxImplementation,
 		OSSandboxState:         r.OSSandboxState,
 		SandboxModeSource:      r.SandboxModeSource,
 		OSSandboxSource:        r.OSSandboxSource,

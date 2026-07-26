@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -131,6 +132,26 @@ var launchCarryoverExcused = map[string]string{
 // launch parameters a resume reproduces from the conversation's recorded
 // posture whenever the caller did not pass the flag itself.
 var launchCarryoverFields = []launchCarryoverField{
+	{
+		flag:        "sandbox-impl",
+		recorded:    "SandboxImplementation",
+		containment: true,
+		unpinned:    []string{string(sandboxpolicy.ImplementationHarnessBuiltin)},
+		supplied: func(p *NewParams) bool {
+			return strings.TrimSpace(p.SandboxImpl) != ""
+		},
+		carry: func(_ *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.SandboxImplementation == nil {
+				return nil, carryUnrecorded
+			}
+			implementation, err := sandboxpolicy.NormalizeImplementation(*rec.SandboxImplementation)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.SandboxImpl = string(implementation)
+			return p.SandboxImpl, carryApplied
+		},
+	},
 	{
 		flag:        "sandbox",
 		recorded:    "SandboxMode",

@@ -120,6 +120,29 @@ through one.
 If MCP reachability matters to your threat model, control it where MCP servers
 are configured — not in the sandbox profile.
 
+## Experimental `tclaude-layer` on Linux
+
+`tclaude session new --sandbox-impl tclaude-layer` runs the complete harness
+process inside a tclaude-owned bubblewrap mount namespace. The default remains
+`harness-builtin`, which preserves the current harness-native behavior exactly.
+The implementation choice is recorded with the conversation, so a flagless
+resume uses the same layer.
+
+This first slice is deliberately filesystem-only. It requires Linux,
+`bwrap` on `PATH`, and working unprivileged user namespaces. If any capability
+is missing, tclaude refuses the launch instead of silently falling back. It
+does not unshare networking, PID, or IPC namespaces. The harness's own sandbox
+is disabled inside the wrapper for now; a later workstream will define when
+nested sandboxes may be stacked.
+
+The layer starts with a read-only view of the host root, gives `/dev`, `/proc`,
+and `/tmp` fresh sandbox views, then applies the resolved profile's ordered
+mount plan. Later entries shadow earlier entries, so a more-specific allow can
+reopen beneath a deny and a more-specific deny can hide beneath an allow.
+Missing read/write bind sources are skipped without creating anything on the
+host; hide entries are still applied. A profile with a non-inherited network
+posture is refused in this filesystem-only slice.
+
 ## The shape that does the work: deny + reopen
 
 There is exactly one mechanism, the profile's `filesystem` table. Strictness is

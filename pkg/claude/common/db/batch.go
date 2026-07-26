@@ -235,7 +235,7 @@ func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 	for _, chunk := range chunkStrings(convIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
 		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance
+			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance
 			FROM sessions WHERE conv_id `+clause+`
 			ORDER BY conv_id, updated_at DESC`, args...)
 		if err != nil {
@@ -276,7 +276,7 @@ func LoadSessionsByIDs(sessionIDs []string) (map[string]*SessionRow, error) {
 	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
 		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance
+			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance
 			FROM sessions WHERE id `+clause, args...)
 		if err != nil {
 			return nil, err

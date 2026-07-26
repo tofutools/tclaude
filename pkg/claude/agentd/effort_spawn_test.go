@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -206,6 +207,39 @@ func TestSessionNewArgs_Sandbox(t *testing.T) {
 		}
 		if slices.Contains(args, "--permission-profile") {
 			t.Fatalf("codex %s must NOT emit --permission-profile, got %v", mode, args)
+		}
+	}
+}
+
+func TestSessionArgs_SandboxImplementationDefaultsOffAndReplaysOptIn(t *testing.T) {
+	for _, implementation := range []string{"", string(sandboxpolicy.ImplementationHarnessBuiltin)} {
+		for _, args := range [][]string{
+			sessionNewArgs(clcommon.SpawnArgs{
+				Label: "lbl", Cwd: "/tmp/x", SandboxImplementation: implementation,
+			}),
+			sessionResumeArgs(clcommon.SpawnArgs{
+				ConvID: "conv-1", Cwd: "/tmp/x", SandboxImplementation: implementation,
+			}),
+		} {
+			if slices.Contains(args, "--sandbox-impl") {
+				t.Fatalf("default implementation %q must not change the launch argv: %v", implementation, args)
+			}
+		}
+	}
+
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "lbl", Cwd: "/tmp/x",
+			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "conv-1", Cwd: "/tmp/x",
+			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		}),
+	} {
+		i := slices.Index(args, "--sandbox-impl")
+		if i < 0 || i+1 >= len(args) || args[i+1] != string(sandboxpolicy.ImplementationTclaudeLayer) {
+			t.Fatalf("%s must replay the durable tclaude-layer opt-in, got %v", name, args)
 		}
 	}
 }

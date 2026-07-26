@@ -22,6 +22,10 @@ const TemporarySandboxModeSource = "temporary dashboard unlock"
 type AgentRelaunchProfile struct {
 	Version     int     `json:"version"`
 	SandboxMode *string `json:"sandbox_mode,omitempty"`
+	// SandboxImplementation is the durable owner of OS-level confinement.
+	// nil is legacy/unknown; harness-builtin is the explicit compatibility
+	// default for every new launch.
+	SandboxImplementation *string `json:"sandbox_implementation,omitempty"`
 	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
 	// explicit flag, or the named/group-default/global-default spawn profile
 	// that carried it. It is durable because the badge attributes the launch's
@@ -397,7 +401,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		return nil
 	}
 	var rowID int64
-	var convID, cwd, harnessName, sandboxMode, approvalPolicy, modelID, effort, askTimeout, provenance, createdAt string
+	var convID, cwd, harnessName, sandboxMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance, createdAt string
 	var approvalAutoReview, remoteControl, autoMemory int
 	var contextWindowSize int64
 	var contextFeaturesRaw, autoCompactWindow string
@@ -433,13 +437,21 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if haveSandboxModeSource {
 		sandboxModeSourceColumn = "sandbox_mode_source"
 	}
+	haveSandboxImplementation, err := sessionsHaveColumn(q, "sandbox_implementation")
+	if err != nil {
+		return err
+	}
+	sandboxImplementationColumn := "''"
+	if haveSandboxImplementation {
+		sandboxImplementationColumn = "sandbox_implementation"
+	}
 	var sandboxModeSource string
-	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxModeSourceColumn+`,
+	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxImplementationColumn+`, `+sandboxModeSourceColumn+`,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
 		auto_memory, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
-		&rowID, &convID, &cwd, &harnessName, &sandboxMode, &sandboxModeSource,
+		&rowID, &convID, &cwd, &harnessName, &sandboxMode, &sandboxImplementation, &sandboxModeSource,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
 		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAt)
@@ -507,6 +519,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// Absent column = pre-v158 database = genuinely unknown, so nil.
 	if haveSandboxModeSource {
 		agent.SandboxModeSource = stringPtr(sandboxModeSource)
+	}
+	if haveSandboxImplementation {
+		agent.SandboxImplementation = stringPtr(sandboxImplementation)
 	}
 	if modelID != "" {
 		agent.ModelID = stringPtr(modelID)
@@ -636,6 +651,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 			// survive a projection that replaced the mode would credit the new
 			// mode to whatever chose the old one.
 			merged.SandboxModeSource = agent.SandboxModeSource
+		}
+		if agent.SandboxImplementation != nil {
+			merged.SandboxImplementation = agent.SandboxImplementation
 		}
 		merged.ApprovalPolicy = agent.ApprovalPolicy
 		merged.ApprovalAutoReview = agent.ApprovalAutoReview
@@ -782,6 +800,7 @@ func execSessionUpdateAndProject(sessionID string, opts relaunchProjectionOption
 func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw string) error {
 	var spawn struct {
 		SandboxMode            *string            `json:"sandbox"`
+		SandboxImplementation  *string            `json:"sandbox_implementation"`
 		ApprovalPolicy         *string            `json:"approval"`
 		ToolGovernance         *string            `json:"tools"`
 		ApprovalAutoReview     *bool              `json:"auto_review"`
@@ -799,6 +818,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 	p := AgentRelaunchProfile{
 		Version:                RelaunchProfileVersion,
 		SandboxMode:            spawn.SandboxMode,
+		SandboxImplementation:  spawn.SandboxImplementation,
 		ApprovalPolicy:         spawn.ApprovalPolicy,
 		ToolGovernance:         spawn.ToolGovernance,
 		ApprovalAutoReview:     spawn.ApprovalAutoReview,

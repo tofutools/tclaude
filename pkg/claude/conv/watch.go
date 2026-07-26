@@ -2258,8 +2258,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
+	implementation, err := resumeSandboxImplementation(convID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
 	var shellEnvironment map[string]string
+	effectiveProfile := sandboxpolicy.EffectiveProfile{}
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
@@ -2280,6 +2286,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
+		effectiveProfile = validated.Effective
 		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
 		for _, entry := range validated.Effective.Environment {
 			resumeEnv[entry.Name] = entry.Value
@@ -2358,16 +2365,21 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
-		return "", "", nil, err
-	}
-	if len(breakGlassGrants) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, sandboxMode, breakGlassGrants, launchGrants); err != nil {
+	if !tclaudeLayer {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
 			return "", "", nil, err
 		}
+		if len(breakGlassGrants) > 0 {
+			if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, sandboxMode, breakGlassGrants, launchGrants); err != nil {
+				return "", "", nil, err
+			}
+		}
 	}
-	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
+	if !tclaudeLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
+	}
+	if tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: tclaude-layer is filesystem-only in this experimental slice; network posture must inherit")
 	}
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
@@ -2380,17 +2392,35 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
+	if tclaudeLayer {
+		switch h.Name {
+		case harness.DefaultName:
+			sandboxMode = harness.ClaudeSandboxOff
+		case harness.CodexName:
+			sandboxMode = harness.SandboxDangerFull
+		case harness.OpenCodeName:
+			sandboxMode = harness.OpenCodeSandboxOff
+		default:
+			return "", "", nil, fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
+		}
+	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every
 	// sibling repo beneath the deny.
 	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
-	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
+	if tclaudeLayer ||
+		(h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
+	}
+	if tclaudeLayer {
+		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
+			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+		}
 	}
 	if workspaceDenied {
 		// A deny covering the workspace masks the harness's ordinary cwd grant,
@@ -2410,8 +2440,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
-	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
-		return "", "", nil, err
+	if !tclaudeLayer {
+		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
+			return "", "", nil, err
+		}
 	}
 	askTimeout, err := resumeAskTimeout(h, convID)
 	if err != nil {
@@ -2453,7 +2485,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+	if !tclaudeLayer && h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
@@ -2483,7 +2515,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			spec.ExecutablePath = splitCapability.ExecutablePath
 		}
 		cleanupPath = profilePath
-	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
+	} else if !tclaudeLayer && h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if splitCapability != nil {
@@ -2494,6 +2526,17 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
+	}
+	if tclaudeLayer {
+		effectiveProfile.Filesystem = renderedGrants
+		binary, _, resolveErr := session.ResolveTclaudeLayer()
+		if resolveErr != nil {
+			return "", "", nil, resolveErr
+		}
+		cmd, err = session.WrapTclaudeLayer(binary, effectiveProfile, cmd)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)
+		}
 	}
 	return cmd, cleanupPath, h, nil
 }
@@ -2610,6 +2653,18 @@ func resumeSandboxState(convID string) (mode, cwd string) {
 func resumeSandboxMode(convID string) string {
 	mode, _ := resumeSandboxState(convID)
 	return mode
+}
+
+func resumeSandboxImplementation(convID string) (sandboxpolicy.Implementation, error) {
+	launch, err := db.SessionLaunchProfileForConv(convID)
+	if err != nil {
+		return "", fmt.Errorf("load sandbox implementation for conversation %s: %w", convID, err)
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(launch.SandboxImplementation)
+	if err != nil {
+		return "", fmt.Errorf("invalid recorded sandbox implementation for conversation %s: %w", convID, err)
+	}
+	return implementation, nil
 }
 
 // resumeSandboxChosenBy replays the recorded attribution for the mode
@@ -2863,7 +2918,14 @@ func createSessionForConv(conv *SessionEntry) error {
 	// operator may have changed settings.json since (TCL-729).
 	resumeMode := resumeSandboxMode(conv.SessionID)
 	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
+	resumeImplementation, err := resumeSandboxImplementation(conv.SessionID)
+	if err != nil {
+		return err
+	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
+	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+		launchOSSandbox = harness.LaunchOSSandbox{State: "on", Source: "tclaude-layer (bubblewrap)"}
+	}
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -2873,6 +2935,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            resumeMode,
+		SandboxImplementation:  string(resumeImplementation),
 		SandboxModeSource:      resumeChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,

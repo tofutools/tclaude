@@ -354,6 +354,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		proofArgs.Model = model
 		proofArgs.Harness = srcHarness
 		proofArgs.Sandbox = cloneSandbox
+		proofArgs.SandboxImplementation = relaunch.SandboxImplementation
 		proofArgs.SandboxChosenBy = cloneSandboxSource
 		proofArgs.CodexGitCommonDir = codexGitCommonDir
 		proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
@@ -496,6 +497,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	proofArgs.Model = model
 	proofArgs.Harness = srcHarness
 	proofArgs.Sandbox = cloneSandbox
+	proofArgs.SandboxImplementation = relaunch.SandboxImplementation
 	proofArgs.SandboxChosenBy = cloneSandboxSource
 	proofArgs.CodexGitCommonDir = codexGitCommonDir
 	proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned

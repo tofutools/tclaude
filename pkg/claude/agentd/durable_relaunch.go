@@ -17,6 +17,10 @@ type durableRelaunchConfig struct {
 	Cwd              string
 	ResumeProvenance string
 	Sandbox          string
+	// SandboxImplementation is independent of the per-harness Sandbox mode:
+	// it decides whether the durable launch is harness-owned or wrapped by
+	// tclaude's outer layer.
+	SandboxImplementation string
 	// SandboxModeSource is the recorded attribution for Sandbox — which
 	// resolution tier chose it at the ORIGINAL launch. Every relaunch replays it
 	// alongside the mode; dropping it would let a crash recovery or a
@@ -71,6 +75,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		}
 	}
 	sandboxMode := p.SandboxMode
+	sandboxImplementation := string(sandboxpolicy.ImplementationHarnessBuiltin)
 	sandboxModeSource := p.SandboxModeSource
 	approvalPolicy := p.ApprovalPolicy
 	toolGovernance := p.ToolGovernance
@@ -92,8 +97,9 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	// own threshold across relaunches, not inherit one a later profile edit adds.
 	autoCompactWindow := p.AutoCompactWindow
 	return db.AgentRelaunchProfile{
-		Version:     db.RelaunchProfileVersion,
-		SandboxMode: &sandboxMode,
+		Version:               db.RelaunchProfileVersion,
+		SandboxMode:           &sandboxMode,
+		SandboxImplementation: &sandboxImplementation,
 		// Frozen alongside the mode it explains: a relaunch replays both, so an
 		// agent keeps naming the profile that chose its containment instead of
 		// degrading to an anonymous "this launch" on its first restart.
@@ -177,6 +183,13 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	sandboxMode, err := relaunchSandboxForProfile(agentProfile, h.Name)
 	if err != nil {
 		return nil, err
+	}
+	sandboxImplementation := sandboxpolicy.ImplementationHarnessBuiltin
+	if agentProfile.SandboxImplementation != nil {
+		sandboxImplementation, err = sandboxpolicy.NormalizeImplementation(*agentProfile.SandboxImplementation)
+		if err != nil {
+			return nil, fmt.Errorf("invalid durable sandbox implementation: %w", err)
+		}
 	}
 	// Attribution follows the mode it explains, and only while that mode is the
 	// one that was recorded: a profile whose SandboxMode is blank falls through
@@ -315,6 +328,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		Cwd:                    strings.TrimSpace(conversation.Cwd),
 		ResumeProvenance:       conversation.ResumeProvenance,
 		Sandbox:                sandboxMode,
+		SandboxImplementation:  string(sandboxImplementation),
 		SandboxModeSource:      sandboxModeSource,
 		TemporarySandboxMode:   temporarySandboxMode != nil,
 		NormalSandbox:          normalSandboxMode,
