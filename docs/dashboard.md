@@ -912,9 +912,10 @@ independently. A missing, zero, negative, or malformed value falls back to
 The **Default terminal** toggle (`dashboard.default_terminal`) chooses where
 dashboard focus/open actions appear. Its default, `native`, opens or raises OS
 terminal windows. Selecting web terminals routes per-agent focus, open-window,
-open-terminal, and bulk focus from the **🪟 windows…** modal into panes in the
-dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
-clients and closes matching web panes; it never stops the agents.
+open-terminal, and bulk focus from the **🪟 windows…** modal or command palette
+into panes in the dashboard's **Terminals** tab. Bulk unfocus still detaches the
+selected terminal clients and closes matching web panes; it never stops the
+agents.
 
 On the Groups tab, **Ctrl-click** or **Cmd-click** the Remote Access phone
 indicator or **web window** action to open that web terminal in the background.

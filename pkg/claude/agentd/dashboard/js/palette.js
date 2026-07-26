@@ -59,6 +59,7 @@ import { setDockOpen } from './dock.js';
 import { scribeVisible } from './virtual-groups.js';
 import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
+import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
@@ -78,34 +79,12 @@ function wiz(regular, wizard) {
 //    hit. Each toasts its own outcome (matching the existing modal's
 //    wording) and never touches an agent process: window-only.
 
-async function bulkWindowOp(payload, what) {
-  let r;
-  try {
-    r = await fetch('/api/agent-windows', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    toast(`${what}: request failed: ${(e && e.message) || e}`, true);
-    return;
-  }
-  if (!r.ok) { toast(`${what}: ${await r.text()}`, true); return; }
-  const out = await r.json().catch(() => null);
-  if (!out) { toast(`${what}: done`); return; }
-  if (payload.direction === 'focus') {
-    const extra = out.failed ? `, ${out.failed} failed` : '';
-    toast(`${what}: ${out.focused} focused${extra}`, out.failed > 0);
-  } else {
-    // Close the multiplexer panes of exactly the agents this bulk unfocus
-    // detached (out.agents carries the per-agent outcome), so their terminal
-    // tabs don't linger showing "disconnected". Precise — panes for agents
-    // outside the op's scope are untouched.
-    closeTerminalsForWindowOp(out.agents);
-    const extra = out.failed ? `, ${out.failed} failed` : '';
-    toast(`${what}: ${out.detached} detached${extra}`, out.failed > 0);
-  }
-}
+const bulkWindowOp = createPaletteWindowOperator({
+  fetchImpl: (...args) => fetch(...args),
+  notify: toast,
+  openWebWindowPane,
+  closeTerminalsForWindowOp,
+});
 
 async function jumpAgent(conv, label, preferWebTerminal) {
   // If this agent already has an open web terminal / window pane in the
@@ -194,6 +173,8 @@ function setAllGroupsOpen(open) {
 // empty-query view.
 export function buildCommands(snapshot) {
   const snap = snapshot || {};
+  const preferWebTerminal = snap.default_terminal === 'web';
+  const allWebWindowTargets = webWindowTargets(snap.agents);
   // Mirror the Groups tab's scribe treatment: live scribe groups and their
   // commands are always visible; dormant/offline ones follow the view toggle.
   // Per-AGENT commands (§7/§7b, sourced from snap.agents) are unaffected: the
@@ -215,7 +196,7 @@ export function buildCommands(snapshot) {
     keywords: 'hide unfocus all windows declutter detach panic minimize'
       + ' veil conceal cloak shroud portal scrying vision familiars',
     run: () => bulkWindowOp({ direction: 'unfocus', scope: 'all' },
-      'hide all windows'),
+      'hide all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
     icon: wiz('◎', '👁'), label: wiz('Focus all windows', 'Reveal all familiars'),
@@ -224,7 +205,7 @@ export function buildCommands(snapshot) {
     keywords: 'show all windows raise focus bring up'
       + ' reveal behold conjure portal scrying vision familiars',
     run: () => bulkWindowOp({ direction: 'focus', scope: 'all' },
-      'focus all windows'),
+      'focus all windows', { webTerminal: preferWebTerminal, targets: allWebWindowTargets }),
   });
   cmds.push({
     icon: wiz('▦', '👁'), label: wiz('Pick windows to focus / hide…', 'Choose familiars to reveal / veil…'),
@@ -528,6 +509,7 @@ export function buildCommands(snapshot) {
   for (const g of groups) {
     const online = (g.members || []).filter(m => m.online).length;
     if (!online) continue;
+    const groupWebWindowTargets = webWindowTargets(g.members);
     const n = `${online} window${online === 1 ? '' : 's'}`;
     const nPortals = `${online} scrying portal${online === 1 ? '' : 's'}`;
     cmds.push({
@@ -537,7 +519,8 @@ export function buildCommands(snapshot) {
         + ' veil conceal cloak portal scrying party',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'unfocus', scope: 'group', group: g.name },
-        `hide group ${g.name}`); },
+        `hide group ${g.name}`,
+        { webTerminal: preferWebTerminal, targets: groupWebWindowTargets }); },
     });
     cmds.push({
       icon: wiz('◎', '👁'), label: wiz(`Focus group: ${g.name}`, `Reveal party: ${g.name}`),
@@ -546,7 +529,8 @@ export function buildCommands(snapshot) {
         + ' reveal behold conjure portal scrying party',
       run: () => { recordGroupInteraction(g.name); bulkWindowOp(
         { direction: 'focus', scope: 'group', group: g.name },
-        `focus group ${g.name}`); },
+        `focus group ${g.name}`,
+        { webTerminal: preferWebTerminal, targets: groupWebWindowTargets }); },
     });
   }
 
