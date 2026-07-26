@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // TestStatusLineInput_ParsesEffortLevel pins the effort.level field path
@@ -27,6 +28,29 @@ func TestStatusLineInput_ParsesEffortLevel(t *testing.T) {
 	var input StatusLineInput
 	require.NoError(t, json.Unmarshal([]byte(payload), &input), "unmarshal statusline JSON")
 	assert.Equal(t, "high", input.Effort.Level, "effort.level field path")
+}
+
+func TestTemporarySandboxWarningFollowsStableAgentAcrossRotation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	const oldConv = "statusline-unlocked-old"
+	const newConv = "statusline-unlocked-new"
+	agentID, _, err := db.EnsureAgentForConv(oldConv, "test")
+	require.NoError(t, err)
+	normal := "on"
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &normal,
+	}))
+	override := "off"
+	require.NoError(t, db.SetTemporarySandboxModeForConv(oldConv, normal, "test", &override))
+	assert.Contains(t, temporarySandboxWarning(oldConv), "⚠ SB-OFF")
+
+	_, err = db.RotateAgentConv(oldConv, newConv, "clear")
+	require.NoError(t, err)
+	assert.Contains(t, temporarySandboxWarning(newConv), "⚠ SB-OFF")
+
+	require.NoError(t, db.SetTemporarySandboxModeForConv(newConv, "", "", nil))
+	assert.Empty(t, temporarySandboxWarning(newConv))
 }
 
 // TestStatusLineInput_ParsesModelID pins the model.id field path — the

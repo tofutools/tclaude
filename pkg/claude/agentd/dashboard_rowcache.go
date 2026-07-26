@@ -186,6 +186,7 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 			rc.codexTelemetryDuration += d
 		}),
 	}
+	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode
 	rc.memo[convID] = b
 	return b
 }

@@ -412,6 +412,9 @@ func run() error {
 	}
 
 	var line2 []string
+	if warning := temporarySandboxWarning(sessionID); warning != "" {
+		line2 = append(line2, warning)
+	}
 	ctxLabel := fmt.Sprintf("%d%%", ctxPct)
 	line2 = append(line2, fmt.Sprintf("%s%s %s %s",
 		modelLabel, contextWindowTag(effectiveWindow), contextBar(ctxPct), ctxLabel))
@@ -557,6 +560,22 @@ func run() error {
 	}
 
 	return nil
+}
+
+// temporarySandboxWarning resolves the current conversation generation to its
+// stable agent and reads the reversible override from that agent-owned record.
+// It therefore survives /clear and reincarnation even though Claude Code's
+// statusline payload rotates conversation IDs.
+func temporarySandboxWarning(convID string) string {
+	agentID, err := db.AgentIDForConv(strings.TrimSpace(convID))
+	if err != nil || agentID == "" {
+		return ""
+	}
+	_, active, err := db.TemporarySandboxModeForAgent(agentID)
+	if err != nil || !active {
+		return ""
+	}
+	return colorRed + "⚠ SB-OFF" + colorReset
 }
 
 // shortModelLabel derives the compact model tag shown at the head of the

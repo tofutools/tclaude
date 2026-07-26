@@ -131,6 +131,59 @@ func TestSupersededSessionCannotOverwriteCurrentAgentRelaunchIntent(t *testing.T
 	assert.Equal(t, "never", *oldProfile.FallbackRelaunch.AskUserQuestionTimeout)
 }
 
+func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.T) {
+	setupTestDB(t)
+	const (
+		oldConv = "sandbox-override-old"
+		newConv = "sandbox-override-new"
+	)
+	agentID, _, err := EnsureAgentForConv(oldConv, "test")
+	require.NoError(t, err)
+	normalMode, normalSource := "on", "group default profile \"confined\""
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, SandboxMode: &normalMode,
+		SandboxModeSource: &normalSource,
+	}))
+
+	override := "off"
+	require.NoError(t, SetTemporarySandboxModeForConv(
+		oldConv, normalMode, normalSource, &override,
+	))
+	mode, active, err := TemporarySandboxModeForAgent(agentID)
+	require.NoError(t, err)
+	assert.True(t, active)
+	assert.Equal(t, override, mode)
+
+	// Process telemetry from the unlocked launch must not promote "off" to the
+	// stable normal posture.
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "sandbox-override-session", ConvID: oldConv, Cwd: "/tmp/unlocked",
+		Harness: DefaultHarness, Status: "idle", SandboxMode: override,
+	}))
+	profile, err := AgentRelaunchProfileForConv(oldConv)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.SandboxMode)
+	assert.Equal(t, normalMode, *profile.SandboxMode)
+
+	_, err = RotateAgentConv(oldConv, newConv, "clear")
+	require.NoError(t, err)
+	mode, active, err = TemporarySandboxModeForConv(newConv)
+	require.NoError(t, err)
+	assert.True(t, active, "the override follows the stable agent, not a conversation generation")
+	assert.Equal(t, override, mode)
+
+	require.NoError(t, SetTemporarySandboxModeForConv(newConv, "", "", nil))
+	_, active, err = TemporarySandboxModeForAgent(agentID)
+	require.NoError(t, err)
+	assert.False(t, active)
+	profile, err = AgentRelaunchProfileForConv(newConv)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.Equal(t, normalMode, *profile.SandboxMode)
+	assert.Equal(t, normalSource, *profile.SandboxModeSource)
+}
+
 func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {
 	setupTestDB(t)
 	const convID = "same-conversation-generations"

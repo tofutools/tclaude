@@ -56,6 +56,26 @@ func TestCloneSupportsArgvEnrollmentIsClaudeCodeSpecific(t *testing.T) {
 	assert.False(t, cloneSupportsArgvEnrollment(nil))
 }
 
+func TestCloneSandboxPostureDoesNotInheritTemporaryUnlock(t *testing.T) {
+	unlocked := &durableRelaunchConfig{
+		Sandbox:              harness.ClaudeSandboxOff,
+		SandboxModeSource:    "temporary dashboard unlock",
+		TemporarySandboxMode: true,
+		NormalSandbox:        harness.ClaudeSandboxOn,
+		NormalSandboxSource:  `group default profile "confined"`,
+	}
+	mode, source := cloneSandboxPosture(unlocked)
+	assert.Equal(t, harness.ClaudeSandboxOn, mode)
+	assert.Equal(t, `group default profile "confined"`, source)
+
+	normal := &durableRelaunchConfig{
+		Sandbox: harness.SandboxWorkspaceWrite, SandboxModeSource: "explicit",
+	}
+	mode, source = cloneSandboxPosture(normal)
+	assert.Equal(t, harness.SandboxWorkspaceWrite, mode)
+	assert.Equal(t, "explicit", source)
+}
+
 func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

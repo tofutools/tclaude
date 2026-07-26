@@ -129,6 +129,13 @@ func cloneSupportsArgvEnrollment(h *harness.Harness) bool {
 	return h != nil && h.Name == harness.DefaultName && h.SupportsLaunchEnrollment()
 }
 
+func cloneSandboxPosture(relaunch *durableRelaunchConfig) (mode, source string) {
+	if relaunch.TemporarySandboxMode {
+		return relaunch.NormalSandbox, relaunch.NormalSandboxSource
+	}
+	return relaunch.Sandbox, relaunch.SandboxModeSource
+}
+
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
 // Two branches:
 //   - copy: use convops to fork the existing jsonl onto a fresh
@@ -200,7 +207,10 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	// Same reasoning for the auto-compaction window: a source pinned to compact
 	// at 450K must not produce a sibling that runs to the model's full window.
 	autoCompactWindow := relaunch.AutoCompactWindow
-	cloneSandbox := relaunch.Sandbox
+	// The temporary unlock belongs to the source's stable agent. A clone is a
+	// new agent and must inherit the preserved normal posture, otherwise one
+	// temporary debugging action would mint a permanently-unconfined sibling.
+	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -336,7 +346,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		proofArgs.Model = model
 		proofArgs.Harness = srcHarness
 		proofArgs.Sandbox = cloneSandbox
-		proofArgs.SandboxChosenBy = relaunch.SandboxModeSource
+		proofArgs.SandboxChosenBy = cloneSandboxSource
 		proofArgs.CodexGitCommonDir = codexGitCommonDir
 		proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
 		proofArgs.GitWorktreeWriteDirs = gitWriteDirs
@@ -478,7 +488,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	proofArgs.Model = model
 	proofArgs.Harness = srcHarness
 	proofArgs.Sandbox = cloneSandbox
-	proofArgs.SandboxChosenBy = relaunch.SandboxModeSource
+	proofArgs.SandboxChosenBy = cloneSandboxSource
 	proofArgs.CodexGitCommonDir = codexGitCommonDir
 	proofArgs.CodexGitCommonDirPinned = codexGitCommonDirPinned
 	proofArgs.GitWorktreeWriteDirs = gitWriteDirs
@@ -951,7 +961,7 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	var proofDirs []string
 	var proofToken string
 	srcHarness := relaunch.Harness
-	cloneSandbox := relaunch.Sandbox
+	cloneSandbox, _ := cloneSandboxPosture(relaunch)
 	if cwdOverride != "" {
 		resolved, err := resolveSpawnCwd(cwdOverride)
 		if err != nil {

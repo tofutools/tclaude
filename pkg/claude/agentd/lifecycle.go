@@ -1206,12 +1206,16 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 		effectiveSandbox = &validated
 	}
+	stableEffectiveSandbox := effectiveSandbox
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	// Preserve the mode this conversation was launched under; the harness
 	// default would silently drop an enforced `sandbox on` posture on resume.
 	relaunchSandbox := launchConfig.Sandbox
 	harnessName := launchConfig.Harness
+	if launchConfig.TemporarySandboxMode {
+		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
+	}
 	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
@@ -1308,7 +1312,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	var persistedAgentID string
-	if effectiveSandbox != nil {
+	if effectiveSandbox != nil && !launchConfig.TemporarySandboxMode {
 		agentID, err := db.AgentIDForConv(convID)
 		if err != nil {
 			res.Action = "error"
@@ -1365,7 +1369,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
-		if resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+		if !launchConfig.TemporarySandboxMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *resumePolicy.Previous); cleanupErr != nil {
 				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
 			}
@@ -1381,7 +1385,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 	} else {
 		res.Action = "resumed"
-		if resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
+		if !launchConfig.TemporarySandboxMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
 			if _, cleanupErr := removeSupersededMaterializedAgentDirectories(*resumePolicy.Previous, *effectiveSandbox); cleanupErr != nil {
 				res.Detail = "resumed; remove superseded agent-owned directories: " + cleanupErr.Error()
 			}

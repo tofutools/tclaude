@@ -457,6 +457,22 @@ the daemon applies its managed-profile default. A bare `tclaude session new --ha
 with no `--sandbox` records no mode at all and gets no badge — its real posture
 comes from `~/.codex/config.toml`, which tclaude does not read.
 
+### Temporary sandbox-off restart
+
+For a short debugging task that cannot be completed under the normal sandbox,
+the dashboard member ⚙ menu can restart the same agent with its sandbox off.
+This is a reversible override on the stable `agent_id`; it does not replace the
+agent's normal launch posture, and the restore action restarts under that
+preserved posture. Conversation rotations keep the override, while clones do
+not inherit it.
+
+The daemon refuses either transition unless the agent is online and fully idle:
+the main status is `idle`, no background agents remain, and no background shell
+commands remain. Claude Code's customizable statusline leads with a red
+`⚠ SB-OFF` while the override is active. Codex has no corresponding
+customizable statusline surface, so use the dashboard's sandbox warning and
+restore menu state there.
+
 ### Who chose the sandbox, and which profile shaped it
 
 Two questions the verdict alone cannot answer ride in the same tooltip.

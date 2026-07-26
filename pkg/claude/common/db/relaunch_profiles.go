@@ -24,7 +24,17 @@ type AgentRelaunchProfile struct {
 	// containment to it, and an agent that has been relaunched a few times must
 	// not lose that attribution and fall back to an anonymous "this launch".
 	// nil = unknown (legacy record, or a launch that recorded none).
-	SandboxModeSource      *string `json:"sandbox_mode_source,omitempty"`
+	SandboxModeSource *string `json:"sandbox_mode_source,omitempty"`
+	// TemporarySandboxMode is a reversible operator override applied only to
+	// relaunches of this stable agent. SandboxMode above remains the agent's
+	// normal posture so clearing this field restores the exact recorded mode
+	// instead of trying to reconstruct it from the currently-running session.
+	//
+	// The override lives in the existing versioned JSON spine rather than a
+	// session row because it must survive the stop→resume gap and daemon
+	// restarts. Session projection deliberately never copies it from process
+	// telemetry; only the explicit operator action sets or clears it.
+	TemporarySandboxMode   *string `json:"temporary_sandbox_mode,omitempty"`
 	ApprovalPolicy         *string `json:"approval_policy,omitempty"`
 	ToolGovernance         *string `json:"tools,omitempty"`
 	ApprovalAutoReview     *bool   `json:"approval_auto_review,omitempty"`
@@ -184,6 +194,125 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 		return fmt.Errorf("SetAgentRelaunchProfile: agent %s does not exist", agentID)
 	}
 	return nil
+}
+
+// SetTemporarySandboxMode atomically sets or clears a stable agent's temporary
+// sandbox override. When enabling it, normalMode/normalSource freeze the
+// already-resolved normal launch posture if the agent's durable fields are
+// still unknown (legacy agents); this prevents the first overridden session
+// projection from becoming the only remaining sandbox evidence.
+//
+// A nil override clears the temporary state. A non-nil override is stored
+// verbatim after lifecycle-layer validation.
+func SetTemporarySandboxMode(
+	agentID string,
+	normalMode string,
+	normalSource string,
+	override *string,
+) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errors.New("SetTemporarySandboxMode: agent_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var raw string
+	err = tx.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
+		agentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("SetTemporarySandboxMode: unknown agent %s", agentID)
+	}
+	if err != nil {
+		return err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	if err != nil {
+		return err
+	}
+	if profile == nil {
+		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
+	}
+	if override != nil {
+		if profile.SandboxMode == nil {
+			profile.SandboxMode = stringPtr(strings.TrimSpace(normalMode))
+		}
+		if profile.SandboxModeSource == nil {
+			profile.SandboxModeSource = stringPtr(strings.TrimSpace(normalSource))
+		}
+		mode := strings.TrimSpace(*override)
+		profile.TemporarySandboxMode = &mode
+	} else {
+		profile.TemporarySandboxMode = nil
+	}
+	encoded, err := encodeRelaunchProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`,
+		encoded, agentID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetTemporarySandboxModeForConv is a routing adapter for callers that only
+// have a conversation generation. The state itself is always keyed by agent.
+func SetTemporarySandboxModeForConv(
+	convID string,
+	normalMode string,
+	normalSource string,
+	override *string,
+) error {
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return err
+	}
+	if agentID == "" {
+		return fmt.Errorf("SetTemporarySandboxModeForConv: conversation %s is not an agent", convID)
+	}
+	return SetTemporarySandboxMode(agentID, normalMode, normalSource, override)
+}
+
+// TemporarySandboxModeForConv reports the active reversible sandbox override
+// on a stable agent. ok=false means normal relaunch behavior.
+func TemporarySandboxModeForConv(convID string) (mode string, ok bool, err error) {
+	agentID, err := AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		return "", false, err
+	}
+	return TemporarySandboxModeForAgent(agentID)
+}
+
+// TemporarySandboxModeForAgent reads the override by its actual durable key.
+// Conversation-based callers are only routing adapters; rotations must not
+// move or duplicate this state.
+func TemporarySandboxModeForAgent(agentID string) (mode string, ok bool, err error) {
+	d, err := Open()
+	if err != nil {
+		return "", false, err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT relaunch_profile FROM agents WHERE agent_id = ?`,
+		strings.TrimSpace(agentID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	profile, err := decodeAgentRelaunchProfile(raw)
+	if err != nil || profile == nil || profile.TemporarySandboxMode == nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(*profile.TemporarySandboxMode), true, nil
 }
 
 func SetConversationResumeProfile(convID string, profile ConversationResumeProfile) error {
@@ -490,11 +619,17 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if existingAgent != nil {
 		merged := *existingAgent
 		merged.Version = RelaunchProfileVersion
-		merged.SandboxMode = agent.SandboxMode
-		// The attribution travels with the mode it explains. Letting it survive
-		// a projection that replaced the mode would credit the new mode to
-		// whatever chose the old one.
-		merged.SandboxModeSource = agent.SandboxModeSource
+		// A temporary operator override is process posture, not the agent's new
+		// normal intent. Keep the normal mode/source frozen while it is active;
+		// clearing the override then restores those exact fields. Every other
+		// projection remains unchanged.
+		if existingAgent.TemporarySandboxMode == nil {
+			merged.SandboxMode = agent.SandboxMode
+			// The attribution travels with the mode it explains. Letting it
+			// survive a projection that replaced the mode would credit the new
+			// mode to whatever chose the old one.
+			merged.SandboxModeSource = agent.SandboxModeSource
+		}
 		merged.ApprovalPolicy = agent.ApprovalPolicy
 		merged.ApprovalAutoReview = agent.ApprovalAutoReview
 		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
