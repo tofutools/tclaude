@@ -383,12 +383,16 @@ in both eligible inline delivery and `inbox read` output.
 tclaude agent inbox ls                # last 20, all
 tclaude agent inbox ls --unread       # only unread
 tclaude agent inbox read <id>         # marks read; --keep-unread to defer
+tclaude agent inbox watch --unread    # interactive view; inline mail releases the watcher
 ```
 
 `inbox` has aliases `mailbox` / `mail`. Reading a message returns
 RFC-822-shaped headers — `From`, `To`, `Group`, `Subject`, `Date`,
 `Replyable`, and, when replyable, `Reply-To` and `Reply-Cmd` — followed by the
-body.
+body. If an inline message arrives while `inbox watch` owns the terminal, the
+watcher exits cleanly and returns the complete inline nudge as command output.
+This lets an agent waiting in the watcher resume even though inline delivery
+has already marked the archival inbox row read.
 
 ### groups
 
