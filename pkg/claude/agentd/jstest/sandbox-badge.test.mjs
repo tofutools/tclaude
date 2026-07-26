@@ -13,6 +13,11 @@
 // row without one — a pre-column session, or Codex, whose --sandbox mode IS its
 // posture — keeps rendering exactly as before.
 //
+// The badge is now a bare glyph on the harness line rather than a framed chip
+// on a line of its own, so the mode/verdict LABEL moved into the tooltip. That
+// makes the tooltip assertions load-bearing: they are the only place an
+// operator can still read which mode was requested and what decided it.
+//
 // One harness serves every case: materializing the dashboard module tree costs
 // far more than any single assertion here.
 
@@ -28,9 +33,10 @@ const CASES = [
       os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
     },
     // Rendered nothing at all before TCL-729 — the reported bug.
-    text: /🔒\s*on/, danger: false,
-    // The deciding file is the operator's answer to "why is this on?".
-    title: [/inherited from your Claude Code settings/, /~\/\.claude\/settings\.json/],
+    glyph: '🔒', danger: false,
+    // The deciding file is the operator's answer to "why is this on?", and with
+    // the on-screen label gone the tooltip is the only place it can be read.
+    title: [/^Sandbox: on —/, /inherited from your Claude Code settings/, /~\/\.claude\/settings\.json/],
   },
   {
     name: 'an explicitly forced-on sandbox says so rather than claiming inheritance',
@@ -38,8 +44,8 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'on',
       os_sandbox_state: 'on', os_sandbox_source: 'this launch (sandbox `on`)',
     },
-    text: /🔒\s*on/, danger: false,
-    title: [/forced ON for this launch/], titleNot: [/inherited/],
+    glyph: '🔒', danger: false,
+    title: [/^Sandbox: on —/, /forced ON for this launch/], titleNot: [/inherited/],
   },
   {
     name: 'a forced-off sandbox is flagged as a danger, not dressed up with a padlock',
@@ -47,7 +53,7 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'off',
       os_sandbox_state: 'off', os_sandbox_source: 'this launch (sandbox `off`)',
     },
-    text: /⚠\s*off/, danger: true, title: [/runs unconfined/],
+    glyph: '⚠', danger: true, title: [/^Sandbox: off —/, /runs unconfined/],
   },
   {
     // Only enterprise managed policy outranks the launch's own --settings
@@ -58,7 +64,7 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'off',
       os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
     },
-    text: /⚠/, danger: true,
+    glyph: '⚠', danger: true,
     title: [/asked for the OS sandbox to be ON/, /managed-settings\.json/],
   },
   {
@@ -72,8 +78,8 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
       os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
     },
-    text: /🔒\s*on/, danger: false,
-    title: [/forced ON by/, /overriding this launch's `off`/],
+    glyph: '🔒', danger: false,
+    title: [/^Sandbox: on —/, /forced ON by/, /overriding this launch's `off`/],
     titleNot: [/your Claude Code settings/, /not chosen at launch/],
   },
   {
@@ -84,7 +90,7 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
       os_sandbox_source: 'this launch (sandbox `on`)', os_sandbox_unverified: true,
     },
-    text: /⚠\s*on\?/, danger: true,
+    glyph: '⚠', danger: true,
     title: [/Unverified: tclaude could not read a settings file that outranks this/],
     titleNot: [/Bash is confined/],
   },
@@ -94,7 +100,7 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'on',
       os_sandbox_source: '~/.claude/settings.json', os_sandbox_unverified: false,
     },
-    text: /🔒\s*on/, danger: false, title: [/Bash is confined/],
+    glyph: '🔒', danger: false, title: [/^Sandbox: on —/, /Bash is confined/],
     titleNot: [/Unverified/],
   },
   {
@@ -102,7 +108,7 @@ const CASES = [
     // disabled outright, so the padlock was wrong there for the same reason.
     name: 'a legacy Claude off row with no verdict is a danger badge too',
     state: { harness: 'claude', sandbox_mode: 'off' },
-    text: /⚠\s*off/, danger: true,
+    glyph: '⚠', danger: true, title: [/^Sandbox: off —/],
   },
   {
     name: 'an inherit launch that nothing configures still renders no badge',
@@ -131,7 +137,7 @@ const CASES = [
   {
     name: 'a legacy Claude off row does not borrow Codex\'s "full access" wording',
     state: { harness: 'claude', sandbox_mode: 'off' },
-    text: /⚠\s*off/, danger: true,
+    glyph: '⚠', danger: true,
     title: [/the OS sandbox is disabled for this launch/],
     titleNot: [/full access/],
   },
@@ -143,12 +149,14 @@ const CASES = [
   {
     name: 'a Codex row keeps its mode-driven badge',
     state: { harness: 'codex', sandbox_mode: 'workspace-write' },
-    text: /🔒\s*workspace-write/, danger: false,
+    glyph: '🔒', danger: false,
+    // The mode itself is no longer printed, so the tooltip has to name it.
+    title: [/^Sandbox: workspace-write —/],
   },
   {
     name: 'a Codex full-access row keeps its mode-driven danger badge',
     state: { harness: 'codex', sandbox_mode: 'danger-full-access' },
-    text: /⚠\s*danger-full-access/, danger: true,
+    glyph: '⚠', danger: true, title: [/^Sandbox: danger-full-access —/],
   },
   {
     name: 'an offline agent labels its verdict as last-used',
@@ -157,7 +165,7 @@ const CASES = [
       harness: 'claude', sandbox_mode: 'inherit',
       os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
     },
-    text: /🔒/, danger: false, offlineClass: true, title: [/^Last used sandbox:/],
+    glyph: '🔒', danger: false, offlineClass: true, title: [/^Last used sandbox: on —/],
   },
 ];
 
@@ -180,7 +188,9 @@ test('SandboxBadge describes what actually confines the agent', async (t) => {
           return;
         }
         assert.ok(el, 'expected a badge');
-        assert.match(el.textContent, row.text);
+        // Glyph ONLY: the mode/verdict label the chip used to print is now the
+        // tooltip's job, so a row costs one glyph of width and no extra line.
+        assert.equal(el.textContent.trim(), row.glyph);
         assert.equal(el.classList.contains('sandbox-danger'), row.danger,
           `danger styling should be ${row.danger}`);
         assert.equal(el.classList.contains('runtime-meta-offline'), row.offlineClass === true,
@@ -196,4 +206,78 @@ test('SandboxBadge describes what actually confines the agent', async (t) => {
       }
     });
   }
+});
+
+// Placement: the sandbox glyph rides on the harness line itself, packed with
+// the other trailing indicators, instead of the framed chip that used to own a
+// line under the control cell. A row that spends a second line per agent to
+// say "🔒" does not survive a group of ten.
+test('the sandbox glyph rides the harness line, left of the remote indicator', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { HarnessLine } = await harness.importDashboardModule('js/groups-member-table.js');
+
+  const mount = async (member) => harness.mount(harness.html`<${HarnessLine} member=${member} />`);
+  const confined = {
+    harness: 'claude', model: 'Opus 4.8 (1M context)', effort_level: 'high',
+    sandbox_mode: 'inherit', os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+  };
+
+  await t.test('it sits inside the harness line, after the effort token', async () => {
+    const mounted = await mount({ conv_id: 'c1', online: true, state: confined });
+    try {
+      const line = mounted.container.querySelector('.agent-harness');
+      assert.ok(line, 'expected a harness line');
+      assert.ok(line.querySelector('.sandbox-badge'), 'the glyph belongs to the harness line');
+      // No stray second line under the cell — the glyph is the whole surface.
+      assert.equal(mounted.container.querySelectorAll('.sandbox-badge').length, 1);
+      const text = line.textContent.replace(/\s+/g, ' ').trim();
+      assert.match(text, /high\s*🔒/, 'the glyph trails the effort token');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('sandbox sits left of the remote indicator when both show', async () => {
+    const state = { ...confined, remote_control: true };
+    const mounted = await mount({ conv_id: 'c1', online: true, state });
+    try {
+      const glyphs = [...mounted.container.querySelectorAll('.sandbox-badge, .remote-badge')];
+      assert.deepEqual(glyphs.map((el) => el.className.split(' ')[0]),
+        ['sandbox-badge', 'remote-badge']);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a pre-tick row with no model still shows its sandbox verdict', async () => {
+    // The verdict is recorded at LAUNCH, so it is known before the first
+    // statusline hook reports a model. Folding the glyph into the harness line
+    // must not make it wait for one.
+    const state = {
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'off', os_sandbox_source: 'this launch (sandbox `off`)',
+    };
+    const mounted = await mount({ conv_id: 'c1', online: true, state });
+    try {
+      const el = mounted.container.querySelector('.agent-harness .sandbox-badge');
+      assert.ok(el, 'expected the unconfined warning on a pre-tick row');
+      assert.equal(el.textContent.trim(), '⚠');
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a quiet pre-tick row still renders no line at all', async () => {
+    const state = { harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'unconfigured' };
+    const mounted = await mount({ conv_id: 'c1', online: true, state });
+    try {
+      assert.equal(mounted.container.querySelector('.agent-harness'), null);
+    } finally {
+      await mounted.unmount();
+    }
+  });
 });

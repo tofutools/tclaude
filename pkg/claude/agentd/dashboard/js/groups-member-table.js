@@ -88,18 +88,28 @@ function RemoteBadge({ member }) {
   return html`<span class="remote-badge" data-act="web-open-window" ...${memberAttrs(member)} title=${title}>📱</span>`;
 }
 
-function HarnessLine({ member }) {
+export function HarnessLine({ member }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
   const harness = state.harness || '';
   const labels = harnessLabels(harness);
   const model = state.model || '';
+  // Both indicators trail the metadata text as bare glyphs, tightly packed:
+  // "CC · O4.8 1M high 🔒 📱". The sandbox one used to own a framed chip on its
+  // own line below, which cost a whole row of height to say what a padlock says.
+  const sandbox = html`<${SandboxBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   if (!model) {
-    if (!harness || harness === 'claude') return member.online && state.remote_control ? html`<div class="agent-harness">${remote}</div>` : null;
+    // A pre-tick row has no metadata text to trail, but an armed indicator is
+    // still worth a minimal line — including a sandbox verdict, which is
+    // recorded at launch and so is known before the first statusline hook.
+    if (!harness || harness === 'claude') {
+      const indicated = (member.online && state.remote_control) || !!sandboxIndicator(member);
+      return indicated ? html`<div class="agent-harness">${sandbox}${remote}</div>` : null;
+    }
     const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${remote}</div>`;
+    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${sandbox}${remote}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -113,7 +123,7 @@ function HarnessLine({ member }) {
       ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
-    </span>${remote}
+    </span>${sandbox}${remote}
   </div>`;
 }
 
@@ -166,25 +176,32 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
   return null;
 }
 
-export function SandboxBadge({ member }) {
+// sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
+// its harness line, or null when there is nothing to say. The mode and the
+// deciding settings file live in the tooltip rather than on screen: a padlock
+// per row is enough to scan a group for the unconfined agent, and the framed
+// "🔒 workspace-write" chip this replaces cost every row a second line to say it.
+export function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
   const prefix = offline ? 'Last used sandbox' : 'Sandbox';
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
-  // IS its posture) the mode-driven rendering below is unchanged.
+  // IS its posture) the mode-driven branch below is unchanged.
   const state = member.state?.os_sandbox_state || '';
   if (state) {
     const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix,
       !!member.state?.os_sandbox_unverified);
     if (!badge) return null;
-    const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
-    return html`<span class=${className} role="note" aria-label=${badge.title} title=${badge.title}>${badge.danger ? '⚠' : '🔒'} ${badge.label}</span>`;
+    // The label the chip used to print ("on", "on overridden", "on?") is not
+    // dropped, only moved: every osSandboxBadge title already opens with the
+    // resolved posture, so the tooltip stays a complete account on its own.
+    return { danger: badge.danger, title: badge.title, offline };
   }
   if (!mode || mode === 'inherit') return null;
   // `off` is Claude-only (no other harness offers it) and means the OS sandbox
-  // is disabled outright, so it is a danger badge on a pre-verdict row too —
-  // otherwise every legacy `off` agent keeps the padlock this change removes.
+  // is disabled outright, so it is a danger glyph on a pre-verdict row too —
+  // otherwise every legacy `off` agent keeps a padlock it has not earned.
   const danger = mode === 'danger-full-access' || mode === 'off';
   const title = danger
     ? mode === 'off'
@@ -193,8 +210,16 @@ export function SandboxBadge({ member }) {
       ? `${prefix}: off — the OS sandbox is disabled for this launch. The agent's Bash runs unconfined. Explicit opt-in.`
       : `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes`;
-  const className = `sandbox-badge${danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
-  return html`<span class=${className} role="note" aria-label=${title} title=${title}>${danger ? '⚠' : '🔒'} ${mode}</span>`;
+  return { danger, title, offline };
+}
+
+export function SandboxBadge({ member }) {
+  const badge = sandboxIndicator(member);
+  if (!badge) return null;
+  const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}`;
+  // aria-label carries the same full text as the tooltip: a glyph-only
+  // indicator whose whole meaning is the hover would otherwise be pointer-only.
+  return html`<span class=${className} role="note" aria-label=${badge.title} title=${badge.title}>${badge.danger ? '⚠' : '🔒'}</span>`;
 }
 
 function statusInfo(state, online) {
@@ -591,7 +616,9 @@ function TaskCell({ member }) {
 function MemberCell({ column, member, group, snapshot, actions, grants, ungrouped, menuKey, editorKey }) {
   const state = member.state || {};
   switch (column.key) {
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /><${SandboxBadge} member=${member} /></td>`;
+    // HarnessLine carries the sandbox/remote indicators itself — they trail its
+    // metadata text instead of claiming a line of their own under the cell.
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;
