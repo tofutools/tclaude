@@ -38,10 +38,10 @@ type SpawnProfile struct {
 	DisabledReason string
 
 	// Launch fields — overlap clcommon.SpawnArgs. "" = unset.
-	Harness  string
-	Model    string
-	Effort   string
-	Sandbox  string
+	Harness string
+	Model   string
+	Effort  string
+	Sandbox string
 	// SandboxImplementation pins which layer owns OS-level confinement for
 	// launches this profile fills in: "harness-builtin" (the legacy default) or
 	// the experimental "tclaude-layer" OS wrapper. "" = unset, which falls

@@ -2911,7 +2911,15 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	}
 	resolvedLaunch.SandboxImpl = agent.ResolvedField{
 		Value: body.SandboxImplementation, Source: sandboxImplSource, Note: sandboxImplNote}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, sandboxImplNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
+	// The note rides the echoed field, like Harness/Model/Effort. It ALSO enters
+	// Notes only when the value is blank, because the echo suppresses the
+	// "Sandbox impl:" line for a default-off launch — and a disclosure with no
+	// line to sit on would otherwise vanish. Adding it unconditionally would
+	// print it twice whenever a later tier did supply a value.
+	if body.SandboxImplementation == "" && sandboxImplNote != "" {
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
+	}
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}

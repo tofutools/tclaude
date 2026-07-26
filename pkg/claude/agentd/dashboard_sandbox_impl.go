@@ -67,16 +67,29 @@ var sandboxImplHostProbeNow = time.Now
 // cachedTclaudeLayerHostAvailability answers the DISCLOSURE question, at most
 // once per TTL. Never call it from a path that refuses a launch.
 func cachedTclaudeLayerHostAvailability() error {
+	now := sandboxImplHostProbeNow()
+	sandboxImplHostProbe.Lock()
+	if sandboxImplHostProbe.valid && now.Sub(sandboxImplHostProbe.checkedAt) < sandboxImplHostProbeTTL {
+		err := sandboxImplHostProbe.err
+		sandboxImplHostProbe.Unlock()
+		return err
+	}
+	sandboxImplHostProbe.Unlock()
+
+	// Probe OUTSIDE the lock. The probe forks bwrap, and this runs on the
+	// continuously-polled dashboard snapshot: holding the mutex across the exec
+	// would let one slow probe queue every later snapshot request behind it, so
+	// a wedged namespace setup would freeze the whole page rather than one
+	// field. Two callers racing a stale cache may both probe; that is bounded
+	// (the probe carries its own deadline) and far cheaper than the alternative.
+	err := tclaudeLayerHostAvailability()
+
 	sandboxImplHostProbe.Lock()
 	defer sandboxImplHostProbe.Unlock()
-	now := sandboxImplHostProbeNow()
-	if sandboxImplHostProbe.valid && now.Sub(sandboxImplHostProbe.checkedAt) < sandboxImplHostProbeTTL {
-		return sandboxImplHostProbe.err
-	}
-	sandboxImplHostProbe.err = tclaudeLayerHostAvailability()
+	sandboxImplHostProbe.err = err
 	sandboxImplHostProbe.checkedAt = now
 	sandboxImplHostProbe.valid = true
-	return sandboxImplHostProbe.err
+	return err
 }
 
 // buildSandboxImplCatalog assembles the host-wide implementation catalog.

@@ -71,7 +71,7 @@ type ResolvedLaunch struct {
 	// by a profile they did not name. A blank Value is the legacy
 	// harness-builtin path, echoed as "(harness default)" like any unpinned
 	// field. See TCL-769.
-	SandboxImpl ResolvedField `json:"sandbox_impl"`
+	SandboxImpl ResolvedField `json:"sandbox_implementation"`
 	// SandboxPolicy exposes the frozen profile chain, canonical grants, and
 	// environment names. Environment values remain private in the snapshot.
 	SandboxPolicy *ResolvedSandboxPolicy `json:"sandbox_policy,omitempty"`
@@ -652,9 +652,13 @@ type SpawnParams struct {
 	// AutoCompactWindow pins where Claude Code auto-compacts for the new agent.
 	// A plain string flag (unlike the opt-in-only bools above), so a blank still
 	// defers to the profile chain and an explicit value overrides it.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL who owns OS-level containment for the new agent: harness-builtin (default; current behavior) | tclaude-layer (runs the whole harness process in a tclaude-owned bubblewrap namespace and disables the harness's own sandbox inside it). Linux only; needs bwrap and unprivileged user namespaces, and refuses the spawn naming the missing capability if the host lacks them. Unset = filled by the profile chain, then harness-builtin"`
-
 	AutoCompactWindow string `long:"auto-compact-window" optional:"true" help:"Context capacity in tokens for the new agent's Claude Code auto-compaction (CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M. Pin it below a 1M model's real window so a long-lived agent compacts while it is still sharp. Capped at the model's actual window. Unset = filled by the profile chain, then the model default. Not applicable to codex"`
+
+	// SandboxImpl picks WHO OWNS OS-level containment for the new agent — an axis
+	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
+	// force. Blank defers to the profile chain and then to harness-builtin, so an
+	// unpassed flag launches exactly as it did before this flag existed.
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL who owns OS-level containment for the new agent: harness-builtin (default; current behavior) | tclaude-layer (runs the whole harness process in a tclaude-owned bubblewrap namespace and disables the harness's own sandbox inside it). Linux only; needs bwrap and unprivileged user namespaces, and refuses the spawn naming the missing capability if the host lacks them. Unset = filled by the profile chain, then harness-builtin"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing

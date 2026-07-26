@@ -54,10 +54,10 @@ type spawnProfileJSON struct {
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
-	Harness        string `json:"harness,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Sandbox string `json:"sandbox,omitempty"`
 	// SandboxImplementation pins who owns OS-level confinement:
 	// "harness-builtin" (the legacy default) or the EXPERIMENTAL
 	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next

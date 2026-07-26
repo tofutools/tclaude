@@ -46,10 +46,10 @@ type profileJSON struct {
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields.
-	Harness        string `json:"harness,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Effort         string `json:"effort,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
+	Harness string `json:"harness,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Sandbox string `json:"sandbox,omitempty"`
 	// SandboxImplementation is the profile's pinned owner of OS-level
 	// containment: "harness-builtin" or the experimental "tclaude-layer"
 	// ("" = unset, so it falls through to the next spawn precedence tier).

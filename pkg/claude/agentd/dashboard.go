@@ -959,7 +959,7 @@ type snapshotPayload struct {
 	// with which harness was selected — the per-harness half of the question is
 	// dashboardHarness.CanTclaudeLayer.
 	SandboxImpl dashboardSandboxImpl `json:"sandbox_impl"`
-	PopupBase string             `json:"popup_base"` // for tray-shareable display
+	PopupBase   string               `json:"popup_base"` // for tray-shareable display
 	// NotificationsEnabled mirrors config.notifications.enabled — the
 	// master OS-notification switch above the per-group / per-agent
 	// filters. Drives the top-bar bell toggle.

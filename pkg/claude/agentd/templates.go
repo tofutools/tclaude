@@ -3887,15 +3887,15 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				po[s] = db.PermEffectGrant
 			}
 			inline = &db.SpawnProfile{
-				Harness:             launch.Harness,
-				Model:               launch.Model,
-				Effort:              launch.Effort,
-				Sandbox:             launch.Sandbox,
+				Harness:               launch.Harness,
+				Model:                 launch.Model,
+				Effort:                launch.Effort,
+				Sandbox:               launch.Sandbox,
 				Approval:              launch.Approval,
 				AutoCompactWindow:     launch.AutoCompactWindow,
 				SandboxImplementation: launch.SandboxImplementation,
-				PermissionOverrides: po,
-				ContextFeatures:     launch.ContextFeatures,
+				PermissionOverrides:   po,
+				ContextFeatures:       launch.ContextFeatures,
 			}
 			if launch.ContextFeaturesSet && inline.ContextFeatures == nil {
 				// Traced, and the answer was "trims nothing". Recorded as a non-nil

@@ -228,7 +228,7 @@ func TestSpawn_IncompatibleTierSandboxImplementationFallsThroughDisclosed(t *tes
 		} `json:"resolved"`
 	}
 	require.NoError(t, json.Unmarshal(resp.Raw, &parsed))
-	assert.Truef(t, hasNoteAbout(parsed.Resolved.Notes, "sandbox_impl"),
+	assert.Truef(t, hasNoteAbout(parsed.Resolved.Notes, "sandbox_implementation"),
 		"the skip must be disclosed in the resolved-launch notes, got %v", parsed.Resolved.Notes)
 }
 
@@ -331,11 +331,88 @@ func TestSpawn_ResolvedLaunchEchoesSandboxImplementationSource(t *testing.T) {
 			SandboxImpl struct {
 				Value  string `json:"value"`
 				Source string `json:"source"`
-			} `json:"sandbox_impl"`
+			} `json:"sandbox_implementation"`
 		} `json:"resolved"`
 	}
 	require.NoError(t, json.Unmarshal(resp.Raw, &parsed))
 	assert.Equal(t, "tclaude-layer", parsed.Resolved.SandboxImpl.Value)
 	assert.Contains(t, parsed.Resolved.SandboxImpl.Source, "team-default",
 		"the echo must name the profile that chose the containment layer")
+}
+
+// TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability covers the
+// SECOND host gate — the one in applyDefaultProfile rather than at the HTTP
+// spawn boundary.
+//
+// The distinction is the point. A template deploy builds spawnParams itself and
+// calls executeSpawn directly, so it never passes handleGroupSpawn's gate. If
+// the gate inside applyDefaultProfile were removed, every other test in this
+// file would still pass while a template pinning tclaude-layer deployed happily
+// onto a host that cannot run it — the refusal arriving only later, in a
+// detached pane nobody is watching.
+func TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
+	f := newFlow(t)
+	unavailableHost(t, errNoBwrap)
+
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
+	}).Code, "create profile")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "team",
+		"agents": []map[string]any{
+			{"name": "worker", "role": "dev", "spawn_profile": "layered"},
+		},
+	}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/deploy", map[string]any{
+		"group_name": "phoenix",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	agentd.WaitForBackgroundForTest()
+
+	require.Equal(t, 0, res.Spawned, "the member must not launch on a host that cannot run the layer")
+	require.Equal(t, 1, res.Failed, "the deploy must report the member as failed, not quietly downgraded")
+	require.Len(t, res.Agents, 1)
+	assert.Contains(t, res.Agents[0].Error, errNoBwrap.Error(),
+		"the per-member failure must name the concrete missing capability")
+	assert.Contains(t, res.Agents[0].Error, "rather than falling back",
+		"the per-member failure must say it is not degrading to harness-builtin")
+}
+
+// TestTaskForceDeploy_TclaudeLayerDeploysWhenHostSupportsIt is the positive
+// half: the same template on a capable host reaches the launch with the layer
+// intact, so the gate above is refusing for the right reason rather than
+// blocking template deploys outright.
+func TestTaskForceDeploy_TclaudeLayerDeploysWhenHostSupportsIt(t *testing.T) {
+	f := newFlow(t)
+	availableHost(t)
+
+	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
+	}).Code, "create profile")
+
+	require.Equalf(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "team",
+		"agents": []map[string]any{
+			{"name": "worker", "role": "dev", "spawn_profile": "layered"},
+		},
+	}).Code, "create template")
+
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/team/deploy", map[string]any{
+		"group_name": "phoenix",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "deploy: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	agentd.WaitForBackgroundForTest()
+
+	require.Equalf(t, 1, res.Spawned, "the member should deploy: %+v", res.Agents)
+	require.Equal(t, 0, res.Failed)
+	got, ok := f.World.SpawnSandboxImplementation(res.Agents[0].ConvID)
+	require.True(t, ok, "the spawn should have been observed by the sim spawner")
+	assert.Equal(t, "tclaude-layer", got,
+		"a template member's pinned implementation must reach the launch")
 }

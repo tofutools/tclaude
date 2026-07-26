@@ -34,14 +34,16 @@ import (
 // "wrong harness" from "wrong machine" without reading the message body.
 
 // sandboxImplementationField is the launch-field name used for provenance
-// notes and invalid_<field> error kinds. It matches the CLI flag spelling
-// (--sandbox-impl) rather than the column name, because that is what an
-// operator reading the error typed.
-const sandboxImplementationField = "sandbox_impl"
+// notes and invalid_<field> error kinds. It matches the JSON field on the spawn
+// request and the profile wire shape, the way every other launch field's kind
+// does (invalid_sandbox, invalid_auto_compact_window, …), so a client keying a
+// form control off invalid_<field> resolves it. The CLI flag is spelled
+// --sandbox-impl to match `session new`; the wire name is the longer one.
+const sandboxImplementationField = "sandbox_implementation"
 
 // sandboxImplementationUnavailableKind marks a refusal caused by the HOST
-// lacking the capability, as opposed to invalid_sandbox_impl, which marks a
-// value that is malformed or inapplicable to the resolved harness.
+// lacking the capability, as opposed to invalid_sandbox_implementation, which
+// marks a value that is malformed or inapplicable to the resolved harness.
 const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable"
 
 // tclaudeLayerHostAvailability is the host-capability predicate, indirected
