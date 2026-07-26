@@ -11,6 +11,10 @@ import (
 
 const RelaunchProfileVersion = 1
 
+// TemporarySandboxModeSource is the attribution paired with the reversible
+// operator override on every relaunch surface.
+const TemporarySandboxModeSource = "temporary dashboard unlock"
+
 // AgentRelaunchProfile is mutable launch intent owned by the stable agent.
 // Pointer fields distinguish an observed/selected zero value from unknown
 // legacy state. Unknown authority-bearing values are resolved fail-closed by

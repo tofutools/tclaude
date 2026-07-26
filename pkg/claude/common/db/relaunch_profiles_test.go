@@ -165,6 +165,10 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	require.NotNil(t, profile)
 	require.NotNil(t, profile.SandboxMode)
 	assert.Equal(t, normalMode, *profile.SandboxMode)
+	launch, err := SessionLaunchProfileForConv(oldConv)
+	require.NoError(t, err)
+	assert.Equal(t, override, launch.SandboxMode)
+	assert.Equal(t, TemporarySandboxModeSource, launch.SandboxModeSource)
 
 	_, err = RotateAgentConv(oldConv, newConv, "clear")
 	require.NoError(t, err)
@@ -182,6 +186,10 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	require.NotNil(t, profile)
 	assert.Equal(t, normalMode, *profile.SandboxMode)
 	assert.Equal(t, normalSource, *profile.SandboxModeSource)
+	launch, err = SessionLaunchProfileForConv(newConv)
+	require.NoError(t, err)
+	assert.Equal(t, normalMode, launch.SandboxMode)
+	assert.Equal(t, normalSource, launch.SandboxModeSource)
 }
 
 func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {

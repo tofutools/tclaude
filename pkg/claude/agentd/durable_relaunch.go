@@ -195,7 +195,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		if err != nil {
 			return nil, fmt.Errorf("invalid temporary sandbox override: %w", err)
 		}
-		sandboxModeSource = "temporary dashboard unlock"
+		sandboxModeSource = db.TemporarySandboxModeSource
 	}
 
 	if agentProfile.ApprovalPolicy == nil {
