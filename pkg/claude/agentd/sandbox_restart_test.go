@@ -63,7 +63,6 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 
 	const (
 		oldTmux = "sandbox-old-pane"
-		newTmux = "sandbox-new-pane"
 		ttyOne  = "/dev/pts/41"
 		ttyTwo  = "/dev/pts/42"
 	)
@@ -79,11 +78,12 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	assert.Equal(t, holding, w.Tmux.ClientSession(ttyTwo))
 
 	// The same-name production resume cannot appear until the old pane is
-	// gone. A distinct name keeps this unit test's two phases explicit.
-	w.Tmux.MarkAlive(newTmux)
-	assert.Equal(t, 2, handoff.finish(newTmux))
-	assert.Equal(t, newTmux, w.Tmux.ClientSession(ttyOne))
-	assert.Equal(t, newTmux, w.Tmux.ClientSession(ttyTwo))
+	// gone. Model that gap, then reuse the original name for the new pane.
+	w.Tmux.MarkOffline(oldTmux)
+	w.Tmux.MarkAlive(oldTmux)
+	assert.Equal(t, 2, handoff.finish(oldTmux))
+	assert.Equal(t, oldTmux, w.Tmux.ClientSession(ttyOne))
+	assert.Equal(t, oldTmux, w.Tmux.ClientSession(ttyTwo))
 	assert.False(t, w.Tmux.IsAlive(holding), "the bridge must not leak")
 }
 
@@ -95,8 +95,8 @@ func TestSandboxRestartTmuxHandoffSkipsBridgeWithoutAttachedClients(t *testing.T
 
 	w.Tmux.MarkAlive("unattended-pane")
 	assert.Nil(t, beginSandboxRestartTmuxHandoff("unattended-pane"))
-	assert.Equal(t, 1, w.Tmux.CommandCount("new-session"))
-	assert.Len(t, w.Tmux.Sessions(), 1, "the unused bridge must be removed")
+	assert.Zero(t, w.Tmux.CommandCount("new-session"),
+		"an unattended restart does not need a bridge shell")
 }
 
 func TestSandboxRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {

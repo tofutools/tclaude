@@ -26,6 +26,10 @@ func beginSandboxRestartTmuxHandoff(oldTmux string) *sandboxRestartTmuxHandoff {
 	if strings.TrimSpace(oldTmux) == "" {
 		return nil
 	}
+	clients := tmuxClientTTYs(oldTmux)
+	if len(clients) == 0 {
+		return nil
+	}
 	holding := "restart-" + strings.TrimPrefix(generateSpawnLabel(), "spwn-")
 	if err := clcommon.TmuxCommand(
 		"new-session", "-d", "-s", holding,
@@ -35,7 +39,7 @@ func beginSandboxRestartTmuxHandoff(oldTmux string) *sandboxRestartTmuxHandoff {
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil
 	}
-	if switched := switchTmuxClients(oldTmux, holding); switched == 0 {
+	if switched := switchTmuxClientTTYs(clients, oldTmux, holding); switched == 0 {
 		killSandboxRestartTmuxBridge(holding)
 		return nil
 	}

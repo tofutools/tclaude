@@ -1090,16 +1090,27 @@ func scheduleReincarnationDirectoryCleanup(oldConv, newConv string, previous san
 // CC, the pane closes and any attached client is detached, defeating
 // the carry-over.
 func switchTmuxClients(oldTmux, newTmux string) int {
-	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(oldTmux), "-F", "#{client_tty}").Output()
+	return switchTmuxClientTTYs(tmuxClientTTYs(oldTmux), oldTmux, newTmux)
+}
+
+func tmuxClientTTYs(tmuxSession string) []string {
+	out, err := clcommon.TmuxCommand("list-clients", "-t", clcommon.ExactTarget(tmuxSession), "-F", "#{client_tty}").Output()
 	if err != nil {
-		slog.Warn("tmux client handoff: list-clients failed; skipping client switch", "tmux", oldTmux, "error", err)
-		return 0
+		slog.Warn("tmux client handoff: list-clients failed; skipping client switch", "tmux", tmuxSession, "error", err)
+		return nil
 	}
-	n := 0
+	var clients []string
 	for _, tty := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if tty == "" {
-			continue
+		if tty != "" {
+			clients = append(clients, tty)
 		}
+	}
+	return clients
+}
+
+func switchTmuxClientTTYs(clients []string, oldTmux, newTmux string) int {
+	n := 0
+	for _, tty := range clients {
 		if err := clcommon.TmuxCommand("switch-client", "-c", tty, "-t", clcommon.ExactTarget(newTmux)).Run(); err != nil {
 			slog.Warn("tmux client handoff: switch-client failed", "tty", tty, "from", oldTmux, "to", newTmux, "error", err)
 			continue
