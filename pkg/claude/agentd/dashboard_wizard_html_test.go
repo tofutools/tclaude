@@ -1262,7 +1262,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("realms: ['harnesses']", "realms bridge to harnesses")
 	must("links: ['channels']", "links bridge to arcane channels")
 	must("channels: ['links']", "arcane channels bridge to links")
-	must("import: ['unseal']", "import bridges to unseal")
+	must("'import': ['unseal']", "import bridges to unseal")
 	must("unseal: ['import']", "unseal bridges to import")
 	must("cleanup: ['tidy', 'clean up']", "cleanup bridges to tidy and the two-word regular label")
 	must("tidy: ['cleanup', 'clean up']", "tidy bridges to cleanup and the two-word regular label")

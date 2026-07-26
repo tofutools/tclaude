@@ -67,7 +67,7 @@ export const SYNONYMS = {
   channels: ['links'],
   link: ['channel'],
   channel: ['link'],
-  import: ['unseal'],
+  'import': ['unseal'],
   unseal: ['import'],
   cleanup: ['tidy', 'clean up'],
   tidy: ['cleanup', 'clean up'],
