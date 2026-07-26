@@ -8,6 +8,31 @@ import (
 	"testing"
 )
 
+func TestSandboxOffModeUsesHarnessNativeUnconfinedPosture(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{DefaultName, ClaudeSandboxOff},
+		{CodexName, SandboxDangerFull},
+		{OpenCodeName, OpenCodeSandboxOff},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := Resolve(tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := SandboxOffMode(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("SandboxOffMode(%s) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCodexSandbox_DefaultMode pins the secure default: a tclaude-spawned
 // Codex agent runs under the managed tclaude-agent profile (SandboxManagedProfile)
 // — workspace-write containment (writes confined to cwd+/tmp+$TMPDIR, $HOME

@@ -90,6 +90,28 @@ func ValidateSandboxMode(h *Harness, requested string) (string, error) {
 	return h.Sandbox.ValidateMode(requested)
 }
 
+// SandboxOffMode returns the harness-native mode that deliberately disables
+// confinement for a temporary operator unlock. Keeping this mapping beside the
+// catalogs prevents dashboard lifecycle code from guessing which spelling
+// means "off" for each harness.
+func SandboxOffMode(h *Harness) (string, error) {
+	if h == nil {
+		return "", fmt.Errorf("nil harness")
+	}
+	var mode string
+	switch normalizeLineageHarness(h.Name) {
+	case DefaultName:
+		mode = ClaudeSandboxOff
+	case CodexName:
+		mode = SandboxDangerFull
+	case OpenCodeName:
+		mode = OpenCodeSandboxOff
+	default:
+		return "", fmt.Errorf("harness %q has no sandbox-off mode", h.Name)
+	}
+	return ValidateSandboxMode(h, mode)
+}
+
 // SpawnSandboxWarnings is the single harness-neutral entry point every spawn
 // surface uses to describe a launch posture whose sandboxing is weaker than it
 // looks — the HTTP effective-sandbox probe behind the spawn dialog and the

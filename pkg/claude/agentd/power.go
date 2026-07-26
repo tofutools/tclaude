@@ -432,11 +432,22 @@ func runPowerOn(targets []string) []powerAgentOutcome {
 // session — no DB row, no .jsonl. Idempotent: an already-offline conv
 // comes back as already_offline.
 func escalateShutdown(convID string, grace time.Duration) powerAgentOutcome {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	return escalateShutdownUnderLaunchLock(convID, grace)
+}
+
+// escalateShutdownUnderLaunchLock performs the full soft→hard sequence while
+// its caller holds the conversation launch lock.
+func escalateShutdownUnderLaunchLock(convID string, grace time.Duration) powerAgentOutcome {
 	out := powerAgentOutcome{AgentID: peerAgentID(convID), ConvID: convID, Title: agent.FreshTitle(convID)}
 
 	// Step 1: soft exit — inject /exit, exactly as the per-agent
 	// "soft exit" shutdown button does.
-	soft := stopOneConv(convID, false)
+	soft := stopOneConvWithIntentUnderLaunchLock(
+		convID, false, db.AgentExitActionStop, "",
+	)
 	switch soft.Action {
 	case "skipped:already_offline":
 		// Raced — the agent exited between collection and now.
@@ -456,7 +467,9 @@ func escalateShutdown(convID string, grace time.Duration) powerAgentOutcome {
 	}
 
 	// Step 3: still alive (or the soft exit never landed) — force-kill.
-	hard := stopOneConv(convID, true)
+	hard := stopOneConvWithIntentUnderLaunchLock(
+		convID, true, db.AgentExitActionForceStop, "",
+	)
 	switch hard.Action {
 	case "killed":
 		out.Outcome = shutdownKilled

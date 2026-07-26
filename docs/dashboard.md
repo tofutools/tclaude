@@ -204,6 +204,21 @@ group. (Turning the agent on/off is the status dot's job — see above.
 Permanently *deleting* an agent is offered on the virtual Ungrouped
 group's rows, not on grouped rows — see below.)
 
+The member ⚙ menu also has **⚠ restart without sandbox** for a temporary
+operator debugging window. It stops and resumes the *same conversation* under
+the harness's unconfined mode, while preserving the agent's normal recorded
+sandbox posture. While active, the item becomes **🔒 restore sandbox +
+restart**. The override is keyed to the stable agent identity, so `/clear` or
+reincarnation cannot lose it; a clone is a new agent and inherits the normal
+posture, not the temporary unlock.
+
+Both directions are deliberately refused unless the live session reports
+`idle` and its database ledgers contain zero live background agents and zero
+live background shell commands. The check is a basic preflight, not a
+race-free lock: if the agent starts work just afterwards, the normal stop path
+still governs the restart. If a restarted agent does not come back, the chosen
+posture remains durable and the ordinary wake action retries it.
+
 Per-group quick actions live above the roster as icon-only buttons (hover for
 their labels): **spawn agent**, **create subgroup**, **power on**, and
 **shutdown**. The remaining actions live in the group header menu: **+ add

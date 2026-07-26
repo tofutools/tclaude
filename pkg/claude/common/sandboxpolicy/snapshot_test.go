@@ -36,6 +36,39 @@ func TestOmittedProfilesSnapshotSurvivesRevalidation(t *testing.T) {
 	require.ErrorContains(t, err, "omitted sandbox-profile snapshot contains profile values")
 }
 
+func TestUnconfinedLaunchSnapshotRetainsOnlyEnvironmentAndAudit(t *testing.T) {
+	root := t.TempDir()
+	effective, err := Resolve(Scopes{Global: &Profile{
+		Name: "developer",
+		Filesystem: []FilesystemGrant{{
+			Path: root, Access: AccessWrite,
+		}},
+		Environment:      []EnvironmentEntry{{Name: "SAFE_LITERAL", Value: "yes"}},
+		AgentDirectories: []string{"GOCACHE"},
+		NetworkAccess:    NetworkAccessInternet,
+	}})
+	require.NoError(t, err)
+	stable := NewSnapshot(effective, []AppliedProfile{{Scope: ScopeGlobal, ID: 7, Name: "developer"}})
+	stable.ResolutionGroupID = 42
+
+	got := UnconfinedLaunchSnapshot(stable)
+	assert.Equal(t, []EnvironmentEntry{{Name: "SAFE_LITERAL", Value: "yes"}}, got.Effective.Environment)
+	assert.Empty(t, got.Effective.Filesystem)
+	assert.Empty(t, got.Effective.BreakGlassFilesystem)
+	assert.Empty(t, got.Effective.AgentDirectories)
+	assert.Equal(t, NetworkAccessInherit, got.Effective.NetworkAccess)
+	assert.Equal(t, stable.Applied, got.Applied)
+	assert.Equal(t, int64(42), got.ResolutionGroupID)
+	assert.NotEmpty(t, got.Effective.Provenance.Applied)
+	require.NoError(t, func() error {
+		_, err := RevalidateSnapshot(got)
+		return err
+	}())
+
+	// The stable source remains untouched for restoration.
+	assert.NotEmpty(t, stable.Effective.Filesystem)
+	assert.Equal(t, NetworkAccessInternet, stable.Effective.NetworkAccess)
+}
 func TestRevalidateSnapshotUpgradesLegacyVersion(t *testing.T) {
 	legacy := EmptySnapshot()
 	legacy.Version = 1

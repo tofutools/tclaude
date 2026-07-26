@@ -1658,6 +1658,11 @@ type agentState struct {
 	Status        string `json:"status,omitempty"`
 	StatusDetail  string `json:"status_detail,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
+	// TemporarySandboxMode is the reversible operator override currently
+	// applied to this stable agent. It remains visible while the session is
+	// between stop and resume so the dashboard never mistakes an unlocked
+	// agent for one using its normal posture.
+	TemporarySandboxMode string `json:"temporary_sandbox_mode,omitempty"`
 	// BgShellCount is how many background shell commands (Claude Code
 	// `Bash` with run_in_background) the agent still has running — the
 	// dashboard's "⚙+N" badge. Like SubagentCount it is only ever

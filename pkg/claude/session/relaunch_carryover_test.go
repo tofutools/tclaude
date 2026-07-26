@@ -104,6 +104,22 @@ func TestApplyRecordedLaunchPosture_CarriesEveryOmittedFlag(t *testing.T) {
 	assert.Equal(t, "450000", params.AutoCompactWindow)
 }
 
+func TestApplyRecordedLaunchPosture_CarriesTemporarySandboxOverride(t *testing.T) {
+	cwd := carryoverTestHome(t)
+	normal := harness.ClaudeSandboxOn
+	temporary := harness.ClaudeSandboxOff
+	normalSource := `group default profile "confined"`
+	seedResumableConv(t, cwd, &db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &normal,
+		SandboxModeSource: &normalSource, TemporarySandboxMode: &temporary,
+	})
+
+	params := &NewParams{Resume: carryoverConvID, Dir: cwd}
+	require.NoError(t, applyRecordedLaunchPosture(params, explicitLaunchFields{}))
+	assert.Equal(t, harness.ClaudeSandboxOff, params.Sandbox)
+	assert.Equal(t, db.TemporarySandboxModeSource, params.SandboxChosenBy)
+}
+
 // TestApplyRecordedLaunchPosture_ExplicitFlagWins pins the other half of the
 // contract: an explicitly passed flag overrides the record, INCLUDING one set
 // to the value that also happens to be the default. That distinction only

@@ -453,6 +453,10 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		if durable.SandboxModeSource != nil {
 			p.SandboxModeSource = *durable.SandboxModeSource
 		}
+		if durable.TemporarySandboxMode != nil {
+			p.SandboxMode = *durable.TemporarySandboxMode
+			p.SandboxModeSource = TemporarySandboxModeSource
+		}
 		if durable.ApprovalPolicy != nil {
 			p.ApprovalPolicy = *durable.ApprovalPolicy
 		}

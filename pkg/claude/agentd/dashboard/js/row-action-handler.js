@@ -226,6 +226,38 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
+      case 'sandbox-restart': {
+        const direction = data.action === 'restore' ? 'restore' : 'unlock';
+        const unlocking = direction === 'unlock';
+        const confirmed = await confirmModal({
+          title: unlocking ? `Restart ${label} without a sandbox?` : `Restore ${label}'s sandbox?`,
+          body: unlocking
+            ? 'This stops and restarts the same conversation with its sandbox OFF and full machine access. The normal configuration is saved for restoration. The server will refuse unless the agent is fully idle with no background agents or shell commands.'
+            : 'This stops and restarts the same conversation under its preserved normal sandbox configuration. The server will refuse unless the agent is fully idle with no background agents or shell commands.',
+          okLabel: unlocking ? 'Restart without sandbox' : 'Restore sandbox and restart',
+        });
+        if (!confirmed) return;
+        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/sandbox-restart`, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: direction }),
+        });
+        if (!r.ok) {
+          let detail = await r.text();
+          try {
+            const parsed = JSON.parse(detail);
+            detail = parsed.error || parsed.message || detail;
+          } catch (_) { /* plain error */ }
+          toast(`Sandbox restart failed: ${detail}`, true);
+          refresh();
+          return;
+        }
+        toast(unlocking
+          ? `${label}: restarted with sandbox OFF ⚠`
+          : `${label}: normal sandbox restored`);
+        refresh();
+        return;
+      }
       case 'jump': {
         // If this agent already has an open web terminal / window pane in the
         // dashboard's Terminals tab, jump to THAT instead of raising a native

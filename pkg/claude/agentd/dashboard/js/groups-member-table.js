@@ -572,6 +572,23 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+function SandboxRestartMenuItem({ member }) {
+  const unlocked = !!member.state?.temporary_sandbox_mode;
+  const label = member.title || member.conv_id;
+  const regular = unlocked ? '🔒 restore sandbox + restart' : '⚠ restart without sandbox';
+  const wizard = unlocked ? '🔒 restore ward + reincant' : '⚠ reincant without ward';
+  const title = !member.online
+    ? `${regular} is unavailable while ${label} is offline`
+    : unlocked
+      ? `Stop and restart ${label} with its preserved normal sandbox configuration. Requires the agent to be fully idle with no background agents or shell commands.`
+      : `Stop and restart ${label} with its sandbox OFF and full machine access. Its normal sandbox configuration is preserved for restoration. Requires the agent to be fully idle with no background agents or shell commands.`;
+  return html`<${MenuButton}
+    member=${member} act="sandbox-restart" className=${unlocked ? undefined : 'danger'}
+    attrs=${{ 'data-action': unlocked ? 'restore' : 'unlock' }}
+    regular=${regular} wizard=${wizard} title=${title} disabled=${!member.online}
+  />`;
+}
+
 function MenuSeparator() {
   return html`<div class="menu-sep" role="separator"></div>`;
 }
@@ -604,6 +621,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuSeparator} />
     <${MenuButton} member=${member} act="clone" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="clone" wizard="mirror familiar" title=${wizardCopy('Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.', 'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.')} />
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
+    <${SandboxRestartMenuItem} member=${member} />
     <${MenuSeparator} />
     ${ungrouped
       ? html`<${MenuButton} member=${member} selector="conv" act="retire-agent" className="warn" regular="retire" wizard="banish" title=${wizardCopy('Retire this agent — demote it back to a plain conversation, revoking its group memberships and permission grants. Reversible via reinstate (stripped grants are not restored).', 'Banish this familiar — return it to a plain conversation, revoking its party memberships and boons. Reversible via reinstate.')} /><${MenuButton} member=${member} act="delete-agent" className="danger" regular="delete" wizard="erase familiar" title=${wizardCopy('Permanently delete this agent and conversation', 'Permanently erase this familiar and its conversation scroll')} />`

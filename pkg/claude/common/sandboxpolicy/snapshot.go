@@ -193,6 +193,26 @@ func OmittedProfilesSnapshot() Snapshot {
 	return out
 }
 
+// UnconfinedLaunchSnapshot retains a profile's plain environment entries and
+// audit provenance while withholding every confinement-dependent or
+// host-authority field for a deliberately sandbox-off launch. The stable
+// agent snapshot remains unchanged; this value exists only for the temporary
+// process launch.
+func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
+	effective := cloneEffectiveProfile(in.Effective)
+	effective.Filesystem = nil
+	effective.BreakGlassFilesystem = nil
+	effective.AgentDirectories = nil
+	effective.NetworkAccess = NetworkAccessInherit
+	effective.Provenance.Filesystem = nil
+	effective.Provenance.BreakGlassFilesystem = nil
+	effective.Provenance.AgentDirectories = nil
+	effective.Provenance.Network = nil
+	out := NewSnapshot(effective, in.Applied)
+	out.ResolutionGroupID = in.ResolutionGroupID
+	return out
+}
+
 // RevalidateSnapshot checks a frozen payload immediately before use. It
 // re-runs canonical path, protected-root, environment, and aggregate checks.
 // Missing paths remain valid and may later become ordinary directories at the

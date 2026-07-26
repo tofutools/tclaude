@@ -118,6 +118,8 @@ var launchCarryoverExcused = map[string]string{
 	"SandboxModeSource": "not a launch parameter of its own — it is the attribution " +
 		"for SandboxMode and is carried by that field's own carry(), so a separate " +
 		"entry here would be a second, desynchronizable copy of the same decision",
+	"TemporarySandboxMode": "an agent-owned override folded into SandboxMode's carry; " +
+		"it is not a second independent session-new flag",
 	"ContextWindowSize": "an OBSERVED statusline value, not operator intent; carrying " +
 		"it would mean re-deriving Claude's \"[1m]\" model suffix rather than replaying " +
 		"a decision",
@@ -141,10 +143,17 @@ var launchCarryoverFields = []launchCarryoverField{
 			return strings.TrimSpace(p.Sandbox) != "" || strings.TrimSpace(p.PermissionProfile) != ""
 		},
 		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
-			if rec.SandboxMode == nil {
+			recordedMode := rec.SandboxMode
+			recordedSource := rec.SandboxModeSource
+			if rec.TemporarySandboxMode != nil {
+				recordedMode = rec.TemporarySandboxMode
+				source := db.TemporarySandboxModeSource
+				recordedSource = &source
+			}
+			if recordedMode == nil {
 				return nil, carryUnrecorded
 			}
-			mode, err := harness.ValidateSandboxMode(h, strings.TrimSpace(*rec.SandboxMode))
+			mode, err := harness.ValidateSandboxMode(h, strings.TrimSpace(*recordedMode))
 			if err != nil {
 				return nil, carryDropped
 			}
@@ -152,8 +161,8 @@ var launchCarryoverFields = []launchCarryoverField{
 			// The attribution rides with the mode it explains, so a resumed agent
 			// keeps naming the profile that chose its containment instead of
 			// degrading to an anonymous "this launch" on its first restart.
-			if rec.SandboxModeSource != nil {
-				p.SandboxChosenBy = strings.TrimSpace(*rec.SandboxModeSource)
+			if recordedSource != nil {
+				p.SandboxChosenBy = strings.TrimSpace(*recordedSource)
 			}
 			return mode, carryApplied
 		},

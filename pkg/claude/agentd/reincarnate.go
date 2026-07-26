@@ -374,6 +374,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if relaunchPolicy != nil {
 		effectiveSandbox = relaunchPolicy.Snapshot
 	}
+	stableEffectiveSandbox := effectiveSandbox
 
 	// 2. Spawn a fresh tclaude session in the same cwd, carrying the stable
 	// agent's durable model + reasoning effort. An unknown or removed model is
@@ -395,6 +396,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// A successor inherits the predecessor's recorded sandbox posture, not the
 	// harness default — reincarnation must not weaken the sandbox.
 	reincarnateSandbox := relaunch.Sandbox
+	if relaunch.TemporarySandboxMode {
+		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
+	}
 	if fail := sandboxProfileCapabilityFailure(relaunch.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -405,7 +409,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// rotation restores the predecessor's previous policy and removes any newly
 	// materialized private directories.
 	persistedAgentID := ""
-	if effectiveSandbox != nil {
+	if effectiveSandbox != nil && !relaunch.TemporarySandboxMode {
 		agentID, err := db.AgentIDForConv(target)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", "resolve target agent identity: "+err.Error())
@@ -429,7 +433,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 				slog.Warn("reincarnate: restore previous sandbox snapshot failed", "agent", persistedAgentID, "error", err)
 			}
 		}
-		if removeUnusedDirs && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+		if !relaunch.TemporarySandboxMode && removeUnusedDirs && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 			if _, err := removeSupersededMaterializedAgentDirectories(*effectiveSandbox, *relaunchPolicy.Previous); err != nil {
 				slog.Warn("reincarnate: remove unused refreshed agent directories failed", "error", err)
 			}
@@ -851,7 +855,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			clearFailedExitIntent(intentSet)
 		}
 	}
-	if relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
+	if !relaunch.TemporarySandboxMode && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 		scheduleReincarnationDirectoryCleanup(target, newConv, *relaunchPolicy.Previous)
 	}
 

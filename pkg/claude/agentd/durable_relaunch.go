@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -22,6 +23,10 @@ type durableRelaunchConfig struct {
 	// reincarnation silently re-credit a group default's containment to "this
 	// launch", and the durable projection would then assert that erasure.
 	SandboxModeSource      string
+	TemporarySandboxMode   bool
+	NormalSandbox          string
+	NormalSandboxSource    string
+	NormalSSHWorkaround    bool
 	Approval               string
 	ToolGovernance         string
 	AutoReview             bool
@@ -33,6 +38,23 @@ type durableRelaunchConfig struct {
 	SSHWorkaround          bool
 	ContextFeatures        map[string]string
 	AutoCompactWindow      string
+}
+
+// temporarySandboxLaunchSnapshot derives the process-only policy paired with a
+// temporary sandbox-off mode. Codex's raw full-access mode cannot accept any
+// profile values; Claude Code and OpenCode can still receive plain environment
+// entries, but no filesystem, network, break-glass, or agent-directory policy
+// is represented as confinement while their sandbox is disabled.
+func temporarySandboxLaunchSnapshot(harnessName string, stable *sandboxpolicy.Snapshot) *sandboxpolicy.Snapshot {
+	if harnessName == harness.CodexName {
+		omitted := sandboxpolicy.OmittedProfilesSnapshot()
+		return &omitted
+	}
+	if stable == nil {
+		return nil
+	}
+	unconfined := sandboxpolicy.UnconfinedLaunchSnapshot(*stable)
+	return &unconfined
 }
 
 // relaunchProfileForSpawn freezes the already-resolved launch posture at an
@@ -138,6 +160,10 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			return nil, fmt.Errorf("reload durable agent relaunch profile: %w", err)
 		}
 	}
+	var temporarySandboxMode *string
+	if agentProfile != nil {
+		temporarySandboxMode = agentProfile.TemporarySandboxMode
+	}
 	// A plain tclaude conversation has no stable agent row by design. Its
 	// conversation-owned fallback keeps ordinary conv/session resume working
 	// after process history is pruned. Managed intent wins field-by-field; a nil
@@ -159,6 +185,18 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	sandboxModeSource := ""
 	if agentProfile.SandboxModeSource != nil && strings.TrimSpace(*agentProfile.SandboxMode) != "" {
 		sandboxModeSource = harness.SanitizeSandboxChosenBy(*agentProfile.SandboxModeSource)
+	}
+	normalSandboxMode := sandboxMode
+	normalSandboxModeSource := sandboxModeSource
+	if temporarySandboxMode != nil {
+		if strings.TrimSpace(*temporarySandboxMode) == "" {
+			return nil, fmt.Errorf("invalid temporary sandbox override: mode is empty")
+		}
+		sandboxMode, err = harness.ValidateSandboxMode(h, *temporarySandboxMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid temporary sandbox override: %w", err)
+		}
+		sandboxModeSource = db.TemporarySandboxModeSource
 	}
 
 	if agentProfile.ApprovalPolicy == nil {
@@ -267,6 +305,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
 	}
+	normalSSHWorkaround := sshWorkaround && normalSandboxMode == harness.SandboxManagedProfile
 	if sandboxMode != harness.SandboxManagedProfile {
 		sshWorkaround = false
 	}
@@ -277,6 +316,10 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		ResumeProvenance:       conversation.ResumeProvenance,
 		Sandbox:                sandboxMode,
 		SandboxModeSource:      sandboxModeSource,
+		TemporarySandboxMode:   temporarySandboxMode != nil,
+		NormalSandbox:          normalSandboxMode,
+		NormalSandboxSource:    normalSandboxModeSource,
+		NormalSSHWorkaround:    normalSSHWorkaround,
 		Approval:               approval,
 		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,
