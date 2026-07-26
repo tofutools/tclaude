@@ -70,17 +70,37 @@ func TestRegister_Roundtrip(t *testing.T) {
 func TestSupports_NilContracts(t *testing.T) {
 	var h *Harness
 	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() ||
-		h.CanReplayOneShotLaunchPosture() {
+		h.CanReplayOneShotLaunchPosture() || h.SupportsOfflineModelTransport() {
 		t.Fatalf("nil harness must report no capabilities")
 	}
 	bare := &Harness{Name: "bare"}
 	if bare.SupportsRename() || bare.SupportsCompact() || bare.SupportsSoftExit() ||
-		bare.CanReplayOneShotLaunchPosture() {
+		bare.CanReplayOneShotLaunchPosture() || bare.SupportsOfflineModelTransport() {
 		t.Fatalf("harness with nil Lifecycle must report no capabilities")
 	}
 	unknown := &Harness{Ask: codexAsker{}, OneShotReplay: OneShotReplayStrategy(255)}
 	if unknown.CanReplayOneShotLaunchPosture() {
 		t.Fatal("unknown one-shot replay strategies must fail closed")
+	}
+}
+
+func TestSupportsOfflineModelTransport(t *testing.T) {
+	codex, err := Resolve(CodexName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !codex.SupportsOfflineModelTransport() {
+		t.Fatal("Codex must advertise the explicitly gated offline transport capability")
+	}
+	if Default().SupportsOfflineModelTransport() {
+		t.Fatal("Claude Code requires hosted model traffic and must fail the isolated gate")
+	}
+	opencode, err := Resolve(OpenCodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opencode.SupportsOfflineModelTransport() {
+		t.Fatal("OpenCode joins the isolated gate only when its descriptor is deliberately enabled")
 	}
 }
 

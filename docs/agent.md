@@ -491,14 +491,18 @@ an inherited managed proxy and permits ordinary IP networking. On macOS,
 Seatbelt can preserve the agentd Unix-socket exception. Independently of this
 setting, every managed Codex profile denies the private directory containing
 tclaude's tmux server socket; a Codex agent therefore cannot control its host
-tmux server even when Internet access is enabled. Network policies currently
-require Codex's managed sandbox; a Claude launch or a raw Codex sandbox mode
-is rejected instead of silently dropping the rule. Linux/WSL `none` launches
-are also rejected: Codex's current restricted-network seccomp denies the
-`connect` syscall for Unix sockets as well as IP sockets, which would sever
-the agentd control channel. The profile value remains portable so this can be
-enabled when Codex gains a compatible Linux boundary. Existing profiles omit
-the field and therefore remain backward-compatible.
+tmux server even when Internet access is enabled. Under `harness-builtin`,
+network policies require Codex's managed sandbox; a Claude launch or a raw
+Codex sandbox mode is rejected instead of silently dropping the rule.
+Linux/WSL `none` is also rejected there because Codex's restricted-network
+seccomp denies Unix-socket `connect` together with IP traffic, severing agentd.
+Under the experimental Linux `tclaude-layer`, `none` instead selects the
+constructed-root
+[isolated-with-agentd posture](sandboxing.md#isolated-with-agentd-network-posture).
+Because that isolates the whole harness, it additionally requires an
+offline-transport-capable harness and the exact `TCLAUDE_OFFLINE_MODEL=1`
+profile assertion documented there. Existing profiles omit the field and
+therefore remain backward-compatible.
 
 #### Deny rules, reopens, and common rules
 

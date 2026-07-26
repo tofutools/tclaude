@@ -2337,6 +2337,22 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		// Keep direct-DB callbacks soft-disabled even if a recorded profile
 		// environment tried to overwrite the compatibility switch.
 		resumeEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
+		if err := session.ValidateTclaudeLayerNetwork(h, effectiveProfile); err != nil {
+			return "", "", nil, err
+		}
+		posture, err := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
+		if err != nil {
+			return "", "", nil, err
+		}
+		if err := session.ApplyAgentSocketEnv(
+			h.Name,
+			"",
+			"",
+			posture == sandboxpolicy.NetworkIsolatedWithAgentd,
+			resumeEnv,
+		); err != nil {
+			return "", "", nil, err
+		}
 	}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
 	// from interrupting this resume. No-op for non-Claude harnesses. See
@@ -2388,16 +2404,13 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if !tclaudeLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
-		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: tclaude-layer is filesystem-only in this experimental slice; network posture must inherit")
-	}
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
+	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
+	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if networkAccess != sandboxpolicy.NetworkAccessInherit {
+	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
 		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
@@ -2546,7 +2559,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			effectiveProfile.Filesystem...,
 		)
 		effectiveProfile.Filesystem = renderedGrants
-		binary, _, resolveErr := session.ResolveTclaudeLayer()
+		posture, postureErr := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
+		if postureErr != nil {
+			return "", "", nil, postureErr
+		}
+		binary, _, resolveErr := session.ResolveTclaudeLayer(posture)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
@@ -2945,7 +2962,9 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox()
+		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
+			resumeTclaudeLayerNetworkPosture(conv.SessionID),
+		)
 	}
 	state := &session.SessionState{
 		ID:                     sessionID,
@@ -2986,6 +3005,18 @@ func createSessionForConv(conv *SessionEntry) error {
 	fmt.Println("Attaching... (Ctrl+B D to detach)")
 
 	return session.AttachToSession(sessionID, tmuxSession, false)
+}
+
+func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPosture {
+	snapshot := resumeEffectiveSandboxForState(convID)
+	if snapshot == nil {
+		return sandboxpolicy.NetworkHostOpen
+	}
+	posture, err := sandboxpolicy.NetworkPostureForAccess(snapshot.Effective.NetworkAccess)
+	if err != nil {
+		return sandboxpolicy.NetworkHostOpen
+	}
+	return posture
 }
 
 func findSessionForConv(convID string) *session.SessionState {

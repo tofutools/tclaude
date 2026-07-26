@@ -32,6 +32,21 @@ func (m MountMode) String() string {
 	}
 }
 
+// String renders the network posture as the stable token used in effective
+// plan output and launch-fidelity messages.
+func (p NetworkPosture) String() string {
+	switch p {
+	case NetworkHostOpen:
+		return "host-open"
+	case NetworkIsolatedWithAgentd:
+		return "isolated-with-agentd"
+	case NetworkFiltered:
+		return "filtered"
+	default:
+		return fmt.Sprintf("network-posture(%d)", int(p))
+	}
+}
+
 // String renders the whole plan in application order. Entries are indented and
 // the mode column is padded so paths line up, which is what makes a two-plan
 // diff readable. The output always ends in a newline; an empty plan is stated
@@ -40,8 +55,9 @@ func (m MountMode) String() string {
 func (p MountPlan) String() string {
 	var b strings.Builder
 	b.WriteString("mount-plan:\n")
+	fmt.Fprintf(&b, "  network %s\n", p.NetworkPosture)
 	if len(p.Entries) == 0 {
-		b.WriteString("  (empty)\n")
+		b.WriteString("  mounts  (empty)\n")
 		return b.String()
 	}
 	for _, entry := range p.Entries {

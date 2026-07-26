@@ -191,6 +191,13 @@ type Harness struct {
 	// engages for a Codex agent. See db.BgShellSet (TCL-613).
 	BackgroundShells bool
 
+	// OfflineModelTransport marks a harness for which tclaude has a supported
+	// way to run the model/control transport without IP networking. It does not
+	// assert that a particular launch configured such a transport; the
+	// tclaude-layer gate additionally requires the operator's explicit
+	// TCLAUDE_OFFLINE_MODEL=1 assertion in the resolved sandbox profile.
+	OfflineModelTransport bool
+
 	// DirTrust marks a harness that gates its first launch in an untrusted
 	// directory behind a blocking "do you trust this folder?" dialog, AND whose
 	// trust record tclaude can pre-seed from outside the process. Both halves
@@ -224,6 +231,13 @@ func (h *Harness) SupportsDirTrust() bool {
 // nothing would ever retire.
 func (h *Harness) SupportsBackgroundShells() bool {
 	return h != nil && h.BackgroundShells
+}
+
+// SupportsOfflineModelTransport reports whether the harness descriptor can
+// participate in a whole-process network-isolated launch. The per-launch
+// transport assertion is checked separately at the tclaude-layer boundary.
+func (h *Harness) SupportsOfflineModelTransport() bool {
+	return h != nil && h.OfflineModelTransport
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename

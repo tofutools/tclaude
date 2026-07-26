@@ -399,7 +399,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if relaunch.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
 	}
-	if fail := sandboxProfileCapabilityFailure(relaunch.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		relaunch.Harness,
+		reincarnateSandbox,
+		effectiveSandbox,
+		relaunch.SandboxImplementation,
+	); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}

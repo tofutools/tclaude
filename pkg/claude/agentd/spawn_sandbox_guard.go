@@ -35,13 +35,31 @@ func spawnSandboxLineageFailure(parentConvID, childHarness, childSandbox string)
 	return nil
 }
 
-func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *sandboxpolicy.Snapshot) *spawnFailure {
+func sandboxProfileCapabilityFailure(
+	harnessName, sandboxMode string,
+	snapshot *sandboxpolicy.Snapshot,
+	sandboxImplementation ...string,
+) *spawnFailure {
 	if snapshot == nil {
 		return nil
 	}
 	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
+	}
+	tclaudeLayer := len(sandboxImplementation) > 0 &&
+		strings.TrimSpace(sandboxImplementation[0]) == string(sandboxpolicy.ImplementationTclaudeLayer)
+	if tclaudeLayer {
+		// The outer applier, not the harness-native sandbox catalog, represents
+		// filesystem and network policy. Keep launch-time break-glass existence
+		// validation here; the session boundary validates the layer's network
+		// transport assertion and renders the mount plan.
+		if len(snapshot.Effective.BreakGlassFilesystem) > 0 {
+			if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {
+				return &spawnFailure{http.StatusUnprocessableEntity, harness.SandboxCapabilityBreakGlass, err.Error()}
+			}
+		}
+		return nil
 	}
 	// The capability gates run FIRST and unconditionally: a reopen-under-deny
 	// shape or an acknowledged protected grant must be refused by a harness that

@@ -22,10 +22,31 @@ type MountEntry struct {
 	Mode MountMode
 }
 
+// NetworkPosture describes how an OS-sandbox applier exposes the network
+// namespace. It is deliberately separate from MountEntry: network isolation
+// is not a filesystem entry, while Unix-socket allowlisting is expressed by
+// ordinary read-only binds of the allowed socket paths.
+type NetworkPosture int
+
+const (
+	// NetworkHostOpen preserves the caller's host network namespace. It is the
+	// zero value so existing MountPlan literals retain the walking skeleton's
+	// behavior.
+	NetworkHostOpen NetworkPosture = iota
+	// NetworkIsolatedWithAgentd creates a private network namespace and a
+	// constructed filesystem root. Only explicitly bound pathname sockets,
+	// including agentd, remain visible.
+	NetworkIsolatedWithAgentd
+	// NetworkFiltered is reserved for a future proxy-backed intermediate
+	// posture. No current profile value renders it and appliers must refuse it.
+	NetworkFiltered
+)
+
 // MountPlan is the harness-neutral mount intermediate representation.
 //
 // Entries are ordered: later entries shadow earlier ones. Renderers preserve
 // that order so a more-specific path can override an ancestor uniformly.
 type MountPlan struct {
-	Entries []MountEntry
+	Entries        []MountEntry
+	NetworkPosture NetworkPosture
 }

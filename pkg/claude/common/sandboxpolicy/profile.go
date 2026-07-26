@@ -30,6 +30,11 @@ const (
 	// and launch-time flattening enforce the same unit and bound, so a policy
 	// that persists is always resolvable.
 	MaxIncludeDepth = 16
+	// OfflineModelTransportEnv is the one operator-authored TCLAUDE_ control
+	// admitted through sandbox-profile environment validation. The
+	// tclaude-layer consumes it as an explicit whole-process isolation
+	// assertion; every other TCLAUDE_ name remains launch-reserved.
+	OfflineModelTransportEnv = "TCLAUDE_OFFLINE_MODEL"
 )
 
 type Access string
@@ -620,6 +625,9 @@ func normalizeEnvironment(in []EnvironmentEntry) ([]EnvironmentEntry, error) {
 }
 
 func isReservedEnvironmentName(name string) bool {
+	if name == OfflineModelTransportEnv {
+		return false
+	}
 	if _, ok := reservedEnvironmentNames[name]; ok {
 		return true
 	}

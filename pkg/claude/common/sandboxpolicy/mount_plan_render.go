@@ -115,12 +115,15 @@ type mountGrantSection struct {
 // authors it strictly beneath the deny, which is the shape the whole model is
 // built around.
 //
-// Sections that do not describe host paths (Environment, AgentDirectories,
-// NetworkAccess) are deliberately absent: AgentDirectories are private
-// directories agentd mints per agent rather than host authority the profile
-// grants, and the network posture is not a mount. They belong to the launch
-// contract that consumes this plan.
+// Sections that do not describe host paths (Environment and AgentDirectories)
+// are deliberately absent: AgentDirectories are private directories agentd
+// mints per agent rather than host authority the profile grants. NetworkAccess
+// maps onto the sibling NetworkPosture field rather than onto Entries.
 func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
+	posture, err := NetworkPostureForAccess(effective.NetworkAccess)
+	if err != nil {
+		return MountPlan{}, err
+	}
 	breakGlass := make([]FilesystemGrant, 0, len(effective.BreakGlassFilesystem))
 	for i, grant := range effective.BreakGlassFilesystem {
 		// Break-glass never denies: deny is already the default for protected
@@ -135,10 +138,31 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 		// of silently dropping it here.
 		breakGlass = append(breakGlass, FilesystemGrant(grant))
 	}
-	return renderMountPlanSections([]mountGrantSection{
+	plan, err := renderMountPlanSections([]mountGrantSection{
 		{label: "filesystem", grants: effective.Filesystem},
 		{label: "break_glass_filesystem", grants: breakGlass},
 	})
+	if err != nil {
+		return MountPlan{}, err
+	}
+	plan.NetworkPosture = posture
+	return plan, nil
+}
+
+// NetworkPostureForAccess maps the operator-authored network intent onto the
+// OS-layer IR. Inherit preserves the walking skeleton's host namespace;
+// reinterpreting an omitted field as isolated would strand every hosted model
+// client now that the outer layer wraps the whole harness process.
+func NetworkPostureForAccess(access NetworkAccess) (NetworkPosture, error) {
+	switch access {
+	case NetworkAccessInherit, NetworkAccessInternet:
+		return NetworkHostOpen, nil
+	case NetworkAccessNone:
+		return NetworkIsolatedWithAgentd, nil
+	default:
+		return NetworkHostOpen, fmt.Errorf(
+			"network_access %q is invalid (want internet, none, or omitted)", access)
+	}
 }
 
 // RenderMountPlanFromGrants is the primitive RenderMountPlan is built on. It
