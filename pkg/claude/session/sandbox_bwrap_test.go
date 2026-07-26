@@ -161,10 +161,10 @@ func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
 }
 
 func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T) {
-	tmuxBase := t.TempDir()
-	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
+	tmuxBase := filepath.Dir(tmuxSocketDir)
 
 	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
 		Path: tmuxBase, Mode: sandboxpolicy.MountHide,
