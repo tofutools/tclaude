@@ -123,5 +123,8 @@ func TestDurableRelaunchKeepsNormalCodexSSHPostureDuringUnlock(t *testing.T) {
 	got, err := durableRelaunchConfigForConv(convID)
 	require.NoError(t, err)
 	assert.False(t, got.SSHWorkaround, "danger-full-access launch does not materialize managed-profile SSH")
-	assert.True(t, got.NormalSSHWorkaround, "a clone/restore still needs the preserved managed-profile SSH posture")
+	codex, ok := harness.Get(harness.CodexName)
+	require.True(t, ok)
+	assert.Equal(t, codex.CanSSHWorkaround(), got.NormalSSHWorkaround,
+		"a clone/restore preserves the normal platform-supported SSH posture")
 }
