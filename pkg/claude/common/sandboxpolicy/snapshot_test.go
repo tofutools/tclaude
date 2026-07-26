@@ -96,6 +96,13 @@ func TestNormalizeSnapshotVersionDoesNotRevalidateFilesystem(t *testing.T) {
 
 func TestSnapshotFileRoundTripAndTamperRejection(t *testing.T) {
 	snapshot := EmptySnapshot()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(root, "target")
+	link := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	require.NoError(t, os.Symlink(target, link))
+	snapshot.Effective.MountAliases = []MountAlias{{Link: link, Target: target}}
 	snapshot.Effective.Environment = []EnvironmentEntry{{Name: "LITERAL", Value: "$(touch nope); `echo nope`\n'quoted'"}}
 	path, digest, err := WriteSnapshotFile(t.TempDir(), snapshot)
 	require.NoError(t, err)
@@ -106,6 +113,7 @@ func TestSnapshotFileRoundTripAndTamperRejection(t *testing.T) {
 	got, err := ReadSnapshotFile(path, digest)
 	require.NoError(t, err)
 	assert.Equal(t, snapshot.Effective.Environment, got.Effective.Environment)
+	assert.Equal(t, snapshot.Effective.MountAliases, got.Effective.MountAliases)
 	assert.False(t, strings.Contains(path, snapshot.Effective.Environment[0].Value))
 
 	require.NoError(t, os.WriteFile(path, []byte(`{"version":1}`), 0o600))

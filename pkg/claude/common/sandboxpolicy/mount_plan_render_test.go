@@ -381,6 +381,10 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 		BreakGlassFilesystem: []BreakGlassGrant{
 			{Path: "/home/dev/.tclaude/data/logs", Access: AccessRead},
 		},
+		MountAliases: []MountAlias{
+			{Link: "/home/dev/cache", Target: "/mnt/cache"},
+			{Link: "/home/dev/bin", Target: "/opt/tools"},
+		},
 		// Non-path sections must not leak into the plan.
 		Environment:      []EnvironmentEntry{{Name: "FOO", Value: "bar"}},
 		AgentDirectories: []string{"AGENT_SCRATCH"},
@@ -395,6 +399,13 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 		entry("/home/dev/.tclaude/data/logs", MountRO),
 		entry("/home/dev/work", MountRW),
 	})
+	wantAliases := []MountAlias{
+		{Link: "/home/dev/bin", Target: "/opt/tools"},
+		{Link: "/home/dev/cache", Target: "/mnt/cache"},
+	}
+	if !slices.Equal(plan.Aliases, wantAliases) {
+		t.Fatalf("aliases = %#v, want %#v", plan.Aliases, wantAliases)
+	}
 	if plan.NetworkPosture != NetworkIsolatedWithAgentd {
 		t.Fatalf("network posture = %s, want isolated-with-agentd", plan.NetworkPosture)
 	}
@@ -409,6 +420,16 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 	// And its protected siblings stay hidden.
 	if mode, _ := EffectiveMountModeAt(plan, "/home/dev/.tclaude/data/db.sqlite"); mode != MountHide {
 		t.Fatalf("protected sibling: mode %s, want hide", mode)
+	}
+}
+
+func TestRenderMountPlanRejectsConflictingAliases(t *testing.T) {
+	_, err := RenderMountPlan(EffectiveProfile{MountAliases: []MountAlias{
+		{Link: "/home/dev/cache", Target: "/mnt/cache-a"},
+		{Link: "/home/dev/cache", Target: "/mnt/cache-b"},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "conflicting targets") {
+		t.Fatalf("RenderMountPlan conflicting aliases error = %v, want conflicting targets", err)
 	}
 }
 
@@ -785,6 +806,25 @@ func TestMountPlanSnapshot(t *testing.T) {
 				t.Fatalf("plan snapshot mismatch:\ngot:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMountPlanSnapshotIncludesAliases(t *testing.T) {
+	plan := MountPlan{
+		NetworkPosture: NetworkIsolatedWithAgentd,
+		Aliases: []MountAlias{{
+			Link: "/home/dev/cache", Target: "/mnt/cache",
+		}},
+	}
+	want := strings.Join([]string{
+		"mount-plan:",
+		"  network isolated-with-agentd",
+		"  alias /home/dev/cache -> /mnt/cache",
+		"  mounts  (empty)",
+		"",
+	}, "\n")
+	if got := plan.String(); got != want {
+		t.Fatalf("plan snapshot mismatch:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
 

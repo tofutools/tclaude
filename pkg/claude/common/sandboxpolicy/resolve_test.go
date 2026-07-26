@@ -175,6 +175,69 @@ func TestResolveRecanonicalizesPathChangedSincePersistence(t *testing.T) {
 	assert.Equal(t, []ProfileSource{{Scope: ScopeGlobal, Profile: "saved"}}, got.Provenance.Filesystem[canonicalNew])
 }
 
+func TestResolveCarriesObservableMountAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, root string) (spelled, link, target string)
+	}{
+		{
+			name: "ancestor symlink",
+			setup: func(t *testing.T, root string) (string, string, string) {
+				target := filepath.Join(root, "real")
+				link := filepath.Join(root, "alias")
+				require.NoError(t, os.MkdirAll(filepath.Join(target, "nested"), 0o755))
+				require.NoError(t, os.Symlink(target, link))
+				return filepath.Join(link, "nested"), link, target
+			},
+		},
+		{
+			name: "symlink resolving through a second symlink",
+			setup: func(t *testing.T, root string) (string, string, string) {
+				target := filepath.Join(root, "real")
+				second := filepath.Join(root, "second")
+				link := filepath.Join(root, "first")
+				require.NoError(t, os.MkdirAll(filepath.Join(target, "nested"), 0o755))
+				require.NoError(t, os.Symlink(target, second))
+				require.NoError(t, os.Symlink(second, link))
+				return filepath.Join(link, "nested"), link, target
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			t.Setenv("HOME", root)
+			spelled, link, target := tc.setup(t, root)
+			probe := filepath.Join(target, "nested", "probe")
+			require.NoError(t, os.WriteFile(probe, []byte("alias-ok"), 0o600))
+
+			effective, err := Resolve(Scopes{Explicit: &Profile{
+				Name:       "aliases",
+				Filesystem: []FilesystemGrant{{Path: spelled, Access: AccessRead}},
+			}})
+			require.NoError(t, err)
+			require.Equal(t, []MountAlias{{Link: link, Target: target}}, effective.MountAliases)
+
+			plan, err := RenderMountPlan(effective)
+			require.NoError(t, err)
+			require.Equal(t, effective.MountAliases, plan.Aliases)
+			require.Equal(t, []MountEntry{{
+				Path: filepath.Join(target, "nested"),
+				Mode: MountRO,
+			}}, plan.Entries)
+
+			relative, err := filepath.Rel(link, spelled)
+			require.NoError(t, err)
+			mapped := filepath.Join(plan.Aliases[0].Target, relative, "probe")
+			assert.Equal(t, probe, mapped,
+				"recreating the highest alias must map an open through the spelling to the bound target")
+			content, err := os.ReadFile(mapped)
+			require.NoError(t, err)
+			assert.Equal(t, "alias-ok", string(content))
+		})
+	}
+}
+
 func TestResolveEnforcesAggregateEnvironmentLimits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	entries := func(prefix string, count int) []EnvironmentEntry {

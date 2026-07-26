@@ -145,6 +145,10 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 	if err != nil {
 		return MountPlan{}, err
 	}
+	plan.Aliases, err = renderMountAliases(effective.MountAliases)
+	if err != nil {
+		return MountPlan{}, err
+	}
 	plan.NetworkPosture = posture
 	return plan, nil
 }
@@ -214,8 +218,10 @@ func NetworkPostureForAccess(access NetworkAccess) (NetworkPosture, error) {
 // ancestor (canonicalMissingDirectory), with the remaining suffix lexical. The
 // honest consequence, which the applier owns: the plan binds the RESOLVED
 // target, so an aliased spelling of that path (an unmounted symlink pointing at
-// it) does not itself exist inside the namespace. Materializing alias paths is
-// a launch-contract concern, not a policy one.
+// it) must be recreated separately in a constructed root. Resolve records every
+// still-observable spelling as MountAliases; this renderer only validates and
+// copies those pairs into the sibling MountPlan field, preserving its
+// filesystem purity.
 //
 // Missing paths: emitted, not skipped, and never pre-created. The renderer is
 // pure and so cannot know whether a path exists, but that is the right
@@ -278,6 +284,40 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 		entries = append(entries, MountEntry{Path: path, Mode: mountModeForAccess(byPath[path])})
 	}
 	return MountPlan{Entries: entries}, nil
+}
+
+func renderMountAliases(in []MountAlias) ([]MountAlias, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	byLink := make(map[string]string, len(in))
+	for i, alias := range in {
+		link, err := canonicalMountPath(alias.Link)
+		if err != nil {
+			return nil, fmt.Errorf("mount_aliases[%d].link: %w", i, err)
+		}
+		target, err := canonicalMountPath(alias.Target)
+		if err != nil {
+			return nil, fmt.Errorf("mount_aliases[%d].target: %w", i, err)
+		}
+		if previous, exists := byLink[link]; exists && previous != target {
+			return nil, fmt.Errorf(
+				"mount_aliases[%d].link %q has conflicting targets %q and %q",
+				i, link, previous, target,
+			)
+		}
+		byLink[link] = target
+	}
+	links := make([]string, 0, len(byLink))
+	for link := range byLink {
+		links = append(links, link)
+	}
+	sortMountPaths(links)
+	out := make([]MountAlias, 0, len(links))
+	for _, link := range links {
+		out = append(out, MountAlias{Link: link, Target: byLink[link]})
+	}
+	return out, nil
 }
 
 // canonicalMountPath applies the syntactic half of canonicalDirectory: every

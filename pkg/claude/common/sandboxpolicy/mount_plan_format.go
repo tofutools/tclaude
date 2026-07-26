@@ -56,6 +56,9 @@ func (p MountPlan) String() string {
 	var b strings.Builder
 	b.WriteString("mount-plan:\n")
 	fmt.Fprintf(&b, "  network %s\n", p.NetworkPosture)
+	for _, alias := range p.Aliases {
+		fmt.Fprintf(&b, "  alias %s -> %s\n", alias.Link, alias.Target)
+	}
 	if len(p.Entries) == 0 {
 		b.WriteString("  mounts  (empty)\n")
 		return b.String()

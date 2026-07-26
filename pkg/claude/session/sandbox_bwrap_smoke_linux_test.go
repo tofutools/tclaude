@@ -146,6 +146,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{Path: realTools, Mode: sandboxpolicy.MountRO})
 	assert.NotContains(t, plan.Entries, sandboxpolicy.MountEntry{Path: aliasTools, Mode: sandboxpolicy.MountRO})
+	assert.Contains(t, plan.Aliases, sandboxpolicy.MountAlias{Link: aliasTools, Target: realTools})
 
 	phase0, err := tclaudeLayerPhase0WriteDirs(TclaudeLayerLaunchContract{
 		HarnessName: harness.DefaultName,
