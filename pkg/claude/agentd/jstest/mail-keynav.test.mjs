@@ -19,6 +19,14 @@ function mailbox(id, overrides = {}) {
 // expected to walk exactly that order, so the fixture spans all three bands.
 const SIDEBAR_ORDER = ['all', 'human', 'group:tclaude', 'conv-a', 'conv-b', 'conv-c'];
 
+function accessRequest(id, overrides = {}) {
+  return {
+    id, agent_id: 'agt_alpha', conv_id: 'conv-a', conv_title: 'Alpha',
+    perm: 'groups.spawn', created_at: '2026-07-12T00:00:00Z',
+    deadline: '2026-07-12T00:05:00Z', ...overrides,
+  };
+}
+
 function baseState() {
   return {
     boxQuery: '', messageQuery: '', selected: 'human', showRetired: false, showEmpty: false,
@@ -27,6 +35,17 @@ function baseState() {
     total: 3, totalUnfiltered: 3,
     mailboxes: [],
     messages: [message(1), message(2), message(3)],
+  };
+}
+
+// The approvals folder is the one pane whose rows regroup on their own: a
+// pending request becomes a handled one on an ordinary background refresh.
+function accessState() {
+  return {
+    ...baseState(),
+    selected: 'access-requests', selectedMsgId: 'req-1',
+    accessRequests: [accessRequest('req-1'), accessRequest('req-2'),
+      accessRequest('req-3', { status: 'declined', decided_at: '2026-07-12T00:01:00Z' })],
   };
 }
 
@@ -58,10 +77,21 @@ function controllerFor(signal, calls) {
       }],
       agents: [mailbox('conv-c', { title: 'Gamma' })],
     }),
-    messageView: () => ({
-      access: false, messages: signal.value.messages, search: signal.value.messageQuery,
-      isAggregate: false, pages: 1,
-    }),
+    messageView: () => {
+      const requests = signal.value.accessRequests;
+      if (!requests) {
+        return {
+          access: false, messages: signal.value.messages, search: signal.value.messageQuery,
+          isAggregate: false, pages: 1,
+        };
+      }
+      const pending = (request) => !request.status || request.status === 'pending';
+      return {
+        access: true, allAccess: requests, messages: [], isAggregate: false, pages: 1,
+        pendingAccess: requests.filter(pending),
+        handledAccess: requests.filter((request) => !pending(request)),
+      };
+    },
     messageCountText: () => `${signal.value.totalUnfiltered} messages`,
     counterparty: (item) => item.from_title,
     senderLabel: (item) => item.from_title,
@@ -221,5 +251,37 @@ test('Clicking a row focuses it, so the arrow keys pick up from there', async (t
   assert.equal(harness.document.activeElement, listRows[2]);
   await harness.act(() => harness.fireEvent(boxes[3], 'click'));
   assert.equal(harness.document.activeElement, boxes[3]);
+  await mounted.unmount();
+});
+
+test('A request decided in the background keeps the focused row, and the arrows with it', async (t) => {
+  const { harness, signal, calls, mounted, rows, press } = await mountMail(t, accessState());
+  const rowFor = (id) => rows('#mail-list .mail-row').find((row) => row.dataset.id === id);
+  const focused = rowFor('req-1');
+  focused.focus();
+
+  // A decision taken elsewhere — the tray, another browser, or the auto-decline
+  // running out — arrives on an ordinary refresh and moves req-1 from the
+  // pending group to the handled one, below the divider.
+  await harness.act(() => {
+    signal.value = {
+      ...signal.value,
+      accessRequests: signal.value.accessRequests.map((request) => (request.id === 'req-1'
+        ? { ...request, status: 'approved', decided_at: '2026-07-12T00:02:00Z' }
+        : request)),
+    };
+  });
+  assert.deepEqual(rows('#mail-list .mail-row').map((row) => row.dataset.id),
+    ['req-2', 'req-1', 'req-3']);
+
+  // Regrouping must reorder the row, not remount it: a remount drops focus to
+  // the document body, and the pane never sees another arrow key.
+  // assert.ok, not assert.equal: a failing DOM-node comparison spends ~20s
+  // rendering two element diffs nobody reads.
+  assert.ok(rowFor('req-1') === focused, 'the decided row must keep its DOM node');
+  assert.equal(harness.document.activeElement, focused);
+
+  await press(harness.document.activeElement, 'ArrowDown');
+  assert.deepEqual(calls.messages, ['req-3']);
   await mounted.unmount();
 });

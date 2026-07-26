@@ -206,11 +206,23 @@ function MessageList({ current, controller, model }) {
       : 'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.'}</div></div>`;
     if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
       ? 'No petitions match your seeking.' : 'No access requests match the filter.'}</div></div>`;
-    return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>
-      ${model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`)}
-      ${model.handledAccess.length > 0 && html`<div class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`}
-      ${model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`)}
-    </div>`;
+    // Pending rows, the divider, and handled rows are ONE keyed child list, not
+    // three interpolations. This folder regroups itself: a request decided
+    // elsewhere — the tray, another browser, or its auto-decline running out —
+    // crosses from the pending group to the handled one on an ordinary refresh,
+    // with nobody having touched the pane. Across separate child slots Preact
+    // reconciles each slot on its own, so the moved row is unmounted and
+    // remounted; that drops the focus ↑/↓ navigation rides on and the pane stops
+    // answering the keyboard mid-flow. In one keyed list the row is reordered,
+    // and the operator keeps their place.
+    const accessRows = [
+      ...model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
+      ...(model.handledAccess.length > 0
+        ? [html`<div key="__access_handled__" class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`]
+        : []),
+      ...model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`),
+    ];
+    return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${accessRows}</div>`;
   }
   if (model.messages.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${current.totalUnfiltered
     ? (wizard ? 'No scrolls match your seeking.' : 'No messages match the filter.')
