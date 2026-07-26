@@ -34,6 +34,9 @@ type AgentRelaunchProfile struct {
 	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl          *bool   `json:"remote_control,omitempty"`
 	AutoMemory             *bool   `json:"auto_memory,omitempty"`
+	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
+	// nil means unknown/legacy; false is an explicit opt-out.
+	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 	// AutoCompactWindow is the durable CLAUDE_CODE_AUTO_COMPACT_WINDOW token
 	// count ("" = known intent to pin nothing; nil = unknown/legacy). Distinct
 	// from ContextWindowSize above, which is an OBSERVED statusline value used to
@@ -429,6 +432,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if sameSourceGeneration && agent.AutoMemory == nil {
 			agent.AutoMemory = previous.AutoMemory
 		}
+		if agent.SSHWorkaround == nil {
+			agent.SSHWorkaround = previous.SSHWorkaround
+		}
 		if sameSourceGeneration && agent.ContextFeatures == nil {
 			agent.ContextFeatures = previous.ContextFeatures
 		}
@@ -509,6 +515,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if agent.AutoMemory != nil {
 			merged.AutoMemory = agent.AutoMemory
+		}
+		if agent.SSHWorkaround != nil {
+			merged.SSHWorkaround = agent.SSHWorkaround
 		}
 		if agent.ContextFeatures != nil {
 			merged.ContextFeatures = agent.ContextFeatures
@@ -639,6 +648,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 		AskUserQuestionTimeout *string            `json:"ask_user_question_timeout"`
 		RemoteControl          *bool              `json:"remote_control"`
 		AutoMemory             *bool              `json:"auto_memory"`
+		SSHWorkaround          *bool              `json:"ssh_workaround"`
 		ContextFeatures        *map[string]string `json:"context_features"`
 	}
 	if err := json.Unmarshal([]byte(raw), &spawn); err != nil {
@@ -655,6 +665,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 		AskUserQuestionTimeout: spawn.AskUserQuestionTimeout,
 		RemoteControl:          spawn.RemoteControl,
 		AutoMemory:             spawn.AutoMemory,
+		SSHWorkaround:          spawn.SSHWorkaround,
 		ContextFeatures:        spawn.ContextFeatures,
 	}
 	encoded, err := encodeRelaunchProfile(p)

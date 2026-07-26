@@ -180,6 +180,10 @@ type SpawnRequest struct {
 	// incompatibility) from ambient profile values (skip + disclose when a
 	// higher tier selected a foreign harness).
 	Profile string `json:"profile,omitempty"`
+	// SSHWorkaround controls tclaude's Codex-only Git-over-SSH compatibility
+	// config. nil inherits the selected profile and then defaults on for managed
+	// Codex agents; false is an explicit opt-out.
+	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 	// Name, when set, becomes the new agent's conversation title:
 	// runSpawnPostInit injects `/rename <name>` into the fresh pane. An
 	// agent has exactly one name — its title — so there is no separate

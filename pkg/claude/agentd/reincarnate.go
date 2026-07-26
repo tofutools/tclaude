@@ -349,10 +349,26 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())
 		return
 	}
-	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(target)
+	label := generateSpawnLabel()
+	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(
+		target, relaunch.SSHWorkaround, label)
 	if policyErr != nil {
 		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
 		return
+	}
+	if relaunchPolicy != nil && relaunchPolicy.Snapshot != nil {
+		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
+			*relaunchPolicy.Snapshot, relaunch.SSHWorkaround)
+		if refreshErr != nil {
+			detail := "prepare Codex SSH workaround: " + refreshErr.Error()
+			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
+				detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+			}
+			writeError(w, http.StatusInternalServerError, "spawn",
+				detail)
+			return
+		}
+		relaunchPolicy.Snapshot = &refreshed
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
 	if relaunchPolicy != nil {
@@ -364,7 +380,6 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// omitted so the harness can use its default, preserving historical
 	// fail-open behavior for non-authority model selection.
 	effort, model := relaunch.Effort, relaunch.Model
-	label := generateSpawnLabel()
 	// Carry the predecessor's armed Remote Access to the successor (JOH-261):
 	// a reincarnation is a directed handoff of the same identity, so an agent
 	// the operator armed for phone access stays phone-reachable across it.

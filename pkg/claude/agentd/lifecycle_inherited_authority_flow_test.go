@@ -78,9 +78,15 @@ func TestLifecycleInheritedAuthority_AgentOwnedDirectoriesNeedNoCallerProof(t *t
 			before, err := db.AgentEffectiveSandboxConfigForConv(target.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, before)
-			require.Equal(t, []string{"GOCACHE"}, before.Effective.AgentDirectories)
-			require.Len(t, before.Effective.Environment, 1)
-			privateDir := before.Effective.Environment[0].Value
+			require.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE"),
+				before.Effective.AgentDirectories)
+			var privateDir string
+			for _, entry := range before.Effective.Environment {
+				if entry.Name == "GOCACHE" {
+					privateDir = entry.Value
+				}
+			}
+			require.NotEmpty(t, privateDir)
 			assert.Contains(t, privateDir, filepath.Join("agent-dirs", target.Label))
 
 			caller := target.ConvID
@@ -136,8 +142,13 @@ func TestLifecycleInheritedAuthority_ResumePinsTargetOwnedDirectory(t *testing.T
 			before, err := db.AgentEffectiveSandboxConfigForConv(target.ConvID)
 			require.NoError(t, err)
 			require.NotNil(t, before)
-			require.Len(t, before.Effective.Environment, 1)
-			privateDir := before.Effective.Environment[0].Value
+			var privateDir string
+			for _, entry := range before.Effective.Environment {
+				if entry.Name == "GOCACHE" {
+					privateDir = entry.Value
+				}
+			}
+			require.NotEmpty(t, privateDir)
 			assert.Contains(t, privateDir, filepath.Join("agent-dirs", target.Label))
 			f.MarkOffline(target.TmuxSession)
 

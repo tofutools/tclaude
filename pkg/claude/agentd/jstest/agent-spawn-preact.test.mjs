@@ -48,7 +48,7 @@ const harnesses = [{
   can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {},
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
-  can_remote_control: false, can_auto_memory: false,
+  can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
   can_dir_trust: true, dir_trust_store: '~/.codex/config.toml',
   can_context_features: false, context_features: [],
 }, {
@@ -946,6 +946,38 @@ test('spawn dialog applies a profile auto memory default', async (t) => {
     draft, { name: 'quiet', harness: 'claude' }, context,
   );
   assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
+});
+
+test('Codex SSH workaround defaults on and a spawn or profile can opt out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const initial = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+  const codex = model.selectSpawnHarness(initial, 'codex', context);
+
+  assert.equal(model.spawnCapabilityView(codex, context).showSSHWorkaround, true);
+  assert.equal(model.spawnCapabilityView(codex, context).sshWorkaroundAvailable, true);
+  assert.equal(codex.sshWorkaround, true, 'managed Codex defaults the workaround on');
+  assert.equal(model.buildSpawnRequest({ ...codex, name: 'ssh-on' }, context, null, [])
+    .body.ssh_workaround, true);
+  assert.equal(model.buildSpawnRequest(
+    { ...codex, name: 'ssh-off', sshWorkaround: false }, context, null, [],
+  ).body.ssh_workaround, false, 'an unchecked box is authoritative');
+
+  const optedOut = model.applySpawnProfile(
+    codex, { name: 'no-ssh', harness: 'codex', ssh_workaround: false }, context,
+  );
+  assert.equal(optedOut.sshWorkaround, false);
+  const inheritedDefault = model.applySpawnProfile(
+    optedOut, { name: 'default-ssh', harness: 'codex' }, context,
+  );
+  assert.equal(inheritedDefault.sshWorkaround, true,
+    'a sparse Codex profile returns to the default-on posture');
+
+  const raw = { ...codex, name: 'raw-codex', sandbox: 'workspace-write' };
+  assert.equal(model.spawnCapabilityView(raw, context).sshWorkaroundAvailable, false);
+  assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, false,
+    'raw Codex modes cannot claim the managed-sandbox workaround is active');
 });
 
 // TCL-609: the resolved sandbox policy drives the break-glass spawn gate, so

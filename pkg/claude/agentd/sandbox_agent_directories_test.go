@@ -155,7 +155,7 @@ func TestRemoveMaterializedAgentDirectoriesDeletesEveryLaunchRoot(t *testing.T) 
 	}})
 	require.NoError(t, err)
 	current, err := reconcileAgentDirectoriesForResume(
-		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_test")
+		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 
 	roots := map[string]struct{}{}
@@ -286,7 +286,7 @@ func TestRemoveSupersededMaterializedAgentDirectoriesDeletesReplacedRoot(t *test
 	}})
 	require.NoError(t, err)
 	current, err := reconcileAgentDirectoriesForResume(
-		sandboxpolicy.NewSnapshot(newEffective, nil), previous, "agt_resume_test")
+		sandboxpolicy.NewSnapshot(newEffective, nil), previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 	newRoot := filepath.Dir(current.Effective.Environment[0].Value)
 
@@ -295,6 +295,31 @@ func TestRemoveSupersededMaterializedAgentDirectoriesDeletesReplacedRoot(t *test
 	assert.Equal(t, 1, removed)
 	assert.NoDirExists(t, oldRoot)
 	assert.DirExists(t, newRoot)
+}
+
+func TestCleanupUncommittedResumeSandboxPolicyDeletesNewRoot(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "cache", AgentDirectories: []string{"GOCACHE"},
+	}})
+	require.NoError(t, err)
+	previous, previousCleanup, err := materializeAgentDirectories(
+		sandboxpolicy.NewSnapshot(effective, nil), "spwn-original")
+	require.NoError(t, err)
+	t.Cleanup(previousCleanup)
+	current, currentCleanup, err := materializeAgentDirectories(
+		sandboxpolicy.NewSnapshot(effective, nil), "spwn-relaunch")
+	require.NoError(t, err)
+	t.Cleanup(currentCleanup)
+	previousRoot := filepath.Dir(previous.Effective.Environment[0].Value)
+	currentRoot := filepath.Dir(current.Effective.Environment[0].Value)
+
+	require.NoError(t, cleanupUncommittedResumeSandboxPolicy(&resumeSandboxPolicy{
+		Snapshot: &current,
+		Previous: &previous,
+	}))
+	assert.DirExists(t, previousRoot)
+	assert.NoDirExists(t, currentRoot)
 }
 
 func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t *testing.T) {
@@ -316,7 +341,7 @@ func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t
 	}})
 	require.NoError(t, err)
 	current := sandboxpolicy.NewSnapshot(currentEffective, nil)
-	resumed, err := reconcileAgentDirectoriesForResume(current, previous, "agt_resume_test")
+	resumed, err := reconcileAgentDirectoriesForResume(current, previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 
 	bindings := map[string]string{}
@@ -505,7 +530,8 @@ func TestReconcileAgentDirectoriesForResumeMountsParentPerRoot(t *testing.T) {
 		Name: "current", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
 	}})
 	require.NoError(t, err)
-	resumed, err := reconcileAgentDirectoriesForResume(sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_mount")
+	resumed, err := reconcileAgentDirectoriesForResume(
+		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_mount", nil)
 	require.NoError(t, err)
 
 	bindings := map[string]string{}

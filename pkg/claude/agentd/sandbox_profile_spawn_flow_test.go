@@ -293,12 +293,16 @@ func TestSandboxProfileSpawnMaterializesUniqueAgentDirectories(t *testing.T) {
 		snapshot, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
 		require.True(t, ok)
 		require.NotNil(t, snapshot)
-		assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, snapshot.Effective.AgentDirectories)
-		require.Len(t, snapshot.Effective.Environment, 2)
+		assert.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE", "GOLANGCI_LINT_CACHE"),
+			snapshot.Effective.AgentDirectories)
+		require.Len(t, snapshot.Effective.Environment, expectedManagedCodexEnvironmentCount(2))
 		require.Len(t, snapshot.Effective.Filesystem, 1)
 		paths := map[string]string{}
 		for _, entry := range snapshot.Effective.Environment {
 			paths[entry.Name] = entry.Value
+			if entry.Name == "GIT_SSH_COMMAND" {
+				continue
+			}
 			info, statErr := os.Stat(entry.Value)
 			require.NoError(t, statErr)
 			assert.True(t, info.IsDir())
@@ -339,7 +343,8 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	parentSnapshot, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, parentSnapshot)
-	require.Equal(t, []string{"GOCACHE"}, parentSnapshot.Effective.AgentDirectories)
+	require.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE"),
+		parentSnapshot.Effective.AgentDirectories)
 
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
 		Name: "child-caches", AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
@@ -355,14 +360,24 @@ func TestSandboxProfileAgentCanSpawnChildWithAdditionalAgentDirectories(t *testi
 	childSnapshot, ok := f.World.SpawnSandboxPolicy(child.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, childSnapshot)
-	assert.Equal(t, []string{"GOCACHE", "GOTMPDIR"}, childSnapshot.Effective.AgentDirectories)
+	assert.Equal(t, expectedManagedCodexAgentDirectories("GOCACHE", "GOTMPDIR"),
+		childSnapshot.Effective.AgentDirectories)
 	require.Len(t, childSnapshot.Effective.Filesystem, 1)
-	require.Len(t, childSnapshot.Effective.Environment, 2)
+	require.Len(t, childSnapshot.Effective.Environment, expectedManagedCodexEnvironmentCount(2))
 
-	parentGOCACHE := parentSnapshot.Effective.Environment[0].Value
+	var parentGOCACHE string
+	for _, entry := range parentSnapshot.Effective.Environment {
+		if entry.Name == "GOCACHE" {
+			parentGOCACHE = entry.Value
+		}
+	}
+	require.NotEmpty(t, parentGOCACHE)
 	childRoot := childSnapshot.Effective.Filesystem[0]
 	assert.Equal(t, "write", string(childRoot.Access))
 	for _, entry := range childSnapshot.Effective.Environment {
+		if entry.Name == "GIT_SSH_COMMAND" {
+			continue
+		}
 		assert.NotEqual(t, parentGOCACHE, entry.Value, "%s must be private to the child", entry.Name)
 		assert.Contains(t, entry.Value, string(filepath.Separator)+"agent-dirs"+string(filepath.Separator))
 		assert.Equal(t, childRoot.Path, filepath.Dir(entry.Value), "%s must share the child's writable root", entry.Name)

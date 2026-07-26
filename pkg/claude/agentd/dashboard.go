@@ -1176,6 +1176,9 @@ type dashboardHarness struct {
 	// without it (Codex). The spawn dialog and profile editor gate their
 	// auto-memory controls on this.
 	CanAutoMemory bool `json:"can_auto_memory"`
+	// CanSSHWorkaround is true for Codex, whose managed Linux sandbox can need
+	// an ownership-safe copy of the host SSH client configuration.
+	CanSSHWorkaround bool `json:"can_ssh_workaround"`
 	// CanContextFeatures mirrors Harness.CanContextFeatures — true only for a
 	// harness whose startup context tclaude can trim (Claude Code). The spawn
 	// dialog and profile editor gate their "Context…" control on it.
@@ -1239,6 +1242,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
 			CanAutoMemory:    h.CanAutoMemory(),
+			CanSSHWorkaround: h.CanSSHWorkaround(),
 
 			CanContextFeatures:   h.CanContextFeatures(),
 			CanAutoCompactWindow: h.CanAutoCompactWindow(),

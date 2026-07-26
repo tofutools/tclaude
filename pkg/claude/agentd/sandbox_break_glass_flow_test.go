@@ -643,7 +643,8 @@ func TestResumeCannotDropLaunchedDenyRow(t *testing.T) {
 	launched, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, launched)
-	require.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, launched.Effective.Filesystem)
+	require.Contains(t, launched.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny})
 
 	// Widen the profile by removing the deny entirely.
 	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/group-policy", map[string]any{
@@ -658,7 +659,8 @@ func TestResumeCannotDropLaunchedDenyRow(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
-	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, after.Effective.Filesystem,
+	assert.Contains(t, after.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny},
 		"dropping a deny the agent launched under is widening and must not happen implicitly on resume")
 }
 
@@ -1069,7 +1071,8 @@ func TestSelfReincarnateCannotDropLaunchedDenyRow(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 	require.NoError(t, err)
 	require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
-	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, after.Effective.Filesystem,
+	assert.Contains(t, after.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny},
 		"dropping a launched deny is widening and must not happen on reincarnation either")
 }
 

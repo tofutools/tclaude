@@ -740,6 +740,11 @@ type templateAgentLaunch struct {
 	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
 	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	AutoMemory bool
+	// SSHWorkaround is the resolved Codex Git-over-SSH compatibility posture.
+	// It defaults on for a managed Codex launch and may be disabled by the
+	// referenced or inline profile.
+	SSHWorkaround    bool
+	SSHWorkaroundSet bool
 	// ContextFeatures is the startup-context trim map a template-deployed agent
 	// launches with, resolved from the profile tiers (whole, not merged — see
 	// resolveContextFeaturesLaunchField). Empty means the agent keeps Claude
@@ -928,6 +933,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.AutoMemory != nil {
 		if _, err := harness.ResolveAutoMemory(h, p.AutoMemory); err != nil {
 			return wrap("invalid_auto_memory", err.Error())
+		}
+	}
+	if p.SSHWorkaround != nil {
+		if _, err := harness.ResolveSSHWorkaround(h, p.SSHWorkaround); err != nil {
+			return wrap("invalid_ssh_workaround", err.Error())
 		}
 	}
 	if len(p.ContextFeatures) > 0 {
@@ -1192,6 +1202,27 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if memNote != "" {
 		notes = append(notes, memNote)
 	}
+	sshWorkaround, sshWorkaroundSet, sshNote, fail := resolveBoolLaunchField(
+		"ssh_workaround", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
+		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if !sshWorkaroundSet {
+		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
+		sshWorkaroundSet = true
+	}
+	if sandbox != harness.SandboxManagedProfile {
+		if sshWorkaround {
+			notes = append(notes,
+				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
+		}
+		sshWorkaround = false
+	}
+	if sshNote != "" {
+		notes = append(notes, sshNote)
+	}
 	// Startup-context trims: no explicit per-deploy request exists, so the tiers
 	// alone decide. Resolved whole rather than merged, like every other consumer.
 	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
@@ -1224,6 +1255,8 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		SSHWorkaround:          sshWorkaround,
+		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,
 		AskUserQuestionTimeout: askTimeout,
 		AutoCompactWindow:      autoCompactWindow,
@@ -1304,6 +1337,13 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	if window, err := db.AutoCompactWindowForConv(convID); err == nil {
 		if resolved, err := harness.ResolveAutoCompactWindow(h, window); err == nil {
 			out.AutoCompactWindow = resolved
+		}
+	}
+	if durable, err := db.AgentRelaunchProfileForConv(convID); err == nil &&
+		durable != nil && durable.SSHWorkaround != nil {
+		if resolved, err := harness.ResolveSSHWorkaround(h, durable.SSHWorkaround); err == nil {
+			out.SSHWorkaround = resolved
+			out.SSHWorkaroundSet = true
 		}
 	}
 	return out
@@ -3711,6 +3751,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
 	out.AutoMemory = prev.AutoMemory
+	if out.SSHWorkaround == nil {
+		out.SSHWorkaround = prev.SSHWorkaround
+	}
 	// ContextFeatures IS observable, so the traced value wins like harness/model —
 	// INCLUDING an observed "trims nothing", which must be able to CLEAR the
 	// template's previous trims. That is why the signal here is nil-vs-empty
@@ -3742,6 +3785,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.AutoCompactWindow == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
+		out.SSHWorkaround == nil &&
 		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil
@@ -3796,7 +3840,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || launch.SSHWorkaroundSet || len(launch.ContextFeatures) > 0 || launch.AutoCompactWindow != "" || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3822,6 +3866,10 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 			if launch.AutoReviewSet {
 				autoReview := launch.AutoReview
 				inline.AutoReview = &autoReview
+			}
+			if launch.SSHWorkaroundSet {
+				sshWorkaround := launch.SSHWorkaround
+				inline.SSHWorkaround = &sshWorkaround
 			}
 		}
 		t.Agents = append(t.Agents, db.GroupTemplateAgent{

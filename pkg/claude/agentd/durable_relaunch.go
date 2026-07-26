@@ -30,6 +30,7 @@ type durableRelaunchConfig struct {
 	AskUserQuestionTimeout string
 	RemoteControl          bool
 	AutoMemory             bool
+	SSHWorkaround          bool
 	ContextFeatures        map[string]string
 	AutoCompactWindow      string
 }
@@ -56,6 +57,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	askTimeout := p.AskUserQuestionTimeout
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	sshWorkaround := p.SSHWorkaround
 	// Freeze the trim map as KNOWN intent even when it is empty: an agent
 	// deliberately spawned untrimmed should stay untrimmed, and a nil here would
 	// instead read as "unknown" and let a later profile edit change it.
@@ -83,6 +85,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		AskUserQuestionTimeout: &askTimeout,
 		RemoteControl:          &remoteControl,
 		AutoMemory:             &autoMemory,
+		SSHWorkaround:          &sshWorkaround,
 		ContextFeatures:        &contextFeatures,
 		AutoCompactWindow:      &autoCompactWindow,
 	}
@@ -260,6 +263,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		}
 	}
 
+	sshWorkaround, err := harness.ResolveSSHWorkaround(h, agentProfile.SSHWorkaround)
+	if err != nil {
+		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
+	}
+	if sandboxMode != harness.SandboxManagedProfile {
+		sshWorkaround = false
+	}
+
 	return &durableRelaunchConfig{
 		Harness:                h.Name,
 		Cwd:                    strings.TrimSpace(conversation.Cwd),
@@ -274,6 +285,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		AskUserQuestionTimeout: askTimeout,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		SSHWorkaround:          sshWorkaround,
 		ContextFeatures:        contextFeatures,
 		AutoCompactWindow:      autoCompactWindow,
 	}, nil

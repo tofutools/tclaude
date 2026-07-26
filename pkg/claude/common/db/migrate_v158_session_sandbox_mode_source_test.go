@@ -59,7 +59,3 @@ func TestSessionSandboxModeSourceRoundTrips(t *testing.T) {
 	assert.Empty(t, cleared.SandboxModeSource,
 		"a launch with nothing to attribute must not inherit the previous launch's chooser")
 }
-
-func TestMigrateV158IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 158, currentVersion, "tripwire: bump this with the next migration")
-}

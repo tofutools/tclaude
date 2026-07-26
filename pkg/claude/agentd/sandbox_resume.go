@@ -14,11 +14,21 @@ type resumeSandboxPolicy struct {
 	Previous *sandboxpolicy.Snapshot
 }
 
+// cleanupUncommittedResumeSandboxPolicy removes generation-specific roots
+// materialized while preparing a relaunch that will not be attempted.
+func cleanupUncommittedResumeSandboxPolicy(policy *resumeSandboxPolicy) error {
+	if policy == nil || policy.Snapshot == nil || policy.Previous == nil {
+		return nil
+	}
+	_, err := removeSupersededMaterializedAgentDirectories(*policy.Snapshot, *policy.Previous)
+	return err
+}
+
 // resolveResumeSandboxPolicy reconstructs an offline agent's policy from the
 // current global/group/explicit registry state. The previous snapshot supplies
 // only stable provenance and private agent-directory bindings; its ordinary
 // filesystem/environment values are not launch authority after resume.
-func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
+func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey string) (*resumeSandboxPolicy, error) {
 	previous, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
@@ -58,11 +68,30 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
+	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
+	if err != nil {
+		return nil, err
+	}
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		return nil, err
 	}
-	current, err = reconcileAgentDirectoriesForResume(current, *previous, agentID)
+	// The SSH config is regenerated for every process generation. Its fresh,
+	// generation-keyed root is not mounted into the predecessor, which is
+	// essential during reincarnation: that pane remains live until its
+	// successor has started and must not be able to race daemon-side writes.
+	previousForReconcile, err := configureCodexSSHWorkaroundDeclaration(*previous, false)
+	if err != nil {
+		return nil, err
+	}
+	freshBindingKeys := map[string]string{}
+	if sshWorkaround {
+		if sshLaunchKey == "" {
+			return nil, fmt.Errorf("codex SSH workaround launch key is missing")
+		}
+		freshBindingKeys[codexSSHAgentDirectory] = sshLaunchKey
+	}
+	current, err = reconcileAgentDirectoriesForResume(current, previousForReconcile, agentID, freshBindingKeys)
 	if err != nil {
 		return nil, err
 	}

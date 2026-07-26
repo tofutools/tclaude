@@ -142,6 +142,11 @@ export function spawnCapabilityView(draft, context) {
   const askTimeout = launchSetting(harness, 'askTimeout');
   const sandboxProfilesDisabled = draft.harness === 'codex'
     && draft.sandbox === 'danger-full-access';
+  const showSSHWorkaround = !!harness?.can_ssh_workaround;
+  const sshWorkaroundAvailable = showSSHWorkaround
+    && draft.sandbox === 'tclaude-agent'
+    && !sandboxProfilesDisabled
+    && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
   return {
     harness,
     models,
@@ -161,6 +166,8 @@ export function spawnCapabilityView(draft, context) {
     trustDirStore: harness?.dir_trust_store || '',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
+    showSSHWorkaround,
+    sshWorkaroundAvailable,
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
@@ -278,6 +285,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // Off is tclaude's recommended posture: agents sharing a repo would
     // otherwise cross-pollute one Claude Code project memory store.
     autoMemory: false,
+    sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
     sandboxProfile: '',
   };
@@ -318,6 +326,7 @@ export function createSpawnDraft({
     includeGroupContext: true,
     remoteControl: groupRemoteControlDefault(group),
     autoMemory: false,
+    sshWorkaround: !!harness?.can_ssh_workaround,
   };
 }
 
@@ -352,6 +361,7 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     remoteControl: harness?.can_remote_control
       ? groupRemoteControlDefault(group) : false,
     autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
+    sshWorkaround: !!harness?.can_ssh_workaround,
     // A harness with no steerable startup context cannot carry trims, and keeping
     // them would send a map the daemon rejects with a 400.
     contextFeatures: harness?.can_context_features ? draft.contextFeatures : {},
@@ -425,6 +435,8 @@ export function applySpawnProfile(
   // the dialog's own default, which is off.
   next.autoMemory = view.showAutoMemory && profile.auto_memory != null
     ? !!profile.auto_memory : false;
+  next.sshWorkaround = view.showSSHWorkaround
+    ? profile.ssh_workaround !== false : false;
   // Same "a sparse profile means inherit" rule: an unset window clears any value
   // the previously selected profile put in the field, rather than leaving it to
   // silently ride along onto a profile that never asked for it.
@@ -479,6 +491,7 @@ export function clearSpawnProfileFields(draft, context, {
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
     autoMemory: false,
+    sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
     owner: false,
     permissionOverrides: {},
@@ -613,6 +626,7 @@ export function spawnProfileSeed(draft, context) {
   // chip on a field they never touched — indistinguishable from a deliberate
   // pin, and it would opt the profile out of any future default change.
   if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
+  if (view.showSSHWorkaround) seed.ssh_workaround = !!draft.sshWorkaround;
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {
     seed.auto_compact_window = text(draft.autoCompactWindow);
   }
@@ -622,7 +636,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -706,6 +720,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
   if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
+  if (view.showSSHWorkaround) {
+    body.ssh_workaround = !!(view.sshWorkaroundAvailable && draft.sshWorkaround);
+  }
   // Blank omits the key so the daemon's profile tier stack still speaks; the
   // daemon normalizes "450k" to plain digits, so the raw field text is sent.
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {

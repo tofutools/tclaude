@@ -31,6 +31,7 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 		Approval:       "never",
 		AutoReview:     boolp(false),
 		TrustDir:       boolp(true),
+		SSHWorkaround:  boolp(false),
 		AgentName:      "worker",
 		Role:           "dev",
 		Descr:          "a sandboxed codex worker",
@@ -61,6 +62,8 @@ func TestSpawnProfile_CRUDRoundTrip(t *testing.T) {
 	assert.False(t, *got.AutoReview, "explicit false survives, not coerced to nil")
 	require.NotNil(t, got.TrustDir)
 	assert.True(t, *got.TrustDir)
+	require.NotNil(t, got.SSHWorkaround)
+	assert.False(t, *got.SSHWorkaround)
 	assert.Nil(t, got.SyncWorktree, "unset toggle round-trips as nil")
 	assert.Nil(t, got.AutoFocus)
 	assert.Nil(t, got.IncludeGroupDefaultContext)

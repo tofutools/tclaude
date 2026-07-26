@@ -237,10 +237,16 @@ func ensureAgentDirectoriesForRelaunch(snapshot sandboxpolicy.Snapshot) (sandbox
 
 // reconcileAgentDirectoriesForResume applies a freshly-resolved profile while
 // retaining the private directory bindings that belong to this stable agent.
-// Existing declarations keep their frozen paths; newly-added declarations get
-// a stable actor-keyed path. Removed declarations disappear with the rest of
-// the old profile rather than leaking into the relaunched sandbox.
-func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot, agentID string) (sandboxpolicy.Snapshot, error) {
+// Existing declarations keep their frozen paths. Newly-added declarations get
+// a stable actor-keyed path unless the caller supplies a generation key for a
+// binding that must not be shared with a live predecessor. Removed declarations
+// disappear with the rest of the old profile rather than leaking into the
+// relaunched sandbox.
+func reconcileAgentDirectoriesForResume(
+	current, previous sandboxpolicy.Snapshot,
+	agentID string,
+	freshBindingKeys map[string]string,
+) (sandboxpolicy.Snapshot, error) {
 	if len(current.Effective.AgentDirectories) == 0 {
 		return sandboxpolicy.RevalidateSnapshot(current)
 	}
@@ -271,11 +277,6 @@ func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve tclaude cache directory for agent-owned directories: %w", err)
 	}
-	root := filepath.Join(cacheDir, "agent-dirs", agentID)
-	if err := mkdirAllNoFollow(root, 0o700); err != nil {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("create resumed agent-owned directory root: %w", err)
-	}
-
 	effective := current.Effective
 	effective.Filesystem = append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
 	effective.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...)
@@ -283,6 +284,17 @@ func reconcileAgentDirectoriesForResume(current, previous sandboxpolicy.Snapshot
 	for _, name := range effective.AgentDirectories {
 		path := oldBindings[name]
 		if path == "" {
+			launchKey := agentID
+			if fresh := strings.TrimSpace(freshBindingKeys[name]); fresh != "" {
+				launchKey = fresh
+			}
+			if !agentDirectoryLaunchKeyRE.MatchString(launchKey) {
+				return sandboxpolicy.Snapshot{}, fmt.Errorf("invalid launch key for resumed agent-owned directory %s", name)
+			}
+			root := filepath.Join(cacheDir, "agent-dirs", launchKey)
+			if err := mkdirAllNoFollow(root, 0o700); err != nil {
+				return sandboxpolicy.Snapshot{}, fmt.Errorf("create resumed agent-owned directory root: %w", err)
+			}
 			path = filepath.Join(root, name)
 			if err := mkdirAllNoFollow(path, 0o700); err != nil {
 				return sandboxpolicy.Snapshot{}, fmt.Errorf("create resumed agent-owned directory for %s: %w", name, err)

@@ -74,6 +74,7 @@ type spawnProfileJSON struct {
 	AutoReview        *bool  `json:"auto_review,omitempty"`
 	TrustDir          *bool  `json:"trust_dir,omitempty"`
 	AutoMemory        *bool  `json:"auto_memory,omitempty"`
+	SSHWorkaround     *bool  `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -125,6 +126,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
+		SSHWorkaround:              p.SSHWorkaround,
 		RemoteControl:              p.RemoteControl,
 		AgentName:                  p.AgentName,
 		Role:                       p.Role,
@@ -292,6 +294,22 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_memory", err.Error()}
 		}
 	}
+	sshWorkaround := body.SSHWorkaround
+	if sshWorkaround != nil {
+		resolved, err := harness.ResolveSSHWorkaround(h, sshWorkaround)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_ssh_workaround", err.Error()}
+		}
+		sshWorkaround = &resolved
+	}
+	resolvedSandbox, err := harness.ResolveSandboxMode(h, sandbox)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	if resolvedSandbox != harness.SandboxManagedProfile && sshWorkaround != nil {
+		off := false
+		sshWorkaround = &off
+	}
 
 	// The agent_name becomes the spawned agent's display name (a /rename title
 	// at spawn) — same slash/control-char rules a template agent name follows.
@@ -348,6 +366,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,
+		SSHWorkaround:              sshWorkaround,
 		AutoMemory:                 body.AutoMemory,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
