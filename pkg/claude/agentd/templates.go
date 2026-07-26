@@ -1214,6 +1214,10 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		sshWorkaroundSet = true
 	}
 	if sandbox != harness.SandboxManagedProfile {
+		if sshWorkaround {
+			notes = append(notes,
+				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
+		}
 		sshWorkaround = false
 	}
 	if sshNote != "" {

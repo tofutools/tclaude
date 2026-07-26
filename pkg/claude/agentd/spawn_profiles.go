@@ -294,10 +294,21 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_memory", err.Error()}
 		}
 	}
-	if body.SSHWorkaround != nil {
-		if _, err := harness.ResolveSSHWorkaround(h, body.SSHWorkaround); err != nil {
+	sshWorkaround := body.SSHWorkaround
+	if sshWorkaround != nil {
+		resolved, err := harness.ResolveSSHWorkaround(h, sshWorkaround)
+		if err != nil {
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_ssh_workaround", err.Error()}
 		}
+		sshWorkaround = &resolved
+	}
+	resolvedSandbox, err := harness.ResolveSandboxMode(h, sandbox)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	if resolvedSandbox != harness.SandboxManagedProfile && sshWorkaround != nil {
+		off := false
+		sshWorkaround = &off
 	}
 
 	// The agent_name becomes the spawned agent's display name (a /rename title
@@ -355,7 +366,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,
-		SSHWorkaround:              body.SSHWorkaround,
+		SSHWorkaround:              sshWorkaround,
 		AutoMemory:                 body.AutoMemory,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),

@@ -142,6 +142,11 @@ export function spawnCapabilityView(draft, context) {
   const askTimeout = launchSetting(harness, 'askTimeout');
   const sandboxProfilesDisabled = draft.harness === 'codex'
     && draft.sandbox === 'danger-full-access';
+  const showSSHWorkaround = !!harness?.can_ssh_workaround;
+  const sshWorkaroundAvailable = showSSHWorkaround
+    && draft.sandbox === 'tclaude-agent'
+    && !sandboxProfilesDisabled
+    && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
   return {
     harness,
     models,
@@ -161,7 +166,8 @@ export function spawnCapabilityView(draft, context) {
     trustDirStore: harness?.dir_trust_store || '',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
-    showSSHWorkaround: harness ? !!harness.can_ssh_workaround : draft.harness === 'codex',
+    showSSHWorkaround,
+    sshWorkaroundAvailable,
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
@@ -714,7 +720,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
   if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
-  if (view.showSSHWorkaround) body.ssh_workaround = !!draft.sshWorkaround;
+  if (view.showSSHWorkaround) {
+    body.ssh_workaround = !!(view.sshWorkaroundAvailable && draft.sshWorkaround);
+  }
   // Blank omits the key so the daemon's profile tier stack still speaks; the
   // daemon normalizes "450k" to plain digits, so the raw field text is sent.
   if (view.showAutoCompactWindow && text(draft.autoCompactWindow)) {

@@ -30,6 +30,31 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	require.NotNil(t, snapshot)
 	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+	firstConfigDir := sshSnapshotEnvironment(snapshot.Effective.Environment, "TCL_CODEX_SSH_CONFIG_DIR")
+	require.NotEmpty(t, firstConfigDir)
+
+	defaultSuccessor := selfReincarnate(t, f, spawn.ConvID)
+	snapshot, ok = f.World.SpawnSandboxPolicy(defaultSuccessor)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	successorConfigDir := sshSnapshotEnvironment(snapshot.Effective.Environment, "TCL_CODEX_SSH_CONFIG_DIR")
+	require.NotEmpty(t, successorConfigDir)
+	assert.NotEqual(t, firstConfigDir, successorConfigDir,
+		"a live predecessor must never share the successor's regenerated SSH directory")
+	assert.Contains(t, successorConfigDir, "agent-dirs/spwn-",
+		"relaunches use a generation-keyed root instead of the stable agent ID")
+
+	raw := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "raw-codex", "harness": "codex", "sandbox": "workspace-write",
+		"ssh_workaround": true,
+	})
+	require.Equalf(t, http.StatusOK, raw.Code, "body=%s", raw.Raw)
+	rawDurable, err := db.AgentRelaunchProfileForConv(raw.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, rawDurable)
+	require.NotNil(t, rawDurable.SSHWorkaround)
+	assert.False(t, *rawDurable.SSHWorkaround,
+		"raw Codex containment cannot persist the managed-sandbox workaround as active")
 
 	optedOut := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "explicit-off", "harness": "codex", "sandbox": "tclaude-agent",
@@ -91,9 +116,14 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 
 func assertSnapshotHasEnvironment(t *testing.T, entries []sandboxpolicy.EnvironmentEntry, name string, want bool) {
 	t.Helper()
-	found := false
+	assert.Equal(t, want, sshSnapshotEnvironment(entries, name) != "")
+}
+
+func sshSnapshotEnvironment(entries []sandboxpolicy.EnvironmentEntry, name string) string {
 	for _, entry := range entries {
-		found = found || entry.Name == name
+		if entry.Name == name {
+			return entry.Value
+		}
 	}
-	assert.Equal(t, want, found)
+	return ""
 }

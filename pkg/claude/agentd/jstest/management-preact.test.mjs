@@ -1317,7 +1317,10 @@ test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) 
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
 
-  const defaults = model.profileDraft({ name: 'p', harness: 'codex' }, {}, catalog);
+  const defaults = {
+    ...model.profileDraft({ name: 'p', harness: 'codex' }, {}, catalog),
+    sandbox: 'tclaude-agent',
+  };
   assert.equal(defaults.ssh_workaround, true);
   assert.equal(model.profilePayload(defaults, null, catalog).ssh_workaround, true);
 
@@ -1326,6 +1329,10 @@ test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) 
   );
   assert.equal(optedOut.ssh_workaround, false);
   assert.equal(model.profilePayload(optedOut, null, catalog).ssh_workaround, false);
+
+  const raw = { ...defaults, sandbox: 'workspace-write' };
+  assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, false,
+    'raw Codex profiles persist the workaround as inactive');
 
   const claude = model.profileDraft(
     { name: 'p', harness: 'claude', ssh_workaround: false }, {}, catalog,

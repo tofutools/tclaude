@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,13 +14,13 @@ func TestResolveSSHWorkaround(t *testing.T) {
 	claude, err := Resolve(DefaultName)
 	require.NoError(t, err)
 
-	assert.True(t, codex.CanSSHWorkaround())
+	assert.Equal(t, runtime.GOOS == "linux", codex.CanSSHWorkaround())
 	assert.False(t, claude.CanSSHWorkaround())
 	assert.False(t, (*Harness)(nil).CanSSHWorkaround())
 
 	got, err := ResolveSSHWorkaround(codex, nil)
 	require.NoError(t, err)
-	assert.True(t, got, "Codex defaults the workaround on")
+	assert.Equal(t, runtime.GOOS == "linux", got, "Codex defaults the workaround on where it applies")
 
 	got, err = ResolveSSHWorkaround(claude, nil)
 	require.NoError(t, err)
@@ -31,7 +32,7 @@ func TestResolveSSHWorkaround(t *testing.T) {
 	assert.False(t, got, "Codex supports an explicit opt-out")
 	got, err = ResolveSSHWorkaround(codex, &on)
 	require.NoError(t, err)
-	assert.True(t, got)
+	assert.Equal(t, runtime.GOOS == "linux", got)
 
 	_, err = ResolveSSHWorkaround(claude, &on)
 	require.ErrorContains(t, err, "not supported")

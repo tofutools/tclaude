@@ -92,7 +92,9 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (remote != null) body.remote_control = remote;
   const autoMemory = (!h || h.can_auto_memory) ? readTri(draft.auto_memory) : null;
   if (autoMemory != null) body.auto_memory = autoMemory;
-  if (h?.can_ssh_workaround) body.ssh_workaround = !!draft.ssh_workaround;
+  if (h?.can_ssh_workaround) {
+    body.ssh_workaround = draft.sandbox === 'tclaude-agent' && !!draft.ssh_workaround;
+  }
   for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;
   }

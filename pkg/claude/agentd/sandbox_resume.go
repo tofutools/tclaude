@@ -18,7 +18,7 @@ type resumeSandboxPolicy struct {
 // current global/group/explicit registry state. The previous snapshot supplies
 // only stable provenance and private agent-directory bindings; its ordinary
 // filesystem/environment values are not launch authority after resume.
-func resolveResumeSandboxPolicy(convID string, sshWorkaround bool) (*resumeSandboxPolicy, error) {
+func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey string) (*resumeSandboxPolicy, error) {
 	previous, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
@@ -66,15 +66,22 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool) (*resumeSandb
 	if err != nil {
 		return nil, err
 	}
-	// The SSH config is regenerated for every process generation. Do not pin it
-	// to the predecessor's launch-keyed root: newly resolving it under the
-	// stable agent key lets the old root be retired once the predecessor exits,
-	// even when other authored agent directories were removed at the same time.
+	// The SSH config is regenerated for every process generation. Its fresh,
+	// generation-keyed root is not mounted into the predecessor, which is
+	// essential during reincarnation: that pane remains live until its
+	// successor has started and must not be able to race daemon-side writes.
 	previousForReconcile, err := configureCodexSSHWorkaroundDeclaration(*previous, false)
 	if err != nil {
 		return nil, err
 	}
-	current, err = reconcileAgentDirectoriesForResume(current, previousForReconcile, agentID)
+	freshBindingKeys := map[string]string{}
+	if sshWorkaround {
+		if sshLaunchKey == "" {
+			return nil, fmt.Errorf("codex SSH workaround launch key is missing")
+		}
+		freshBindingKeys[codexSSHAgentDirectory] = sshLaunchKey
+	}
+	current, err = reconcileAgentDirectoriesForResume(current, previousForReconcile, agentID, freshBindingKeys)
 	if err != nil {
 		return nil, err
 	}

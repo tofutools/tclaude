@@ -1,13 +1,16 @@
 package harness
 
-import "fmt"
+import (
+	"fmt"
+	"runtime"
+)
 
 // CanSSHWorkaround reports whether tclaude can give managed agents an
 // ownership-safe SSH client configuration. The workaround exists for Codex's
 // Linux user-namespace sandbox, which can expose root-owned system SSH
 // drop-ins as nobody:nogroup and make OpenSSH reject them.
 func (h *Harness) CanSSHWorkaround() bool {
-	return h != nil && h.Name == CodexName
+	return h != nil && h.Name == CodexName && runtime.GOOS == "linux"
 }
 
 // ResolveSSHWorkaround resolves the profile/spawn tri-state. Codex defaults to
@@ -17,7 +20,7 @@ func ResolveSSHWorkaround(h *Harness, requested *bool) (bool, error) {
 	if requested == nil {
 		return h != nil && h.CanSSHWorkaround(), nil
 	}
-	if *requested && (h == nil || !h.CanSSHWorkaround()) {
+	if *requested && (h == nil || h.Name != CodexName) {
 		name := ""
 		if h != nil {
 			name = h.Name

@@ -155,7 +155,7 @@ func TestRemoveMaterializedAgentDirectoriesDeletesEveryLaunchRoot(t *testing.T) 
 	}})
 	require.NoError(t, err)
 	current, err := reconcileAgentDirectoriesForResume(
-		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_test")
+		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 
 	roots := map[string]struct{}{}
@@ -286,7 +286,7 @@ func TestRemoveSupersededMaterializedAgentDirectoriesDeletesReplacedRoot(t *test
 	}})
 	require.NoError(t, err)
 	current, err := reconcileAgentDirectoriesForResume(
-		sandboxpolicy.NewSnapshot(newEffective, nil), previous, "agt_resume_test")
+		sandboxpolicy.NewSnapshot(newEffective, nil), previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 	newRoot := filepath.Dir(current.Effective.Environment[0].Value)
 
@@ -316,7 +316,7 @@ func TestReconcileAgentDirectoriesForResumeRetainsExistingAndAddsStableBinding(t
 	}})
 	require.NoError(t, err)
 	current := sandboxpolicy.NewSnapshot(currentEffective, nil)
-	resumed, err := reconcileAgentDirectoriesForResume(current, previous, "agt_resume_test")
+	resumed, err := reconcileAgentDirectoriesForResume(current, previous, "agt_resume_test", nil)
 	require.NoError(t, err)
 
 	bindings := map[string]string{}
@@ -505,7 +505,8 @@ func TestReconcileAgentDirectoriesForResumeMountsParentPerRoot(t *testing.T) {
 		Name: "current", AgentDirectories: []string{"GOCACHE", "GOLANGCI_LINT_CACHE"},
 	}})
 	require.NoError(t, err)
-	resumed, err := reconcileAgentDirectoriesForResume(sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_mount")
+	resumed, err := reconcileAgentDirectoriesForResume(
+		sandboxpolicy.NewSnapshot(currentEffective, nil), previous, "agt_resume_mount", nil)
 	require.NoError(t, err)
 
 	bindings := map[string]string{}

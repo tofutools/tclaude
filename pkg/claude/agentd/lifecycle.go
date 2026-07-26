@@ -1172,7 +1172,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
 	remoteControl := launchConfig.RemoteControl
-	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(convID, launchConfig.SSHWorkaround)
+	sshLaunchKey := generateSpawnLabel()
+	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(
+		convID, launchConfig.SSHWorkaround, sshLaunchKey)
 	if snapshotErr != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + snapshotErr.Error()
@@ -2885,6 +2887,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if sandboxMode != harness.SandboxManagedProfile {
+		if sshWorkaround {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
+		}
 		sshWorkaround = false
 	}
 	// Persist the resolved posture in the audit request as an explicit boolean,
