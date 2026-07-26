@@ -20,6 +20,22 @@ func TestSnapshotDistinguishesResolvedEmptyFromMissing(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported sandbox snapshot version")
 }
 
+func TestOmittedProfilesSnapshotSurvivesRevalidation(t *testing.T) {
+	omitted := OmittedProfilesSnapshot()
+	assert.True(t, omitted.ProfilesOmitted)
+	assert.Empty(t, omitted.Applied)
+	assert.Empty(t, omitted.Effective.Filesystem)
+	assert.Empty(t, omitted.Effective.Environment)
+
+	got, err := RevalidateSnapshot(omitted)
+	require.NoError(t, err)
+	assert.True(t, got.ProfilesOmitted)
+
+	omitted.Effective.Environment = []EnvironmentEntry{{Name: "SURPRISE", Value: "yes"}}
+	_, err = RevalidateSnapshot(omitted)
+	require.ErrorContains(t, err, "omitted sandbox-profile snapshot contains profile values")
+}
+
 func TestRevalidateSnapshotUpgradesLegacyVersion(t *testing.T) {
 	legacy := EmptySnapshot()
 	legacy.Version = 1

@@ -2,6 +2,11 @@ import { readReviewer, reviewerValue } from './approval-controls.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
+// Local-only select sentinel. Sandbox-profile names cannot contain "/", so it
+// cannot collide with an operator-authored profile. Never send it as
+// sandbox_profile: the request builder translates it to the explicit
+// omit_sandbox_profiles wire flag.
+export const SANDBOX_PROFILE_NONE = '/omit-all-tclaude-sandbox-profiles';
 export const MAX_SPAWN_NAME_LEN = 64;
 export const SPAWN_NAME_VALID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -684,7 +689,9 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (text(draft.task).trim()) body.task_ref_url = text(draft.task).trim();
   if (draft.harness) body.harness = draft.harness;
   if (view.sandbox.visible && draft.sandbox) body.sandbox = draft.sandbox;
-  if (!view.sandboxProfilesDisabled && draft.sandboxProfile) {
+  if (view.sandboxProfilesDisabled || draft.sandboxProfile === SANDBOX_PROFILE_NONE) {
+    body.omit_sandbox_profiles = true;
+  } else if (draft.sandboxProfile) {
     body.sandbox_profile = draft.sandboxProfile;
   }
   if (view.approval.visible && draft.approval) body.approval = draft.approval;

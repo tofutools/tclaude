@@ -8,12 +8,13 @@ import (
 	"time"
 )
 
-// SnapshotVersion 5 drops the separate read-baseline/read-exclusion mechanism
-// (TCL-623): strictness is now expressed entirely through ordinary filesystem
-// rows (a broad deny plus narrower reopens), so those fields no longer exist.
-// The bump keeps the fail-closed downgrade property of earlier versions — an
-// older binary rejects v5 rather than reinterpreting it.
-const SnapshotVersion = 5
+// SnapshotVersion 6 adds ProfilesOmitted, a lifecycle-significant launch
+// contract that prevents ambient sandbox-profile tiers from reappearing on
+// resume/reincarnation. The bump preserves the fail-closed downgrade property:
+// an older binary rejects v6 rather than ignoring the marker and reapplying
+// global/group profile values. Version 5 removed the retired read-baseline
+// mechanism (TCL-623).
+const SnapshotVersion = 6
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -154,6 +155,10 @@ func HasCapabilities(snapshot Snapshot) bool {
 // interpreted as an empty-but-authorized policy.
 type Snapshot struct {
 	Version int `json:"version"`
+	// ProfilesOmitted records an explicit launch contract that suppresses every
+	// tclaude sandbox-profile tier. It keeps resume/reincarnate from later
+	// reapplying newly assigned global or group values to an opted-out agent.
+	ProfilesOmitted bool `json:"profiles_omitted,omitempty"`
 	// ResolutionGroupID is the launch group whose sandbox assignment supplied
 	// the group tier. It is recorded even when that group had no profile, so a
 	// later resume can pick up a new assignment without guessing among an
@@ -180,6 +185,14 @@ func EmptySnapshot() Snapshot {
 	return NewSnapshot(effective, nil)
 }
 
+// OmittedProfilesSnapshot is an explicit resolved policy whose launch contract
+// suppresses all ambient and explicit sandbox-profile tiers.
+func OmittedProfilesSnapshot() Snapshot {
+	out := EmptySnapshot()
+	out.ProfilesOmitted = true
+	return out
+}
+
 // RevalidateSnapshot checks a frozen payload immediately before use. It
 // re-runs canonical path, protected-root, environment, and aggregate checks.
 // Missing paths remain valid and may later become ordinary directories at the
@@ -191,6 +204,14 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	in, err = NormalizeSnapshotVersion(in)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if in.ProfilesOmitted && (len(in.Applied) > 0 ||
+		len(in.Effective.Filesystem) > 0 ||
+		len(in.Effective.BreakGlassFilesystem) > 0 ||
+		len(in.Effective.Environment) > 0 ||
+		len(in.Effective.AgentDirectories) > 0 ||
+		in.Effective.NetworkAccess != NetworkAccessInherit) {
+		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:                 "effective-sandbox-snapshot",
@@ -226,6 +247,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
+	out.ProfilesOmitted = in.ProfilesOmitted
 	return out, nil
 }
 
@@ -237,15 +259,15 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	switch in.Version {
 	// v1 and v2 are structurally compatible: they simply carry neither TCL-609
 	// field, which decodes to the zero value that means "today's behavior".
-	// v2 is what current main persists, so rejecting it here would break every
-	// existing session, actor, and pending spawn on upgrade.
 	// v3/v4 additionally carried read_baseline and read_baseline_exclusions.
 	// TCL-623 removed that mechanism outright, so those fields simply do not
 	// decode any more and the restriction is dropped rather than reinterpreted.
 	// That is the deliberate operator decision — the feature had no users, and
 	// silently claiming to enforce a mechanism this binary no longer implements
-	// would be worse than dropping it.
-	case 1, 2, 3, 4, SnapshotVersion:
+	// would be worse than dropping it. v5 is the immediately prior shape and
+	// carries no ProfilesOmitted marker, so false preserves its ambient-resolution
+	// behavior when upgraded to v6.
+	case 1, 2, 3, 4, 5, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:

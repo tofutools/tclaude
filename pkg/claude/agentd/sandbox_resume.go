@@ -23,6 +23,12 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
+	if previous.ProfilesOmitted {
+		// This is a durable per-agent launch choice, not an empty ambient
+		// resolution. Do not let later global/group assignments reappear on
+		// resume or reincarnation.
+		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
+	}
 
 	var explicitProfileID int64
 	var explicitProfileName string

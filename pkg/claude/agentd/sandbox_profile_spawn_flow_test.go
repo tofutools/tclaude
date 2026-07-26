@@ -62,6 +62,11 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	})
 	require.Equal(t, http.StatusForbidden, denied.Code)
 	assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+	deniedOmit := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
+		"name": "child", "omit_sandbox_profiles": true, "approval": "default",
+	})
+	require.Equal(t, http.StatusForbidden, deniedOmit.Code)
+	assert.Contains(t, string(deniedOmit.Raw), "sandbox_profile_restricted")
 
 	profile, err := db.GetSandboxProfile("literal-env")
 	require.NoError(t, err)
@@ -560,9 +565,52 @@ func TestDangerFullAccessOmitsAssignedAndExplicitSandboxProfiles(t *testing.T) {
 	snapshot, err := db.AgentEffectiveSandboxConfigForConv(resp.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
+	assert.True(t, snapshot.ProfilesOmitted)
 	assert.Empty(t, snapshot.Applied)
 	assert.Empty(t, snapshot.Effective.Filesystem)
 	assert.Empty(t, snapshot.Effective.Environment)
+}
+
+func TestHumanCanExplicitlyOmitAllSandboxProfileValues(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:             "ambient",
+		Environment:      []db.SandboxEnvironmentEntry{{Name: "AMBIENT", Value: "yes"}},
+		AgentDirectories: []string{"GOCACHE"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("ambient"))
+	_, err = db.SetAgentGroupSandboxProfile("crew", "ambient")
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "sandbox": harness.ClaudeSandboxOff,
+		"omit_sandbox_profiles": true, "approval": "bypassPermissions",
+	})
+	require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.True(t, snapshot.ProfilesOmitted)
+	assert.Empty(t, snapshot.Applied)
+	assert.Empty(t, snapshot.Effective.Environment)
+	assert.Empty(t, snapshot.Effective.AgentDirectories)
+	assert.Empty(t, snapshot.Effective.Filesystem)
+}
+
+func TestExplicitProfileAndOmissionAreMutuallyExclusive(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "explicit"})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "sandbox_profile": "explicit", "omit_sandbox_profiles": true,
+	})
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.Contains(t, string(resp.Raw), "mutually exclusive")
 }
 
 func TestOpenCodeOffRejectsAssignedFilesystemSandboxPolicy(t *testing.T) {

@@ -301,9 +301,15 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   }, context, { path: '', branch: '' }).body;
   assert.equal(codexBody.trust_dir, false);
   assert.equal('sandbox_profile' in codexBody, false);
+  assert.equal(codexBody.omit_sandbox_profiles, true);
   assert.equal('remote_control' in codexBody, false);
   assert.equal(codexBody.approval, 'on-request');
   assert.equal(codexBody.auto_review, true);
+  const omittedBody = model.buildSpawnRequest({
+    ...draft, name: 'worker', sandboxProfile: model.SANDBOX_PROFILE_NONE,
+  }, context, { path: '', branch: '' }).body;
+  assert.equal(omittedBody.omit_sandbox_profiles, true);
+  assert.equal('sandbox_profile' in omittedBody, false);
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   const openCodeBody = model.buildSpawnRequest({
     ...openCode, name: 'worker', sandboxProfile: 'stale', tools: 'deny',
@@ -362,6 +368,13 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
     recordInteraction: (...args) => calls.push(['interaction', ...args]),
     shortID: (value) => value.slice(0, 8),
   });
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const omittedPolicy = await actions.loadSandboxPolicy('alpha', model.SANDBOX_PROFILE_NONE);
+  assert.equal(omittedPolicy.selected, model.SANDBOX_PROFILE_NONE);
+  assert.match(omittedPolicy.preview, /No tclaude sandbox-profile values/);
+  assert.deepEqual(omittedPolicy.breakGlass, []);
+  assert.equal(calls.filter(([, url]) => url?.includes('sandbox-profile-default')).length, 0,
+    'an explicit omission does not fetch or preview ambient assignments');
   actions.rememberLaunchPreferences({ autoFocus: false, model: 'opus', effort: 'high' });
   assert.equal(actions.autoFocusDefault(), false);
   assert.equal(actions.rememberedEffort('opus'), 'high');
@@ -493,6 +506,29 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-tools-row').hidden, true);
   mounted.cleanup();
+});
+
+test('Codex sandbox-off keeps a visible forced-none sandbox-profile choice', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'codex');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    const codexSandbox = host.querySelector('#agent-spawn-sandbox');
+    setValue(codexSandbox, 'danger-full-access');
+    await harness.act(() => harness.fireEvent(codexSandbox, 'change'));
+
+    const forcedNone = host.querySelector('#agent-spawn-sandbox-profile');
+    assert.equal(forcedNone.closest('.cron-create-row').hidden, false,
+      'the forced omission is explained instead of hiding the field');
+    assert.equal(forcedNone.disabled, true);
+    assert.match(forcedNone.options[0].textContent, /none.*required/i);
+  } finally {
+    mounted.cleanup();
+  }
 });
 
 test('Preact agent-spawn Clear wins a race with the initial default-profile load', async (t) => {
