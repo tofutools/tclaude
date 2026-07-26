@@ -2140,6 +2140,32 @@ tr:hover .agent-harness { color: #c9d1d9; }
    cursor and a subtle hover lift, mirroring the .cwd-link click affordance. */
 .remote-badge { margin-left: 5px; cursor: pointer; }
 .remote-badge:hover { filter: brightness(1.25); }
+/* Per-agent "agentd is refusing this agent's brokered telemetry" indicator
+   (TCL-761) — a bare 🚫 trailing the same harness line, styled like its
+   neighbours so it costs no extra row. It is deliberately NOT clickable:
+   there is no one-click repair, and the whole content is the tooltip's
+   explanation of why the rest of the row has stopped being true.
+   Amber-tinted like .sandbox-danger for the text-glyph rendering, and given
+   a slow pulse because it says the surface is lying, which a static glyph
+   among two other static glyphs reads too quietly for. */
+.broker-refusal-badge { margin-left: 5px; color: #f0883e; animation: broker-refusal-pulse 2.4s ease-in-out infinite; }
+@keyframes broker-refusal-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .broker-refusal-badge { animation: none; }
+}
+/* Machine-level sibling of the badge: brokered callbacks agentd could not
+   place on ANY row, so there is nowhere to put a per-agent glyph. It sits
+   above the group tree rather than inside it for the same reason — the
+   condition is not about a group. Framed like a warning row, but muted:
+   it is informational, and it must not outshout an actual agent error. */
+.broker-refusal-notice {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 10px; padding: 8px 10px;
+  border: 1px solid #6b4a1f; border-radius: 6px;
+  background: rgba(240, 136, 62, 0.08);
+  color: #d7c3a8; font-size: 12px; line-height: 1.45;
+}
+.broker-refusal-notice-glyph { color: #f0883e; }
 /* A name whose harness cannot be renamed: no click-to-edit affordance, so
    drop the pointer cursor + hover frame the editable .rowname-text carries. */
 .rowname-text.rowname-fixed { cursor: default; }

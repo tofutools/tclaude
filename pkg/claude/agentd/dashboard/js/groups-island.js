@@ -252,7 +252,48 @@ export function GroupsList({ host, state, actions }) {
     if (!present) setHoveredGroupKey(null);
   }, [current.groups, hoveredGroupKey]);
 
-  return html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} /><//>`;
+  return html`<${GroupsInteractionProvider}>
+    <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
+    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />
+  <//>`;
+}
+
+// BrokerRefusalNotice is the machine-level half of TCL-761, and the reason
+// the per-agent 🚫 badge is not the whole feature.
+//
+// Two things it covers that a badge cannot. First, refusals the daemon could
+// not place on any row at all — a brokered caller whose process ancestry
+// reaches no recorded session. Second, and less obvious: a badge is attached
+// to the row the daemon RESOLVED, which in the pid-reuse case is a dead
+// session — so it can be recorded and then drawn nowhere, because the
+// operator hides offline agents or that conv was never in a group. The total
+// makes the condition visible even then.
+//
+// It stays a bare counter. The refused request names a session id, and
+// putting THAT on screen would print an unauthenticated string from a caller
+// the daemon just declined to identify — the same reason it is never allowed
+// to decide which row gets a badge. So the notice says only that it is
+// happening and where to go looking, which is all the daemon honestly knows.
+export function BrokerRefusalNotice({ snapshot }) {
+  const total = Number(snapshot?.broker_refusals_total || 0);
+  const unplaceable = Number(snapshot?.broker_refusals_unplaceable || 0);
+  if (!(total > 0)) return null;
+  const plural = total === 1 ? '' : 's';
+  const title = 'These callbacks carry telemetry — status, cost, context, directory — for some agent, and it is being dropped;'
+    + ' the affected agent keeps working, so nothing else on the dashboard will look wrong.'
+    + ' agentd identifies a brokered caller by walking its process ancestry to a recorded session.'
+    + ' Where that resolved to a row, the row is marked 🚫 — but the resolved row can be a dead session, which you will not see if offline agents are hidden or it was never in a group.'
+    + ' Where it resolved to nothing there is no row to mark at all. Usual causes: a session row recorded against the same pid as a live agent’s pane, a sandboxed agent launched outside tclaude, or a row deleted while its pane kept running.'
+    + ' The daemon log records each refusal with the caller pid.';
+  const detail = unplaceable === total
+    ? ` from ${total === 1 ? 'a caller' : 'callers'} it could not place at all`
+    : unplaceable > 0
+      ? ` (${unplaceable} from callers it could not place at all)`
+      : '';
+  return html`<div class="broker-refusal-notice" role="status" title=${title}>
+    <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
+    <span>agentd refused ${total} brokered callback${plural}${detail} in the last 15 minutes — telemetry for at least one agent is being lost. Look for a 🚫 on an agent row; if there is none, the affected row is hidden or unplaceable, and the daemon log has the caller pid.</span>
+  </div>`;
 }
 
 export function mountGroupsIsland({

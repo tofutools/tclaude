@@ -241,6 +241,27 @@ unaffected.
 The daemon identifies the calling session from host pids it recorded at
 spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the
 request is accepted only as a cross-check and a disagreement is refused.
+
+A pid is not unique over a machine's lifetime, so a long-dead session's row
+can be recorded against the same number as a live agent's pane. On the
+brokered paths, when more than one row claims the pid the daemon replaces a
+winner whose tmux session it can see is gone with one it can see is alive.
+It is a repair of a demonstrably dead answer, not a re-ranking: with nothing
+provably alive, with tmux unreachable, or with no recorded tmux session to
+judge by, resolution is exactly what it was before. It matters because
+picking the corpse refuses a live agent's callbacks, and that failure
+sustains itself — the live row is advanced mainly by the very callbacks
+being refused.
+
+The repair covers the brokered hook and status-line paths and the
+`tclaude-layer` ancestry walks. The general pid → conv-id lookup that backs
+CLI identity is unchanged and can still misidentify on a reused pid.
+
+A run of refusals is surfaced on the dashboard rather than only logged: the
+agent's row carries a `🚫` badge saying the rest of the row has stopped
+being updated. It is always attributed to the row the daemon resolved,
+never the session id the refused request claimed. See
+[Groups](dashboard.md#groups).
 For the status line that resolved identity also replaces the environment
 variable the direct path trusts, so which *session row* a brokered render
 may write is decided by evidence the caller cannot assert. The second half

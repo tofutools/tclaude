@@ -72,6 +72,11 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	// than on anything the caller controls.
 	row, _ := hookSessionRowForPID(p.PID)
 	if row == nil {
+		// Before the rate check, for the reason spelled out at the same
+		// point in hook_broker.go: a throttled request is still a refused
+		// one, and this limiter's bucket is shared across every
+		// unplaceable caller.
+		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
@@ -104,6 +109,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
 		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
 			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
+		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

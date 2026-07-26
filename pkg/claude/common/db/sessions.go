@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -373,6 +374,59 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, nil
 	}
 	return s, err
+}
+
+// FindSessionsByPID returns every session row recorded against a host
+// pid, most recently updated first — the same order FindSessionByPID
+// picks its single winner from.
+//
+// It exists because a pid is NOT unique across a machine's lifetime. The
+// OS reuses pids, and a row is recorded with the pid its pane had at
+// spawn, so a long-dead session and a live one can both claim the same
+// number. FindSessionByPID answers that with "most recently updated
+// wins", which is a reasonable guess but not the same question as "which
+// of these is still running" — and for the brokered hook/statusline path
+// guessing wrong means a live agent's telemetry is refused for its whole
+// life (TCL-761).
+//
+// Callers that can tell which candidate is alive should use this and
+// choose; callers that cannot should keep using FindSessionByPID.
+func FindSessionsByPID(pid int) ([]*SessionRow, error) {
+	if pid <= 0 {
+		return nil, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		ORDER BY updated_at DESC`, pid)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*SessionRow
+	for rows.Next() {
+		s, err := scanSessionRow(rows)
+		if err != nil {
+			// Skip the bad row rather than failing the query, matching
+			// the batch loader. Scanning can fail on ONE row's own
+			// column (an effective_sandbox_config written by a newer
+			// tclaude, say), and this is a multi-row read feeding
+			// identity resolution: aborting would let an unrelated
+			// sibling row make a live agent unplaceable — the exact
+			// silent-total-telemetry-loss failure TCL-761 exists to
+			// remove. A caller reading one row (FindSessionByPID) never
+			// saw its siblings' decode errors either.
+			slog.Warn("db: skipping undecodable session row in pid lookup",
+				"pid", pid, "error", err, "module", "db")
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // FindSessionByPID finds a session by its (host) process PID — the PID

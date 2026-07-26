@@ -110,6 +110,16 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	// cross-check, below.
 	row, harnessPID := hookSessionRowForPID(p.PID)
 	if row == nil {
+		// No row resolved, so there is nothing trustworthy to attribute
+		// this to — counted only. See broker_refusals.go.
+		//
+		// Recorded BEFORE the rate check, because a throttled request is
+		// still a refused one and the pre-identity limiter is a single
+		// shared bucket: leaving it after would let one noisy unplaceable
+		// caller suppress a genuinely starving agent's contribution to
+		// the only number the operator can see. Recording is a mutex and
+		// a few field writes — cheaper than the writeError below it.
+		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
@@ -142,6 +152,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
 			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
 			"event", req.Input.HookEventName, "module", "hooks")
+		// Identity DID resolve here, so the refusal is attributed to the
+		// row the DAEMON concluded — never to the claimed one, which is
+		// the caller's own string. See broker_refusals.go.
+		brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

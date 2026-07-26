@@ -791,13 +791,17 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 // its known bwrap -> sh ancestry without trusting caller-controlled env.
 func tclaudeLayerSessionConvByAncestor(pid int) string {
 	const maxWrapperHops = 16
+	// Same live-row preference as the row-returning twin below: a wrapped
+	// agent whose pid is shadowed by a dead row would otherwise be given
+	// the corpse's conv-id here too (TCL-761). The extra conv-id condition
+	// stays part of the candidate test, so a row that has not established
+	// one yet is skipped rather than returned as "".
+	accept := func(row *db.SessionRow) bool { return row.ConvID != "" && isTclaudeLayerRow(row) }
 	for range maxWrapperHops {
 		if pid <= 1 {
 			return ""
 		}
-		if row, err := db.FindSessionByPID(pid); err == nil && row != nil &&
-			row.ConvID != "" &&
-			row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		if row := preferLiveRowAtPID(pid, accept); row != nil {
 			return row.ConvID
 		}
 		pid = procParent(pid)
@@ -851,25 +855,118 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	return nil, 0
 }
 
+// sessionRowByPID resolves the session row recorded against a host pid,
+// preferring a candidate whose tmux session is still alive.
+//
+// The preference exists because a pid is not unique over a machine's
+// lifetime: the OS reuses it, rows record the pid their pane had at
+// spawn, and so a long-dead session can share a number with a live one.
+// The plain "most recently updated wins" rule then answers a question
+// nobody asked. For the brokered hook/statusline path (TCL-754) picking
+// the dead row means a LIVE agent is refused — and the failure sustains
+// itself, because that agent's row is updated mainly by the hooks now
+// being refused, so its updated_at never catches up and the stale row
+// keeps winning. TCL-761.
+//
+// Liveness is a REPAIR OF A DEMONSTRABLY DEAD WINNER, never a filter and
+// never a re-ranking. The incumbent — the first candidate, exactly what
+// FindSessionByPID would have returned — is displaced only when tmux
+// positively reports its session gone AND some other candidate's session
+// is positively reported alive. Everything else keeps the incumbent:
+//
+//   - the incumbent's tmux session is alive → keep it;
+//   - the incumbent has no recorded tmux session at all → keep it. Absence
+//     of a name is not evidence of death, and a row auto-registered
+//     outside tmux legitimately has none. Ranking it below an older row
+//     that merely HAS a live name would break the invariant below in the
+//     one case where nothing is actually known;
+//   - no other candidate is alive → keep it;
+//   - the liveness probe fails, or the cache is cold and tmux is
+//     unreachable → keep it, because an empty alive set proves nothing
+//     about anybody.
+//
+// So this may resolve better than before; it can never resolve nothing
+// where the old code resolved something, and it never moves off a row
+// without positive evidence in both directions. Nothing here touches the
+// refusal semantics at the call sites: a caller that cannot be placed is
+// still refused.
 func sessionRowByPID(hostPID int) *db.SessionRow {
-	if row, err := db.FindSessionByPID(hostPID); err == nil && row != nil && row.ID != "" {
-		return row
+	return preferLiveRowAtPID(hostPID, nil)
+}
+
+// preferLiveRowAtPID is the shared body of the pid → row lookup: read
+// every row recorded against hostPID in FindSessionByPID's order, keep the
+// ones `accept` allows, and repair the incumbent per the rule above.
+//
+// A nil accept keeps every non-empty row. The layer walk passes one so the
+// tclaude-layer implementation check happens BEFORE the liveness
+// preference: those are different questions, and applying them in the
+// other order could prefer a live row the trust boundary excludes.
+func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.SessionRow {
+	rows, err := db.FindSessionsByPID(hostPID)
+	if err != nil || len(rows) == 0 {
+		return nil
 	}
-	return nil
+
+	candidates := rows[:0:0]
+	for _, row := range rows {
+		if row == nil || row.ID == "" {
+			continue
+		}
+		if accept != nil && !accept(row) {
+			continue
+		}
+		candidates = append(candidates, row)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	incumbent := candidates[0]
+	if len(candidates) == 1 || incumbent.TmuxSession == "" {
+		// One row means no ambiguity; a nameless incumbent means no
+		// evidence. Either way there is nothing to ask tmux.
+		return incumbent
+	}
+
+	// Only now is liveness worth a probe. The error is deliberately
+	// discarded rather than propagated — every other consumer of this
+	// cache treats a failed probe as an empty alive set, and here that
+	// degrades precisely to the old behaviour.
+	alive, _ := cachedLiveTmuxSessions()
+	if _, ok := alive[incumbent.TmuxSession]; ok {
+		return incumbent
+	}
+	for _, row := range candidates[1:] {
+		if row.TmuxSession == "" {
+			continue
+		}
+		if _, ok := alive[row.TmuxSession]; ok {
+			return row
+		}
+	}
+	return incumbent
+}
+
+func isTclaudeLayerRow(row *db.SessionRow) bool {
+	return row != nil && row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 }
 
 // tclaudeLayerSessionRowByAncestor is tclaudeLayerSessionConvByAncestor
 // returning the row. The recorded-implementation check is the same trust
 // boundary: only a launch the daemon itself recorded as tclaude-layer may
 // have its bwrap -> sh wrapper hops crossed.
+//
+// This is the walk that actually carries a WRAPPED agent's brokered hooks,
+// so it needs the same live-row preference sessionRowByPID applies — a
+// tclaude-layer agent is precisely the one that cannot recover on its own
+// when a dead row shadows its pid (TCL-761).
 func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 	const maxWrapperHops = 16
 	for range maxWrapperHops {
 		if pid <= 1 {
 			return nil
 		}
-		if row, err := db.FindSessionByPID(pid); err == nil && row != nil && row.ID != "" &&
-			row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		if row := preferLiveRowAtPID(pid, isTclaudeLayerRow); row != nil {
 			return row
 		}
 		pid = procParent(pid)

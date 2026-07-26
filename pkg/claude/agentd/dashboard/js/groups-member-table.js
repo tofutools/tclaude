@@ -88,6 +88,28 @@ function RemoteBadge({ member }) {
   return html`<span class="remote-badge" data-act="web-open-window" ...${memberAttrs(member)} title=${title}>📱</span>`;
 }
 
+// BrokerRefusalBadge warns that agentd is REFUSING this agent's brokered
+// telemetry callbacks (TCL-761). It matters because the refusal is silent
+// everywhere else: the agent keeps working, but its status, cost, context
+// meter and directory stop advancing — so the rest of this row quietly
+// becomes fiction, and without the badge the operator's only clue is a
+// row that looks merely idle.
+//
+// The count is per resolved session row and daemon-derived; a refused
+// request's own claimed session id never puts a badge anywhere.
+function BrokerRefusalBadge({ member }) {
+  const state = member.state || {};
+  const count = Number(state.broker_refusals || 0);
+  if (!(count > 0)) return null;
+  const since = relTime(state.broker_refusal_since);
+  const detail = state.broker_refusal_detail || '';
+  const title = `⚠ agentd has refused ${count} brokered callback${count === 1 ? '' : 's'} resolved to this session${since ? `, starting ${since}` : ''}`
+    + `${detail ? ` (${detail})` : ''}.`
+    + ' While this lasts, everything else on this row — status, model, cost, context, directory — is FROZEN at its last accepted value and may be badly out of date.'
+    + ' The usual cause is a dead session row recorded against the same pid as this agent’s pane, so the daemon places the callback on the wrong row; the other is an agent presenting a session id that disagrees with the one its process ancestry resolves to.';
+  return html`<span class="broker-refusal-badge" role="note" aria-label=${title} title=${title}>🚫</span>`;
+}
+
 export function HarnessLine({ member }) {
   const state = member.state || {};
   const offline = !member.online;
@@ -100,16 +122,23 @@ export function HarnessLine({ member }) {
   // own line below, which cost a whole row of height to say what a padlock says.
   const sandbox = html`<${SandboxBadge} member=${member} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
+  const refused = html`<${BrokerRefusalBadge} member=${member} />`;
   if (!model) {
     // A pre-tick row has no metadata text to trail, but an armed indicator is
     // still worth a minimal line — including a sandbox verdict, which is
     // recorded at launch and so is known before the first statusline hook.
+    //
+    // A refusal warning belongs here most of all: the model is stamped by the
+    // status line, so an agent whose brokered callbacks are ALL being refused
+    // never gets one, and this branch is the only one it ever renders through.
     if (!harness || harness === 'claude') {
-      const indicated = (member.online && state.remote_control) || !!sandboxIndicator(member);
-      return indicated ? html`<div class="agent-harness">${sandbox}${remote}</div>` : null;
+      const indicated = (member.online && state.remote_control)
+        || !!sandboxIndicator(member)
+        || Number(state.broker_refusals || 0) > 0;
+      return indicated ? html`<div class="agent-harness">${sandbox}${remote}${refused}</div>` : null;
     }
     const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${sandbox}${remote}</div>`;
+    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${sandbox}${remote}${refused}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -123,7 +152,7 @@ export function HarnessLine({ member }) {
       ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
-    </span>${sandbox}${remote}
+    </span>${sandbox}${remote}${refused}
   </div>`;
 }
 

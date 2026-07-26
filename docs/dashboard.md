@@ -125,6 +125,30 @@ profile that supplied the agent's rules, and says whether those rules are in
 force given the sandbox state. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 
+The same line can carry a **refused-telemetry badge** — `🚫`, shown when agentd
+has been refusing this agent's brokered hook/status-line callbacks. It matters
+because the failure is otherwise silent: the agent keeps working, but nothing it
+reports gets written, so **the rest of the row — status, model, cost, context,
+directory — is frozen at its last accepted value** and may be badly out of date.
+Hover it for the count and how long it has been happening. The usual cause is a
+dead session row recorded against the same pid as this agent's pane, which makes
+the daemon place the callbacks on the wrong row; the other is an agent
+presenting a session id that disagrees with the one its process ancestry
+resolves to. Only sandboxed (`tclaude-layer`) agents route their callbacks
+through the daemon, so only they can *cause* one — but the badge lands on
+whichever row the daemon resolved, and in the pid-reuse case that is the
+unrelated (often dead, often unsandboxed) row whose pid was reused.
+
+The badge always names the row **agentd itself resolved** for the caller, never
+the session id the refused request claimed — otherwise any wrapped agent could
+paint a warning on a peer. That has a consequence worth knowing: because the
+resolved row can be a dead session, the badge may land somewhere you are not
+looking — on an offline agent you have hidden, or on a conversation that was
+never in a group. So a notice above the group list reports the **total**
+number of refusals in the window, and how many of them the daemon could not
+place on any row at all. It names no agent, because for the unplaceable ones
+there is nothing trustworthy to name; the daemon log carries the caller pid.
+
 Group headers carry status-bot counts for their direct members. In a nested
 group tree, folding a group rolls every hidden descendant into that header's
 bot counts; unfolding it moves descendant activity back down to the visible
