@@ -73,10 +73,33 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
 	require.NoError(t, err)
 	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
-	require.ErrorContains(t, err, "mount, network, and PID namespaces required by isolated-with-agentd")
+	require.ErrorContains(t, err, "mount, network, and PID namespaces")
+	require.ErrorContains(t, err, "read-only remount support")
 	assert.Equal(t, "off", verdict.State)
 	assert.Equal(t, []sandboxpolicy.NetworkPosture{
 		sandboxpolicy.NetworkHostOpen,
 		sandboxpolicy.NetworkIsolatedWithAgentd,
 	}, probed)
+}
+
+func TestTclaudeLayerProbeExercisesReadOnlyRemountSemantics(t *testing.T) {
+	for _, posture := range []sandboxpolicy.NetworkPosture{
+		sandboxpolicy.NetworkHostOpen,
+		sandboxpolicy.NetworkIsolatedWithAgentd,
+	} {
+		t.Run(posture.String(), func(t *testing.T) {
+			args, err := tclaudeLayerProbeArgs(posture)
+			require.NoError(t, err)
+
+			tmpfs := indexOfBwrapTriplet(args, "--tmpfs", "/tmp")
+			childBind := indexOfBwrapTriplet(args, "--ro-bind", "/dev/null")
+			remount := indexOfBwrapTriplet(args, "--remount-ro", "/tmp")
+			require.NotEqual(t, -1, tmpfs)
+			require.NotEqual(t, -1, childBind)
+			require.NotEqual(t, -1, remount)
+			assert.Less(t, tmpfs, childBind)
+			assert.Less(t, childBind, remount)
+			assert.Contains(t, args[len(args)-1], "! touch /tmp/.tclaude-remount-write")
+		})
+	}
 }

@@ -5,6 +5,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -126,6 +128,10 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			Name:          "tclaude-layer-smoke",
 			NetworkAccess: sandboxpolicy.NetworkAccessNone,
 			Filesystem: []sandboxpolicy.FilesystemGrant{
+				// Exercise a legitimate most-specific-wins reopen beneath an
+				// ordinary hide. The applier must create this child bind before
+				// remounting the hidden parent read-only.
+				{Path: root, Access: sandboxpolicy.AccessDeny},
 				{Path: allowed, Access: sandboxpolicy.AccessWrite},
 				{Path: aliasTools, Access: sandboxpolicy.AccessRead},
 				{Path: filepath.Dir(tclaudeBinary), Access: sandboxpolicy.AccessRead},
@@ -216,10 +222,19 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
 	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
 
-	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600),
+		"a writable child reopen inside an ordinary hide must stay writable")
 	if err := os.WriteFile(filepath.Join(outside, "blocked"), []byte("no"), 0o600); err == nil {
 		t.Fatal("write outside the allowed root unexpectedly succeeded")
 	}
+	// The parent of the smoke fixture is auto-created in the isolated
+	// posture's constructed tmpfs root but is not itself an explicit mount.
+	// It must be read-only rather than accepting another throwaway write.
+	unboundRootWrite := filepath.Join(filepath.Dir(filepath.Dir(outside)), "tclaude-sandbox-v2-phantom")
+	err := os.WriteFile(unboundRootWrite, []byte("must-fail"), 0o600)
+	require.Error(t, err, "the constructed root must reject writes to unbound paths")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"constructed-root write must fail with EROFS, got %v", err)
 	got, err := os.ReadFile(aliasFile)
 	require.NoError(t, err, "symlink alias must remain usable through the read-only base root")
 	assert.Equal(t, "alias-ok", string(got))
@@ -230,6 +245,11 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	} else if err == nil {
 		t.Fatal("protected tclaude state unexpectedly remained readable under an ordinary profile")
 	}
+	hiddenWrite := filepath.Join(filepath.Dir(protectedFile), "phantom")
+	err = os.WriteFile(hiddenWrite, []byte("must-fail"), 0o600)
+	require.Error(t, err, "a hidden path must reject writes instead of accepting phantom state")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"hidden-path write must fail with EROFS, got %v", err)
 	if conn, err := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); err == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite the final applier hide")

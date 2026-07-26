@@ -112,10 +112,24 @@ func WrapTclaudeLayer(
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed
 // bubblewrap hygiene. Policy/profile interpretation belongs before this
 // boundary.
+//
+// The four precedence classes are established at their normal positions in
+// the argument stream, but read-only hardening of class-2 and class-3 hides is
+// deferred until plan replay finishes. Bubblewrap creates missing bind
+// destinations as it executes filesystem arguments, so remounting an ancestor
+// hide immediately would prevent narrower launch-contract, break-glass, and
+// most-specific-wins mounts from landing. The deferred tracker records whether
+// a hide is still the topmost mount at its exact path; a later exact bind
+// cancels its pending remount, while child mounts survive because
+// --remount-ro is non-recursive. The isolated posture's constructed tmpfs root
+// joins the same flush so unbound paths cannot accept throwaway writes. Class 4
+// is materialized and hardened only after that flush, so host control remains
+// the final, unshadowable phase.
 func bwrapArgs(
 	phase0WriteDirs, breakGlassPaths []string,
 	plan sandboxpolicy.MountPlan,
 ) ([]string, error) {
+	var hideRemounts tclaudeLayerHideRemounts
 	args := []string{
 		"--die-with-parent",
 		// Give the wrapped process a new terminal session so a copied tmux
@@ -135,7 +149,8 @@ func bwrapArgs(
 		// bubblewrap as PID 1 (do not use --as-pid-1) so it reaps orphaned
 		// harness subprocesses and host processes cannot reopen the host mount
 		// namespace through /proc/<pid>/root.
-		args = append(args, "--unshare-net", "--unshare-pid", "--tmpfs", "/")
+		args = append(args, "--unshare-net", "--unshare-pid")
+		args = hideRemounts.appendHide(args, "/")
 		var err error
 		args, err = appendTclaudeLayerStaticOSRoot(args)
 		if err != nil {
@@ -195,7 +210,7 @@ func bwrapArgs(
 		}
 	}
 	for _, root := range protectedRoots {
-		args = append(args, "--tmpfs", root)
+		args = hideRemounts.appendHide(args, root)
 	}
 	socketPaths := []string(nil)
 	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
@@ -234,9 +249,15 @@ func bwrapArgs(
 			if !exists {
 				continue
 			}
+			hideRemounts.noteReplacement(path)
 			args = append(args, "--ro-bind", path, path)
 			if !breakGlass[path] {
-				args = appendTclaudeLayerProtectedRehides(args, path, protectedRoots)
+				args = appendTclaudeLayerProtectedRehides(
+					args,
+					path,
+					protectedRoots,
+					&hideRemounts,
+				)
 			}
 		case sandboxpolicy.MountRW:
 			exists, err := bwrapBindSourceExists(path)
@@ -246,19 +267,31 @@ func bwrapArgs(
 			if !exists {
 				continue
 			}
+			hideRemounts.noteReplacement(path)
 			args = append(args, "--bind", path, path)
 			if !breakGlass[path] {
-				args = appendTclaudeLayerProtectedRehides(args, path, protectedRoots)
+				args = appendTclaudeLayerProtectedRehides(
+					args,
+					path,
+					protectedRoots,
+					&hideRemounts,
+				)
 			}
 		case sandboxpolicy.MountHide:
-			args = append(args, "--tmpfs", path)
+			args = hideRemounts.appendHide(args, path)
 			args = appendTclaudeLayerContractRepairs(
 				args,
 				path,
 				existingPhase0WriteDirs,
 				protectedRoots,
+				&hideRemounts,
 			)
-			args = appendTclaudeLayerSocketRepairs(args, path, socketPaths)
+			args = appendTclaudeLayerSocketRepairs(
+				args,
+				path,
+				socketPaths,
+				&hideRemounts,
+			)
 		default:
 			return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}
@@ -271,8 +304,77 @@ func bwrapArgs(
 	if err != nil {
 		return nil, fmt.Errorf("resolve tclaude tmux socket directory: %w", err)
 	}
-	args = append(args, "--tmpfs", tmuxSocketDir)
+	// If an ordinary ancestor hide is pending, create the class-4 mountpoint
+	// while that tmpfs is still mutable. No wrapped process runs until all
+	// setup operations finish, and the final tmpfs below still supplies the
+	// unshadowable host-control view.
+	if hideRemounts.hasActiveAncestor(tmuxSocketDir) {
+		args = append(args, "--dir", tmuxSocketDir)
+	}
+	args = hideRemounts.appendRemounts(args)
+	args = append(args,
+		"--tmpfs", tmuxSocketDir,
+		"--remount-ro", tmuxSocketDir,
+	)
 	return args, nil
+}
+
+// tclaudeLayerHideRemounts tracks the topmost exact-path operation without
+// disturbing MountPlan order. The first sighting fixes deterministic flush
+// order; later hide/replacement operations only update which mount currently
+// owns that path.
+type tclaudeLayerHideRemounts struct {
+	order  []string
+	active map[string]bool
+}
+
+func (r *tclaudeLayerHideRemounts) appendHide(args []string, path string) []string {
+	if r.active == nil {
+		r.active = make(map[string]bool)
+	}
+	r.noteAncestorReplacement(path)
+	if _, seen := r.active[path]; !seen {
+		r.order = append(r.order, path)
+	}
+	r.active[path] = true
+	return append(args, "--tmpfs", path)
+}
+
+func (r *tclaudeLayerHideRemounts) noteReplacement(path string) {
+	r.noteAncestorReplacement(path)
+	if _, tracked := r.active[path]; tracked {
+		r.active[path] = false
+	}
+}
+
+// noteAncestorReplacement deactivates child hides shadowed by a later mount.
+// A protected re-hide emitted after the replacement will reactivate its exact
+// path; a child left covered only by the new ancestor is not itself a visible
+// mountpoint and must not receive --remount-ro at flush time.
+func (r *tclaudeLayerHideRemounts) noteAncestorReplacement(path string) {
+	for candidate, active := range r.active {
+		if active && candidate != path && sandboxpolicy.PathContainsOrEqual(path, candidate) {
+			r.active[candidate] = false
+		}
+	}
+}
+
+func (r *tclaudeLayerHideRemounts) hasActiveAncestor(path string) bool {
+	for candidate, active := range r.active {
+		if active && sandboxpolicy.PathContainsOrEqual(candidate, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *tclaudeLayerHideRemounts) appendRemounts(args []string) []string {
+	for _, path := range r.order {
+		if r.active[path] {
+			args = append(args, "--remount-ro", path)
+		}
+	}
+	return args
 }
 
 var tclaudeLayerStaticOSPaths = []string{
@@ -313,9 +415,15 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 	return args, nil
 }
 
-func appendTclaudeLayerSocketRepairs(args []string, hide string, socketPaths []string) []string {
+func appendTclaudeLayerSocketRepairs(
+	args []string,
+	hide string,
+	socketPaths []string,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
 	for _, socket := range socketPaths {
 		if hide != socket && sandboxpolicy.PathContainsOrEqual(hide, socket) {
+			hideRemounts.noteReplacement(socket)
 			args = append(args, "--ro-bind", socket, socket)
 		}
 	}
@@ -326,11 +434,12 @@ func appendTclaudeLayerProtectedRehides(
 	args []string,
 	mountedPath string,
 	protectedRoots []string,
+	hideRemounts *tclaudeLayerHideRemounts,
 ) []string {
 	for _, protected := range protectedRoots {
 		if sandboxpolicy.PathContainsOrEqual(mountedPath, protected) ||
 			sandboxpolicy.PathContainsOrEqual(protected, mountedPath) {
-			args = append(args, "--tmpfs", protected)
+			args = hideRemounts.appendHide(args, protected)
 		}
 	}
 	return args
@@ -340,6 +449,7 @@ func appendTclaudeLayerContractRepairs(
 	args []string,
 	hide string,
 	existingWriteDirs, protectedRoots []string,
+	hideRemounts *tclaudeLayerHideRemounts,
 ) []string {
 	repaired := make([]string, 0, len(existingWriteDirs))
 	for _, writeDir := range existingWriteDirs {
@@ -347,6 +457,7 @@ func appendTclaudeLayerContractRepairs(
 		// ordinary profile row at/below the harness state root separately;
 		// workspace and agent-directory rows retain normal plan precedence.
 		if hide != writeDir && sandboxpolicy.PathContainsOrEqual(hide, writeDir) {
+			hideRemounts.noteReplacement(writeDir)
 			args = append(args, "--bind", writeDir, writeDir)
 			repaired = append(repaired, writeDir)
 		}
@@ -359,7 +470,7 @@ func appendTclaudeLayerContractRepairs(
 		for _, writeDir := range repaired {
 			if sandboxpolicy.PathContainsOrEqual(writeDir, protected) ||
 				sandboxpolicy.PathContainsOrEqual(protected, writeDir) {
-				args = append(args, "--tmpfs", protected)
+				args = hideRemounts.appendHide(args, protected)
 				break
 			}
 		}
