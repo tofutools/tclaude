@@ -55,8 +55,16 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 
 	// The commands DELEGATE to operations that already exist — bulk
 	// window ops, per-agent jump/hide, the window-subset modal, and
-	// spawn. This is what keeps the palette a thin surface.
-	must("'/api/agent-windows'", "bulk focus/unfocus reuses /api/agent-windows")
+	// spawn. Web focus opens terminal-shell panes directly, matching the
+	// picker; native focus and every hide still use the daemon window API.
+	must("./palette-window-ops.js", "bulk palette windows use the shared routing adapter")
+	must("const preferWebTerminal = snap.default_terminal === 'web'",
+		"bulk palette focus honors the frozen terminal preference")
+	must("const allWebWindowTargets = webWindowTargets(snap.agents)",
+		"focus-all captures the running agent roster for browser panes")
+	must("const groupWebWindowTargets = webWindowTargets(g.members)",
+		"group focus captures its running member roster for browser panes")
+	must("'/api/agent-windows'", "native focus and every hide reuse /api/agent-windows")
 	must("/api/jump/", "per-agent focus reuses /api/jump")
 	must("/api/hide/", "per-agent hide reuses /api/hide")
 	must("openWindowModal('all', null)", "the subset picker reuses the window modal")

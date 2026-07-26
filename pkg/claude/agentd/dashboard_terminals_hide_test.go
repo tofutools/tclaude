@@ -66,7 +66,7 @@ func TestHidePathsClosePanes(t *testing.T) {
 			"the eye-button hide case must close the agent's terminal pane"},
 		{"palette.js", "closeTerminalsForConvs([conv])",
 			"the palette per-agent hide must close that agent's terminal pane"},
-		{"palette.js", "closeTerminalsForWindowOp(out.agents)",
+		{"palette-window-ops.js", "closeTerminalsForWindowOp(result.agents)",
 			"the palette bulk unfocus must close the detached agents' terminal panes"},
 		{"transaction-dialog-actions.js", "closeTerminalsForWindowOp(result.agents)",
 			"the window-picker modal's unfocus must close the detached agents' terminal panes"},
