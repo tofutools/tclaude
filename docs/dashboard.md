@@ -273,6 +273,41 @@ records the reason returned to a blocked agent. The same editor appears in each
 real group's ⚙ menu; group cells add an **inherit global** state and otherwise
 override that one edge. Same-harness cells are always allowed, and human
 spawns bypass the matrix.
+
+#### Filtering a ⚙ menu
+
+All three of the Groups tab's cog menus — this toolbar one, each group header's,
+and each agent row's — open with a **filter box** at the top and the keyboard in
+it, so a long menu can be typed at instead of scanned. Every item is still an
+ordinary click target in its usual place; the box only narrows which of them are
+showing.
+
+- Typing filters on what the item **says** plus its **tooltip**, so
+  `blueprints` finds **⧉ templates…** and `conversation` finds **+ add member**.
+  Both themes' wording is always searchable, whichever skin is active: `disband`
+  finds **delete group** in the plain theme and `retire` finds **banish** in 🧙.
+  The Ctrl/Cmd-K palette's synonyms apply too — `hide` reaches a *veil*, `spawn`
+  a *summon*.
+- **↑/↓** move a cursor over the matches and wrap; **Enter** runs the one under
+  it, which is the topmost match as soon as you type, so `clone`+Enter works
+  without arrowing first. Moving the mouse takes the cursor over instead. The
+  cursor survives the 2s snapshot refresh, so a menu that redraws under you does
+  not lose your place.
+- **Esc** clears a non-empty box, and closes the menu when it is already empty.
+- Order is deliberately **not** re-ranked: matches stay where they sit in the
+  menu, so a filtered menu still reads like the menu you know. Disabled items
+  are still listed — their tooltip is what explains why they cannot run — but the
+  keyboard skips them.
+
+These menus keep growing, and this is the cheap way in: the filter reads each
+item's rendered label, so a newly added action is searchable the moment it is
+added, with nothing to register.
+
+The menus stay `role="menu"` / `role="menuitem"` — the click path is a menu, and
+converting ~55 items to listbox/option would be a lot of churn for a secondary
+surface. The filter box is a `combobox` over the menu it `aria-controls`, which
+is what makes its `aria-activedescendant` cursor reference resolve.
+
 Toggles surface three
 **virtual groups** below the real ones: **Ungrouped** (online agents in no
 group),
@@ -1462,6 +1497,21 @@ allowlist.
 | `browser-io` | Operation modules may create a short-lived download anchor, clipboard textarea fallback, or standalone Preact host solely to invoke a browser API. `xterm-loader.js` owns the non-visual script node used to fetch the classic xterm runtime on first valid terminal intent. | Temporary operation nodes and object URLs are removed/revoked in the same operation; no draft or request state is stored on them. The xterm script and installed global intentionally live for the page lifetime, while an in-flight promise deduplicates concurrent opens and a failed load is retryable. An auth-aware HEAD preflight preserves the dashboard's expired-session redirect before script injection. | Payload/download/clipboard tests assert the invoked browser contract and cleanup. The xterm loader test proves imports cause no fetch, auth failure causes no injection, concurrent requests append one script, and a ready runtime is reused; facade tests prove canceled/invalid requests do not prepare it. |
 | `config-adapter` | `config-form-adapter.js` and `remote-admin.js` are bounded adapters for server-described native controls embedded in Preact-owned config surfaces. | Activation is generation-guarded; option/list replacement is scoped to the supplied control, and the Config island owns activation cleanup. | Config activation and retry tests must prove stale loads cannot publish into a replacement control. |
 | `preact-compat` | Preact remains the visual owner. This marker covers trusted legacy readback HTML and standalone process-dialog wrappers used outside the main editor tree, not permission to build new imperative UI. | Injected markup is escaped/trusted at its model boundary; standalone hosts unmount Preact and remove themselves on completion. | Readback escaping and standalone-dialog close/disposal tests are required. New uses need explicit review and documentation here. |
+
+One surface sits just inside that allowance and is worth naming, because it
+reads at a glance like an exception: `menu-filter.js`, the type-to-filter core
+behind the ⚙ cog menus, decides which items a query keeps by **reading the
+rendered menu** rather than from data. It is not new imperative UI — it creates
+no nodes, and Preact still owns the box, the query and every item — but it does
+mark items on a Preact-rendered subtree. Two properties keep that safe. Its
+three `data-menu-*` attributes are declared by no vnode, so Preact never diffs
+them and a snapshot publish cannot fight them; and `ActionMenu` re-applies the
+filter after every render, so items that appear or disappear with the snapshot
+are re-evaluated. Reading the DOM is also the only complete option here: several
+items (`NotifyMenuItem`, `RemoteMenuItem`, `RestartMenuItem`,
+`SandboxRestartMenuItem`) compute their own label inside the component from live
+member state, so no call site knows what they say — and matching the rendered
+text means the filter cannot drift from the labels the operator can see.
 
 The guard intentionally allows ordinary ref-based effects (`focus`, measure,
 scroll, browser APIs) and rejects undocumented DOM ownership. If a new surface

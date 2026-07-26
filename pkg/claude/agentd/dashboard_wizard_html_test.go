@@ -1318,6 +1318,53 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	if !strings.Contains(dashboardAssets, "body.wizard .group-actions .cog-btn .cog-glyph { animation: none; }") {
 		t.Error("wizard cog rotation is not disabled under prefers-reduced-motion")
 	}
+
+	// The type-to-filter box each cog opens with (menu-filter.js) is chrome, so
+	// it takes the arcane skin along with the panel it sits in — otherwise it
+	// would sit as an unthemed default-dark input inside the violet-void
+	// dropdown. Its keyboard cursor gilds like a hovered spell, and the
+	// no-matches note re-letters to match the Spellbook's own empty state.
+	must("body.wizard .action-menu-filter {", "the cog filter box gets the arcane skin")
+	must("body.wizard .action-menu-filter::placeholder", "the filter box's prompt is re-lettered arcane")
+	must("body.wizard .action-menu button[data-menu-active]", "the keyboard cursor takes the mystic-purple glow in wizard mode")
+	must("body.wizard .action-menu[data-menu-empty]::after", "the empty-result note is re-lettered arcane")
+}
+
+// TestDashboardHTML_CogMenuFilter pins the shell-side contract of the ⚙ cog
+// menus' type-to-filter box (docs/dashboard.md, "Filtering a ⚙ menu"). Behaviour
+// lives in the Node suites — jstest/menu-filter.test.mjs for the matching rules,
+// cog-menu-filter-preact.test.mjs and toolbar-actions-menu.test.mjs for the two
+// owners — so these guards only cover what those cannot see: that the static
+// toolbar cog still ships the input its binder looks for, and that the CSS the
+// filter's three attributes depend on exists.
+func TestDashboardHTML_CogMenuFilter(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The toolbar cog's items are static markup, so unlike the two Preact cogs
+	// its filter box is authored in the shell. toolbar-actions-menu.js binds by
+	// this class and degrades to the old click-only menu without it.
+	must(`<input class="action-menu-filter"`, "the static toolbar cog ships a filter box")
+	must(`aria-label="Filter actions"`, "the filter box is named for screen readers")
+	// aria-activedescendant only resolves against a descendant or an
+	// aria-controls / aria-owns target, and the cursor's item is a SIBLING of the
+	// box. role=combobox plus the aria-controls edge menu-filter.js writes is what
+	// makes the reference resolvable instead of inert.
+	must(`role="combobox"`, "the filter box declares the role its aria-activedescendant needs")
+
+	// Presentation for the three attributes menu-filter.js owns. Without the
+	// hide rule a filtered-out item would stay visible and the feature would
+	// silently do nothing.
+	must(".action-menu [data-menu-filtered-out] { display: none; }", "non-matching items are hidden")
+	must(".action-menu[data-menu-empty]::after", "a query matching nothing says so")
+	// Background only: a border here would tie with the existing per-cog :hover
+	// rules on specificity and win on source order, turning a .danger row's red
+	// edge blue on plain hover.
+	must(".action-menu button[data-menu-active] { background: #1f6feb33; }", "the keyboard cursor marks its row with a background alone")
 }
 
 // TestDashboardHTML_WizardConfigTab pins the wizard re-skin of the Config tab

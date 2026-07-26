@@ -1,6 +1,11 @@
 import { createContext, h } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import {
+  applyMenuFilter, bindMenuHover, handleMenuFilterKeyDown,
+  MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER,
+} from './menu-filter.js';
+import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -108,7 +113,9 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   const interactions = useGroupsInteractions();
   const buttonRef = useRef(null);
   const menuRef = useRef(null);
+  const filterRef = useRef(null);
   const [opensUp, setOpensUp] = useState(false);
+  const [query, setQuery] = useState('');
   const open = interactions.openMenuKey === menuKey;
 
   useLayoutEffect(() => interactions.registerMenu(menuKey, {
@@ -119,11 +126,46 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   useLayoutEffect(() => {
     const menu = menuRef.current;
     const dismissItem = (event) => {
+      // The filter box lives inside the menu; only an item click dismisses.
       if (event.target.closest('button')) interactions.closeMenu();
     };
     menu.addEventListener('click', dismissItem);
-    return () => menu.removeEventListener('click', dismissItem);
+    const unbindHover = bindMenuHover(menu, { resolveInput: () => filterRef.current });
+    return () => {
+      menu.removeEventListener('click', dismissItem);
+      unbindHover();
+    };
   }, [menuKey, interactions.closeMenu]);
+
+  // Items are opaque children that re-render on every 2s snapshot publish, and
+  // conditional ones come and go, so while the menu is OPEN the filter is
+  // re-applied after each render rather than only when the query changes.
+  // applyMenuFilter writes attributes no vnode declares, so it cannot conflict
+  // with Preact's diff. It also preserves the cursor: a publish arrives every
+  // 2s, and clearing would undo an ↑/↓ selection out from under the operator
+  // and leave Enter doing nothing.
+  //
+  // Gated on `open` because there is one ActionMenu per group AND per agent
+  // row: without the guard every one of them would walk its items on every
+  // poll to re-filter a menu nobody can see.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (menu && open) applyMenuFilter(menu, query, { input: filterRef.current });
+  });
+
+  // The open/close edges. Opening focuses the box so the menu is typeable
+  // straight away; closing empties it and drops the cursor so the next open
+  // starts from the full list — once, on the transition, rather than on every
+  // render the menu then spends closed.
+  useLayoutEffect(() => {
+    if (open) {
+      queueMicrotask(() => filterRef.current?.focus());
+      return;
+    }
+    setQuery('');
+    const menu = menuRef.current;
+    if (menu) applyMenuFilter(menu, '', { input: filterRef.current, resetActive: true });
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -158,7 +200,31 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
       class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
-    >${children}</div>
+    ><input
+        ref=${filterRef}
+        class="action-menu-filter"
+        type="text"
+        autocomplete="off"
+        spellcheck=${false}
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
+        aria-label="Filter actions"
+        placeholder=${isWizardActive() ? MENU_FILTER_WIZARD_PLACEHOLDER : MENU_FILTER_PLACEHOLDER}
+        value=${query}
+        onClick=${(event) => {
+    // The group cog's menu is rendered inside <summary>, whose activation
+    // behaviour is the default action of a click anywhere within it. Blink
+    // exempts form controls, but suppress it explicitly rather than rely on
+    // that — the same guard row-actions.js applies to the menu's buttons.
+    event.preventDefault();
+  }}
+        onInput=${(event) => setQuery(event.currentTarget.value)}
+        onKeyDown=${(event) => handleMenuFilterKeyDown(menuRef.current, event, {
+    hasQuery: !!query,
+    clearQuery: () => setQuery(''),
+  })}
+      />${children}</div>
   `;
   return wrapperClass ? html`<span class=${wrapperClass}>${body}</span>` : body;
 }
