@@ -1,0 +1,225 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPreactHarness } from './preact-harness.mjs';
+
+function message(id, overrides = {}) {
+  return {
+    id, direction: 'in', from_conv: 'conv-a', from_agent: 'agt_alpha', from_title: 'Alpha',
+    to_conv: 'human', subject: `Subject ${id}`, body: `Body ${id}`,
+    created_at: '2026-07-12T00:00:00Z', read: false, ...overrides,
+  };
+}
+
+function mailbox(id, overrides = {}) {
+  return { id, kind: 'agent', title: id, total: 1, unread: 0, in: 1, out: 0, ...overrides };
+}
+
+// The sidebar's painted order is pinned folders, then each group with its
+// expanded members nested beneath it, then the flat agent list. Arrow keys are
+// expected to walk exactly that order, so the fixture spans all three bands.
+const SIDEBAR_ORDER = ['all', 'human', 'group:tclaude', 'conv-a', 'conv-b', 'conv-c'];
+
+function baseState() {
+  return {
+    boxQuery: '', messageQuery: '', selected: 'human', showRetired: false, showEmpty: false,
+    showPrevGens: false, busy: false, progress: null, selectedMsgId: 2,
+    selectedMsgs: new Set(), selectedBoxes: new Set(), page: 1, pageSize: 50,
+    total: 3, totalUnfiltered: 3,
+    mailboxes: [],
+    messages: [message(1), message(2), message(3)],
+  };
+}
+
+function controllerFor(signal, calls) {
+  const noop = () => {};
+  return {
+    state: { view: signal },
+    setBoxQuery: noop, setMessageQuery: noop, setShowRetired: noop, setShowEmpty: noop,
+    setShowPrevGens: noop, toggleBoxSelection: noop, clearBoxSelection: noop,
+    wipeSelectedMailboxes: noop, toggleGroupExpand: noop, toggleAgentsExpand: noop,
+    toggleMessageSelection: noop, togglePageSelection: noop, deleteOneMessage: noop,
+    deleteSelectedMessages: noop, setMessagesRead: noop, markAllAgentRead: noop,
+    setPageSize: noop, decideAccess: noop, consumeAccessHighlight: noop, renderMailTab: noop,
+    selectMessage: (id) => calls.messages.push(id),
+    selectMailbox: (id) => calls.mailboxes.push(id),
+    goToPage: (page) => calls.pages.push(page),
+    highlightedAccessRequest: () => null,
+    mailboxLabel: (box) => box.title || box.id,
+    mailboxTitleAttr: (box) => box.title || box.id,
+    mailboxView: () => ({
+      empty: false, hasRoster: true, filtering: false, agentsExpanded: true,
+      prevGens: new Set(),
+      pinned: [mailbox('all', { kind: 'all', title: 'All agent messages' }),
+        mailbox('human', { kind: 'human', title: 'Human notifications' })],
+      groups: [{
+        mailbox: mailbox('group:tclaude', { kind: 'group', title: 'tclaude', members: 2 }),
+        expanded: true,
+        members: [mailbox('conv-a', { title: 'Alpha' }), mailbox('conv-b', { title: 'Beta' })],
+      }],
+      agents: [mailbox('conv-c', { title: 'Gamma' })],
+    }),
+    messageView: () => ({
+      access: false, messages: signal.value.messages, search: signal.value.messageQuery,
+      isAggregate: false, pages: 1,
+    }),
+    messageCountText: () => `${signal.value.totalUnfiltered} messages`,
+    counterparty: (item) => item.from_title,
+    senderLabel: (item) => item.from_title,
+    allRecipientLabel: (item) => item.to_title || item.to_conv,
+    msgPreview: (item) => item.subject,
+    msgKind: () => 'decree',
+    senderOnline: () => true,
+    accessIsPending: (request) => !request.status || request.status === 'pending',
+    accessWho: (request) => request.conv_title,
+    accessSubject: (request) => request.perm,
+    accessStatusText: (request) => request.status || 'pending',
+    accessOutcome: (status) => ({ cls: status, txt: status }),
+    accessCountdown: () => 'auto-declines in 1m',
+  };
+}
+
+async function mountMail(t, state) {
+  const harness = await createPreactHarness(t);
+  const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
+  const signal = harness.signals.signal(state ?? baseState());
+  const calls = { messages: [], mailboxes: [], pages: [] };
+  const controller = controllerFor(signal, calls);
+  const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
+  const rows = (selector) => [...mounted.container.querySelectorAll(selector)];
+  // act() does not forward its callback's value, so the dispatched event —
+  // whose defaultPrevented says whether the pane claimed the key — is handed
+  // back through the closure.
+  const press = async (element, key, init = {}) => {
+    let event;
+    await harness.act(() => { event = harness.fireEvent(element, 'keydown', { key, ...init }); });
+    return event;
+  };
+  return { harness, signal, calls, mounted, rows, press };
+}
+
+test('Arrow keys walk the message list, moving the selection and the focus together', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const listRows = rows('#mail-list .mail-row');
+  assert.deepEqual(listRows.map((row) => row.dataset.id), ['1', '2', '3']);
+
+  listRows[1].focus();
+  const down = await press(listRows[1], 'ArrowDown');
+  assert.deepEqual(calls.messages, ['3']);
+  assert.equal(harness.document.activeElement, listRows[2]);
+  assert.equal(down.defaultPrevented, true);
+
+  await press(listRows[2], 'ArrowUp');
+  assert.deepEqual(calls.messages, ['3', '2']);
+  assert.equal(harness.document.activeElement, listRows[1]);
+  await mounted.unmount();
+});
+
+test('Arrow keys stop at the ends of the rendered page instead of paging', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const listRows = rows('#mail-list .mail-row');
+
+  listRows[0].focus();
+  const up = await press(listRows[0], 'ArrowUp');
+  listRows[2].focus();
+  const down = await press(listRows[2], 'ArrowDown');
+
+  assert.deepEqual(calls.messages, []);
+  assert.deepEqual(calls.pages, []);
+  // Still consumed: the pane must hold still rather than scroll off the row
+  // the operator is reading.
+  assert.equal(up.defaultPrevented, true);
+  assert.equal(down.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, listRows[2]);
+  await mounted.unmount();
+});
+
+test('A move started from a row control continues from that row', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const listRows = rows('#mail-list .mail-row');
+  const checkbox = rows('#mail-list .mail-msg-check')[1];
+
+  checkbox.focus();
+  await press(checkbox, 'ArrowDown');
+
+  assert.deepEqual(calls.messages, ['3']);
+  assert.equal(harness.document.activeElement, listRows[2]);
+  await mounted.unmount();
+});
+
+test('With no focused row the move starts from the selected one', async (t) => {
+  const { calls, mounted, press } = await mountMail(t);
+  const list = mounted.container.querySelector('#mail-list');
+  assert.equal(list.querySelector('.mail-row.active').dataset.id, '2');
+
+  await press(list, 'ArrowDown');
+
+  assert.deepEqual(calls.messages, ['3']);
+  await mounted.unmount();
+});
+
+test('Modified arrow keys stay with the browser', async (t) => {
+  const { calls, mounted, rows, press } = await mountMail(t);
+  const listRows = rows('#mail-list .mail-row');
+  listRows[1].focus();
+
+  for (const modifier of ['altKey', 'ctrlKey', 'metaKey', 'shiftKey']) {
+    const event = await press(listRows[1], 'ArrowDown', { [modifier]: true });
+    assert.equal(event.defaultPrevented, false, `${modifier} must not be swallowed`);
+  }
+  assert.deepEqual(calls.messages, []);
+  await mounted.unmount();
+});
+
+test('A running bulk op takes the arrow keys with the folders it disables', async (t) => {
+  const { calls, mounted, rows, press } = await mountMail(t, { ...baseState(), busy: true });
+  const sidebarRows = rows('#mail-sidebar .mailbox');
+  const listRows = rows('#mail-list .mail-row');
+
+  // Folder buttons are disabled for the duration, and selectMailbox refuses to
+  // switch anyway — so the sidebar's arrows go quiet with them.
+  const sidebarEvent = await press(sidebarRows[1], 'ArrowDown');
+  assert.deepEqual(calls.mailboxes, []);
+  assert.equal(sidebarEvent.defaultPrevented, false);
+
+  // Message rows stay clickable through a bulk op (opening one only reads it),
+  // so the list keeps its arrows too.
+  await press(listRows[1], 'ArrowDown');
+  assert.deepEqual(calls.messages, ['3']);
+  await mounted.unmount();
+});
+
+test('Arrow keys walk the sidebar in painted order, nested group members included', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const boxes = rows('#mail-sidebar .mailbox');
+  assert.deepEqual(boxes.map((row) => row.dataset.id), SIDEBAR_ORDER);
+
+  // No row holds focus yet, so the move starts from the open folder ("human").
+  const sidebar = mounted.container.querySelector('#mail-sidebar');
+  await press(sidebar, 'ArrowDown');
+  assert.deepEqual(calls.mailboxes, ['group:tclaude']);
+  assert.equal(harness.document.activeElement, boxes[2]);
+
+  // …and crosses into the group's nested members and out again to the flat
+  // agent list without stopping on the section heading or the expand caret.
+  for (const expected of ['conv-a', 'conv-b', 'conv-c']) {
+    await press(harness.document.activeElement, 'ArrowDown');
+    assert.equal(calls.mailboxes.at(-1), expected);
+  }
+  assert.equal(harness.document.activeElement, boxes[5]);
+  await mounted.unmount();
+});
+
+test('Clicking a row focuses it, so the arrow keys pick up from there', async (t) => {
+  const { harness, mounted, rows } = await mountMail(t);
+  const listRows = rows('#mail-list .mail-row');
+  const boxes = rows('#mail-sidebar .mailbox');
+
+  // Browsers disagree about whether a click focuses a <button> (macOS does
+  // not), so the island focuses it explicitly — otherwise "click a message,
+  // then arrow" would be a Linux-only feature.
+  await harness.act(() => harness.fireEvent(listRows[2], 'click'));
+  assert.equal(harness.document.activeElement, listRows[2]);
+  await harness.act(() => harness.fireEvent(boxes[3], 'click'));
+  assert.equal(harness.document.activeElement, boxes[3]);
+  await mounted.unmount();
+});
