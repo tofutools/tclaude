@@ -173,6 +173,8 @@ func TestClaudeAndCodexInlineMessagesKeepTmuxDelivery(t *testing.T) {
 			assert.Contains(t, nudge, "; delivery: inline")
 			assert.Contains(t, nudge, "; subject: unchanged]")
 			assert.True(t, strings.HasSuffix(nudge, "] existing pane delivery"), nudge)
+			assert.Greater(t, f.World.Tmux.CommandCount("paste-buffer"), 0,
+				"single-line message nudge must reach Bubble Tea as one bracketed-paste event")
 		})
 	}
 }

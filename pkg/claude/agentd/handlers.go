@@ -1684,7 +1684,15 @@ func acquirePaneInjectLock(mu *sync.Mutex) error {
 // injectors targeting the same pane single-file instead of interleaving
 // their send-keys (JOH-310 — see paneInjectLock).
 func injectTextAndSubmit(tmuxTarget, text string) error {
-	return injectTextAndSubmitSerializedBy(tmuxTarget, tmuxTarget, text)
+	return injectTextAndSubmitWithOptions(tmuxTarget, tmuxTarget, text, false)
+}
+
+// injectBracketedTextAndSubmit keeps one-line text atomic for a terminal
+// application that recognises bracketed paste as an event. Agent-message
+// nudges use this path so an inbox watcher can release itself without trying
+// to reconstruct a server-authored envelope from individual key presses.
+func injectBracketedTextAndSubmit(tmuxTarget, text string) error {
+	return injectTextAndSubmitWithOptions(tmuxTarget, tmuxTarget, text, true)
 }
 
 // injectTextAndSubmitSerializedBy sends to tmuxTarget while serializing
@@ -1695,17 +1703,22 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 // would not single-file. Callers that know the pane's session pass it as
 // lockTarget; plain injectTextAndSubmit keeps target == lock identity.
 func injectTextAndSubmitSerializedBy(lockTarget, tmuxTarget, text string) error {
+	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false)
+}
+
+func injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text string, forceBracketedPaste bool) error {
 	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
 	}
 	defer mu.Unlock()
 	return paneinput.InjectTextAndSubmit(tmuxTarget, text, paneinput.Options{
-		Run:            runTmuxCommand,
-		SettleDelay:    injectSettleDelay,
-		SettleDelaySet: true,
-		LockTimeout:    paneInjectLockTimeout,
-		LockID:         lockTarget,
+		Run:                 runTmuxCommand,
+		SettleDelay:         injectSettleDelay,
+		SettleDelaySet:      true,
+		LockTimeout:         paneInjectLockTimeout,
+		LockID:              lockTarget,
+		ForceBracketedPaste: forceBracketedPaste,
 	})
 }
 

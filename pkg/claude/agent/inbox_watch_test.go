@@ -49,7 +49,7 @@ func TestInboxWatch_LoadErrorPreservesEntries(t *testing.T) {
 
 func TestInboxWatch_InlineNudgeQuitsAndPreservesMessage(t *testing.T) {
 	m := newInboxWatchModel(&inboxWatchParams{Limit: 10, Unread: true})
-	nudge := "[system: new agent message #42 from agt_sender; delivery: inline; subject: review] Please review this.\nSecond line."
+	nudge := "[system: new agent message #42 from agt_sender; delivery: inline; subject: review] Please review this."
 
 	m2, cmd := m.Update(tea.PasteMsg{Content: nudge})
 	mm := m2.(*inboxWatchModel)

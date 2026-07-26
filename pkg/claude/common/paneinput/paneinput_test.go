@@ -72,6 +72,26 @@ func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
 	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
 }
 
+func TestInjectTextAndSubmitCanForceBracketedPasteForSingleLineText(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var commands [][]string
+	const text = "[system: new agent message #42; delivery: inline] hello"
+	err := InjectTextAndSubmit("pane-paste:0.0", text, Options{
+		Run: func(args ...string) error {
+			commands = append(commands, append([]string(nil), args...))
+			return nil
+		},
+		SettleDelay: 0, SettleDelaySet: true,
+		ForceBracketedPaste: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, commands, 4)
+	require.Equal(t, "set-buffer", commands[0][0])
+	require.Equal(t, text, commands[0][len(commands[0])-1])
+	require.Equal(t, "paste-buffer", commands[1][0])
+	require.Contains(t, commands[1], "-p")
+}
+
 func TestInjectTextAndSubmitPreservesExactPaneID(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var commands [][]string

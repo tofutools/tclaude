@@ -319,7 +319,7 @@ func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window
 	// remains while we wait for the pane lock; closing that would require the
 	// injection primitive itself to understand persisted session status.
-	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
+	if err := injectBracketedTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
 		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}
