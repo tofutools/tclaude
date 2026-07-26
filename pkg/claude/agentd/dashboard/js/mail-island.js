@@ -29,7 +29,7 @@ const MAIL_PANES = [
 // Bare ←/→ move between the three mail panes. Group expansion remains on the
 // dedicated caret button, which avoids overloading a folder row with two
 // meanings and keeps pane traversal consistent from every row in the sidebar.
-function movePaneFocus(event) {
+function movePaneFocus(event, controller) {
   if (!event || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
   const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
   if (!direction) return false;
@@ -41,7 +41,10 @@ function movePaneFocus(event) {
     if (!pane) continue;
     let moved;
     if (MAIL_PANES[index].rows) {
-      moved = focusPaneRows(pane, MAIL_PANES[index].rows.rowSelector);
+      const select = MAIL_PANES[index].selector === '#mail-list'
+        ? (row) => controller.selectMessage(row.dataset.id)
+        : undefined;
+      moved = focusPaneRows(pane, MAIL_PANES[index].rows.rowSelector, select);
     } else {
       pane.focus();
       moved = true;
@@ -526,7 +529,7 @@ export function MailApp({ controller }) {
       select: (row) => controller.selectMessage(row.dataset.id),
     });
   };
-  return html`<div class="mail-client" onKeyDown=${movePaneFocus}>
+  return html`<div class="mail-client" onKeyDown=${(event) => movePaneFocus(event, controller)}>
     <input id="filter-mailboxes" type="text" class="mail-sidebar-filter"
       placeholder=${wizard ? 'Seek a familiar…' : 'Filter mailboxes (name / id)'}
       autocomplete="off" spellcheck=${false} value=${current.boxQuery}

@@ -49,7 +49,7 @@ function accessState() {
   };
 }
 
-function controllerFor(signal, calls) {
+function controllerFor(signal, calls, statefulSelection = false) {
   const noop = () => {};
   return {
     state: { view: signal },
@@ -59,7 +59,14 @@ function controllerFor(signal, calls) {
     toggleMessageSelection: noop, togglePageSelection: noop, deleteOneMessage: noop,
     deleteSelectedMessages: noop, setMessagesRead: noop, markAllAgentRead: noop,
     setPageSize: noop, decideAccess: noop, consumeAccessHighlight: noop, renderMailTab: noop,
-    selectMessage: (id) => calls.messages.push(id),
+    selectMessage: (id) => {
+      calls.messages.push(id);
+      if (!statefulSelection) return;
+      signal.value = {
+        ...signal.value,
+        selectedMsgId: signal.value.selected === 'access-requests' ? String(id || '') : Number(id),
+      };
+    },
     selectMailbox: (id) => calls.mailboxes.push(id),
     goToPage: (page) => calls.pages.push(page),
     highlightedAccessRequest: () => null,
@@ -108,12 +115,12 @@ function controllerFor(signal, calls) {
   };
 }
 
-async function mountMail(t, state) {
+async function mountMail(t, state, { statefulSelection = false } = {}) {
   const harness = await createPreactHarness(t);
   const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
   const signal = harness.signals.signal(state ?? baseState());
   const calls = { messages: [], mailboxes: [], pages: [] };
-  const controller = controllerFor(signal, calls);
+  const controller = controllerFor(signal, calls, statefulSelection);
   const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
   const rows = (selector) => [...mounted.container.querySelectorAll(selector)];
   // act() does not forward its callback's value, so the dispatched event —
@@ -297,6 +304,33 @@ test('Left and Right move focus across sidebar, list, and reader', async (t) => 
   const modified = await press(boxes[1], 'ArrowRight', { ctrlKey: true });
   assert.equal(modified.defaultPrevented, false);
   assert.equal(harness.document.activeElement, boxes[1]);
+  await mounted.unmount();
+});
+
+test('Entering an unselected message list opens the focused fallback row', async (t) => {
+  const state = { ...baseState(), selectedMsgId: null };
+  const { harness, signal, calls, mounted, rows, press } = await mountMail(
+    t, state, { statefulSelection: true },
+  );
+  const boxes = rows('#mail-sidebar .mailbox');
+  const listRows = rows('#mail-list .mail-row');
+  const reader = mounted.container.querySelector('#mail-reader');
+
+  boxes[1].focus();
+  await press(boxes[1], 'ArrowRight');
+  assert.equal(harness.document.activeElement, listRows[0]);
+  assert.equal(signal.value.selectedMsgId, 1);
+  assert.equal(mounted.container.querySelector('.mail-subject').textContent, 'Subject 1 #1');
+
+  await harness.act(() => {
+    signal.value = { ...signal.value, selectedMsgId: null };
+  });
+  reader.focus();
+  await press(reader, 'ArrowLeft');
+  assert.equal(harness.document.activeElement, listRows[0]);
+  assert.equal(signal.value.selectedMsgId, 1);
+  assert.equal(mounted.container.querySelector('.mail-subject').textContent, 'Subject 1 #1');
+  assert.deepEqual(calls.messages, ['1', '1']);
   await mounted.unmount();
 });
 
