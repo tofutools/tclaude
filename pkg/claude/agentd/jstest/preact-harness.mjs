@@ -120,6 +120,56 @@ function installDOM(t) {
     value: (candidate) => candidate instanceof window.HTMLElement && candidate.localName === 'details',
   });
 
+  // LinkeDOM invokes a listener with `this` bound to the event's target rather
+  // than to the node the listener sits on, which the DOM contract (and every
+  // browser) makes currentTarget. Preact registers one shared proxy function
+  // per event type and looks its real handler up on `this`, so a Preact
+  // handler reached by BUBBLING — a pane owning the keyboard on behalf of its
+  // rows, say — throws instead of running. Rebind through a wrapper so
+  // delegation behaves as it does in the browser. Wrappers are memoised per
+  // (node, listener) so removeEventListener still matches, which matters
+  // because Preact removes handlers by passing back that same shared proxy.
+  const eventTargetProto = (() => {
+    let proto = Object.getPrototypeOf(document.createElement('div'));
+    while (proto && !Object.getOwnPropertyDescriptor(proto, 'addEventListener')) {
+      proto = Object.getPrototypeOf(proto);
+    }
+    return proto;
+  })();
+  assert.ok(eventTargetProto, 'DOM event-target prototype is reachable');
+  const addDescriptor = Object.getOwnPropertyDescriptor(eventTargetProto, 'addEventListener');
+  const removeDescriptor = Object.getOwnPropertyDescriptor(eventTargetProto, 'removeEventListener');
+  const rebound = new WeakMap();
+  const reboundListener = (node, listener) => {
+    let perNode = rebound.get(node);
+    if (!perNode) rebound.set(node, perNode = new Map());
+    let wrapper = perNode.get(listener);
+    if (!wrapper) {
+      wrapper = function reboundToCurrentTarget(event) {
+        const self = event.currentTarget ?? node;
+        return typeof listener === 'function'
+          ? listener.call(self, event)
+          : listener.handleEvent(event);
+      };
+      perNode.set(listener, wrapper);
+    }
+    return wrapper;
+  };
+  Object.defineProperty(eventTargetProto, 'addEventListener', {
+    configurable: true,
+    value(type, listener, options) {
+      if (!listener) return addDescriptor.value.call(this, type, listener, options);
+      return addDescriptor.value.call(this, type, reboundListener(this, listener), options);
+    },
+  });
+  Object.defineProperty(eventTargetProto, 'removeEventListener', {
+    configurable: true,
+    value(type, listener, options) {
+      if (!listener) return removeDescriptor.value.call(this, type, listener, options);
+      return removeDescriptor.value.call(this, type, reboundListener(this, listener), options);
+    },
+  });
+
   // LinkeDOM intentionally does not emulate browsing-context focus. This tiny
   // patch supplies the activeElement contract needed to prove that Preact's
   // keyed reconciliation preserves the focused node; all DOM/events/querying
@@ -156,6 +206,8 @@ function installDOM(t) {
   });
 
   t.after(() => {
+    Object.defineProperty(eventTargetProto, 'addEventListener', addDescriptor);
+    Object.defineProperty(eventTargetProto, 'removeEventListener', removeDescriptor);
     if (detailsHasInstance) {
       Object.defineProperty(window.HTMLDetailsElement, Symbol.hasInstance, detailsHasInstance);
     } else {

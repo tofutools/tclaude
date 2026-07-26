@@ -732,6 +732,15 @@ top-level symlinks and asks the agent to pass the resolved path explicitly.
 Count caps of 100 attachments per stable agent and 1,000 daemon-wide prevent
 empty or tiny files from exhausting database rows and filesystem inodes.
 
+Both list panes are keyboard-navigable the way a desktop mail client is. Open
+a message (or a folder) and **↑ / ↓** move the selection to the row above or
+below it, taking the focus and the reading pane along; the folder sidebar walks
+its rows in painted order, so an expanded group's members are simply part of
+the path. Movement stops at the first and last row *of the page currently
+shown* — arrow keys never turn a page, so a key held down cannot walk you
+through a whole mailbox. Use the pager for that. Arrows with a modifier held
+(**Ctrl**, **Alt**, **Shift**, **⌘**) are left to the browser.
+
 After upgrading tclaude, run `tclaude setup --install-agent-skills` to refresh
 the bundled `human-notify` skill so agents discover the `--attach` workflow.
 

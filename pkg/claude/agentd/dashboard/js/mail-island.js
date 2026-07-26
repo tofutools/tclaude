@@ -2,10 +2,18 @@ import { Fragment, h, render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { registerMailController } from './mail-bridge.js';
+import { focusRow, moveRowSelection } from './mail-keynav.js';
 import { idTooltip, relTime, shortAgentId, shortId } from './helpers.js';
 import { dashboardState } from './snapshot-store.js';
 
 const html = htm.bind(h);
+
+// The two list panes' arrow-key wiring (mail-keynav.js). Each names the row
+// button ↑/↓ walk between, plus the wrapper that owns a row's out-of-button
+// controls, so a move started from a row's checkbox or 🗑 continues from that
+// row rather than restarting at the selection.
+const SIDEBAR_ROWS = { rowSelector: '.mailbox', wrapSelector: '.mailbox-row' };
+const LIST_ROWS = { rowSelector: '.mail-row', wrapSelector: '.mail-row-wrap' };
 
 function Progress({ progress }) {
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -44,7 +52,7 @@ function MailboxRow({ mailbox, nested = false, prevGen = false, current, control
   return html`<div class=${cls}>${lead}<button
     class=${`mailbox${active ? ' active' : ''}${mailbox.unread ? ' has-unread' : ''}`}
     data-id=${mailbox.id} title=${controller.mailboxTitleAttr(mailbox)} disabled=${current.busy}
-    onClick=${() => controller.selectMailbox(mailbox.id)}>
+    onClick=${(event) => { focusRow(event.currentTarget); controller.selectMailbox(mailbox.id); }}>
     <span class="mailbox-icon"><${MailboxIcon} mailbox=${mailbox} /></span>
     <span class="mailbox-name">${controller.mailboxLabel(mailbox)}</span>
     ${mailbox.retired && html`<span class="mailbox-tag" title="This agent has been retired">retired</span>`}
@@ -75,7 +83,13 @@ function MailSidebar({ current, controller }) {
       ? 'No mailboxes match the filter.' : 'No mailboxes.'}</div></aside>`;
   }
   const agentUnread = model.agentsExpanded ? 0 : model.agents.reduce((sum, mailbox) => sum + (mailbox.unread || 0), 0);
-  return html`<aside class="mail-sidebar" id="mail-sidebar">
+  // ↑/↓ walk the folders in painted order — pinned, then each group with its
+  // expanded members, then the agent folders. Section headings and expand
+  // carets are not folders, so they are simply not on the path.
+  const onKeyDown = (event) => moveRowSelection({
+    event, ...SIDEBAR_ROWS, select: (row) => { controller.selectMailbox(row.dataset.id); },
+  });
+  return html`<aside class="mail-sidebar" id="mail-sidebar" onKeyDown=${onKeyDown}>
     ${model.pinned.map(mailbox => html`<${MailboxRow} key=${mailbox.id} mailbox=${mailbox} current=${current} controller=${controller} />`)}
     ${model.groups.length > 0 && html`<div class="mailbox-section">${wizard ? 'Parties' : 'Groups'}</div>`}
     ${model.groups.map(group => html`<${Fragment} key=${group.mailbox.id}>
@@ -109,7 +123,8 @@ function AccessRow({ request, current, controller }) {
   return html`<div class=${`mail-row-wrap access-row-wrap${handled ? ' handled' : ''}`}
     data-key=${request.id} data-kind="decree">
     <button class=${`mail-row access-row-item${active ? ' active' : ''}${handled ? '' : ' unread'}${attention ? ' access-attn' : ''}`}
-      data-id=${request.id} onClick=${() => controller.selectMessage(request.id)}>
+      data-id=${request.id}
+      onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(request.id); }}>
       <span class="mail-row-top">
         ${!handled && html`<span class="mail-row-dot" title="pending">●</span>`}
         <span class="mail-row-party" title=${idTooltip(request.agent_id, request.current_conv_id || request.conv_id)}>${controller.accessWho(request)}</span>
@@ -146,7 +161,8 @@ function MessageRow({ message, current, aggregate, controller }) {
       disabled=${current.busy} title="Select message"
       onChange=${(event) => controller.toggleMessageSelection(message.id, event.currentTarget.checked)} />
     <button class=${`mail-row${active ? ' active' : ''}${unread ? ' unread' : ''}`}
-      data-id=${message.id} onClick=${() => controller.selectMessage(message.id)}>
+      data-id=${message.id}
+      onClick=${(event) => { focusRow(event.currentTarget); controller.selectMessage(message.id); }}>
       <span class="mail-row-top">
         ${unread && html`<span class="mail-row-dot" title="unread">●</span>`}
         <${MessageHead} message=${message} aggregate=${aggregate} controller=${controller} />
@@ -178,13 +194,19 @@ function MessageList({ current, controller, model }) {
     </div></div>`;
   }
   const wizard = document.body.classList.contains('wizard');
+  // ↑/↓ move the open message one row up or down the page. The access folder's
+  // "Recently handled" divider is not a row, so a move crosses it without a
+  // wasted keypress.
+  const onKeyDown = (event) => moveRowSelection({
+    event, ...LIST_ROWS, select: (row) => controller.selectMessage(row.dataset.id),
+  });
   if (model.access) {
     if (model.allAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
       ? 'No petitions await. When a familiar begs a boon beyond its station, it appears here for your judgement.'
       : 'No pending access requests. When an agent asks for access it can’t self-grant, it appears here for your decision.'}</div></div>`;
     if (model.pendingAccess.length + model.handledAccess.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${wizard
       ? 'No petitions match your seeking.' : 'No access requests match the filter.'}</div></div>`;
-    return html`<div class="mail-list" id="mail-list">
+    return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>
       ${model.pendingAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`)}
       ${model.handledAccess.length > 0 && html`<div class="access-divider" data-key="__access_handled__">${wizard ? 'Judgements past' : 'Recently handled'}</div>`}
       ${model.handledAccess.map(request => html`<${AccessRow} key=${request.id} request=${request} current=${current} controller=${controller} />`)}
@@ -193,7 +215,7 @@ function MessageList({ current, controller, model }) {
   if (model.messages.length === 0) return html`<div class="mail-list" id="mail-list"><div class="empty">${current.totalUnfiltered
     ? (wizard ? 'No scrolls match your seeking.' : 'No messages match the filter.')
     : (wizard ? 'This roost holds no scrolls.' : 'This mailbox is empty.')}</div></div>`;
-  return html`<div class="mail-list" id="mail-list">${model.messages.map(message => html`
+  return html`<div class="mail-list" id="mail-list" onKeyDown=${onKeyDown}>${model.messages.map(message => html`
     <${MessageRow} key=${message.id} message=${message} current=${current} aggregate=${model.isAggregate} controller=${controller} />`)}</div>`;
 }
 
