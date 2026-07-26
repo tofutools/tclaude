@@ -222,11 +222,13 @@ them still wins. Protected tclaude/harness state and the tmux socket are denied
 for reads and writes, while the canonical agentd socket remains readable and
 connectable so hook/status-line brokering continues to work.
 
-A hidden path remains present in the host directory tree. Seatbelt denies the
-open/write operation with `EPERM`; it does not make a directory listing omit
-the name. This is the intended fail-loud behavior: a hidden database path
-cannot accept writes into phantom state even though its name may still be
-enumerated.
+A hidden path remains present in the host directory tree. Seatbelt denies
+opens, writes, and Unix-socket connects at that path with `EPERM`; it does not
+make a directory listing omit the name. The same descendant reopens apply to
+reads and connects, which keeps the agentd socket reachable beneath an
+ordinary ancestor hide while the final tmux hide has no exception. This is the
+intended fail-loud behavior: a hidden database path cannot accept writes into
+phantom state even though its name may still be enumerated.
 
 Profile paths are passed through `sandbox-exec -D` parameters rather than
 interpolated into SBPL. Resolved symlink targets and any `MountPlan.Aliases`
