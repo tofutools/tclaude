@@ -26,6 +26,11 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 		Status: session.StatusIdle, SubagentsJSON: subagents.Encode(),
 	}
 	assert.Contains(t, sandboxRestartIdleFailure(withSubagent, now), "background agent")
+	legacySubagent := &db.SessionRow{
+		Status: session.StatusIdle, SubagentCount: 1,
+	}
+	assert.Contains(t, sandboxRestartIdleFailure(legacySubagent, now), "background agent",
+		"a pre-ledger row must fall back to its known nonzero count")
 
 	shells := db.BgShellSet{
 		"shell-1": {Command: "go test ./...", Seen: now},
@@ -46,6 +51,21 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 	}
 	assert.Empty(t, sandboxRestartIdleFailure(expired, now),
 		"expired ledger ghosts must not permanently wedge the transition")
+}
+
+func TestRequireCurrentSandboxRestartGenerationRejectsSupersededConversation(t *testing.T) {
+	setupTestDB(t)
+	const oldConv = "sandbox-restart-old"
+	const newConv = "sandbox-restart-new"
+	agentID, _, err := db.EnsureAgentForConv(oldConv, "test")
+	require.NoError(t, err)
+	require.NoError(t, requireCurrentSandboxRestartGeneration(agentID, oldConv))
+
+	_, err = db.RotateAgentConv(oldConv, newConv, "clear")
+	require.NoError(t, err)
+	assert.ErrorContains(t, requireCurrentSandboxRestartGeneration(agentID, oldConv),
+		"no longer the agent's current generation")
+	require.NoError(t, requireCurrentSandboxRestartGeneration(agentID, newConv))
 }
 
 func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *testing.T) {
@@ -78,4 +98,30 @@ func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *te
 	assert.Equal(t, "temporary dashboard unlock", got.SandboxModeSource)
 	assert.Equal(t, harness.ClaudeSandboxOn, got.NormalSandbox)
 	assert.Equal(t, normalSource, got.NormalSandboxSource)
+}
+
+func TestDurableRelaunchKeepsNormalCodexSSHPostureDuringUnlock(t *testing.T) {
+	setupTestDB(t)
+	const convID = "temporary-codex-relaunch"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	normalMode := harness.SandboxManagedProfile
+	approval := harness.ApprovalNever
+	ssh := true
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		ApprovalPolicy: &approval, SSHWorkaround: &ssh,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "temporary-codex-session", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.CodexName, Status: session.StatusIdle,
+		SandboxMode: normalMode, ApprovalPolicy: approval, ResumeProvenance: "test-proof",
+	}))
+	override := harness.SandboxDangerFull
+	require.NoError(t, db.SetTemporarySandboxModeForConv(convID, normalMode, "", &override))
+
+	got, err := durableRelaunchConfigForConv(convID)
+	require.NoError(t, err)
+	assert.False(t, got.SSHWorkaround, "danger-full-access launch does not materialize managed-profile SSH")
+	assert.True(t, got.NormalSSHWorkaround, "a clone/restore still needs the preserved managed-profile SSH posture")
 }

@@ -26,6 +26,7 @@ type durableRelaunchConfig struct {
 	TemporarySandboxMode   bool
 	NormalSandbox          string
 	NormalSandboxSource    string
+	NormalSSHWorkaround    bool
 	Approval               string
 	ToolGovernance         string
 	AutoReview             bool
@@ -304,6 +305,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
 	}
+	normalSSHWorkaround := sshWorkaround && normalSandboxMode == harness.SandboxManagedProfile
 	if sandboxMode != harness.SandboxManagedProfile {
 		sshWorkaround = false
 	}
@@ -317,6 +319,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		TemporarySandboxMode:   temporarySandboxMode != nil,
 		NormalSandbox:          normalSandboxMode,
 		NormalSandboxSource:    normalSandboxModeSource,
+		NormalSSHWorkaround:    normalSSHWorkaround,
 		Approval:               approval,
 		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,

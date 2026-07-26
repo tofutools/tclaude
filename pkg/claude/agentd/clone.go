@@ -136,6 +136,13 @@ func cloneSandboxPosture(relaunch *durableRelaunchConfig) (mode, source string) 
 	return relaunch.Sandbox, relaunch.SandboxModeSource
 }
 
+func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
+	if relaunch.TemporarySandboxMode {
+		return relaunch.NormalSSHWorkaround
+	}
+	return relaunch.SSHWorkaround
+}
+
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
 // Two branches:
 //   - copy: use convops to fork the existing jsonl onto a fresh
@@ -211,6 +218,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	// new agent and must inherit the preserved normal posture, otherwise one
 	// temporary debugging action would mint a permanently-unconfined sibling.
 	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
+	cloneSSH := cloneSSHWorkaround(relaunch)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -318,7 +326,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 		agentDirectoryCleanup := func() {}
 		if effectiveSandbox != nil {
 			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-				*effectiveSandbox, label, relaunch.SSHWorkaround)
+				*effectiveSandbox, label, cloneSSH)
 			if materializeErr != nil {
 				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 			}
@@ -463,7 +471,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	agentDirectoryCleanup := func() {}
 	if effectiveSandbox != nil {
 		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
-			*effectiveSandbox, newConv, relaunch.SSHWorkaround)
+			*effectiveSandbox, newConv, cloneSSH)
 		if materializeErr != nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 		}

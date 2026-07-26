@@ -26,7 +26,10 @@ func sandboxRestartIdleFailure(sess *db.SessionRow, now time.Time) string {
 	if sess == nil {
 		return "the agent must be online before its sandbox mode can be restarted"
 	}
-	subagents := db.ParseSubagentSet(sess.SubagentsJSON).LiveCount(now)
+	subagents := sess.SubagentCount
+	if set := db.ParseSubagentSet(sess.SubagentsJSON); set != nil {
+		subagents = set.LiveCount(now)
+	}
 	backgroundShells := db.ParseBgShellSet(sess.BgShellsJSON).LiveCount(now)
 	if sess.Status == session.StatusIdle && subagents == 0 && backgroundShells == 0 {
 		return ""
@@ -64,6 +67,14 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	if agentID == "" {
 		writeError(w, http.StatusConflict, "not_agent",
 			"temporary sandbox restart requires a stable agent identity")
+		return
+	}
+
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	if err := requireCurrentSandboxRestartGeneration(agentID, convID); err != nil {
+		writeError(w, http.StatusConflict, "stale_generation", err.Error())
 		return
 	}
 
@@ -121,10 +132,15 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		override = &mode
 	}
 
-	stopped := escalateShutdown(convID, shutdownGrace)
+	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
 	if stopped.Outcome == shutdownFailed {
 		writeError(w, http.StatusInternalServerError, "shutdown_failed",
 			"could not stop the idle agent before changing sandbox mode: "+stopped.Detail)
+		return
+	}
+	if err := requireCurrentSandboxRestartGeneration(agentID, convID); err != nil {
+		writeError(w, http.StatusConflict, "stale_generation",
+			"agent generation changed while stopping; sandbox posture was not changed: "+err.Error())
 		return
 	}
 	if err := db.SetTemporarySandboxMode(
@@ -132,7 +148,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	); err != nil {
 		// The posture did not change, so restore availability under the old
 		// configuration before reporting the persistence failure.
-		resume := resumeOneConvLocked(convID, false, true)
+		resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
 		detail := "persist temporary sandbox mode: " + err.Error()
 		if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
 			detail += "; restoring the stopped agent also failed: " + resume.Detail
@@ -141,8 +157,8 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		return
 	}
 
-	resume := resumeOneConvLocked(convID, false, true)
-	if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
+	resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+	if resume.Action != "resumed" {
 		writeError(w, http.StatusInternalServerError, "restart_failed",
 			"sandbox posture was updated, but the agent could not be restarted: "+resume.Detail+
 				"; use the normal wake action to retry")
@@ -156,4 +172,18 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		"sandbox_unlocked":       active,
 		"restart":                resume.Action,
 	})
+}
+
+func requireCurrentSandboxRestartGeneration(agentID, convID string) error {
+	actor, err := db.GetAgentByConv(convID)
+	if err != nil {
+		return fmt.Errorf("resolve stable agent generation: %w", err)
+	}
+	if actor == nil || actor.AgentID != agentID {
+		return fmt.Errorf("conversation %s no longer resolves to agent %s", convID, agentID)
+	}
+	if actor.CurrentConvID != convID {
+		return fmt.Errorf("conversation %s is no longer the agent's current generation", convID)
+	}
+	return nil
 }

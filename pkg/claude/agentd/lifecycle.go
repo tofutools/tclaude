@@ -124,6 +124,14 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	return stopOneConvWithIntentUnderLaunchLock(convID, force, lifecycleAction, relatedEventID)
+}
+
+// stopOneConvWithIntentUnderLaunchLock is stopOneConvWithIntent after the
+// caller has acquired the conversation launch lock. Compound lifecycle
+// operations use it to keep stop → posture mutation → resume indivisible from
+// other daemon wake/stop requests.
+func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
 	recoveryReason := lifecycleAction
 	if recoveryReason == "" {
 		recoveryReason = db.AgentExitActionStop
