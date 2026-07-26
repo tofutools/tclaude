@@ -168,11 +168,11 @@ is deliberate:
 It supports Claude Code and Codex; OpenCode is refused because its
 tool-executing server runs outside the attach pane this slice wraps. Linux uses
 `bwrap` from `PATH` and requires working unprivileged user namespaces. macOS
-uses `/usr/bin/sandbox-exec` and currently supports filesystem confinement only:
-`network_access: none` and every non-host-open posture are refused because this
-slice cannot supply network/PID isolation, a constructed root, or per-socket
-allowlisting there. If any required capability is missing, tclaude refuses the
-launch instead of silently falling back.
+uses `/usr/bin/sandbox-exec` for filesystem confinement and for the
+isolated-with-agentd network boundary. The reserved `filtered` posture is
+refused on both platforms because no proxy-backed applier exists. If any
+required capability is missing, tclaude refuses the launch instead of silently
+falling back.
 
 On Linux the layer does not unshare the IPC namespace. The host-open posture
 also retains the host PID namespace; the isolated posture unshares PIDs as part
@@ -313,12 +313,13 @@ therefore gives up that integration as well as host-local model servers.
 Claude Code and other hosted-only harnesses are refused because they would be
 dead on arrival. Codex proceeds only when the resolved sandbox profile contains
 `TCLAUDE_OFFLINE_MODEL=1`. That value is a precise operator assertion that the
-model transport **functions inside this isolated namespace**—for example a
-namespace-local Unix socket, an inherited file descriptor, or a workflow that
-needs no model traffic. It does not mean merely “a local model exists”:
-host-TCP Ollama/LM Studio-style servers are on the other side of the new
-network namespace and remain unreachable. tclaude deliberately does not infer
-the assertion from Codex `--oss` or a model name.
+model transport **functions across the selected platform's isolated
+boundary**—for example the allowlisted agentd-style Unix-socket transport, an
+inherited file descriptor, or a workflow that needs no model traffic. It does
+not mean merely “a local model exists”: host-TCP Ollama/LM Studio-style servers
+remain unreachable, across Linux's new network namespace or behind Darwin's
+Seatbelt network denies. tclaude deliberately does not infer the assertion from
+Codex `--oss` or a model name.
 
 The remaining limitation in the host-open posture is explicit:
 

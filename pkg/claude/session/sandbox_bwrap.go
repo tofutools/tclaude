@@ -65,7 +65,8 @@ func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // both the harness descriptor and the operator's resolved profile assert a
-// model transport that functions from inside the new network namespace.
+// model transport that functions across the selected platform's boundary
+// (a network namespace on Linux, Seatbelt network denies on Darwin).
 func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.EffectiveProfile) error {
 	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
 	if err != nil {
@@ -86,7 +87,7 @@ func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.Eff
 		}
 	}
 	return fmt.Errorf(
-		"unsupported_sandbox_profile_network: network_access none requires %s=1 in the resolved sandbox profile, asserting a model transport that functions inside the isolated namespace; see docs/sandboxing.md#isolated-with-agentd-network-posture",
+		"unsupported_sandbox_profile_network: network_access none requires %s=1 in the resolved sandbox profile, asserting a model transport that functions across the isolated network boundary; see docs/sandboxing.md#isolated-with-agentd-network-posture",
 		sandboxpolicy.OfflineModelTransportEnv,
 	)
 }

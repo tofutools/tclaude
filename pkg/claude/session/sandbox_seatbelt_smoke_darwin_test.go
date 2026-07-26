@@ -40,6 +40,7 @@ const (
 	darwinSmokeExerciseBrokerEnv    = "TCLAUDE_SANDBOX_V2_EXERCISE_BROKER"
 	darwinSmokeNetworkIsolatedEnv   = "TCLAUDE_SANDBOX_V2_NETWORK_ISOLATED"
 	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
+	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
 	darwinSmokeHelperTestExpression = "^TestTclaudeLayerDarwinSmokeHelper$"
@@ -126,6 +127,8 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}))
+	expectedAgentID, _, err := db.EnsureAgentForConv(darwinSmokeConvID, "seatbelt-smoke")
+	require.NoError(t, err)
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
@@ -182,6 +185,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		expectedAgentID,
 	)
 
 	state, err := LoadSessionState(darwinSmokeSessionID)
@@ -218,7 +222,16 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		expectedAgentID,
 	)
+	isolatedState, err := LoadSessionState(darwinSmokeSessionID)
+	require.NoError(t, err)
+	assert.True(t, isolatedState.LastHook.After(state.LastHook),
+		"the isolated brokered hook must advance the host session row")
+	isolatedSnapshot, err := db.GetContextSnapshot(darwinSmokeSessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Opus 5 isolated", isolatedSnapshot.Model,
+		"the isolated brokered status write must be readable from the host database")
 
 	// The compatibility paths pierce only the baseline deny. Adding explicit
 	// RO plan entries for /dev and TMPDIR must make the same writes fail.
@@ -253,6 +266,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		expectedAgentID,
 	)
 }
 
@@ -263,7 +277,7 @@ func runDarwinSeatbeltSmokeHelper(
 	plan sandboxpolicy.MountPlan,
 	restrictBaseline, exerciseBroker, networkIsolated bool,
 	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, tmuxSocket,
-	runtimeTempDir, tclaudeBinary, hostListener string,
+	runtimeTempDir, tclaudeBinary, hostListener, expectedAgentID string,
 ) {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
@@ -302,6 +316,7 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeExerciseBrokerEnv+"="+boolString(exerciseBroker),
 		darwinSmokeNetworkIsolatedEnv+"="+boolString(networkIsolated),
 		darwinSmokeHostListenerEnv+"="+hostListener,
+		darwinSmokeExpectedAgentIDEnv+"="+expectedAgentID,
 		darwinSmokeRuntimeTempDirEnv+"="+runtimeTempDir,
 		darwinSmokeInheritedFDEnv+"=3",
 		HookBrokerEnvVar+"="+HookBrokerAgentd,
@@ -331,6 +346,7 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	exerciseBroker := os.Getenv(darwinSmokeExerciseBrokerEnv) == "1"
 	networkIsolated := os.Getenv(darwinSmokeNetworkIsolatedEnv) == "1"
 	hostListener := os.Getenv(darwinSmokeHostListenerEnv)
+	expectedAgentID := os.Getenv(darwinSmokeExpectedAgentIDEnv)
 	runtimeTempDir := os.Getenv(darwinSmokeRuntimeTempDirEnv)
 	inheritedFD := os.Getenv(darwinSmokeInheritedFDEnv)
 
@@ -440,8 +456,10 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		"the agentd socket reopened beneath an ancestor hide must remain connectable")
 	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami through Seatbelt: %s", whoami)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
-		"agentd must resolve a stable managed identity through sandbox-exec ancestry; got %q", whoami)
+	require.NotEmpty(t, expectedAgentID)
+	whoamiID := strings.SplitN(strings.TrimSpace(string(whoami)), "\t", 2)[0]
+	assert.Equal(t, expectedAgentID, whoamiID,
+		"agentd must return the true stable identity, never a fallback identity")
 
 	hookPayload := `{"session_id":"` + darwinSmokeConvID +
 		`","cwd":"` + allowed +
@@ -451,8 +469,12 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	hookOutput, err := hook.CombinedOutput()
 	require.NoErrorf(t, err, "brokered hook callback through Seatbelt: %s", hookOutput)
 
+	statusModel := "Opus 5"
+	if networkIsolated {
+		statusModel += " isolated"
+	}
 	statusPayload := `{"session_id":"` + darwinSmokeConvID +
-		`","model":{"id":"claude-opus-5","display_name":"Opus 5"},` +
+		`","model":{"id":"claude-opus-5","display_name":"` + statusModel + `"},` +
 		`"workspace":{"current_dir":"` + allowed + `"},` +
 		`"context_window":{"used_percentage":42,"context_window_size":200000},` +
 		`"cost":{"total_cost_usd":1.25},"effort":{"level":"high"}}`

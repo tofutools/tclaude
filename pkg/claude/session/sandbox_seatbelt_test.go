@@ -192,7 +192,8 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testi
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, strings.Count(profile, "(deny network-bind)"))
-	assert.Equal(t, 1, strings.Count(profile, "(deny network-inbound)"))
+	assert.Equal(t, 1, strings.Count(profile, "(deny network-inbound"))
+	assert.GreaterOrEqual(t, strings.Count(profile, "(deny network-outbound"), 1)
 	assert.NotContains(t, profile, "(deny network*)")
 	assert.NotContains(t, profile, "system-socket")
 
@@ -207,9 +208,11 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testi
 		exceptions["AGENTD_SOCKET_1"],
 	})
 	for name := range exceptions {
-		assert.Contains(t, profile,
+		assert.Equal(t, 2, strings.Count(profile,
 			`(remote unix-socket
         (literal (param "`+name+`")))`,
+		),
+			"agentd path must except both inbound replies and outbound connects",
 		)
 	}
 }

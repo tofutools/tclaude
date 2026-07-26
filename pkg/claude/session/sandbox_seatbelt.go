@@ -579,9 +579,9 @@ func compileSeatbeltDenyRegions(
 }
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection, listener, and
-// inbound flow except connect(2) to the parameterized agentd Unix socket
-// spellings. The exception belongs inside the deny predicate because a broad
-// Seatbelt deny cannot be reopened by a later allow.
+// inbound flow except connect(2) and replies at the parameterized agentd Unix
+// socket spellings. The exceptions belong inside the deny predicates because
+// a broad Seatbelt deny cannot be reopened by a later allow.
 //
 // Do not replace these operations with network* or deny system-socket.
 // Creating an AF_UNIX socket descriptor is a pathless system-socket operation,
@@ -610,21 +610,36 @@ func appendSeatbeltIsolatedNetworkRules(
 	})
 
 	profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
-	profile.WriteString("; Only the parameterized agentd Unix socket spellings are excepted.\n")
+	profile.WriteString("; Only agentd replies/connects at the parameterized socket spellings are excepted.\n")
 	profile.WriteString("(deny network-bind)\n")
-	profile.WriteString("(deny network-inbound)\n")
 	if len(exceptions) == 0 {
+		profile.WriteString("(deny network-inbound)\n")
 		profile.WriteString("(deny network-outbound)\n")
 		return params
 	}
-	profile.WriteString("(deny network-outbound\n")
-	profile.WriteString("  (require-all\n")
 	for index, exception := range exceptions {
 		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
 		params = append(params, seatbeltProfileParam{
 			name: name,
 			path: nodes[exception].path,
 		})
+	}
+	appendSeatbeltNetworkDenyExceptAgentd(profile, "network-inbound", len(exceptions))
+	appendSeatbeltNetworkDenyExceptAgentd(profile, "network-outbound", len(exceptions))
+	return params
+}
+
+func appendSeatbeltNetworkDenyExceptAgentd(
+	profile *strings.Builder,
+	action string,
+	exceptionCount int,
+) {
+	profile.WriteString("(deny ")
+	profile.WriteString(action)
+	profile.WriteString("\n")
+	profile.WriteString("  (require-all\n")
+	for index := range exceptionCount {
+		name := fmt.Sprintf("AGENTD_SOCKET_%d", index)
 		profile.WriteString("    (require-not\n")
 		profile.WriteString("      (remote unix-socket\n")
 		profile.WriteString("        (literal (param \"")
@@ -632,7 +647,6 @@ func appendSeatbeltIsolatedNetworkRules(
 		profile.WriteString("\"))))\n")
 	}
 	profile.WriteString("  ))\n")
-	return params
 }
 
 func seatbeltRuntimePolicyDenies(
