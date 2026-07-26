@@ -338,6 +338,18 @@ func runDarwinSeatbeltSmokeHelper(
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	require.NoError(t, cmd.Start())
+	waited := false
+	defer func() {
+		if waited {
+			return
+		}
+		// Unblock the helper before killing/waiting for the outer shell. This
+		// runs on FailNow too, so a setup assertion cannot strand a child or
+		// leave os/exec's output-copy goroutines unjoined.
+		_ = gateWriter.Close()
+		cancel()
+		_ = cmd.Wait()
+	}()
 	require.NoError(t, gateReader.Close())
 
 	// This copied test binary stands in for the real harness process. Register
@@ -356,7 +368,7 @@ func runDarwinSeatbeltSmokeHelper(
 		helperPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
 		return readErr == nil && helperPID > 1
 	}, 5*time.Second, 10*time.Millisecond,
-		"darwin smoke helper did not publish its PID; output: %s", output.String())
+		"darwin smoke helper did not publish its PID")
 	row, err := db.LoadSession(darwinSmokeSessionID)
 	require.NoError(t, err)
 	row.PID = helperPID
@@ -367,6 +379,7 @@ func runDarwinSeatbeltSmokeHelper(
 	require.NoError(t, gateWriter.Close())
 
 	err = cmd.Wait()
+	waited = true
 	if ctx.Err() != nil {
 		t.Fatal("darwin tclaude-layer smoke timed out")
 	}
