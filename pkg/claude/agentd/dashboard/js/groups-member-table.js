@@ -161,11 +161,17 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
       : mode === 'off'
         ? `forced ON by ${source || 'a higher-precedence settings file'}, overriding this launch's \`off\``
         : `not chosen at launch — inherited from your Claude Code settings${via}`;
-    const confined = unverified ? '' : ' Bash is confined (working dir writable, $HOME read-only).';
+    // Only tclaude's own `on` block has a shape this can name: it is the
+    // hardening block tclaude emits. Under `inherit` the rules are the
+    // operator's settings plus whatever sandbox profile applied, so asserting
+    // "working dir writable, $HOME read-only" there describes a block this
+    // launch may never have used.
+    const shape = mode === 'on' ? ' (working dir writable, $HOME read-only)' : '';
+    const confined = unverified ? '' : ` Bash is confined${shape}.`;
     // The hedge rides in the opening posture rather than only in the caveat
     // below: "on" alone, read first, is the claim this case cannot make.
     const posture = unverified ? 'on (unverified)' : 'on';
-    return { danger: unverified, title: `${prefix}: ${posture} — ${why}.${confined}${caveat}` };
+    return { danger: unverified, enforced: true, title: `${prefix}: ${posture} — ${why}.${confined}${caveat}` };
   }
   if (mode === 'on') {
     // The launch asked for `on` and lost. Only enterprise managed policy
@@ -173,24 +179,59 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
     // confined is precisely who needs telling that it is not — so the title
     // leads with the posture that won, then names the request it overrode.
     return {
-      danger: true,
+      danger: true, enforced: false,
       title: `${prefix}: off — this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
     };
   }
   if (mode === 'off') {
     return {
-      danger: true,
+      danger: true, enforced: false,
       title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.${caveat}`,
     };
   }
   return null;
 }
 
+const SANDBOX_SCOPE_LABELS = {
+  global: 'global default',
+  group: 'group default',
+  explicit: 'chosen for this agent',
+};
+
+// sandboxProfileClause names the tclaude sandbox profiles applied to a launch
+// and says whether their rules are actually in force.
+//
+// A profile is orthogonal to the sandbox STATE: it never decides whether the
+// agent is sandboxed, it supplies the rules. For Claude Code those filesystem
+// grants are compiled into the harness's own `sandbox.filesystem.*` through
+// `--settings`, so they bite only while the sandbox is enabled, while a
+// profile's environment entries are plain env vars that apply either way. A
+// tooltip that named only the settings file which enabled the sandbox read as
+// the whole configuration, when a profile is what actually shaped it.
+//
+// Returns "" for a launch that recorded no policy at all — a row older than the
+// snapshot. Saying "no profile" there would invent a fact rather than report
+// one; "none applied" is only claimed where a resolved policy exists to say it.
+function sandboxProfileClause(member, enforced) {
+  const applied = member.state?.sandbox_profiles || [];
+  if (!applied.length) {
+    return member.state?.sandbox_profiles_recorded ? ' No tclaude sandbox profile applied.' : '';
+  }
+  const names = applied
+    .map((p) => `“${p.name}” (${SANDBOX_SCOPE_LABELS[p.scope] || p.scope})`)
+    .join(' + ');
+  return enforced
+    ? ` Rules: tclaude sandbox profile ${names}.`
+    : ` tclaude sandbox profile ${names} still sets this agent's environment, but its`
+      + ` filesystem rules are not enforced while the sandbox is off.`;
+}
+
 // sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
-// its harness line, or null when there is nothing to say. The mode and the
-// deciding settings file live in the tooltip rather than on screen: a padlock
-// per row is enough to scan a group for the unconfined agent, and the framed
-// "🔒 workspace-write" chip this replaces cost every row a second line to say it.
+// its harness line, or null when there is nothing to say. The mode, the
+// deciding settings file and the applied sandbox profiles live in the tooltip
+// rather than on screen: a padlock per row is enough to scan a group for the
+// unconfined agent, and the framed "🔒 workspace-write" chip this replaces cost
+// every row a second line to say less.
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
@@ -206,7 +247,10 @@ function sandboxIndicator(member) {
     // The label the chip used to print ("on", "on overridden", "on?") is not
     // dropped, only moved: every osSandboxBadge title opens with the resolved
     // posture, so the tooltip stays a complete account on its own.
-    return { danger: badge.danger, title: badge.title, offline };
+    return {
+      danger: badge.danger, offline,
+      title: badge.title + sandboxProfileClause(member, badge.enforced),
+    };
   }
   if (!mode || mode === 'inherit') return null;
   // `off` is Claude-only (no other harness offers it) and means the OS sandbox
@@ -219,8 +263,10 @@ function sandboxIndicator(member) {
       // so borrowing Codex's vocabulary here would name a concept it lacks.
       ? `${prefix}: off — the OS sandbox is disabled for this launch. The agent's Bash runs unconfined. Explicit opt-in.`
       : `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
-    : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes`;
-  return { danger, title, offline };
+    : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes.`;
+  // A mode-driven row (Codex, or a legacy Claude row) states its own posture,
+  // so the mode alone decides whether the profile's rules are enforced.
+  return { danger, title: title + sandboxProfileClause(member, !danger), offline };
 }
 
 export function SandboxBadge({ member }) {

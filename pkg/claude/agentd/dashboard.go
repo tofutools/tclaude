@@ -24,6 +24,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -1609,6 +1610,37 @@ type dashboardSudoEntry struct {
 	RemainingSeconds int64  `json:"remaining_seconds"`
 }
 
+// sandboxProfileRef names one tclaude sandbox profile that contributed to a
+// launch, with the tier it came from ("global" / "group" / "explicit"). It is
+// the display-facing subset of sandboxpolicy.AppliedProfile: the dashboard
+// needs to say WHICH profile and WHERE it was assigned, and nothing else in
+// that record (row id, mtime) belongs in a snapshot served to the browser.
+type sandboxProfileRef struct {
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
+}
+
+// sandboxProfileRefs projects a launch's frozen sandbox snapshot onto the
+// display refs above, preserving the resolver's global → group → explicit
+// order (Resolve appends the tiers in that order, so it is already sorted).
+// A nil snapshot — a launch older than the column, or one that recorded none —
+// yields nil, which the caller distinguishes from "resolved to no profiles"
+// via the recorded flag.
+func sandboxProfileRefs(snapshot *sandboxpolicy.Snapshot) []sandboxProfileRef {
+	if snapshot == nil || len(snapshot.Applied) == 0 {
+		return nil
+	}
+	out := make([]sandboxProfileRef, 0, len(snapshot.Applied))
+	for _, applied := range snapshot.Applied {
+		name := strings.TrimSpace(applied.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, sandboxProfileRef{Scope: string(applied.Scope), Name: name})
+	}
+	return out
+}
+
 // agentState mirrors what `tclaude session ls` shows: status from the
 // hook callbacks (idle / working / awaiting_*), last hook timestamp,
 // the agent's cwd, and subagent count. Empty string fields when no
@@ -1709,6 +1741,26 @@ type agentState struct {
 	// badge hedges instead of asserting containment — a padlock on an agent
 	// nothing confines is worse than no padlock at all.
 	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
+	// SandboxProfiles names the tclaude sandbox profiles that were applied to
+	// this launch, in resolution order (global → group → explicit).
+	//
+	// The profile is orthogonal to the state above: it does not decide WHETHER
+	// the agent is sandboxed, it supplies the RULES. For Claude Code a profile's
+	// filesystem grants are compiled into the harness's own
+	// `sandbox.filesystem.*` via `--settings`, so they bite only while the OS
+	// sandbox is enabled; its environment entries are plain env vars and apply
+	// either way. The badge tooltip needs both halves — naming only the settings
+	// file that enabled the sandbox reads as "this is your whole sandbox
+	// configuration" when a profile actually shaped it.
+	//
+	// Empty means either "no profile applied" or "no snapshot recorded" — the
+	// two are distinguished by SandboxProfilesRecorded, because claiming "none"
+	// for a legacy row would invent a fact.
+	SandboxProfiles []sandboxProfileRef `json:"sandbox_profiles,omitempty"`
+	// SandboxProfilesRecorded reports that this launch recorded a resolved
+	// sandbox policy at all, so an empty SandboxProfiles above is a genuine
+	// "nothing applied" rather than a row from before the snapshot existed.
+	SandboxProfilesRecorded bool `json:"sandbox_profiles_recorded,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -1800,6 +1852,11 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		OSSandboxState:      pick.OSSandboxState,
 		OSSandboxSource:     pick.OSSandboxSource,
 		OSSandboxUnverified: pick.OSSandboxUnverified,
+		// The sandbox profiles ride the same session row the verdict does — the
+		// row cache already bulk-loads it, so naming them costs no extra query
+		// on the poll.
+		SandboxProfiles:         sandboxProfileRefs(pick.EffectiveSandbox),
+		SandboxProfilesRecorded: pick.EffectiveSandbox != nil,
 		// RemoteControl is tclaude's best-known Remote Access flag for the
 		// conv (JOH-256), surfaced regardless of liveness like the other
 		// launch/row properties — the dashboard reflects the recorded intent

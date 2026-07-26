@@ -113,6 +113,16 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
 
+	// The tooltip names the tclaude sandbox profiles that supplied the RULES,
+	// not just the settings file that decided the STATE — the two are
+	// orthogonal, and naming only the latter read as the whole configuration.
+	// Behaviour is covered by jstest/sandbox-badge.test.mjs.
+	must("function sandboxProfileClause(member, enforced)", "the applied-profile clause is defined")
+	must("member.state?.sandbox_profiles", "the clause reads the applied profiles off the agent's state")
+	must("member.state?.sandbox_profiles_recorded", "a row that recorded no policy is distinguished from one that resolved to none")
+	must("global: 'global default'", "the assignment tier is named in operator vocabulary")
+	must("not enforced while the sandbox is off", "an unenforced profile does not read as containment")
+
 	// The sandbox indicator rides INSIDE the harness line, trailing the effort
 	// token next to the 📱 remote indicator, rather than owning a second line
 	// under the control cell.

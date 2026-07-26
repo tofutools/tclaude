@@ -7,7 +7,25 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+// requireDashAgentState / requireDashMemberState fetch one row's state from the
+// two surfaces the sandbox badge draws from, failing rather than nil-panicking
+// when the row is missing — the assertions below read the same fields off both.
+func requireDashAgentState(t *testing.T, snap dashSnapshot, convID string) dashState {
+	t.Helper()
+	agent := findDashAgent(snap, convID)
+	require.NotNil(t, agent, "agent %s missing from Agents[]", convID)
+	return agent.State
+}
+
+func requireDashMemberState(t *testing.T, snap dashSnapshot, group, convID string) dashState {
+	t.Helper()
+	member := findDashMember(snap, group, convID)
+	require.NotNil(t, member, "agent %s missing from group %s", convID, group)
+	return member.State
+}
 
 // Scenario (TCL-729): the Groups tab could not tell a Claude agent confined by
 // the operator's own settings.json from one confined by nothing. Both spawn
@@ -193,4 +211,96 @@ func TestDashboardSnapshot_VerifiedOSSandboxVerdictCarriesNoDoubt(t *testing.T) 
 	require.NotNil(t, agent)
 	assert.False(t, agent.State.OSSandboxUnverified,
 		"a verdict every tier confirmed must not wear the hedge")
+}
+
+// Scenario: the badge tooltip named the settings file that ENABLED the sandbox
+// and nothing else, which reads as "this is your whole sandbox configuration"
+// — when the rules the agent actually runs under came from a tclaude sandbox
+// profile the operator never sees mentioned. The profile is orthogonal to the
+// state: it does not decide whether the agent is sandboxed, it supplies the
+// rules (for Claude Code, compiled into the harness's own sandbox.filesystem.*
+// through `--settings`).
+//
+// The launch already freezes its resolved policy on the session row, so this
+// pins the READ path: both surfaces the badge draws from must name the applied
+// profiles and the tier each came from, in resolution order.
+func TestDashboardSnapshot_AppliedSandboxProfilesSurface(t *testing.T) {
+	const convID = "sbx6-1111-2222-3333-4444"
+	const label = "spwn-sbx6"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("profiled")
+	f.HaveAliveSession(convID, label, "tmux-sbx6", f.TestCwd("sbx6"))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	// Deliberately out of tier order on the way in: the read path must present
+	// them the way resolution applies them (global, then group), not the order
+	// they happen to sit in the record.
+	snapshot.Applied = []sandboxpolicy.AppliedProfile{
+		{Scope: sandboxpolicy.ScopeGlobal, ID: 1, Name: "tclaude-agent"},
+		{Scope: sandboxpolicy.ScopeGroup, ID: 2, Name: "squad-tight"},
+	}
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: label, TmuxSession: "tmux-sbx6", ConvID: convID, Cwd: f.TestCwd("sbx6"),
+		Status: "running", Harness: "claude",
+		OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+		EffectiveSandbox: &snapshot,
+	}), "stamp a launch whose rules came from sandbox profiles")
+	f.HaveMember("profiled", convID)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	for name, state := range map[string]dashState{
+		"Agents[]":  requireDashAgentState(t, snap, convID),
+		"Members[]": requireDashMemberState(t, snap, "profiled", convID),
+	} {
+		require.Len(t, state.SandboxProfiles, 2, "%s: both applied profiles reach the browser", name)
+		assert.Equal(t, "global", state.SandboxProfiles[0].Scope, "%s: global tier first", name)
+		assert.Equal(t, "tclaude-agent", state.SandboxProfiles[0].Name, "%s: names the global profile", name)
+		assert.Equal(t, "group", state.SandboxProfiles[1].Scope, "%s: group tier second", name)
+		assert.Equal(t, "squad-tight", state.SandboxProfiles[1].Name, "%s: names the group profile", name)
+		assert.True(t, state.SandboxProfilesRecorded, "%s: the launch recorded a resolved policy", name)
+	}
+}
+
+// The two ways a row can carry no profile names are NOT the same fact, and the
+// tooltip says different things about them: a launch that resolved to no
+// profile can be reported as such, while a row predating the snapshot must stay
+// silent rather than claim an absence tclaude never observed.
+func TestDashboardSnapshot_NoSandboxProfilesDistinguishesEmptyFromUnrecorded(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("plain")
+
+	const emptyConv = "sbx7-1111-2222-3333-4444"
+	f.HaveAliveSession(emptyConv, "spwn-sbx7", "tmux-sbx7", f.TestCwd("sbx7"))
+	empty := sandboxpolicy.EmptySnapshot()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbx7", TmuxSession: "tmux-sbx7", ConvID: emptyConv, Cwd: f.TestCwd("sbx7"),
+		Status: "running", Harness: "claude", OSSandboxState: "on",
+		EffectiveSandbox: &empty,
+	}), "stamp a launch that resolved to no sandbox profile")
+	f.HaveMember("plain", emptyConv)
+
+	const legacyConv = "sbx8-1111-2222-3333-4444"
+	f.HaveAliveSession(legacyConv, "spwn-sbx8", "tmux-sbx8", f.TestCwd("sbx8"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbx8", TmuxSession: "tmux-sbx8", ConvID: legacyConv, Cwd: f.TestCwd("sbx8"),
+		Status: "running", Harness: "claude", OSSandboxState: "on",
+	}), "stamp a row from before the policy snapshot existed")
+	f.HaveMember("plain", legacyConv)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	resolved := requireDashAgentState(t, snap, emptyConv)
+	assert.Empty(t, resolved.SandboxProfiles, "nothing applied")
+	assert.True(t, resolved.SandboxProfilesRecorded,
+		"a resolved policy with no profiles is an observed absence the tooltip may report")
+
+	legacy := requireDashAgentState(t, snap, legacyConv)
+	assert.Empty(t, legacy.SandboxProfiles, "nothing to name")
+	assert.False(t, legacy.SandboxProfilesRecorded,
+		"a row with no recorded policy must not be reported as 'no profile applied'")
 }

@@ -442,6 +442,26 @@ as the warning above, and records it on the session row. The badge then reads:
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
 something is off; hover for which of the three it is.
 
+### The badge also names your sandbox profile
+
+The glyph reports the sandbox **state** — whether the OS sandbox is effectively
+enabled. A tclaude **sandbox profile** is orthogonal to that: it never decides
+whether the agent is sandboxed, it supplies the *rules*. For a Claude agent the
+profile's filesystem grants are compiled into Claude Code's own
+`sandbox.filesystem.*` through `--settings`, so they take effect only while the
+sandbox is enabled, while the profile's environment entries are plain
+environment variables that apply either way.
+
+The tooltip therefore names both halves, and says which part of the profile is
+actually in force:
+
+| Situation | Tooltip adds |
+| --- | --- |
+| sandbox on, profile applied | `Rules: tclaude sandbox profile "x" (global default).` — one clause per applied tier, in `global` → `group` → `explicit` order |
+| sandbox off, profile applied | `tclaude sandbox profile "x" … still sets this agent's environment, but its filesystem rules are not enforced while the sandbox is off.` |
+| launch resolved to no profile | `No tclaude sandbox profile applied.` |
+| agent older than the recorded policy | *(nothing — an absence tclaude never observed is not reported as one)* |
+
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's
 badge. Claude Code may hot-reload a project/local scalar such as

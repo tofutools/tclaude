@@ -163,6 +163,104 @@ const CASES = [
     glyph: '⚠', danger: true, title: [/^Sandbox: danger-full-access —/],
   },
   {
+    // The tooltip named the settings file that ENABLED the sandbox and stopped
+    // there, which reads as the whole configuration — while the rules the agent
+    // actually runs under came from a profile it never mentioned.
+    name: 'an applied sandbox profile is named, with the tier it came from',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/^Sandbox: on —/, /Rules: tclaude sandbox profile “tclaude-agent” \(global default\)/],
+  },
+  {
+    name: 'every applied tier is named, in resolution order',
+    state: {
+      harness: 'claude', sandbox_mode: 'on',
+      os_sandbox_state: 'on', os_sandbox_source: 'this launch (sandbox `on`)',
+      sandbox_profiles: [
+        { scope: 'global', name: 'tclaude-agent' },
+        { scope: 'group', name: 'squad-tight' },
+      ],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/“tclaude-agent” \(global default\) \+ “squad-tight” \(group default\)/],
+  },
+  {
+    // The profile is orthogonal to the state: for Claude Code its filesystem
+    // grants ride the harness's own sandbox settings, so they bite only while
+    // the sandbox is enabled, while its environment entries are plain env vars
+    // that apply either way. Saying "rules: X" over an OFF sandbox would claim
+    // containment that nothing enforces.
+    name: 'a profile over a disabled sandbox says which half still applies',
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'off', os_sandbox_source: 'this launch (sandbox `off`)',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/still sets this agent's environment/, /not enforced while the sandbox is off/],
+    titleNot: [/^Rules:/, / Rules: /],
+  },
+  {
+    name: 'a launch that resolved to no profile reports the absence',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/No tclaude sandbox profile applied\./],
+  },
+  {
+    // A row older than the policy snapshot never observed an absence. Reporting
+    // one would be a fresh piece of misinformation in place of the old one.
+    name: 'a row with no recorded policy stays silent about profiles',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+    },
+    glyph: '🔒', danger: false,
+    titleNot: [/sandbox profile/],
+  },
+  {
+    // The shape claim describes the block tclaude emits for `on`. Under
+    // `inherit` the rules are the operator's settings plus whatever profile
+    // applied, so asserting it there describes a block this launch never used.
+    name: 'the confinement shape is claimed only for the block tclaude itself emits',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit',
+      os_sandbox_state: 'on', os_sandbox_source: '~/.claude/settings.json',
+    },
+    glyph: '🔒', danger: false,
+    title: [/Bash is confined\./], titleNot: [/working dir writable/],
+  },
+  {
+    name: 'a mode-driven row names its profile too',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write',
+      sandbox_profiles: [{ scope: 'explicit', name: 'tight' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/Rules: tclaude sandbox profile “tight” \(chosen for this agent\)/],
+  },
+  {
+    name: 'a full-access mode-driven row does not claim its profile is enforced',
+    state: {
+      harness: 'codex', sandbox_mode: 'danger-full-access',
+      sandbox_profiles: [{ scope: 'explicit', name: 'tight' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/not enforced while the sandbox is off/], titleNot: [/Rules:/],
+  },
+  {
     name: 'an offline agent labels its verdict as last-used',
     online: false,
     state: {
