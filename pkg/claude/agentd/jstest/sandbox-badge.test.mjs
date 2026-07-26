@@ -65,7 +65,10 @@ const CASES = [
       os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
     },
     glyph: '⚠', danger: true,
-    title: [/asked for the OS sandbox to be ON/, /managed-settings\.json/],
+    // Opens with the posture that WON: an operator reading "on" first would take
+    // away the opposite of the truth, which is the whole point of this case.
+    title: [/^Sandbox: off — this launch asked for the OS sandbox to be ON/, /managed-settings\.json/],
+    titleNot: [/^Sandbox: on/],
   },
   {
     // Managed policy is the one tier that outranks the launch's own --settings
@@ -91,7 +94,8 @@ const CASES = [
       os_sandbox_source: 'this launch (sandbox `on`)', os_sandbox_unverified: true,
     },
     glyph: '⚠', danger: true,
-    title: [/Unverified: tclaude could not read a settings file that outranks this/],
+    // The `on?` the chip used to print survives as the opening hedge.
+    title: [/^Sandbox: on \(unverified\) —/, /Unverified: tclaude could not read a settings file that outranks this/],
     titleNot: [/Bash is confined/],
   },
   {
@@ -248,6 +252,22 @@ test('the sandbox glyph rides the harness line, left of the remote indicator', a
       const glyphs = [...mounted.container.querySelectorAll('.sandbox-badge, .remote-badge')];
       assert.deepEqual(glyphs.map((el) => el.className.split(' ')[0]),
         ['sandbox-badge', 'remote-badge']);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a pre-tick Codex row still shows its unconfined warning', async () => {
+    // The no-model branches are per-harness, so each has to carry the glyph on
+    // its own now that it rides the line rather than the cell. A fresh
+    // danger-full-access Codex agent must warn before its first tick, not after.
+    const state = { harness: 'codex', sandbox_mode: 'danger-full-access' };
+    const mounted = await mount({ conv_id: 'c1', online: true, state });
+    try {
+      const el = mounted.container.querySelector('.agent-harness .sandbox-badge');
+      assert.ok(el, 'expected the unconfined warning on a pre-tick Codex row');
+      assert.equal(el.textContent.trim(), '⚠');
+      assert.match(mounted.container.querySelector('.agent-harness').textContent, /Codex\s*⚠/);
     } finally {
       await mounted.unmount();
     }

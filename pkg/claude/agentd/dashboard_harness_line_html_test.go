@@ -96,7 +96,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.
 	must("export function SandboxBadge({ member })", "SandboxBadge component is defined")
-	must("export function sandboxIndicator(member)", "the sandbox posture decision is separable from its rendering")
+	must("function sandboxIndicator(member)", "the sandbox posture decision is separable from its rendering")
 	must("member.state?.sandbox_mode", "the sandbox indicator reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
 
@@ -128,11 +128,24 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("rowname-fixed", "a non-renameable harness gets a fixed-name span")
 
 	// CSS: the sandbox glyph + its danger variant + the fixed-name tweak are
-	// styled. The glyph is frameless — a border here would reinstate the chip
-	// the indicator replaced.
-	must(".sandbox-badge { margin-left: 5px; white-space: nowrap; cursor: default; }",
-		"the sandbox indicator is a bare glyph trailing the harness line, with no frame of its own")
-	must(".sandbox-badge.sandbox-danger { color: #f0883e; }", "the unconfined/unverified glyph is styled distinctly")
+	// styled.
+	must(".sandbox-badge {", "the sandbox indicator has a style rule")
+	must(".sandbox-badge.sandbox-danger", "the unconfined/unverified glyph is styled distinctly")
+	// The glyph is frameless: a border or padding would rebuild the chip this
+	// replaced, so assert their ABSENCE rather than freezing the exact block.
+	found := false
+	for _, rule := range dashboardCSSRules(t) {
+		if strings.TrimSpace(rule.selectors) != ".sandbox-badge" {
+			continue
+		}
+		if strings.Contains(rule.declarations, "border") || strings.Contains(rule.declarations, "padding") {
+			t.Errorf(".sandbox-badge reintroduces the chip framing this indicator replaced: %q", rule.declarations)
+		}
+		found = true
+	}
+	if !found {
+		t.Error("dashboard.css has no bare .sandbox-badge rule to check for chip framing")
+	}
 	must(".rowname-text.rowname-fixed", "the non-renameable name drops the click-to-edit affordance")
 }
 

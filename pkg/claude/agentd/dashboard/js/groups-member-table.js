@@ -136,6 +136,12 @@ export function HarnessLine({ member }) {
 //
 // Returns null when there is nothing to say — an `inherit` launch that no
 // settings file confines is the unremarkable, unchanged case.
+//
+// Every title opens with the RESOLVED posture ("Sandbox: on", "Sandbox: off",
+// "Sandbox: on (unverified)"), because the badge no longer prints that word on
+// screen: the tooltip is now the only place it can be read, and one that opened
+// with the launch's REQUEST would tell an operator the opposite of the truth in
+// exactly the case — a request that lost — where it matters most.
 function osSandboxBadge(mode, state, source, prefix, unverified) {
   const via = source ? ` (${source})` : '';
   // A settings file outranking the one that decided could not be read, so a
@@ -156,20 +162,24 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
         ? `forced ON by ${source || 'a higher-precedence settings file'}, overriding this launch's \`off\``
         : `not chosen at launch — inherited from your Claude Code settings${via}`;
     const confined = unverified ? '' : ' Bash is confined (working dir writable, $HOME read-only).';
-    return { label: unverified ? 'on?' : 'on', danger: unverified, title: `${prefix}: on — ${why}.${confined}${caveat}` };
+    // The hedge rides in the opening posture rather than only in the caveat
+    // below: "on" alone, read first, is the claim this case cannot make.
+    const posture = unverified ? 'on (unverified)' : 'on';
+    return { danger: unverified, title: `${prefix}: ${posture} — ${why}.${confined}${caveat}` };
   }
   if (mode === 'on') {
     // The launch asked for `on` and lost. Only enterprise managed policy
     // outranks a `--settings` block, and an operator who believes this agent is
-    // confined is precisely who needs telling that it is not.
+    // confined is precisely who needs telling that it is not — so the title
+    // leads with the posture that won, then names the request it overrode.
     return {
-      label: 'on overridden', danger: true,
-      title: `${prefix}: this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
+      danger: true,
+      title: `${prefix}: off — this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
     };
   }
   if (mode === 'off') {
     return {
-      label: 'off', danger: true,
+      danger: true,
       title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.${caveat}`,
     };
   }
@@ -181,7 +191,7 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
 // deciding settings file live in the tooltip rather than on screen: a padlock
 // per row is enough to scan a group for the unconfined agent, and the framed
 // "🔒 workspace-write" chip this replaces cost every row a second line to say it.
-export function sandboxIndicator(member) {
+function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
   const prefix = offline ? 'Last used sandbox' : 'Sandbox';
@@ -194,8 +204,8 @@ export function sandboxIndicator(member) {
       !!member.state?.os_sandbox_unverified);
     if (!badge) return null;
     // The label the chip used to print ("on", "on overridden", "on?") is not
-    // dropped, only moved: every osSandboxBadge title already opens with the
-    // resolved posture, so the tooltip stays a complete account on its own.
+    // dropped, only moved: every osSandboxBadge title opens with the resolved
+    // posture, so the tooltip stays a complete account on its own.
     return { danger: badge.danger, title: badge.title, offline };
   }
   if (!mode || mode === 'inherit') return null;

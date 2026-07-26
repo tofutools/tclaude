@@ -2069,8 +2069,10 @@ tr:hover .agent-harness { color: #c9d1d9; }
    line, next to the 📱 remote indicator: "CC · O4.8 1M high 🔒 📱". No frame
    and no text; the mode, the resolved verdict and the deciding settings file
    all live in the tooltip. It was a framed chip on its own line below the
-   controls, which spent a row of height per agent on what a padlock conveys. */
-.sandbox-badge { margin-left: 5px; white-space: nowrap; cursor: default; }
+   controls, which spent a row of height per agent on what a padlock conveys.
+   Nothing but the gap: the harness line already supplies nowrap and the
+   default cursor, and a border/padding here would rebuild the chip. */
+.sandbox-badge { margin-left: 5px; }
 /* An OS sandbox that is OFF (or a verdict tclaude could not verify) trades the
    padlock for ⚠ — amber where the glyph renders as text rather than emoji, so
    an unconfined agent stands apart from a confined one either way. */
