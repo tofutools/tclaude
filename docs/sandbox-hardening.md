@@ -435,7 +435,7 @@ as the warning above, and records it on the session row. The badge then reads:
 | --- | --- | --- |
 | `🔒` | `Sandbox: on` | The OS sandbox confined this agent. The tooltip says whether it was forced on for this launch, inherited from your settings, or forced on by managed policy over an explicit `off` — and which file decided it. |
 | *(none)* | — | Nothing confines the agent, and nothing was asked for — the plain `inherit` launch with no sandbox configured. This is the posture the unsandboxed-autonomy warning is about. |
-| `⚠` | `Sandbox: off` | The launch forced the sandbox **off**. Explicit opt-in; the agent's Bash runs unconfined. |
+| `⚠` | `Sandbox: off` | The sandbox was forced **off** for this launch; the agent's Bash runs unconfined. The tooltip names who chose it (see below) — it is not necessarily a human's explicit opt-in. |
 | `⚠` | `Sandbox: off — this launch asked for the OS sandbox to be ON, but …` | The launch asked for the sandbox to be **on** and did not get it — only managed policy settings can do this. The agent is unconfined despite what was requested. |
 | `⚠` | `Sandbox: on (unverified)` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
 
@@ -456,6 +456,59 @@ named in the tooltip). One caveat: that holds for agents tclaude spawns, where
 the daemon applies its managed-profile default. A bare `tclaude session new --harness codex`
 with no `--sandbox` records no mode at all and gets no badge — its real posture
 comes from `~/.codex/config.toml`, which tclaude does not read.
+
+### Who chose the sandbox, and which profile shaped it
+
+Two questions the verdict alone cannot answer ride in the same tooltip.
+
+**Who chose the mode.** `sandbox: on` reaches a launch either because someone
+passed it or because a spawn profile carried it — a named `--profile`, the
+group's default, or the global default. The resolved verdict is identical, so
+the badge used to call both "forced ON for this launch", crediting the operator
+with a decision a default profile made. It now names the tier:
+
+| Chosen by | Tooltip |
+| --- | --- |
+| an explicit `--sandbox on` / the spawn dialog | ``forced ON by this launch (sandbox `on`)`` |
+| a default or named spawn profile | ``forced ON by global default profile "agents" (sandbox `on`)`` |
+| a profile that chose `off` | ``forced OFF by group default profile "loose" (sandbox `off`)`` |
+
+An `off` is attributed the same way an `on` is, and for a stronger reason: a
+default profile can opt an agent *out* of containment as silently as it can opt
+one in, and that is the claim an operator is least likely to question.
+
+The attribution is recorded at launch (`sessions.sandbox_mode_source`) and
+replayed by the durable relaunch posture — on a CLI resume, and on every daemon
+relaunch (crash recovery, reincarnation, clone) — so it survives a restart
+rather than going anonymous. Only a LAUNCH-decided verdict is
+attributed: where a settings file decided, who chose the mode did not affect the
+outcome, and naming a profile there would be a fresh false attribution.
+
+A harness whose mode *is* its posture (Codex) records no verdict to fold the
+tier into, so its badge appends the attribution as its own sentence —
+``Chosen by global default profile "wide-open".`` — from the same column.
+
+**Which profile shaped it.** The glyph reports the sandbox *state*. A tclaude
+**sandbox profile** is orthogonal to that: it never decides whether the agent is
+sandboxed, it supplies the *rules*. For a Claude agent the profile's filesystem
+grants are compiled into Claude Code's own `sandbox.filesystem.*` through
+`--settings`, so they take effect only while the sandbox is enabled — and are
+not emitted at all for a launch that requested `off` — while the profile's
+environment entries are plain environment variables that apply either way.
+
+| Situation | Tooltip adds |
+| --- | --- |
+| profile applied, rules in force | `Customized by tclaude sandbox profile “x” (global default).` — one clause per applied tier, in `global` → `group` → `explicit` order |
+| profile applied, rules withheld | the same clause plus `Its filesystem rules are not in force (…); any environment entries it defines still apply.` The reason is either that the sandbox is off, or that the launch requested `off` so the rules were never emitted — including when managed policy then forced the sandbox back on |
+| unverified verdict | the profile is named, with no claim either way: the hedge above already says the posture is unproven |
+| launch resolved to no profile | `No tclaude sandbox profile applied.` |
+| the caller omitted the profiles (spawn dialog "none", `--omit-sandbox-profiles`) | `No tclaude sandbox profile — this launch omitted them.` |
+| the launch mode cannot carry them (Codex `danger-full-access`) | `tclaude sandbox profiles do not apply under this launch mode.` |
+| agent older than the recorded policy | *(nothing — an absence tclaude never observed is not reported as one)* |
+
+The clause says "customized by", not "rules from": the dashboard receives
+profile *names* only, so it cannot know whether a given profile contributes
+filesystem rules, environment entries, or both.
 
 ## Verifying
 

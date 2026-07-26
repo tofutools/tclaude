@@ -176,33 +176,40 @@ type dashHarness struct {
 
 // dashState mirrors the relevant fields of agentd.agentState.
 type dashState struct {
-	Status               string  `json:"status,omitempty"`
-	StatusDetail         string  `json:"status_detail,omitempty"`
-	SubagentCount        int     `json:"subagent_count,omitempty"`
-	BgShellCount         int     `json:"bg_shell_count,omitempty"`
-	LastHook             string  `json:"last_hook,omitempty"`
-	ContextPct           float64 `json:"context_pct,omitempty"`
-	TokensInput          int64   `json:"tokens_input,omitempty"`
-	TokensOutput         int64   `json:"tokens_output,omitempty"`
-	ContextWindowSize    int64   `json:"context_window_size,omitempty"`
-	Model                string  `json:"model,omitempty"`
-	EffortLevel          string  `json:"effort_level,omitempty"`
-	CostUSD              float64 `json:"cost_usd,omitempty"`
-	VirtualCostUSD       float64 `json:"virtual_cost_usd,omitempty"`
-	ExitReason           string  `json:"exit_reason,omitempty"`
-	Harness              string  `json:"harness,omitempty"`
-	SandboxMode          string  `json:"sandbox_mode,omitempty"`
-	OSSandboxState       string  `json:"os_sandbox_state,omitempty"`
-	OSSandboxSource      string  `json:"os_sandbox_source,omitempty"`
-	OSSandboxUnverified  bool    `json:"os_sandbox_unverified,omitempty"`
-	RemoteControl        bool    `json:"remote_control,omitempty"`
-	RecoveryStatus       string  `json:"recovery_status,omitempty"`
-	RecoveryDetail       string  `json:"recovery_detail,omitempty"`
-	RecoveryReason       string  `json:"recovery_reason,omitempty"`
-	RecoveryCount        int     `json:"recovery_count,omitempty"`
-	RecoveryBackoff      int     `json:"recovery_backoff_seconds,omitempty"`
-	RecoveryNextAttempt  string  `json:"recovery_next_attempt_at,omitempty"`
-	RecoveryLastExitCode *int    `json:"recovery_last_exit_code,omitempty"`
+	Status              string  `json:"status,omitempty"`
+	StatusDetail        string  `json:"status_detail,omitempty"`
+	SubagentCount       int     `json:"subagent_count,omitempty"`
+	BgShellCount        int     `json:"bg_shell_count,omitempty"`
+	LastHook            string  `json:"last_hook,omitempty"`
+	ContextPct          float64 `json:"context_pct,omitempty"`
+	TokensInput         int64   `json:"tokens_input,omitempty"`
+	TokensOutput        int64   `json:"tokens_output,omitempty"`
+	ContextWindowSize   int64   `json:"context_window_size,omitempty"`
+	Model               string  `json:"model,omitempty"`
+	EffortLevel         string  `json:"effort_level,omitempty"`
+	CostUSD             float64 `json:"cost_usd,omitempty"`
+	VirtualCostUSD      float64 `json:"virtual_cost_usd,omitempty"`
+	ExitReason          string  `json:"exit_reason,omitempty"`
+	Harness             string  `json:"harness,omitempty"`
+	SandboxMode         string  `json:"sandbox_mode,omitempty"`
+	SandboxModeSource   string  `json:"sandbox_mode_source,omitempty"`
+	OSSandboxState      string  `json:"os_sandbox_state,omitempty"`
+	OSSandboxSource     string  `json:"os_sandbox_source,omitempty"`
+	OSSandboxUnverified bool    `json:"os_sandbox_unverified,omitempty"`
+	SandboxProfiles     []struct {
+		Scope string `json:"scope"`
+		Name  string `json:"name"`
+	} `json:"sandbox_profiles,omitempty"`
+	SandboxProfilesRecorded bool   `json:"sandbox_profiles_recorded,omitempty"`
+	SandboxProfilesOmitted  bool   `json:"sandbox_profiles_omitted,omitempty"`
+	RemoteControl           bool   `json:"remote_control,omitempty"`
+	RecoveryStatus          string `json:"recovery_status,omitempty"`
+	RecoveryDetail          string `json:"recovery_detail,omitempty"`
+	RecoveryReason          string `json:"recovery_reason,omitempty"`
+	RecoveryCount           int    `json:"recovery_count,omitempty"`
+	RecoveryBackoff         int    `json:"recovery_backoff_seconds,omitempty"`
+	RecoveryNextAttempt     string `json:"recovery_next_attempt_at,omitempty"`
+	RecoveryLastExitCode    *int   `json:"recovery_last_exit_code,omitempty"`
 }
 
 // fetchSnapshotOnly fetches ONLY /api/snapshot (a single request). Use it when

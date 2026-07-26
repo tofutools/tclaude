@@ -120,7 +120,9 @@ The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects
 what actually confined the launch, not which mode was requested, so a Claude
 agent sandboxed through your own `settings.json` is badged even though it was
-spawned under the default `inherit`. See
+spawned under the default `inherit`. Hovering it also names the tclaude sandbox
+profile that supplied the agent's rules, and says whether those rules are in
+force given the sandbox state. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 
 Group headers carry status-bot counts for their direct members. In a nested

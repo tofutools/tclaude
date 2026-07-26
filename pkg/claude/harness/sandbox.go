@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // SandboxCatalog is the optional capability for a harness that takes a
@@ -184,14 +185,22 @@ type LaunchOSSandbox struct {
 // sandboxMode must be the FINAL resolved mode and cwd the launch directory —
 // the same inputs SpawnSandboxWarnings takes, so the recorded verdict and the
 // warning the operator saw at spawn can never disagree.
-func ResolveLaunchOSSandbox(h *Harness, sandboxMode, cwd string) LaunchOSSandbox {
+//
+// chosenBy names the resolution tier that supplied sandboxMode (an explicit
+// flag, a spawn profile, a replay of the recorded posture) and is folded into
+// the recorded Source when the LAUNCH is what decided the state. It answers a
+// question the verdict alone cannot: an operator who never typed `--sandbox on`
+// still gets one when a group or global default spawn profile carries it, and
+// "forced ON for this launch" attributed that to them. Empty (a direct
+// `session new`, or a caller with nothing to say) keeps the previous wording.
+func ResolveLaunchOSSandbox(h *Harness, sandboxMode, chosenBy, cwd string) LaunchOSSandbox {
 	if h == nil || normalizeLineageHarness(h.Name) != DefaultName {
 		return LaunchOSSandbox{}
 	}
 	resolution := ResolveClaudeSandboxEnabled(sandboxMode, cwd)
 	return LaunchOSSandbox{
 		State:  resolution.State.String(),
-		Source: resolution.Source,
+		Source: attributeLaunchSandboxSource(resolution.Source, chosenBy),
 		// Diagnostics are only ever collected from tiers walked BEFORE the one
 		// that decided, so a non-empty list means something that outranks this
 		// verdict was unreadable — including for an explicit on/off, where the
@@ -199,4 +208,76 @@ func ResolveLaunchOSSandbox(h *Harness, sandboxMode, cwd string) LaunchOSSandbox
 		// outranks it.
 		Unverified: len(resolution.Diagnostics) > 0,
 	}
+}
+
+// SandboxChosenExplicitly is the attribution for a mode the caller typed
+// themselves — `tclaude session new --sandbox on`, or a spawn request that
+// carried an explicit field. It matches the daemon's own provenance vocabulary
+// (agent.ProvExplicit) without importing it: the agent package depends on
+// session, which depends on this one.
+const SandboxChosenExplicitly = "explicit"
+
+// launchDecidedSourcePrefix marks the resolutions whose deciding tier was the
+// launch itself ("this launch (sandbox `on`)"). Only those can be attributed:
+// where a settings file decided, WHO chose the launch mode did not affect the
+// outcome, and naming a spawn profile there would credit it with a verdict it
+// had no part in.
+const launchDecidedSourcePrefix = "this launch ("
+
+// launchDecidedActor is the part of that prefix an attribution replaces.
+const launchDecidedActor = "this launch"
+
+// maxSandboxChosenByLen bounds the attribution folded into the recorded source.
+// The tier label embeds an operator-authored spawn-profile name, and this value
+// is persisted, logged, and rendered; a name is a label, not a payload.
+const maxSandboxChosenByLen = 120
+
+// attributeLaunchSandboxSource names the ACTOR in a launch-decided source,
+// leaving every other source untouched:
+//
+//	this launch (sandbox `on`)  +  global default profile "agents"
+//	→ global default profile "agents" (sandbox `on`)
+//
+// It replaces "this launch" rather than appending to it, because the reader is
+// asking who imposed the containment and "this launch" is the answer only when
+// the caller typed the flag. An explicit choice is left as "this launch": it IS
+// this launch, and naming the tier would add a word without adding a fact.
+func attributeLaunchSandboxSource(source, chosenBy string) string {
+	chosenBy = SanitizeSandboxChosenBy(chosenBy)
+	if chosenBy == "" || chosenBy == SandboxChosenExplicitly {
+		return source
+	}
+	if !strings.HasPrefix(source, launchDecidedSourcePrefix) {
+		return source
+	}
+	return chosenBy + strings.TrimPrefix(source, launchDecidedActor)
+}
+
+// SanitizeSandboxChosenBy makes an attribution safe to persist and display. The
+// spawn-profile name inside it is operator free text that reaches an argv, a DB
+// column, a log line, and the dashboard, so control characters (which would
+// forge line structure in a log) are dropped and the whole label is bounded.
+// Truncation is marked, so a clipped label never reads as a complete name.
+//
+// Exported because the bound has to be applied where the value is RECORDED, not
+// only where it is rendered: `session new` writes it to sessions, the durable
+// relaunch profile projects it, and every later relaunch replays it into an
+// argv. Scrubbing only the derived source would leave the unbounded original in
+// all three.
+func SanitizeSandboxChosenBy(chosenBy string) string {
+	chosenBy = strings.TrimSpace(chosenBy)
+	if chosenBy == "" {
+		return ""
+	}
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, chosenBy)
+	cleaned = strings.TrimSpace(strings.Join(strings.Fields(cleaned), " "))
+	if len([]rune(cleaned)) > maxSandboxChosenByLen {
+		cleaned = string([]rune(cleaned)[:maxSandboxChosenByLen]) + "…"
+	}
+	return cleaned
 }

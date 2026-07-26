@@ -7,7 +7,25 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+// requireDashAgentState / requireDashMemberState fetch one row's state from the
+// two surfaces the sandbox badge draws from, failing rather than nil-panicking
+// when the row is missing — the assertions below read the same fields off both.
+func requireDashAgentState(t *testing.T, snap dashSnapshot, convID string) dashState {
+	t.Helper()
+	agent := findDashAgent(snap, convID)
+	require.NotNil(t, agent, "agent %s missing from Agents[]", convID)
+	return agent.State
+}
+
+func requireDashMemberState(t *testing.T, snap dashSnapshot, group, convID string) dashState {
+	t.Helper()
+	member := findDashMember(snap, group, convID)
+	require.NotNil(t, member, "agent %s missing from group %s", convID, group)
+	return member.State
+}
 
 // Scenario (TCL-729): the Groups tab could not tell a Claude agent confined by
 // the operator's own settings.json from one confined by nothing. Both spawn
@@ -193,4 +211,233 @@ func TestDashboardSnapshot_VerifiedOSSandboxVerdictCarriesNoDoubt(t *testing.T) 
 	require.NotNil(t, agent)
 	assert.False(t, agent.State.OSSandboxUnverified,
 		"a verdict every tier confirmed must not wear the hedge")
+}
+
+// Scenario: the badge tooltip named the settings file that ENABLED the sandbox
+// and nothing else, which reads as "this is your whole sandbox configuration"
+// — when the rules the agent actually runs under came from a tclaude sandbox
+// profile the operator never sees mentioned. The profile is orthogonal to the
+// state: it does not decide whether the agent is sandboxed, it supplies the
+// rules (for Claude Code, compiled into the harness's own sandbox.filesystem.*
+// through `--settings`).
+//
+// The launch already freezes its resolved policy on the session row, so this
+// pins the READ path: both surfaces the badge draws from must name the applied
+// profiles and the tier each came from, in resolution order.
+func TestDashboardSnapshot_AppliedSandboxProfilesSurface(t *testing.T) {
+	const convID = "sbx6-1111-2222-3333-4444"
+	const label = "spwn-sbx6"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("profiled")
+	f.HaveAliveSession(convID, label, "tmux-sbx6", f.TestCwd("sbx6"))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	// Recorded in the order the snapshot BUILDER writes them
+	// (db.resolveEffectiveSandboxSnapshot walks global → group → explicit). The
+	// read path preserves that order rather than imposing one, so this fixture
+	// mirrors a real record instead of proving a sort that does not exist.
+	snapshot.Applied = []sandboxpolicy.AppliedProfile{
+		{Scope: sandboxpolicy.ScopeGlobal, ID: 1, Name: "tclaude-agent"},
+		{Scope: sandboxpolicy.ScopeGroup, ID: 2, Name: "squad-tight"},
+	}
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: label, TmuxSession: "tmux-sbx6", ConvID: convID, Cwd: f.TestCwd("sbx6"),
+		Status: "running", Harness: "claude",
+		OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+		EffectiveSandbox: &snapshot,
+	}), "stamp a launch whose rules came from sandbox profiles")
+	f.HaveMember("profiled", convID)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	for name, state := range map[string]dashState{
+		"Agents[]":  requireDashAgentState(t, snap, convID),
+		"Members[]": requireDashMemberState(t, snap, "profiled", convID),
+	} {
+		require.Len(t, state.SandboxProfiles, 2, "%s: both applied profiles reach the browser", name)
+		assert.Equal(t, "global", state.SandboxProfiles[0].Scope,
+			"%s: the recorded tier order survives to the browser", name)
+		assert.Equal(t, "tclaude-agent", state.SandboxProfiles[0].Name, "%s: names the global profile", name)
+		assert.Equal(t, "group", state.SandboxProfiles[1].Scope, "%s: group tier second", name)
+		assert.Equal(t, "squad-tight", state.SandboxProfiles[1].Name, "%s: names the group profile", name)
+		assert.True(t, state.SandboxProfilesRecorded, "%s: the launch recorded a resolved policy", name)
+	}
+}
+
+// The two ways a row can carry no profile names are NOT the same fact, and the
+// tooltip says different things about them: a launch that resolved to no
+// profile can be reported as such, while a row predating the snapshot must stay
+// silent rather than claim an absence tclaude never observed.
+func TestDashboardSnapshot_NoSandboxProfilesDistinguishesEmptyFromUnrecorded(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("plain")
+
+	const emptyConv = "sbx7-1111-2222-3333-4444"
+	f.HaveAliveSession(emptyConv, "spwn-sbx7", "tmux-sbx7", f.TestCwd("sbx7"))
+	empty := sandboxpolicy.EmptySnapshot()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbx7", TmuxSession: "tmux-sbx7", ConvID: emptyConv, Cwd: f.TestCwd("sbx7"),
+		Status: "running", Harness: "claude", OSSandboxState: "on",
+		EffectiveSandbox: &empty,
+	}), "stamp a launch that resolved to no sandbox profile")
+	f.HaveMember("plain", emptyConv)
+
+	const legacyConv = "sbx8-1111-2222-3333-4444"
+	f.HaveAliveSession(legacyConv, "spwn-sbx8", "tmux-sbx8", f.TestCwd("sbx8"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbx8", TmuxSession: "tmux-sbx8", ConvID: legacyConv, Cwd: f.TestCwd("sbx8"),
+		Status: "running", Harness: "claude", OSSandboxState: "on",
+	}), "stamp a row from before the policy snapshot existed")
+	f.HaveMember("plain", legacyConv)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	resolved := requireDashAgentState(t, snap, emptyConv)
+	assert.Empty(t, resolved.SandboxProfiles, "nothing applied")
+	assert.True(t, resolved.SandboxProfilesRecorded,
+		"a resolved policy with no profiles is an observed absence the tooltip may report")
+
+	legacy := requireDashAgentState(t, snap, legacyConv)
+	assert.Empty(t, legacy.SandboxProfiles, "nothing to name")
+	assert.False(t, legacy.SandboxProfilesRecorded,
+		"a row with no recorded policy must not be reported as 'no profile applied'")
+}
+
+// Scenario: `sandbox: on` reaches a launch either because someone typed it or
+// because a spawn profile they never opened carried it — a named profile, their
+// group's default, or the global default. The resolved VERDICT is identical
+// either way, so the badge called both "forced ON for this launch" and credited
+// the containment to the operator reading it.
+//
+// The spawn boundary already resolves that tier (resolveStringLaunchField) and
+// used to discard it. This pins the recorded end of the path: the attribution
+// reaches both snapshot surfaces, and an explicit choice is NOT dressed up as a
+// profile's doing.
+func TestDashboardSnapshot_SandboxModeAttributionSurfaces(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("attributed")
+
+	const profileConv = "sbx9-1111-2222-3333-4444"
+	f.HaveAliveSession(profileConv, "spwn-sbx9", "tmux-sbx9", f.TestCwd("sbx9"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbx9", TmuxSession: "tmux-sbx9", ConvID: profileConv, Cwd: f.TestCwd("sbx9"),
+		Status: "running", Harness: "claude",
+		SandboxMode: "on", SandboxModeSource: `global default profile "agents"`,
+		OSSandboxState: "on", OSSandboxSource: "global default profile \"agents\" (sandbox `on`)",
+	}), "stamp a launch whose sandbox a default profile chose")
+	f.HaveMember("attributed", profileConv)
+
+	const explicitConv = "sbxa-1111-2222-3333-4444"
+	f.HaveAliveSession(explicitConv, "spwn-sbxa", "tmux-sbxa", f.TestCwd("sbxa"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxa", TmuxSession: "tmux-sbxa", ConvID: explicitConv, Cwd: f.TestCwd("sbxa"),
+		Status: "running", Harness: "claude",
+		SandboxMode: "on", SandboxModeSource: "explicit",
+		OSSandboxState: "on", OSSandboxSource: "this launch (sandbox `on`)",
+	}), "stamp a launch whose sandbox the caller chose")
+	f.HaveMember("attributed", explicitConv)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	for name, state := range map[string]dashState{
+		"Agents[]":  requireDashAgentState(t, snap, profileConv),
+		"Members[]": requireDashMemberState(t, snap, "attributed", profileConv),
+	} {
+		assert.Equal(t, "global default profile \"agents\" (sandbox `on`)", state.OSSandboxSource,
+			"%s: the badge can name the profile that forced the sandbox", name)
+	}
+
+	explicit := requireDashAgentState(t, snap, explicitConv)
+	assert.Equal(t, "this launch (sandbox `on`)", explicit.OSSandboxSource,
+		"a caller's own choice stays 'this launch' — it IS this launch")
+}
+
+// The durable half: a resumed agent replays the attribution rather than losing
+// it. Without this, an agent that has restarted once reports an anonymous "this
+// launch" for containment a profile imposed — the same misattribution, arrived
+// at by a slower route.
+func TestSandboxModeAttributionSurvivesTheDurableProjection(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	const convID = "sbxb-1111-2222-3333-4444"
+	f.HaveAliveSession(convID, "spwn-sbxb", "tmux-sbxb", f.TestCwd("sbxb"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxb", TmuxSession: "tmux-sbxb", ConvID: convID, Cwd: f.TestCwd("sbxb"),
+		Status: "running", Harness: "claude",
+		SandboxMode: "on", SandboxModeSource: `group default profile "squad"`,
+	}), "stamp an attributed launch")
+
+	launch, err := db.SessionLaunchProfileForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, "on", launch.SandboxMode, "the mode is replayed")
+	assert.Equal(t, `group default profile "squad"`, launch.SandboxModeSource,
+		"and so is who chose it — a resume that dropped this would go anonymous")
+}
+
+// The projection above is only half the contract. A DAEMON relaunch — a resume,
+// a crash recovery, a reincarnation, a clone — does not read that projection at
+// spawn time; it builds a fresh argv from the durable relaunch config. A path
+// that carries the MODE but not its attribution mints a session row with an
+// empty sandbox_mode_source, and the projection then asserts that emptiness as
+// intent, permanently erasing who chose the containment. The badge would be
+// back to crediting "this launch" — the exact misattribution this surface
+// exists to remove, now arrived at by way of a restart.
+func TestSandboxModeAttributionSurvivesADaemonRelaunch(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("relaunch")
+	const convID = "sbxd-1111-2222-3333-4444"
+	f.HaveAliveSession(convID, "spwn-sbxd", "tmux-sbxd", f.TestCwd("sbxd"))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxd", TmuxSession: "tmux-sbxd", ConvID: convID, Cwd: f.TestCwd("sbxd"),
+		Status: "running", Harness: "claude",
+		SandboxMode: "on", SandboxModeSource: `group default profile "squad"`,
+	}), "stamp an attributed launch")
+	f.HaveMember("relaunch", convID)
+
+	f.MarkOffline("tmux-sbxd")
+	f.AssertResumeSpawned(f.Resume(convID))
+
+	state := requireDashMemberState(t, fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "relaunch", convID)
+	assert.Equal(t, "on", state.SandboxMode, "the relaunch preserved the mode")
+	assert.Equal(t, `group default profile "squad"`, state.SandboxModeSource,
+		"and the tier that chose it — a relaunch that dropped this re-credits the operator")
+	assert.Contains(t, state.OSSandboxSource, `group default profile "squad"`,
+		"the replayed attribution reaches the verdict the badge actually renders")
+}
+
+// A launch mode can discard the profile tiers outright — a Codex
+// danger-full-access spawn takes the raw --sandbox opt-out, which cannot carry
+// the managed permission profile that renders filesystem rules. That is not the
+// same fact as "no profile was assigned", and the tooltip says so, which it can
+// only do if the distinction survives to the browser.
+func TestDashboardSnapshot_SuppressedSandboxProfilesAreDistinguishable(t *testing.T) {
+	const convID = "sbxc-1111-2222-3333-4444"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("omitted")
+	f.HaveAliveCodexSession(convID, "spwn-sbxc", "tmux-sbxc", f.TestCwd("sbxc"))
+	omitted := sandboxpolicy.OmittedProfilesSnapshot()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-sbxc", TmuxSession: "tmux-sbxc", ConvID: convID, Cwd: f.TestCwd("sbxc"),
+		Status: "running", Harness: "codex", SandboxMode: "danger-full-access",
+		EffectiveSandbox: &omitted,
+	}), "stamp a launch whose mode suppresses the profile tiers")
+	f.HaveMember("omitted", convID)
+
+	state := requireDashAgentState(t, fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), convID)
+	assert.Empty(t, state.SandboxProfiles, "nothing was applied")
+	assert.True(t, state.SandboxProfilesRecorded, "a policy WAS resolved for this launch")
+	assert.True(t, state.SandboxProfilesOmitted,
+		"the mode discarded the tiers — distinct from nobody having configured one")
 }

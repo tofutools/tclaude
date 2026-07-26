@@ -12,10 +12,16 @@ import (
 // and conversation-owned resume facts. No field is sourced from a predecessor
 // session row.
 type durableRelaunchConfig struct {
-	Harness                string
-	Cwd                    string
-	ResumeProvenance       string
-	Sandbox                string
+	Harness          string
+	Cwd              string
+	ResumeProvenance string
+	Sandbox          string
+	// SandboxModeSource is the recorded attribution for Sandbox — which
+	// resolution tier chose it at the ORIGINAL launch. Every relaunch replays it
+	// alongside the mode; dropping it would let a crash recovery or a
+	// reincarnation silently re-credit a group default's containment to "this
+	// launch", and the durable projection would then assert that erasure.
+	SandboxModeSource      string
 	Approval               string
 	ToolGovernance         string
 	AutoReview             bool
@@ -42,6 +48,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		}
 	}
 	sandboxMode := p.SandboxMode
+	sandboxModeSource := p.SandboxModeSource
 	approvalPolicy := p.ApprovalPolicy
 	toolGovernance := p.ToolGovernance
 	autoReview := p.AutoReview
@@ -61,8 +68,12 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	// own threshold across relaunches, not inherit one a later profile edit adds.
 	autoCompactWindow := p.AutoCompactWindow
 	return db.AgentRelaunchProfile{
-		Version:                db.RelaunchProfileVersion,
-		SandboxMode:            &sandboxMode,
+		Version:     db.RelaunchProfileVersion,
+		SandboxMode: &sandboxMode,
+		// Frozen alongside the mode it explains: a relaunch replays both, so an
+		// agent keeps naming the profile that chose its containment instead of
+		// degrading to an anonymous "this launch" on its first restart.
+		SandboxModeSource:      &sandboxModeSource,
 		ApprovalPolicy:         &approvalPolicy,
 		ToolGovernance:         &toolGovernance,
 		ApprovalAutoReview:     &autoReview,
@@ -137,6 +148,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	sandboxMode, err := relaunchSandboxForProfile(agentProfile, h.Name)
 	if err != nil {
 		return nil, err
+	}
+	// Attribution follows the mode it explains, and only while that mode is the
+	// one that was recorded: a profile whose SandboxMode is blank falls through
+	// to the harness default above, and crediting a tier with a mode it did not
+	// supply is the same false attribution in the other direction.
+	sandboxModeSource := ""
+	if agentProfile.SandboxModeSource != nil && strings.TrimSpace(*agentProfile.SandboxMode) != "" {
+		sandboxModeSource = harness.SanitizeSandboxChosenBy(*agentProfile.SandboxModeSource)
 	}
 
 	if agentProfile.ApprovalPolicy == nil {
@@ -246,6 +265,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		Cwd:                    strings.TrimSpace(conversation.Cwd),
 		ResumeProvenance:       conversation.ResumeProvenance,
 		Sandbox:                sandboxMode,
+		SandboxModeSource:      sandboxModeSource,
 		Approval:               approval,
 		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,

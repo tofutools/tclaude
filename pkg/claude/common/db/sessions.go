@@ -52,6 +52,14 @@ type SessionRow struct {
 	// Harness, "" is a genuine value (no sandbox), so it is stored verbatim
 	// — never coalesced.
 	SandboxMode string
+	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// explicit flag, or the named / group-default / global-default spawn profile
+	// that carried it (schema v158). The mode alone cannot say: an operator who
+	// never typed `--sandbox on` still gets one from a default profile, and the
+	// badge credited that to "this launch" as though they had chosen it. "" is
+	// "nothing recorded" — a pre-column row, or a direct `session new` with
+	// nothing to attribute — and renders exactly as it did before.
+	SandboxModeSource string
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the harness's OS sandbox was ACTUALLY active, and what decided that —
 	// "on"/"off"/"unconfigured" plus the launch flag or the settings file that
@@ -200,10 +208,10 @@ func SaveSession(s *SessionRow) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
 		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
 		 ?, '', '', NULL, '', '', '', NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
@@ -221,6 +229,7 @@ func SaveSession(s *SessionRow) error {
 			last_hook = excluded.last_hook,
 			harness = excluded.harness,
 			sandbox_mode = excluded.sandbox_mode,
+			sandbox_mode_source = excluded.sandbox_mode_source,
 			os_sandbox_state = CASE WHEN excluded.os_sandbox_state <> '' THEN excluded.os_sandbox_state ELSE sessions.os_sandbox_state END,
 			os_sandbox_source = CASE WHEN excluded.os_sandbox_state <> '' THEN excluded.os_sandbox_source ELSE sessions.os_sandbox_source END,
 			os_sandbox_unverified = CASE WHEN excluded.os_sandbox_state <> '' THEN excluded.os_sandbox_unverified ELSE sessions.os_sandbox_unverified END,
@@ -240,7 +249,7 @@ func SaveSession(s *SessionRow) error {
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.SandboxModeSource, s.OSSandboxState, s.OSSandboxSource, boolToInt(s.OSSandboxUnverified), s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	if err != nil {
 		return err
@@ -293,7 +302,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -332,7 +341,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +359,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -375,7 +384,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -395,10 +404,16 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 // Any field can be "" ("not observed" — e.g. a session that hasn't ticked
 // the statusline has no model/effort yet, or a harness with no sandbox flag).
 type SessionLaunchProfile struct {
-	Harness            string
-	ModelID            string
-	Effort             string
-	SandboxMode        string
+	Harness     string
+	ModelID     string
+	Effort      string
+	SandboxMode string
+	// SandboxModeSource is the recorded attribution for SandboxMode — which
+	// resolution tier chose it. A relaunch replays it alongside the mode so the
+	// badge keeps naming the spawn profile that forced the sandbox rather than
+	// degrading to an anonymous "this launch" after the first resume. "" =
+	// nothing recorded (legacy row, or a launch that had nothing to attribute).
+	SandboxModeSource  string
 	ApprovalPolicy     string
 	ApprovalAutoReview bool
 }
@@ -435,6 +450,9 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		if durable.SandboxMode != nil {
 			p.SandboxMode = *durable.SandboxMode
 		}
+		if durable.SandboxModeSource != nil {
+			p.SandboxModeSource = *durable.SandboxModeSource
+		}
 		if durable.ApprovalPolicy != nil {
 			p.ApprovalPolicy = *durable.ApprovalPolicy
 		}
@@ -470,7 +488,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -551,7 +569,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview, osSandboxUnverified int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.SandboxModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0

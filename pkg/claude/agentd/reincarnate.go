@@ -429,6 +429,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		Model:                  model,
 		Harness:                relaunch.Harness,
 		Sandbox:                reincarnateSandbox,
+		SandboxChosenBy:        relaunch.SandboxModeSource,
 		Approval:               approval,
 		ToolGovernance:         relaunch.ToolGovernance,
 		AutoReview:             autoReview,

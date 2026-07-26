@@ -2,6 +2,7 @@ package harness
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +14,7 @@ func TestResolveLaunchOSSandboxRecordsInheritedOn(t *testing.T) {
 	home, _ := isolateClaudeSettings(t)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, home)
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, "", home)
 	if got.State != "on" {
 		t.Fatalf("inherited sandbox: got state %q, want %q", got.State, "on")
 	}
@@ -29,7 +30,7 @@ func TestResolveLaunchOSSandboxRecordsInheritedOn(t *testing.T) {
 func TestResolveLaunchOSSandboxRecordsUnconfigured(t *testing.T) {
 	home, _ := isolateClaudeSettings(t)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, home)
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, "", home)
 	if got.State != "unconfigured" {
 		t.Fatalf("unconfigured sandbox: got state %q, want %q", got.State, "unconfigured")
 	}
@@ -46,7 +47,7 @@ func TestResolveLaunchOSSandboxRecordsManagedPolicyOverride(t *testing.T) {
 	_, managed := isolateClaudeSettings(t)
 	writeSettings(t, filepath.Join(managed, "managed-settings.json"), `{"sandbox":{"enabled":false}}`)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, "")
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, "", "")
 	if got.State != "off" {
 		t.Fatalf("managed override: got state %q, want %q", got.State, "off")
 	}
@@ -69,11 +70,11 @@ func TestResolveLaunchOSSandboxRecordsNothingForOtherHarnesses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve %s: %v", name, err)
 		}
-		if got := ResolveLaunchOSSandbox(h, "", home); got != (LaunchOSSandbox{}) {
+		if got := ResolveLaunchOSSandbox(h, "", "", home); got != (LaunchOSSandbox{}) {
 			t.Fatalf("%s: want no recorded verdict, got %+v", name, got)
 		}
 	}
-	if got := ResolveLaunchOSSandbox(nil, "", home); got != (LaunchOSSandbox{}) {
+	if got := ResolveLaunchOSSandbox(nil, "", "", home); got != (LaunchOSSandbox{}) {
 		t.Fatalf("nil harness: want no recorded verdict, got %+v", got)
 	}
 }
@@ -89,7 +90,7 @@ func TestResolveLaunchOSSandboxMarksAnUnreadableHigherTierUnverified(t *testing.
 	// one leaves a sandbox-`on` launch genuinely unproven.
 	writeSettings(t, filepath.Join(managed, "managed-settings.json"), `{"sandbox":`)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, home)
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, "", home)
 	if got.State != "on" {
 		t.Fatalf("unreadable managed policy: got state %q, want %q", got.State, "on")
 	}
@@ -106,7 +107,7 @@ func TestResolveLaunchOSSandboxMarksAnUnreadableProjectTierUnverified(t *testing
 	writeSettings(t, filepath.Join(project, ".claude", "settings.json"), `{oops`)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, project)
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, "", project)
 	if got.State != "on" {
 		t.Fatalf("unreadable project tier: got state %q, want %q", got.State, "on")
 	}
@@ -121,7 +122,7 @@ func TestResolveLaunchOSSandboxIsVerifiedWhenEveryTierIsReadable(t *testing.T) {
 	home, _ := isolateClaudeSettings(t)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
 
-	if got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, home); got.Unverified {
+	if got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, "", home); got.Unverified {
 		t.Fatalf("a readable settings chain must not be marked unverified: %+v", got)
 	}
 }
@@ -143,11 +144,86 @@ func TestResolveLaunchOSSandboxDoesNotHedgeOnALowerTier(t *testing.T) {
 	writeSettings(t, filepath.Join(project, ".claude", "settings.json"), `{oops`)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{also oops`)
 
-	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, project)
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, "", project)
 	if got.State != "on" {
 		t.Fatalf("managed policy decides: got state %q, want %q", got.State, "on")
 	}
 	if got.Unverified {
 		t.Fatal("a decided verdict must not be hedged by unreadable files that rank BELOW the decider")
+	}
+}
+
+// The gap this closes: `sandbox: on` can be chosen by an explicit flag OR by a
+// spawn profile the operator never looked at (a named profile, their group's
+// default, the global default). The verdict is identical either way, so a
+// recorded source of "this launch" credited the containment to whoever is
+// reading the badge — precisely the person who did not choose it.
+func TestResolveLaunchOSSandboxNamesTheProfileThatChoseTheMode(t *testing.T) {
+	home, _ := isolateClaudeSettings(t)
+
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, `global default profile "agents"`, home)
+	if got.State != "on" {
+		t.Fatalf("forced on: got state %q, want %q", got.State, "on")
+	}
+	want := "global default profile \"agents\" (sandbox `on`)"
+	if got.Source != want {
+		t.Fatalf("attributed source: got %q, want %q", got.Source, want)
+	}
+}
+
+// An explicit choice keeps "this launch": it IS this launch, and swapping in
+// the word "explicit" would add a token without adding a fact.
+func TestResolveLaunchOSSandboxLeavesAnExplicitChoiceUnattributed(t *testing.T) {
+	home, _ := isolateClaudeSettings(t)
+
+	explicit := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, SandboxChosenExplicitly, home)
+	none := ResolveLaunchOSSandbox(Default(), ClaudeSandboxOn, "", home)
+	if explicit.Source != none.Source {
+		t.Fatalf("explicit attribution changed the source: got %q, want %q", explicit.Source, none.Source)
+	}
+	if explicit.Source != "this launch (sandbox `on`)" {
+		t.Fatalf("explicit source: got %q", explicit.Source)
+	}
+}
+
+// A verdict the LAUNCH did not decide is left alone. Who chose the mode did not
+// affect the outcome there, and crediting a spawn profile with a settings
+// file's decision would be a fresh false attribution in place of the old one.
+func TestResolveLaunchOSSandboxDoesNotAttributeASettingsDecidedVerdict(t *testing.T) {
+	home, _ := isolateClaudeSettings(t)
+	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
+
+	got := ResolveLaunchOSSandbox(Default(), ClaudeSandboxInherit, `global default profile "agents"`, home)
+	if got.State != "on" {
+		t.Fatalf("inherited: got state %q, want on", got.State)
+	}
+	if strings.Contains(got.Source, "agents") {
+		t.Fatalf("a settings-decided verdict must not name the mode's chooser: %q", got.Source)
+	}
+}
+
+// The attribution embeds an operator-authored profile NAME, and it is
+// persisted, logged, and rendered. Control characters would forge line
+// structure in a log; an unbounded name would ride into all three.
+func TestSanitizeSandboxChosenBy(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"trims", "  explicit  ", "explicit"},
+		{"collapses newlines a log would read as structure", "profile \"a\nb\"", `profile "a b"`},
+		{"drops control characters", "profile \"a\x00\x07b\"", `profile "a b"`},
+		{"leaves an ordinary name alone", `group default profile "team-x"`, `group default profile "team-x"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeSandboxChosenBy(tc.in); got != tc.want {
+				t.Fatalf("sanitize(%q): got %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	long := SanitizeSandboxChosenBy(`profile "` + strings.Repeat("x", 400) + `"`)
+	if len([]rune(long)) != maxSandboxChosenByLen+1 {
+		t.Fatalf("bounded label: got %d runes, want %d", len([]rune(long)), maxSandboxChosenByLen+1)
+	}
+	if !strings.HasSuffix(long, "…") {
+		t.Fatal("a clipped label must be marked, so it never reads as a complete name")
 	}
 }

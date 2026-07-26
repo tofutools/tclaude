@@ -704,11 +704,18 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
-	SpawnProfile   string
-	Harness        string
-	Model          string
-	Effort         string
-	Sandbox        string
+	SpawnProfile string
+	Harness      string
+	Model        string
+	Effort       string
+	Sandbox      string
+	// SandboxSource names the tier that CHOSE Sandbox above (an explicit field
+	// on the template agent, the template's inline profile, the referenced
+	// profile, the role's, the group default, or the global default). The
+	// instantiator threads it into spawnParams so a wave-deployed agent's badge
+	// names the profile that imposed its containment rather than crediting an
+	// operator who only clicked deploy.
+	SandboxSource  string
 	Approval       string
 	ToolGovernance string
 	// TrustDir / AutoReview are the two *bool launch toggles a referenced spawn
@@ -1066,7 +1073,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
-	sandbox, _, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
+	sandbox, sandboxSource, note, fail := resolveStringLaunchField("sandbox", a.Sandbox, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Sandbox }, func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1208,6 +1215,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		Model:                  model,
 		Effort:                 effort,
 		Sandbox:                sandbox,
+		SandboxSource:          sandboxSource,
 		Approval:               approval,
 		ToolGovernance:         toolGovernance,
 		TrustDir:               trustDir,

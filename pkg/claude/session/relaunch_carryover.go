@@ -115,6 +115,9 @@ var launchCarryoverExcused = map[string]string{
 		"across a resume, and the status line re-records it on every render, so an " +
 		"omitted --model resumes on the same model instead of reverting",
 	"Effort": "recorded by the status line on every render, like ModelID",
+	"SandboxModeSource": "not a launch parameter of its own — it is the attribution " +
+		"for SandboxMode and is carried by that field's own carry(), so a separate " +
+		"entry here would be a second, desynchronizable copy of the same decision",
 	"ContextWindowSize": "an OBSERVED statusline value, not operator intent; carrying " +
 		"it would mean re-deriving Claude's \"[1m]\" model suffix rather than replaying " +
 		"a decision",
@@ -144,6 +147,12 @@ var launchCarryoverFields = []launchCarryoverField{
 				return nil, carryDropped
 			}
 			p.Sandbox = mode
+			// The attribution rides with the mode it explains, so a resumed agent
+			// keeps naming the profile that chose its containment instead of
+			// degrading to an anonymous "this launch" on its first restart.
+			if rec.SandboxModeSource != nil {
+				p.SandboxChosenBy = strings.TrimSpace(*rec.SandboxModeSource)
+			}
 			return mode, carryApplied
 		},
 	},

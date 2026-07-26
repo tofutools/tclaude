@@ -31,7 +31,14 @@ import (
 type NewParams struct {
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
-	ManagedLaunch         bool   `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
+	// SandboxChosenBy is the resolution tier that supplied --sandbox, as
+	// resolved by the daemon spawn boundary ("explicit", `global default
+	// profile "x"`, …). The badge attributes the launch's containment to it, so
+	// an operator who never chose a sandbox can see which default profile did.
+	// Internal: only the daemon has the tier stack to know. A direct
+	// `session new --sandbox on` is attributed as explicit by runNew itself.
+	SandboxChosenBy       string `short:"T" long:"sandbox-chosen-by" optional:"true" help:"Internal: which resolution tier chose --sandbox"`
 	SandboxSnapshotPath   string `short:"U" long:"sandbox-snapshot-path" optional:"true" help:"Internal: private effective sandbox snapshot handoff"`
 	SandboxSnapshotDigest string `short:"V" long:"sandbox-snapshot-digest" optional:"true" help:"Internal: expected effective sandbox snapshot digest"`
 	Dir                   string `short:"C" long:"dir" optional:"true" help:"Directory to start session in (defaults to current directory)"`
@@ -909,7 +916,20 @@ func runNew(params *NewParams) error {
 	// settings files as they are at launch (TCL-729). Same inputs as the
 	// warnings above, so the badge an operator sees later cannot contradict the
 	// warning they saw at spawn.
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, cwd)
+	// Who chose the mode. The daemon resolves it through its profile tier stack
+	// and passes it in; a direct `session new --sandbox …` is the human's own
+	// choice. A managed launch with nothing passed stays unattributed rather
+	// than claiming "explicit" on the daemon's behalf — an older agentd that
+	// does not send the tier is unknown, not explicit.
+	// Bounded and scrubbed HERE, at the point of record: this value is written
+	// to sessions.sandbox_mode_source, projected into the durable relaunch
+	// profile, and replayed into a child argv on every later relaunch. Cleaning
+	// only the derived os_sandbox_source would leave the raw label in all three.
+	sandboxChosenBy := harness.SanitizeSandboxChosenBy(params.SandboxChosenBy)
+	if sandboxChosenBy == "" && sandboxMode != "" && !params.ManagedLaunch {
+		sandboxChosenBy = harness.SandboxChosenExplicitly
+	}
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, sandboxChosenBy, cwd)
 
 	// Ensure the managed profile file exists before launch (self-healing —
 	// works even if `tclaude setup` was never run). This lives after cwd
@@ -965,6 +985,7 @@ func runNew(params *NewParams) error {
 		Status:                 StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
+		SandboxModeSource:      sandboxChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
 		OSSandboxUnverified:    launchOSSandbox.Unverified,
