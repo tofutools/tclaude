@@ -158,9 +158,10 @@ func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) [
 type LaunchOSSandbox struct {
 	State  string
 	Source string
-	// Unverified marks a verdict tclaude could not fully establish: a settings
-	// file that outranks the deciding tier existed but could not be read or
-	// parsed, so a policy tclaude never saw may say the opposite.
+	// Unverified marks a verdict tclaude could not fully establish. For a
+	// harness-owned sandbox this means an outranking settings file could not be
+	// read; experimental outer layers may also use it to record a known partial
+	// enforcement boundary in Source.
 	//
 	// It is recorded because the badge is a durable claim about containment, and
 	// the one thing worse than no badge is a padlock on an agent nothing confines.

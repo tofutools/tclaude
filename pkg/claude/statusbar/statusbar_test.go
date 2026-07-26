@@ -9,6 +9,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+func TestStatusbarSoftDisablesInsideTclaudeLayer(t *testing.T) {
+	t.Setenv("TCLAUDE_IGNORE_HOOKS", "1")
+	require.NoError(t, run())
+}
+
 // TestStatusLineInput_ParsesEffortLevel pins the effort.level field path
 // against Claude Code's documented statusline schema. The whole feature
 // hinges on reading the right key — CC emits the reasoning-effort level as

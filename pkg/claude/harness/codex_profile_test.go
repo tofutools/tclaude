@@ -117,28 +117,6 @@ func TestCodexAgentProfileContentNetworkPostures(t *testing.T) {
 	}
 }
 
-func TestCodexTmuxSocketDir(t *testing.T) {
-	base := t.TempDir()
-	t.Setenv("TMUX_TMPDIR", base)
-	got, err := codexTmuxSocketDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalBase, err := filepath.EvalSymlinks(base)
-	if err != nil {
-		t.Fatalf("canonicalize tmux base: %v", err)
-	}
-	want := filepath.Join(canonicalBase, fmt.Sprintf("tmux-%d", os.Getuid()))
-	if got != want {
-		t.Fatalf("tmux socket dir = %q, want %q", got, want)
-	}
-
-	t.Setenv("TMUX_TMPDIR", "relative")
-	if _, err := codexTmuxSocketDir(); err == nil {
-		t.Fatal("relative TMUX_TMPDIR must be rejected")
-	}
-}
-
 func TestCodexAgentProfileContentIncludesAdditiveReadAndWriteGrants(t *testing.T) {
 	got, err := codexAgentProfileContentForNameAndGrants(
 		"tclaude-agent-test", "/tmp/agentd.sock", "/tmp/private",

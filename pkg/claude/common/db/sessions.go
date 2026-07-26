@@ -75,11 +75,10 @@ type SessionRow struct {
 	// renders no badge, exactly as before the columns existed.
 	OSSandboxState  string
 	OSSandboxSource string
-	// OSSandboxUnverified marks a verdict a settings file OUTRANKING the deciding
-	// tier could have overturned, had tclaude been able to read it. The badge
-	// hedges rather than asserting containment: a padlock on an agent nothing
-	// confines is worse than no padlock at all. Persisted with the verdict —
-	// gated on the same non-empty OSSandboxState, so it can never outlive it.
+	// OSSandboxUnverified marks a verdict tclaude could not fully establish,
+	// either because an outranking settings tier was unreadable or because an
+	// experimental outer layer records a known partial enforcement boundary in
+	// OSSandboxSource. The badge hedges rather than asserting containment.
 	OSSandboxUnverified bool
 	// ApprovalPolicy and ApprovalAutoReview are the resolved launch-time
 	// approval posture. Together they let the daemon prevent an agent from

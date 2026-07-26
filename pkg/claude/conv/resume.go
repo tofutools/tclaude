@@ -263,7 +263,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = harness.LaunchOSSandbox{State: "on", Source: "tclaude-layer (bubblewrap)"}
+		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox()
 	}
 	state := &session.SessionState{
 		ID:                     sessionID,

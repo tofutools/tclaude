@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -118,7 +119,7 @@ func TestCodexBreakGlassOnOtherRootKeepsPrivateStateDenied(t *testing.T) {
 // class than protected state and is NOT reachable through break-glass.
 func TestCodexBreakGlassNeverReopensTmuxSocketDirectory(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "/tmp")
-	tmuxDir, err := codexTmuxSocketDir()
+	tmuxDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
 
 	content, err := codexAgentProfileContentForRules("tclaude-agent-test", "/run/agentd.sock", "/home/u/.tclaude/data",

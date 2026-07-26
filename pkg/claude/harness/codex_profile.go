@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -225,8 +226,11 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	if err := validateCodexAgentNetworkAccessForOS(networkAccess, goos); err != nil {
 		return "", err
 	}
-	tmuxSocketDir, err := codexTmuxSocketDir()
+	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil {
+		return "", err
+	}
+	if err := validateCodexProfilePath("tclaude tmux socket directory", tmuxSocketDir); err != nil {
 		return "", err
 	}
 	breakGlass := append(append([]string{}, rules.BreakGlassReadDirs...), rules.BreakGlassWriteDirs...)
@@ -358,32 +362,6 @@ func codexProtectedRootDenies(privateStateDir string) ([]string, error) {
 		return nil, err
 	}
 	return []string{path}, nil
-}
-
-// codexTmuxSocketDir returns the private directory holding tclaude's named
-// tmux socket (`tmux -L tclaude`). tmux uses $TMUX_TMPDIR/tmux-UID when that
-// variable is set and /tmp/tmux-UID otherwise. Blocking the directory covers
-// the current socket and a server created after the profile was rendered.
-//
-// Windows is not a supported tclaude target; this file is built for the Linux
-// and macOS targets documented by the project, where os.Getuid is available.
-func codexTmuxSocketDir() (string, error) {
-	base := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
-	if base == "" {
-		base = "/tmp"
-	}
-	if !filepath.IsAbs(base) {
-		return "", fmt.Errorf("TMUX_TMPDIR %q is not absolute", base)
-	}
-	base, err := filepath.EvalSymlinks(filepath.Clean(base))
-	if err != nil {
-		return "", fmt.Errorf("resolve tmux socket base %q: %w", base, err)
-	}
-	dir := filepath.Join(base, fmt.Sprintf("tmux-%d", os.Getuid()))
-	if err := validateCodexProfilePath("tclaude tmux socket directory", dir); err != nil {
-		return "", err
-	}
-	return dir, nil
 }
 
 func validateCodexProfilePath(label, path string) error {

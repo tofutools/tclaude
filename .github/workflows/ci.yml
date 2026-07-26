@@ -37,6 +37,39 @@ jobs:
         with:
           version: v2.12.2
 
+  sandbox-v2-smoke:
+    name: Sandbox v2 host smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
+      - name: Probe bubblewrap user namespace support
+        run: |
+          if ! bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true; then
+            echo "::error::bubblewrap cannot create the user/mount namespace required by the sandbox v2 smoke"
+            exit 1
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run sandbox v2 host smoke
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}

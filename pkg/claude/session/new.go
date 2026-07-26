@@ -460,6 +460,11 @@ func runNew(params *NewParams) error {
 	}
 	params.SandboxImpl = string(sandboxImplementation)
 	tclaudeLayer := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	if tclaudeLayer {
+		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return err
+		}
+	}
 
 	// Normalize the managed-profile pseudo-mode. SandboxManagedProfile is the
 	// dashboard/daemon way of selecting `codex -p tclaude-agent` through the one
@@ -579,8 +584,6 @@ func runNew(params *NewParams) error {
 			sandboxMode = harness.ClaudeSandboxOff
 		case harness.CodexName:
 			sandboxMode = harness.SandboxDangerFull
-		case harness.OpenCodeName:
-			sandboxMode = harness.OpenCodeSandboxOff
 		default:
 			return fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
 		}
@@ -868,6 +871,14 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
+	if tclaudeLayer {
+		// Hook callbacks currently write private SQLite state directly. Until
+		// TCL-754 brokers them through agentd, make installed hooks inherit the
+		// existing soft-disable switch rather than fail every harness event.
+		// Apply after profile environment so policy cannot disable this safety
+		// behavior for an outer-layer launch.
+		additionalEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
+	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
 	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
@@ -1153,7 +1164,10 @@ func runNew(params *NewParams) error {
 			effective = launchSandbox.Effective
 		}
 		effective.Filesystem = sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)
-		harnessCmd, err = WrapTclaudeLayer(bwrapBinary, effective, harnessCmd)
+		harnessCmd, err = WrapTclaudeLayer(bwrapBinary, effective, TclaudeLayerLaunchContract{
+			HarnessName: h.Name,
+			WriteDirs:   append(append([]string{}, launchGitWriteDirs...), cwd),
+		}, harnessCmd)
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}

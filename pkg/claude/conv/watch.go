@@ -2263,6 +2263,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, err
 	}
 	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
+	if tclaudeLayer {
+		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return "", "", nil, err
+		}
+	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
 	var shellEnvironment map[string]string
 	effectiveProfile := sandboxpolicy.EffectiveProfile{}
@@ -2327,6 +2332,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 				}
 			}
 		}
+	}
+	if tclaudeLayer {
+		// Keep direct-DB callbacks soft-disabled even if a recorded profile
+		// environment tried to overwrite the compatibility switch.
+		resumeEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
 	}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
 	// from interrupting this resume. No-op for non-Claude harnesses. See
@@ -2398,8 +2408,6 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			sandboxMode = harness.ClaudeSandboxOff
 		case harness.CodexName:
 			sandboxMode = harness.SandboxDangerFull
-		case harness.OpenCodeName:
-			sandboxMode = harness.OpenCodeSandboxOff
 		default:
 			return "", "", nil, fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
 		}
@@ -2408,6 +2416,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// spawn path does: the historical repository container would reopen every
 	// sibling repo beneath the deny.
 	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
+	var tclaudeLayerContractWriteDirs []string
 	if tclaudeLayer ||
 		(h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
@@ -2416,10 +2425,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
+		if tclaudeLayer {
+			tclaudeLayerContractWriteDirs = append(tclaudeLayerContractWriteDirs, gitWriteDirs...)
+		}
 	}
 	if tclaudeLayer {
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
 			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+			tclaudeLayerContractWriteDirs = appendUniqueResumeDir(tclaudeLayerContractWriteDirs, workspace)
 		}
 	}
 	if workspaceDenied {
@@ -2533,7 +2546,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
-		cmd, err = session.WrapTclaudeLayer(binary, effectiveProfile, cmd)
+		cmd, err = session.WrapTclaudeLayer(binary, effectiveProfile, session.TclaudeLayerLaunchContract{
+			HarnessName: h.Name,
+			WriteDirs:   tclaudeLayerContractWriteDirs,
+		}, cmd)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)
 		}
@@ -2924,7 +2940,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
-		launchOSSandbox = harness.LaunchOSSandbox{State: "on", Source: "tclaude-layer (bubblewrap)"}
+		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox()
 	}
 	state := &session.SessionState{
 		ID:                     sessionID,

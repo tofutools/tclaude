@@ -99,6 +99,18 @@ const CASES = [
     titleNot: [/Bash is confined/],
   },
   {
+    name: 'the experimental tclaude layer exposes its partial socket fidelity',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (bubblewrap; ambient host Unix sockets reachable)',
+      os_sandbox_unverified: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: filesystem mounts are enforced/,
+      /ambient host Unix sockets remain connectable/],
+    titleNot: [/Bash is confined/, /could not read a settings file/],
+  },
+  {
     name: 'a verified on keeps the plain padlock and the confinement claim',
     state: {
       harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'on',

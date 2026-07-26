@@ -128,22 +128,49 @@ process inside a tclaude-owned bubblewrap mount namespace. The default remains
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
 
-This first slice is deliberately filesystem-only. It requires Linux,
+This first slice is deliberately filesystem-only. It supports Claude Code and
+Codex; OpenCode is refused because its tool-executing server runs outside the
+attach pane this slice wraps. It requires Linux,
 `bwrap` on `PATH`, and working unprivileged user namespaces. If any capability
 is missing, tclaude refuses the launch instead of silently falling back. It
 does not unshare networking, PID, or IPC namespaces. The harness's own sandbox
 is disabled inside the wrapper for now; a later workstream will define when
 nested sandboxes may be stacked.
 
-The layer starts with a read-only view of the host root, gives `/dev`, `/proc`,
-and `/tmp` fresh sandbox views, then hides tclaude's protected state roots
-before applying the resolved profile's ordered mount plan. The plan may contain
-an acknowledged break-glass reopen, so this order is load-bearing. Later
-entries shadow earlier entries, allowing a more-specific allow to reopen
-beneath a deny and a more-specific deny to hide beneath an allow. Missing
-read/write bind sources are skipped without creating anything on the host; hide
-entries are still applied. A profile with a non-inherited network posture is
-refused in this filesystem-only slice.
+The layer starts with a read-only view of the host root and gives `/dev`,
+`/proc`, and `/tmp` fresh sandbox views. It then applies four load-bearing
+phases:
+
+1. Reopen the launched harness's state root, workspace/Git administration
+   paths, and declared agent directories for writing.
+2. Hide `sandboxpolicy.ProtectedPaths()` on top, so `~/.tclaude/data` and
+   `~/.claude/sessions` stay private despite the harness-state reopen.
+3. Replay the resolved profile's ordered mount plan exactly. An acknowledged
+   break-glass entry may reopen a protected path here.
+4. Hide the tclaude tmux socket directory last, so no ordinary or break-glass
+   rule can grant host tmux control.
+
+Later plan entries shadow earlier ones, allowing a more-specific allow to
+reopen beneath a deny and a more-specific deny to hide beneath an allow.
+Missing read/write bind sources are skipped without creating anything on the
+host; hide entries are still applied. The wrapper also starts a new terminal
+session to prevent terminal-input injection. A profile with a non-inherited
+network posture is refused in this filesystem-only slice.
+
+Two limitations are explicit in this experimental slice:
+
+- Ambient host Unix sockets remain connectable through the read-only root.
+  Privileged daemon sockets such as `docker.sock` or containerd-class sockets
+  are host-root-equivalent escapes when present. The launch badge records this
+  partial fidelity instead of presenting a verified padlock. Socket/network
+  allowlisting is the next layer workstream; this slice deliberately does not
+  maintain a misleading blocklist.
+- Installed hook, legacy status-callback, and status-bar processes cannot write
+  the hidden tclaude database. A `tclaude-layer` launch exports the existing
+  soft-disable switch so those callbacks return successfully without updating
+  status. Brokered callbacks are deferred; authenticated `tclaude agent`
+  coordination through the separate `~/.tclaude/api/agentd.sock` remains
+  available and is covered by the Linux host smoke.
 
 ## The shape that does the work: deny + reopen
 

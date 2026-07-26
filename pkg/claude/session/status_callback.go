@@ -65,6 +65,9 @@ func runStatusCallback(params *StatusCallbackParams) error {
 	default:
 		return fmt.Errorf("invalid status: %s", params.Status)
 	}
+	if os.Getenv("TCLAUDE_IGNORE_HOOKS") != "" {
+		return nil
+	}
 
 	// Read hook input from stdin - we need this for auto-registration
 	var hookInput HookInput

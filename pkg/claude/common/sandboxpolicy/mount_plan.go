@@ -4,9 +4,11 @@ package sandboxpolicy
 type MountMode int
 
 const (
-	MountRO MountMode = iota
+	// MountHide is the zero value so a partially initialized MountEntry fails
+	// closed instead of silently granting read access.
+	MountHide MountMode = iota
+	MountRO
 	MountRW
-	MountHide
 )
 
 // MountEntry is one ordered entry in an OS-sandbox mount plan.
