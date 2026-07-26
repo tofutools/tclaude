@@ -82,6 +82,12 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
     (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
   ))
 
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_0")) (subpath (param "READ_DENY_0")))
+    )))
+
 (deny file-read*
   (require-all
     (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
@@ -93,10 +99,28 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
     (require-not (subpath (param "READ_DENY_1_REOPEN_2")))
   ))
 
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_1")) (subpath (param "READ_DENY_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_0")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_1")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_1")))
+      (require-not (literal (param "READ_DENY_1_REOPEN_2")))
+      (require-not (subpath (param "READ_DENY_1_REOPEN_2")))
+    )))
+
 (deny file-read*
   (require-all
     (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
   ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_2")) (subpath (param "READ_DENY_2")))
+    )))
 
 (deny file-read*
   (require-all
@@ -104,6 +128,14 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
     (require-not (literal (param "READ_DENY_3_REOPEN_0")))
     (require-not (subpath (param "READ_DENY_3_REOPEN_0")))
   ))
+
+(deny network-outbound
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_3")) (subpath (param "READ_DENY_3")))
+      (require-not (literal (param "READ_DENY_3_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_3_REOPEN_0")))
+    )))
 
 (deny file-read*
   (require-all
@@ -113,7 +145,12 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
   ))
 
 (deny network-outbound
-  (remote unix-socket (subpath (param "TMUX_SOCKET_DENY_0"))))
+  (remote unix-socket
+    (require-all
+      (require-any (literal (param "READ_DENY_4")) (subpath (param "READ_DENY_4")))
+      (require-not (literal (param "READ_DENY_4_REOPEN_0")))
+      (require-not (subpath (param "READ_DENY_4_REOPEN_0")))
+    )))
 `
 	if got != want {
 		t.Fatalf("Seatbelt profile golden mismatch\nparams: %#v\nprofile:\n%s", params, got)
@@ -176,8 +213,19 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, socketParam, "the required agentd socket must be a parameterized carveout")
-	assert.Contains(t, profile, `(require-not (literal (param "`+socketParam+`")))`)
-	assert.Contains(t, profile, `(require-not (subpath (param "`+socketParam+`")))`)
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (literal (param "`+socketParam+`")))`,
+	), "the same socket parameter must reopen file-read and Unix-connect denies")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (subpath (param "`+socketParam+`")))`,
+	))
+	assert.Equal(t,
+		strings.Count(profile, "\n(deny file-read*"),
+		strings.Count(profile, "\n(deny network-outbound"),
+		"every hide read deny must have one Unix-connect sibling",
+	)
 }
 
 func TestSeatbeltCaseAndNFCCandidatesRequireFileIdentity(t *testing.T) {

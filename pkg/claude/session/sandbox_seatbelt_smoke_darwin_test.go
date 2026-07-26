@@ -33,6 +33,7 @@ const (
 	darwinSmokeHiddenEnv            = "TCLAUDE_SANDBOX_V2_HIDDEN"
 	darwinSmokeAliasFileEnv         = "TCLAUDE_SANDBOX_V2_ALIAS_FILE"
 	darwinSmokeProtectedFileEnv     = "TCLAUDE_SANDBOX_V2_PROTECTED_FILE"
+	darwinSmokePolicySocketEnv      = "TCLAUDE_SANDBOX_V2_POLICY_SOCKET"
 	darwinSmokeTmuxSocketEnv        = "TCLAUDE_SANDBOX_V2_TMUX_SOCKET"
 	darwinSmokeTclaudeBinaryEnv     = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	darwinSmokeRestrictBaselineEnv  = "TCLAUDE_SANDBOX_V2_RESTRICT_BASELINE"
@@ -92,6 +93,10 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(realTools, "probe"), []byte("alias-ok"), 0o600))
 	require.NoError(t, os.WriteFile(protectedFile, []byte("protected"), 0o600))
 	require.NoError(t, os.Symlink(realTools, aliasTools))
+	policySocket := filepath.Join(hidden, "policy.sock")
+	policyListener, err := net.Listen("unix", policySocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = policyListener.Close() })
 
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
@@ -166,6 +171,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		hidden,
 		filepath.Join(aliasTools, "probe"),
 		protectedFile,
+		policySocket,
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
@@ -204,6 +210,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		hidden,
 		filepath.Join(aliasTools, "probe"),
 		protectedFile,
+		policySocket,
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
@@ -216,7 +223,7 @@ func runDarwinSeatbeltSmokeHelper(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	restrictBaseline, exerciseBroker bool,
-	allowed, outside, readonly, hidden, aliasFile, protectedFile, tmuxSocket,
+	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, tmuxSocket,
 	runtimeTempDir, tclaudeBinary string,
 ) {
 	t.Helper()
@@ -249,6 +256,7 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeHiddenEnv+"="+hidden,
 		darwinSmokeAliasFileEnv+"="+aliasFile,
 		darwinSmokeProtectedFileEnv+"="+protectedFile,
+		darwinSmokePolicySocketEnv+"="+policySocket,
 		darwinSmokeTmuxSocketEnv+"="+tmuxSocket,
 		darwinSmokeTclaudeBinaryEnv+"="+tclaudeBinary,
 		darwinSmokeRestrictBaselineEnv+"="+boolString(restrictBaseline),
@@ -275,6 +283,7 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	hidden := os.Getenv(darwinSmokeHiddenEnv)
 	aliasFile := os.Getenv(darwinSmokeAliasFileEnv)
 	protectedFile := os.Getenv(darwinSmokeProtectedFileEnv)
+	policySocket := os.Getenv(darwinSmokePolicySocketEnv)
 	tmuxSocket := os.Getenv(darwinSmokeTmuxSocketEnv)
 	tclaudeBinary := os.Getenv(darwinSmokeTclaudeBinaryEnv)
 	restrictBaseline := os.Getenv(darwinSmokeRestrictBaselineEnv) == "1"
@@ -304,6 +313,12 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		os.WriteFile(filepath.Join(filepath.Dir(protectedFile), "phantom"), []byte("no"), 0o600),
 		"protected state phantom write",
 	)
+	if conn, dialErr := net.DialTimeout("unix", policySocket, 250*time.Millisecond); dialErr == nil {
+		_ = conn.Close()
+		t.Fatal("ordinary policy-hide socket remained connectable")
+	} else {
+		assertSeatbeltEPERM(t, dialErr, "ordinary policy-hide Unix connect")
+	}
 	if conn, dialErr := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); dialErr == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite class-4 deny")
@@ -351,6 +366,8 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	if !exerciseBroker {
 		return
 	}
+	require.True(t, agentipc.SocketReachable(agentipc.ClientSocketPath()),
+		"the agentd socket reopened beneath an ancestor hide must remain connectable")
 	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami through Seatbelt: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),

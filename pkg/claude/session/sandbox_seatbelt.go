@@ -29,7 +29,6 @@ type seatbeltRegion struct {
 	path   string
 	mode   sandboxpolicy.MountMode
 	policy bool
-	tmux   bool
 }
 
 type seatbeltRegionNode struct {
@@ -173,7 +172,6 @@ func renderSeatbeltProfile(
 	ordered = append(ordered, seatbeltRegion{
 		path: tmuxSocketDir,
 		mode: sandboxpolicy.MountHide,
-		tmux: true,
 	})
 
 	ordered, err = expandSeatbeltAliasRegions(ordered, plan.Aliases)
@@ -375,7 +373,6 @@ func expandSeatbeltAliasRegions(
 				path:   path,
 				mode:   region.mode,
 				policy: region.policy,
-				tmux:   region.tmux,
 			})
 		}
 	}
@@ -530,26 +527,12 @@ func compileSeatbeltDenyRegions(
 			false,
 			runtimeTempDir,
 		)
-	}
-	tmuxSocketRules := make([]int, 0, 1)
-	for i, node := range nodes {
-		if node.tmux {
-			tmuxSocketRules = append(tmuxSocketRules, i)
-		}
-	}
-	sort.Slice(tmuxSocketRules, func(i, j int) bool {
-		return nodes[tmuxSocketRules[i]].path < nodes[tmuxSocketRules[j]].path
-	})
-	for index, nodeIndex := range tmuxSocketRules {
-		name := fmt.Sprintf("TMUX_SOCKET_DENY_%d", index)
-		params = append(params, seatbeltProfileParam{
-			name: name,
-			path: nodes[nodeIndex].path,
-		})
-		profile.WriteString("\n(deny network-outbound\n")
-		profile.WriteString("  (remote unix-socket (subpath (param \"")
-		profile.WriteString(name)
-		profile.WriteString("\"))))\n")
+		appendSeatbeltUnixConnectDenyRule(
+			&profile,
+			fmt.Sprintf("READ_DENY_%d", index),
+			exceptions,
+			nodes,
+		)
 	}
 	return profile.String(), params
 }
@@ -691,4 +674,36 @@ func appendSeatbeltDenyRule(
 	}
 	profile.WriteString("  ))\n")
 	return params
+}
+
+// appendSeatbeltUnixConnectDenyRule gives every hidden region the same
+// boundary for AF_UNIX connect as it has for file reads. Seatbelt evaluates
+// connect(2) as network-outbound, not file-read*, so omitting this sibling
+// would leave a hidden socket usable. Reuse the read rule's exact parameters
+// and descendant exceptions: an agentd socket reopened beneath an ordinary
+// ancestor hide must remain connectable, while class-4 tmux has no reopen.
+func appendSeatbeltUnixConnectDenyRule(
+	profile *strings.Builder,
+	name string,
+	exceptions []int,
+	nodes []seatbeltRegionNode,
+) {
+	profile.WriteString("\n(deny network-outbound\n")
+	profile.WriteString("  (remote unix-socket\n")
+	profile.WriteString("    (require-all\n")
+	profile.WriteString("      (require-any (literal (param \"")
+	profile.WriteString(name)
+	profile.WriteString("\")) (subpath (param \"")
+	profile.WriteString(name)
+	profile.WriteString("\")))\n")
+	for index := range exceptions {
+		exceptionName := fmt.Sprintf("%s_REOPEN_%d", name, index)
+		profile.WriteString("      (require-not (literal (param \"")
+		profile.WriteString(exceptionName)
+		profile.WriteString("\")))\n")
+		profile.WriteString("      (require-not (subpath (param \"")
+		profile.WriteString(exceptionName)
+		profile.WriteString("\")))\n")
+	}
+	profile.WriteString("    )))\n")
 }
