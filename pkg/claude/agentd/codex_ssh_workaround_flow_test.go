@@ -44,6 +44,22 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	assert.Contains(t, successorConfigDir, "agent-dirs/spwn-",
 		"relaunches use a generation-keyed root instead of the stable agent ID")
 
+	require.NoError(t, db.GrantAgentPermission(defaultSuccessor, agentd.PermSelfClone, "test"))
+	enabledClone := agentReq(t, f, defaultSuccessor, http.MethodPost, "/v1/whoami/clone",
+		map[string]any{"no_copy_conv": true})
+	require.Equalf(t, http.StatusOK, enabledClone.Code, "body=%s", enabledClone.Body.String())
+	var enabledCloneResponse struct {
+		NewConv string `json:"new_conv"`
+	}
+	testharness.DecodeJSON(t, enabledClone, &enabledCloneResponse)
+	snapshot, ok = f.World.SpawnSandboxPolicy(enabledCloneResponse.NewConv)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	cloneConfigDir := sshSnapshotEnvironment(snapshot.Effective.Environment, "TCL_CODEX_SSH_CONFIG_DIR")
+	require.NotEmpty(t, cloneConfigDir)
+	assert.NotEqual(t, successorConfigDir, cloneConfigDir,
+		"an enabled clone must not share its source agent's SSH directory")
+
 	raw := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "raw-codex", "harness": "codex", "sandbox": "workspace-write",
 		"ssh_workaround": true,
