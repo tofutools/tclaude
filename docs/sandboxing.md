@@ -192,6 +192,10 @@ therefore reports full socket fidelity for the constructed-root posture. The
 reserved `filtered` posture will eventually cover proxy-backed host/domain and
 host-loopback allowlists; no proxy is implemented today.
 
+Host-loopback isolation also severs editor integrations that connect over a
+localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture
+therefore gives up that integration as well as host-local model servers.
+
 `network_access: none` also isolates the harness's own model transport.
 Claude Code and other hosted-only harnesses are refused because they would be
 dead on arrival. Codex proceeds only when the resolved sandbox profile contains

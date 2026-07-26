@@ -41,7 +41,7 @@ func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		return harness.LaunchOSSandbox{
 			State:  "on",
-			Source: "tclaude-layer (bubblewrap; isolated network; isolated PIDs; constructed root; agentd socket allowlisted)",
+			Source: "tclaude-layer (bubblewrap; isolated network; host loopback/IDE bridge unavailable; isolated PIDs; constructed root; agentd socket allowlisted)",
 		}
 	default:
 		return harness.LaunchOSSandbox{

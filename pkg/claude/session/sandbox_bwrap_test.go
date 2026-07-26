@@ -296,6 +296,7 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
 	assert.Equal(t, "on", isolated.State)
 	assert.Contains(t, isolated.Source, "isolated network")
+	assert.Contains(t, isolated.Source, "host loopback/IDE bridge unavailable")
 	assert.Contains(t, isolated.Source, "isolated PIDs")
 	assert.Contains(t, isolated.Source, "agentd socket allowlisted")
 	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
