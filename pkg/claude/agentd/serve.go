@@ -535,12 +535,15 @@ func runServe(p *serveParams) error {
 	// per-agent envelope directories, for sandboxes whose seccomp denies
 	// every socket syscall. The supervisor tracks the flag (env var OR
 	// features.file_spool_transport in config, editable live from the
-	// dashboard Config tab) and starts/stops the consumer to match. See
-	// spool.go.
-	stopSpool := startSpoolSupervisor(v1mux)
+	// dashboard Config tab) and starts/stops the consumer to match —
+	// including drain mode, which keeps serving agents provisioned before
+	// the flag went off until they retire. See spool.go.
+	stopSpool := startSpoolSupervisor(v1mux, spoolConfigPollInterval, 2*time.Second)
 	defer stopSpool()
-	if spoolTransportEnabled() {
+	if serve, draining := spoolShouldServe(); serve && !draining {
 		fmt.Printf("  experimental file-spool transport: %s\n", agentipc.SpoolRoot())
+	} else if draining {
+		fmt.Printf("  file-spool transport draining (flag off; serving existing spool agents): %s\n", agentipc.SpoolRoot())
 	}
 	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
 	for _, ln := range listeners {

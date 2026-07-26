@@ -83,29 +83,59 @@ func spoolTransportEnabled() bool {
 // per-request config reads the process-routes gate already does.
 const spoolConfigPollInterval = 5 * time.Second
 
-// startSpoolSupervisor keeps a spool consumer running exactly while the
-// experimental flag is on, re-checking the config every few seconds so a
-// dashboard Config-tab toggle takes effect without a daemon restart.
-// Returns a stop function for daemon shutdown.
-func startSpoolSupervisor(handler http.Handler) (stop func()) {
+// spoolShouldServe decides whether the consumer must run, and why. The
+// flag alone does NOT decide: agents provisioned while the flag was on may
+// still be running after the flag goes off (a dashboard toggle, or a
+// daemon restarted without the env var after an upgrade), and a spool
+// agent inside a socketless sandbox has no other channel. So the flag
+// gates PROVISIONING (see session.ApplyAgentSpoolEnv), while serving
+// continues for existing bindings until they retire — drain mode. Once the
+// last binding is revoked and swept, the consumer stops on the next poll.
+func spoolShouldServe() (serve bool, draining bool) {
+	if spoolTransportEnabled() {
+		return true, false
+	}
+	bindings, err := db.ListActiveSpoolBindings()
+	if err != nil {
+		slog.Warn("spool: list bindings for drain check failed", "error", err)
+		return false, false
+	}
+	return len(bindings) > 0, len(bindings) > 0
+}
+
+// startSpoolSupervisor keeps a spool consumer running exactly while it is
+// needed — flag on, or existing spool agents to drain — re-checking every
+// poll interval so a dashboard Config-tab toggle takes effect without a
+// daemon restart. Returns a stop function for daemon shutdown.
+func startSpoolSupervisor(handler http.Handler, poll, rescan time.Duration) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		var stopConsumer func()
+		wasDraining := false
 		apply := func() {
-			enabled := spoolTransportEnabled()
+			serve, draining := spoolShouldServe()
 			switch {
-			case enabled && stopConsumer == nil:
-				slog.Info("experimental file-spool transport enabled", "root", agentipc.SpoolRoot())
-				stopConsumer = startSpoolConsumer(handler, agentipc.SpoolRoot(), 2*time.Second)
-			case !enabled && stopConsumer != nil:
-				slog.Info("experimental file-spool transport disabled")
+			case serve && stopConsumer == nil:
+				if draining {
+					slog.Info("file-spool transport draining: flag off, serving existing spool agents until they retire", "root", agentipc.SpoolRoot())
+				} else {
+					slog.Info("experimental file-spool transport enabled", "root", agentipc.SpoolRoot())
+				}
+				stopConsumer = startSpoolConsumer(handler, agentipc.SpoolRoot(), rescan)
+			case !serve && stopConsumer != nil:
+				if wasDraining {
+					slog.Info("file-spool transport drained: last spool agent retired; consumer stopped")
+				} else {
+					slog.Info("experimental file-spool transport disabled")
+				}
 				stopConsumer()
 				stopConsumer = nil
 			}
+			wasDraining = draining
 		}
 		apply()
-		ticker := time.NewTicker(spoolConfigPollInterval)
+		ticker := time.NewTicker(poll)
 		defer ticker.Stop()
 		for {
 			select {

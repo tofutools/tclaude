@@ -136,8 +136,15 @@ on, sandboxed agents on the same host can read each other's envelopes —
 request/response bodies also touch disk, which the socket never does.
 The config field is the shared source both the daemon and session launches
 read; the env var is a per-process override. A provisioned agent whose
-daemon isn't consuming (flag off there, or daemon down) fails fast via the
-`.serving` heartbeat the consumer maintains at the spool root.
+daemon isn't consuming at all (daemon down, or a pre-spool daemon binary)
+fails fast via the `.serving` heartbeat the consumer maintains at the
+spool root.
+
+Upgrade/toggle overlap is handled by drain mode: the flag gates
+*provisioning new* spool directories, but the daemon keeps *serving
+existing* ones even with the flag off — agents spawned while it was on
+stay connected across daemon restarts and toggles, until they retire. The
+consumer stops on its own once the last binding is gone.
 
 By default `agentd serve` also adds a system tray icon (Open
 dashboard, Reinstall agent skills, Open config, pending-approvals

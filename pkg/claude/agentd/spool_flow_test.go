@@ -229,3 +229,52 @@ func TestSpool_StaleRequestIsRefusedNotServed(t *testing.T) {
 	_, err = os.Stat(respPath)
 	assert.True(t, os.IsNotExist(err), "stale request must never be served")
 }
+
+// Scenario: the upgrade/toggle overlap. Agents provisioned while the flag
+// was on are still running after it goes off (dashboard toggle, or a
+// daemon restarted without the env var). The supervisor must keep serving
+// their existing bindings — drain mode — until they retire, and stop only
+// once the last binding is gone.
+func TestSpool_FlagOffDrainsExistingAgentsUntilRetired(t *testing.T) {
+	f := newFlow(t)
+	const conv = "spool-abab-cdcd-efef-0101"
+	f.HaveConvWithTitle(conv, "spool-drain")
+	dir := provisionSpool(t, conv) // sets the flag env for provisioning...
+	t.Setenv(agentipc.FileTransportFlagEnv, "") // ...then the "upgrade" clears it
+
+	stop := agentd.StartSpoolSupervisorForTest(25*time.Millisecond, 25*time.Millisecond)
+	defer stop()
+
+	// Flag off, binding exists → drain mode still serves this agent.
+	status, body := spoolGet(t, dir, "/v1/whoami")
+	require.Equal(t, http.StatusOK, status, "drain mode must keep serving existing spool agents: %s", body)
+	var who struct {
+		ConvID string `json:"conv_id"`
+	}
+	require.NoError(t, json.Unmarshal(body, &who))
+	assert.Equal(t, conv, who.ConvID)
+
+	// Retirement ends the drain: the binding is revoked, the directory
+	// swept, and (on the next poll) the consumer stops.
+	_, err := db.RevokeSpoolBindingsForConv(conv)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(dir)
+		return os.IsNotExist(err)
+	}, 5*time.Second, 10*time.Millisecond, "revoked spool dir must be swept during drain")
+}
+
+// Scenario: flag off and nothing to drain → the supervisor runs no
+// consumer at all: no heartbeat marker appears and requests are not
+// served.
+func TestSpool_FlagOffWithNoBindingsServesNothing(t *testing.T) {
+	newFlow(t)
+	t.Setenv(agentipc.FileTransportFlagEnv, "")
+
+	stop := agentd.StartSpoolSupervisorForTest(25*time.Millisecond, 25*time.Millisecond)
+	defer stop()
+
+	time.Sleep(150 * time.Millisecond)
+	_, err := os.Stat(agentipc.SpoolRoot() + "/.serving")
+	assert.True(t, os.IsNotExist(err), "no consumer may run with the flag off and no bindings")
+}

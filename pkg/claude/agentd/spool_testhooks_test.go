@@ -9,3 +9,9 @@ import "time"
 func StartSpoolConsumerForTest(root string, rescan time.Duration) func() {
 	return startSpoolConsumer(buildMux(), root, rescan)
 }
+
+// StartSpoolSupervisorForTest runs the production supervisor (flag/drain
+// resolution included) with test-scale intervals.
+func StartSpoolSupervisorForTest(poll, rescan time.Duration) func() {
+	return startSpoolSupervisor(buildMux(), poll, rescan)
+}
