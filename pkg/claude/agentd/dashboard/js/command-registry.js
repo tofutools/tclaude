@@ -27,6 +27,14 @@ export function buildRegisteredCommands(context = {}) {
   return commands;
 }
 
+export function isCommandPaletteShortcut(event) {
+  if (!event || event.type !== 'keydown' || event.repeat ||
+      !(event.ctrlKey || event.metaKey)) return false;
+  return (event.key || '').toLowerCase() === 'k';
+}
+
 export function requestCommandPalette(documentRef = document) {
-  documentRef.dispatchEvent(new CustomEvent(COMMAND_PALETTE_OPEN_EVENT));
+  const event = new CustomEvent(COMMAND_PALETTE_OPEN_EVENT, { cancelable: true });
+  documentRef.dispatchEvent(event);
+  return event.defaultPrevented;
 }

@@ -1,6 +1,11 @@
 // terminal-interactions.js — shared native-terminal affordances for every
 // dashboard xterm surface: selection/copy, safe links, and clipboard images.
 
+import {
+  isCommandPaletteShortcut,
+  requestCommandPalette,
+} from './command-registry.js';
+
 const IMAGE_TYPES = new Map([
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
@@ -57,6 +62,19 @@ export function isComposeMessageShortcut(event) {
   const m = event.code === 'KeyM' ||
     (typeof event.key === 'string' && event.key.toLowerCase() === 'm');
   return m && Boolean(event.ctrlKey || event.metaKey);
+}
+
+export function claimCommandPaletteShortcut(
+  event,
+  documentRef,
+  requestPalette = requestCommandPalette,
+) {
+  if (!isCommandPaletteShortcut(event) || !requestPalette(documentRef)) return false;
+  event.preventDefault();
+  // The palette opens synchronously. Do not let this same keydown bubble to
+  // its global toggle handler and immediately close it again.
+  event.stopPropagation();
+  return true;
 }
 
 // OSC 52 payloads have the form "selection;base64-data". tmux emits one when
@@ -226,6 +244,7 @@ async function uploadImages(files, signal) {
 export function attachTerminalInteractions({
   term, host, copyButton, setStatus, baseStatus = () => '',
   onComposeMessage = null, onSelectionChange = () => {},
+  requestPalette = requestCommandPalette,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -398,6 +417,11 @@ export function attachTerminalInteractions({
 
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
+    // xterm owns a hidden textarea, so the dashboard's global launcher
+    // deliberately treats it like ordinary text input. Ask the surrounding
+    // document synchronously instead: the integrated dashboard claims the
+    // request, while the standalone terminal has no listener and keeps Ctrl-K.
+    if (claimCommandPaletteShortcut(event, ownerDocument, requestPalette)) return false;
     if (onComposeMessage && isComposeMessageShortcut(event)) {
       event.preventDefault();
       onComposeMessage();
