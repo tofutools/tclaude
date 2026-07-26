@@ -214,13 +214,29 @@ The remaining limitation in the host-open posture is explicit:
   are host-root-equivalent escapes when present. The launch badge records this
   partial fidelity instead of presenting a verified padlock. The open posture
   deliberately does not maintain a misleading dangerous-socket blocklist.
-- Installed hook, legacy status-callback, and status-bar processes cannot write
-  the hidden tclaude database. A `tclaude-layer` launch exports the existing
-  soft-disable switch so those callbacks return successfully without updating
-  status. Brokered callbacks are deferred; authenticated `tclaude agent`
-  coordination through the separate `~/.tclaude/api/agentd.sock` remains
-  available and is covered by the Linux host smoke in both posture and
-  filesystem-boundary assertions.
+
+## Hook callbacks under the layer
+
+Installed hook processes write the tclaude database, which the layer's
+baseline necessarily hides. A `tclaude-layer` launch therefore exports
+`TCLAUDE_HOOK_BROKER=agentd`, and the hook callback POSTs each parsed event
+to the daemon over `~/.tclaude/api/agentd.sock` instead of writing state
+itself. agentd applies the event host-side by calling the same function a
+direct callback would, so a wrapped agent's status, sub-agent ledger,
+directory tracking, desktop notifications and pre-compact guard behave as
+they do for any other launch. Every other launch still writes directly and
+is byte-for-byte unaffected.
+
+The daemon identifies the calling session from host pids it recorded at
+spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the
+request is accepted only as a cross-check and a disagreement is refused.
+
+Note that the hidden `~/.tclaude/data` is an empty tmpfs rather than an
+unwritable path, so a hook that wrote it directly from inside the wall would
+silently populate a throwaway database instead of failing. That is why the
+routing is driven by the launch marker rather than by catching a write
+error, and why the fallback probe looks for the absence of the database file
+rather than for a failure.
 
 The CI smoke reports a visible skip when its runner cannot create an
 unprivileged user/mount namespace. Run the fallback on a compatible Linux host

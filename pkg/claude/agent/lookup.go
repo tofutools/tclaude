@@ -727,6 +727,19 @@ var whoamiViaDaemon = currentConvIDViaDaemon
 
 // readCCSessionID walks up to the parent CC pid and reads
 // ~/.claude/sessions/<pid>.json for its `sessionId`.
+//
+// Inert under `tclaude-layer`, deliberately: ~/.claude/sessions is a
+// protected root the wrapper hides behind an empty tmpfs, so Claude Code
+// writes its pid file where only the wrapped process can see it and this
+// read finds nothing. That costs nothing — the daemon resolves identity
+// server-side from host pids it recorded itself (agentd's convIDForPID),
+// which is both authoritative and unaffected by the wall, and it is why
+// `tclaude agent whoami` works from inside the wrapper.
+//
+// So: do NOT "fix" this by reopening ~/.claude/sessions to the sandbox or
+// by teaching the caller to assert its own session id. The first
+// re-exposes protected state to break a fallback nothing depends on; the
+// second replaces a daemon-verified fact with a caller-controlled claim.
 func readCCSessionID() string {
 	pid := session.FindClaudePID()
 	if pid == 0 {

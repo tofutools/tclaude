@@ -154,10 +154,8 @@ func taskSignalPath() (string, bool) {
 	return cleanPath, true
 }
 
-// inTaskRunnerHook reports whether this hook fired under `tclaude task
-// run` (a valid TCLAUDE_TASK_SIGNAL is present — see taskSignalPath).
-//
-// Task mode is exempt from the foreign-process guard, the conv-advance
+// Task mode (HookAmbient.InTaskRunnerHook) is exempt from the
+// foreign-process guard, the conv-advance
 // identity-migration path, and instant agent-enrollment, because the
 // runner is, by design, a SEQUENCE of independent Claude conversations
 // under ONE env-session: one fresh conv per task in TODO.md. So the
@@ -170,10 +168,10 @@ func taskSignalPath() (string, bool) {
 // is inherent to the guard (its own doc comment notes hook inputs carry
 // no process identity); exempting only task mode keeps the guard fully in
 // force for every interactive agent session, the case #284 protects.
-func inTaskRunnerHook() bool {
-	_, ok := taskSignalPath()
-	return ok
-}
+//
+// Brokered (tclaude-layer) events are never in task mode — see
+// BrokeredHookAmbient for why the signal path is not carried across the
+// broker, and why that is the safe direction.
 
 // needsIdentityMigration reports whether a conv-id rotation on an
 // env-keyed session is a /clear whose agent identity still has to be
@@ -439,13 +437,36 @@ func runHookCallback() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
+	// Route the event. A `tclaude-layer` launch cannot reach the real
+	// database from inside its namespace, so its events are handed to
+	// agentd, which runs this same dispatch host-side on the caller's
+	// behalf. Every other launch keeps writing directly, unchanged.
+	if brokerHookEvents() {
+		return brokerHookEvent(input, os.Stdout)
+	}
+
+	return DispatchHookEvent(input, envSessionID, LocalHookAmbient(), os.Stdout)
+}
+
+// DispatchHookEvent applies one parsed hook event: the PreCompact gate
+// path (which may write a decision document to stdout) or the ordinary
+// ApplyHook path. It is the whole of the hook callback below the
+// stdin/env/record-hooks IO in runHookCallback, which is exactly the seam
+// the agentd broker needs — agentd receives a parsed event and a resolved
+// identity and calls straight into here, so the brokered and direct paths
+// execute the same code rather than two implementations that must be kept
+// in agreement.
+//
+// stdout receives any hook decision document; it is the hook's real stdout
+// on the direct path and a response buffer on the brokered one.
+func DispatchHookEvent(input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
 	// PreCompact is a gate, not a status transition: it may write a
 	// {"decision":"block"} back to Claude Code to refuse an early
 	// auto-compaction. Handle it on its own path (it does not flow
-	// through ApplyHook's status machinery) and emit any decision to
-	// the hook's stdout. Codex still reports its active model on this
-	// event, so persist it first when the hook belongs to the tracked
-	// main conversation; a blocked compaction has no PostCompact backstop.
+	// through ApplyHook's status machinery). Codex still reports its
+	// active model on this event, so persist it first when the hook
+	// belongs to the tracked main conversation; a blocked compaction has
+	// no PostCompact backstop.
 	if input.HookEventName == "PreCompact" {
 		sessionKey := envSessionID
 		if sessionKey == "" {
@@ -461,10 +482,10 @@ func runHookCallback() error {
 		if state, err := LoadSessionState(envSessionID); err == nil {
 			persistCodexHookModel(state, input)
 		}
-		return decidePreCompact(input, envSessionID, os.Stdout)
+		return decidePreCompact(input, envSessionID, amb, stdout)
 	}
 
-	return ApplyHook(input, envSessionID)
+	return applyHook(input, envSessionID, amb)
 }
 
 // ApplyHook applies a single parsed Claude Code hook event to session
@@ -477,7 +498,16 @@ func runHookCallback() error {
 // envSessionID is the TCLAUDE_SESSION_ID of the calling session ("" for
 // a session not launched by tclaude); it is the stable key that lets a
 // conv-id rotation (/clear, /resume) be tracked across the rotation.
+//
+// This entry point reads the caller's own ambient process context, which
+// is correct for everything that runs inside the agent's pane. The agentd
+// broker does not; it goes through DispatchHookEvent with an explicit
+// HookAmbient instead.
 func ApplyHook(input HookCallbackInput, envSessionID string) error {
+	return applyHook(input, envSessionID, LocalHookAmbient())
+}
+
+func applyHook(input HookCallbackInput, envSessionID string, amb HookAmbient) error {
 	// Acquire a per-session exclusive lock to prevent concurrent hook callbacks
 	// from racing on the read-modify-write of session state.
 	sessionKey := envSessionID
@@ -506,7 +536,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	)
 
 	// Get or create session state
-	state, err := getOrCreateSessionState(input, envSessionID)
+	state, err := getOrCreateSessionState(input, envSessionID, amb)
 	if err != nil || state == nil {
 		return err
 	}
@@ -557,11 +587,11 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// status or conv mutation, and it may legitimately arrive carrying
 	// a rotated conv-id.
 	//
-	// `tclaude task run` is exempt too (inTaskRunnerHook): it drives a
+	// `tclaude task run` is exempt too (HookAmbient.InTaskRunnerHook): it drives a
 	// sequence of independent conversations under one env-session — one
 	// fresh conv per task — so its conv-id rotations are legitimate, not
-	// foreign. See inTaskRunnerHook for the full rationale.
-	if !inTaskRunnerHook() &&
+	// foreign. See HookAmbient.InTaskRunnerHook for the full rationale.
+	if !amb.InTaskRunnerHook() &&
 		envSessionID != "" && state.ConvID != "" && input.ConvID != "" &&
 		input.ConvID != state.ConvID &&
 		input.HookEventName != "PostCompact" {
@@ -964,7 +994,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			CauseKind:          db.AgentExitCauseNormal,
 			Reason:             boundedSessionEndReason(input.Reason),
 			ObservedState:      StatusExited,
-			ExpectedGeneration: os.Getenv("TCLAUDE_EXIT_GENERATION"),
+			ExpectedGeneration: amb.ExitGeneration,
 		})
 		if err != nil {
 			slog.Warn("exit audit: persist SessionEnd observation failed",
@@ -977,7 +1007,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 				"session", state.ID, "module", "hooks")
 			return nil
 		}
-		if !inTaskRunnerHook() {
+		if !amb.InTaskRunnerHook() {
 			convTitle := getConvTitle(state.ConvID, state.Cwd)
 			notifyOnStateTransition(state.ID, state.ConvID, prevStatus, state.Status,
 				state.Cwd, convTitle, state.Harness)
@@ -1078,7 +1108,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// gate the injection on the harness actually understanding those
 		// commands, or a Codex pane would be typed a hint it can't act on.
 		// Harness-aware nudging is future work (Codex Lifecycle).
-		handleContextNudge(envSessionID)
+		handleContextNudge(envSessionID, amb)
 	}
 
 	state.Updated = time.Now()
@@ -1088,7 +1118,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// handle moving the agent's identity across that rotation.
 	if input.ConvID != "" && state.ConvID != input.ConvID {
 		switch {
-		case envSessionID == "" || state.ConvID == "" || inTaskRunnerHook():
+		case envSessionID == "" || state.ConvID == "" || amb.InTaskRunnerHook():
 			// Not an env-keyed rotation we can migrate identity across
 			// (a non-tclaude session, or the session's first conv-id
 			// record). Plain advance — the pre-/clear-fix behaviour.
@@ -1198,13 +1228,13 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// separate agentd concern; the conv-advance exemption above is what
 	// keeps the migration machinery from firing regardless.) The task
 	// runner needs only the session row + Stop-hook signal. See
-	// inTaskRunnerHook.
+	// HookAmbient.InTaskRunnerHook.
 	//
 	// Codex has one extra repair path: if the launch/start hooks were missed,
 	// a later modeled hook from a non-pending spawned session still proves the
 	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
 	// here because agentd's sweeper owns their group/name/briefing intent.
-	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID) {
+	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {
 		if _, _, err := db.EnsureAgentForConv(state.ConvID, "session-start"); err != nil {
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
@@ -1214,7 +1244,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// Keep the row keyed by the real harness process, not tmux's shell
 	// wrapper pane PID. Spawn records #{pane_pid}; hooks run under the
 	// harness, so FindClaudePID can correct wrapper-shaped rows.
-	if newPID := FindClaudePID(); newPID > 0 && state.PID != newPID {
+	if newPID := amb.HarnessPID; newPID > 0 && state.PID != newPID {
 		state.PID = newPID
 	}
 
@@ -1276,7 +1306,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
 	// (writes/removes the signal file the auto-/exit watcher polls).
-	handleTaskSignal(stopped, input)
+	handleTaskSignal(stopped, input, amb)
 
 	// In task mode the task runner owns all user-facing notifications — it
 	// sends its own targeted messages ("Task failed: X", "All tasks
@@ -1287,7 +1317,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	// each task finishes, are pure noise (reported by Mikael). A manual
 	// `tclaude` /exit is deliberately NOT affected here — that is not task
 	// mode, and /exit is the normal interactive/dashboard lifecycle.
-	if inTaskRunnerHook() {
+	if amb.InTaskRunnerHook() {
 		return nil
 	}
 
@@ -1365,8 +1395,8 @@ func persistCodexHookModel(state *SessionState, input HookCallbackInput) {
 	}
 }
 
-func shouldEnrollLaunchedSessionFromHook(state *SessionState, input HookCallbackInput, envSessionID string) bool {
-	if state == nil || envSessionID == "" || state.ConvID == "" || inTaskRunnerHook() {
+func shouldEnrollLaunchedSessionFromHook(state *SessionState, input HookCallbackInput, envSessionID string, amb HookAmbient) bool {
+	if state == nil || envSessionID == "" || state.ConvID == "" || amb.InTaskRunnerHook() {
 		return false
 	}
 	if input.HookEventName == "SessionStart" && !isConvTransitionStart(input) {
@@ -1410,13 +1440,13 @@ type TaskSignal struct {
 // file path. On Stop, we write the report and session ID as JSON.
 // On UserPromptSubmit, we remove the signal to cancel any pending
 // auto-exit (the user is interacting).
-func handleTaskSignal(isDone bool, input HookCallbackInput) bool {
+func handleTaskSignal(isDone bool, input HookCallbackInput, amb HookAmbient) bool {
 	// taskSignalPath enforces the CacheDir bound (the same predicate
-	// inTaskRunnerHook gates the hook exemptions on); warn on a
+	// HookAmbient.InTaskRunnerHook gates the hook exemptions on); warn on a
 	// set-but-out-of-bounds path, since this is where the path is
 	// consumed for a write.
-	signalPath, ok := taskSignalPath()
-	if !ok {
+	signalPath := amb.TaskSignalPath
+	if signalPath == "" {
 		if raw := os.Getenv("TCLAUDE_TASK_SIGNAL"); raw != "" {
 			slog.Warn("task signal path outside allowed directory, ignoring", "path", raw, "module", "hooks")
 		}
@@ -1650,7 +1680,7 @@ func persistCodexWorkspaceSnapshot(state *SessionState, input HookCallbackInput)
 // getOrCreateSessionState finds existing session or creates a new one.
 // envSessionID is the caller's TCLAUDE_SESSION_ID ("" when the session
 // was not launched by tclaude).
-func getOrCreateSessionState(input HookCallbackInput, envSessionID string) (*SessionState, error) {
+func getOrCreateSessionState(input HookCallbackInput, envSessionID string, amb HookAmbient) (*SessionState, error) {
 	if envSessionID != "" {
 		return LoadSessionState(envSessionID)
 	}
@@ -1683,18 +1713,18 @@ func getOrCreateSessionState(input HookCallbackInput, envSessionID string) (*Ses
 		return nil, nil
 	}
 
-	return autoRegisterSessionFromHook(input), nil
+	return autoRegisterSessionFromHook(input, amb), nil
 }
 
 // autoRegisterSessionFromHook creates a new session state for a Claude session
 // that wasn't started via tclaude
-func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
-	claudePID := FindClaudePID()
+func autoRegisterSessionFromHook(input HookCallbackInput, amb HookAmbient) *SessionState {
+	claudePID := amb.HarnessPID
 	if claudePID == 0 {
 		return nil
 	}
 
-	tmuxSession := GetCurrentTmuxSession()
+	tmuxSession := amb.TmuxSession
 
 	// The session PK is the conversation's full UUID — never a truncation.
 	// Two conversations sharing an 8-char prefix would otherwise collide on
@@ -1703,7 +1733,7 @@ func autoRegisterSessionFromHook(input HookCallbackInput) *SessionState {
 
 	cwd := input.Cwd
 	if cwd == "" {
-		cwd, _ = os.Getwd()
+		cwd = amb.FallbackCwd
 	}
 
 	state := &SessionState{
@@ -1751,7 +1781,7 @@ type preCompactDecision struct {
 //
 // envSessionID is TCLAUDE_SESSION_ID, the key the statusline hook
 // stores the context snapshot under (statusbar.UpdateContextSnapshot).
-func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer) error {
+func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbient, w io.Writer) error {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Warn("pre-compact guard: config load failed, allowing compaction", "error", err, "module", "hooks")
@@ -1790,7 +1820,7 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, w io.Writer)
 	// same reason the status line does: the hook runs inside the agent's pane, so
 	// it sees the variable Claude Code is actually acting on.
 	pinnedWindow := int64(0)
-	if parsed, err := harness.ParseAutoCompactWindow(os.Getenv(harness.AutoCompactWindowEnvVar)); err == nil {
+	if parsed, err := harness.ParseAutoCompactWindow(amb.AutoCompactWindow); err == nil {
 		// Parsed, not read raw, so an out-of-range value in the operator's own shell
 		// cannot govern the guard. See the same treatment in the status bar.
 		pinnedWindow = harness.AutoCompactWindowTokens(parsed)
@@ -1937,7 +1967,7 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-func handleContextNudge(sessionID string) {
+func handleContextNudge(sessionID string, amb HookAmbient) {
 	if sessionID == "" {
 		return
 	}
@@ -1974,7 +2004,7 @@ func handleContextNudge(sessionID string) {
 		return
 	}
 
-	tmuxSession := GetCurrentTmuxSession()
+	tmuxSession := amb.TmuxSession
 	if tmuxSession == "" {
 		// No pane can receive this ephemeral hint. Stamp the threshold so a
 		// later hook does not deliver a stale reminder for the same climb.

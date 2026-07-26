@@ -878,12 +878,13 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if tclaudeLayer {
-		// Hook callbacks currently write private SQLite state directly. Until
-		// TCL-754 brokers them through agentd, make installed hooks inherit the
-		// existing soft-disable switch rather than fail every harness event.
-		// Apply after profile environment so policy cannot disable this safety
-		// behavior for an outer-layer launch.
-		additionalEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
+		// Hook callbacks write private SQLite state, which this launch's own
+		// namespace hides. Route them through agentd instead, which applies
+		// them host-side on the caller's behalf (TCL-754). Apply after the
+		// profile environment so policy cannot unset the marker for an
+		// outer-layer launch and silently send the pane's telemetry into the
+		// throwaway database behind the wall.
+		additionalEnv[HookBrokerEnvVar] = HookBrokerAgentd
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""

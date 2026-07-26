@@ -442,6 +442,33 @@ func AsAgentPeer(r *http.Request, convID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// AsAgentPeerWithPID is AsAgentPeer with a caller pid the test chooses.
+// The hook broker resolves its target session by walking that pid's
+// ancestry (never by anything the request says), so a broker test has to
+// be able to place its caller in a process tree — see
+// SetProcTreeForTest.
+func AsAgentPeerWithPID(r *http.Request, convID string, pid int) *http.Request {
+	p := &peer{PID: pid, HasClaudeAncestor: true, ConvID: convID}
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
+// SetProcTreeForTest installs a synthetic process tree over the /proc
+// readers the identity walks use, so a flow test can model the
+// harness → wrapper → pane ancestry an identity resolution depends on
+// without spawning real processes. Unlisted pids resolve to init, ending
+// the walk. Returns a restore function.
+func SetProcTreeForTest(name map[int]string, parent map[int]int) func() {
+	prevName, prevParent := procName, procParent
+	procName = func(pid int) string { return name[pid] }
+	procParent = func(pid int) int {
+		if p, ok := parent[pid]; ok {
+			return p
+		}
+		return 1
+	}
+	return func() { procName, procParent = prevName, prevParent }
+}
+
 // SetOperatorTokenForTest installs a known operator token so flow tests
 // can exercise the dashboard browser-login path (handleDashboardLogin)
 // without scraping the random startup banner. Returns a restore

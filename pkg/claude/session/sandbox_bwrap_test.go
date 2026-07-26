@@ -381,7 +381,12 @@ func TestBwrapArgsRefusesReservedFilteredPosture(t *testing.T) {
 	require.ErrorContains(t, err, "reserved")
 }
 
-func TestStatusCallbackSoftDisablesInsideTclaudeLayer(t *testing.T) {
+// TCLAUDE_IGNORE_HOOKS is the blanket soft-disable used by callers that
+// must not generate hook traffic at all — agentd's plugin shells, seance
+// steps, and `tclaude task` subprocesses. It is NOT how tclaude-layer
+// launches are handled any more (TCL-754 brokers those through agentd
+// instead), so this pins the switch on its own terms.
+func TestStatusCallbackSoftDisablesUnderIgnoreHooks(t *testing.T) {
 	t.Setenv("TCLAUDE_IGNORE_HOOKS", "1")
 	require.NoError(t, runStatusCallback(&StatusCallbackParams{Status: StatusWorking}))
 }

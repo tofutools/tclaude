@@ -2334,9 +2334,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		}
 	}
 	if tclaudeLayer {
-		// Keep direct-DB callbacks soft-disabled even if a recorded profile
-		// environment tried to overwrite the compatibility switch.
-		resumeEnv["TCLAUDE_IGNORE_HOOKS"] = "1"
+		// Mirror the spawn seam: hook callbacks go through agentd for a
+		// launch whose namespace hides the database (TCL-754). Applied after
+		// the recorded profile environment so a stale or hostile profile
+		// cannot unset the marker on resume.
+		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
 		if err := session.ValidateTclaudeLayerNetwork(h, effectiveProfile); err != nil {
 			return "", "", nil, err
 		}
