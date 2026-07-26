@@ -253,6 +253,18 @@ test('Down in a filter stays native when its result pane has no rows', async (t)
   await mounted.unmount();
 });
 
+test('Down in a composing filter stays with the IME candidate list', async (t) => {
+  const { harness, calls, mounted, press } = await mountMail(t);
+  const filter = mounted.container.querySelector('#filter-messages');
+  filter.focus();
+
+  const down = await press(filter, 'ArrowDown', { isComposing: true });
+  assert.equal(down.defaultPrevented, false);
+  assert.equal(harness.document.activeElement, filter);
+  assert.deepEqual(calls.messages, []);
+  await mounted.unmount();
+});
+
 test('Left and Right move focus across sidebar, list, and reader', async (t) => {
   const { harness, calls, mounted, rows, press } = await mountMail(t);
   const boxes = rows('#mail-sidebar .mailbox');

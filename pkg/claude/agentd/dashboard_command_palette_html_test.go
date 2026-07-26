@@ -236,7 +236,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("case 'Enter':", "Enter runs the selected command")
 	must("case 'Escape':", "Escape closes the palette")
 	must("function movePage(", "the page jump clamps at the ends (distinct from the wrapping move)")
-	must("const pageSize = () =>", "the page jump is a measured viewport-worth of rows")
+	must("visiblePageSize(listRef.current, '.palette-item')",
+		"the page jump is a measured viewport-worth of rows")
 	// The footer advertises the page-jump keys alongside the ↑/↓ nav hint.
 	must("<kbd>PgUp</kbd><kbd>PgDn</kbd> jump", "the palette footer documents PageUp/PageDown")
 }

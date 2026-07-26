@@ -30,7 +30,8 @@ export function arrowStep(event) {
 }
 
 function plainKey(event) {
-  return !!event && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+  return !!event && !event.isComposing && event.keyCode !== 229
+    && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
 // rowEnabled keeps arrow keys away from what a click cannot reach either: a
