@@ -276,6 +276,20 @@ func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
 	if got := strings.Count(menu, `role="menuitem"`); got != len(cases) {
 		t.Fatalf("global Groups toolbar cog has %d menu items, but the palette parity table covers %d", got, len(cases))
 	}
+	palette := dashboardAssetFile(t, "js/palette.js")
+	requireBefore := func(first, second, why string) {
+		t.Helper()
+		firstAt, secondAt := strings.Index(palette, first), strings.Index(palette, second)
+		if firstAt < 0 || secondAt < 0 || firstAt >= secondAt {
+			t.Errorf("%s: expected %q before %q", why, first, second)
+		}
+	}
+	requireBefore("label: wiz('Create new group…'", "label: wiz('Import a group archive…'",
+		"broad group/party queries should keep create-group as their first result")
+	requireBefore("label: wiz('Clean up agents and conversations…'", "label: wiz('Delete retired agents…'",
+		"broad cleanup queries should prefer the all-categories tool to delete-retired")
+	requireBefore("label: wiz('Clean up agents and conversations…'", "label: wiz('Retire ungrouped agents…'",
+		"broad cleanup queries should prefer the all-categories tool to retire-ungrouped")
 	for _, tc := range cases {
 		t.Run(tc.menuID, func(t *testing.T) {
 			for value, why := range map[string]string{

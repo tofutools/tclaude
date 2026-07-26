@@ -1232,7 +1232,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("slumber sleep rest lull dormant quell still familiars", "global shutdown carries the arcane slumber keywords")
 	must("banish exile dismiss familiar", "per-agent retire carries the arcane banish keywords")
 	must("veil conceal cloak shroud portal scrying vision familiars", "hide-windows carries the arcane veil keywords")
-	must("patterns pattern familiar weave inscribe grimoire", "the profiles manager carries the arcane pattern keywords")
+	must("familiar patterns pattern weave inscribe grimoire", "the profiles manager carries the arcane pattern keywords")
 	must("party form fellowship warband adventuring muster gather assemble guild", "create-group carries the arcane party keywords")
 
 	// A mid-open theme flip must re-skin the baked labels, not just the
@@ -1264,8 +1264,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("channels: ['links']", "arcane channels bridge to links")
 	must("import: ['unseal']", "import bridges to unseal")
 	must("unseal: ['import']", "unseal bridges to import")
-	must("cleanup: ['tidy']", "cleanup bridges to tidy")
-	must("tidy: ['cleanup']", "tidy bridges to cleanup")
+	must("cleanup: ['tidy', 'clean up']", "cleanup bridges to tidy and the two-word regular label")
+	must("tidy: ['cleanup', 'clean up']", "tidy bridges to cleanup and the two-word regular label")
 	must("delete: ['dispel']", "delete bridges to dispel")
 	must("dispel: ['delete']", "dispel bridges to delete")
 	must("retired: ['banished']", "retired bridges to banished")

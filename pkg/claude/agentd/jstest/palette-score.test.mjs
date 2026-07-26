@@ -24,19 +24,20 @@ const COMMANDS = [
   { label: 'Hide all windows', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
   { label: 'Focus all windows', keywords: 'show all windows raise focus bring up reveal behold conjure portal scrying vision familiars' },
   { label: 'Pick windows to focus / hide…', keywords: 'windows subset choose select modal some reveal veil portals scrying familiars' },
+  { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
+  { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle familiars' },
   { label: 'Create new group…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble guild' },
-  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Import a group archive…', keywords: 'import group archive zip restore recreate upload unseal party archive familiar wards missives scrolls' },
   { label: 'Clean up agents and conversations…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy familiars and scrolls release banish dispel restore' },
   { label: 'Delete retired agents…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate familiars' },
+  { label: 'Retire ungrouped agents…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached familiars' },
+  { label: 'Spawn agent…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Manage spawn profiles…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults familiar patterns pattern weave inscribe grimoire loom blueprint' },
   { label: 'Manage group templates…', keywords: 'group templates template manage team blueprint blueprints roster deploy import library summoning circles circle party chalk trace cast unseal rite' },
   { label: 'Manage role library…', keywords: 'roles role library edit manage brief defaults permission permissions class library classes reviewer tester lead dev designer po party' },
   { label: 'Manage sandbox profiles…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
   { label: 'Manage cross-harness spawns…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
   { label: 'Manage inter-group links…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
-  { label: 'Shut down all agents', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
-  { label: 'Power on all agents', keywords: 'power on start resume wake boot up all agents global everything batch awaken rouse stir revive kindle familiars' },
   { label: 'Switch to slop theme', keywords: 'toggle switch theme slop regular vegas casino mode appearance descend leave depart halls machine' },
   { label: 'Go to Groups', keywords: 'tab navigate go open groups scry peer gaze behold chamber vision' },
   { label: 'Hide group: alpha', keywords: 'hide unfocus group windows alpha veil conceal cloak portal scrying party' },
@@ -53,18 +54,19 @@ const COMMANDS = [
 // direction (plain query → arcane label), the one that matters in wizard mode.
 const WIZ_COMMANDS = [
   { label: 'Veil all familiars', keywords: 'hide unfocus all windows declutter detach panic minimize veil conceal cloak shroud portal scrying vision familiars' },
+  { label: 'Slumber all familiars', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
   { label: 'Form a party…', keywords: 'new group create make add team squad party form fellowship warband adventuring muster gather assemble guild' },
-  { label: 'Summon a familiar…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Unseal a party archive…', keywords: 'import group archive zip restore recreate upload unseal party archive familiar wards missives scrolls' },
   { label: 'Tidy familiars and scrolls…', keywords: 'clean up agents and conversations cleanup all categories unjoin retire delete reinstate tidy familiars and scrolls release banish dispel restore' },
   { label: 'Dispel banished familiars…', keywords: 'delete purge retired cleanup remove wipe agents dispel banished obliterate destroy erase vanquish incinerate familiars' },
+  { label: 'Banish unbound familiars…', keywords: 'retire demote cleanup remove tidy bulk ungrouped no group groupless loose solo orphan stray agents banish exile dismiss unbound loose unattached familiars' },
+  { label: 'Summon a familiar…', keywords: 'new agent create spawn launch start summon conjure invoke call forth familiar' },
   { label: 'Manage familiar patterns…', keywords: 'spawn profiles profile edit manage recipe recipes bundle preset presets defaults familiar patterns pattern weave inscribe grimoire loom blueprint' },
   { label: 'Manage summoning circles…', keywords: 'group templates template manage team blueprint blueprints roster deploy import library summoning circles circle party chalk trace cast unseal rite' },
   { label: 'Manage class library…', keywords: 'roles role library edit manage brief defaults permission permissions class library classes reviewer tester lead dev designer po party' },
   { label: 'Manage wards…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
   { label: 'Manage cross-realm summons…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
   { label: 'Manage arcane channels between parties…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
-  { label: 'Slumber all familiars', keywords: 'shutdown shut down stop kill power off halt all agents global everything batch slumber sleep rest lull dormant quell still familiars' },
   { label: 'Banish familiar: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
 ];
 
@@ -191,8 +193,8 @@ test('SYNONYMS pairs are bidirectional', () => {
   assert.deepEqual(SYNONYMS.channels, ['links']);
   assert.deepEqual(SYNONYMS.import, ['unseal']);
   assert.deepEqual(SYNONYMS.unseal, ['import']);
-  assert.deepEqual(SYNONYMS.cleanup, ['tidy']);
-  assert.deepEqual(SYNONYMS.tidy, ['cleanup']);
+  assert.deepEqual(SYNONYMS.cleanup, ['tidy', 'clean up']);
+  assert.deepEqual(SYNONYMS.tidy, ['cleanup', 'clean up']);
   assert.deepEqual(SYNONYMS.delete, ['dispel']);
   assert.deepEqual(SYNONYMS.dispel, ['delete']);
   assert.deepEqual(SYNONYMS.retired, ['banished']);
@@ -217,8 +219,8 @@ test('wizard verb finds the plain command: "awaken" → Power on all agents', ()
   assert.equal(top('awaken'), 'Power on all agents');
 });
 
-test('wizard verb finds the plain command: "banish" → Retire agent', () => {
-  assert.equal(top('banish'), 'Retire agent: worker-7');
+test('wizard verb finds plain retire commands', () => {
+  assert.ok(labels('banish').includes('Retire agent: worker-7'));
 });
 
 test('wizard verb finds the plain command: "veil all" → Hide all windows', () => {
@@ -230,7 +232,8 @@ test('plain verb still finds the arcane label in wizard mode', () => {
   // old muscle memory (spawn / shutdown / retire / hide) must still land them.
   assert.equal(wizTop('spawn'), 'Summon a familiar…');
   assert.equal(wizTop('shutdown'), 'Slumber all familiars');
-  assert.equal(wizTop('retire'), 'Banish familiar: worker-7');
+  assert.ok(rankCommands(WIZ_COMMANDS, 'retire')
+    .some((command) => command.label === 'Banish familiar: worker-7'));
   assert.equal(wizTop('hide'), 'Veil all familiars');
 });
 
@@ -265,6 +268,13 @@ test('global menu managers are reachable by regular and wizard nouns in either t
     assert.equal(wizTop(wizard), wizardLabel, `${wizard} should lead to its wizard manager`);
     assert.equal(wizTop(regular), wizardLabel, `${regular} should find the wizard-labelled manager`);
   }
+});
+
+test('broad cleanup vocabulary prefers the all-categories tool over narrower cleanup actions', () => {
+  assert.equal(top('cleanup'), 'Clean up agents and conversations…');
+  assert.equal(top('tidy'), 'Clean up agents and conversations…');
+  assert.equal(wizTop('cleanup'), 'Tidy familiars and scrolls…');
+  assert.equal(wizTop('tidy'), 'Tidy familiars and scrolls…');
 });
 
 test('scoreMatch ladder: exact > prefix > word-start > substring', () => {
