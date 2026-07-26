@@ -2,6 +2,8 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -201,6 +203,7 @@ func OmittedProfilesSnapshot() Snapshot {
 func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective := cloneEffectiveProfile(in.Effective)
 	effective.Filesystem = nil
+	effective.MountAliases = nil
 	effective.BreakGlassFilesystem = nil
 	effective.AgentDirectories = nil
 	effective.NetworkAccess = NetworkAccessInherit
@@ -227,6 +230,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if in.ProfilesOmitted && (len(in.Applied) > 0 ||
 		len(in.Effective.Filesystem) > 0 ||
+		len(in.Effective.MountAliases) > 0 ||
 		len(in.Effective.BreakGlassFilesystem) > 0 ||
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
@@ -245,6 +249,32 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")
+	}
+	aliases, err := renderMountAliases(in.Effective.MountAliases)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate effective sandbox mount aliases: %w", err)
+	}
+	if !reflect.DeepEqual(aliases, in.Effective.MountAliases) {
+		return Snapshot{}, fmt.Errorf("effective sandbox mount aliases changed since resolution")
+	}
+	for _, alias := range aliases {
+		info, err := os.Lstat(alias.Link)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("revalidate effective sandbox mount alias %q: %w", alias.Link, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return Snapshot{}, fmt.Errorf("effective sandbox mount alias %q is no longer a symlink", alias.Link)
+		}
+		target, err := filepath.EvalSymlinks(alias.Link)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("revalidate effective sandbox mount alias %q: %w", alias.Link, err)
+		}
+		if filepath.Clean(target) != alias.Target {
+			return Snapshot{}, fmt.Errorf(
+				"effective sandbox mount alias %q changed target since resolution",
+				alias.Link,
+			)
+		}
 	}
 	// A protected-path rule that no longer canonicalizes to the same bytes, or
 	// no longer lands on a protected root, must fail the launch closed rather
@@ -352,7 +382,8 @@ func BreakGlassForLaunch(in EffectiveProfile) ([]BreakGlassGrant, error) {
 
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem: append([]FilesystemGrant{}, in.Filesystem...),
+		Filesystem:   append([]FilesystemGrant{}, in.Filesystem...),
+		MountAliases: append([]MountAlias(nil), in.MountAliases...),
 		// Break-glass stays nil when empty (unlike the always-materialized
 		// slices above) so an unused capability serializes as an absent field
 		// and revalidation's exact comparison against a fresh normalization

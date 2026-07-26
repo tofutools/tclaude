@@ -456,34 +456,11 @@ func accessRank(access Access) int {
 }
 
 func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
-	if path == "" {
-		return "", false, fmt.Errorf("path is required")
+	original := path
+	clean, err := cleanDirectoryPath(path)
+	if err != nil {
+		return "", false, err
 	}
-	if len(path) > MaxPathBytes {
-		return "", false, fmt.Errorf("path is too long (maximum %d bytes)", MaxPathBytes)
-	}
-	if !utf8.ValidString(path) || strings.ContainsFunc(path, isControl) {
-		return "", false, fmt.Errorf("path must be valid UTF-8 without control characters")
-	}
-	// A leading "~" or "~/" is a convenience alias for the daemon's own home
-	// directory (the box these grants apply to). Only the bare-user form is
-	// supported — "~otheruser/..." keeps its literal "~" and falls through to
-	// the not-absolute error below, rather than guessing another account's home.
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", false, fmt.Errorf("expand %q: resolve home directory: %w", path, err)
-		}
-		if path == "~" {
-			path = home
-		} else {
-			path = filepath.Join(home, path[len("~/"):])
-		}
-	}
-	if !filepath.IsAbs(path) {
-		return "", false, fmt.Errorf("path %q is not absolute", path)
-	}
-	clean := filepath.Clean(path)
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
 		if allowMissing && os.IsNotExist(err) {
@@ -492,7 +469,7 @@ func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
 				return resolved, true, nil
 			}
 		}
-		return "", false, fmt.Errorf("resolve symlinks for %q: %w", path, err)
+		return "", false, fmt.Errorf("resolve symlinks for %q: %w", original, err)
 	}
 	resolved = filepath.Clean(resolved)
 	info, err := os.Stat(resolved)
@@ -503,6 +480,39 @@ func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
 		return "", false, fmt.Errorf("path %q is not a directory", resolved)
 	}
 	return resolved, false, nil
+}
+
+// cleanDirectoryPath applies the lexical path rules shared by canonical
+// resolution and Resolve's symlink-alias discovery.
+func cleanDirectoryPath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if len(path) > MaxPathBytes {
+		return "", fmt.Errorf("path is too long (maximum %d bytes)", MaxPathBytes)
+	}
+	if !utf8.ValidString(path) || strings.ContainsFunc(path, isControl) {
+		return "", fmt.Errorf("path must be valid UTF-8 without control characters")
+	}
+	// A leading "~" or "~/" is a convenience alias for the daemon's own home
+	// directory (the box these grants apply to). Only the bare-user form is
+	// supported — "~otheruser/..." keeps its literal "~" and falls through to
+	// the not-absolute error below, rather than guessing another account's home.
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand %q: resolve home directory: %w", path, err)
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, path[len("~/"):])
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path %q is not absolute", path)
+	}
+	return filepath.Clean(path), nil
 }
 
 // canonicalMissingDirectory resolves the longest existing ancestor so an

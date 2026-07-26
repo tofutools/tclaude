@@ -151,11 +151,6 @@ func bwrapArgs(
 		// namespace through /proc/<pid>/root.
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
-		var err error
-		args, err = appendTclaudeLayerStaticOSRoot(args)
-		if err != nil {
-			return nil, err
-		}
 	case sandboxpolicy.NetworkFiltered:
 		return nil, fmt.Errorf("network posture %s is reserved and has no tclaude-layer applier", plan.NetworkPosture)
 	default:
@@ -167,6 +162,17 @@ func bwrapArgs(
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	)
+	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+		var err error
+		args, err = appendTclaudeLayerAliases(args, plan.Aliases)
+		if err != nil {
+			return nil, err
+		}
+		args, err = appendTclaudeLayerStaticOSRoot(args)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// Class 1 baseline: the harness process itself runs inside this wall,
 	// unlike the harness-native sandboxes which confine only tools. Reopen only its
 	// launch-contract state/workspace paths here; protected children are hidden
@@ -279,6 +285,15 @@ func bwrapArgs(
 			}
 		case sandboxpolicy.MountHide:
 			args = hideRemounts.appendHide(args, path)
+			if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+				args = appendTclaudeLayerAliasRepairs(
+					args,
+					path,
+					plan.Aliases,
+					protectedRoots,
+					&hideRemounts,
+				)
+			}
 			args = appendTclaudeLayerContractRepairs(
 				args,
 				path,
@@ -413,6 +428,59 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 		args = append(args, "--ro-bind", path, path)
 	}
 	return args, nil
+}
+
+func appendTclaudeLayerAliases(
+	args []string,
+	aliases []sandboxpolicy.MountAlias,
+) ([]string, error) {
+	for i, alias := range aliases {
+		link := filepath.Clean(alias.Link)
+		target := filepath.Clean(alias.Target)
+		if link == "." || !filepath.IsAbs(link) || link == string(filepath.Separator) {
+			return nil, fmt.Errorf("mount alias %d has invalid link %q", i, alias.Link)
+		}
+		if target == "." || !filepath.IsAbs(target) {
+			return nil, fmt.Errorf("mount alias %d has non-absolute target %q", i, alias.Target)
+		}
+		if tclaudeLayerStaticOSRootProvides(link) {
+			continue
+		}
+		args = append(args, "--symlink", target, link)
+	}
+	return args, nil
+}
+
+func tclaudeLayerStaticOSRootProvides(path string) bool {
+	for _, static := range tclaudeLayerStaticOSPaths {
+		if sandboxpolicy.PathContainsOrEqual(static, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendTclaudeLayerAliasRepairs(
+	args []string,
+	hide string,
+	aliases []sandboxpolicy.MountAlias,
+	protectedRoots []string,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	for _, alias := range aliases {
+		link := filepath.Clean(alias.Link)
+		if hide == link || !sandboxpolicy.PathContainsOrEqual(hide, link) {
+			continue
+		}
+		args = append(args, "--symlink", filepath.Clean(alias.Target), link)
+		args = appendTclaudeLayerProtectedRehides(
+			args,
+			link,
+			protectedRoots,
+			hideRemounts,
+		)
+	}
+	return args
 }
 
 func appendTclaudeLayerSocketRepairs(

@@ -22,6 +22,15 @@ type MountEntry struct {
 	Mode MountMode
 }
 
+// MountAlias recreates one host symlink spelling inside a constructed
+// filesystem root. Link is an absolute cleaned spelling and Target is its
+// fully resolved absolute target prefix; appliers choose whether the active
+// posture needs the alias materialized.
+type MountAlias struct {
+	Link   string `json:"link"`
+	Target string `json:"target"`
+}
+
 // NetworkPosture describes how an OS-sandbox applier exposes the network
 // namespace. It is deliberately separate from MountEntry: network isolation
 // is not a filesystem entry, while Unix-socket allowlisting is expressed by
@@ -46,7 +55,10 @@ const (
 //
 // Entries are ordered: later entries shadow earlier ones. Renderers preserve
 // that order so a more-specific path can override an ancestor uniformly.
+// Aliases are auxiliary namespace setup rather than authority-bearing mounts;
+// their targets remain governed by Entries.
 type MountPlan struct {
 	Entries        []MountEntry
+	Aliases        []MountAlias
 	NetworkPosture NetworkPosture
 }

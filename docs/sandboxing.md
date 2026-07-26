@@ -182,6 +182,15 @@ wraps the whole harness process, not only its tool executions:
   them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
   launch-contract path.
 
+When a profile path reaches resolution with a symlinked spelling, the
+constructed root recreates the highest symlinked component so tools can keep
+using that spelling while the mount plan binds the resolved target. There is a
+temporary authoring limitation: registry profiles are canonicalized when they
+are saved, so their original symlink spellings are not yet preserved for later
+resolution. Aliases are therefore materialized only when the spelling is still
+present in the value passed to resolution; host-open continues to inherit
+aliases from its read-only host root.
+
 The isolated posture blocks TCP egress and host-loopback TCP. It also closes
 the Linux abstract Unix-socket namespace. PID isolation prevents the harness
 from escaping the constructed root through a host process's

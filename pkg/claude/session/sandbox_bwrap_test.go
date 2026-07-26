@@ -498,6 +498,105 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 		"class-4 tmux hide remains final under the constructed root")
 }
 
+func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
+	home, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	fixture := filepath.Join(home, "fixture")
+	link := filepath.Join(fixture, "alias")
+	target := filepath.Join(fixture, "real")
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Aliases: []sandboxpolicy.MountAlias{{
+			Link: link, Target: target,
+		}},
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: fixture, Mode: sandboxpolicy.MountHide},
+			{Path: target, Mode: sandboxpolicy.MountHide},
+		},
+	}
+	got, err := bwrapArgs(nil, nil, plan)
+	require.NoError(t, err)
+
+	aliases := indicesOfBwrapSymlink(got, target, link)
+	require.Len(t, aliases, 2,
+		"the constructed root gets an initial alias and an ordinary-hide repair")
+	scratch := indexOfBwrapTriplet(got, "--tmpfs", "/tmp")
+	fixtureHide := indexOfBwrapTriplet(got, "--tmpfs", fixture)
+	targetHide := indexOfBwrapTriplet(got, "--tmpfs", target)
+	fixtureRemount := indexOfBwrapTriplet(got, "--remount-ro", fixture)
+	targetRemount := indexOfBwrapTriplet(got, "--remount-ro", target)
+	rootRemount := indexOfBwrapTriplet(got, "--remount-ro", "/")
+	staticBind := indexOfBwrapTriplet(got, "--ro-bind", "/usr")
+	for _, index := range []int{scratch, fixtureHide, targetHide, fixtureRemount, targetRemount, rootRemount, staticBind} {
+		require.NotEqual(t, -1, index)
+	}
+	assert.Less(t, scratch, aliases[0],
+		"aliases under /tmp must be created in the fresh scratch mount")
+	assert.Less(t, aliases[0], fixtureHide,
+		"initial aliases precede host binds and plan replay")
+	assert.Less(t, aliases[0], staticBind,
+		"initial aliases precede the constructed root's host binds")
+	assert.Less(t, fixtureHide, aliases[1],
+		"an ordinary ancestor hide must recreate its narrower alias")
+	assert.Less(t, aliases[1], targetHide,
+		"hiding the resolved target after alias repair must still block traversal")
+	for _, remount := range []int{fixtureRemount, targetRemount, rootRemount} {
+		assert.Less(t, aliases[1], remount,
+			"every alias repair must land before TCL-758's read-only flush")
+	}
+
+	hostOpen, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+		Aliases: plan.Aliases,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, indicesOfBwrapSymlink(hostOpen, target, link),
+		"host-open inherits the real host symlink from its read-only root")
+}
+
+func TestBwrapArgsProtectedHideBeatsAliasRepair(t *testing.T) {
+	home, err := filepath.EvalSymlinks(agentipctest.ShortSocketDir(t))
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	link := filepath.Join(protectedRoots[0], "alias")
+	target := filepath.Join(home, "safe-target")
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Aliases:        []sandboxpolicy.MountAlias{{Link: link, Target: target}},
+		Entries: []sandboxpolicy.MountEntry{{
+			Path: home, Mode: sandboxpolicy.MountHide,
+		}},
+	})
+	require.NoError(t, err)
+
+	aliases := indicesOfBwrapSymlink(got, target, link)
+	require.Len(t, aliases, 2)
+	protectedHides := indicesOfBwrapTriplet(got, "--tmpfs", protectedRoots[0])
+	require.GreaterOrEqual(t, len(protectedHides), 2)
+	assert.Less(t, aliases[0], protectedHides[0],
+		"the protected baseline shadows the initial alias")
+	assert.Less(t, aliases[1], protectedHides[len(protectedHides)-1],
+		"repairing an ordinary ancestor must immediately restore the protected hide")
+	assert.Equal(t, len(got)-4, indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t)),
+		"class-4 host control remains the final phase after every alias")
+}
+
 func TestBwrapArgsRefusesReservedFilteredPosture(t *testing.T) {
 	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkFiltered,
@@ -532,6 +631,23 @@ func indicesOfBwrapTriplet(args []string, flag, path string) []int {
 		}
 	}
 	return indices
+}
+
+func indicesOfBwrapSymlink(args []string, target, link string) []int {
+	var indices []int
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == "--symlink" && args[i+1] == target && args[i+2] == link {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func mustTmuxSocketDir(t *testing.T) string {
+	t.Helper()
+	path, err := clcommon.TclaudeTmuxSocketDir()
+	require.NoError(t, err)
+	return path
 }
 
 func bwrapFilesystemArgsWithin(args []string, root string) []string {
