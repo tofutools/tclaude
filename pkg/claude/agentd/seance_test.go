@@ -60,10 +60,13 @@ func TestLiveRunSeanceHarness_CancelsOnAnswerLimit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	result := liveRunSeanceHarness(ctx, SeanceExecPlan{
-		Argv: []string{"sh", "-c", "head -c 300000 /dev/zero | tr '\\0' x"},
+		// Stay alive after overflowing stdout so a clean process exit cannot
+		// race the output-limit cancellation that this test is asserting.
+		Argv: []string{"sh", "-c", "head -c 300000 /dev/zero | tr '\\0' x; exec sleep 30"},
 		Cwd:  t.TempDir(),
 	})
 	require.Error(t, result.Err)
+	require.NoError(t, ctx.Err(), "the answer limit should cancel the harness before the test timeout")
 	assert.True(t, result.Started)
 	assert.True(t, result.StdoutTruncated)
 	assert.Len(t, result.Stdout, maxSeanceAnswerBytes)
