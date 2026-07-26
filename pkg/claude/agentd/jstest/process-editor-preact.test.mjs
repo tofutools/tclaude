@@ -96,6 +96,35 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('mounted editor captures browser Save/Open shortcuts across its full document surface', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  let saves = 0;
+  let opens = 0;
+  editor.save = () => { saves += 1; return Promise.resolve(true); };
+  editor.options.onOpenTemplates = () => { opens += 1; return Promise.resolve(true); };
+  editor.model.setTemplateMeta({ description: 'dirty shortcut draft' });
+
+  const save = harness.fireEvent(host.querySelector('.process-editor-canvas-host'), 'keydown', {
+    key: 's', ctrlKey: true,
+  });
+  assert.equal(save.defaultPrevented, true);
+  assert.equal(saves, 1);
+
+  const open = harness.fireEvent(harness.document.body, 'keydown', {
+    key: 'o', metaKey: true,
+  });
+  assert.equal(open.defaultPrevented, true,
+    'the capture listener also owns Cmd+O when focus is outside the editor root');
+  assert.equal(opens, 1);
+
+  editor.destroy();
+  const afterDestroy = harness.fireEvent(harness.document.body, 'keydown', {
+    key: 's', ctrlKey: true,
+  });
+  assert.equal(afterDestroy.defaultPrevented, false, 'teardown restores the browser shortcuts');
+  assert.equal(saves, 1);
+});
+
 test('loaded templates retain their existing End node and exact editor payload', async (t) => {
   const harness = await createPreactHarness(t);
   const previous = { fetch: globalThis.fetch, raf: globalThis.requestAnimationFrame, css: globalThis.CSS };

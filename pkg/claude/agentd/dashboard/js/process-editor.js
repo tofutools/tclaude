@@ -1413,6 +1413,7 @@ export class ProcessTemplateEditor {
   }
 
   onEditorKeyDown(event) {
+    if (event.defaultPrevented) return;
     const inInput = isProcessEditorFormControl(event.target);
     if ((event.ctrlKey || event.metaKey) && !inInput) {
       const key = event.key.toLowerCase();
@@ -1431,6 +1432,36 @@ export class ProcessTemplateEditor {
       event.preventDefault();
       this.deleteSelection();
     }
+  }
+
+  // Save/Open are browser-owned chords, so claim them at the document capture
+  // boundary while this editor is mounted. That reaches focused inspector
+  // fields and editor-owned modals as well as the graph itself. Flush a focused
+  // form control first: clicking the corresponding toolbar navigation blurs it
+  // before the action runs, and the keyboard path must see the same committed
+  // model/dirty state.
+  onEditorShortcutKeyDown(event) {
+    if (this.destroyed || (!event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey) return false;
+    const key = String(event.key || '').toLowerCase();
+    if (key !== 's' && key !== 'o') return false;
+    event.preventDefault();
+    if (event.isComposing || event.keyCode === 229) return true;
+
+    // A modal makes the editor toolbar inert. Do not persist the graph under an
+    // uncommitted modal draft, but still keep Cmd/Ctrl+S away from browser Save.
+    if (key === 's' && this.modalDispose) return true;
+    if (isProcessEditorFormControl(event.target)) event.target?.blur?.();
+
+    if (key === 's') {
+      // Match the header Save button's availability exactly. save() owns the
+      // pending/external-reload guards and the actual version/CAS operation.
+      if (this.model.dirty || this.blank) void this.save();
+    } else {
+      // The Processes action owns the dirty confirmation and can refuse the
+      // navigation without replacing this editor.
+      void this.options.onOpenTemplates?.();
+    }
+    return true;
   }
 
   onEditorCopy(event) {
