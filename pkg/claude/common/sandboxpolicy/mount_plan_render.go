@@ -51,13 +51,29 @@ import (
 // into.
 //
 // That makes them a contract on the applier, not an oversight, and the contract
-// has an ORDER requirement: the applier must establish its baseline — including
-// every protected-root deny — BEFORE replaying these entries. Break-glass
-// grants then reopen their narrower paths by the same most-specific-wins
-// ordering as everything else. An applier that replayed the plan first and
-// applied its baseline afterwards would silently revoke the operator's
-// acknowledged break-glass authority; one that omitted the baseline entirely
-// would expose tclaude's own control state to the agent.
+// has an ORDER requirement — three phases, in which placement is what carries
+// the meaning:
+//
+//  1. Hide ProtectedPaths() BEFORE replaying these entries. Break-glass grants
+//     then reopen their narrower paths by the same most-specific-wins ordering
+//     as everything else. An applier that replayed the plan first and applied
+//     this baseline afterwards would silently revoke the operator's
+//     acknowledged break-glass authority; one that omitted it entirely would
+//     expose tclaude's own private state to the agent.
+//  2. Replay the plan.
+//  3. Hide the strictly-unreachable class AFTER replaying — today the tmux
+//     socket directory, which the Codex adapter already treats as host-control
+//     authority, a more severe class than protected state and deliberately not
+//     reachable through break-glass. It must come last precisely BECAUSE it is
+//     not in ProtectedPaths(): an ordinary rw row at that path passes profile
+//     validation, since it intersects no protected root, so a before-plan hide
+//     could be shadowed by an innocent-looking grant. Applying it after the
+//     replay is what encodes "not reachable through break-glass, or anything
+//     else" — most-specific-wins governs the policy, and this class sits
+//     outside the policy rather than at the top of it.
+//
+// (Phase 3 per the TCL-750 applier ruling; the renderer emits nothing for
+// either phase 1 or phase 3.)
 //
 // # How the plan grows (settled TCL-751 decision, epic requirement 3)
 //
