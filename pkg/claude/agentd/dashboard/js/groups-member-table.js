@@ -572,6 +572,18 @@ function RemoteMenuItem({ member, canRemote }) {
   return html`<${MenuButton} member=${member} act="toggle-remote-control" attrs=${{ 'data-intent': on ? 'off' : 'on' }} regular=${`${glyph} remote: ${on ? 'on' : 'off'}`} wizard=${`${glyph} remote scrying: ${on ? 'on' : 'off'}`} title=${title} />`;
 }
 
+function RestartMenuItem({ member }) {
+  const label = member.title || member.conv_id;
+  const regular = '↻ restart';
+  const title = !member.online
+    ? `${regular} is unavailable while ${label} is offline`
+    : `Stop and restart ${label} under its current launch configuration. Re-resolves sandbox-profile rules. Requires the agent to be fully idle with no background agents or shell commands.`;
+  return html`<${MenuButton}
+    member=${member} act="restart" regular=${regular} wizard="↻ reincant familiar"
+    title=${title} disabled=${!member.online}
+  />`;
+}
+
 function SandboxRestartMenuItem({ member }) {
   const unlocked = !!member.state?.temporary_sandbox_mode;
   const label = member.title || member.conv_id;
@@ -621,6 +633,7 @@ function MemberMenu({ member, group, snapshot, actions, ungrouped }) {
     <${MenuSeparator} />
     <${MenuButton} member=${member} act="clone" attrs=${{ 'data-cwd': member.state?.cwd || member.cwd || '' }} regular="clone" wizard="mirror familiar" title=${wizardCopy('Fork a sibling agent that inherits identity (groups, perms, ownership). The original keeps running.', 'Mirror this familiar into a sibling that inherits its parties, boons, and ownership. The original keeps channeling.')} />
     <${MenuButton} member=${member} act="reincarnate" regular="reincarnate" wizard="reincarnate familiar" title=${wizardCopy('Reincarnate this agent — by default ask it to do so itself (it writes its own handoff); or force an immediate daemon-driven reincarnation.', 'Reincarnate this familiar — by default ask it to write its own handoff; or force its immediate return in a fresh vessel.')} />
+    <${RestartMenuItem} member=${member} />
     <${SandboxRestartMenuItem} member=${member} />
     <${MenuSeparator} />
     ${ungrouped

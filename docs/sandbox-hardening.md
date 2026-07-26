@@ -447,7 +447,9 @@ got. Editing `settings.json` afterwards does not change an existing agent's
 badge. Claude Code may hot-reload a project/local scalar such as
 `allowUnsandboxedCommands`, so the badge is a launch-time OS-sandbox verdict,
 not proof that a later settings edit left every escape hatch disabled. A resume
-re-resolves the OS-sandbox verdict and picks up the new posture.
+re-resolves the OS-sandbox verdict and picks up the new posture. For a running
+agent, the member ⚙ menu's ordinary **↻ restart** performs that resume in place;
+it also re-resolves the agent's assigned tclaude sandbox profiles.
 
 Agents older than this feature, and Codex agents, record no verdict: a Codex
 launch's `--sandbox` mode *is* its posture, so its badge reports the mode

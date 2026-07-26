@@ -266,6 +266,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	DELETE /api/agents/{conv}              → wipe the conversation + orphan-clean
 //	POST   /api/agents/{conv}/stop         → soft exit / force kill
 //	POST   /api/agents/{conv}/resume       → wake (resume tmux pane)
+//	POST   /api/agents/{conv}/restart      → stop + resume the same conversation
 //	POST   /api/agents/{conv}/clone        → fork a sibling (cookie-auth twin)
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
 //	POST   /api/agents/{conv}/task         → set/clear task-reference link
@@ -316,6 +317,13 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dashboardResumeAgent(w, r, convSelector)
+			return
+		case "restart":
+			if r.Method != http.MethodPost {
+				http.Error(w, "POST only", http.StatusMethodNotAllowed)
+				return
+			}
+			dashboardRestartAgent(w, r, convSelector)
 			return
 		case "sandbox-restart":
 			if r.Method != http.MethodPost {

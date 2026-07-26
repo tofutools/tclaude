@@ -422,7 +422,7 @@ func TestDashboardEdit_StopResume_WrongMethod(t *testing.T) {
 	const convID = "11111111-2222-3333-4444-555555555555"
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{ConvID: convID, CustomTitle: "alice"}), "UpsertConvIndex")
 
-	for _, verb := range []string{"stop", "resume"} {
+	for _, verb := range []string{"stop", "resume", "restart"} {
 		w := httptest.NewRecorder()
 		r := dashboardRequest(http.MethodGet, "/api/agents/"+convID+"/"+verb, "")
 		handleDashboardAgentsAPI(w, r)
