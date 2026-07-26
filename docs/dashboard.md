@@ -272,7 +272,10 @@ agent-initiated delegation. Each source→target edge is allow/deny and a denial
 records the reason returned to a blocked agent. The same editor appears in each
 real group's ⚙ menu; group cells add an **inherit global** state and otherwise
 override that one edge. Same-harness cells are always allowed, and human
-spawns bypass the matrix.
+spawns bypass the matrix. Every action in this global cog also has a Ctrl/Cmd-K
+command-palette entry. Both vocabularies remain searchable in either theme:
+for example, `templates` and `circles`, `sandbox` and `wards`, `links` and
+`channels`, and `cross-harness` and `cross-realm` reach the same managers.
 
 #### Filtering a ⚙ menu
 

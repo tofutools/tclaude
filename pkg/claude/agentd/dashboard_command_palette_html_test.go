@@ -80,11 +80,11 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// the same list the Groups cog's "⧉ profiles…" entry opens — reusing
 	// openProfilesManageModal (exported from modal-profiles.js just for this).
 	// The command adds only a keyboard entry point, no new behaviour. The
-	// presented label is a wiz(plain, arcane) pair — "Edit profiles…" plainly,
-	// "Edit familiar patterns…" under body.wizard (profiles re-letter to
+	// presented label is a wiz(plain, arcane) pair — "Manage spawn profiles…"
+	// plainly, "Manage familiar patterns…" under body.wizard (profiles re-letter to
 	// patterns) — pinned in one needle so dropping either copy fails CI.
 	must("./modal-profiles.js", "the palette imports the profiles manage overlay")
-	must("wiz('Edit profiles…', 'Edit familiar patterns…')",
+	must("wiz('Manage spawn profiles…', 'Manage familiar patterns…')",
 		"the palette offers the spawn-profiles manager (plain + arcane label)")
 	must("run: () => openProfilesManageModal(),",
 		"the profiles command reuses the existing manage overlay")
@@ -240,4 +240,53 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the page jump is a measured viewport-worth of rows")
 	// The footer advertises the page-jump keys alongside the ↑/↓ nav hint.
 	must("<kbd>PgUp</kbd><kbd>PgDn</kbd> jump", "the palette footer documents PageUp/PageDown")
+}
+
+// The Groups toolbar's global ⚙ menu and Ctrl/Cmd-K are two entry points to
+// the same operations. Pin every menu item to a distinct regular/wizard command
+// label and the existing controller/modal opener it delegates to. This table is
+// deliberately exhaustive: adding a global menu option without its palette
+// twin should require updating this test.
+func TestDashboardHTML_GlobalMenuCommandsHavePaletteActions(t *testing.T) {
+	cases := []struct {
+		menuID string
+		label  string
+		run    string
+	}{
+		{"group-import-open", "wiz('Import a group archive…', 'Unseal a party archive…')", "run: () => openGroupImport()"},
+		{"cleanup-all-open", "wiz('Clean up agents and conversations…', 'Tidy familiars and scrolls…')", "run: () => openCleanupModal({ mode: 'agents' })"},
+		{"delete-retired-open", "wiz('Delete retired agents…', 'Dispel banished familiars…')", "run: () => openDeleteRetiredPreview()"},
+		{"profiles-manage-open", "wiz('Manage spawn profiles…', 'Manage familiar patterns…')", "run: () => openProfilesManageModal()"},
+		{"templates-manage-open", "wiz('Manage group templates…', 'Manage summoning circles…')", "run: () => openTemplatesManageModal()"},
+		{"roles-manage-open", "wiz('Manage role library…', 'Manage class library…')", "run: () => openRolesManageModal()"},
+		{"sandbox-profiles-manage-open", "wiz('Manage sandbox profiles…', 'Manage wards…')", "run: () => openSandboxProfilesManageModal()"},
+		{"spawn-harness-policy-open", "wiz('Manage cross-harness spawns…', 'Manage cross-realm summons…')", "run: () => openSpawnHarnessPolicy()"},
+		{"links-manage-open", "wiz('Manage inter-group links…', 'Manage arcane channels between parties…')", "run: () => openLinksManager()"},
+	}
+	html := dashboardAssetFile(t, "dashboard.html")
+	menuStart := strings.Index(html, `<div class="filter-bar-cog">`)
+	if menuStart < 0 {
+		t.Fatal("global Groups toolbar cog is missing")
+	}
+	menuEnd := strings.Index(html[menuStart:], "</div>\n      </div>")
+	if menuEnd < 0 {
+		t.Fatal("global Groups toolbar cog has no closing boundary")
+	}
+	menu := html[menuStart : menuStart+menuEnd]
+	if got := strings.Count(menu, `role="menuitem"`); got != len(cases) {
+		t.Fatalf("global Groups toolbar cog has %d menu items, but the palette parity table covers %d", got, len(cases))
+	}
+	for _, tc := range cases {
+		t.Run(tc.menuID, func(t *testing.T) {
+			for value, why := range map[string]string{
+				`id="` + tc.menuID + `"`: "the global menu item exists",
+				tc.label:                 "the palette command has distinct regular and wizard names",
+				tc.run:                   "the palette delegates to the existing operation",
+			} {
+				if !strings.Contains(dashboardAssets, value) {
+					t.Errorf("dashboard source missing %q (%s)", value, why)
+				}
+			}
+		})
+	}
 }

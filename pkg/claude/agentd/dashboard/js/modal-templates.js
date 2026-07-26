@@ -24,6 +24,10 @@ export function openTemplatesManageModal(options) {
   return managementController().openTemplatesManageModal(options);
 }
 
+export function openGroupImport() {
+  return managementController().openGroupImport();
+}
+
 export function openTemplateEditor(template, options = {}) {
   return managementController().openTemplateEditor(template || null, options);
 }
@@ -64,7 +68,7 @@ export function bindTemplatesUI() {
 }
 
 export function bindGroupImportModal() {
-  document.querySelector('#group-import-open')?.addEventListener('click', () => managementController().openGroupImport());
+  document.querySelector('#group-import-open')?.addEventListener('click', openGroupImport);
 }
 
 const SCRIBE_NAME = 'circle-scribe';
