@@ -104,6 +104,18 @@ test('Ctrl/Cmd+S stays out of an editor modal without falling through to browser
   assert.equal(prevented, true);
 });
 
+test('browser Save/Open remain native when the mounted process editor is inactive', () => {
+  const editor = {
+    destroyed: false, options: { isShortcutActive: () => false },
+    save() { assert.fail('a hidden editor cannot save'); },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+    target: { tagName: 'DIV' },
+    preventDefault() { assert.fail('a hidden editor cannot claim the browser shortcut'); },
+  }), false);
+});
+
 function clipboardText(id = 'copied') {
   return serializeProcessSelection({
     kind: 'tclaude/process-selection', version: 1,

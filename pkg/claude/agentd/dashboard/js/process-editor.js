@@ -1441,9 +1441,17 @@ export class ProcessTemplateEditor {
   // before the action runs, and the keyboard path must see the same committed
   // model/dirty state.
   onEditorShortcutKeyDown(event) {
-    if (this.destroyed || (!event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey) return false;
+    if (this.destroyed || this.options.isShortcutActive?.() === false
+        || (!event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey) return false;
     const key = String(event.key || '').toLowerCase();
     if (key !== 's' && key !== 'o') return false;
+    // Dashboard islands remain mounted while another tab or overlay owns
+    // focus. Body/document focus represents this editor's unfocused canvas;
+    // any concrete control outside the active process view belongs elsewhere.
+    const element = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+    const shortcutScope = this.mount?.closest?.('#process-editor-view') || this.mount;
+    if (element && element !== globalThis.document?.body && element !== globalThis.document?.documentElement
+        && shortcutScope?.contains && !shortcutScope.contains(element)) return false;
     event.preventDefault();
     if (event.isComposing || event.keyCode === 229) return true;
 

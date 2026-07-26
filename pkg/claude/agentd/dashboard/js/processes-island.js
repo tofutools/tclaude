@@ -81,7 +81,7 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
   useEffect(() => {
     let disposed = false; let editor = null;
     const loadEditor = openEditor || (async (mount, value) => (await import('./process-editor.js')).openTemplateEditor(mount, value));
-    loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, config: { confirmDiscard, onOpenTemplates: () => actions?.activateSubtab?.('templates'), onScribe: actions?.summonScribe, describeActor: actions?.describeActor, onOpenActor: actions?.openActor } })
+    loadEditor(mountRef.current, { id: spec.id, blank: spec.blank, name: spec.name, view: spec.view, config: { confirmDiscard, isShortcutActive: () => state.view.value.active, onOpenTemplates: () => actions?.activateSubtab?.('templates'), onScribe: actions?.summonScribe, describeActor: actions?.describeActor, onOpenActor: actions?.openActor } })
       .then((value) => { editor = value; if (disposed) editor?.destroy?.(); else state.setEditor(editor); })
       .catch((cause) => { if (!disposed) { setError(cause.message); state.setNotice(`Could not open editor: ${cause.message}`); } });
     return () => { disposed = true; state.setEditor(null); editor?.destroy?.(); };

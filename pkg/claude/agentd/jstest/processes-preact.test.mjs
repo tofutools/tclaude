@@ -477,6 +477,7 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   assert.equal(received.view, undefined);
   assert.equal(received.blank, false);
   assert.equal(received.config.confirmDiscard, confirmDiscard, 'the shared discard dialog reaches node editor transactions');
+  assert.equal(received.config.isShortcutActive(), true);
   assert.equal(await received.config.onOpenTemplates(), true);
   assert.deepEqual(navigated, ['templates'], 'the editor shortcut uses the same dirty-guarded templates navigation');
   assert.deepEqual(await received.config.onScribe({ kind: 'library' }), { ok: true });

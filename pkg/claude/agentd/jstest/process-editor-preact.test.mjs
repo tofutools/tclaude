@@ -117,6 +117,13 @@ test('mounted editor captures browser Save/Open shortcuts across its full docume
     'the capture listener also owns Cmd+O when focus is outside the editor root');
   assert.equal(opens, 1);
 
+  const foreign = harness.document.body.appendChild(harness.document.createElement('input'));
+  const outside = harness.fireEvent(foreign, 'keydown', { key: 's', ctrlKey: true });
+  assert.equal(outside.defaultPrevented, false,
+    'a concrete control outside the process view keeps its own browser shortcuts');
+  assert.equal(saves, 1);
+  foreign.remove();
+
   editor.destroy();
   const afterDestroy = harness.fireEvent(harness.document.body, 'keydown', {
     key: 's', ctrlKey: true,
