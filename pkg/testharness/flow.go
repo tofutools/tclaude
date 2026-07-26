@@ -162,12 +162,12 @@ func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 // settings.json gets the same answer a real launch under that config would.
 // An unknown harness tag simply records nothing, which is what a harness with
 // no verdict does anyway.
-func resolveLaunchOSSandbox(harnessName, sandboxMode, cwd string) harness.LaunchOSSandbox {
+func resolveLaunchOSSandbox(harnessName, sandboxMode, chosenBy, cwd string) harness.LaunchOSSandbox {
 	h, err := harness.Resolve(harnessName)
 	if err != nil {
 		return harness.LaunchOSSandbox{}
 	}
-	return harness.ResolveLaunchOSSandbox(h, sandboxMode, cwd)
+	return harness.ResolveLaunchOSSandbox(h, sandboxMode, chosenBy, cwd)
 }
 
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
@@ -253,7 +253,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	// in time. The pane is still registered so it behaves like a real
 	// slow-to-record launch, not a dead one.
 	if !s.w.SkipSpawnRow {
-		launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, cc.Cwd)
+		launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
 		if err := saveSessionWithResumeProvenance(&db.SessionRow{
 			ID:                  label,
 			TmuxSession:         label,
@@ -262,6 +262,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 			Status:              "running",
 			Harness:             args.Harness,
 			SandboxMode:         args.Sandbox,
+			SandboxModeSource:   args.SandboxChosenBy,
 			OSSandboxState:      launchOSSandbox.State,
 			OSSandboxSource:     launchOSSandbox.Source,
 			OSSandboxUnverified: launchOSSandbox.Unverified,
@@ -355,7 +356,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
-	launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, cc.Cwd)
+	launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
 		ID:                  label,
 		TmuxSession:         label,
@@ -364,6 +365,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		Status:              "running",
 		Harness:             args.Harness,
 		SandboxMode:         args.Sandbox,
+		SandboxModeSource:   args.SandboxChosenBy,
 		OSSandboxState:      launchOSSandbox.State,
 		OSSandboxSource:     launchOSSandbox.Source,
 		OSSandboxUnverified: launchOSSandbox.Unverified,

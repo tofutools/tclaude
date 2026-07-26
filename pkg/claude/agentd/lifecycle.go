@@ -2740,7 +2740,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var sandboxNote, approvalNote, toolsNote, askTimeoutNote string
-	body.SandboxMode, _, sandboxNote, fieldFail = resolveStringLaunchField(
+	// The tier that chose the sandbox is kept, not discarded: it is the only
+	// party that can say a global/group default profile forced the containment,
+	// and the badge would otherwise credit "this launch" — i.e. the operator.
+	var sandboxSource string
+	body.SandboxMode, sandboxSource, sandboxNote, fieldFail = resolveStringLaunchField(
 		"sandbox", body.SandboxMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
 		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
 	if fieldFail != nil {
@@ -3214,6 +3218,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:                      model,
 		Harness:                    h.Name,
 		SandboxMode:                sandboxMode,
+		SandboxModeSource:          sandboxSource,
 		AskUserQuestionTimeout:     askTimeout,
 		ApprovalPolicy:             approvalPolicy,
 		ToolGovernance:             toolGovernance,
@@ -3393,6 +3398,13 @@ type spawnParams struct {
 	// the spawn boundary (handleGroupSpawn) before building the params; it
 	// forwards to `tclaude session new --sandbox <mode>`.
 	SandboxMode string
+	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// explicit request field, or the named / group-default / global-default
+	// spawn profile that carried it. It forwards to `tclaude session new
+	// --sandbox-chosen-by` and is recorded beside the launch's sandbox verdict,
+	// so the dashboard badge can attribute the containment to the profile that
+	// imposed it instead of to an operator who never chose one. "" omits it.
+	SandboxModeSource string
 	// ApprovalPolicy is the resolved launch approval policy for a harness that
 	// takes one (Codex: "never" by default — non-escalating so the unattended
 	// pane can't deadlock), or "" to omit the flag (Claude Code, or no
@@ -4206,6 +4218,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Model:                      p.Model,
 		Harness:                    p.Harness,
 		Sandbox:                    p.SandboxMode,
+		SandboxChosenBy:            p.SandboxModeSource,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		Approval:                   p.ApprovalPolicy,
 		ToolGovernance:             p.ToolGovernance,
@@ -5976,6 +5989,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendToolGovernanceFlag(args, a.ToolGovernance)
@@ -6108,6 +6122,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	args = appendHarnessFlag(args, a.Harness)
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
+	args = appendSandboxChosenByFlag(args, a.SandboxChosenBy)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
 	args = appendToolGovernanceFlag(args, a.ToolGovernance)
@@ -6213,6 +6228,22 @@ func appendSandboxArgs(args []string, h, sandbox string) []string {
 func appendSandboxFlag(args []string, mode string) []string {
 	if mode != "" {
 		args = append(args, "--sandbox", mode)
+	}
+	return args
+}
+
+// appendSandboxChosenByFlag carries the resolved sandbox mode's PROVENANCE —
+// which tier of the profile stack supplied it — into the forked `tclaude
+// session new`, which records it beside the launch's sandbox verdict. "" omits
+// it, leaving the launch unattributed exactly as before the flag existed.
+//
+// Unlike the mode beside it, this value embeds an operator-authored spawn
+// profile NAME, so it is emitted in `--flag=value` form: a name beginning with
+// a dash would otherwise be parsed as the next flag rather than as this one's
+// value. The forked session new bounds and scrubs it before recording.
+func appendSandboxChosenByFlag(args []string, chosenBy string) []string {
+	if strings.TrimSpace(chosenBy) != "" {
+		args = append(args, "--sandbox-chosen-by="+chosenBy)
 	}
 	return args
 }

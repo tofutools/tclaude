@@ -2612,6 +2612,20 @@ func resumeSandboxMode(convID string) string {
 	return mode
 }
 
+// resumeSandboxChosenBy replays the recorded attribution for the mode
+// resumeSandboxMode replays. A resume re-resolves the VERDICT against today's
+// settings files, but the mode itself is a replay — so who chose it is a replay
+// too, and dropping it would let an agent's containment become anonymous after
+// its first restart. "" when nothing was recorded (a pre-v158 row, or a launch
+// with nothing to attribute), which reads exactly as it did before.
+func resumeSandboxChosenBy(convID string) string {
+	launch, err := db.SessionLaunchProfileForConv(convID)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(launch.SandboxModeSource)
+}
+
 // resumeContextPosture reads the three launch postures SaveSession's UPSERT
 // does not own, so a resume can re-record them onto the fresh row it creates.
 // resumeLaunchCmd reads the same durable owners to build the pane environment;
@@ -2848,7 +2862,8 @@ func createSessionForConv(conv *SessionEntry) error {
 	// confines it rather than carrying the predecessor's verdict, because the
 	// operator may have changed settings.json since (TCL-729).
 	resumeMode := resumeSandboxMode(conv.SessionID)
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, cwd)
+	resumeChosenBy := resumeSandboxChosenBy(conv.SessionID)
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -2858,6 +2873,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            resumeMode,
+		SandboxModeSource:      resumeChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
 		OSSandboxUnverified:    launchOSSandbox.Unverified,

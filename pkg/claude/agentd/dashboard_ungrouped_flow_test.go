@@ -200,6 +200,7 @@ type dashState struct {
 		Name  string `json:"name"`
 	} `json:"sandbox_profiles,omitempty"`
 	SandboxProfilesRecorded bool   `json:"sandbox_profiles_recorded,omitempty"`
+	SandboxProfilesOmitted  bool   `json:"sandbox_profiles_omitted,omitempty"`
 	RemoteControl           bool   `json:"remote_control,omitempty"`
 	RecoveryStatus          string `json:"recovery_status,omitempty"`
 	RecoveryDetail          string `json:"recovery_detail,omitempty"`

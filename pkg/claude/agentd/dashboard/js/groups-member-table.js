@@ -152,8 +152,13 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
     ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
     : '';
   if (state === 'on') {
+    // `source` for a launch-decided verdict now carries the tier that CHOSE the
+    // mode ("this launch (sandbox `on`, chosen by global default profile …)").
+    // "forced ON for this launch" alone read as the operator's own doing, which
+    // is wrong for the common case where a group or global default profile
+    // carries the sandbox and they never picked one.
     const why = mode === 'on'
-      ? 'forced ON for this launch'
+      ? `forced ON by ${source || 'this launch'}`
       // Managed policy outranks the launch's own `--settings` block, so it can
       // turn the sandbox ON over an explicit `off`. Calling that "not chosen at
       // launch" would be true but useless, and calling an enterprise policy file
@@ -161,17 +166,31 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
       : mode === 'off'
         ? `forced ON by ${source || 'a higher-precedence settings file'}, overriding this launch's \`off\``
         : `not chosen at launch — inherited from your Claude Code settings${via}`;
-    // Only tclaude's own `on` block has a shape this can name: it is the
-    // hardening block tclaude emits. Under `inherit` the rules are the
-    // operator's settings plus whatever sandbox profile applied, so asserting
-    // "working dir writable, $HOME read-only" there describes a block this
-    // launch may never have used.
-    const shape = mode === 'on' ? ' (working dir writable, $HOME read-only)' : '';
-    const confined = unverified ? '' : ` Bash is confined${shape}.`;
+    // "working dir writable, $HOME read-only" described Claude Code's DEFAULT
+    // sandbox shape, which any profile `allowWrite` under $HOME can falsify —
+    // in every mode, not just some. The shape is whatever the operator's
+    // settings and the applied profile resolved to, and the profile clause
+    // below names that; asserting a fixed one here was the same over-claim as
+    // naming a single settings file and calling it the configuration.
+    const confined = unverified ? '' : ' Bash is confined.';
     // The hedge rides in the opening posture rather than only in the caveat
     // below: "on" alone, read first, is the claim this case cannot make.
     const posture = unverified ? 'on (unverified)' : 'on';
-    return { danger: unverified, enforced: true, title: `${prefix}: ${posture} — ${why}.${confined}${caveat}` };
+    return {
+      danger: unverified,
+      // A mode of `off` means tclaude emitted `{"sandbox":{"enabled":false}}`
+      // and, with it, NONE of the profile's filesystem rules (claudeSettingsJSON
+      // skips every filesystem key for an `off` launch). Managed policy can
+      // still force the sandbox on over that, but what it enforces is the
+      // operator's own settings — the profile's rules were never handed over.
+      // An unverified verdict cannot claim enforcement either: the whole point
+      // of the hedge is that tclaude could not establish the sandbox is active.
+      rulesInForce: mode !== 'off' && !unverified,
+      rulesWithheldBecause: mode === 'off'
+        ? 'this launch requested sandbox `off`, so none of its filesystem rules were emitted'
+        : '',
+      title: `${prefix}: ${posture} — ${why}.${confined}${caveat}`,
+    };
   }
   if (mode === 'on') {
     // The launch asked for `on` and lost. Only enterprise managed policy
@@ -179,13 +198,14 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
     // confined is precisely who needs telling that it is not — so the title
     // leads with the posture that won, then names the request it overrode.
     return {
-      danger: true, enforced: false,
+      danger: true, rulesInForce: false, rulesWithheldBecause: 'the sandbox is off',
       title: `${prefix}: off — this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
     };
   }
   if (mode === 'off') {
     return {
-      danger: true, enforced: false,
+      danger: true, rulesInForce: false,
+      rulesWithheldBecause: 'this launch requested sandbox `off`, so none of its filesystem rules were emitted',
       title: `${prefix}: off — the OS sandbox is forced OFF for this launch. The agent's Bash runs unconfined. Explicit opt-in.${caveat}`,
     };
   }
@@ -199,7 +219,7 @@ const SANDBOX_SCOPE_LABELS = {
 };
 
 // sandboxProfileClause names the tclaude sandbox profiles applied to a launch
-// and says whether their rules are actually in force.
+// and, when their filesystem rules are NOT in force, says why.
 //
 // A profile is orthogonal to the sandbox STATE: it never decides whether the
 // agent is sandboxed, it supplies the rules. For Claude Code those filesystem
@@ -209,21 +229,33 @@ const SANDBOX_SCOPE_LABELS = {
 // tooltip that named only the settings file which enabled the sandbox read as
 // the whole configuration, when a profile is what actually shaped it.
 //
+// "Customized by" is deliberately weaker than "rules from": the snapshot the
+// browser gets carries profile NAMES only, so this cannot know whether a given
+// profile contributes filesystem rules, environment entries, or both. It names
+// the profile and lets the withheld-reason carry the one thing that IS known.
+//
 // Returns "" for a launch that recorded no policy at all — a row older than the
 // snapshot. Saying "no profile" there would invent a fact rather than report
 // one; "none applied" is only claimed where a resolved policy exists to say it.
-function sandboxProfileClause(member, enforced) {
+function sandboxProfileClause(member, withheldBecause) {
   const applied = member.state?.sandbox_profiles || [];
   if (!applied.length) {
+    // Three different facts, and flattening them would be its own small lie:
+    // the launch MODE discarded every profile tier; the launch resolved to no
+    // profile; or nothing was ever recorded (a row older than the snapshot), in
+    // which case an absence tclaude never observed is not reported as one.
+    if (member.state?.sandbox_profiles_omitted) {
+      return ' tclaude sandbox profiles do not apply under this launch mode.';
+    }
     return member.state?.sandbox_profiles_recorded ? ' No tclaude sandbox profile applied.' : '';
   }
   const names = applied
     .map((p) => `“${p.name}” (${SANDBOX_SCOPE_LABELS[p.scope] || p.scope})`)
     .join(' + ');
-  return enforced
-    ? ` Rules: tclaude sandbox profile ${names}.`
-    : ` tclaude sandbox profile ${names} still sets this agent's environment, but its`
-      + ` filesystem rules are not enforced while the sandbox is off.`;
+  const clause = ` Customized by tclaude sandbox profile ${names}.`;
+  if (!withheldBecause) return clause;
+  return clause + ` Its filesystem rules are not in force (${withheldBecause});`
+    + ` any environment entries it defines still apply.`;
 }
 
 // sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
@@ -249,7 +281,10 @@ function sandboxIndicator(member) {
     // posture, so the tooltip stays a complete account on its own.
     return {
       danger: badge.danger, offline,
-      title: badge.title + sandboxProfileClause(member, badge.enforced),
+      // A verdict tclaude could not prove says nothing about the profile's
+      // rules either way: rulesInForce is false, but there is no established
+      // reason to report, so the clause names the profile and stops.
+      title: badge.title + sandboxProfileClause(member, badge.rulesWithheldBecause),
     };
   }
   if (!mode || mode === 'inherit') return null;
@@ -265,8 +300,9 @@ function sandboxIndicator(member) {
       : `${prefix}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes.`;
   // A mode-driven row (Codex, or a legacy Claude row) states its own posture,
-  // so the mode alone decides whether the profile's rules are enforced.
-  return { danger, title: title + sandboxProfileClause(member, !danger), offline };
+  // so the mode alone decides whether the profile's rules are in force.
+  const withheld = danger ? 'the sandbox is off' : '';
+  return { danger, title: title + sandboxProfileClause(member, withheld), offline };
 }
 
 export function SandboxBadge({ member }) {

@@ -129,6 +129,16 @@ type SpawnArgs struct {
 	// daemon-owned Codex agent runs sandboxed by default (JOH-192/JOH-207).
 	Sandbox string
 
+	// SandboxChosenBy names the resolution tier that supplied Sandbox — an
+	// explicit request field, or the named / group-default / global-default
+	// spawn profile that carried it. The daemon is the only party with the tier
+	// stack to know, so it travels with the mode into the forked `session new`,
+	// which records it beside the launch verdict. The badge attributes the
+	// agent's containment to it: an operator who never chose a sandbox sees
+	// WHICH default profile did, instead of "forced ON for this launch" as
+	// though they had chosen it themselves. "" omits the flag.
+	SandboxChosenBy string
+
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), forwarded as `tclaude session
 	// new --ask-user-question-timeout <v>`; "" omits it. A Claude-Code-only

@@ -117,11 +117,21 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// not just the settings file that decided the STATE — the two are
 	// orthogonal, and naming only the latter read as the whole configuration.
 	// Behaviour is covered by jstest/sandbox-badge.test.mjs.
-	must("function sandboxProfileClause(member, enforced)", "the applied-profile clause is defined")
+	must("function sandboxProfileClause(member, withheldBecause)", "the applied-profile clause is defined")
 	must("member.state?.sandbox_profiles", "the clause reads the applied profiles off the agent's state")
 	must("member.state?.sandbox_profiles_recorded", "a row that recorded no policy is distinguished from one that resolved to none")
 	must("global: 'global default'", "the assignment tier is named in operator vocabulary")
-	must("not enforced while the sandbox is off", "an unenforced profile does not read as containment")
+	must("Its filesystem rules are not in force", "a profile whose rules were withheld does not read as containment")
+	// A launch that requested `off` never had its profile's filesystem rules
+	// emitted at all, so managed policy forcing the sandbox ON over it enforces
+	// the operator's settings — not the profile.
+	must("rulesInForce: mode !== 'off' && !unverified",
+		"an `off` launch's withheld rules, and an unproven verdict, are not reported as in force")
+
+	// The mode's own provenance: `sandbox: on` can come from an explicit flag or
+	// from a spawn profile the operator never opened, and the badge used to call
+	// both "this launch".
+	must("forced ON by ${source || 'this launch'}", "the badge names whatever forced the sandbox on")
 
 	// The sandbox indicator rides INSIDE the harness line, trailing the effort
 	// token next to the 📱 remote indicator, rather than owning a second line

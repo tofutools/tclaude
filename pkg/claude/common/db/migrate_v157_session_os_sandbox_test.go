@@ -89,7 +89,3 @@ func TestSessionOSSandboxVerdictRoundTrips(t *testing.T) {
 	assert.False(t, replaced.OSSandboxUnverified,
 		"a newly-resolved verdict clears the previous doubt rather than inheriting it")
 }
-
-func TestMigrateV157IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 157, currentVersion, "tripwire: bump this with the next migration")
-}

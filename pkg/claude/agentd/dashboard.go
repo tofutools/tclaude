@@ -1621,11 +1621,16 @@ type sandboxProfileRef struct {
 }
 
 // sandboxProfileRefs projects a launch's frozen sandbox snapshot onto the
-// display refs above, preserving the resolver's global → group → explicit
-// order (Resolve appends the tiers in that order, so it is already sorted).
+// display refs above, in the order the snapshot recorded them. That order is
+// global → group → explicit, an invariant of the snapshot BUILDER
+// (db.resolveEffectiveSandboxSnapshot walks the tiers in that sequence) — this
+// function neither re-sorts nor relies on anything else to.
+//
 // A nil snapshot — a launch older than the column, or one that recorded none —
 // yields nil, which the caller distinguishes from "resolved to no profiles"
-// via the recorded flag.
+// via the recorded flag. An entry with a blank name is skipped because there is
+// nothing to display for it; that cannot silently turn into a false "no profile
+// applied", because names are validated non-empty at profile creation.
 func sandboxProfileRefs(snapshot *sandboxpolicy.Snapshot) []sandboxProfileRef {
 	if snapshot == nil || len(snapshot.Applied) == 0 {
 		return nil
@@ -1761,6 +1766,13 @@ type agentState struct {
 	// sandbox policy at all, so an empty SandboxProfiles above is a genuine
 	// "nothing applied" rather than a row from before the snapshot existed.
 	SandboxProfilesRecorded bool `json:"sandbox_profiles_recorded,omitempty"`
+	// SandboxProfilesOmitted reports a launch whose MODE suppresses the profile
+	// tiers outright — today, a Codex `danger-full-access` spawn, whose raw
+	// --sandbox opt-out cannot be combined with the managed permission profile
+	// that renders filesystem rules. It is a different fact from "no profile was
+	// assigned", and the operator-facing difference matters: one says nobody
+	// configured one, the other says the launch mode threw them away.
+	SandboxProfilesOmitted bool `json:"sandbox_profiles_omitted,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
 	// best-known flag — the harness exposes no readback, so the dashboard
@@ -1857,6 +1869,7 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// on the poll.
 		SandboxProfiles:         sandboxProfileRefs(pick.EffectiveSandbox),
 		SandboxProfilesRecorded: pick.EffectiveSandbox != nil,
+		SandboxProfilesOmitted:  pick.EffectiveSandbox != nil && pick.EffectiveSandbox.ProfilesOmitted,
 		// RemoteControl is tclaude's best-known Remote Access flag for the
 		// conv (JOH-256), surfaced regardless of liveness like the other
 		// launch/row properties — the dashboard reflects the recorded intent

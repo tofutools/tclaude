@@ -25,6 +25,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.SandboxMode != nil {
 		merged.SandboxMode = overlay.SandboxMode
 	}
+	if overlay.SandboxModeSource != nil {
+		merged.SandboxModeSource = overlay.SandboxModeSource
+	}
 	if overlay.ApprovalPolicy != nil {
 		merged.ApprovalPolicy = overlay.ApprovalPolicy
 	}

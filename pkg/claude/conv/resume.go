@@ -254,7 +254,8 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// confines it rather than carrying the predecessor's verdict, because the
 	// operator may have changed settings.json since (TCL-729).
 	resumeMode := resumeSandboxMode(rc.ConvID)
-	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, rc.ProjectPath)
+	resumeChosenBy := resumeSandboxChosenBy(rc.ConvID)
+	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
 	state := &session.SessionState{
 		ID:                     sessionID,
 		TmuxSession:            tmuxSession,
@@ -264,6 +265,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		Status:                 session.StatusIdle,
 		Harness:                h.Name,
 		SandboxMode:            resumeMode,
+		SandboxModeSource:      resumeChosenBy,
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
 		OSSandboxUnverified:    launchOSSandbox.Unverified,

@@ -45,7 +45,7 @@ const CASES = [
       os_sandbox_state: 'on', os_sandbox_source: 'this launch (sandbox `on`)',
     },
     glyph: '🔒', danger: false,
-    title: [/^Sandbox: on —/, /forced ON for this launch/], titleNot: [/inherited/],
+    title: [/^Sandbox: on —/, /forced ON by this launch/], titleNot: [/inherited/],
   },
   {
     name: 'a forced-off sandbox is flagged as a danger, not dressed up with a padlock',
@@ -174,7 +174,9 @@ const CASES = [
       sandbox_profiles_recorded: true,
     },
     glyph: '🔒', danger: false,
-    title: [/^Sandbox: on —/, /Rules: tclaude sandbox profile “tclaude-agent” \(global default\)/],
+    title: [/^Sandbox: on —/, /Customized by tclaude sandbox profile “tclaude-agent” \(global default\)\./],
+    // The rules ARE in force here, so no withheld-reason is appended.
+    titleNot: [/not in force/],
   },
   {
     name: 'every applied tier is named, in resolution order',
@@ -204,8 +206,15 @@ const CASES = [
       sandbox_profiles_recorded: true,
     },
     glyph: '⚠', danger: true,
-    title: [/still sets this agent's environment/, /not enforced while the sandbox is off/],
-    titleNot: [/^Rules:/, / Rules: /],
+    title: [
+      /Customized by tclaude sandbox profile “tclaude-agent” \(global default\)\./,
+      /Its filesystem rules are not in force \(this launch requested sandbox `off`/,
+      // Deliberately conditional: the snapshot carries profile NAMES only, so
+      // the browser cannot know whether this profile defines any environment
+      // entries. Asserting that it "sets this agent's environment" would be the
+      // same unfounded claim, pointed the other way.
+      /any environment entries it defines still apply/,
+    ],
   },
   {
     name: 'a launch that resolved to no profile reports the absence',
@@ -248,9 +257,14 @@ const CASES = [
       sandbox_profiles_recorded: true,
     },
     glyph: '🔒', danger: false,
-    title: [/Rules: tclaude sandbox profile “tight” \(chosen for this agent\)/],
+    title: [/Customized by tclaude sandbox profile “tight” \(chosen for this agent\)\./],
+    titleNot: [/not in force/],
   },
   {
+    // Pins the JS branch rather than a reachable production row: a Codex
+    // danger-full-access spawn suppresses the profile tiers outright (see the
+    // case below), so it cannot in practice arrive carrying one. The branch
+    // still has to be right for any mode-driven row that does.
     name: 'a full-access mode-driven row does not claim its profile is enforced',
     state: {
       harness: 'codex', sandbox_mode: 'danger-full-access',
@@ -258,7 +272,74 @@ const CASES = [
       sandbox_profiles_recorded: true,
     },
     glyph: '⚠', danger: true,
-    title: [/not enforced while the sandbox is off/], titleNot: [/Rules:/],
+    title: [/Its filesystem rules are not in force \(the sandbox is off\)/],
+  },
+  {
+    // What that row ACTUALLY records. "No profile applied" would be true but
+    // would read as "nobody configured one", when the launch mode is what threw
+    // them away — a Codex raw --sandbox opt-out cannot carry the managed
+    // permission profile that renders filesystem rules.
+    name: 'a launch mode that suppresses the profile tiers says so',
+    state: {
+      harness: 'codex', sandbox_mode: 'danger-full-access',
+      sandbox_profiles_recorded: true, sandbox_profiles_omitted: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/tclaude sandbox profiles do not apply under this launch mode\./],
+    titleNot: [/No tclaude sandbox profile applied/],
+  },
+  {
+    // The inverted failure: managed policy forces the sandbox ON over a launch
+    // that asked for `off`. The sandbox IS on — but tclaude emitted
+    // {"sandbox":{"enabled":false}} for that launch and, with it, none of the
+    // profile's filesystem keys (claudeSettingsJSON skips every one of them for
+    // an `off` mode). What confines this agent is the managed/operator settings,
+    // NOT the profile, so claiming the profile's rules are in force would be the
+    // same false account of the configuration this whole surface exists to fix.
+    name: 'a profile on an off-launch forced ON by policy does not claim its rules',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [
+      /Customized by tclaude sandbox profile “tclaude-agent” \(global default\)\./,
+      /Its filesystem rules are not in force \(this launch requested sandbox `off`/,
+    ],
+  },
+  {
+    // The hedge two lines up already drops "Bash is confined" because the
+    // posture is unproven. A rules-in-force claim under the same doubt would
+    // re-assert exactly what the caveat says tclaude could not establish.
+    name: 'an unverified verdict names its profile without claiming its rules are in force',
+    state: {
+      harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'on',
+      os_sandbox_source: '~/.claude/settings.json', os_sandbox_unverified: true,
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\)/, /Customized by tclaude sandbox profile “tclaude-agent”/],
+    // No claim either way: there is no established reason to report, and
+    // asserting enforcement is what the hedge exists to prevent.
+    titleNot: [/not in force/, /Bash is confined/],
+  },
+  {
+    // The provenance half. `sandbox: on` reaches a launch either because
+    // someone typed it or because a spawn profile they never opened carried it;
+    // the verdict is identical, so the recorded source is the only thing that
+    // can tell them apart. Attributing a default profile's choice to "this
+    // launch" credits the operator with a decision they did not make.
+    name: 'a sandbox forced on by a default spawn profile names that profile',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      os_sandbox_source: 'global default profile "agents" (sandbox `on`)',
+    },
+    glyph: '🔒', danger: false,
+    title: [/forced ON by global default profile "agents" \(sandbox `on`\)/],
+    titleNot: [/forced ON by this launch/],
   },
   {
     name: 'an offline agent labels its verdict as last-used',

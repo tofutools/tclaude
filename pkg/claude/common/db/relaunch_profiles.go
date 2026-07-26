@@ -16,8 +16,15 @@ const RelaunchProfileVersion = 1
 // legacy state. Unknown authority-bearing values are resolved fail-closed by
 // the lifecycle layer rather than silently replaced with today's defaults.
 type AgentRelaunchProfile struct {
-	Version                int     `json:"version"`
-	SandboxMode            *string `json:"sandbox_mode,omitempty"`
+	Version     int     `json:"version"`
+	SandboxMode *string `json:"sandbox_mode,omitempty"`
+	// SandboxModeSource names the resolution tier that CHOSE SandboxMode — an
+	// explicit flag, or the named/group-default/global-default spawn profile
+	// that carried it. It is durable because the badge attributes the launch's
+	// containment to it, and an agent that has been relaunched a few times must
+	// not lose that attribution and fall back to an anonymous "this launch".
+	// nil = unknown (legacy record, or a launch that recorded none).
+	SandboxModeSource      *string `json:"sandbox_mode_source,omitempty"`
 	ApprovalPolicy         *string `json:"approval_policy,omitempty"`
 	ToolGovernance         *string `json:"tools,omitempty"`
 	ApprovalAutoReview     *bool   `json:"approval_auto_review,omitempty"`
@@ -277,12 +284,23 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if haveAutoCompactWindow {
 		autoCompactWindowColumn = "auto_compact_window"
 	}
-	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode,
+	// v158. Guarded like the columns above so a projection running against a
+	// not-yet-migrated database reads "unknown" rather than failing the write.
+	haveSandboxModeSource, err := sessionsHaveColumn(q, "sandbox_mode_source")
+	if err != nil {
+		return err
+	}
+	sandboxModeSourceColumn := "''"
+	if haveSandboxModeSource {
+		sandboxModeSourceColumn = "sandbox_mode_source"
+	}
+	var sandboxModeSource string
+	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxModeSourceColumn+`,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
 		auto_memory, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
-		&rowID, &convID, &cwd, &harnessName, &sandboxMode,
+		&rowID, &convID, &cwd, &harnessName, &sandboxMode, &sandboxModeSource,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
 		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAt)
@@ -343,6 +361,13 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		ApprovalPolicy:         stringPtr(approvalPolicy),
 		ApprovalAutoReview:     boolPtr(approvalAutoReview != 0),
 		AskUserQuestionTimeout: stringPtr(askTimeout),
+	}
+	// Projected as KNOWN whenever the column exists, including empty: a relaunch
+	// that re-chose the mode with nothing to attribute must ERASE the previous
+	// attribution rather than let it survive onto a mode its tier never chose.
+	// Absent column = pre-v158 database = genuinely unknown, so nil.
+	if haveSandboxModeSource {
+		agent.SandboxModeSource = stringPtr(sandboxModeSource)
 	}
 	if modelID != "" {
 		agent.ModelID = stringPtr(modelID)
@@ -460,6 +485,10 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		merged := *existingAgent
 		merged.Version = RelaunchProfileVersion
 		merged.SandboxMode = agent.SandboxMode
+		// The attribution travels with the mode it explains. Letting it survive
+		// a projection that replaced the mode would credit the new mode to
+		// whatever chose the old one.
+		merged.SandboxModeSource = agent.SandboxModeSource
 		merged.ApprovalPolicy = agent.ApprovalPolicy
 		merged.ApprovalAutoReview = agent.ApprovalAutoReview
 		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
