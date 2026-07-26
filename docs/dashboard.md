@@ -225,13 +225,19 @@ a tmux client that disappears or cannot be switched does not block the restart.
 The bridge also expires after five minutes if the daemon exits or cannot run
 its normal cleanup.
 
-All three cog-menu restart actions are deliberately refused unless the live
-session reports `idle` and its database ledgers contain zero live background
-agents and zero live background shell commands. The check is a basic
-preflight, not a race-free lock: if the agent starts work just afterwards, the
-normal stop path still governs the restart. If a restarted agent does not come
-back, the chosen posture remains durable and the ordinary wake action retries
-it.
+The live row badge is a shortcut to the same operation: click **🔒** to restart
+temporarily without the sandbox, then click the **⚠** produced by that override
+to restore the preserved configuration. Other warning badges — an agent whose
+normal launch is unconfined or whose verdict is unverified — remain
+informational. Both transitions ask for confirmation; use **Ctrl/Cmd+Enter** to
+confirm or **Escape** to cancel.
+
+All restart actions above are deliberately refused unless the live session
+reports `idle` and its database ledgers contain zero live background agents and
+zero live background shell commands. The check is a basic preflight, not a
+race-free lock: if the agent starts work just afterwards, the normal stop path
+still governs the restart. If a restarted agent does not come back, the chosen
+posture remains durable and the ordinary wake action retries it.
 
 Per-group quick actions live above the roster as icon-only buttons (hover for
 their labels): **spawn agent**, **create subgroup**, **power on**, and

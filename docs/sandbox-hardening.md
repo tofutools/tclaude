@@ -440,7 +440,10 @@ as the warning above, and records it on the session row. The badge then reads:
 | `⚠` | `Sandbox: on (unverified)` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
 
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
-something is off; hover for which of the three it is.
+something is off; hover for which of the three it is. The one exception to
+purely informational warnings is an active temporary sandbox override: its ⚠
+is clickable and restores the agent's preserved normal sandbox configuration.
+Ordinary unconfined and unverified warnings do not dispatch that action.
 
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's
