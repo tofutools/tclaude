@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,6 +115,13 @@ type TmuxSim struct {
 	// reusing a conv-id-derived tmux name — therefore yields a DIFFERENT pid,
 	// which is exactly what the soft-exit retry's livePanePID guard keys on.
 	nextPID int
+	// clients maps simulated client ttys to their attached sessions. Most
+	// flows have none; lifecycle handoff tests opt in through AttachClient.
+	clients map[string]string
+	// newSessionRemainOnExit models a server-wide/window default inherited by
+	// panes created through new-session. Tests can enable it to prove callers
+	// override the option pane-locally when expiry depends on pane removal.
+	newSessionRemainOnExit bool
 }
 
 type tmuxCommandFault struct {
@@ -142,6 +150,7 @@ func newTmuxSim() *TmuxSim {
 		commandCounts:   map[string]int{},
 		mutationTargets: map[string][]string{},
 		commandFaults:   map[string][]tmuxCommandFault{},
+		clients:         map[string]string{},
 	}
 }
 
@@ -163,6 +172,16 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 	}
 	switch {
+	case len(args) >= 4 && args[0] == "new-session":
+		name := tmuxArgValue(args, "-s")
+		if name == "" {
+			return exec.Command(falseBin)
+		}
+		t.MarkAlive(name)
+		t.mu.Lock()
+		t.sessions[name].remainOnExit = t.newSessionRemainOnExit
+		t.mu.Unlock()
+		return exec.Command(trueBin)
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if name := t.resolveTarget(args[2], false); name != "" && t.hasSession(name) {
 			return exec.Command(trueBin)
@@ -216,6 +235,34 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		t.recordMutationTarget("kill-session", args[2])
 		t.killSession(args[2])
+	case len(args) >= 1 && args[0] == "list-clients":
+		target := tmuxArgValue(args, "-t")
+		name := t.resolveTarget(target, false)
+		t.mu.Lock()
+		var ttys []string
+		for tty, sessionName := range t.clients {
+			if sessionName == name {
+				ttys = append(ttys, tty)
+			}
+		}
+		t.mu.Unlock()
+		sort.Strings(ttys)
+		return exec.Command(echoBin, strings.Join(ttys, "\n"))
+	case len(args) >= 1 && args[0] == "switch-client":
+		tty := tmuxArgValue(args, "-c")
+		target := tmuxArgValue(args, "-t")
+		name := t.resolveTarget(target, false)
+		if tty == "" || name == "" || !t.IsAlive(name) {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if _, ok := t.clients[tty]; !ok {
+			t.mu.Unlock()
+			return exec.Command(falseBin)
+		}
+		t.clients[tty] = name
+		t.mu.Unlock()
+		return exec.Command(trueBin)
 	case len(args) >= 3 && args[0] == "kill-pane" && args[1] == "-t":
 		// Real tmux: "can't find pane: =%N".
 		if strings.HasPrefix(args[2], "=%") {
@@ -290,6 +337,15 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+func tmuxArgValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func (t *TmuxSim) recordMutationTarget(verb, target string) {
@@ -628,10 +684,46 @@ func (t *TmuxSim) killSession(target string) {
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	delete(t.sessions, name)
+	for tty, sessionName := range t.clients {
+		if sessionName == name {
+			delete(t.clients, tty)
+		}
+	}
 	t.mu.Unlock()
 	if ok && s.pane != nil {
 		s.pane.Shutdown()
 	}
+}
+
+// AttachClient registers a simulated tmux client tty on sessionName.
+func (t *TmuxSim) AttachClient(tty, sessionName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.clients[tty] = sessionName
+}
+
+// ClientSession reports the session currently hosting tty, or "" after its
+// session died without a handoff.
+func (t *TmuxSim) ClientSession(tty string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.clients[tty]
+}
+
+// SetNewSessionRemainOnExit controls the option inherited by subsequently
+// simulated new-session panes.
+func (t *TmuxSim) SetNewSessionRemainOnExit(enabled bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.newSessionRemainOnExit = enabled
+}
+
+// PaneRemainOnExit reports the pane-local option for sessionName.
+func (t *TmuxSim) PaneRemainOnExit(sessionName string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[sessionName]
+	return s != nil && s.remainOnExit
 }
 
 // Register attaches a pane sim (a *CCSim or *CodexSim) to a tmux

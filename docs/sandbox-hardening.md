@@ -466,6 +466,12 @@ agent's normal launch posture, and the restore action restarts under that
 preserved posture. Conversation rotations keep the override, while clones do
 not inherit it.
 
+Attached tmux clients are carried across the stop/resume gap through a
+short-lived bridge session. The carry is best-effort so a stale client or tmux
+switch failure cannot prevent the operator-requested posture change. The bridge
+self-expires after five minutes as a fallback for daemon exit or failed
+cleanup.
+
 The daemon refuses either transition unless the agent is online and fully idle:
 the main status is `idle`, no background agents remain, and no background shell
 commands remain. Claude Code's customizable statusline leads with a red

@@ -212,6 +212,13 @@ restart**. The override is keyed to the stable agent identity, so `/clear` or
 reincarnation cannot lose it; a clone is a new agent and inherits the normal
 posture, not the temporary unlock.
 
+If a human terminal is attached to the agent's tmux session, the restart parks
+that client on a short-lived bridge session and switches it onto the resumed
+pane automatically. This is best-effort, like reincarnation's client handoff:
+a tmux client that disappears or cannot be switched does not block the sandbox
+transition. The bridge also expires after five minutes if the daemon exits or
+cannot run its normal cleanup.
+
 Both directions are deliberately refused unless the live session reports
 `idle` and its database ledgers contain zero live background agents and zero
 live background shell commands. The check is a basic preflight, not a
