@@ -994,3 +994,14 @@ CREATE TABLE opencode_usage_step_removals (
 CREATE INDEX idx_opencode_usage_step_removals_removed
 			ON opencode_usage_step_removals(removed_at);
 
+CREATE TABLE agent_spool_bindings (
+			spool_id   TEXT PRIMARY KEY,
+			conv_id    TEXT NOT NULL,
+			dir        TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			revoked_at TEXT
+		);
+
+CREATE INDEX idx_agent_spool_bindings_conv
+			ON agent_spool_bindings(conv_id);
+
