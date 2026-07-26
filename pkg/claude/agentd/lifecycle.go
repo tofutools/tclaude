@@ -1224,7 +1224,12 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	if launchConfig.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
 	}
-	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		harnessName,
+		relaunchSandbox,
+		effectiveSandbox,
+		launchConfig.SandboxImplementation,
+	); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
 		return res

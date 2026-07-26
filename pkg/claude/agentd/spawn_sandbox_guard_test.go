@@ -27,6 +27,29 @@ func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 	}
 }
 
+func TestSandboxProfileCapabilityFailureDefersTclaudeLayerPolicyToOuterApplier(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: root, Access: sandboxpolicy.AccessDeny},
+		},
+		NetworkAccess: sandboxpolicy.NetworkAccessNone,
+	}}
+	require.Nil(t, sandboxProfileCapabilityFailure(
+		harness.DefaultName,
+		harness.ClaudeSandboxOff,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	))
+	require.Nil(t, sandboxProfileCapabilityFailure(
+		harness.CodexName,
+		harness.SandboxDangerFull,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	))
+}
+
 func TestSandboxProfileCapabilityFailureGatesReopenUnderDeny(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

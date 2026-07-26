@@ -395,6 +395,9 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 		entry("/home/dev/.tclaude/data/logs", MountRO),
 		entry("/home/dev/work", MountRW),
 	})
+	if plan.NetworkPosture != NetworkIsolatedWithAgentd {
+		t.Fatalf("network posture = %s, want isolated-with-agentd", plan.NetworkPosture)
+	}
 	assertAncestorsFirst(t, plan)
 
 	// The acknowledged protected path really is reachable through the plan, even
@@ -690,6 +693,38 @@ func TestMountModeString(t *testing.T) {
 	}
 }
 
+func TestNetworkPostureForAccess(t *testing.T) {
+	for _, tt := range []struct {
+		access NetworkAccess
+		want   NetworkPosture
+	}{
+		{NetworkAccessInherit, NetworkHostOpen},
+		{NetworkAccessInternet, NetworkHostOpen},
+		{NetworkAccessNone, NetworkIsolatedWithAgentd},
+	} {
+		got, err := NetworkPostureForAccess(tt.access)
+		if err != nil {
+			t.Fatalf("NetworkPostureForAccess(%q): %v", tt.access, err)
+		}
+		if got != tt.want {
+			t.Fatalf("NetworkPostureForAccess(%q) = %s, want %s", tt.access, got, tt.want)
+		}
+	}
+	if _, err := NetworkPostureForAccess(NetworkAccess("filtered")); err == nil {
+		t.Fatal("unrecognized authored network posture must fail closed")
+	}
+	for posture, want := range map[NetworkPosture]string{
+		NetworkHostOpen:           "host-open",
+		NetworkIsolatedWithAgentd: "isolated-with-agentd",
+		NetworkFiltered:           "filtered",
+		NetworkPosture(99):        "network-posture(99)",
+	} {
+		if got := posture.String(); got != want {
+			t.Fatalf("NetworkPosture(%d).String() = %q, want %q", int(posture), got, want)
+		}
+	}
+}
+
 // TestMountPlanSnapshot pins the diffable rendering. These strings are the
 // groundwork for a dry-run/effective-plan surface, so a change to them is a
 // change to an operator-facing contract and should be deliberate.
@@ -704,7 +739,8 @@ func TestMountPlanSnapshot(t *testing.T) {
 			grants: nil,
 			want: strings.Join([]string{
 				"mount-plan:",
-				"  (empty)",
+				"  network host-open",
+				"  mounts  (empty)",
 				"",
 			}, "\n"),
 		},
@@ -718,6 +754,7 @@ func TestMountPlanSnapshot(t *testing.T) {
 			},
 			want: strings.Join([]string{
 				"mount-plan:",
+				"  network host-open",
 				"  hide /home/dev",
 				"  rw   /home/dev/git/project",
 				"  ro   /home/dev/git/project/.git",
@@ -734,6 +771,7 @@ func TestMountPlanSnapshot(t *testing.T) {
 			},
 			want: strings.Join([]string{
 				"mount-plan:",
+				"  network host-open",
 				"  rw   /home/dev",
 				"  hide /home/dev/.aws",
 				"  hide /home/dev/.ssh",

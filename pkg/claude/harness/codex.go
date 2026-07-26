@@ -51,6 +51,12 @@ func init() {
 		// buildSpawnSeedPrompt). Claude Code reports its id via the SessionStart
 		// hook and leaves this false.
 		SeedsFirstTurn: true,
+		// Codex can use operator-arranged transports that require no IP network
+		// inside the tclaude layer. Each isolated launch still needs the
+		// explicit TCLAUDE_OFFLINE_MODEL=1 profile assertion; tclaude does not
+		// infer this from --oss because host-loopback providers are outside a
+		// freshly unshared network namespace.
+		OfflineModelTransport: true,
 		// Codex blocks a first launch in an unseen dir on its trust-folder
 		// modal, recording the answer as a [projects."<dir>"] trust_level table
 		// in ~/.codex/config.toml — seedable ahead of launch, so the trust-dir

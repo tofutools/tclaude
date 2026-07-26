@@ -128,17 +128,17 @@ process inside a tclaude-owned bubblewrap mount namespace. The default remains
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
 
-This first slice is deliberately filesystem-only. It supports Claude Code and
-Codex; OpenCode is refused because its tool-executing server runs outside the
-attach pane this slice wraps. It requires Linux,
+It supports Claude Code and Codex; OpenCode is refused because its
+tool-executing server runs outside the attach pane this slice wraps. It requires Linux,
 `bwrap` on `PATH`, and working unprivileged user namespaces. If any capability
 is missing, tclaude refuses the launch instead of silently falling back. It
-does not unshare networking, PID, or IPC namespaces. The harness's own sandbox
-is disabled inside the wrapper for now; a later workstream will define when
-nested sandboxes may be stacked.
+does not unshare PID or IPC namespaces. The harness's own sandbox is disabled
+inside the wrapper for now; a later workstream will define when nested
+sandboxes may be stacked.
 
-The layer starts with a read-only view of the host root and gives `/dev`,
-`/proc`, and `/tmp` fresh sandbox views. It then enforces four load-bearing
+The host-open posture starts with a read-only view of the host root; the
+isolated posture uses the constructed root described below. Both give `/dev`,
+`/proc`, and `/tmp` fresh sandbox views and enforce four load-bearing
 precedence classes:
 
 1. Reopen the launched harness's state root, workspace/Git administration
@@ -157,23 +157,61 @@ Later plan entries shadow earlier ones, allowing a more-specific allow to
 reopen beneath a deny and a more-specific deny to hide beneath an allow.
 Missing read/write bind sources are skipped without creating anything on the
 host; hide entries are still applied. The wrapper also starts a new terminal
-session to prevent terminal-input injection. A profile with a non-inherited
-network posture is refused in this filesystem-only slice.
+session to prevent terminal-input injection.
 
-Two limitations are explicit in this experimental slice:
+### Isolated-with-agentd network posture
+
+The profile's `network_access` field maps differently because the outer layer
+wraps the whole harness process, not only its tool executions:
+
+- omitted (`inherit`) and `internet` use the **host-open** posture. This
+  preserves the walking skeleton: the host network namespace and read-only
+  host root remain visible, including host localhost services and ambient
+  filesystem Unix sockets. `internet` therefore means more here than a
+  tool-only Internet switch; the launch badge says `host network` rather than
+  repeating the profile word.
+- `none` requests **isolated-with-agentd**. Bubblewrap creates a fresh network
+  namespace (with loopback up) and a constructed filesystem root. There is no
+  blanket bind of `/`: the static OS surface is read-only (`/usr`, `/bin`,
+  `/sbin`, `/lib*`, `/etc`, and `/opt`, accounting for merged-usr symlinks);
+  `/dev` and `/proc` are fresh, `/tmp` is tmpfs, and `/run`, `/var`, `/srv`,
+  `/media`, `/mnt`, `/boot`, and `/root` are absent. Home paths exist only
+  where the launch contract or ordered profile plan binds them. The canonical
+  `~/.tclaude/api/agentd.sock` is bound read-only as a launch-contract path.
+
+The isolated posture blocks TCP egress and host-loopback TCP. It also closes
+the Linux abstract Unix-socket namespace. A filesystem Unix socket is visible
+only when it was explicitly bound, or when an operator-authored filesystem
+grant re-exposes a parent directory under the normal most-specific-wins policy.
+The badge therefore reports full socket fidelity for the constructed-root
+posture. The reserved `filtered` posture will eventually cover proxy-backed
+host/domain and host-loopback allowlists; no proxy is implemented today.
+
+`network_access: none` also isolates the harness's own model transport.
+Claude Code and other hosted-only harnesses are refused because they would be
+dead on arrival. Codex proceeds only when the resolved sandbox profile contains
+`TCLAUDE_OFFLINE_MODEL=1`. That value is a precise operator assertion that the
+model transport **functions inside this isolated namespace**—for example a
+namespace-local Unix socket, an inherited file descriptor, or a workflow that
+needs no model traffic. It does not mean merely “a local model exists”:
+host-TCP Ollama/LM Studio-style servers are on the other side of the new
+network namespace and remain unreachable. tclaude deliberately does not infer
+the assertion from Codex `--oss` or a model name.
+
+The remaining limitation in the host-open posture is explicit:
 
 - Ambient host Unix sockets remain connectable through the read-only root.
   Privileged daemon sockets such as `docker.sock` or containerd-class sockets
   are host-root-equivalent escapes when present. The launch badge records this
-  partial fidelity instead of presenting a verified padlock. Socket/network
-  allowlisting is the next layer workstream; this slice deliberately does not
-  maintain a misleading blocklist.
+  partial fidelity instead of presenting a verified padlock. The open posture
+  deliberately does not maintain a misleading dangerous-socket blocklist.
 - Installed hook, legacy status-callback, and status-bar processes cannot write
   the hidden tclaude database. A `tclaude-layer` launch exports the existing
   soft-disable switch so those callbacks return successfully without updating
   status. Brokered callbacks are deferred; authenticated `tclaude agent`
   coordination through the separate `~/.tclaude/api/agentd.sock` remains
-  available and is covered by the Linux host smoke.
+  available and is covered by the Linux host smoke in both posture and
+  filesystem-boundary assertions.
 
 The CI smoke reports a visible skip when its runner cannot create an
 unprivileged user/mount namespace. Run the fallback on a compatible Linux host

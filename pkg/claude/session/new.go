@@ -530,10 +530,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit {
-		if tclaudeLayer {
-			return fmt.Errorf("unsupported_sandbox_profile_network: tclaude-layer is filesystem-only in this experimental slice; network posture must inherit")
-		}
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !tclaudeLayer {
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {
@@ -548,6 +545,15 @@ func runNew(params *NewParams) error {
 			}
 		default:
 			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
+		}
+	}
+	if tclaudeLayer {
+		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: networkAccess}
+		if launchSandbox != nil {
+			effective = launchSandbox.Effective
+		}
+		if err := ValidateTclaudeLayerNetwork(h, effective); err != nil {
+			return err
 		}
 	}
 
@@ -890,7 +896,17 @@ func runNew(params *NewParams) error {
 	}()
 	// Pin managed Codex sessions to agentd's canonical state-free socket. That
 	// socket lives outside the profile's denied ~/.tclaude private-state tree.
-	if err := ApplyAgentSocketEnv(h.Name, params.Sandbox, params.PermissionProfile, additionalEnv); err != nil {
+	tclaudeLayerPosture, err := sandboxpolicy.NetworkPostureForAccess(networkAccess)
+	if err != nil {
+		return err
+	}
+	if err := ApplyAgentSocketEnv(
+		h.Name,
+		params.Sandbox,
+		params.PermissionProfile,
+		tclaudeLayer && tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd,
+		additionalEnv,
+	); err != nil {
 		return err
 	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
@@ -984,7 +1000,7 @@ func runNew(params *NewParams) error {
 	bwrapBinary := ""
 	var bwrapCapabilityErr error
 	if tclaudeLayer {
-		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer()
+		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
 	}
 
 	// Ensure the managed profile file exists before launch (self-healing —

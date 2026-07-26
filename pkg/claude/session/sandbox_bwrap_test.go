@@ -1,6 +1,7 @@
 package session
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -285,10 +288,92 @@ func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
 }
 
 func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
-	verdict := TclaudeLayerLaunchOSSandbox()
+	verdict := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", verdict.State)
 	assert.Contains(t, verdict.Source, "ambient host Unix sockets reachable")
 	assert.True(t, verdict.Unverified, "the dashboard must not present a full-fidelity padlock")
+
+	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
+	assert.Equal(t, "on", isolated.State)
+	assert.Contains(t, isolated.Source, "isolated network")
+	assert.Contains(t, isolated.Source, "agentd socket allowlisted")
+	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
+}
+
+func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssertion(t *testing.T) {
+	claude := harness.Default()
+	codex, err := harness.Resolve(harness.CodexName)
+	require.NoError(t, err)
+
+	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(claude, closed), "requires hosted model traffic")
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), OfflineModelEnv+"=1")
+
+	closed.Environment = []sandboxpolicy.EnvironmentEntry{{Name: OfflineModelEnv, Value: "0"}}
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), OfflineModelEnv+"=1")
+	closed.Environment[0].Value = "1"
+	require.NoError(t, ValidateTclaudeLayerNetwork(codex, closed))
+
+	require.NoError(t, ValidateTclaudeLayerNetwork(claude, sandboxpolicy.EffectiveProfile{
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	}))
+}
+
+func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	stateRoot := filepath.Join(home, ".codex")
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: home, Mode: sandboxpolicy.MountHide},
+			{Path: workspace, Mode: sandboxpolicy.MountRW},
+		},
+	}
+	got, err := bwrapArgs([]string{stateRoot, workspace}, nil, plan)
+	require.NoError(t, err)
+
+	assert.Contains(t, got, "--unshare-net")
+	rootTmpfs := indexOfBwrapTriplet(got, "--tmpfs", "/")
+	require.NotEqual(t, -1, rootTmpfs)
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/"),
+		"isolated posture must not blanket-bind the host root")
+	for _, forbidden := range []string{"/run", "/var", "/srv", "/media", "/mnt", "/boot", "/root"} {
+		assert.NotContains(t, got, forbidden, "constructed root must not expose ambient runtime path %s", forbidden)
+	}
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/usr"),
+		"constructed root must expose the static /usr surface")
+
+	homeHide := indexOfBwrapTriplet(got, "--tmpfs", home)
+	stateRepairs := indicesOfBwrapTriplet(got, "--bind", stateRoot)
+	socketBinds := indicesOfBwrapTriplet(got, "--ro-bind", socket)
+	require.NotEqual(t, -1, homeHide)
+	require.Len(t, stateRepairs, 2, "class-1 state root must survive an ordinary ancestor deny")
+	require.Len(t, socketBinds, 2, "agentd socket must be rebound after an ordinary ancestor deny")
+	assert.Less(t, homeHide, stateRepairs[1])
+	assert.Less(t, homeHide, socketBinds[1])
+
+	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
+	require.NoError(t, err)
+	assert.Equal(t, len(got)-2, indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir),
+		"class-4 tmux hide remains final under the constructed root")
+}
+
+func TestBwrapArgsRefusesReservedFilteredPosture(t *testing.T) {
+	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkFiltered,
+	})
+	require.ErrorContains(t, err, "reserved")
 }
 
 func TestStatusCallbackSoftDisablesInsideTclaudeLayer(t *testing.T) {

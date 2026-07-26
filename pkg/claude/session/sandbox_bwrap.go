@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+const OfflineModelEnv = "TCLAUDE_OFFLINE_MODEL"
 
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
@@ -21,7 +24,7 @@ type TclaudeLayerLaunchContract struct {
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
 // committed. Callers record the returned verdict even when verification fails.
-func ResolveTclaudeLayer() (string, harness.LaunchOSSandbox, error) {
+func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.LaunchOSSandbox, error) {
 	binary, err := resolveBwrapBinary()
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
@@ -29,18 +32,54 @@ func ResolveTclaudeLayer() (string, harness.LaunchOSSandbox, error) {
 			Source: "tclaude-layer unavailable",
 		}, err
 	}
-	return binary, TclaudeLayerLaunchOSSandbox(), nil
+	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
 }
 
-// TclaudeLayerLaunchOSSandbox records the layer's current partial fidelity:
-// filesystem mounts are enforced, while ambient host Unix sockets remain
-// connectable until TCL-752 adds the allowlisted network/socket posture.
-func TclaudeLayerLaunchOSSandbox() harness.LaunchOSSandbox {
-	return harness.LaunchOSSandbox{
-		State:      "on",
-		Source:     "tclaude-layer (bubblewrap; ambient host Unix sockets reachable)",
-		Unverified: true,
+// TclaudeLayerLaunchOSSandbox records the resolved network posture and the
+// fidelity it actually enforces. Host-open deliberately retains the skeleton's
+// partial badge; the constructed isolated root has full socket fidelity.
+func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
+	switch posture {
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
+		return harness.LaunchOSSandbox{
+			State:  "on",
+			Source: "tclaude-layer (bubblewrap; isolated network; constructed root; agentd socket allowlisted)",
+		}
+	default:
+		return harness.LaunchOSSandbox{
+			State:      "on",
+			Source:     "tclaude-layer (bubblewrap; host network; ambient host Unix sockets reachable)",
+			Unverified: true,
+		}
 	}
+}
+
+// ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
+// both the harness descriptor and the operator's resolved profile assert a
+// model transport that functions from inside the new network namespace.
+func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.EffectiveProfile) error {
+	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
+	if err != nil {
+		return err
+	}
+	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
+		return nil
+	}
+	if !h.SupportsOfflineModelTransport() {
+		return fmt.Errorf(
+			"unsupported_sandbox_profile_network: network_access none isolates the whole tclaude-layer process, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
+			h.Name,
+		)
+	}
+	for _, entry := range effective.Environment {
+		if entry.Name == OfflineModelEnv && entry.Value == "1" {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"unsupported_sandbox_profile_network: network_access none requires %s=1 in the resolved sandbox profile, asserting a model transport that functions inside the isolated namespace; see docs/sandboxing.md#isolated-with-agentd-network-posture",
+		OfflineModelEnv,
+	)
 }
 
 // WrapTclaudeLayer renders one effective profile and applies the resulting
@@ -85,14 +124,33 @@ func bwrapArgs(
 		// client or TIOCSTI-capable process cannot inject input into the host
 		// pane shell outside this namespace.
 		"--new-session",
-		// Start from a readable, non-writable host view. Explicit plan entries
-		// follow and shadow this baseline.
-		"--ro-bind", "/", "/",
+	}
+	switch plan.NetworkPosture {
+	case sandboxpolicy.NetworkHostOpen:
+		// Preserve the walking skeleton: the host namespace and read-only host
+		// root stay visible, including ambient pathname sockets.
+		args = append(args, "--ro-bind", "/", "/")
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
+		// Bubblewrap brings loopback up in the newly created namespace. Start
+		// from a fresh root so filesystem AF_UNIX sockets are absent unless a
+		// later launch-contract or policy bind explicitly exposes them.
+		args = append(args, "--unshare-net", "--tmpfs", "/")
+		var err error
+		args, err = appendTclaudeLayerStaticOSRoot(args)
+		if err != nil {
+			return nil, err
+		}
+	case sandboxpolicy.NetworkFiltered:
+		return nil, fmt.Errorf("network posture %s is reserved and has no tclaude-layer applier", plan.NetworkPosture)
+	default:
+		return nil, fmt.Errorf("mount plan has invalid network posture %d", plan.NetworkPosture)
+	}
+	args = append(args,
 		"--dev", "/dev",
 		"--proc", "/proc",
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
-	}
+	)
 	// Class 1 baseline: the harness process itself runs inside this wall,
 	// unlike the harness-native sandboxes which confine only tools. Reopen only its
 	// launch-contract state/workspace paths here; protected children are hidden
@@ -137,6 +195,22 @@ func bwrapArgs(
 	}
 	for _, root := range protectedRoots {
 		args = append(args, "--tmpfs", root)
+	}
+	socketPaths := []string(nil)
+	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+		socket := agentipc.CanonicalSocketPath()
+		if socket == "" || !filepath.IsAbs(socket) {
+			return nil, fmt.Errorf("resolve canonical agentd socket for isolated tclaude-layer")
+		}
+		exists, err := bwrapBindSourceExists(socket)
+		if err != nil {
+			return nil, fmt.Errorf("agentd socket source %q: %w", socket, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket %s", socket)
+		}
+		args = append(args, "--ro-bind", socket, socket)
+		socketPaths = append(socketPaths, socket)
 	}
 	breakGlass := make(map[string]bool, len(breakGlassPaths))
 	for _, path := range breakGlassPaths {
@@ -183,6 +257,7 @@ func bwrapArgs(
 				existingPhase0WriteDirs,
 				protectedRoots,
 			)
+			args = appendTclaudeLayerSocketRepairs(args, path, socketPaths)
 		default:
 			return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}
@@ -197,6 +272,53 @@ func bwrapArgs(
 	}
 	args = append(args, "--tmpfs", tmuxSocketDir)
 	return args, nil
+}
+
+var tclaudeLayerStaticOSPaths = []string{
+	"/usr",
+	"/bin",
+	"/sbin",
+	"/lib",
+	"/lib64",
+	"/lib32",
+	"/libx32",
+	"/etc",
+	"/opt",
+}
+
+// appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
+// surface approved for the isolated posture. Merged-usr aliases remain
+// symlinks instead of becoming separate recursive host binds.
+func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
+	for _, path := range tclaudeLayerStaticOSPaths {
+		info, err := os.Lstat(path)
+		switch {
+		case err == nil:
+		case os.IsNotExist(err):
+			continue
+		default:
+			return nil, fmt.Errorf("inspect isolated-root path %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return nil, fmt.Errorf("read isolated-root symlink %q: %w", path, err)
+			}
+			args = append(args, "--symlink", target, path)
+			continue
+		}
+		args = append(args, "--ro-bind", path, path)
+	}
+	return args, nil
+}
+
+func appendTclaudeLayerSocketRepairs(args []string, hide string, socketPaths []string) []string {
+	for _, socket := range socketPaths {
+		if hide != socket && sandboxpolicy.PathContainsOrEqual(hide, socket) {
+			args = append(args, "--ro-bind", socket, socket)
+		}
+	}
+	return args
 }
 
 func appendTclaudeLayerProtectedRehides(

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestResolveTclaudeLayerRefusesMissingBwrapAndRecordsOffVerdict(t *testing.T) {
@@ -21,7 +22,7 @@ func TestResolveTclaudeLayerRefusesMissingBwrapAndRecordsOffVerdict(t *testing.T
 		return "", errors.New("executable file not found")
 	}
 
-	_, verdict, err := ResolveTclaudeLayer()
+	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
 	require.ErrorContains(t, err, "requires bubblewrap (`bwrap`) on PATH")
 	assert.Equal(t, "off", verdict.State)
 	assert.Equal(t, "tclaude-layer unavailable", verdict.Source)
@@ -45,7 +46,7 @@ func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string) error { return errors.New("operation not permitted") }
 
-	_, verdict, err := ResolveTclaudeLayer()
+	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
 	require.ErrorContains(t, err, "unprivileged user namespaces may be unavailable")
 	assert.Equal(t, "off", verdict.State)
 }

@@ -14,9 +14,14 @@ import (
 // cannot coordinate. (The retained legacy sockets sit outside ~/.tclaude/data,
 // which is the only denied subtree; this guard is about a daemon that has not
 // yet restarted onto the api/ canonical path.)
-func ApplyAgentSocketEnv(harnessName, sandboxMode, permissionProfile string, env map[string]string) error {
+func ApplyAgentSocketEnv(
+	harnessName, sandboxMode, permissionProfile string,
+	tclaudeLayerIsolated bool,
+	env map[string]string,
+) error {
 	requiresCanonical := (harnessName == harness.CodexName && permissionProfile == harness.CodexAgentProfile) ||
-		(harnessName == harness.DefaultName && sandboxMode == harness.ClaudeSandboxOn)
+		(harnessName == harness.DefaultName && sandboxMode == harness.ClaudeSandboxOn) ||
+		tclaudeLayerIsolated
 	if !requiresCanonical {
 		return nil
 	}

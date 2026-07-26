@@ -31,6 +31,8 @@ const (
 	smokeProtectedFileEnv      = "TCLAUDE_SANDBOX_V2_PROTECTED_FILE"
 	smokeProtectedReadableEnv  = "TCLAUDE_SANDBOX_V2_PROTECTED_READABLE"
 	smokeTmuxSocketEnv         = "TCLAUDE_SANDBOX_V2_TMUX_SOCKET"
+	smokeRuntimeSocketEnv      = "TCLAUDE_SANDBOX_V2_RUNTIME_SOCKET"
+	smokeLoopbackAddrEnv       = "TCLAUDE_SANDBOX_V2_LOOPBACK_ADDR"
 	smokeTclaudeBinaryEnv      = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 )
 
@@ -40,7 +42,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on an unsandboxed Linux host with bubblewrap")
 	}
-	binary, _, err := ResolveTclaudeLayer()
+	binary, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
 	require.NoError(t, err)
 
 	home, err := os.UserHomeDir()
@@ -96,6 +98,14 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	tmuxListener, err := net.Listen("unix", tmuxSocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tmuxListener.Close() })
+	runtimeSocket := filepath.Join(root, "runtime", "ambient.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(runtimeSocket), 0o700))
+	runtimeListener, err := net.Listen("unix", runtimeSocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = runtimeListener.Close() })
+	hostLoopback, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = hostLoopback.Close() })
 	require.NoError(t, os.WriteFile(protectedFile, []byte("must-stay-hidden"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(realTools, "probe"), []byte("alias-ok"), 0o600))
 	require.NoError(t, os.Symlink(realTools, aliasTools))
@@ -104,17 +114,19 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	// fixture so the sandbox can execute it through the read-only base root.
 	// Name the helper `claude`: the real agentd identity resolver recognizes
 	// that harness ancestor and resolves its PID through the sessions table.
-	helperBinary := filepath.Join(root, "claude")
+	helperBinary := filepath.Join(allowed, "claude")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
 	// Spell the profile rule through a symlink. Resolution must bind the real
 	// target, while the base read-only root keeps the alias itself usable.
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
 		Explicit: &sandboxpolicy.Profile{
-			Name: "tclaude-layer-smoke",
+			Name:          "tclaude-layer-smoke",
+			NetworkAccess: sandboxpolicy.NetworkAccessNone,
 			Filesystem: []sandboxpolicy.FilesystemGrant{
 				{Path: allowed, Access: sandboxpolicy.AccessWrite},
 				{Path: aliasTools, Access: sandboxpolicy.AccessRead},
+				{Path: filepath.Dir(tclaudeBinary), Access: sandboxpolicy.AccessRead},
 				// The applier's final host-control phase must override even an
 				// ordinary write grant on the tmux socket directory's parent.
 				{Path: tmuxBase, Access: sandboxpolicy.AccessWrite},
@@ -133,7 +145,8 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	}, effective)
 	require.NoError(t, err)
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, false, allowed, outside,
-		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, tclaudeBinary)
+		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
+		hostLoopback.Addr().String(), tclaudeBinary)
 
 	breakGlassEffective := effective
 	breakGlassEffective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
@@ -142,7 +155,8 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	breakGlassPlan, err := sandboxpolicy.RenderMountPlan(breakGlassEffective)
 	require.NoError(t, err)
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, breakGlassPlan, true, allowed, outside,
-		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, tclaudeBinary)
+		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
+		hostLoopback.Addr().String(), tclaudeBinary)
 }
 
 func runTclaudeLayerSmokeHelper(
@@ -151,7 +165,8 @@ func runTclaudeLayerSmokeHelper(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	protectedReadable bool,
-	allowed, outside, aliasFile, protectedFile, tmuxSocket, tclaudeBinary string,
+	allowed, outside, aliasFile, protectedFile, tmuxSocket, runtimeSocket,
+	hostLoopbackAddr, tclaudeBinary string,
 ) {
 	t.Helper()
 	var breakGlassPaths []string
@@ -172,6 +187,8 @@ func runTclaudeLayerSmokeHelper(
 		smokeProtectedFileEnv+"="+protectedFile,
 		smokeProtectedReadableEnv+"="+boolEnv(protectedReadable),
 		smokeTmuxSocketEnv+"="+tmuxSocket,
+		smokeRuntimeSocketEnv+"="+runtimeSocket,
+		smokeLoopbackAddrEnv+"="+hostLoopbackAddr,
 		smokeTclaudeBinaryEnv+"="+tclaudeBinary,
 	)
 	output, err := cmd.CombinedOutput()
@@ -191,6 +208,8 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	protectedFile := os.Getenv(smokeProtectedFileEnv)
 	protectedReadable := os.Getenv(smokeProtectedReadableEnv) == "1"
 	tmuxSocket := os.Getenv(smokeTmuxSocketEnv)
+	runtimeSocket := os.Getenv(smokeRuntimeSocketEnv)
+	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
 	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
 
 	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600))
@@ -211,6 +230,24 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite the final applier hide")
 	}
+	if conn, err := net.DialTimeout("unix", runtimeSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("ambient runtime socket remained reachable inside the constructed root")
+	}
+	if conn, err := net.DialTimeout("tcp4", hostLoopbackAddr, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("host-loopback TCP remained reachable across the isolated network namespace")
+	}
+	if conn, err := net.DialTimeout("tcp4", "1.1.1.1:53", 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("TCP egress unexpectedly succeeded inside the isolated network namespace")
+	}
+	loopback, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err, "loopback must be up inside the isolated network namespace")
+	defer func() { _ = loopback.Close() }()
+	conn, err := net.DialTimeout("tcp4", loopback.Addr().String(), 250*time.Millisecond)
+	require.NoError(t, err, "namespace-local loopback round trip")
+	_ = conn.Close()
 
 	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)

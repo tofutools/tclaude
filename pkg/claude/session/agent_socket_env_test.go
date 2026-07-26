@@ -19,7 +19,7 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 	t.Setenv(agentipc.SocketEnv, "")
 
 	env := map[string]string{}
-	require.NoError(t, ApplyAgentSocketEnv(harness.DefaultName, harness.ClaudeSandboxInherit, "", env))
+	require.NoError(t, ApplyAgentSocketEnv(harness.DefaultName, harness.ClaudeSandboxInherit, "", false, env))
 	assert.NotContains(t, env, agentipc.SocketEnv)
 
 	for _, tc := range []struct {
@@ -27,13 +27,15 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 		harness    string
 		sandbox    string
 		permission string
+		isolated   bool
 	}{
-		{"managed Codex", harness.CodexName, "", harness.CodexAgentProfile},
-		{"forced-on Claude", harness.DefaultName, harness.ClaudeSandboxOn, ""},
+		{"managed Codex", harness.CodexName, "", harness.CodexAgentProfile, false},
+		{"forced-on Claude", harness.DefaultName, harness.ClaudeSandboxOn, "", false},
+		{"isolated tclaude layer", harness.CodexName, harness.SandboxDangerFull, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
-			require.NoError(t, ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, env))
+			require.NoError(t, ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, tc.isolated, env))
 			assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), env[agentipc.SocketEnv])
 		})
 	}
@@ -58,7 +60,7 @@ func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 		{"forced-on Claude", harness.DefaultName, harness.ClaudeSandboxOn, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, map[string]string{})
+			err := ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, false, map[string]string{})
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "restart agentd")
 			assert.Contains(t, err.Error(), agentipc.LegacySocketPath())
@@ -77,7 +79,7 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 
 	env := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(
-		harness.CodexName, "", harness.CodexAgentProfile, env))
+		harness.CodexName, "", harness.CodexAgentProfile, false, env))
 	assert.Equal(t, agentipc.CanonicalSocketPath(), env[agentipc.SocketEnv])
 }
 
@@ -88,7 +90,7 @@ func TestApplyAgentSocketEnvRejectsCustomSocket(t *testing.T) {
 	t.Setenv(agentipc.SocketEnv, custom)
 
 	err := ApplyAgentSocketEnv(
-		harness.CodexName, "", harness.CodexAgentProfile, map[string]string{})
+		harness.CodexName, "", harness.CodexAgentProfile, false, map[string]string{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "custom socket")
 	assert.Contains(t, err.Error(), agentipc.CanonicalSocketPath())
