@@ -13,13 +13,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
+func TestAgentRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 	now := time.Now()
-	assert.Contains(t, sandboxRestartIdleFailure(nil, now), "must be online")
-	assert.Empty(t, sandboxRestartIdleFailure(&db.SessionRow{Status: session.StatusIdle}, now))
+	assert.Contains(t, agentRestartIdleFailure(nil, now), "must be online")
+	assert.Empty(t, agentRestartIdleFailure(&db.SessionRow{Status: session.StatusIdle}, now))
 
 	working := &db.SessionRow{Status: session.StatusWorking}
-	assert.Contains(t, sandboxRestartIdleFailure(working, now), "status is working")
+	assert.Contains(t, agentRestartIdleFailure(working, now), "status is working")
 
 	subagents := db.SubagentSet{
 		"sub-1": {Type: "worker", Seen: now},
@@ -27,11 +27,11 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 	withSubagent := &db.SessionRow{
 		Status: session.StatusIdle, SubagentsJSON: subagents.Encode(),
 	}
-	assert.Contains(t, sandboxRestartIdleFailure(withSubagent, now), "background agent")
+	assert.Contains(t, agentRestartIdleFailure(withSubagent, now), "background agent")
 	legacySubagent := &db.SessionRow{
 		Status: session.StatusIdle, SubagentCount: 1,
 	}
-	assert.Contains(t, sandboxRestartIdleFailure(legacySubagent, now), "background agent",
+	assert.Contains(t, agentRestartIdleFailure(legacySubagent, now), "background agent",
 		"a pre-ledger row must fall back to its known nonzero count")
 
 	shells := db.BgShellSet{
@@ -40,7 +40,7 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 	withShell := &db.SessionRow{
 		Status: session.StatusIdle, BgShellsJSON: shells.Encode(),
 	}
-	assert.Contains(t, sandboxRestartIdleFailure(withShell, now), "background shell command")
+	assert.Contains(t, agentRestartIdleFailure(withShell, now), "background shell command")
 
 	expired := &db.SessionRow{
 		Status: session.StatusIdle,
@@ -51,11 +51,11 @@ func TestSandboxRestartIdleFailureRequiresNoBackgroundWork(t *testing.T) {
 			"old-shell": {Seen: now.Add(-db.BgShellTTL - time.Second)},
 		}.Encode(),
 	}
-	assert.Empty(t, sandboxRestartIdleFailure(expired, now),
+	assert.Empty(t, agentRestartIdleFailure(expired, now),
 		"expired ledger ghosts must not permanently wedge the transition")
 }
 
-func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
+func TestAgentRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = w.Tmux
@@ -71,7 +71,7 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	w.Tmux.AttachClient(ttyTwo, oldTmux)
 	w.Tmux.SetNewSessionRemainOnExit(true)
 
-	handoff := beginSandboxRestartTmuxHandoff(oldTmux)
+	handoff := beginAgentRestartTmuxHandoff(oldTmux)
 	require.NotNil(t, handoff)
 	holding := handoff.holdingSession
 	require.NotEmpty(t, holding)
@@ -90,25 +90,25 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	assert.False(t, w.Tmux.IsAlive(holding), "the bridge must not leak")
 }
 
-func TestSandboxRestartTmuxBridgeHasSelfExpiry(t *testing.T) {
-	assert.Contains(t, sandboxRestartHoldingCommand, "sleep 300")
-	assert.NotContains(t, sandboxRestartHoldingCommand, "while :",
+func TestAgentRestartTmuxBridgeHasSelfExpiry(t *testing.T) {
+	assert.Contains(t, agentRestartHoldingCommand, "sleep 300")
+	assert.NotContains(t, agentRestartHoldingCommand, "while :",
 		"the bridge must not outlive a crashed handler forever")
 }
 
-func TestSandboxRestartTmuxHandoffSkipsBridgeWithoutAttachedClients(t *testing.T) {
+func TestAgentRestartTmuxHandoffSkipsBridgeWithoutAttachedClients(t *testing.T) {
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = w.Tmux
 	t.Cleanup(func() { clcommon.Default = previousTmux })
 
 	w.Tmux.MarkAlive("unattended-pane")
-	assert.Nil(t, beginSandboxRestartTmuxHandoff("unattended-pane"))
+	assert.Nil(t, beginAgentRestartTmuxHandoff("unattended-pane"))
 	assert.Zero(t, w.Tmux.CommandCount("new-session"),
 		"an unattended restart does not need a bridge shell")
 }
 
-func TestSandboxRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {
+func TestAgentRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = w.Tmux
@@ -119,12 +119,12 @@ func TestSandboxRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {
 	w.Tmux.AttachClient("/dev/pts/41", oldTmux)
 	w.Tmux.FailNextCommand("new-session")
 
-	assert.Nil(t, beginSandboxRestartTmuxHandoff(oldTmux))
+	assert.Nil(t, beginAgentRestartTmuxHandoff(oldTmux))
 	assert.Equal(t, oldTmux, w.Tmux.ClientSession("/dev/pts/41"),
 		"a failed best-effort bridge must leave the existing client alone")
 }
 
-func TestSandboxRestartTmuxHandoffRefusesUnboundedBridge(t *testing.T) {
+func TestAgentRestartTmuxHandoffRefusesUnboundedBridge(t *testing.T) {
 	w := testharness.New(t)
 	previousTmux := clcommon.Default
 	clcommon.Default = w.Tmux
@@ -136,25 +136,25 @@ func TestSandboxRestartTmuxHandoffRefusesUnboundedBridge(t *testing.T) {
 	w.Tmux.SetNewSessionRemainOnExit(true)
 	w.Tmux.FailNextCommand("set-option")
 
-	assert.Nil(t, beginSandboxRestartTmuxHandoff(oldTmux))
+	assert.Nil(t, beginAgentRestartTmuxHandoff(oldTmux))
 	assert.Equal(t, oldTmux, w.Tmux.ClientSession("/dev/pts/41"),
 		"clients must stay on the agent when bridge expiry cannot be enforced")
 	assert.Len(t, w.Tmux.Sessions(), 1, "the rejected bridge must be removed")
 }
 
-func TestRequireCurrentSandboxRestartGenerationRejectsSupersededConversation(t *testing.T) {
+func TestRequireCurrentAgentGenerationRejectsSupersededConversation(t *testing.T) {
 	setupTestDB(t)
 	const oldConv = "sandbox-restart-old"
 	const newConv = "sandbox-restart-new"
 	agentID, _, err := db.EnsureAgentForConv(oldConv, "test")
 	require.NoError(t, err)
-	require.NoError(t, requireCurrentSandboxRestartGeneration(agentID, oldConv))
+	require.NoError(t, requireCurrentAgentGeneration(agentID, oldConv))
 
 	_, err = db.RotateAgentConv(oldConv, newConv, "clear")
 	require.NoError(t, err)
-	assert.ErrorContains(t, requireCurrentSandboxRestartGeneration(agentID, oldConv),
+	assert.ErrorContains(t, requireCurrentAgentGeneration(agentID, oldConv),
 		"no longer the agent's current generation")
-	require.NoError(t, requireCurrentSandboxRestartGeneration(agentID, newConv))
+	require.NoError(t, requireCurrentAgentGeneration(agentID, newConv))
 }
 
 func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *testing.T) {

@@ -258,6 +258,30 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
+      case 'restart': {
+        const confirmed = await confirmModal({
+          title: `Restart ${label}?`,
+          body: 'This stops and restarts the same conversation under its current launch configuration, re-resolving sandbox-profile rules. The server will refuse unless the agent is fully idle with no background agents or shell commands.',
+          okLabel: 'Restart agent',
+        });
+        if (!confirmed) return;
+        const r = await fetch(`/api/agents/${encodeURIComponent(agent)}/restart`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        if (!r.ok) {
+          let detail = await r.text();
+          try {
+            const parsed = JSON.parse(detail);
+            detail = parsed.error || parsed.message || detail;
+          } catch (_) { /* plain error */ }
+          toast(`Restart failed: ${detail}`, true);
+          refresh();
+          return;
+        }
+        toast(`${label}: restarted`);
+        refresh();
+        return;
+      }
       case 'jump': {
         // If this agent already has an open web terminal / window pane in the
         // dashboard's Terminals tab, jump to THAT instead of raising a native

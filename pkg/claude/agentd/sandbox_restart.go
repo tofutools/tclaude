@@ -10,47 +10,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const (
 	sandboxRestartUnlock  = "unlock"
 	sandboxRestartRestore = "restore"
 )
-
-// sandboxRestartIdleFailure is the authoritative preflight for the temporary
-// sandbox transition. It intentionally reads one DB snapshot rather than
-// pretending to make the later stop race-free: the operator asked for a basic
-// idle check, and the actual restart still uses the normal lifecycle path.
-func sandboxRestartIdleFailure(sess *db.SessionRow, now time.Time) string {
-	if sess == nil {
-		return "the agent must be online before its sandbox mode can be restarted"
-	}
-	subagents := sess.SubagentCount
-	if set := db.ParseSubagentSet(sess.SubagentsJSON); set != nil {
-		subagents = set.LiveCount(now)
-	}
-	backgroundShells := db.ParseBgShellSet(sess.BgShellsJSON).LiveCount(now)
-	if sess.Status == session.StatusIdle && subagents == 0 && backgroundShells == 0 {
-		return ""
-	}
-	var blockers []string
-	if sess.Status != session.StatusIdle {
-		status := strings.TrimSpace(sess.Status)
-		if status == "" {
-			status = "unknown"
-		}
-		blockers = append(blockers, "status is "+status)
-	}
-	if subagents > 0 {
-		blockers = append(blockers, fmt.Sprintf("%d background agent(s) still running", subagents))
-	}
-	if backgroundShells > 0 {
-		blockers = append(blockers, fmt.Sprintf("%d background shell command(s) still running", backgroundShells))
-	}
-	return "temporary sandbox mode can only change while the agent is fully idle; " +
-		strings.Join(blockers, ", ")
-}
 
 // dashboardSandboxRestartAgent stops and resumes the same conversation under
 // either a temporary harness-native sandbox-off mode or its preserved normal
@@ -73,7 +38,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	if err := requireCurrentSandboxRestartGeneration(agentID, convID); err != nil {
+	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
 		writeError(w, http.StatusConflict, "stale_generation", err.Error())
 		return
 	}
@@ -108,7 +73,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		return
 	}
 	liveSession := pickAliveSession(convID)
-	if failure := sandboxRestartIdleFailure(liveSession, time.Now()); failure != "" {
+	if failure := agentRestartIdleFailure(liveSession, time.Now()); failure != "" {
 		writeError(w, http.StatusConflict, "agent_not_idle", failure)
 		return
 	}
@@ -139,7 +104,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	// The deferred finish covers every error path: it switches back to a still
 	// live old pane when shutdown failed, or removes the bridge if no useful
 	// target survived.
-	clientHandoff := beginSandboxRestartTmuxHandoff(liveSession.TmuxSession)
+	clientHandoff := beginAgentRestartTmuxHandoff(liveSession.TmuxSession)
 	defer clientHandoff.finishForConv(convID)
 
 	stopped := escalateShutdownUnderLaunchLock(convID, shutdownGrace)
@@ -148,7 +113,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 			"could not stop the idle agent before changing sandbox mode: "+stopped.Detail)
 		return
 	}
-	if err := requireCurrentSandboxRestartGeneration(agentID, convID); err != nil {
+	if err := requireCurrentAgentGeneration(agentID, convID); err != nil {
 		writeError(w, http.StatusConflict, "stale_generation",
 			"agent generation changed while stopping; sandbox posture was not changed: "+err.Error())
 		return
@@ -185,18 +150,4 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		"restart":                resume.Action,
 		"switched_clients":       switchedClients,
 	})
-}
-
-func requireCurrentSandboxRestartGeneration(agentID, convID string) error {
-	actor, err := db.GetAgentByConv(convID)
-	if err != nil {
-		return fmt.Errorf("resolve stable agent generation: %w", err)
-	}
-	if actor == nil || actor.AgentID != agentID {
-		return fmt.Errorf("conversation %s no longer resolves to agent %s", convID, agentID)
-	}
-	if actor.CurrentConvID != convID {
-		return fmt.Errorf("conversation %s is no longer the agent's current generation", convID)
-	}
-	return nil
 }

@@ -197,12 +197,18 @@ Branch/PR links resolve in the background (cached, best-effort) and are simply
 absent for a non-GitHub repo or when `gh` is unavailable.
 
 Per-member actions: **focus** the session, open a **terminal** in its
-working directory, **clone**, **reincarnate**, **rename**, edit
+working directory, **clone**, **reincarnate**, **restart**, **rename**, edit
 **role/descr**, toggle ownership, grant a **sudo** elevation, edit
 **permissions**, schedule a **cron** job, and **remove** it from the
 group. (Turning the agent on/off is the status dot's job — see above.
 Permanently *deleting* an agent is offered on the virtual Ungrouped
 group's rows, not on grouped rows — see below.)
+
+The member ⚙ menu's ordinary **↻ restart** stops and resumes the same
+conversation under its current durable launch configuration. This is the
+quick way to pick up changes to assigned sandbox profiles: profile selection
+and rules are re-resolved during resume. An active temporary sandbox-off
+override remains active across an ordinary restart.
 
 The member ⚙ menu also has **⚠ restart without sandbox** for a temporary
 operator debugging window. It stops and resumes the *same conversation* under
@@ -215,16 +221,17 @@ posture, not the temporary unlock.
 If a human terminal is attached to the agent's tmux session, the restart parks
 that client on a short-lived bridge session and switches it onto the resumed
 pane automatically. This is best-effort, like reincarnation's client handoff:
-a tmux client that disappears or cannot be switched does not block the sandbox
-transition. The bridge also expires after five minutes if the daemon exits or
-cannot run its normal cleanup.
+a tmux client that disappears or cannot be switched does not block the restart.
+The bridge also expires after five minutes if the daemon exits or cannot run
+its normal cleanup.
 
-Both directions are deliberately refused unless the live session reports
-`idle` and its database ledgers contain zero live background agents and zero
-live background shell commands. The check is a basic preflight, not a
-race-free lock: if the agent starts work just afterwards, the normal stop path
-still governs the restart. If a restarted agent does not come back, the chosen
-posture remains durable and the ordinary wake action retries it.
+All three cog-menu restart actions are deliberately refused unless the live
+session reports `idle` and its database ledgers contain zero live background
+agents and zero live background shell commands. The check is a basic
+preflight, not a race-free lock: if the agent starts work just afterwards, the
+normal stop path still governs the restart. If a restarted agent does not come
+back, the chosen posture remains durable and the ordinary wake action retries
+it.
 
 Per-group quick actions live above the roster as icon-only buttons (hover for
 their labels): **spawn agent**, **create subgroup**, **power on**, and
