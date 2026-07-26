@@ -463,7 +463,8 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   const confirmDiscard = async () => true;
   let summoned = null;
   const summonScribe = async (value) => { summoned = value; return { ok: true }; };
-  const actions = { summonScribe };
+  const navigated = [];
+  const actions = { summonScribe, activateSubtab: async (name) => { navigated.push(name); return true; } };
   const openEditor = async (_mount, options) => {
     mounts += 1; received = options;
     return { model: { dirty: false }, destroy() { destroys += 1; } };
@@ -476,6 +477,9 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
   assert.equal(received.view, undefined);
   assert.equal(received.blank, false);
   assert.equal(received.config.confirmDiscard, confirmDiscard, 'the shared discard dialog reaches node editor transactions');
+  assert.equal(received.config.isShortcutActive(), true);
+  assert.equal(await received.config.onOpenTemplates(), true);
+  assert.deepEqual(navigated, ['templates'], 'the editor shortcut uses the same dirty-guarded templates navigation');
   assert.deepEqual(await received.config.onScribe({ kind: 'library' }), { ok: true });
   assert.deepEqual(summoned, { kind: 'library' }, 'the scoped scribe action reaches the imperative editor');
   state.setNotice('unrelated');

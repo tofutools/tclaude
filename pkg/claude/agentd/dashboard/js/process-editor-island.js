@@ -150,7 +150,7 @@ function Header({ controller, view }) {
     <button class="process-action process-scribe-action" type="button" disabled=${externalPending || pending.save} title="Open an agent scoped to this exact process template" onClick=${() => controller.requestScribe('template')}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
     </button>
-    <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
+    <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version (Ctrl/Cmd+S)" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
   </div>`;
 }
 
@@ -480,6 +480,11 @@ export function ProcessEditorApp({ controller }) {
   const view = controller.snapshotSignal.value;
   const graphRef = useCallback((host) => controller.attachGraphHost(host), [controller]);
   const stageRef = useCallback((stage) => { controller.stage = stage; }, [controller]);
+  useLayoutEffect(() => {
+    const onKeyDown = (event) => controller.onEditorShortcutKeyDown(event);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [controller]);
   return html`<${Fragment}><div inert=${!!view.modal} class=${`process-editor${view.pending.externalDecision || view.pending.externalReload ? ' is-reloading' : ''}`}
     onKeyDown=${(event) => controller.onEditorKeyDown(event)}
     onCopy=${(event) => controller.onEditorCopy(event)}

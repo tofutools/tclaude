@@ -1413,6 +1413,7 @@ export class ProcessTemplateEditor {
   }
 
   onEditorKeyDown(event) {
+    if (event.defaultPrevented) return;
     const inInput = isProcessEditorFormControl(event.target);
     if ((event.ctrlKey || event.metaKey) && !inInput) {
       const key = event.key.toLowerCase();
@@ -1431,6 +1432,44 @@ export class ProcessTemplateEditor {
       event.preventDefault();
       this.deleteSelection();
     }
+  }
+
+  // Save/Open are browser-owned chords, so claim them at the document capture
+  // boundary while this editor is mounted. That reaches focused inspector
+  // fields and editor-owned modals as well as the graph itself. Flush a focused
+  // form control first: clicking the corresponding toolbar navigation blurs it
+  // before the action runs, and the keyboard path must see the same committed
+  // model/dirty state.
+  onEditorShortcutKeyDown(event) {
+    if (this.destroyed || this.options.isShortcutActive?.() === false
+        || (!event.ctrlKey && !event.metaKey) || event.altKey || event.shiftKey) return false;
+    const key = String(event.key || '').toLowerCase();
+    if (key !== 's' && key !== 'o') return false;
+    // Dashboard islands remain mounted while another tab or overlay owns
+    // focus. Body/document focus represents this editor's unfocused canvas;
+    // any concrete control outside the active process view belongs elsewhere.
+    const element = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+    const shortcutScope = this.mount?.closest?.('#process-editor-view') || this.mount;
+    if (element && element !== globalThis.document?.body && element !== globalThis.document?.documentElement
+        && shortcutScope?.contains && !shortcutScope.contains(element)) return false;
+    event.preventDefault();
+    if (event.isComposing || event.keyCode === 229) return true;
+
+    // A modal makes the editor toolbar inert. Do not persist the graph under an
+    // uncommitted modal draft, but still keep Cmd/Ctrl+S away from browser Save.
+    if (key === 's' && this.modalDispose) return true;
+    if (isProcessEditorFormControl(event.target)) event.target?.blur?.();
+
+    if (key === 's') {
+      // Match the header Save button's availability exactly. save() owns the
+      // pending/external-reload guards and the actual version/CAS operation.
+      if (this.model.dirty || this.blank) void this.save();
+    } else {
+      // The Processes action owns the dirty confirmation and can refuse the
+      // navigation without replacing this editor.
+      void this.options.onOpenTemplates?.();
+    }
+    return true;
   }
 
   onEditorCopy(event) {

@@ -37,6 +37,85 @@ test('Delete remains native while editing form fields', () => {
   assert.equal(deleted, false);
 });
 
+test('Ctrl/Cmd+S claims browser Save, flushes focused fields, and matches toolbar availability', () => {
+  let prevented = 0;
+  let blurred = 0;
+  let saves = 0;
+  const editor = {
+    destroyed: false, modalDispose: null, savePending: false,
+    externalDecisionPending: false, externalReloadPending: false,
+    model: { dirty: false }, blank: false, options: {},
+    save() { saves += 1; },
+  };
+  const target = {
+    tagName: 'INPUT',
+    blur() { blurred += 1; editor.model.dirty = true; },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, target,
+    preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 1, 'the browser Save operation is suppressed');
+  assert.equal(blurred, 1, 'the focused draft commits before save availability is checked');
+  assert.equal(saves, 1);
+
+  editor.model.dirty = false;
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 'S', ctrlKey: false, metaKey: true, altKey: false, shiftKey: false,
+    target: { tagName: 'DIV' }, preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 2);
+  assert.equal(saves, 1, 'a clean stored template stays disabled like the toolbar Save button');
+
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true,
+    target: { tagName: 'DIV' }, preventDefault() { assert.fail('Save As remains browser-owned'); },
+  }), false);
+});
+
+test('Ctrl/Cmd+O flushes the draft then delegates to guarded template navigation', () => {
+  const order = [];
+  const editor = {
+    destroyed: false, modalDispose: null,
+    options: { onOpenTemplates() { order.push('open'); } },
+  };
+  const target = { tagName: 'TEXTAREA', blur() { order.push('blur'); } };
+  let prevented = false;
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 'o', ctrlKey: false, metaKey: true, altKey: false, shiftKey: false, target,
+    preventDefault() { prevented = true; },
+  }), true);
+  assert.equal(prevented, true);
+  assert.deepEqual(order, ['blur', 'open'],
+    'activateSubtab sees the committed dirty state and owns discard confirmation');
+});
+
+test('Ctrl/Cmd+S stays out of an editor modal without falling through to browser Save', () => {
+  let prevented = false;
+  ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call({
+    destroyed: false, modalDispose: () => {},
+    options: {}, model: { dirty: true }, blank: false,
+    save() { assert.fail('the inert editor toolbar cannot save under a modal draft'); },
+  }, {
+    key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+    target: { tagName: 'INPUT', blur() { assert.fail('modal draft is not implicitly committed'); } },
+    preventDefault() { prevented = true; },
+  });
+  assert.equal(prevented, true);
+});
+
+test('browser Save/Open remain native when the mounted process editor is inactive', () => {
+  const editor = {
+    destroyed: false, options: { isShortcutActive: () => false },
+    save() { assert.fail('a hidden editor cannot save'); },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorShortcutKeyDown.call(editor, {
+    key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false,
+    target: { tagName: 'DIV' },
+    preventDefault() { assert.fail('a hidden editor cannot claim the browser shortcut'); },
+  }), false);
+});
+
 function clipboardText(id = 'copied') {
   return serializeProcessSelection({
     kind: 'tclaude/process-selection', version: 1,
