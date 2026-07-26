@@ -21,10 +21,12 @@ function bindToolbarActionsMenu() {
   // dashboard.html rather than rendered. The behaviour is the shared core.
   const filter = menu.querySelector('.action-menu-filter');
 
+  // Used on the open and close edges only, so the menu comes up (and goes away)
+  // with an empty box and no cursor.
   const resetFilter = () => {
     if (!filter) return;
     filter.value = '';
-    applyMenuFilter(menu, '', { input: filter });
+    applyMenuFilter(menu, '', { input: filter, resetActive: true });
   };
   const close = (restoreFocus = false) => {
     const focusInside = menu.contains(document.activeElement);
@@ -65,10 +67,7 @@ function bindToolbarActionsMenu() {
   const onFilterInput = () => applyMenuFilter(menu, filter.value, { input: filter });
   const onFilterKeyDown = (event) => handleMenuFilterKeyDown(menu, event, {
     hasQuery: !!filter.value,
-    clearQuery: () => {
-      filter.value = '';
-      applyMenuFilter(menu, '', { input: filter });
-    },
+    clearQuery: resetFilter,
   });
   const onDocumentClick = (event) => {
     if (!host.contains(event.target)) close();

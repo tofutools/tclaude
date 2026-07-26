@@ -130,19 +130,58 @@ test('menu filter hides separators only while a query is live', async (t) => {
   assert.equal(separator.hasAttribute(module.FILTERED_OUT_ATTR), false);
 });
 
-test('an empty query restores the untouched menu, highlight included', async (t) => {
+test('resetActive restores the untouched menu, cursor included', async (t) => {
   const { harness, ...module } = await core(t);
   const { menu, input } = mountMenu(harness);
 
   module.applyMenuFilter(menu, 'clone', { input });
   assert.ok(module.menuActiveItem(menu), 'a live query pre-selects its top match');
 
-  module.applyMenuFilter(menu, '', { input });
+  // The open/close edges ask for a clean slate.
+  module.applyMenuFilter(menu, '', { input, resetActive: true });
   assert.equal(module.menuActiveItem(menu), null);
   assert.equal(input.hasAttribute('aria-activedescendant'), false);
   assert.equal(menu.hasAttribute(module.EMPTY_ATTR), false);
   assert.deepEqual(shown(module, menu), ['+ add member', '🧹 cleanup worktrees…',
     'summary…', '⧉ clone…', 'delete group']);
+});
+
+test('a re-apply preserves the cursor instead of clearing it', async (t) => {
+  const { harness, ...module } = await core(t);
+  const { menu, input } = mountMenu(harness);
+  module.applyMenuFilter(menu, '', { input, resetActive: true });
+
+  // The operator arrows down with an empty box. The Preact cogs re-apply the
+  // filter after every ~2s snapshot render; clearing there would undo the
+  // selection out from under them and leave Enter doing nothing.
+  module.moveMenuActive(menu, 1, { input });
+  module.moveMenuActive(menu, 1, { input });
+  const chosen = module.menuActiveItem(menu);
+  assert.equal(chosen.getAttribute('data-act'), 'cleanup-worktrees-group');
+
+  module.applyMenuFilter(menu, '', { input });
+  assert.equal(module.menuActiveItem(menu), chosen, 'the cursor survives a re-apply');
+  assert.equal(input.getAttribute('aria-activedescendant'), chosen.id);
+
+  // Same for a re-apply under a live query that still includes the cursor.
+  module.applyMenuFilter(menu, 'group', { input });
+  assert.equal(module.menuActiveItem(menu), chosen);
+});
+
+test('a narrowing query moves the cursor off an item it filtered away', async (t) => {
+  const { harness, ...module } = await core(t);
+  const { menu, input } = mountMenu(harness);
+  module.applyMenuFilter(menu, 'group', { input });
+  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'add-member');
+
+  // "conversation" appears only in add-member's title, so the cursor's item
+  // survives; "clone" drops it, and the cursor must fall to the new top match
+  // rather than pointing at a hidden row.
+  module.applyMenuFilter(menu, 'conversation', { input });
+  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'add-member');
+
+  module.applyMenuFilter(menu, 'clone', { input });
+  assert.equal(module.menuActiveItem(menu).getAttribute('data-act'), 'clone-group');
 });
 
 test('a live query pre-selects its top match so Enter runs without arrowing', async (t) => {
@@ -198,14 +237,30 @@ test('arrow navigation wraps across the visible, enabled items', async (t) => {
   assert.equal(act(), 'delete-group', 'and back round the other way');
 });
 
-test('the focused filter box points at the keyboard cursor for screen readers', async (t) => {
+test('the filter box aims a RESOLVABLE aria-activedescendant at the cursor', async (t) => {
   const { harness, ...module } = await core(t);
   const { menu, input } = mountMenu(harness);
+  const { document } = harness;
 
   module.applyMenuFilter(menu, 'clone', { input });
   const active = module.menuActiveItem(menu);
   assert.ok(active.id, 'an id is minted for the selected item');
   assert.equal(input.getAttribute('aria-activedescendant'), active.id);
+
+  // The cursor's item is a SIBLING of the box, not a descendant, so the
+  // reference only resolves through aria-controls. Without that edge the
+  // attribute is inert and no AT announces the cursor — assert the whole
+  // chain, not just that the id round-trips.
+  const controls = input.getAttribute('aria-controls');
+  assert.ok(controls, 'the box declares what it controls');
+  const controlled = document.getElementById(controls);
+  assert.equal(controlled, menu, 'aria-controls resolves to the menu');
+  assert.equal(controlled.contains(document.getElementById(active.id)), true,
+    'and that menu contains the referenced item');
+
+  // Re-applying must not mint a second id for the same menu.
+  module.applyMenuFilter(menu, 'delete', { input });
+  assert.equal(input.getAttribute('aria-controls'), controls);
 });
 
 test('Escape clears a live query first and closes only on the second press', async (t) => {
@@ -220,9 +275,15 @@ test('Escape clears a live query first and closes only on the second press', asy
     stopPropagation() { stopped += 1; },
   }, { hasQuery, clearQuery: () => { cleared += 1; } });
 
+  module.applyMenuFilter(menu, 'clone', { input });
+  assert.ok(module.menuActiveItem(menu), 'the query left a cursor');
+
   assert.equal(escape(true), true, 'a mistyped query is consumed, not the menu');
   assert.equal(cleared, 1);
   assert.equal(stopped, 1, 'and kept from the document handler that would close');
+  // Clearing is a start-over: the cursor went with the query that placed it.
+  assert.equal(module.menuActiveItem(menu), null);
+  assert.equal(input.hasAttribute('aria-activedescendant'), false);
 
   assert.equal(escape(false), false, 'an empty box lets Escape through to close');
   assert.equal(cleared, 1);

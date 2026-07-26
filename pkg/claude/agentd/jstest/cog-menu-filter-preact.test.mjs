@@ -66,8 +66,11 @@ test('the cog menu carries a filter box above its untouched items', async (t) =>
   const filter = view.filter();
   assert.ok(filter, 'the menu renders a filter box');
   assert.equal(filter.getAttribute('aria-label'), 'Filter actions');
-  // The filter must not be mistaken for an item by the menu's own routing.
-  assert.equal(filter.getAttribute('role'), null);
+  // A combobox over the menu it controls — never an item, or the menu's own
+  // routing and the filter's own item walk would both pick it up.
+  assert.equal(filter.getAttribute('role'), 'combobox');
+  assert.equal(filter.getAttribute('aria-controls'), view.menu().id);
+  assert.equal(view.menu().querySelector('[role="menuitem"]') === filter, false);
   assert.equal(view.menu().classList.contains('open'), true);
   assert.deepEqual(view.visible(), ['+ add member', '⧉ clone…', 'delete group']);
 });
@@ -119,6 +122,28 @@ test('a snapshot re-render keeps the live filter applied', async (t) => {
   await view.rerenderWith(true);
   assert.deepEqual(view.visible(), ['🖥 open web terminal']);
   assert.equal(view.filter().value, 'term', 'and the query survives the render');
+});
+
+test('an arrowed cursor survives the 2s snapshot re-render', async (t) => {
+  const runs = [];
+  const view = await mountCog(t, { onRun: (act) => runs.push(act) });
+  await view.open();
+
+  // With an empty box the operator arrows to the second item. A publish lands
+  // before they press Enter; the re-applied filter must leave the cursor alone,
+  // or Enter silently does nothing and ↓ restarts from the top — one keystroke
+  // away from running a different action than the one that was highlighted.
+  await view.press('ArrowDown');
+  await view.press('ArrowDown');
+  const chosen = view.menuFilter.menuActiveItem(view.menu());
+  assert.equal(chosen.getAttribute('data-act'), 'clone-group');
+
+  await view.rerenderWith(false);
+  assert.equal(view.menuFilter.menuActiveItem(view.menu()), chosen,
+    'the cursor is still on the item the operator selected');
+
+  await view.press('Enter');
+  assert.deepEqual(runs, ['clone-group']);
 });
 
 test('Escape clears the query before it closes the menu', async (t) => {

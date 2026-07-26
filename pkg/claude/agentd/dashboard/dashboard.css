@@ -2386,15 +2386,14 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
 .action-menu [data-menu-filtered-out] { display: none; }
 /* One cursor shared by mouse and keyboard: menu-filter.js moves this marker on
    hover as well, so a pointer and an ↑/↓ cursor can never light two rows at
-   once. Deliberately sets no `color`, leaving .danger / .warn items their red
-   and amber text — the destructive signal has to survive being selected.
-   Spelled out per cog to match the specificity of the :hover trio above, so the
-   cursor wins on a row that is both hovered and selected. */
-.filter-bar-cog .action-menu button[data-menu-active],
-.row-actions .action-menu button[data-menu-active],
-.group-actions .action-menu button[data-menu-active] {
-  background: #1f6feb33; border-color: #58a6ff;
-}
+   once. It marks the row with a BACKGROUND only — same as .palette-item.selected
+   — and deliberately sets neither `color` nor `border-color`, so a .danger /
+   .warn item keeps the red or amber text AND edge that mark it destructive.
+   (Setting the border here would tie with the existing :hover rules on
+   specificity and win on source order, quietly turning the "delete" row's red
+   edge blue on plain hover.) Nothing else paints this background, so no
+   per-cog specificity dance is needed. */
+.action-menu button[data-menu-active] { background: #1f6feb33; }
 /* A query that matches nothing still has to say so — the menu would otherwise
    collapse to an empty box. Generated content keeps this out of both owners'
    markup (the static toolbar cog has no renderer to add an empty row). */
@@ -11114,10 +11113,8 @@ body.wizard .action-menu-filter {
 }
 body.wizard .action-menu-filter::placeholder { color: #9a86c4; }
 body.wizard .action-menu-filter:focus { border-color: #d9b45a; }
-body.wizard .filter-bar-cog .action-menu button[data-menu-active],
-body.wizard .row-actions .action-menu button[data-menu-active],
-body.wizard .group-actions .action-menu button[data-menu-active] {
-  background: rgba(122, 93, 176, 0.3); border-color: #d9b45a;
+body.wizard .action-menu button[data-menu-active] {
+  background: rgba(122, 93, 176, 0.3);
 }
 body.wizard .action-menu[data-menu-empty]::after {
   content: 'no such deed in this tome'; color: #b39ddb;

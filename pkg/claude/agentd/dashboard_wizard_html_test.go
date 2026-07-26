@@ -1326,9 +1326,7 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	// no-matches note re-letters to match the Spellbook's own empty state.
 	must("body.wizard .action-menu-filter {", "the cog filter box gets the arcane skin")
 	must("body.wizard .action-menu-filter::placeholder", "the filter box's prompt is re-lettered arcane")
-	must("body.wizard .filter-bar-cog .action-menu button[data-menu-active]", "the filter-bar cursor is gilded in wizard mode")
-	must("body.wizard .row-actions .action-menu button[data-menu-active]", "the per-agent cursor is gilded in wizard mode")
-	must("body.wizard .group-actions .action-menu button[data-menu-active]", "the per-group cursor is gilded in wizard mode")
+	must("body.wizard .action-menu button[data-menu-active]", "the keyboard cursor takes the mystic-purple glow in wizard mode")
 	must("body.wizard .action-menu[data-menu-empty]::after", "the empty-result note is re-lettered arcane")
 }
 
@@ -1352,15 +1350,21 @@ func TestDashboardHTML_CogMenuFilter(t *testing.T) {
 	// this class and degrades to the old click-only menu without it.
 	must(`<input class="action-menu-filter"`, "the static toolbar cog ships a filter box")
 	must(`aria-label="Filter actions"`, "the filter box is named for screen readers")
+	// aria-activedescendant only resolves against a descendant or an
+	// aria-controls / aria-owns target, and the cursor's item is a SIBLING of the
+	// box. role=combobox plus the aria-controls edge menu-filter.js writes is what
+	// makes the reference resolvable instead of inert.
+	must(`role="combobox"`, "the filter box declares the role its aria-activedescendant needs")
 
 	// Presentation for the three attributes menu-filter.js owns. Without the
 	// hide rule a filtered-out item would stay visible and the feature would
 	// silently do nothing.
 	must(".action-menu [data-menu-filtered-out] { display: none; }", "non-matching items are hidden")
 	must(".action-menu[data-menu-empty]::after", "a query matching nothing says so")
-	must(".row-actions .action-menu button[data-menu-active]", "the keyboard cursor is visible on the per-agent cog")
-	must(".group-actions .action-menu button[data-menu-active]", "the keyboard cursor is visible on the per-group cog")
-	must(".filter-bar-cog .action-menu button[data-menu-active]", "the keyboard cursor is visible on the toolbar cog")
+	// Background only: a border here would tie with the existing per-cog :hover
+	// rules on specificity and win on source order, turning a .danger row's red
+	// edge blue on plain hover.
+	must(".action-menu button[data-menu-active] { background: #1f6feb33; }", "the keyboard cursor marks its row with a background alone")
 }
 
 // TestDashboardHTML_WizardConfigTab pins the wizard re-skin of the Config tab

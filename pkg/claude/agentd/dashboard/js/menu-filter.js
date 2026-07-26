@@ -35,6 +35,16 @@
 // re-render — the owner just re-applies after each one (ActionMenu does this in
 // a layout effect). Presentation lives in dashboard.css; this module sets
 // state, never style.
+//
+// Because those re-applies are frequent (one per ~2s snapshot publish), the
+// cursor is preserved across them and only cleared when a caller explicitly
+// asks via applyMenuFilter's resetActive — see the note there.
+//
+// These menus keep role="menu" / role="menuitem" rather than converting to
+// combobox+listbox: the click path is a menu, ~55 items across three files
+// would have to change, and Go guards assert the menu roles. The filter box is
+// a combobox over that menu, linked with aria-controls so its
+// aria-activedescendant resolves (linkFilterInput).
 
 import { scoreCommand } from './palette-score.js';
 
@@ -128,14 +138,31 @@ export function menuActiveItem(menu) {
 }
 
 // The keyboard cursor has to be announceable, so the focused filter box points
-// at it with aria-activedescendant — the same contract the Ctrl/Cmd-K palette
-// uses with its palette-opt-N ids. Menu items are authored without ids, so one
-// is minted lazily on first selection. The counter is module-global and never
+// at it with aria-activedescendant. Menu items are authored without ids, so one
+// is minted lazily on first selection; the counter is module-global and never
 // reused, which keeps ids unique across every cog menu on the page.
-let itemIdSeq = 0;
+//
+// aria-activedescendant only resolves against a DESCENDANT of the element that
+// carries it, or against something it aria-owns / aria-controls. The box is a
+// SIBLING of the items, so linkFilterInput below supplies the aria-controls
+// edge; without it the attribute would be written and read by nothing. This is
+// the same relationship the Ctrl/Cmd-K palette declares between its input and
+// #palette-list — the roles differ (these stay menu / menuitem so the click
+// path keeps its menu semantics) but the reference has to resolve either way.
+let idSeq = 0;
+function mintId(node, prefix) {
+  if (!node.id) node.id = `${prefix}-${++idSeq}`;
+  return node.id;
+}
+
 function itemId(item) {
-  if (!item.id) item.id = `menu-item-${++itemIdSeq}`;
-  return item.id;
+  return mintId(item, 'menu-item');
+}
+
+// linkFilterInput is idempotent — applyMenuFilter calls it on every pass.
+export function linkFilterInput(menu, input) {
+  if (!input) return;
+  input.setAttribute('aria-controls', mintId(menu, 'action-menu'));
 }
 
 export function setMenuActive(menu, item, { input } = {}) {
@@ -172,8 +199,14 @@ export function moveMenuActive(menu, delta, { input } = {}) {
 // flags an empty result, and leaves exactly one sensible Enter target — the
 // topmost match whenever a query is live, so type-then-Enter works without a
 // deliberate ↓ first.
-export function applyMenuFilter(menu, query, { input } = {}) {
+// resetActive is for the open/close edges, where the menu must come up (and go
+// away) with no cursor. Every other call is a RE-APPLY — the Preact cogs run one
+// after each of their ~2s snapshot renders — and must leave a still-valid cursor
+// exactly where the operator put it. Clearing on re-apply would silently undo
+// ↑/↓ mid-use and leave Enter doing nothing.
+export function applyMenuFilter(menu, query, { input, resetActive = false } = {}) {
   const normalized = String(query || '').trim().toLowerCase();
+  linkFilterInput(menu, input);
   const items = menuItems(menu);
   const visible = [];
   for (const item of items) {
@@ -186,10 +219,12 @@ export function applyMenuFilter(menu, query, { input } = {}) {
   }
   toggleAttr(menu, EMPTY_ATTR, !!normalized && !visible.length);
 
+  if (resetActive) setMenuActive(menu, null, { input });
   const navigable = visible.filter(isNavigable);
-  // An empty query restores the untouched menu, highlight included: clicking a
-  // cog must look exactly as it always has.
-  setMenuActive(menu, normalized ? (menuActiveItem(menu) || navigable[0] || null) : null,
+  // menuActiveItem returns null once the cursor's item is filtered out or
+  // disabled, so a narrowing query naturally falls back to the new top match
+  // while a cursor that survives the narrowing is kept.
+  setMenuActive(menu, menuActiveItem(menu) || (normalized ? navigable[0] || null : null),
     { input });
   return { items, visible, navigable };
 }
@@ -229,6 +264,10 @@ export function handleMenuFilterKeyDown(menu, event, { hasQuery = false, clearQu
       if (!hasQuery) return false;
       event.preventDefault();
       event.stopPropagation();
+      // Clearing is a start-over: drop the cursor too, since the item under it
+      // was picked by the query that is going away. Done here rather than in
+      // each owner's clearQuery so both cogs agree on what Escape means.
+      setMenuActive(menu, null, { input });
       clearQuery?.();
       return true;
     default:

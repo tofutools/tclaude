@@ -290,7 +290,9 @@ showing.
   a *summon*.
 - **↑/↓** move a cursor over the matches and wrap; **Enter** runs the one under
   it, which is the topmost match as soon as you type, so `clone`+Enter works
-  without arrowing first. Moving the mouse takes the cursor over instead.
+  without arrowing first. Moving the mouse takes the cursor over instead. The
+  cursor survives the 2s snapshot refresh, so a menu that redraws under you does
+  not lose your place.
 - **Esc** clears a non-empty box, and closes the menu when it is already empty.
 - Order is deliberately **not** re-ranked: matches stay where they sit in the
   menu, so a filtered menu still reads like the menu you know. Disabled items
@@ -300,6 +302,11 @@ showing.
 These menus keep growing, and this is the cheap way in: the filter reads each
 item's rendered label, so a newly added action is searchable the moment it is
 added, with nothing to register.
+
+The menus stay `role="menu"` / `role="menuitem"` — the click path is a menu, and
+converting ~55 items to listbox/option would be a lot of churn for a secondary
+surface. The filter box is a `combobox` over the menu it `aria-controls`, which
+is what makes its `aria-activedescendant` cursor reference resolve.
 
 Toggles surface three
 **virtual groups** below the real ones: **Ungrouped** (online agents in no

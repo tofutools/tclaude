@@ -117,9 +117,6 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   const [opensUp, setOpensUp] = useState(false);
   const [query, setQuery] = useState('');
   const open = interactions.openMenuKey === menuKey;
-  // A closed menu is always unfiltered, so the reset never has to race the
-  // state update that clears the box on close.
-  const activeQuery = open ? query : '';
 
   useLayoutEffect(() => interactions.registerMenu(menuKey, {
     button: buttonRef.current,
@@ -141,22 +138,33 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   }, [menuKey, interactions.closeMenu]);
 
   // Items are opaque children that re-render on every 2s snapshot publish, and
-  // conditional ones come and go, so the filter is re-applied after each render
-  // rather than only when the query changes. applyMenuFilter writes attributes
-  // no vnode declares, so it cannot conflict with Preact's diff.
+  // conditional ones come and go, so while the menu is OPEN the filter is
+  // re-applied after each render rather than only when the query changes.
+  // applyMenuFilter writes attributes no vnode declares, so it cannot conflict
+  // with Preact's diff. It also preserves the cursor: a publish arrives every
+  // 2s, and clearing would undo an ↑/↓ selection out from under the operator
+  // and leave Enter doing nothing.
+  //
+  // Gated on `open` because there is one ActionMenu per group AND per agent
+  // row: without the guard every one of them would walk its items on every
+  // poll to re-filter a menu nobody can see.
   useLayoutEffect(() => {
     const menu = menuRef.current;
-    if (menu) applyMenuFilter(menu, activeQuery, { input: filterRef.current });
+    if (menu && open) applyMenuFilter(menu, query, { input: filterRef.current });
   });
 
-  // Opening focuses the box so the menu is typeable straight away; closing
-  // clears it so the next open starts from the full list.
+  // The open/close edges. Opening focuses the box so the menu is typeable
+  // straight away; closing empties it and drops the cursor so the next open
+  // starts from the full list — once, on the transition, rather than on every
+  // render the menu then spends closed.
   useLayoutEffect(() => {
-    if (!open) {
-      setQuery('');
+    if (open) {
+      queueMicrotask(() => filterRef.current?.focus());
       return;
     }
-    queueMicrotask(() => filterRef.current?.focus());
+    setQuery('');
+    const menu = menuRef.current;
+    if (menu) applyMenuFilter(menu, '', { input: filterRef.current, resetActive: true });
   }, [open]);
 
   useLayoutEffect(() => {
@@ -198,9 +206,19 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
         type="text"
         autocomplete="off"
         spellcheck=${false}
+        role="combobox"
+        aria-expanded="true"
+        aria-autocomplete="list"
         aria-label="Filter actions"
         placeholder=${isWizardActive() ? MENU_FILTER_WIZARD_PLACEHOLDER : MENU_FILTER_PLACEHOLDER}
         value=${query}
+        onClick=${(event) => {
+    // The group cog's menu is rendered inside <summary>, whose activation
+    // behaviour is the default action of a click anywhere within it. Blink
+    // exempts form controls, but suppress it explicitly rather than rely on
+    // that — the same guard row-actions.js applies to the menu's buttons.
+    event.preventDefault();
+  }}
         onInput=${(event) => setQuery(event.currentTarget.value)}
         onKeyDown=${(event) => handleMenuFilterKeyDown(menuRef.current, event, {
     hasQuery: !!query,

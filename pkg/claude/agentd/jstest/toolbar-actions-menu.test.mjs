@@ -141,6 +141,53 @@ test('Escape clears the toolbar query first, then closes', async (t) => {
   assert.equal(view.isOpen(), false);
 });
 
+test('the toolbar cursor survives a re-apply and Enter still runs it', async (t) => {
+  const view = await mountToolbar(t);
+  const runs = [];
+  for (const id of ALL) {
+    view.harness.document.getElementById(id).addEventListener('click', () => runs.push(id));
+  }
+  view.cog.click();
+
+  // Arrow down twice with an empty box, then let a filter pass run again — the
+  // shared core must not clear a cursor outside the open/close edges.
+  view.press('ArrowDown');
+  view.press('ArrowDown');
+  const chosen = view.menuFilter.menuActiveItem(view.menu);
+  assert.equal(chosen.id, 'cleanup-all-open');
+
+  view.menuFilter.applyMenuFilter(view.menu, '', { input: view.filter });
+  assert.equal(view.menuFilter.menuActiveItem(view.menu), chosen);
+
+  view.press('Enter');
+  assert.deepEqual(runs, ['cleanup-all-open']);
+});
+
+test('unbinding the toolbar cog releases every listener it added', async (t) => {
+  const view = await mountToolbar(t);
+  view.cleanup();
+
+  // The cog, the filter box, the menu's hover tracking and the two document
+  // listeners must all be released together — a leaked one would keep acting on
+  // a torn-down dashboard.
+  view.cog.click();
+  assert.equal(view.isOpen(), false, 'the cog no longer opens');
+
+  view.menu.classList.add('open');
+  view.type('links');
+  assert.deepEqual(view.visible(), ALL, 'typing no longer filters');
+
+  view.harness.fireEvent(view.harness.document.getElementById('links-manage-open'), 'mouseover');
+  assert.equal(view.menuFilter.menuActiveItem(view.menu), null, 'hover no longer tracks');
+
+  view.harness.fireEvent(view.harness.document, 'keydown', { key: 'Escape' });
+  assert.equal(view.isOpen(), true, 'the document Escape handler is gone');
+
+  view.harness.document.body.appendChild(
+    view.harness.document.createElement('div')).click();
+  assert.equal(view.isOpen(), true, 'the document click-away handler is gone');
+});
+
 test('a click outside closes the toolbar cog and clears its filter', async (t) => {
   const view = await mountToolbar(t);
   view.cog.click();
