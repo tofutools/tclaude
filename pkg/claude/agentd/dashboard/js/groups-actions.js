@@ -18,8 +18,34 @@ import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { shellConfirm } from './shell-state.js';
 import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
 
+// Claude Code applies /rename in-pane, then the conversation monitor indexes
+// its JSONL write after a 500ms quiet window. The mutation response therefore
+// confirms delivery before an immediate snapshot is guaranteed to carry the
+// new title. One retry just beyond that window closes the ordinary race without
+// turning a rare rename into a standing poll loop. Direct-store harnesses such
+// as Codex normally match on the first refresh and never wait.
+const RENAME_REFRESH_RETRY_MS = 600;
+
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
+}
+
+function snapshotHasAgentTitle(snapshot, selector, title) {
+  const matches = (row) => row &&
+    (row.agent_id === selector || row.conv_id === selector) &&
+    row.title === title;
+  for (const group of snapshot?.groups || []) {
+    if ((group.members || []).some(matches)) return true;
+  }
+  return ['ungrouped', 'retired', 'conversations', 'replaced', 'agents']
+    .some((key) => (snapshot?.[key] || []).some(matches));
+}
+
+async function refreshAfterAgentRename({ state, refresh, selector, title, wait }) {
+  await refresh();
+  if (snapshotHasAgentTitle(state.snapshot?.value, selector, title)) return;
+  await wait(RENAME_REFRESH_RETRY_MS);
+  await refresh();
 }
 
 // Group sandbox-assignment failures carry the daemon's structured
@@ -44,9 +70,11 @@ export function createGroupsActions({
   state, refresh, notify = () => {}, fetchImpl = fetch,
   confirmDanger = shellConfirm,
   openMemberPermissions = () => { throw new Error('permissions editor is not ready'); },
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   if (!state) throw new TypeError('groups actions require state');
   if (typeof refresh !== 'function') throw new TypeError('groups actions require refresh');
+  if (typeof wait !== 'function') throw new TypeError('groups actions require wait');
 
   return Object.freeze({
     refresh,
@@ -120,14 +148,14 @@ export function createGroupsActions({
       const title = String(rawTitle || '').trim();
       if (!title || title === oldTitle) return false;
       const selector = member.agent_id || member.conv_id;
-      const response = await fetch(`/api/agents/${encodeURIComponent(selector)}/rename`, {
+      const response = await fetchImpl(`/api/agents/${encodeURIComponent(selector)}/rename`, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       });
       if (!response.ok) throw new Error(`rename failed: ${await responseError(response)}`);
       notify(`renaming ${member.title || member.conv_id} → ${title}`);
-      void refresh();
+      await refreshAfterAgentRename({ state, refresh, selector, title, wait });
       return true;
     },
     async renameGroup(group, rawName) {
