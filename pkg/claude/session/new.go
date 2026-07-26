@@ -844,6 +844,12 @@ func runNew(params *NewParams) error {
 	if err := ApplyAgentSocketEnv(h.Name, params.Sandbox, params.PermissionProfile, additionalEnv); err != nil {
 		return err
 	}
+	// Experimental file-spool transport: provision a per-session envelope
+	// directory as a socket-free fallback channel to agentd. No-op unless
+	// TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT is set. See ApplyAgentSpoolEnv.
+	if err := ApplyAgentSpoolEnv(sessionID, additionalEnv); err != nil {
+		return err
+	}
 	// Keep Claude Code's interactive "Resume from summary" chooser from blocking
 	// this detached pane (the daemon forks `tclaude session new -r` here, and a
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude

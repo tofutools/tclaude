@@ -53,6 +53,13 @@ func httpClientWithTimeout(timeout time.Duration) *http.Client {
 }
 
 func newUnixSocketClient(timeout time.Duration) *http.Client {
+	// Experimental file-spool transport: same HTTP traffic over per-agent
+	// envelope files, for sandboxes whose seccomp denies socket syscalls
+	// entirely. Selected once per process; the socket stays preferred
+	// whenever it is dialable. See spool_client.go.
+	if dir := spoolTransportDir(); dir != "" {
+		return NewSpoolHTTPClient(dir, timeout)
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
@@ -86,6 +93,21 @@ var DaemonAvailableImpl = realDaemonAvailable
 func DaemonAvailable() bool { return DaemonAvailableImpl() }
 
 func realDaemonAvailable() bool {
+	if anySocketDialable() {
+		return true
+	}
+	if dir := spoolTransportDir(); dir != "" {
+		return spoolReachable(dir)
+	}
+	return false
+}
+
+// anySocketDialable reports whether any agentd Unix socket accepts a
+// connection right now. Shared by availability checks and the spool
+// transport selection: inside a no-network sandbox the dial fails
+// instantly (EPERM from seccomp), so this doubles as the cheap "can this
+// process use sockets at all" probe.
+func anySocketDialable() bool {
 	for _, sock := range agentipc.ClientSocketPaths() {
 		if sock == "" {
 			continue

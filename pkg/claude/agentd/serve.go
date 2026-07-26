@@ -253,8 +253,13 @@ func runServe(p *serveParams) error {
 	defer removeSocketPaths(createdSocketPaths)
 	defer closeListeners(listeners)
 
+	// The bare /v1 mux is shared between the socket server (below, wrapped
+	// in withIdentity) and the experimental file-spool consumer (which
+	// stamps identity per directory binding instead).
+	v1mux := buildMux()
+
 	srv := &http.Server{
-		Handler:           withIdentity(buildMux()),
+		Handler:           withIdentity(v1mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		// Stash the underlying *net.UnixConn so the identity middleware
 		// can read peer credentials from it.
@@ -525,6 +530,15 @@ func runServe(p *serveParams) error {
 		}
 		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
 		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+	}
+	// Experimental file-spool transport (TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT):
+	// serve the same /v1 mux from per-agent envelope directories, for
+	// sandboxes whose seccomp denies every socket syscall. See spool.go.
+	if agentipc.FileTransportEnabled() {
+		stopSpool := startSpoolConsumer(v1mux, agentipc.SpoolRoot(), 2*time.Second)
+		defer stopSpool()
+		slog.Info("experimental file-spool transport enabled", "root", agentipc.SpoolRoot())
+		fmt.Printf("  experimental file-spool transport: %s\n", agentipc.SpoolRoot())
 	}
 	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
 	for _, ln := range listeners {

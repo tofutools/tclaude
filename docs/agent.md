@@ -96,6 +96,32 @@ The daemon binds one canonical socket plus two temporary compatibility sockets:
 - `127.0.0.1:<random>` — loopback HTTP for the human-approval popup
   and the [dashboard](dashboard.md).
 
+### Experimental: socket-free file-spool transport
+
+Some sandbox postures deny every socket syscall (Codex's Linux
+restricted-network seccomp blocks `connect(2)` for `AF_UNIX` too), which
+would cut a fully network-isolated agent off from agentd entirely. Setting
+`TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT=1` (on the daemon and on whatever
+launches sessions) enables an additive, experimental transport that needs
+only plain filesystem operations:
+
+- Every spawned session gets a private spool directory under
+  `~/.tclaude/api/spool/<random-id>/` (exported as `TCLAUDE_AGENTD_SPOOL`),
+  bound to its conversation in SQLite at spawn time.
+- The CLI writes each request as an envelope file in `req/`, the daemon
+  serves it through the same `/v1` mux the socket uses and publishes the
+  response in `resp/`. Possession of the bound directory is the caller
+  identity — the daemon stamps the binding's conv-id, no `SO_PEERCRED`
+  needed.
+- The socket stays preferred: an agent only falls back to the spool when no
+  agentd socket is dialable (or `TCLAUDE_AGENTD_TRANSPORT=spool` forces it).
+- Requests are plain files, so anything written while the daemon was down
+  is served by the next daemon's startup scan — restarts usually surface no
+  error at all.
+
+Human/operator-token commands are not carried over the spool; it is an
+agent-class transport only.
+
 By default `agentd serve` also adds a system tray icon (Open
 dashboard, Reinstall agent skills, Open config, pending-approvals
 submenu, Quit). On Linux hosts without a reachable session DBus (common
