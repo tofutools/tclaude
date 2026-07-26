@@ -118,6 +118,10 @@ type TmuxSim struct {
 	// clients maps simulated client ttys to their attached sessions. Most
 	// flows have none; lifecycle handoff tests opt in through AttachClient.
 	clients map[string]string
+	// newSessionRemainOnExit models a server-wide/window default inherited by
+	// panes created through new-session. Tests can enable it to prove callers
+	// override the option pane-locally when expiry depends on pane removal.
+	newSessionRemainOnExit bool
 }
 
 type tmuxCommandFault struct {
@@ -174,6 +178,9 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 			return exec.Command(falseBin)
 		}
 		t.MarkAlive(name)
+		t.mu.Lock()
+		t.sessions[name].remainOnExit = t.newSessionRemainOnExit
+		t.mu.Unlock()
 		return exec.Command(trueBin)
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
 		if name := t.resolveTarget(args[2], false); name != "" && t.hasSession(name) {
@@ -701,6 +708,22 @@ func (t *TmuxSim) ClientSession(tty string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.clients[tty]
+}
+
+// SetNewSessionRemainOnExit controls the option inherited by subsequently
+// simulated new-session panes.
+func (t *TmuxSim) SetNewSessionRemainOnExit(enabled bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.newSessionRemainOnExit = enabled
+}
+
+// PaneRemainOnExit reports the pane-local option for sessionName.
+func (t *TmuxSim) PaneRemainOnExit(sessionName string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[sessionName]
+	return s != nil && s.remainOnExit
 }
 
 // Register attaches a pane sim (a *CCSim or *CodexSim) to a tmux

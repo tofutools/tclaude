@@ -42,6 +42,18 @@ func beginSandboxRestartTmuxHandoff(oldTmux string) *sandboxRestartTmuxHandoff {
 			"from", oldTmux, "bridge", holding, "error", err)
 		return nil
 	}
+	// User tmux configuration can inherit remain-on-exit=on into this pane.
+	// Override it pane-locally so the command's five-minute exit really removes
+	// the bridge even if agentd is no longer around to run kill-session.
+	if err := clcommon.TmuxCommand(
+		"set-option", "-p", "-t", clcommon.ExactTarget(holding)+":",
+		"remain-on-exit", "off",
+	).Run(); err != nil {
+		slog.Warn("sandbox restart: could not bound tmux client bridge lifetime",
+			"from", oldTmux, "bridge", holding, "error", err)
+		killSandboxRestartTmuxBridge(holding)
+		return nil
+	}
 	if switched := switchTmuxClientTTYs(clients, oldTmux, holding); switched == 0 {
 		killSandboxRestartTmuxBridge(holding)
 		return nil

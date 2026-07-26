@@ -69,11 +69,14 @@ func TestSandboxRestartTmuxHandoffCarriesAttachedClients(t *testing.T) {
 	w.Tmux.MarkAlive(oldTmux)
 	w.Tmux.AttachClient(ttyOne, oldTmux)
 	w.Tmux.AttachClient(ttyTwo, oldTmux)
+	w.Tmux.SetNewSessionRemainOnExit(true)
 
 	handoff := beginSandboxRestartTmuxHandoff(oldTmux)
 	require.NotNil(t, handoff)
 	holding := handoff.holdingSession
 	require.NotEmpty(t, holding)
+	assert.False(t, w.Tmux.PaneRemainOnExit(holding),
+		"the self-expiring bridge must override an inherited remain-on-exit")
 	assert.Equal(t, holding, w.Tmux.ClientSession(ttyOne))
 	assert.Equal(t, holding, w.Tmux.ClientSession(ttyTwo))
 
@@ -119,6 +122,24 @@ func TestSandboxRestartTmuxHandoffFailureDoesNotBlockRestart(t *testing.T) {
 	assert.Nil(t, beginSandboxRestartTmuxHandoff(oldTmux))
 	assert.Equal(t, oldTmux, w.Tmux.ClientSession("/dev/pts/41"),
 		"a failed best-effort bridge must leave the existing client alone")
+}
+
+func TestSandboxRestartTmuxHandoffRefusesUnboundedBridge(t *testing.T) {
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	const oldTmux = "sandbox-old-pane"
+	w.Tmux.MarkAlive(oldTmux)
+	w.Tmux.AttachClient("/dev/pts/41", oldTmux)
+	w.Tmux.SetNewSessionRemainOnExit(true)
+	w.Tmux.FailNextCommand("set-option")
+
+	assert.Nil(t, beginSandboxRestartTmuxHandoff(oldTmux))
+	assert.Equal(t, oldTmux, w.Tmux.ClientSession("/dev/pts/41"),
+		"clients must stay on the agent when bridge expiry cannot be enforced")
+	assert.Len(t, w.Tmux.Sessions(), 1, "the rejected bridge must be removed")
 }
 
 func TestRequireCurrentSandboxRestartGenerationRejectsSupersededConversation(t *testing.T) {
