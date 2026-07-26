@@ -1128,6 +1128,28 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	assert.NotContains(t, string(none), "features")
 }
 
+// FileSpoolTransportEnabled must be nil-safe and default to FALSE, and
+// features.file_spool_transport must round-trip: the experimental spool
+// transport stays dark unless explicitly enabled.
+func TestFileSpoolTransportEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.FileSpoolTransportEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).FileSpoolTransportEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).FileSpoolTransportEnabled(), "features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{FileSpoolTransport: true}}).FileSpoolTransportEnabled(), "explicit true → true")
+
+	data, err := json.Marshal(&Config{Features: &FeaturesConfig{FileSpoolTransport: true}})
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"file_spool_transport":true`)
+	var out Config
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.True(t, out.FileSpoolTransportEnabled())
+
+	clean, err := json.Marshal(&Config{Features: &FeaturesConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "file_spool_transport", "unset flag omits the key")
+}
+
 // AgentDirsMountParentEnabled defaults on while preserving explicit true and
 // false values. The pointer's omitempty shape keeps the default absent but
 // persists an opt-out through JSON.

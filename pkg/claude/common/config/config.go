@@ -155,6 +155,15 @@ type FeaturesConfig struct {
 	// per-directory grants: the agent can write inside each directory but cannot
 	// delete the directory itself because its parent is not writable.
 	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
+
+	// FileSpoolTransport enables the experimental socket-free file-spool
+	// transport to agentd: spawned sessions get a private envelope directory
+	// (TCLAUDE_AGENTD_SPOOL) and the daemon serves it alongside the Unix
+	// socket, for sandboxes whose seccomp denies socket syscalls entirely.
+	// The TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT=1 environment variable enables
+	// the same thing (either switch suffices). See docs/agent.md
+	// "Experimental: socket-free file-spool transport".
+	FileSpoolTransport bool `json:"file_spool_transport,omitempty"`
 }
 
 // ProcessesDisabledMessage is the stable operator-facing text surfaced when
@@ -170,6 +179,15 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// FileSpoolTransportEnabled reports whether the opt-in experimental
+// file-spool transport flag is set in config. Callers generally OR this
+// with the TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT environment switch
+// (agentipc.FileTransportEnabled). Nil-safe on both the config and the
+// features block.
+func (c *Config) FileSpoolTransportEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.FileSpoolTransport
 }
 
 // AgentDirsMountParentEnabled reports whether agent-owned directories should be

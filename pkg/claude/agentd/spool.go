@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -63,6 +64,66 @@ const spoolProcessingSlots = 32
 // would otherwise discover it only by waiting out a full request timeout
 // per call.
 const spoolServingMarker = ".serving"
+
+// spoolTransportEnabled resolves the experimental flag from either switch:
+// the TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT environment variable or the
+// features.file_spool_transport config field (the dashboard Config tab's
+// Experimental section edits the latter). Config is re-read on every call,
+// so the supervisor below observes toggles live.
+func spoolTransportEnabled() bool {
+	if agentipc.FileTransportEnabled() {
+		return true
+	}
+	cfg, err := config.Load()
+	return err == nil && cfg.FileSpoolTransportEnabled()
+}
+
+// spoolConfigPollInterval is how often the supervisor re-resolves the flag.
+// Config loads are one small-file read; the same cadence class as the
+// per-request config reads the process-routes gate already does.
+const spoolConfigPollInterval = 5 * time.Second
+
+// startSpoolSupervisor keeps a spool consumer running exactly while the
+// experimental flag is on, re-checking the config every few seconds so a
+// dashboard Config-tab toggle takes effect without a daemon restart.
+// Returns a stop function for daemon shutdown.
+func startSpoolSupervisor(handler http.Handler) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		var stopConsumer func()
+		apply := func() {
+			enabled := spoolTransportEnabled()
+			switch {
+			case enabled && stopConsumer == nil:
+				slog.Info("experimental file-spool transport enabled", "root", agentipc.SpoolRoot())
+				stopConsumer = startSpoolConsumer(handler, agentipc.SpoolRoot(), 2*time.Second)
+			case !enabled && stopConsumer != nil:
+				slog.Info("experimental file-spool transport disabled")
+				stopConsumer()
+				stopConsumer = nil
+			}
+		}
+		apply()
+		ticker := time.NewTicker(spoolConfigPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				if stopConsumer != nil {
+					stopConsumer()
+				}
+				return
+			case <-ticker.C:
+				apply()
+			}
+		}
+	})
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
 
 type spoolConsumer struct {
 	handler http.Handler

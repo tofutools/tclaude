@@ -7,14 +7,29 @@ import (
 	"path/filepath"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+// fileSpoolProvisioningEnabled mirrors the daemon's flag resolution: the
+// TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT environment variable OR the
+// features.file_spool_transport config field (dashboard Config tab →
+// Experimental). `session new` runs unsandboxed, so reading private config
+// here is fine; sandboxed agent CLIs never consult the flag — they only see
+// the TCLAUDE_AGENTD_SPOOL env this provisioning exports.
+func fileSpoolProvisioningEnabled() bool {
+	if agentipc.FileTransportEnabled() {
+		return true
+	}
+	cfg, err := config.Load()
+	return err == nil && cfg.FileSpoolTransportEnabled()
+}
 
 // ApplyAgentSpoolEnv provisions the experimental file-spool transport for a
 // launching session: a private envelope directory whose possession is the
 // session's caller identity toward agentd, bound to the session's conv in
-// SQLite before the pane exists. No-op unless the operator opted in via
-// TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT. The socket stays this agent's
+// SQLite before the pane exists. No-op unless the operator opted in (see
+// fileSpoolProvisioningEnabled). The socket stays this agent's
 // preferred transport; the spool only carries traffic when the sandbox
 // leaves the client no dialable socket (or TCLAUDE_AGENTD_TRANSPORT=spool
 // forces it). See pkg/claude/common/agentipc spool.go for the protocol.
@@ -29,7 +44,7 @@ import (
 // session that never existed doesn't leave a live identity capability
 // behind.
 func ApplyAgentSpoolEnv(sessionID string, env map[string]string) (string, error) {
-	if !agentipc.FileTransportEnabled() {
+	if !fileSpoolProvisioningEnabled() {
 		return "", nil
 	}
 	root := agentipc.SpoolRoot()

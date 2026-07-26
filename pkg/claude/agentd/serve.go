@@ -531,13 +531,15 @@ func runServe(p *serveParams) error {
 		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
 		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
 	}
-	// Experimental file-spool transport (TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT):
-	// serve the same /v1 mux from per-agent envelope directories, for
-	// sandboxes whose seccomp denies every socket syscall. See spool.go.
-	if agentipc.FileTransportEnabled() {
-		stopSpool := startSpoolConsumer(v1mux, agentipc.SpoolRoot(), 2*time.Second)
-		defer stopSpool()
-		slog.Info("experimental file-spool transport enabled", "root", agentipc.SpoolRoot())
+	// Experimental file-spool transport: serve the same /v1 mux from
+	// per-agent envelope directories, for sandboxes whose seccomp denies
+	// every socket syscall. The supervisor tracks the flag (env var OR
+	// features.file_spool_transport in config, editable live from the
+	// dashboard Config tab) and starts/stops the consumer to match. See
+	// spool.go.
+	stopSpool := startSpoolSupervisor(v1mux)
+	defer stopSpool()
+	if spoolTransportEnabled() {
 		fmt.Printf("  experimental file-spool transport: %s\n", agentipc.SpoolRoot())
 	}
 	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)

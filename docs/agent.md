@@ -100,10 +100,17 @@ The daemon binds one canonical socket plus two temporary compatibility sockets:
 
 Some sandbox postures deny every socket syscall (Codex's Linux
 restricted-network seccomp blocks `connect(2)` for `AF_UNIX` too), which
-would cut a fully network-isolated agent off from agentd entirely. Setting
-`TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT=1` (on the daemon and on whatever
-launches sessions) enables an additive, experimental transport that needs
-only plain filesystem operations:
+would cut a fully network-isolated agent off from agentd entirely. An
+additive, experimental transport that needs only plain filesystem
+operations can be enabled either way:
+
+- set `features.file_spool_transport: true` in tclaude config — the
+  dashboard Config tab's **Experimental features** section has the toggle;
+  the daemon picks it up within a few seconds, no restart needed — or
+- set `TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT=1` in the environment (daemon
+  and whatever launches sessions).
+
+When enabled:
 
 - Every spawned session gets a private spool directory under
   `~/.tclaude/api/spool/<random-id>/` (exported as `TCLAUDE_AGENTD_SPOOL`),
@@ -127,9 +134,10 @@ Experimental caveats (why the flag): sandbox profiles do not yet
 read-deny the spool root with a per-agent carve-out, so while the flag is
 on, sandboxed agents on the same host can read each other's envelopes —
 request/response bodies also touch disk, which the socket never does.
-Both daemon and spawner must run with the flag; a provisioned agent whose
-daemon lacks it fails fast via the `.serving` heartbeat the consumer
-maintains at the spool root.
+The config field is the shared source both the daemon and session launches
+read; the env var is a per-process override. A provisioned agent whose
+daemon isn't consuming (flag off there, or daemon down) fails fast via the
+`.serving` heartbeat the consumer maintains at the spool root.
 
 By default `agentd serve` also adds a system tray icon (Open
 dashboard, Reinstall agent skills, Open config, pending-approvals

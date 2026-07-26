@@ -564,6 +564,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-agent-dirs-mount-parent" /> mount the shared parent root of <strong>agent-owned directories</strong> read-write</label>
         <span class="cfg-hint">On by default: the shared parent root is granted once, so the agent can create, rewrite, and delete its own env-var'd directories. Uncheck to opt out and restore per-directory grants — the agent can write inside each directory but cannot delete it. Takes effect on the next launch/resume. Stored as <code>features.agent_dirs_mount_parent</code>.</span>
       </div>
+      <div class="cfg-field">
+        <span class="cfg-label">File-spool transport</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-file-spool-transport" /> enable the experimental <strong>socket-free file-spool transport</strong> to agentd</label>
+        <span class="cfg-hint">For sandboxes that deny every socket syscall: newly spawned sessions get a private envelope directory under <code>~/.tclaude/api/spool/</code>, and the daemon serves the same agent API from it alongside the Unix socket (which stays preferred whenever it is dialable). The daemon picks the toggle up within a few seconds; existing agents gain a spool directory on their next launch/resume. While experimental, spool envelopes are readable by other sandboxed agents on this host — see "Experimental: socket-free file-spool transport" in docs/agent.md. Stored as <code>features.file_spool_transport</code> (the <code>TCLAUDE_EXPERIMENTAL_FILE_TRANSPORT=1</code> env var also enables it).</span>
+      </div>
     </div>
 
     <div class="cfg-section">

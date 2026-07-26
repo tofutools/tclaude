@@ -135,6 +135,33 @@ test('Config treats agent directory parent mounting as default-on with an explic
   await mounted.unmount();
 });
 
+test('Config treats the file-spool transport flag as default-off with an explicit opt-in', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = '{}';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  const checkbox = mounted.container.querySelector('#cfg-feature-file-spool-transport');
+  assert.equal(checkbox.checked, false, 'absent key loads as unchecked');
+  assert.equal(adapter.assembleConfig().features?.file_spool_transport, undefined,
+    'unchecked default stays omitted');
+
+  raw = JSON.stringify({ features: { file_spool_transport: true } });
+  await adapter.loadConfigTab();
+  assert.equal(checkbox.checked, true, 'explicit true loads as checked');
+  assert.equal(adapter.assembleConfig().features.file_spool_transport, true,
+    'checked persists the explicit opt-in');
+  await mounted.unmount();
+});
+
 test('Config saves live wizard and slop activity-bot selections over their loaded defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([

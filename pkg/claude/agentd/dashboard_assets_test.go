@@ -850,8 +850,10 @@ func TestDashboardAssets_UsageReadoutWired(t *testing.T) {
 // config.TestProcessesEnabled / config.TestFeaturesConfig_RoundTrips.
 func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 	owners := map[string][]string{
-		"js/config-form-markup.js":  {`id="cfg-feature-processes"`, `features.processes`},
-		"js/config-form-adapter.js": {"#cfg-feature-processes", "feats.processes = true"},
+		"js/config-form-markup.js": {`id="cfg-feature-processes"`, `features.processes`,
+			`id="cfg-feature-file-spool-transport"`, `features.file_spool_transport`},
+		"js/config-form-adapter.js": {"#cfg-feature-processes", "feats.processes = true",
+			"#cfg-feature-file-spool-transport", "feats.file_spool_transport = true"},
 	}
 	for name, needles := range owners {
 		contents := string(mustReadFS(dashboardAssetsFS, name))
