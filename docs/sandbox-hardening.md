@@ -441,9 +441,11 @@ as the warning above, and records it on the session row. The badge then reads:
 
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
 something is off; hover for which of the three it is. The one exception to
-purely informational warnings is an active temporary sandbox override: its ⚠
-is clickable and restores the agent's preserved normal sandbox configuration.
-Ordinary unconfined and unverified warnings do not dispatch that action.
+purely informational warnings is an active temporary sandbox override: its
+badge is clickable and restores the agent's preserved normal sandbox
+configuration. That badge is normally ⚠, but remains 🔒 if higher-precedence
+policy keeps the sandbox on. Ordinary unconfined and unverified warnings do not
+dispatch that action.
 
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's

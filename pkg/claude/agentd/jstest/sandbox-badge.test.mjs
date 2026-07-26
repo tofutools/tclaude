@@ -502,6 +502,23 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
     }
   });
 
+  await t.test('a temporary override kept on by managed policy is still a restore lock', async () => {
+    const mounted = await mount({
+      harness: 'claude', sandbox_mode: 'off',
+      os_sandbox_state: 'on',
+      os_sandbox_source: '/etc/claude-code/managed-settings.json (managed policy)',
+      temporary_sandbox_mode: 'off',
+    });
+    try {
+      const badge = mounted.container.querySelector('.sandbox-badge');
+      assert.equal(badge.textContent.trim(), '🔒');
+      assert.equal(badge.dataset.action, 'restore');
+      assert.match(badge.title, /preserved normal sandbox configuration/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   await t.test('an ordinary unconfined warning is information, not an unlock action', async () => {
     const mounted = await mount({
       harness: 'codex', sandbox_mode: 'danger-full-access',

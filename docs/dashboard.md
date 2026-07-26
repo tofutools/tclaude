@@ -226,8 +226,9 @@ The bridge also expires after five minutes if the daemon exits or cannot run
 its normal cleanup.
 
 The live row badge is a shortcut to the same operation: click **🔒** to restart
-temporarily without the sandbox, then click the **⚠** produced by that override
-to restore the preserved configuration. Other warning badges — an agent whose
+temporarily without the sandbox, then click the resulting badge — normally
+**⚠**, but still **🔒** if higher-precedence policy keeps the sandbox on — to
+restore the preserved configuration. Other warning badges — an agent whose
 normal launch is unconfined or whose verdict is unverified — remain
 informational. Both transitions ask for confirmation; use **Ctrl/Cmd+Enter** to
 confirm or **Escape** to cancel.
