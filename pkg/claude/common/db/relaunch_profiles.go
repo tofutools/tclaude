@@ -241,13 +241,16 @@ func SetTemporarySandboxMode(
 		profile = &AgentRelaunchProfile{Version: RelaunchProfileVersion}
 	}
 	if override != nil {
+		mode := strings.TrimSpace(*override)
+		if mode == "" {
+			return errors.New("SetTemporarySandboxMode: override mode required")
+		}
 		if profile.SandboxMode == nil {
 			profile.SandboxMode = stringPtr(strings.TrimSpace(normalMode))
 		}
 		if profile.SandboxModeSource == nil {
 			profile.SandboxModeSource = stringPtr(strings.TrimSpace(normalSource))
 		}
-		mode := strings.TrimSpace(*override)
 		profile.TemporarySandboxMode = &mode
 	} else {
 		profile.TemporarySandboxMode = nil

@@ -244,7 +244,10 @@ export async function handleRowAction(action) {
         });
         if (!r.ok) {
           let detail = await r.text();
-          try { detail = JSON.parse(detail).message || detail; } catch (_) { /* plain error */ }
+          try {
+            const parsed = JSON.parse(detail);
+            detail = parsed.error || parsed.message || detail;
+          } catch (_) { /* plain error */ }
           toast(`Sandbox restart failed: ${detail}`, true);
           refresh();
           return;

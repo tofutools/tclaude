@@ -188,6 +188,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	normalSandboxMode := sandboxMode
 	normalSandboxModeSource := sandboxModeSource
 	if temporarySandboxMode != nil {
+		if strings.TrimSpace(*temporarySandboxMode) == "" {
+			return nil, fmt.Errorf("invalid temporary sandbox override: mode is empty")
+		}
 		sandboxMode, err = harness.ValidateSandboxMode(h, *temporarySandboxMode)
 		if err != nil {
 			return nil, fmt.Errorf("invalid temporary sandbox override: %w", err)
