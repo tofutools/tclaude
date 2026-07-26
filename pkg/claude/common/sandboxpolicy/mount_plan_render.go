@@ -63,7 +63,11 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 			return MountPlan{}, fmt.Errorf(
 				"break_glass_filesystem[%d].access %q is invalid (want read or write)", i, grant.Access)
 		}
-		grants = append(grants, FilesystemGrant{Path: grant.Path, Access: grant.Access})
+		// A direct conversion rather than a field-by-field literal: if the two
+		// grant shapes ever diverge this stops compiling, which is exactly the
+		// moment to decide what the new field means for the mount plan, instead
+		// of silently dropping it here.
+		grants = append(grants, FilesystemGrant(grant))
 	}
 	return RenderMountPlanFromGrants(grants)
 }
