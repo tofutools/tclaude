@@ -54,6 +54,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
+    ssh_workaround: seed?.ssh_workaround !== false,
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
@@ -91,6 +92,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (remote != null) body.remote_control = remote;
   const autoMemory = (!h || h.can_auto_memory) ? readTri(draft.auto_memory) : null;
   if (autoMemory != null) body.auto_memory = autoMemory;
+  if (h?.can_ssh_workaround) body.ssh_workaround = !!draft.ssh_workaround;
   for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;
   }

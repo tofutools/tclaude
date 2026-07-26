@@ -55,6 +55,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.AutoMemory != nil {
 		merged.AutoMemory = overlay.AutoMemory
 	}
+	if overlay.SSHWorkaround != nil {
+		merged.SSHWorkaround = overlay.SSHWorkaround
+	}
 	if overlay.AutoCompactWindow != nil {
 		merged.AutoCompactWindow = overlay.AutoCompactWindow
 	}

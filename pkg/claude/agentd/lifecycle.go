@@ -1172,11 +1172,21 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
 	remoteControl := launchConfig.RemoteControl
-	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(convID)
+	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(convID, launchConfig.SSHWorkaround)
 	if snapshotErr != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + snapshotErr.Error()
 		return res
+	}
+	if resumePolicy != nil && resumePolicy.Snapshot != nil {
+		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
+			*resumePolicy.Snapshot, launchConfig.SSHWorkaround)
+		if refreshErr != nil {
+			res.Action = "error"
+			res.Detail = "prepare Codex SSH workaround: " + refreshErr.Error()
+			return res
+		}
+		resumePolicy.Snapshot = &refreshed
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
 	if resumePolicy != nil {
@@ -1429,6 +1439,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		approval = harness.ApprovalUntrusted
 	}
 	no := false
+	sshWorkaround := harnessName == harness.CodexName
 	zero := int64(0)
 	legacy := db.AgentRelaunchProfile{
 		Version:     db.RelaunchProfileVersion,
@@ -1436,6 +1447,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
 		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
 		RemoteControl: &no, AutoMemory: &no, AutoCompactWindow: &empty,
+		SSHWorkaround: &sshWorkaround,
 	}
 	profile := db.ConversationResumeProfile{
 		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: observed.Cwd.Path, ResumeProvenance: encoded,
@@ -2788,14 +2800,25 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	var autoReviewSet, trustDirSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote string
+	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
+	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
+	}
+	sshWorkaround, sshWorkaroundSet, sshWorkaroundNote, fieldFail := resolveBoolLaunchField(
+		"ssh_workaround", body.SSHWorkaround != nil && *body.SSHWorkaround, body.SSHWorkaround != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.SSHWorkaround },
+		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	if !sshWorkaroundSet {
+		sshWorkaround, _ = harness.ResolveSSHWorkaround(h, nil)
 	}
 	body.TrustDir, trustDirSet, trustDirNote, fieldFail = resolveBoolLaunchField(
 		"trust_dir", body.TrustDir, body.TrustDirSpecified(), h.Name, profileTiers,
@@ -2838,7 +2861,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -2861,6 +2884,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
+	if sandboxMode != harness.SandboxManagedProfile {
+		sshWorkaround = false
+	}
+	// Persist the resolved posture in the audit request as an explicit boolean,
+	// including the default-on case and an operator's opt-out.
+	body.SSHWorkaround = &sshWorkaround
 	// body.ApprovalPolicy is already profile-merged above (resolveStringLaunchField
 	// overlays the profile tiers without defaulting), so an empty value here means
 	// NOTHING chose a posture — neither an explicit flag nor a spawn profile. Only
@@ -2982,6 +3011,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
+	}
+	if effectiveSandbox.ProfilesOmitted && sshWorkaround {
+		sshWorkaround = false
+		body.SSHWorkaround = &sshWorkaround
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			"SSH workaround disabled because sandbox profiles were explicitly omitted")
 	}
 	resolvedLaunch.SandboxPolicy = agent.SummarizeSandboxPolicy(effectiveSandbox)
 
@@ -3218,6 +3253,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Effort:                     effort,
 		Model:                      model,
 		Harness:                    h.Name,
+		SSHWorkaround:              sshWorkaround,
+		SSHWorkaroundSet:           true,
 		SandboxMode:                sandboxMode,
 		SandboxModeSource:          sandboxSource,
 		AskUserQuestionTimeout:     askTimeout,
@@ -3393,6 +3430,12 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn resolves it against the harness registry
 	// before building the params).
 	Harness string
+	// SSHWorkaround is the already-resolved Codex Git-over-SSH compatibility
+	// posture. It is frozen into the durable relaunch profile at enrollment.
+	SSHWorkaround bool
+	// SSHWorkaroundSet preserves an explicit false through executeSpawn's
+	// safety-net profile overlay.
+	SSHWorkaroundSet bool
 	// SandboxMode is the resolved launch sandbox mode for a harness that
 	// takes one (Codex: the managed "tclaude-agent" profile by default), or "" to omit the
 	// flag (Claude Code, or no sandbox handling). Resolved + cwd-guarded at
@@ -3993,8 +4036,25 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.SSHWorkaround, p.SSHWorkaroundSet, _, fail = resolveBoolLaunchField(
+		"ssh_workaround", p.SSHWorkaround, p.SSHWorkaroundSet, h.Name, tiers,
+		func(prof *db.SpawnProfile) *bool { return prof.SSHWorkaround },
+		func(v bool) (bool, error) { return harness.ResolveSSHWorkaround(h, &v) })
+	if fail != nil {
+		return fail
+	}
+	if !p.SSHWorkaroundSet {
+		p.SSHWorkaround, err = harness.ResolveSSHWorkaround(h, nil)
+		if err != nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_ssh_workaround", err.Error()}
+		}
+		p.SSHWorkaroundSet = true
+	}
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	if p.SandboxMode != harness.SandboxManagedProfile {
+		p.SSHWorkaround = false
 	}
 	// As at the HTTP boundary: empty HERE (after the profile tiers above) means
 	// no flag and no profile chose a posture, so the harness default may be
@@ -4197,8 +4257,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			agentDirectoryCleanup()
 		}
 	}()
-	if p.EffectiveSandbox != nil && len(p.EffectiveSandbox.Effective.AgentDirectories) > 0 {
-		materialized, cleanup, err := materializeAgentDirectories(*p.EffectiveSandbox, label)
+	if p.EffectiveSandbox != nil {
+		materialized, cleanup, err := prepareCodexSSHWorkaroundForNewLaunch(
+			*p.EffectiveSandbox, label, p.SSHWorkaround)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", err.Error()}
 		}
@@ -5140,24 +5201,28 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		if err != nil {
 			return err
 		}
-		if existing == nil {
-			profile := relaunchProfileForSpawn(p)
-			// A pending Codex spawn is enrolled after its session row has
-			// materialised. Its persisted pending-spawn intent predates some
-			// launch flags, while SaveSession has already recorded the exact
-			// posture as the unmanaged conversation fallback. Promote that
-			// snapshot when present; pre-fork Claude enrollment has no
-			// conversation profile yet and correctly uses resolved spawnParams.
-			conversation, err := db.ConversationResumeProfileForConv(convID)
-			if err != nil {
-				return err
-			}
-			if conversation != nil && conversation.FallbackRelaunch != nil {
-				profile = *conversation.FallbackRelaunch
-			}
-			if err := db.SetAgentRelaunchProfile(agentID, profile); err != nil {
-				return err
-			}
+		profile := relaunchProfileForSpawn(p)
+		// A pending Codex spawn is enrolled after its session row has
+		// materialised. Its persisted pending-spawn intent predates some
+		// launch flags, while SaveSession has already recorded the exact
+		// observable posture as the unmanaged conversation fallback. Overlay
+		// that snapshot, then any stable agent values already written by a
+		// concurrent projection/retry. Birth-time-only fields remain underneath:
+		// SSHWorkaround is not a session column, so replacing the whole profile
+		// would turn an explicit opt-out into unknown and then back into Codex's
+		// default-on posture on clone/reincarnation.
+		conversation, err := db.ConversationResumeProfileForConv(convID)
+		if err != nil {
+			return err
+		}
+		if conversation != nil && conversation.FallbackRelaunch != nil {
+			profile = *db.ComposeAgentRelaunchProfile(&profile, conversation.FallbackRelaunch)
+		}
+		if existing != nil {
+			profile = *db.ComposeAgentRelaunchProfile(&profile, existing)
+		}
+		if err := db.SetAgentRelaunchProfile(agentID, profile); err != nil {
+			return err
 		}
 		relaunchProfileBound = true
 		return nil

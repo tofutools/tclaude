@@ -26,7 +26,7 @@ func TestResolveResumeSandboxPolicyRejectsAmbiguousMultiGroupAssignment(t *testi
 		require.NoError(t, err)
 	}
 
-	_, err = resolveResumeSandboxPolicy(convID)
+	_, err = resolveResumeSandboxPolicy(convID, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
@@ -58,7 +58,7 @@ func TestResolveResumeSandboxPolicyDoesNotInferLegacyGroupFromStaleProfileID(t *
 		require.NoError(t, assignErr)
 	}
 
-	_, err = resolveResumeSandboxPolicy(convID)
+	_, err = resolveResumeSandboxPolicy(convID, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot determine the sandbox source group")
 }
@@ -77,7 +77,7 @@ func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, db.SetGlobalSandboxProfile("ambient"))
 
-	resolved, err := resolveResumeSandboxPolicy(convID)
+	resolved, err := resolveResumeSandboxPolicy(convID, false)
 	require.NoError(t, err)
 	require.NotNil(t, resolved)
 	require.NotNil(t, resolved.Snapshot)

@@ -56,7 +56,7 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
-  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner', 'permissionOverrides',
+  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -333,7 +333,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'contextFeatures']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'sshWorkaround', 'contextFeatures']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -1043,6 +1043,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-auto-memory" type="checkbox" checked=${draft.autoMemory} disabled=${busy}
         onChange=${(event) => update('autoMemory', event.currentTarget.checked)} />
       Keep Claude Code auto memory on — off by default to stop agents cross-polluting one project memory
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
+      title="Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; disable it if the workaround conflicts with your SSH setup.">
+      <input id="agent-spawn-ssh-workaround" type="checkbox" checked=${draft.sshWorkaround} disabled=${busy}
+        onChange=${(event) => update('sshWorkaround', event.currentTarget.checked)} />
+      Use Codex SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">

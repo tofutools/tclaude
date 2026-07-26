@@ -198,9 +198,12 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	// membership add + pending-name + inbox briefing + post-init (/rename +
 	// welcome) the inline path runs — and, because the conv-id now exists, it
 	// only send-keys to a Codex pane that has cleared its startup gates.
+	sshWorkaround := codexSSHWorkaroundEnabledInSnapshot(ps.EffectiveSandbox)
 	p := spawnParams{
 		AgentID:          ps.AgentID,
 		EffectiveSandbox: ps.EffectiveSandbox,
+		SSHWorkaround:    sshWorkaround,
+		SSHWorkaroundSet: true,
 		Role:             ps.Role,
 		Descr:            ps.Descr,
 		Name:             ps.Name,

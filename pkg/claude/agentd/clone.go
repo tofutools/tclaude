@@ -306,8 +306,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	if noCopyConv {
 		label = generateSpawnLabel()
 		agentDirectoryCleanup := func() {}
-		if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
-			materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, label)
+		if effectiveSandbox != nil {
+			materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
+				*effectiveSandbox, label, relaunch.SSHWorkaround)
 			if materializeErr != nil {
 				return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 			}
@@ -450,8 +451,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	}
 	newConv = copyResult.NewConvID
 	agentDirectoryCleanup := func() {}
-	if effectiveSandbox != nil && len(effectiveSandbox.Effective.AgentDirectories) > 0 {
-		materialized, cleanup, materializeErr := materializeAgentDirectories(*effectiveSandbox, newConv)
+	if effectiveSandbox != nil {
+		materialized, cleanup, materializeErr := prepareCodexSSHWorkaroundForNewLaunch(
+			*effectiveSandbox, newConv, relaunch.SSHWorkaround)
 		if materializeErr != nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusInternalServerError, Code: "spawn", Msg: materializeErr.Error()}
 		}

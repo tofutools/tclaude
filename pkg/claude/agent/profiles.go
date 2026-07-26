@@ -71,6 +71,9 @@ type profileJSON struct {
 	// memory so agents sharing a repo don't cross-pollute one project memory
 	// store. Claude-Code-only.
 	AutoMemory *bool `json:"auto_memory,omitempty"`
+	// SSHWorkaround is the Codex Git-over-SSH compatibility default. nil leaves
+	// the launch default in place; false explicitly opts out.
+	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 
 	// Identity / enrollment fields.
 	AgentName      string `json:"agent_name,omitempty"`
@@ -687,6 +690,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}{
 		{"auto_review", p.AutoReview}, {"trust_dir", p.TrustDir}, {"remote_control", p.RemoteControl},
 		{"auto_memory", p.AutoMemory},
+		{"ssh_workaround", p.SSHWorkaround},
 	})...)
 	if len(launch) > 0 {
 		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))

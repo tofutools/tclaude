@@ -18,7 +18,7 @@ type resumeSandboxPolicy struct {
 // current global/group/explicit registry state. The previous snapshot supplies
 // only stable provenance and private agent-directory bindings; its ordinary
 // filesystem/environment values are not launch authority after resume.
-func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
+func resolveResumeSandboxPolicy(convID string, sshWorkaround bool) (*resumeSandboxPolicy, error) {
 	previous, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
@@ -58,11 +58,23 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
+	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
+	if err != nil {
+		return nil, err
+	}
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		return nil, err
 	}
-	current, err = reconcileAgentDirectoriesForResume(current, *previous, agentID)
+	// The SSH config is regenerated for every process generation. Do not pin it
+	// to the predecessor's launch-keyed root: newly resolving it under the
+	// stable agent key lets the old root be retired once the predecessor exits,
+	// even when other authored agent directories were removed at the same time.
+	previousForReconcile, err := configureCodexSSHWorkaroundDeclaration(*previous, false)
+	if err != nil {
+		return nil, err
+	}
+	current, err = reconcileAgentDirectoriesForResume(current, previousForReconcile, agentID)
 	if err != nil {
 		return nil, err
 	}

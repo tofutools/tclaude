@@ -198,7 +198,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
     const h = harnessByName(catalog, harness);
     const defaults = harnessDefaults(h);
     setCustomModel(false);
-    setDraft((current) => ({ ...current, harness, model: '', effort: '', ...defaults, trust_dir: '', remote_control: '', auto_memory: '' }));
+    setDraft((current) => ({
+      ...current, harness, model: '', effort: '', ...defaults,
+      trust_dir: '', remote_control: '', auto_memory: '',
+      ssh_workaround: !!h?.can_ssh_workaround,
+    }));
   };
   const [helpOpen, setHelpOpen] = useState('');
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
@@ -295,6 +299,7 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Trust dir" hidden=${hEntry && !hEntry.can_dir_trust} title=${`Pre-trust the launch directory so the agent doesn't freeze on the harness's trust-folder dialog${hEntry?.dir_trust_store ? ` (edits ${hEntry.dir_trust_store})` : ''}.`}><${Select} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
+    <${Row} label="SSH workaround" hidden=${!hEntry?.can_ssh_workaround} title="Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; uncheck it if the workaround conflicts with your setup."><input id="profile-editor-ssh-workaround" type="checkbox" checked=${draft.ssh_workaround} onChange=${(event) => change(setDraft, 'ssh_workaround', event.currentTarget.checked)} /></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role', 'role', 'optional — e.g. researcher, planner'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     ${[['Sync worktree', 'sync_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}

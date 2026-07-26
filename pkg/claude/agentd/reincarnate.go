@@ -349,10 +349,20 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())
 		return
 	}
-	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(target)
+	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(target, relaunch.SSHWorkaround)
 	if policyErr != nil {
 		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
 		return
+	}
+	if relaunchPolicy != nil && relaunchPolicy.Snapshot != nil {
+		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
+			*relaunchPolicy.Snapshot, relaunch.SSHWorkaround)
+		if refreshErr != nil {
+			writeError(w, http.StatusInternalServerError, "spawn",
+				"prepare Codex SSH workaround: "+refreshErr.Error())
+			return
+		}
+		relaunchPolicy.Snapshot = &refreshed
 	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
 	if relaunchPolicy != nil {
