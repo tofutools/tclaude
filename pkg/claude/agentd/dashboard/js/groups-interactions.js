@@ -1,6 +1,11 @@
 import { createContext, h } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import {
+  applyMenuFilter, bindMenuHover, handleMenuFilterKeyDown,
+  MENU_FILTER_PLACEHOLDER, MENU_FILTER_WIZARD_PLACEHOLDER,
+} from './menu-filter.js';
+import { isWizardActive } from './slop.js';
 
 const html = htm.bind(h);
 const GroupsInteractions = createContext(null);
@@ -108,8 +113,13 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   const interactions = useGroupsInteractions();
   const buttonRef = useRef(null);
   const menuRef = useRef(null);
+  const filterRef = useRef(null);
   const [opensUp, setOpensUp] = useState(false);
+  const [query, setQuery] = useState('');
   const open = interactions.openMenuKey === menuKey;
+  // A closed menu is always unfiltered, so the reset never has to race the
+  // state update that clears the box on close.
+  const activeQuery = open ? query : '';
 
   useLayoutEffect(() => interactions.registerMenu(menuKey, {
     button: buttonRef.current,
@@ -119,11 +129,35 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
   useLayoutEffect(() => {
     const menu = menuRef.current;
     const dismissItem = (event) => {
+      // The filter box lives inside the menu; only an item click dismisses.
       if (event.target.closest('button')) interactions.closeMenu();
     };
     menu.addEventListener('click', dismissItem);
-    return () => menu.removeEventListener('click', dismissItem);
+    const unbindHover = bindMenuHover(menu, { resolveInput: () => filterRef.current });
+    return () => {
+      menu.removeEventListener('click', dismissItem);
+      unbindHover();
+    };
   }, [menuKey, interactions.closeMenu]);
+
+  // Items are opaque children that re-render on every 2s snapshot publish, and
+  // conditional ones come and go, so the filter is re-applied after each render
+  // rather than only when the query changes. applyMenuFilter writes attributes
+  // no vnode declares, so it cannot conflict with Preact's diff.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (menu) applyMenuFilter(menu, activeQuery, { input: filterRef.current });
+  });
+
+  // Opening focuses the box so the menu is typeable straight away; closing
+  // clears it so the next open starts from the full list.
+  useLayoutEffect(() => {
+    if (!open) {
+      setQuery('');
+      return;
+    }
+    queueMicrotask(() => filterRef.current?.focus());
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -158,7 +192,21 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
       class=${`action-menu${open ? ' open' : ''}${opensUp ? ' opens-up' : ''}`}
       data-preact-menu="1"
       role="menu"
-    >${children}</div>
+    ><input
+        ref=${filterRef}
+        class="action-menu-filter"
+        type="text"
+        autocomplete="off"
+        spellcheck=${false}
+        aria-label="Filter actions"
+        placeholder=${isWizardActive() ? MENU_FILTER_WIZARD_PLACEHOLDER : MENU_FILTER_PLACEHOLDER}
+        value=${query}
+        onInput=${(event) => setQuery(event.currentTarget.value)}
+        onKeyDown=${(event) => handleMenuFilterKeyDown(menuRef.current, event, {
+    hasQuery: !!query,
+    clearQuery: () => setQuery(''),
+  })}
+      />${children}</div>
   `;
   return wrapperClass ? html`<span class=${wrapperClass}>${body}</span>` : body;
 }

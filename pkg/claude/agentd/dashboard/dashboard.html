@@ -309,6 +309,11 @@
       <div class="filter-bar-cog">
         <button class="cog-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="More group actions — import, clean up, and manage group resources" aria-label="More group actions"><span class="cog-glyph">⚙︎</span></button>
         <div class="action-menu" role="menu">
+          <!-- Type-to-filter over the items below. toolbar-actions-menu.js wires
+               it through the shared menu-filter core (the same one the Preact
+               per-group / per-agent cogs use) and sets the themed placeholder on
+               open; the items themselves stay plain click targets. -->
+          <input class="action-menu-filter" type="text" autocomplete="off" spellcheck="false" aria-label="Filter actions" placeholder="filter actions…">
           <button role="menuitem" id="group-import-open" title="Import a group from a .zip archive produced by ⤓ export — recreates the group, its agents, permissions and conversations. Shows a preview with any collisions before anything is written."><span class="tpl-word-regular">⤒ import</span><span class="tpl-word-wizard">⤒ unseal an archive</span></button>
           <button role="menuitem" id="cleanup-all-open" title="Bulk cleanup across agents, retired agents and plain conversations — unjoin, retire, delete or reinstate">🧹 clean up</button>
           <button role="menuitem" id="delete-retired-open" title="Permanently delete retired agents — a filterable preview of every retired agent, all ticked, with per-row opt-out before the purge">🗑 delete retired…</button>
