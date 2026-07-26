@@ -1198,3 +1198,12 @@ func ResetBrokerLimiterForTest() func() {
 		resetBrokerEnforcementForTest()
 	}
 }
+
+// ResetBrokerRefusalsForTest clears the process-wide brokered-refusal
+// recorder. It is daemon-wide state (one daemon, one view of the
+// condition), so a test that drives a refusal must start clean or it
+// inherits the previous test's counts.
+func ResetBrokerRefusalsForTest() func() {
+	brokerRefusals.resetForTest()
+	return func() { brokerRefusals.resetForTest() }
+}

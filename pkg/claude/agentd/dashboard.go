@@ -1033,6 +1033,17 @@ type snapshotPayload struct {
 	// chooses real versus WHAT-IF per row; this flag reveals hypothetical
 	// per-agent badges even when real spend also exists.
 	CostTabWhatIf bool `json:"cost_tab_whatif"`
+	// BrokerRefusalsUnplaceable counts brokered hook/statusline requests
+	// the daemon refused because it could not place the caller at all,
+	// inside the refusal recorder's window.
+	//
+	// It is a COUNT and not an attribution on purpose: with no resolved
+	// row there is nothing trustworthy to attribute to, and the only
+	// identifier such a request carries is the caller-chosen session id
+	// the refusal already declined to trust. A non-zero value means some
+	// agent is losing telemetry; which one has to be found from the
+	// daemon log, and that is the honest limit of what this can say.
+	BrokerRefusalsUnplaceable int `json:"broker_refusals_unplaceable,omitempty"`
 	// UsageTabVisible is true while either subscription provider has retained
 	// quota samples or OpenCode has retained provider activity that needs a
 	// coverage warning in the 90-day history window.
@@ -1722,6 +1733,26 @@ type agentState struct {
 	// hypothetical — only when the WHAT-IF view is active
 	// (snapshot.cost_tab_whatif). Surfaced regardless of liveness, like CostUSD.
 	VirtualCostUSD float64 `json:"virtual_cost_usd,omitempty"`
+	// BrokerRefusals is how many brokered hook/statusline requests the
+	// daemon has REFUSED while resolving them to THIS row, inside the
+	// recorder's window. Non-zero means an agent is losing telemetry:
+	// either this row is shadowing a live session whose pid it shares
+	// (the stale-row case TCL-761 is about), or a caller is presenting a
+	// session id that disagrees with the one its process ancestry
+	// resolves to.
+	//
+	// Attribution is the daemon's own conclusion — the row the ancestry
+	// walk produced — never the session id the refused request claimed.
+	// That field is caller-chosen, and the refusal happened precisely
+	// because it is not trusted; letting it decide what appears on
+	// another agent's row would let any wrapped agent make a peer look
+	// broken on the surface the operator uses to decide where to look.
+	BrokerRefusals int `json:"broker_refusals,omitempty"`
+	// BrokerRefusalDetail names the refusal kind behind BrokerRefusals.
+	BrokerRefusalDetail string `json:"broker_refusal_detail,omitempty"`
+	// BrokerRefusalSince is when the current run of refusals began
+	// (RFC3339), so the UI can say how long this has been happening.
+	BrokerRefusalSince string `json:"broker_refusal_since,omitempty"`
 	// ExitReason is why a now-offline agent's session ended: a graceful
 	// SessionEnd `reason`, a daemon-owned clean reason, or 'unexpected'
 	// when a harness-specific reaper path has a positive abnormal-death
@@ -2040,6 +2071,13 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 			slog.Warn("dashboard: read exit_reason failed",
 				"session", pick.ID, "error", err)
 		}
+	}
+	// Brokered-request refusals recorded against THIS row. Purely
+	// daemon-derived; see the field comments and broker_refusals.go.
+	if refusal := brokerRefusals.forSession(pick.ID); refusal != nil {
+		out.BrokerRefusals = refusal.Count
+		out.BrokerRefusalDetail = refusal.Reason
+		out.BrokerRefusalSince = refusal.First.UTC().Format(time.RFC3339)
 	}
 	if recovery, err := db.AgentRecoveryForConv(pick.ConvID); err == nil && recovery != nil {
 		now := time.Now()
@@ -2818,6 +2856,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = showOnSub
+	out.BrokerRefusalsUnplaceable = brokerRefusals.unplaceableCount()
 	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles

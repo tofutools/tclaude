@@ -252,7 +252,33 @@ export function GroupsList({ host, state, actions }) {
     if (!present) setHoveredGroupKey(null);
   }, [current.groups, hoveredGroupKey]);
 
-  return html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} /><//>`;
+  return html`<${GroupsInteractionProvider}>
+    <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
+    <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />
+  <//>`;
+}
+
+// BrokerRefusalNotice is the machine-level half of TCL-761. The per-agent 🚫
+// badge covers refusals the daemon could place on a row; this covers the ones
+// it could not — a brokered caller whose process ancestry reaches no recorded
+// session at all.
+//
+// It is a bare counter on purpose. The refused request names a session id, and
+// putting THAT on screen would print an unauthenticated string from a caller
+// the daemon just declined to identify — the same reason it is never allowed
+// to decide which row gets a badge. So the notice says only that it is
+// happening and how to go find it, which is all the daemon actually knows.
+export function BrokerRefusalNotice({ snapshot }) {
+  const count = Number(snapshot?.broker_refusals_unplaceable || 0);
+  if (!(count > 0)) return null;
+  const title = 'These callbacks carry telemetry — status, cost, context, directory — for some agent, and it is being dropped.'
+    + ' agentd identifies a brokered caller by walking its process ancestry to a recorded session; these reached none, so there is no row to place them on and no row to warn on.'
+    + ' Usual causes: a sandboxed agent launched outside tclaude, a session row deleted while its pane kept running, or a process re-parented away from its pane.'
+    + ' The daemon log records each refusal with the caller pid.';
+  return html`<div class="broker-refusal-notice" role="status" title=${title}>
+    <span class="broker-refusal-notice-glyph" aria-hidden="true">🚫</span>
+    <span>agentd refused ${count} brokered callback${count === 1 ? '' : 's'} from ${count === 1 ? 'a caller' : 'callers'} it could not place — telemetry for at least one agent is being lost. See the daemon log for the caller pid.</span>
+  </div>`;
 }
 
 export function mountGroupsIsland({

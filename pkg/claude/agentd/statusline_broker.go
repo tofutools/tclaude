@@ -76,6 +76,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
+		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return
@@ -104,6 +105,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
 		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
 			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
+		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

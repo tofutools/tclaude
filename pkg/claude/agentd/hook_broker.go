@@ -114,6 +114,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
+		// No row resolved, so there is nothing trustworthy to attribute
+		// this to — counted only. See broker_refusals.go.
+		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
 		writeError(w, http.StatusForbidden, "auth",
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
@@ -142,6 +145,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
 			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
 			"event", req.Input.HookEventName, "module", "hooks")
+		// Identity DID resolve here, so the refusal is attributed to the
+		// row the DAEMON concluded — never to the claimed one, which is
+		// the caller's own string. See broker_refusals.go.
+		brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
 		writeError(w, http.StatusForbidden, "auth",
 			"claimed session id does not match the session resolved for this caller")
 		return

@@ -88,10 +88,18 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// (Claude Code) no-model row stays clean UNLESS Remote Access is armed,
 	// in which case the bare 📱 indicator still earns a minimal line.
 	must("if (!harness || harness === 'claude')", "no-model Claude Code rows stay clean; Codex still badges")
-	must("const indicated = (member.online && state.remote_control) || !!sandboxIndicator(member);",
-		"an armed remote or a recorded sandbox verdict still earns a minimal line on a pre-tick CC row")
-	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}</div>` : null;",
-		"the pre-tick line carries both indicators")
+	must("const indicated = (member.online && state.remote_control)",
+		"an armed remote still earns a minimal line on a pre-tick CC row")
+	must("|| !!sandboxIndicator(member)",
+		"so does a recorded sandbox verdict, which is known before the first tick")
+	// TCL-761: and so does a run of refused brokered callbacks — that agent
+	// never GETS a model (the status line is what stamps one, and it is
+	// exactly what is being refused), so the pre-tick branch is the only one
+	// it ever renders through. Behaviour: jstest/broker-refusal-badge.test.mjs.
+	must("|| Number(state.broker_refusals || 0) > 0;",
+		"a starved agent must be badged on the branch it is stuck on")
+	must("return indicated ? html`<div class=\"agent-harness\">${sandbox}${remote}${refused}</div>` : null;",
+		"the pre-tick line carries every armed indicator")
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.

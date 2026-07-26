@@ -16,26 +16,27 @@ import (
 // without importing the unexported type. Adding fields here is cheap
 // when more assertions need them.
 type dashSnapshot struct {
-	Version                  string             `json:"version"`
-	Groups                   []dashGroup        `json:"groups"`
-	Agents                   []dashAgent        `json:"agents"`
-	AgentRosterAuthoritative bool               `json:"agent_roster_authoritative"`
-	Ungrouped                []dashAgent        `json:"ungrouped"`
-	Conversations            []dashConversation `json:"conversations"`
-	Retired                  []dashRetired      `json:"retired"`
-	Replaced                 []dashReplaced     `json:"replaced"`
-	Pending                  []dashPending      `json:"pending"`
-	Usage                    dashUsage          `json:"usage"`
-	Harnesses                []dashHarness      `json:"harnesses"`
-	NotificationsEnabled     bool               `json:"notifications_enabled"`
-	CostTabVisible           bool               `json:"cost_tab_visible"`
-	CostTabWhatIf            bool               `json:"cost_tab_whatif"`
-	PluginsTabVisible        bool               `json:"plugins_tab_visible"`
-	DebugTabVisible          bool               `json:"debug_tab_visible"`
-	ProcessesEnabled         bool               `json:"processes_enabled"`
-	TerminalPaletteShortcut  bool               `json:"terminal_command_palette_shortcut_enabled"`
-	RetiredTotal             int                `json:"retired_total"`
-	RemoteAccess             dashRemoteAccess   `json:"remote_access"`
+	Version                   string             `json:"version"`
+	Groups                    []dashGroup        `json:"groups"`
+	Agents                    []dashAgent        `json:"agents"`
+	AgentRosterAuthoritative  bool               `json:"agent_roster_authoritative"`
+	Ungrouped                 []dashAgent        `json:"ungrouped"`
+	Conversations             []dashConversation `json:"conversations"`
+	Retired                   []dashRetired      `json:"retired"`
+	Replaced                  []dashReplaced     `json:"replaced"`
+	Pending                   []dashPending      `json:"pending"`
+	Usage                     dashUsage          `json:"usage"`
+	Harnesses                 []dashHarness      `json:"harnesses"`
+	NotificationsEnabled      bool               `json:"notifications_enabled"`
+	CostTabVisible            bool               `json:"cost_tab_visible"`
+	CostTabWhatIf             bool               `json:"cost_tab_whatif"`
+	PluginsTabVisible         bool               `json:"plugins_tab_visible"`
+	DebugTabVisible           bool               `json:"debug_tab_visible"`
+	ProcessesEnabled          bool               `json:"processes_enabled"`
+	TerminalPaletteShortcut   bool               `json:"terminal_command_palette_shortcut_enabled"`
+	RetiredTotal              int                `json:"retired_total"`
+	RemoteAccess              dashRemoteAccess   `json:"remote_access"`
+	BrokerRefusalsUnplaceable int                `json:"broker_refusals_unplaceable,omitempty"`
 }
 
 // dashRemoteAccess mirrors agentd.dashboardRemoteAccess — the Config tab's
@@ -211,6 +212,9 @@ type dashState struct {
 	RecoveryBackoff         int    `json:"recovery_backoff_seconds,omitempty"`
 	RecoveryNextAttempt     string `json:"recovery_next_attempt_at,omitempty"`
 	RecoveryLastExitCode    *int   `json:"recovery_last_exit_code,omitempty"`
+	BrokerRefusals          int    `json:"broker_refusals,omitempty"`
+	BrokerRefusalDetail     string `json:"broker_refusal_detail,omitempty"`
+	BrokerRefusalSince      string `json:"broker_refusal_since,omitempty"`
 }
 
 // fetchSnapshotOnly fetches ONLY /api/snapshot (a single request). Use it when
