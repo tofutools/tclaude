@@ -3,9 +3,11 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,6 +89,28 @@ func TestTclaudeLayerHostAvailabilityDarwinUsesSeatbeltCapability(t *testing.T) 
 		return errors.New("deny probe failed")
 	}
 	require.ErrorContains(t, TclaudeLayerHostAvailability(), "deny-write capability")
+}
+
+func TestDarwinSeatbeltCapabilityProbeHasDeadline(t *testing.T) {
+	oldRun := runDarwinSeatbeltProbe
+	t.Cleanup(func() { runDarwinSeatbeltProbe = oldRun })
+	t.Setenv("TMPDIR", "/private/var/folders/ab/runtime/T")
+
+	runDarwinSeatbeltProbe = func(
+		ctx context.Context,
+		_, _, _ string,
+	) ([]byte, error) {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok, "the dashboard/launch capability predicate must be bounded")
+		remaining := time.Until(deadline)
+		assert.Greater(t, remaining, 4*time.Second)
+		assert.LessOrEqual(t, remaining, darwinSeatbeltProbeTimeout)
+		return nil, context.DeadlineExceeded
+	}
+
+	err := probeDarwinSeatbeltCapability(darwinSeatbeltExecutable)
+	require.ErrorContains(t, err, "timed out after 5s")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) {

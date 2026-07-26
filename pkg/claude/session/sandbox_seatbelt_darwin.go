@@ -3,12 +3,15 @@
 package session
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
@@ -16,22 +19,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-const darwinSeatbeltExecutable = "/usr/bin/sandbox-exec"
+const (
+	darwinSeatbeltExecutable   = "/usr/bin/sandbox-exec"
+	darwinSeatbeltProbeTimeout = 5 * time.Second
+)
 
 var (
-	statDarwinSeatbelt  = os.Stat
-	probeDarwinSeatbelt = func(binary string) error {
-		tmpDir, err := darwinSeatbeltRuntimeTempDir()
-		if err != nil {
-			return err
-		}
-		probePath := filepath.Join(tmpDir, fmt.Sprintf(".tclaude-seatbelt-probe-%d", os.Getpid()))
-		_ = os.Remove(probePath)
-		profile := `(version 1)
-(allow default)
-(deny file-write* (literal (param "TCLAUDE_PROBE")))
-`
-		cmd := exec.Command(
+	statDarwinSeatbelt     = os.Stat
+	runDarwinSeatbeltProbe = func(
+		ctx context.Context,
+		binary, profile, probePath string,
+	) ([]byte, error) {
+		cmd := exec.CommandContext(
+			ctx,
 			binary,
 			"-p", profile,
 			"-DTCLAUDE_PROBE="+probePath,
@@ -39,20 +39,44 @@ var (
 			`test ! -e "$TCLAUDE_PROBE" && ! touch "$TCLAUDE_PROBE"`,
 		)
 		cmd.Env = append(os.Environ(), "TCLAUDE_PROBE="+probePath)
-		output, runErr := cmd.CombinedOutput()
-		if runErr != nil {
-			return fmt.Errorf("sandbox-exec deny-write probe: %w: %s", runErr, output)
-		}
-		if _, statErr := os.Lstat(probePath); !os.IsNotExist(statErr) {
-			_ = os.Remove(probePath)
-			if statErr == nil {
-				return fmt.Errorf("sandbox-exec deny-write probe unexpectedly created %s", probePath)
-			}
-			return fmt.Errorf("inspect sandbox-exec deny-write probe %s: %w", probePath, statErr)
-		}
-		return nil
+		return cmd.CombinedOutput()
 	}
+	probeDarwinSeatbelt = probeDarwinSeatbeltCapability
 )
+
+func probeDarwinSeatbeltCapability(binary string) error {
+	tmpDir, err := darwinSeatbeltRuntimeTempDir()
+	if err != nil {
+		return err
+	}
+	probePath := filepath.Join(tmpDir, fmt.Sprintf(".tclaude-seatbelt-probe-%d", os.Getpid()))
+	_ = os.Remove(probePath)
+	profile := `(version 1)
+(allow default)
+(deny file-write* (literal (param "TCLAUDE_PROBE")))
+`
+	ctx, cancel := context.WithTimeout(context.Background(), darwinSeatbeltProbeTimeout)
+	defer cancel()
+	output, runErr := runDarwinSeatbeltProbe(ctx, binary, profile, probePath)
+	if runErr != nil {
+		if ctx.Err() != nil || errors.Is(runErr, context.DeadlineExceeded) {
+			return fmt.Errorf(
+				"sandbox-exec capability probe timed out after %s: %w",
+				darwinSeatbeltProbeTimeout,
+				context.DeadlineExceeded,
+			)
+		}
+		return fmt.Errorf("sandbox-exec deny-write probe: %w: %s", runErr, output)
+	}
+	if _, statErr := os.Lstat(probePath); !os.IsNotExist(statErr) {
+		_ = os.Remove(probePath)
+		if statErr == nil {
+			return fmt.Errorf("sandbox-exec deny-write probe unexpectedly created %s", probePath)
+		}
+		return fmt.Errorf("inspect sandbox-exec deny-write probe %s: %w", probePath, statErr)
+	}
+	return nil
+}
 
 func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	switch posture {

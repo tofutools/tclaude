@@ -73,8 +73,13 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 (deny file-write*
   (require-all
     (require-any (literal (param "WRITE_DENY_3")) (subpath (param "WRITE_DENY_3")))
-    (require-not (literal (param "WRITE_DENY_3_REOPEN_0")))
-    (require-not (subpath (param "WRITE_DENY_3_REOPEN_0")))
+  ))
+
+(deny file-write*
+  (require-all
+    (require-any (literal (param "WRITE_DENY_4")) (subpath (param "WRITE_DENY_4")))
+    (require-not (literal (param "WRITE_DENY_4_REOPEN_0")))
+    (require-not (subpath (param "WRITE_DENY_4_REOPEN_0")))
   ))
 
 (deny file-read*
@@ -185,6 +190,47 @@ func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 		"the narrower /dev policy must retain a separate write deny with no runtime carveouts")
 }
 
+func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T) {
+	const policySpelling = "/DEV"
+	sameIdentity := func(path string) (seatbeltFileIdentity, bool) {
+		switch path {
+		case "/dev", policySpelling:
+			return seatbeltFileIdentity{dev: 1, ino: 7}, true
+		default:
+			return seatbeltFileIdentity{}, false
+		}
+	}
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: policySpelling,
+				Mode: sandboxpolicy.MountRO,
+			}},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		sameIdentity,
+	)
+	require.NoError(t, err)
+
+	strictParam := ""
+	for _, param := range params {
+		if param.path == policySpelling && strings.HasPrefix(param.name, "WRITE_DENY_") {
+			strictParam = param.name
+			break
+		}
+	}
+	require.NotEmpty(t, strictParam,
+		"identity-equivalent /DEV policy must emit a strict deny beyond the /dev carveout")
+	assert.Contains(t, profile,
+		`(require-any (literal (param "`+strictParam+`")) (subpath (param "`+strictParam+`")))`)
+}
+
 func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 	const socket = "/Users/dev/.tclaude/api/agentd.sock"
 	profile, params, err := renderSeatbeltProfile(
@@ -226,6 +272,41 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 		strings.Count(profile, "\n(deny network-outbound"),
 		"every hide read deny must have one Unix-connect sibling",
 	)
+}
+
+func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
+	const tmuxDir = "/private/tmp/tmux-501"
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: tmuxDir + "/operator-reopen",
+				Mode: sandboxpolicy.MountRW,
+			}},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		tmuxDir,
+		"/private/var/folders/ab/runtime/T",
+		nil,
+	)
+	require.NoError(t, err)
+
+	tmuxDenyParams := []string{}
+	for _, param := range params {
+		if param.path == tmuxDir &&
+			(strings.HasPrefix(param.name, "WRITE_DENY_") ||
+				strings.HasPrefix(param.name, "READ_DENY_")) {
+			tmuxDenyParams = append(tmuxDenyParams, param.name)
+		}
+	}
+	require.Len(t, tmuxDenyParams, 2, "class 4 must emit strict read and write denies")
+	for _, denyParam := range tmuxDenyParams {
+		assert.NotContains(t, profile, denyParam+"_REOPEN",
+			"class-4 read, write, and connect denies cannot inherit descendant reopens")
+	}
 }
 
 func TestSeatbeltCaseAndNFCCandidatesRequireFileIdentity(t *testing.T) {

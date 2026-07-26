@@ -191,10 +191,16 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 
 	// The compatibility paths pierce only the baseline deny. Adding explicit
 	// RO plan entries for /dev and TMPDIR must make the same writes fail.
+	devPolicyPath := darwinSmokeIdentityEquivalentSpelling(t, "/dev", "/DEV")
+	runtimePolicyPath := darwinSmokeIdentityEquivalentSpelling(
+		t,
+		runtimeTempDir,
+		strings.Replace(runtimeTempDir, "/private/", "/PRIVATE/", 1),
+	)
 	restrictedPlan := plan
 	restrictedPlan.Entries = append(append([]sandboxpolicy.MountEntry(nil), plan.Entries...),
-		sandboxpolicy.MountEntry{Path: "/dev", Mode: sandboxpolicy.MountRO},
-		sandboxpolicy.MountEntry{Path: runtimeTempDir, Mode: sandboxpolicy.MountRO},
+		sandboxpolicy.MountEntry{Path: devPolicyPath, Mode: sandboxpolicy.MountRO},
+		sandboxpolicy.MountEntry{Path: runtimePolicyPath, Mode: sandboxpolicy.MountRO},
 	)
 	runDarwinSeatbeltSmokeHelper(
 		t,
@@ -440,6 +446,19 @@ func boolString(value bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func darwinSmokeIdentityEquivalentSpelling(t *testing.T, canonical, candidate string) string {
+	t.Helper()
+	canonicalInfo, err := os.Lstat(canonical)
+	require.NoError(t, err)
+	candidateInfo, err := os.Lstat(candidate)
+	if err == nil && os.SameFile(canonicalInfo, candidateInfo) {
+		t.Logf("exercising identity-equivalent policy spelling %q for %q", candidate, canonical)
+		return candidate
+	}
+	t.Logf("volume keeps %q distinct or unavailable; exercising canonical spelling %q", candidate, canonical)
+	return canonical
 }
 
 func copyDarwinSmokeBinary(t *testing.T, source, destination string) {

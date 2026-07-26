@@ -26,9 +26,10 @@ type seatbeltProfileParam struct {
 }
 
 type seatbeltRegion struct {
-	path   string
-	mode   sandboxpolicy.MountMode
-	policy bool
+	path         string
+	mode         sandboxpolicy.MountMode
+	policy       bool
+	unshadowable bool
 }
 
 type seatbeltRegionNode struct {
@@ -170,8 +171,9 @@ func renderSeatbeltProfile(
 
 	// Class 4 is last and receives no carveout, including break-glass.
 	ordered = append(ordered, seatbeltRegion{
-		path: tmuxSocketDir,
-		mode: sandboxpolicy.MountHide,
+		path:         tmuxSocketDir,
+		mode:         sandboxpolicy.MountHide,
+		unshadowable: true,
 	})
 
 	ordered, err = expandSeatbeltAliasRegions(ordered, plan.Aliases)
@@ -179,7 +181,7 @@ func renderSeatbeltProfile(
 		return "", nil, err
 	}
 	nodes := buildSeatbeltRegionTree(ordered, identity)
-	profile, params := compileSeatbeltDenyRegions(nodes, runtimeTempDir)
+	profile, params := compileSeatbeltDenyRegions(nodes, runtimeTempDir, identity)
 	return profile, params, nil
 }
 
@@ -370,9 +372,10 @@ func expandSeatbeltAliasRegions(
 		})
 		for _, path := range paths {
 			out = append(out, seatbeltRegion{
-				path:   path,
-				mode:   region.mode,
-				policy: region.policy,
+				path:         path,
+				mode:         region.mode,
+				policy:       region.policy,
+				unshadowable: region.unshadowable,
 			})
 		}
 	}
@@ -443,6 +446,7 @@ func buildSeatbeltRegionTree(
 func compileSeatbeltDenyRegions(
 	nodes []seatbeltRegionNode,
 	runtimeTempDir string,
+	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
 	var profile strings.Builder
 	profile.WriteString("(version 1)\n")
@@ -458,11 +462,14 @@ func compileSeatbeltDenyRegions(
 	normalWriteRule := make(map[int]bool, len(writeRules))
 	for index, nodeIndex := range writeRules {
 		normalWriteRule[nodeIndex] = true
-		exceptions := seatbeltFirstAllowedDescendants(
-			nodes,
-			nodeIndex,
-			func(mode sandboxpolicy.MountMode) bool { return mode != sandboxpolicy.MountRW },
-		)
+		exceptions := []int(nil)
+		if !nodes[nodeIndex].unshadowable {
+			exceptions = seatbeltFirstAllowedDescendants(
+				nodes,
+				nodeIndex,
+				func(mode sandboxpolicy.MountMode) bool { return mode != sandboxpolicy.MountRW },
+			)
+		}
 		rootBaseline := nodes[nodeIndex].parent == -1 &&
 			nodes[nodeIndex].path == string(filepath.Separator)
 		params = appendSeatbeltDenyRule(
@@ -486,6 +493,7 @@ func compileSeatbeltDenyRegions(
 		nodes,
 		runtimeTempDir,
 		normalWriteRule,
+		identity,
 	) {
 		index := len(writeRules)
 		writeRules = append(writeRules, nodeIndex)
@@ -511,11 +519,14 @@ func compileSeatbeltDenyRegions(
 		return mode == sandboxpolicy.MountHide
 	})
 	for index, nodeIndex := range readRules {
-		exceptions := seatbeltFirstAllowedDescendants(
-			nodes,
-			nodeIndex,
-			func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
-		)
+		exceptions := []int(nil)
+		if !nodes[nodeIndex].unshadowable {
+			exceptions = seatbeltFirstAllowedDescendants(
+				nodes,
+				nodeIndex,
+				func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
+			)
+		}
 		params = appendSeatbeltDenyRule(
 			&profile,
 			params,
@@ -541,6 +552,7 @@ func seatbeltRuntimePolicyDenies(
 	nodes []seatbeltRegionNode,
 	runtimeTempDir string,
 	normal map[int]bool,
+	identity seatbeltIdentityLookup,
 ) []int {
 	out := []int{}
 	for i, node := range nodes {
@@ -553,7 +565,7 @@ func seatbeltRuntimePolicyDenies(
 		if normal[i] && node.path != string(filepath.Separator) {
 			continue
 		}
-		if seatbeltRuntimeCarveoutIntersects(node.path, runtimeTempDir) {
+		if seatbeltRuntimeCarveoutIntersects(node.path, runtimeTempDir, identity) {
 			out = append(out, i)
 		}
 	}
@@ -563,10 +575,13 @@ func seatbeltRuntimePolicyDenies(
 	return out
 }
 
-func seatbeltRuntimeCarveoutIntersects(path, runtimeTempDir string) bool {
+func seatbeltRuntimeCarveoutIntersects(
+	path, runtimeTempDir string,
+	identity seatbeltIdentityLookup,
+) bool {
 	for _, carveout := range []string{"/dev", runtimeTempDir} {
-		if sandboxpolicy.PathContainsOrEqual(path, carveout) ||
-			sandboxpolicy.PathContainsOrEqual(carveout, path) {
+		if seatbeltPathContains(path, carveout, identity) ||
+			seatbeltPathContains(carveout, path, identity) {
 			return true
 		}
 	}
@@ -582,7 +597,9 @@ func seatbeltDenyStarts(
 		if !denied(node.mode) {
 			continue
 		}
-		if node.parent >= 0 && denied(nodes[node.parent].mode) {
+		if node.parent >= 0 &&
+			denied(nodes[node.parent].mode) &&
+			!node.unshadowable {
 			continue
 		}
 		out = append(out, i)
