@@ -163,6 +163,38 @@ test('Arrow keys stop at the ends of the rendered page instead of paging', async
   await mounted.unmount();
 });
 
+test('Home, End, PageUp, and PageDown move within the rendered page', async (t) => {
+  const messages = Array.from({ length: 12 }, (_, index) => message(index + 1));
+  const state = {
+    ...baseState(), messages, selectedMsgId: 6, total: messages.length,
+    totalUnfiltered: messages.length,
+  };
+  const { harness, calls, mounted, rows, press } = await mountMail(t, state);
+  const list = mounted.container.querySelector('#mail-list');
+  const listRows = rows('#mail-list .mail-row');
+  Object.defineProperty(list, 'clientHeight', { configurable: true, value: 65 });
+  Object.defineProperty(listRows[0], 'offsetHeight', { configurable: true, value: 20 });
+
+  listRows[5].focus();
+  await press(listRows[5], 'PageDown');
+  assert.equal(calls.messages.at(-1), '9', 'PageDown moves one three-row viewport');
+  assert.equal(harness.document.activeElement, listRows[8]);
+  await press(listRows[8], 'PageUp');
+  assert.equal(calls.messages.at(-1), '6');
+
+  await press(listRows[5], 'Home');
+  assert.equal(calls.messages.at(-1), '1');
+  assert.equal(harness.document.activeElement, listRows[0]);
+  await press(listRows[0], 'End');
+  assert.equal(calls.messages.at(-1), '12');
+  assert.equal(harness.document.activeElement, listRows[11]);
+
+  await press(listRows[11], 'PageDown');
+  assert.equal(calls.messages.at(-1), '12', 'PageDown clamps at the rendered last row');
+  assert.deepEqual(calls.pages, [], 'row navigation never turns a server page');
+  await mounted.unmount();
+});
+
 test('A move started from a row control continues from that row', async (t) => {
   const { harness, calls, mounted, rows, press } = await mountMail(t);
   const listRows = rows('#mail-list .mail-row');
@@ -173,6 +205,86 @@ test('A move started from a row control continues from that row', async (t) => {
 
   assert.deepEqual(calls.messages, ['3']);
   assert.equal(harness.document.activeElement, listRows[2]);
+  await mounted.unmount();
+});
+
+test('Down enters each filter result list, while Up or Escape returns from its first row', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const boxFilter = mounted.container.querySelector('#filter-mailboxes');
+  const messageFilter = mounted.container.querySelector('#filter-messages');
+  const boxes = rows('#mail-sidebar .mailbox');
+  const listRows = rows('#mail-list .mail-row');
+
+  boxFilter.focus();
+  const intoBoxes = await press(boxFilter, 'ArrowDown');
+  assert.equal(intoBoxes.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, boxes[0]);
+  assert.deepEqual(calls.mailboxes, ['all']);
+  const outOfBoxes = await press(boxes[0], 'ArrowUp');
+  assert.equal(outOfBoxes.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, boxFilter);
+
+  messageFilter.focus();
+  await press(messageFilter, 'ArrowDown');
+  assert.equal(harness.document.activeElement, listRows[0]);
+  assert.deepEqual(calls.messages, ['1']);
+  await press(listRows[0], 'Escape');
+  assert.equal(harness.document.activeElement, messageFilter);
+
+  listRows[1].focus();
+  const deeperEscape = await press(listRows[1], 'Escape');
+  assert.equal(deeperEscape.defaultPrevented, false, 'Escape only returns from the first row');
+  assert.equal(harness.document.activeElement, listRows[1]);
+  await mounted.unmount();
+});
+
+test('Down in a filter stays native when its result pane has no rows', async (t) => {
+  const state = {
+    ...baseState(), messages: [], selectedMsgId: null, total: 0, totalUnfiltered: 0,
+  };
+  const { harness, calls, mounted, press } = await mountMail(t, state);
+  const filter = mounted.container.querySelector('#filter-messages');
+  filter.focus();
+
+  const down = await press(filter, 'ArrowDown');
+  assert.equal(down.defaultPrevented, false);
+  assert.equal(harness.document.activeElement, filter);
+  assert.deepEqual(calls.messages, []);
+  await mounted.unmount();
+});
+
+test('Left and Right move focus across sidebar, list, and reader', async (t) => {
+  const { harness, calls, mounted, rows, press } = await mountMail(t);
+  const boxes = rows('#mail-sidebar .mailbox');
+  const listRows = rows('#mail-list .mail-row');
+  const reader = mounted.container.querySelector('#mail-reader');
+
+  assert.equal(boxes[1].getAttribute('aria-current'), 'true');
+  assert.equal(listRows[1].getAttribute('aria-current'), 'true');
+  assert.equal(reader.getAttribute('role'), 'region');
+  assert.equal(reader.getAttribute('aria-label'), 'Message reader');
+  assert.equal(reader.getAttribute('tabindex'), '0');
+
+  boxes[1].focus();
+  await press(boxes[1], 'ArrowRight');
+  assert.equal(harness.document.activeElement, listRows[1]);
+  await press(listRows[1], 'ArrowRight');
+  assert.equal(harness.document.activeElement, reader);
+
+  const readerDown = await press(reader, 'ArrowDown');
+  assert.equal(readerDown.defaultPrevented, false, 'the focused reader keeps native scrolling');
+  assert.equal(harness.document.activeElement, reader);
+
+  await press(reader, 'ArrowLeft');
+  assert.equal(harness.document.activeElement, listRows[1]);
+  await press(listRows[1], 'ArrowLeft');
+  assert.equal(harness.document.activeElement, boxes[1]);
+  assert.deepEqual(calls.mailboxes, []);
+  assert.deepEqual(calls.messages, [], 'pane switches preserve the current selection');
+
+  const modified = await press(boxes[1], 'ArrowRight', { ctrlKey: true });
+  assert.equal(modified.defaultPrevented, false);
+  assert.equal(harness.document.activeElement, boxes[1]);
   await mounted.unmount();
 });
 
@@ -187,7 +299,7 @@ test('With no focused row the move starts from the selected one', async (t) => {
   await mounted.unmount();
 });
 
-test('Modified arrow keys stay with the browser', async (t) => {
+test('Modified navigation keys stay with the browser', async (t) => {
   const { calls, mounted, rows, press } = await mountMail(t);
   const listRows = rows('#mail-list .mail-row');
   listRows[1].focus();
@@ -195,6 +307,10 @@ test('Modified arrow keys stay with the browser', async (t) => {
   for (const modifier of ['altKey', 'ctrlKey', 'metaKey', 'shiftKey']) {
     const event = await press(listRows[1], 'ArrowDown', { [modifier]: true });
     assert.equal(event.defaultPrevented, false, `${modifier} must not be swallowed`);
+  }
+  for (const key of ['Home', 'End', 'PageUp', 'PageDown']) {
+    const event = await press(listRows[1], key, { ctrlKey: true });
+    assert.equal(event.defaultPrevented, false, `modified ${key} must not be swallowed`);
   }
   assert.deepEqual(calls.messages, []);
   await mounted.unmount();

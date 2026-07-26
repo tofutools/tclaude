@@ -734,14 +734,21 @@ top-level symlinks and asks the agent to pass the resolved path explicitly.
 Count caps of 100 attachments per stable agent and 1,000 daemon-wide prevent
 empty or tiny files from exhausting database rows and filesystem inodes.
 
-Both list panes are keyboard-navigable the way a desktop mail client is. Open
-a message (or a folder) and **↑ / ↓** move the selection to the row above or
-below it, taking the focus and the reading pane along; the folder sidebar walks
-its rows in painted order, so an expanded group's members are simply part of
-the path. Movement stops at the first and last row *of the page currently
-shown* — arrow keys never turn a page, so a key held down cannot walk you
-through a whole mailbox. Use the pager for that. Arrows with a modifier held
-(**Ctrl**, **Alt**, **Shift**, **⌘**) are left to the browser.
+The three mail panes are keyboard-navigable the way a desktop mail client is.
+From either filter, **↓** enters and selects the first rendered result; **↑**
+or **Esc** on that first row returns to its filter. Within the folder sidebar
+or message list, **↑ / ↓** move by one row, **Home / End** jump to the first
+or last row, and **PageUp / PageDown** move by one visible viewport of rows.
+The folder sidebar follows painted order, so an expanded group's members are
+simply part of the path; its group caret remains the dedicated expand/collapse
+control.
+
+Bare **← / →** move between the folder sidebar, message list, and reading
+pane. The reader is focusable and keeps the browser's normal **↑ / ↓**
+scrolling. Every row-navigation key clamps to the page currently rendered and
+never turns a server page, so use the pager to move through the whole mailbox.
+Navigation keys with a modifier held (**Ctrl**, **Alt**, **Shift**, **⌘**) are
+left to the browser.
 
 After upgrading tclaude, run `tclaude setup --install-agent-skills` to refresh
 the bundled `human-notify` skill so agents discover the `--attach` workflow.
