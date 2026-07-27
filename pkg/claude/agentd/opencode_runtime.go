@@ -574,7 +574,7 @@ func openCodeServeProcessExec(
 	}
 	if sandboxSpec == nil || sandboxSpec.Version != session.TclaudeLayerUnixRelaySpecVersion {
 		return "", nil, nil, noCleanup, fmt.Errorf(
-			"Unix-relay OpenCode runtime requires a tclaude-layer v4 spec")
+			"unix-relay OpenCode runtime requires a tclaude-layer v4 spec")
 	}
 	listener, device, inode, err := opencodeapi.CreateUnixListener(runtime.ControlSocketPath)
 	if err != nil {

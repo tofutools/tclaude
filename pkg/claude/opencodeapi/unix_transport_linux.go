@@ -96,7 +96,7 @@ func unlinkSocketIdentity(path string, device, inode int64, requireMode bool) er
 	if err != nil {
 		return fmt.Errorf("open OpenCode control parent for cleanup: %w", err)
 	}
-	defer unix.Close(parentFD)
+	defer func() { _ = unix.Close(parentFD) }()
 	var stat unix.Stat_t
 	if err := unix.Fstatat(parentFD, filepath.Base(path),
 		&stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {

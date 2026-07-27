@@ -15,7 +15,10 @@ func CreateUnixListener(string) (*net.UnixListener, int64, int64, error) {
 	return nil, 0, 0, fmt.Errorf("OpenCode Unix relay is Linux-only")
 }
 
-func RemoveUnixSocket(db.OpenCodeRuntime) error {
+func RemoveUnixSocket(runtime db.OpenCodeRuntime) error {
+	if runtime.Transport != db.OpenCodeTransportUnixRelay {
+		return nil
+	}
 	return fmt.Errorf("OpenCode Unix relay is Linux-only")
 }
 

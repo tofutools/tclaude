@@ -17,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/sys/unix"
@@ -106,15 +107,39 @@ func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T)
 		agentdListener, listenErr := net.Listen("unix", agentdSocket)
 		require.NoError(t, listenErr)
 		t.Cleanup(func() { _ = agentdListener.Close() })
-		argv, renderErr := session.TclaudeLayerUnixRelayServerExecArgs(
-			"/usr/bin/bwrap", *spec, 2,
-			[]string{"/proc/self/fd/4", opencodeapi.InheritedUnixRelayMode,
-				"3", "127.0.0.1:43210", "--", "/usr/bin/opencode", "serve"})
+		require.NoError(t, listener.Close())
+		require.NoError(t, os.Remove(controlPath))
+		previousResolver := resolveOpenCodeTclaudeLayer
+		resolveOpenCodeTclaudeLayer = func(
+			sandboxpolicy.NetworkPosture,
+		) (string, harness.LaunchOSSandbox, error) {
+			return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+		}
+		previousRelayExecutable := openCodeRelayExecutable
+		openCodeRelayExecutable = os.Executable
+		t.Cleanup(func() {
+			resolveOpenCodeTclaudeLayer = previousResolver
+			openCodeRelayExecutable = previousRelayExecutable
+		})
+		command, args, extraFiles, cleanup, renderErr := openCodeServeProcessExec(
+			"/usr/bin/opencode", "43210", &v4Runtime, spec)
 		require.NoError(t, renderErr)
+		require.Equal(t, "/usr/bin/bwrap", command)
+		require.Len(t, extraFiles, 2,
+			"ExtraFiles must map listener→fd3 and tclaude relay executable→fd4")
+		t.Cleanup(func() {
+			cleanup()
+			require.NoError(t, opencodeapi.RemoveUnixSocket(v4Runtime))
+		})
+		argv := append([]string{command}, args...)
 		joined := strings.Join(argv, " ")
 		assert.Contains(t, joined, "--unshare-net")
 		assert.Contains(t, joined, "--unshare-pid")
-		assert.Contains(t, joined, "--preserve-fds 2")
+		assert.NotContains(t, joined, "--preserve-fds",
+			"upstream bubblewrap preserves inherited non-CLOEXEC fds without a flag")
+		assert.Contains(t, joined,
+			"/proc/self/fd/4 "+opencodeapi.InheritedUnixRelayMode+" 3 ",
+			"the relay executable and listener must retain their exact fd mapping")
 		assert.NotContains(t, joined, controlPath,
 			"the server namespace must receive only the inherited control fd")
 		assert.NotContains(t, joined, "--ro-bind "+controlPath+" "+controlPath)
@@ -332,6 +357,9 @@ func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T
 	assert.Equal(t, openCodeInstallGitignore, string(raw),
 		"legacy replay must bootstrap before applying the same read-only install bind")
 
+	if runtime.GOOS != "linux" {
+		return
+	}
 	shortData, err := os.MkdirTemp("/tmp", "tcl780-legacy-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(shortData) })

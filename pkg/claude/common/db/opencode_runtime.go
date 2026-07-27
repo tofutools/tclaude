@@ -219,7 +219,7 @@ func ValidateOpenCodeRuntimeTransport(runtime OpenCodeRuntime) error {
 		if runtime.ControlSocketPath == "" ||
 			runtime.ControlSocketDevice <= 0 ||
 			runtime.ControlSocketInode <= 0 {
-			return fmt.Errorf("Unix-relay OpenCode runtime has incomplete socket authority")
+			return fmt.Errorf("unix-relay OpenCode runtime has incomplete socket authority")
 		}
 	default:
 		return fmt.Errorf("unsupported OpenCode runtime transport %q", runtime.Transport)

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,9 @@ import (
 )
 
 func TestOpenCodeHealthyUnixTransportNeverDialsLogicalHostTCP(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("OpenCode Unix transport is Linux-only")
+	}
 	var tcpCalls atomic.Int32
 	trap := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		tcpCalls.Add(1)

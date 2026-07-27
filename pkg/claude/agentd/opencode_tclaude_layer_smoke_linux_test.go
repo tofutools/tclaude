@@ -481,49 +481,6 @@ func runOpenCodeLayerSmokeShell(
 	return ""
 }
 
-func processHasOpenCodeServerConnection(rootPID int, endpoint string) bool {
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return false
-	}
-	_, rawPort, err := net.SplitHostPort(parsed.Host)
-	if err != nil {
-		return false
-	}
-	port, err := strconv.ParseUint(rawPort, 10, 16)
-	if err != nil {
-		return false
-	}
-	portHex := fmt.Sprintf("%04X", port)
-	data, err := os.ReadFile("/proc/net/tcp")
-	if err != nil {
-		return false
-	}
-	inodes := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 9 && fields[3] == "01" &&
-			strings.HasSuffix(fields[2], ":"+portHex) {
-			inodes[fields[9]] = true
-		}
-	}
-	for _, pid := range openCodeLayerSmokeProcessTree(rootPID) {
-		entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			target, err := os.Readlink(filepath.Join(
-				"/proc", strconv.Itoa(pid), "fd", entry.Name()))
-			if err == nil && strings.HasPrefix(target, "socket:[") &&
-				inodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func openCodeLayerSmokeProcessTree(rootPID int) []int {
 	result := []int{rootPID}
 	seen := map[int]bool{rootPID: true}

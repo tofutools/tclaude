@@ -526,10 +526,10 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	serverArgv []string,
 ) ([]string, error) {
 	if spec.Version != TclaudeLayerUnixRelaySpecVersion {
-		return nil, fmt.Errorf("Unix-relay server renderer requires tclaude-layer v4")
+		return nil, fmt.Errorf("unix-relay server renderer requires tclaude-layer v4")
 	}
-	if preserveFDs <= 0 || len(serverArgv) == 0 {
-		return nil, fmt.Errorf("Unix-relay server renderer requires inherited descriptors and a command")
+	if preserveFDs != 2 || len(serverArgv) == 0 {
+		return nil, fmt.Errorf("unix-relay server renderer requires inherited descriptors and a command")
 	}
 	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
@@ -550,7 +550,10 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	if err != nil {
 		return nil, err
 	}
-	args = append(args, "--preserve-fds", strconv.Itoa(preserveFDs), "--")
+	// Upstream bubblewrap deliberately passes non-CLOEXEC descriptors to the
+	// sandbox command; it has no --preserve-fds option. ExtraFiles supplies
+	// exactly fd 3 (listener) and fd 4 (relay executable).
+	args = append(args, "--")
 	args = append(args, serverArgv...)
 	return append([]string{binary}, args...), nil
 }
