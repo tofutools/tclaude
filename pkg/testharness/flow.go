@@ -262,20 +262,21 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	if !s.w.SkipSpawnRow {
 		launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
 		if err := saveSessionWithResumeProvenance(&db.SessionRow{
-			ID:                  label,
-			TmuxSession:         label,
-			ConvID:              cc.ConvID,
-			Cwd:                 cc.Cwd,
-			Status:              "running",
-			Harness:             args.Harness,
-			SandboxMode:         args.Sandbox,
-			SandboxModeSource:   args.SandboxChosenBy,
-			OSSandboxState:      launchOSSandbox.State,
-			OSSandboxSource:     launchOSSandbox.Source,
-			OSSandboxUnverified: launchOSSandbox.Unverified,
-			EffectiveSandbox:    args.EffectiveSandbox,
-			ApprovalPolicy:      args.Approval,
-			ApprovalAutoReview:  args.AutoReview,
+			ID:                    label,
+			TmuxSession:           label,
+			ConvID:                cc.ConvID,
+			Cwd:                   cc.Cwd,
+			Status:                "running",
+			Harness:               args.Harness,
+			SandboxMode:           args.Sandbox,
+			SandboxImplementation: args.SandboxImplementation,
+			SandboxModeSource:     args.SandboxChosenBy,
+			OSSandboxState:        launchOSSandbox.State,
+			OSSandboxSource:       launchOSSandbox.Source,
+			OSSandboxUnverified:   launchOSSandbox.Unverified,
+			EffectiveSandbox:      args.EffectiveSandbox,
+			ApprovalPolicy:        args.Approval,
+			ApprovalAutoReview:    args.AutoReview,
 			// Mirror production's session/new.go, which records the resolved
 			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
 			// preserve it (schema v97). "" for a Codex/omitted spawn.
@@ -366,20 +367,21 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	cc.SessionID = label
 	launchOSSandbox := resolveLaunchOSSandbox(args.Harness, args.Sandbox, args.SandboxChosenBy, cc.Cwd)
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:                  label,
-		TmuxSession:         label,
-		ConvID:              convID,
-		Cwd:                 cc.Cwd,
-		Status:              "running",
-		Harness:             args.Harness,
-		SandboxMode:         args.Sandbox,
-		SandboxModeSource:   args.SandboxChosenBy,
-		OSSandboxState:      launchOSSandbox.State,
-		OSSandboxSource:     launchOSSandbox.Source,
-		OSSandboxUnverified: launchOSSandbox.Unverified,
-		EffectiveSandbox:    args.EffectiveSandbox,
-		ApprovalPolicy:      args.Approval,
-		ApprovalAutoReview:  args.AutoReview,
+		ID:                    label,
+		TmuxSession:           label,
+		ConvID:                convID,
+		Cwd:                   cc.Cwd,
+		Status:                "running",
+		Harness:               args.Harness,
+		SandboxMode:           args.Sandbox,
+		SandboxImplementation: args.SandboxImplementation,
+		SandboxModeSource:     args.SandboxChosenBy,
+		OSSandboxState:        launchOSSandbox.State,
+		OSSandboxSource:       launchOSSandbox.Source,
+		OSSandboxUnverified:   launchOSSandbox.Unverified,
+		EffectiveSandbox:      args.EffectiveSandbox,
+		ApprovalPolicy:        args.Approval,
+		ApprovalAutoReview:    args.AutoReview,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -504,7 +506,8 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		// The tag the whole soft-stop / resume / identity path keys on:
 		// harnessForConv resolves this to the Codex harness so a stop
 		// injects `/quit`, and resume relaunches `--harness codex`.
-		Harness: codexHarnessName,
+		Harness:               codexHarnessName,
+		SandboxImplementation: args.SandboxImplementation,
 	}); err != nil {
 		return err
 	}
@@ -555,6 +558,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
 		Harness:                codexHarnessName,
 		SandboxMode:            args.Sandbox,
+		SandboxImplementation:  args.SandboxImplementation,
 		EffectiveSandbox:       args.EffectiveSandbox,
 		ApprovalPolicy:         args.Approval,
 		ApprovalAutoReview:     args.AutoReview,

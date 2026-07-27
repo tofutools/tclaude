@@ -546,7 +546,7 @@ func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	}))
 	override := harness.ClaudeSandboxOff
 	require.NoError(t, db.SetTemporarySandboxMode(
-		agentID, normalMode, "", &override,
+		agentID, normalMode, normalImplementation, "", &override,
 	))
 
 	res := resumeOneConv(convID)

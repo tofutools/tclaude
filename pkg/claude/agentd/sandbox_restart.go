@@ -119,7 +119,8 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		return
 	}
 	if err := db.SetTemporarySandboxMode(
-		agentID, normal.NormalSandbox, normal.NormalSandboxSource, override,
+		agentID, normal.NormalSandbox, normal.SandboxImplementation,
+		normal.NormalSandboxSource, override,
 	); err != nil {
 		// The posture did not change, so restore availability under the old
 		// configuration before reporting the persistence failure.

@@ -60,6 +60,36 @@ func (c *durableRelaunchConfig) activeSandboxImplementation() string {
 	return c.SandboxImplementation
 }
 
+// recoverDurableSandboxImplementation repairs agents launched or temporarily
+// unlocked by versions that recorded the process-only harness-builtin value
+// over their durable tclaude-layer/stacked posture. The newest historical row
+// that used an outer layer is the last remaining evidence of the exact normal
+// combination. This also covers an operator who already attempted restore:
+// that faulty transition cleared the temporary marker before relaunching plain
+// OFF, but its older TClaude session remains. New launches freeze and protect
+// the durable value directly, so this compatibility path only changes a
+// collapsed harness-builtin record that has concrete outer-layer history.
+func recoverDurableSandboxImplementation(
+	convID string,
+	recorded sandboxpolicy.Implementation,
+) (sandboxpolicy.Implementation, error) {
+	if recorded != sandboxpolicy.ImplementationHarnessBuiltin {
+		return recorded, nil
+	}
+	historical, err := db.LatestTclaudeSandboxImplementationForConv(convID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(historical) == "" {
+		return recorded, nil
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(historical)
+	if err != nil {
+		return "", err
+	}
+	return implementation, nil
+}
+
 // temporarySandboxLaunchSnapshot derives the process-only policy paired with a
 // temporary sandbox-off mode. Codex's raw full-access mode cannot accept any
 // profile values; Claude Code and OpenCode can still receive plain environment
@@ -91,7 +121,10 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		}
 	}
 	sandboxMode := p.SandboxMode
-	sandboxImplementation := string(sandboxpolicy.ImplementationHarnessBuiltin)
+	sandboxImplementation := strings.TrimSpace(p.SandboxImplementation)
+	if sandboxImplementation == "" {
+		sandboxImplementation = string(sandboxpolicy.ImplementationHarnessBuiltin)
+	}
 	sandboxModeSource := p.SandboxModeSource
 	approvalPolicy := p.ApprovalPolicy
 	toolGovernance := p.ToolGovernance
@@ -214,6 +247,12 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		if err != nil {
 			return nil, fmt.Errorf("invalid durable sandbox implementation: %w", err)
 		}
+	}
+	sandboxImplementation, err = recoverDurableSandboxImplementation(
+		convID, sandboxImplementation,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recover normal sandbox implementation: %w", err)
 	}
 	// Attribution follows the mode it explains, and only while that mode is the
 	// one that was recorded: a profile whose SandboxMode is blank falls through

@@ -568,6 +568,32 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	return scanSessions(rows)
 }
 
+// LatestTclaudeSandboxImplementationForConv returns the newest recorded
+// outer-layer implementation for a conversation. It is a narrow compatibility
+// lookup for relaunch records damaged by the temporary-unlock projection bug;
+// querying only the scalar evidence avoids decoding every historical session
+// on the overwhelmingly common harness-builtin path.
+func LatestTclaudeSandboxImplementationForConv(convID string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var implementation string
+	err = d.QueryRow(`SELECT sandbox_implementation
+		FROM sessions
+		WHERE conv_id = ? AND sandbox_implementation IN (?, ?)
+		ORDER BY updated_at DESC
+		LIMIT 1`,
+		strings.TrimSpace(convID),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		string(sandboxpolicy.ImplementationStacked),
+	).Scan(&implementation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return implementation, err
+}
+
 // LatestInsertedSessionIDForConv returns the newest distinct session row for a
 // conversation by SQLite row insertion order. Recovery identity uses this
 // immutable chronology rather than updated_at, which the reaper deliberately
