@@ -144,6 +144,65 @@ test('OpenCode profile editor surfaces and saves sandbox plus tool governance', 
   cleanups.reverse().forEach((fn) => fn());
 });
 
+// The sandbox-implementation option that means "the harness owns containment"
+// must name the harness the operator actually picked. "Harness built-in" reads
+// as if tclaude were the harness, which is exactly the confusion this row can
+// least afford. The editor renders the same host-wide catalog the spawn dialog
+// does, so it has to fill the catalog's {harness} placeholder too.
+test('profile editor names the harness-owned sandbox after the selected harness', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'profile-editor',
+    seed: { name: 'impl', harness: 'claude', sandbox_implementation: 'harness-builtin' },
+    options: {},
+    catalog,
+    sandboxImpl: {
+      options: [
+        { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
+        { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
+        { value: 'tclaude-layer', label: 'tclaude layer (experimental)', experimental: true },
+      ],
+      default: 'harness-builtin',
+      host_available: true,
+    },
+  });
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: { async saveProfile() {}, async loadUnsandboxedAutonomy() { return { warnings: [] }; } },
+    confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const impl = host.querySelector('#profile-editor-sandbox-impl');
+  assert.deepEqual(
+    [...impl.options].map((option) => option.textContent),
+    [
+      'Unset (inherit at spawn)',
+      'Claude Code built-in',
+      'Stacked: tclaude + Claude Code (experimental)',
+      'tclaude layer (experimental)',
+    ],
+  );
+
+  // The label follows the harness selection, which changes in the browser
+  // without refetching the host-wide catalog.
+  const harnessSelect = host.querySelector('#profile-editor-harness');
+  choose(harnessSelect, 'opencode');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(
+    [...host.querySelector('#profile-editor-sandbox-impl').options][1].textContent,
+    'OpenCode built-in',
+  );
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 // TCL-586 follow-up: the profile editor warns, before save, when the chosen
 // posture pairs an unattended command-running mode with a sandbox that won't
 // confine it. The daemon decides (an explicit `off` is unsafe anywhere;
