@@ -43,9 +43,6 @@ func TestSeatbeltAssumptions(t *testing.T) {
 	runDarwinAssumption(t, "FileReadDenyDoesNotBlockUnixConnect",
 		"session.appendSeatbeltUnixConnectDenyRule",
 		assumeFileReadDoesNotDenyUnixConnect)
-	runDarwinAssumption(t, "NetworkInboundDenyBlocksUnixReply",
-		"session.appendSeatbeltIsolatedNetworkRules deliberately omits network-inbound",
-		assumeInboundDenyBlocksReply)
 	runDarwinAssumption(t, "OutboundExceptionAndBindDeny",
 		"session.appendSeatbeltNetworkDenyExceptAgentd and "+
 			"session.appendSeatbeltIsolatedNetworkRules",
@@ -127,36 +124,6 @@ func assumeFileReadDoesNotDenyUnixConnect(t *testing.T) {
 `
 	runSeatbeltHelper(t, fileAndConnect, map[string]string{"SOCKET": socket},
 		"unix-connect-denied", map[string]string{"ASSUME_SOCKET": socket}, nil)
-}
-
-func assumeInboundDenyBlocksReply(t *testing.T) {
-	t.Helper()
-	root := shortDarwinTempDir(t)
-	socket := filepath.Join(root, "echo.sock")
-	stop := startUnixEchoServer(t, socket)
-	defer stop()
-
-	inboundDeny := `(version 1)
-(allow default)
-(deny network-inbound)
-`
-	runSeatbeltHelper(t, inboundDeny, nil,
-		"unix-reply-denied", map[string]string{"ASSUME_SOCKET": socket}, nil)
-
-	inboundRemoteException := `(version 1)
-(allow default)
-(deny network-inbound
-  (require-not
-    (remote unix-socket (literal (param "SOCKET")))))
-`
-	runSeatbeltHelper(t, inboundRemoteException, map[string]string{"SOCKET": socket},
-		"unix-reply-denied", map[string]string{"ASSUME_SOCKET": socket}, nil)
-
-	noInboundDeny := `(version 1)
-(allow default)
-`
-	runSeatbeltHelper(t, noInboundDeny, nil,
-		"unix-roundtrip", map[string]string{"ASSUME_SOCKET": socket}, nil)
 }
 
 func assumeOutboundExceptionAndBindDeny(t *testing.T) {
@@ -342,7 +309,7 @@ func TestSeatbeltAssumptionHelper(t *testing.T) {
 			t.Fatalf("Seatbelt unexpectedly denied the read: %v", err)
 		}
 	case "unix-roundtrip":
-		seatbeltHelperUnixRoundTrip(t, true)
+		seatbeltHelperUnixRoundTrip(t)
 	case "unix-connect-denied":
 		socket := os.Getenv("ASSUME_SOCKET")
 		conn, err := net.DialTimeout("unix", socket, time.Second)
@@ -350,8 +317,6 @@ func TestSeatbeltAssumptionHelper(t *testing.T) {
 			_ = conn.Close()
 			t.Fatalf("Seatbelt unexpectedly permitted connect to %s", socket)
 		}
-	case "unix-reply-denied":
-		seatbeltHelperUnixRoundTrip(t, false)
 	case "unix-listen-denied":
 		socket := os.Getenv("ASSUME_SOCKET")
 		_ = os.Remove(socket)
@@ -390,7 +355,7 @@ func TestSeatbeltAssumptionHelper(t *testing.T) {
 	}
 }
 
-func seatbeltHelperUnixRoundTrip(t *testing.T, wantReply bool) {
+func seatbeltHelperUnixRoundTrip(t *testing.T) {
 	t.Helper()
 	socket := os.Getenv("ASSUME_SOCKET")
 	conn, err := net.DialTimeout("unix", socket, time.Second)
@@ -407,12 +372,6 @@ func seatbeltHelperUnixRoundTrip(t *testing.T, wantReply bool) {
 	}
 	reply := make([]byte, len(nonce))
 	_, err = io.ReadFull(conn, reply)
-	if !wantReply {
-		if err == nil {
-			t.Fatalf("network-inbound deny unexpectedly permitted reply %q", reply)
-		}
-		return
-	}
 	if err != nil {
 		t.Fatalf("read Unix echo reply: %v", err)
 	}

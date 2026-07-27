@@ -272,11 +272,11 @@ networking and ambient Unix sockets retain their host behavior. In the isolated
 posture, deny rules block outbound connections and listener binds, with only
 the canonical agentd Unix socket and its surviving alias spellings excepted
 from outbound denial. A `network-inbound` deny is intentionally absent:
-hardware testing showed that it blocks agentd replies and its remote-Unix path
-exception does not reopen them. Inbound listener prevention therefore rests on
-the bind deny. A listening descriptor passed through the trusted agentd daemon
-with `SCM_RIGHTS` is outside this boundary's threat model. Mach services remain
-outside this slice. The filesystem baseline is read-only, with narrow
+current hardware does not make it a reliable AF_UNIX reply block, and reply
+suppression is not part of the isolated contract. Inbound listener prevention
+therefore rests on the bind deny. A listening descriptor passed through the
+trusted agentd daemon with `SCM_RIGHTS` is outside this boundary's threat model.
+Mach services remain outside this slice. The filesystem baseline is read-only, with narrow
 launch-contract write roots plus the Darwin process runtime paths
 (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical `$TMPDIR` beneath
 `/private/var/folders`). Those runtime exceptions apply only to the baseline;
@@ -477,11 +477,11 @@ make an assumption pass.
 An assumption test is appropriate when production depends on behavior supplied
 by bubblewrap, the Linux kernel, or Seatbelt: for example non-recursive
 read-only remounts, `--new-session` terminal semantics, or the way a Seatbelt
-network deny affects an AF_UNIX reply. Pure argument/profile rendering remains
-an ordinary unit test. A tclaude composition or harness-distribution regression
-remains beside the code or in an end-to-end smoke. Do not turn a scheduler race
-or one observed errno into a platform promise: assert the stable operation or
-round-trip production needs.
+file deny remains separate from an AF_UNIX connect deny. Pure argument/profile
+rendering remains an ordinary unit test. A tclaude composition or
+harness-distribution regression remains beside the code or in an end-to-end
+smoke. Do not turn a scheduler race or one observed errno into a platform
+promise: assert the stable operation or round-trip production needs.
 
 The behavioral suites are env-gated outside their platform jobs. In CI they run
 under the same prerequisites as the real smokes and are hard gates: an unrun or

@@ -659,11 +659,11 @@ func seatbeltDaemonReopenDescendants(
 // network* deny would block the descriptor agentd needs and could not be
 // carved back open.
 //
-// network-inbound is deliberately absent. On real Darwin hardware it blocks
-// agentd replies, and a remote-unix exception parses but does not reopen them.
-// Listener prevention therefore rests on network-bind. A listening descriptor
-// handed in over SCM_RIGHTS would require cooperation from the trusted agentd
-// daemon and is outside this boundary's threat model.
+// network-inbound is deliberately absent: current Darwin hardware does not
+// make it a reliable AF_UNIX reply block, and reply suppression is not part of
+// the isolated contract. Listener prevention rests on network-bind. A listening
+// descriptor handed in over SCM_RIGHTS would require cooperation from the
+// trusted agentd daemon and is outside this boundary's threat model.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,
