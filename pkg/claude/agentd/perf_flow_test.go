@@ -127,17 +127,8 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 			break
 		}
 	}
-	var contextWriteChildNames []string
-	for _, child := range contextWrite.Children {
-		contextWriteChildNames = append(contextWriteChildNames, child.Name)
-	}
-	assert.Equal(t, []string{"reset", "fast_update", "full_projection", "other"},
-		contextWriteChildNames)
-	require.Len(t, contextWrite.Children[1].Children, 4)
-	assert.Equal(t, "exec_commit", contextWrite.Children[1].Children[1].Name)
-	require.Len(t, contextWrite.Children[2].Children, 6)
-	assert.Equal(t, "profile_projection", contextWrite.Children[2].Children[3].Name)
-	assert.Equal(t, "commit", contextWrite.Children[2].Children[4].Name)
+	assert.Empty(t, contextWrite.Children,
+		"write-path children are sparse observations, not zero-valued samples on idle polls")
 	collectors := snap.Phases[6]
 	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
 	var usage perfPhaseJSON

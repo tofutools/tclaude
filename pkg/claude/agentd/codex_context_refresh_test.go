@@ -63,6 +63,49 @@ func TestCodexContextRefreshPersistsAndRestoresFollowerCheckpoint(t *testing.T) 
 	assert.NotEqual(t, string(firstCheckpoint.Data), string(secondCheckpoint.Data))
 }
 
+func TestCodexContextWritePerfPhasesOnlyIncludeExecutedPaths(t *testing.T) {
+	timing := codexTelemetryTiming{
+		contextWrite: 32 * time.Millisecond,
+		contextReset: contextWriteTiming{
+			total: 2 * time.Millisecond, open: 100 * time.Microsecond,
+			execCommit: 1800 * time.Microsecond,
+		},
+		contextFast: contextWriteTiming{
+			total: 10 * time.Millisecond, open: 100 * time.Microsecond,
+			execCommit: 9800 * time.Microsecond, result: 50 * time.Microsecond,
+		},
+		contextProject: contextWriteTiming{
+			total: 18 * time.Millisecond, open: 100 * time.Microsecond,
+			begin: 2 * time.Millisecond, update: 500 * time.Microsecond,
+			projection: 5 * time.Millisecond, commit: 10 * time.Millisecond,
+		},
+	}
+	var contextWrite perfPhase
+	for _, phase := range timing.perfPhases() {
+		if phase.Name == "context_write" {
+			contextWrite = phase
+			break
+		}
+	}
+	var names []string
+	for _, child := range contextWrite.Children {
+		names = append(names, child.Name)
+	}
+	assert.Equal(t, []string{"reset", "fast_update", "full_projection", "other"}, names)
+	require.Len(t, contextWrite.Children[1].Children, 4)
+	assert.Equal(t, "exec_commit", contextWrite.Children[1].Children[1].Name)
+	require.Len(t, contextWrite.Children[2].Children, 6)
+	assert.Equal(t, "profile_projection", contextWrite.Children[2].Children[3].Name)
+	assert.Equal(t, "commit", contextWrite.Children[2].Children[4].Name)
+
+	for _, phase := range (codexTelemetryTiming{}).perfPhases() {
+		if phase.Name == "context_write" {
+			assert.Empty(t, phase.Children,
+				"idle polls must not dilute sparse path quantiles with zero samples")
+		}
+	}
+}
+
 func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()

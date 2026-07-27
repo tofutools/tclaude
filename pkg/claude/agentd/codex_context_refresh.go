@@ -175,16 +175,23 @@ func (t codexTelemetryTiming) perfPhases() []perfPhase {
 	if other < 0 {
 		other = 0
 	}
-	contextChildren := []perfPhase{
-		t.contextReset.resetPerfPhase(),
-		t.contextFast.fastPerfPhase(),
-		t.contextProject.projectPerfPhase(),
+	contextChildren := make([]perfPhase, 0, 4)
+	if t.contextReset.total > 0 {
+		contextChildren = append(contextChildren, t.contextReset.resetPerfPhase())
+	}
+	if t.contextFast.total > 0 {
+		contextChildren = append(contextChildren, t.contextFast.fastPerfPhase())
+	}
+	if t.contextProject.total > 0 {
+		contextChildren = append(contextChildren, t.contextProject.projectPerfPhase())
 	}
 	contextAccounted := t.contextReset.total + t.contextFast.total + t.contextProject.total
-	contextChildren = append(contextChildren, perfPhase{
-		Name: "other",
-		Ms:   durMs(contextWriteOther(t.contextWrite, contextAccounted)),
-	})
+	if contextOther := contextWriteOther(t.contextWrite, contextAccounted); contextOther > 0 {
+		contextChildren = append(contextChildren, perfPhase{
+			Name: "other",
+			Ms:   durMs(contextOther),
+		})
+	}
 	return []perfPhase{
 		{Name: "claim", Ms: durMs(t.claim)},
 		{Name: "checkpoint_load", Ms: durMs(t.checkpointLoad)},
