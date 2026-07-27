@@ -68,11 +68,50 @@ jobs:
           opencode --version
 
       - name: Install pinned stacked sandbox engines
+        shell: bash
         run: |
-          npm install --global \
-            @anthropic-ai/claude-code@2.1.220 \
-            @openai/codex@0.145.0
-          claude install 2.1.220 --force
+          npm install --global @openai/codex@0.145.0
+
+          claude_version=2.1.220
+          claude_platform=linux-x64
+          claude_base_url=https://downloads.claude.ai/claude-code-releases
+          claude_manifest="$RUNNER_TEMP/claude-manifest.json"
+          claude_binary="$RUNNER_TEMP/claude-$claude_version"
+          curl_args=(
+            --fail
+            --location
+            --silent
+            --show-error
+            --max-time 60
+            --retry 2
+            --retry-all-errors
+          )
+
+          curl "${curl_args[@]}" \
+            --output "$claude_manifest" \
+            "$claude_base_url/$claude_version/manifest.json"
+          claude_checksum=$(node -e '
+            const fs = require("fs");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            process.stdout.write(manifest.platforms[process.argv[2]]?.checksum ?? "");
+          ' "$claude_manifest" "$claude_platform")
+          if [[ ! "$claude_checksum" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Missing Claude Code checksum for $claude_platform" >&2
+            exit 1
+          fi
+
+          curl "${curl_args[@]}" \
+            --output "$claude_binary" \
+            "$claude_base_url/$claude_version/$claude_platform/claude"
+          echo "$claude_checksum  $claude_binary" | sha256sum --check
+
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/claude/versions"
+          install -m 0755 \
+            "$claude_binary" \
+            "$HOME/.local/share/claude/versions/$claude_version"
+          ln -sfn \
+            "$HOME/.local/share/claude/versions/$claude_version" \
+            "$HOME/.local/bin/claude"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/claude" --version
           codex --version
