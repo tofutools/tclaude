@@ -122,6 +122,8 @@ func tclaudeLayerStackedCommand(
 	string,
 	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	string,
 	string,
@@ -137,6 +139,8 @@ func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	_ []TclaudeLayerReadOnlyBind,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
@@ -169,6 +173,7 @@ func tclaudeLayerCommand(
 	if err != nil {
 		return "", fmt.Errorf("resolve protected sandbox roots: %w", err)
 	}
+	protectedRoots = append(protectedRoots, finalHideDirs...)
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve tclaude tmux socket directory: %w", err)
@@ -218,6 +223,8 @@ func tclaudeLayerServerCommand(
 	string,
 	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {

@@ -319,7 +319,8 @@ func openCodeRuntimeSandboxSpec(
 		}
 		return nil, fmt.Errorf("decode OpenCode tclaude-layer launch spec trailer: %w", err)
 	}
-	if spec.Version != session.TclaudeLayerLaunchSpecVersion {
+	if spec.Version != session.TclaudeLayerLaunchSpecVersion &&
+		spec.Version != session.TclaudeLayerLegacyLaunchSpecVersion {
 		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer launch spec version %d", spec.Version)
 	}
 	if spec.Contract.HarnessName != harness.OpenCodeName {
@@ -351,7 +352,8 @@ func openCodeRuntimeSandboxSpec(
 				stateDir)
 		}
 	}
-	if len(spec.Contract.ReadOnlyStateDirs) == 0 {
+	if len(spec.Contract.ReadOnlyStateDirs) == 0 &&
+		len(spec.Contract.ReadOnlyBinds) == 0 {
 		return nil, fmt.Errorf(
 			"OpenCode tclaude-layer launch spec does not protect its executable state")
 	}
@@ -369,6 +371,11 @@ func openCodeRuntimeSandboxSpec(
 			return nil, fmt.Errorf(
 				"OpenCode tclaude-layer read-only state directory %q is not protected in the rendered contract",
 				stateDir)
+		}
+	}
+	if spec.Version == session.TclaudeLayerLaunchSpecVersion {
+		if err := validateOpenCodeV3LaunchContract(spec.Contract); err != nil {
+			return nil, err
 		}
 	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
@@ -397,6 +404,9 @@ func openCodeRuntimeSandboxSpec(
 	if posture != sandboxpolicy.NetworkHostOpen {
 		return nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer restart requires the host-open loopback control plane and endpoint-ownership proof")
+	}
+	if err := session.ValidateTclaudeLayerLaunchSpec(spec); err != nil {
+		return nil, fmt.Errorf("validate OpenCode tclaude-layer renderer contract: %w", err)
 	}
 	return &spec, nil
 }
@@ -492,14 +502,104 @@ func openCodeServerEnvironment(
 	ambient []string,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) []string {
-	out := append([]string(nil), ambient...)
 	if sandboxSpec == nil {
-		return out
+		return append([]string(nil), ambient...)
+	}
+	privateState := len(sandboxSpec.Contract.Environment) > 0
+	out := make([]string, 0, len(ambient)+len(sandboxSpec.Effective.Environment)+
+		len(sandboxSpec.Contract.Environment))
+	for _, entry := range ambient {
+		if privateState && openCodePrivateEnvironmentName(strings.SplitN(entry, "=", 2)[0]) {
+			continue
+		}
+		out = append(out, entry)
 	}
 	for _, entry := range sandboxSpec.Effective.Environment {
+		if privateState && openCodePrivateEnvironmentName(entry.Name) {
+			continue
+		}
+		out = append(out, entry.Name+"="+entry.Value)
+	}
+	for _, entry := range sandboxSpec.Contract.Environment {
 		out = append(out, entry.Name+"="+entry.Value)
 	}
 	return out
+}
+
+func openCodePrivateEnvironmentName(name string) bool {
+	switch name {
+	case "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+		"OPENCODE_CONFIG_DIR":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateOpenCodeV3LaunchContract(
+	contract session.TclaudeLayerLaunchContract,
+) error {
+	if len(contract.Environment) == 0 {
+		// Grandfathered v3 contracts intentionally keep ambient XDG state.
+		if openCodeAgentIDRE.MatchString(filepath.Base(
+			canonicalOpenCodeRuntimePath(contract.StateRoot))) {
+			return fmt.Errorf("private OpenCode v3 launch contract has no enforced XDG environment")
+		}
+		if len(contract.FinalHideDirs) != 1 {
+			return fmt.Errorf("legacy OpenCode v3 launch contract does not hide the private-state parent")
+		}
+		return nil
+	}
+	expectedNames := []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	}
+	if len(contract.Environment) != len(expectedNames) ||
+		len(contract.StateDirs) != len(expectedNames) {
+		return fmt.Errorf("private OpenCode v3 launch contract must carry exactly four XDG roots")
+	}
+	for i, name := range expectedNames {
+		entry := contract.Environment[i]
+		if entry.Name != name {
+			return fmt.Errorf("private OpenCode v3 launch contract environment %d is %q, want %q",
+				i, entry.Name, name)
+		}
+		wantStateDir := filepath.Join(entry.Value, "opencode")
+		if canonicalOpenCodeRuntimePath(contract.StateDirs[i]) !=
+			canonicalOpenCodeRuntimePath(wantStateDir) {
+			return fmt.Errorf("private OpenCode v3 %s does not target state directory %q",
+				name, contract.StateDirs[i])
+		}
+	}
+	stateRoot := canonicalOpenCodeRuntimePath(contract.StateRoot)
+	if stateRoot == "" || !openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
+		return fmt.Errorf("private OpenCode v3 state root %q does not end in a stable agent id",
+			contract.StateRoot)
+	}
+	privatePair := false
+	for _, pair := range contract.PrivateWriteDirs {
+		if canonicalOpenCodeRuntimePath(pair.Current) == stateRoot &&
+			canonicalOpenCodeRuntimePath(pair.Parent) == filepath.Dir(stateRoot) {
+			privatePair = true
+			break
+		}
+	}
+	if !privatePair {
+		return fmt.Errorf("private OpenCode v3 launch contract does not hide siblings and reopen its agent root")
+	}
+	if len(contract.FinalHideDirs) != 3 {
+		return fmt.Errorf("private OpenCode v3 launch contract must hide the three ambient mutable XDG roots")
+	}
+	configTarget := canonicalOpenCodeRuntimePath(contract.StateDirs[2])
+	configReadOnly := false
+	for _, bind := range contract.ReadOnlyBinds {
+		if canonicalOpenCodeRuntimePath(bind.Target) == configTarget {
+			configReadOnly = true
+		}
+	}
+	if !configReadOnly {
+		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
+	}
+	return nil
 }
 
 func openCodeServeExec(
@@ -541,6 +641,7 @@ func openCodeTclaudeLayerLaunchSpec(
 	implementation, cwd string,
 	gitWriteDirs []string,
 	snapshot *sandboxpolicy.Snapshot,
+	agentID string,
 	privateSessionIDs ...string,
 ) (*session.TclaudeLayerLaunchSpec, error) {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
@@ -563,20 +664,41 @@ func openCodeTclaudeLayerLaunchSpec(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking because agentd and the attach pane use its authenticated loopback control plane and endpoint-ownership proof",
 		)
 	}
+	allocation, err := requireOpenCodeStateAllocation(agentID)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := openCodeStateLayoutForAllocation(*allocation)
+	if err != nil {
+		return nil, err
+	}
 	var privateWriteDirs []session.TclaudeLayerPrivateWriteDir
+	if allocation.Mode == db.OpenCodeStatePrivate {
+		privateWriteDirs = append(privateWriteDirs, session.TclaudeLayerPrivateWriteDir{
+			Parent: layout.parent, Current: allocation.StateRoot,
+		})
+	}
 	if len(privateSessionIDs) > 0 && strings.TrimSpace(privateSessionIDs[0]) != "" {
-		privateWriteDirs = []session.TclaudeLayerPrivateWriteDir{{
+		privateWriteDirs = append(privateWriteDirs, session.TclaudeLayerPrivateWriteDir{
 			Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
 			Current: tclcommon.SpawnAttachmentsPrivateDir(privateSessionIDs[0]),
-		}}
+		})
 	}
-	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+	input := session.TclaudeLayerLaunchInput{
 		HarnessName:      harness.OpenCodeName,
 		Cwd:              cwd,
 		GitWriteDirs:     gitWriteDirs,
 		Snapshot:         snapshot,
 		PrivateWriteDirs: privateWriteDirs,
-	})
+		Environment:      layout.environment,
+		FinalHideDirs:    layout.finalHideDirs,
+		ReadOnlyBinds:    layout.readOnlyBinds,
+	}
+	if allocation.Mode == db.OpenCodeStatePrivate {
+		input.StateRoot = allocation.StateRoot
+		input.StateDirs = layout.stateDirs
+	}
+	spec, err := session.BuildTclaudeLayerLaunchSpec(input)
 	if err != nil {
 		return nil, err
 	}

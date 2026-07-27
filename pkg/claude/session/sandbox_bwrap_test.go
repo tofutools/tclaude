@@ -1005,7 +1005,8 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
-	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
+	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, nil,
+		sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")

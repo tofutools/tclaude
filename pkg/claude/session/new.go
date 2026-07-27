@@ -962,6 +962,8 @@ func runNew(params *NewParams) error {
 		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
 			return fmt.Errorf("invalid internal OpenCode server URL")
 		}
+		applyOpenCodeAttachEnvironment(additionalEnv)
+		envExports = clcommon.BuildEnvExports(additionalEnv)
 	}
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
@@ -1029,6 +1031,14 @@ func runNew(params *NewParams) error {
 		}
 		if bwrapCapabilityErr == nil && !stacked {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
+		}
+		if h.Name == harness.OpenCodeName {
+			switch os.Getenv(clcommon.OpenCodeStateIsolationEnv) {
+			case "private":
+				launchOSSandbox.Source += "; " + clcommon.OpenCodeStatePrivateNote
+			case "legacy-shared":
+				launchOSSandbox.Source += "; " + clcommon.OpenCodeStateLegacyNote
+			}
 		}
 		if stacked {
 			launchOSSandbox = harness.LaunchOSSandbox{
@@ -1469,6 +1479,20 @@ func validateSandboxImplementationDecision(
 		return nil
 	}
 	return harness.ValidateHarnessBuiltinOSSandbox(h)
+}
+
+func applyOpenCodeAttachEnvironment(environment map[string]string) {
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		if value, ok := os.LookupEnv(name); ok {
+			environment[name] = value
+		}
+	}
+	// OpenCode loads this custom directory after project config. A private
+	// launch preserves native precedence through the read-only XDG config bind
+	// and must neutralize an ambient custom-dir override.
+	environment["OPENCODE_CONFIG_DIR"] = ""
 }
 
 func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd string) []string {

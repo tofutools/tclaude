@@ -21,8 +21,9 @@ func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
 func tclaudeLayerCommand(
 	string,
 	[]string,
-	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {
@@ -32,8 +33,9 @@ func tclaudeLayerCommand(
 func tclaudeLayerStackedCommand(
 	string,
 	[]string,
-	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	string,
 	string,
@@ -47,8 +49,9 @@ func tclaudeLayerStackedCommand(
 func tclaudeLayerServerCommand(
 	string,
 	[]string,
-	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {
