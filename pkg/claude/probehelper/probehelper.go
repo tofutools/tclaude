@@ -34,7 +34,11 @@ const (
 
 var (
 	socketAFUnix = func() (int, error) {
-		return unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+		fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+		if err == nil {
+			unix.CloseOnExec(fd)
+		}
+		return fd, err
 	}
 	closeFD = unix.Close
 )
@@ -97,7 +101,7 @@ func ServeStub(
 	if err != nil {
 		return err
 	}
-	defer unix.Close(rootFD)
+	defer func() { _ = unix.Close(rootFD) }()
 	if !validSecret(secret) || strings.TrimSpace(command) == "" ||
 		strings.TrimSpace(marker) == "" {
 		return fmt.Errorf("invalid launch-owned probe arguments")

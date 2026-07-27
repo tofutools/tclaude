@@ -378,7 +378,7 @@ func prepareStackedRelayBinding(
 	}
 	if manifest.Engine.Destination != stackedBoundExecutablePath &&
 		manifest.ProbeHelper != nil {
-		return nil, nil, fmt.Errorf("Codex stacked binding carries a probe helper")
+		return nil, nil, fmt.Errorf("codex stacked binding carries a probe helper")
 	}
 	_, err = openBinding(manifest.Engine)
 	if err != nil {

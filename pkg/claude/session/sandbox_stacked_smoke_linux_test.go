@@ -27,6 +27,11 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 	}
 	tclaudeBinary := os.Getenv("TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY")
 	require.NotEmpty(t, tclaudeBinary)
+	previousProbeHelperSource := stackedProbeHelperSourcePath
+	stackedProbeHelperSourcePath = tclaudeBinary
+	t.Cleanup(func() {
+		stackedProbeHelperSourcePath = previousProbeHelperSource
+	})
 	previousRelay := tclaudeLayerRelayPrefix
 	tclaudeLayerRelayPrefix = func() string {
 		return clcommon.ShellQuoteArg(tclaudeBinary) +
