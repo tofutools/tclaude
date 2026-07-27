@@ -2954,6 +2954,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	if h.UsesAuthoritativeServer() &&
+		body.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			clcommon.OpenCodeStatePrivateNote)
+	}
 	if sandboxMode != harness.SandboxManagedProfile {
 		if sshWorkaround {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
@@ -4493,11 +4498,27 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 				"could not build OpenCode access-control policy: " + err.Error()}
 		}
+		implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
+			p.SandboxImplementation)
+		if implementationErr != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity,
+				"unsupported_sandbox_profile_network", implementationErr.Error()}
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+			if p.AgentID == "" {
+				p.AgentID = db.NewAgentID()
+			}
+			if _, allocationErr := allocatePrivateOpenCodeState(p.AgentID); allocationErr != nil {
+				return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+					"failed to allocate private OpenCode state: " + allocationErr.Error()}
+			}
+		}
 		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
 			p.SandboxImplementation,
 			p.Cwd,
 			p.GitWorktreeWriteDirs,
 			p.EffectiveSandbox,
+			p.AgentID,
 			label,
 		)
 		if err != nil {
@@ -4511,6 +4532,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
 		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
+		if sandboxSpec != nil {
+			spawnArgs.OpenCodeEnvironment = append(
+				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
+			spawnArgs.OpenCodeStateIsolation = db.OpenCodeStatePrivate
+		}
 		spawnArgs.SessionID = openCodeLaunch.ConvID
 	}
 
@@ -5017,8 +5043,21 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
 	}
+	p.AgentID = db.NewAgentID()
+	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_network", err.Error()}
+	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		if _, err := allocatePrivateOpenCodeState(p.AgentID); err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"failed to allocate private OpenCode state: " + err.Error()}
+		}
+	}
 	if _, err := openCodeTclaudeLayerLaunchSpec(
-		p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox); err != nil {
+		p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox,
+		p.AgentID); err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_network", err.Error()}
 	}
@@ -5034,7 +5073,6 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 				"could not reserve private attachment root: " + reserveErr.Error()}
 		}
 	}
-	p.AgentID = db.NewAgentID()
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
@@ -6714,11 +6752,21 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
+	if len(a.OpenCodeEnvironment) > 0 {
+		cmd.Env = openCodeAttachProcessEnvironment(cmd.Env)
+	}
 	if a.OpenCodeServerURL != "" {
 		cmd.Env = append(cmd.Env, "TCLAUDE_OPENCODE_SERVER_URL="+a.OpenCodeServerURL)
 	}
 	if a.OpenCodeServerPassword != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
+	}
+	for _, entry := range a.OpenCodeEnvironment {
+		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
+	}
+	if a.OpenCodeStateIsolation != "" {
+		cmd.Env = append(cmd.Env,
+			clcommon.OpenCodeStateIsolationEnv+"="+a.OpenCodeStateIsolation)
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
@@ -6749,6 +6797,17 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		}
 	}()
 	return nil
+}
+
+func openCodeAttachProcessEnvironment(environment []string) []string {
+	out := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		if openCodePrivateEnvironmentName(strings.SplitN(entry, "=", 2)[0]) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // liveSpawnResume runs `tclaude session new -r <conv> -d --global`
@@ -6808,11 +6867,19 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			}
 			privateAttachmentRootCreated = created
 		}
+		agentID, identityErr := db.AgentIDForConv(a.ConvID)
+		if identityErr != nil {
+			return identityErr
+		}
+		if agentID == "" && implementation == sandboxpolicy.ImplementationTclaudeLayer {
+			return fmt.Errorf("OpenCode tclaude-layer resume has no stable agent identity")
+		}
 		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
 			a.SandboxImplementation,
 			a.Cwd,
 			a.GitWorktreeWriteDirs,
 			a.EffectiveSandbox,
+			agentID,
 			a.ConvID,
 		)
 		if sandboxErr != nil {
@@ -6826,6 +6893,15 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		a.OpenCodeServerURL = openCodeLaunch.ServerURL
 		a.OpenCodeServerPassword = openCodeLaunch.Password
+		if sandboxSpec != nil {
+			a.OpenCodeEnvironment = append(
+				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
+			allocation, allocationErr := requireOpenCodeStateAllocation(agentID)
+			if allocationErr != nil {
+				return allocationErr
+			}
+			a.OpenCodeStateIsolation = allocation.Mode
+		}
 	}
 	var cleanup func()
 	var err error
@@ -6845,11 +6921,21 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
+	if len(a.OpenCodeEnvironment) > 0 {
+		cmd.Env = openCodeAttachProcessEnvironment(cmd.Env)
+	}
 	if a.OpenCodeServerURL != "" {
 		cmd.Env = append(cmd.Env, "TCLAUDE_OPENCODE_SERVER_URL="+a.OpenCodeServerURL)
 	}
 	if a.OpenCodeServerPassword != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
+	}
+	for _, entry := range a.OpenCodeEnvironment {
+		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
+	}
+	if a.OpenCodeStateIsolation != "" {
+		cmd.Env = append(cmd.Env,
+			clcommon.OpenCodeStateIsolationEnv+"="+a.OpenCodeStateIsolation)
 	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {

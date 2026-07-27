@@ -97,6 +97,19 @@ func TestOpenCodeSessionCreationFailsIfPolicyIsNotRetained(t *testing.T) {
 	require.ErrorContains(t, err, "did not retain")
 }
 
+func TestOpenCodeSessionCreationReportsBoundedServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "private state is not writable", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := createOpenCodeSession(db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL, Password: "private-password",
+		Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
+	}, "worker")
+	require.ErrorContains(t, err, "HTTP 500: private state is not writable")
+}
+
 func TestEnsureOpenCodeSessionPermissionRejectsLegacyEmptyPolicy(t *testing.T) {
 	err := ensureOpenCodeSessionPermission(db.OpenCodeRuntime{})
 	require.ErrorContains(t, err, "no persisted permission policy")
@@ -604,7 +617,8 @@ func TestRandomOpenCodePassword(t *testing.T) {
 }
 
 func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	setupTestDB(t)
+	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	cwd := filepath.Join(home, "project")
@@ -616,6 +630,7 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 		Snapshot:    &snapshot,
 	})
 	require.NoError(t, err)
+	spec.Version = session.TclaudeLayerLegacyLaunchSpecVersion
 	implementation, encoded, err := openCodeSandboxRecord(&spec)
 	require.NoError(t, err)
 
@@ -662,21 +677,26 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 
 	privateRoot, _, err := tclcommon.PrepareSpawnAttachmentsPrivateDir("spwn-opencode")
 	require.NoError(t, err)
+	agentID := db.NewAgentID()
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
 	freshSpec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		cwd,
 		nil,
 		nil,
+		agentID,
 		"spwn-opencode",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, freshSpec)
-	require.Equal(t, []session.TclaudeLayerPrivateWriteDir{{
-		Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
-		Current: privateRoot,
-	}}, freshSpec.Contract.PrivateWriteDirs,
+	require.Equal(t, []session.TclaudeLayerPrivateWriteDir{
+		{Parent: filepath.Dir(allocation.StateRoot), Current: allocation.StateRoot},
+		{Parent: tclcommon.SpawnAttachmentsPrivateBase(), Current: privateRoot},
+	}, freshSpec.Contract.PrivateWriteDirs,
 		"the persisted server spec must carry the tool executor's attachment root")
 	freshSpec.Contract.ReadOnlyStateDirs = nil
+	freshSpec.Contract.ReadOnlyBinds = nil
 	_, missingReadOnlyState, err := openCodeSandboxRecord(freshSpec)
 	require.NoError(t, err)
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{

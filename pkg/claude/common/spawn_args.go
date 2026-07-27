@@ -2,6 +2,12 @@ package common
 
 import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 
+const (
+	OpenCodeStateIsolationEnv = "TCLAUDE_OPENCODE_STATE_ISOLATION"
+	OpenCodeStatePrivateNote  = "OpenCode state isolation: per-agent-private XDG state; auth.json and mcp-auth.json are seeded once from ambient credentials, then refresh independently per agent"
+	OpenCodeStateLegacyNote   = "OpenCode state isolation: legacy shared XDG retained for this existing conversation; start a new agent for per-agent-private state."
+)
+
 // SpawnDirWriteProofPrefix is the fixed basename prefix for the short-lived
 // marker an agent caller creates in a child spawn directory. It lives in this
 // shared package so the CLI, daemon, session launcher, and flow simulator agree
@@ -122,6 +128,10 @@ type SpawnArgs struct {
 	// Empty for every pane-authoritative harness.
 	OpenCodeServerURL      string
 	OpenCodeServerPassword string
+	// OpenCodeEnvironment is the daemon-final XDG allocation carried to the
+	// attach client. It is empty for harness-builtin and grandfathered agents.
+	OpenCodeEnvironment    []sandboxpolicy.EnvironmentEntry
+	OpenCodeStateIsolation string
 
 	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The

@@ -994,3 +994,14 @@ CREATE TABLE opencode_usage_step_removals (
 CREATE INDEX idx_opencode_usage_step_removals_removed
 			ON opencode_usage_step_removals(removed_at);
 
+CREATE TABLE opencode_agent_state_allocations (
+			agent_id  TEXT PRIMARY KEY,
+			mode      TEXT NOT NULL CHECK (mode IN ('private', 'legacy-shared')),
+			state_root TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			CHECK (
+				(mode = 'private' AND state_root <> '') OR
+				(mode = 'legacy-shared' AND state_root = '')
+			)
+		);
+

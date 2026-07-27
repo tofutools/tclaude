@@ -236,6 +236,43 @@ implementation above is the reviewed exception for Claude Code and Codex.
 OpenCode's ordered tool permission rules remain enabled as defense in depth,
 but OpenCode has no stacked contract.
 
+### OpenCode state under `tclaude-layer`
+
+A new Linux OpenCode agent using `tclaude-layer` receives four durable,
+per-agent XDG roots under
+`$XDG_DATA_HOME/tclaude/opencode-agents/<agent-id>/` (falling back to
+`~/.local/share`). The launch contract hides the parent and reopens only that
+raw, validated stable-agent-id child. It also hides the ambient OpenCode data,
+cache, and state directories. The ambient `~/.opencode` install tree and global
+XDG config are mounted read-only; global config remains at its canonical XDG
+location inside the private layout, so project config keeps OpenCode's native
+higher precedence.
+
+OpenCode 1.18.5 and 1.18.6 try to create `~/.opencode/.gitignore` during
+instance bootstrap, and 1.18.6 aborts when that missing-file write meets the
+read-only install mount. As a compatibility shim, the daemon creates only that
+one file before composing the read-only bind, with OpenCode's exact contents
+and mode `0600`. An existing regular file is left byte-for-byte untouched;
+symlinks and other file types refuse the launch. Agents still receive the
+entire install tree read-only.
+
+On first allocation, regular ambient `auth.json` and `mcp-auth.json` files are
+copied once into the private data root with mode `0600`. Symlinks are refused
+and an existing private credential is never overwritten. This avoids an
+initial login while keeping credentials out of the cross-agent mutable surface.
+Credential refresh state then belongs to that agent. In particular, a provider
+using rotating, single-use refresh tokens can make another agent's older
+private copy require a new login; tclaude does not synchronize or broker those
+tokens.
+
+OpenCode agents created before this isolation contract retain their existing
+shared XDG state so their conversations remain usable. Their resolved launch
+disclosure is:
+`OpenCode state isolation: legacy shared XDG retained for this existing conversation; start a new agent for per-agent-private state.`
+Missing or corrupt durable allocation state refuses a replay instead of
+silently returning to shared state. Harness-builtin OpenCode launches are
+unchanged.
+
 The Linux host-open posture starts with a read-only view of the host root; the
 isolated posture uses the constructed root described below. Both give `/dev`,
 `/proc`, and `/tmp` fresh sandbox views. Both platform appliers enforce four

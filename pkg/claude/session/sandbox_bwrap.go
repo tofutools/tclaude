@@ -16,12 +16,15 @@ import (
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
-	HarnessName       string                          `json:"harness_name"`
-	StateRoot         string                          `json:"state_root"`
-	StateDirs         []string                        `json:"state_dirs,omitempty"`
-	ReadOnlyStateDirs []string                        `json:"read_only_state_dirs,omitempty"`
-	WriteDirs         []string                        `json:"write_dirs"`
-	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
+	HarnessName       string                           `json:"harness_name"`
+	StateRoot         string                           `json:"state_root"`
+	StateDirs         []string                         `json:"state_dirs,omitempty"`
+	ReadOnlyStateDirs []string                         `json:"read_only_state_dirs,omitempty"`
+	Environment       []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	FinalHideDirs     []string                         `json:"final_hide_dirs,omitempty"`
+	ReadOnlyBinds     []TclaudeLayerReadOnlyBind       `json:"read_only_binds,omitempty"`
+	WriteDirs         []string                         `json:"write_dirs"`
+	ProfileFilesystem []sandboxpolicy.FilesystemGrant  `json:"profile_filesystem"`
 	// omitempty keeps pre-TCL-779 v2 rows byte-compatible for new readers:
 	// absent means no private reopen. An older strict reader encountering the
 	// field refuses the newer contract instead of silently dropping it.
@@ -36,6 +39,13 @@ type TclaudeLayerPrivateWriteDir struct {
 	Current string `json:"current"`
 }
 
+// TclaudeLayerReadOnlyBind is a daemon-final source→target bind. Unlike a
+// profile read grant it cannot be weakened by a later operator-authored rule.
+type TclaudeLayerReadOnlyBind struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+}
+
 // TclaudeLayerLaunchSpec is the complete, versioned input to the outer-layer
 // renderer. It is deliberately independent of NewParams and daemon launch
 // types so pane-authoritative harnesses and agentd-owned executors can render
@@ -46,7 +56,10 @@ type TclaudeLayerLaunchSpec struct {
 	Contract  TclaudeLayerLaunchContract     `json:"contract"`
 }
 
-const TclaudeLayerLaunchSpecVersion = 2
+const (
+	TclaudeLayerLaunchSpecVersion       = 3
+	TclaudeLayerLegacyLaunchSpecVersion = 2
+)
 
 // TclaudeLayerLaunchInput carries the trusted launch identities used to build
 // a TclaudeLayerLaunchSpec. GitWriteDirs must already be daemon-pinned for a
@@ -57,6 +70,11 @@ type TclaudeLayerLaunchInput struct {
 	GitWriteDirs     []string
 	Snapshot         *sandboxpolicy.Snapshot
 	PrivateWriteDirs []TclaudeLayerPrivateWriteDir
+	StateRoot        string
+	StateDirs        []string
+	Environment      []sandboxpolicy.EnvironmentEntry
+	FinalHideDirs    []string
+	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
 }
 
 // BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem rows, then
@@ -89,9 +107,13 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		launchContractReadDirs...,
 	)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
-	stateRoot, err := tclaudeLayerHarnessStateRoot(input.HarnessName)
-	if err != nil {
-		return TclaudeLayerLaunchSpec{}, err
+	var err error
+	stateRoot := strings.TrimSpace(input.StateRoot)
+	if stateRoot == "" {
+		stateRoot, err = tclaudeLayerHarnessStateRoot(input.HarnessName)
+		if err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
 	}
 	stateRoot, err = canonicalTclaudeLayerStatePath(stateRoot)
 	if err != nil {
@@ -102,28 +124,32 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	var stateDirs []string
 	var readOnlyStateDirs []string
 	if input.HarnessName == harness.OpenCodeName {
-		stateDirs, err = tclaudeLayerOpenCodeStateDirs()
-		if err != nil {
-			return TclaudeLayerLaunchSpec{}, err
+		if len(input.StateDirs) > 0 {
+			stateDirs = append([]string(nil), input.StateDirs...)
+		} else {
+			stateDirs, err = tclaudeLayerOpenCodeStateDirs()
+			if err != nil {
+				return TclaudeLayerLaunchSpec{}, err
+			}
 		}
 		contractWriteDirs = append(contractWriteDirs, stateDirs...)
-		// ~/.opencode is mutable harness state, but its bin subtree is also
-		// OpenCodeExecutable's supported fallback install location. Reopen it
-		// read-only after the parent state bind so a confined tool cannot plant
-		// a binary that a later human invocation executes outside the wall.
-		binState, stateErr := canonicalTclaudeLayerStatePath(
-			filepath.Join(stateRoot, "bin"))
-		if stateErr != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-				"resolve OpenCode executable state: %w", stateErr)
+		if len(input.ReadOnlyBinds) == 0 {
+			// Legacy v2-compatible shape: ~/.opencode is mutable harness state,
+			// while its executable subtree is reopened read-only.
+			binState, stateErr := canonicalTclaudeLayerStatePath(
+				filepath.Join(stateRoot, "bin"))
+			if stateErr != nil {
+				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+					"resolve OpenCode executable state: %w", stateErr)
+			}
+			if !sandboxpolicy.PathContainsOrEqual(stateRoot, binState) {
+				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+					"OpenCode executable state %q resolves outside state root %q",
+					binState, stateRoot)
+			}
+			readOnlyStateDirs = []string{binState}
+			launchReadDirs = append(launchReadDirs, readOnlyStateDirs...)
 		}
-		if !sandboxpolicy.PathContainsOrEqual(stateRoot, binState) {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-				"OpenCode executable state %q resolves outside state root %q",
-				binState, stateRoot)
-		}
-		readOnlyStateDirs = []string{binState}
-		launchReadDirs = append(launchReadDirs, readOnlyStateDirs...)
 		// The executor's tool subprocesses are the managed agent. Keep their
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
@@ -147,6 +173,9 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		StateRoot:         stateRoot,
 		StateDirs:         stateDirs,
 		ReadOnlyStateDirs: readOnlyStateDirs,
+		Environment:       append([]sandboxpolicy.EnvironmentEntry(nil), input.Environment...),
+		FinalHideDirs:     append([]string(nil), input.FinalHideDirs...),
+		ReadOnlyBinds:     append([]TclaudeLayerReadOnlyBind(nil), input.ReadOnlyBinds...),
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 	}
@@ -310,7 +339,7 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -319,6 +348,8 @@ func WrapTclaudeLayerSpec(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
+		finalHideDirs,
+		readOnlyBinds,
 		plan,
 		harnessCommand,
 	)
@@ -423,7 +454,7 @@ func WrapTclaudeLayerStackedSpec(
 	consume bool,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -432,6 +463,8 @@ func WrapTclaudeLayerStackedSpec(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
+		finalHideDirs,
+		readOnlyBinds,
 		plan,
 		manifestPath,
 		manifestSHA256,
@@ -451,7 +484,7 @@ func WrapTclaudeLayerServerSpec(
 	spec TclaudeLayerLaunchSpec,
 	serverCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -460,6 +493,8 @@ func WrapTclaudeLayerServerSpec(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
+		finalHideDirs,
+		readOnlyBinds,
 		plan,
 		serverCommand,
 	)
@@ -470,21 +505,23 @@ func tclaudeLayerSpecRenderInput(
 ) (
 	[]string,
 	[]TclaudeLayerPrivateWriteDir,
+	[]string,
+	[]TclaudeLayerReadOnlyBind,
 	sandboxpolicy.MountPlan,
 	error,
 ) {
-	if spec.Version != TclaudeLayerLaunchSpecVersion {
-		return nil, nil, sandboxpolicy.MountPlan{},
+	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
 	}
 	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
 	if err != nil {
-		return nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
 	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
@@ -493,16 +530,53 @@ func tclaudeLayerSpecRenderInput(
 			stateRoot,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
-			return nil, nil, sandboxpolicy.MountPlan{}, err
+			return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 		}
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
 	)
 	if err != nil {
-		return nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
-	return phase0WriteDirs, privateWriteDirs, plan, nil
+	finalHideDirs, err := cleanTclaudeLayerAbsoluteDirs(
+		"daemon-final hide", spec.Contract.FinalHideDirs)
+	if err != nil {
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+	}
+	readOnlyBinds, err := cleanTclaudeLayerReadOnlyBinds(spec.Contract.ReadOnlyBinds)
+	if err != nil {
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+			fmt.Errorf("resolve protected paths for daemon-final read-only binds: %w", err)
+	}
+	for _, bind := range readOnlyBinds {
+		for _, path := range []string{bind.Source, bind.Target} {
+			for _, protected := range protectedRoots {
+				if sandboxpolicy.PathContainsOrEqual(protected, path) {
+					return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+						fmt.Errorf(
+							"daemon-final read-only bind path %q is at or below protected root %q",
+							path, protected)
+				}
+			}
+			if err := validateTclaudeLayerHarnessStateRules(
+				path, spec.Contract.ProfileFilesystem); err != nil {
+				return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+			}
+		}
+	}
+	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, nil
+}
+
+// ValidateTclaudeLayerLaunchSpec applies the renderer's complete structural
+// validation without producing a platform command.
+func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
+	_, _, _, _, _, err := tclaudeLayerSpecRenderInput(spec)
+	return err
 }
 
 // PrepareTclaudeLayerHarnessState materializes only the harness-owned state
@@ -510,7 +584,7 @@ func tclaudeLayerSpecRenderInput(
 // paths remain non-creating: a future allow path must not appear on the host
 // merely because a launch mentioned it.
 func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
-	if spec.Version != TclaudeLayerLaunchSpecVersion {
+	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
 		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
 	}
 	stateDirs := append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
@@ -518,7 +592,8 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 		return fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
 	}
 	if spec.Contract.HarnessName == harness.OpenCodeName &&
-		len(spec.Contract.ReadOnlyStateDirs) == 0 {
+		len(spec.Contract.ReadOnlyStateDirs) == 0 &&
+		len(spec.Contract.ReadOnlyBinds) == 0 {
 		return fmt.Errorf("OpenCode tclaude-layer launch spec does not protect its executable state")
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
@@ -606,7 +681,73 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 				path)
 		}
 	}
+	if _, err := cleanTclaudeLayerAbsoluteDirs(
+		"daemon-final hide", spec.Contract.FinalHideDirs); err != nil {
+		return err
+	}
+	if _, err := cleanTclaudeLayerReadOnlyBinds(spec.Contract.ReadOnlyBinds); err != nil {
+		return err
+	}
 	return nil
+}
+
+func supportedTclaudeLayerLaunchSpecVersion(version int) bool {
+	return version == TclaudeLayerLaunchSpecVersion ||
+		version == TclaudeLayerLegacyLaunchSpecVersion
+}
+
+func cleanTclaudeLayerAbsoluteDirs(label string, paths []string) ([]string, error) {
+	out := make([]string, 0, len(paths))
+	for i, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("%s entry %d has non-absolute path %q", label, i, path)
+		}
+		out = appendUniqueDir(out, path)
+	}
+	return out, nil
+}
+
+func cleanTclaudeLayerReadOnlyBinds(
+	binds []TclaudeLayerReadOnlyBind,
+) ([]TclaudeLayerReadOnlyBind, error) {
+	out := make([]TclaudeLayerReadOnlyBind, 0, len(binds))
+	for i, bind := range binds {
+		source := filepath.Clean(strings.TrimSpace(bind.Source))
+		target := filepath.Clean(strings.TrimSpace(bind.Target))
+		if source == "." || !filepath.IsAbs(source) {
+			return nil, fmt.Errorf("daemon-final read-only bind %d has non-absolute source %q", i, source)
+		}
+		if target == "." || !filepath.IsAbs(target) {
+			return nil, fmt.Errorf("daemon-final read-only bind %d has non-absolute target %q", i, target)
+		}
+		sourceInfo, err := os.Lstat(source)
+		if err != nil {
+			return nil, fmt.Errorf("daemon-final read-only bind %d source %q: %w", i, source, err)
+		}
+		targetInfo, err := os.Lstat(target)
+		if err != nil {
+			return nil, fmt.Errorf("daemon-final read-only bind %d target %q: %w", i, target, err)
+		}
+		if sourceInfo.Mode()&os.ModeSymlink != 0 || targetInfo.Mode()&os.ModeSymlink != 0 ||
+			sourceInfo.IsDir() != targetInfo.IsDir() {
+			return nil, fmt.Errorf(
+				"daemon-final read-only bind %d source and target must be real paths of the same type", i)
+		}
+		resolvedSource, err := filepath.EvalSymlinks(source)
+		if err != nil {
+			return nil, fmt.Errorf("resolve daemon-final read-only bind %d source: %w", i, err)
+		}
+		resolvedTarget, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve daemon-final read-only bind %d target: %w", i, err)
+		}
+		out = append(out, TclaudeLayerReadOnlyBind{
+			Source: resolvedSource,
+			Target: resolvedTarget,
+		})
+	}
+	return out, nil
 }
 
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed
@@ -629,6 +770,17 @@ func bwrapArgs(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
+) ([]string, error) {
+	return bwrapArgsWithDaemonFinal(
+		phase0WriteDirs, plan, privateWriteDirs, nil, nil)
+}
+
+func bwrapArgsWithDaemonFinal(
+	phase0WriteDirs []string,
+	plan sandboxpolicy.MountPlan,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
 ) ([]string, error) {
 	var hideRemounts tclaudeLayerHideRemounts
 	args := []string{
@@ -829,6 +981,31 @@ func bwrapArgs(
 		args = hideRemounts.appendHide(args, privateDir.Parent)
 		args = append(args, "--bind", privateDir.Current, privateDir.Current)
 		hideRemounts.noteReplacement(privateDir.Current)
+	}
+	// These invariants are daemon-owned and deliberately land after both
+	// profile replay and private-child reopening. A broad profile grant can
+	// therefore neither reveal legacy OpenCode roots nor make shared install
+	// and global-config trees writable.
+	for _, path := range finalHideDirs {
+		args = hideRemounts.appendHide(args, path)
+	}
+	for _, bind := range readOnlyBinds {
+		exists, err := bwrapBindSourceExists(bind.Source)
+		if err != nil {
+			return nil, fmt.Errorf("daemon-final read-only source %q: %w", bind.Source, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("daemon-final read-only source %q does not exist", bind.Source)
+		}
+		targetExists, err := bwrapBindSourceExists(bind.Target)
+		if err != nil {
+			return nil, fmt.Errorf("daemon-final read-only target %q: %w", bind.Target, err)
+		}
+		if !targetExists {
+			return nil, fmt.Errorf("daemon-final read-only target %q does not exist", bind.Target)
+		}
+		hideRemounts.noteReplacement(bind.Target)
+		args = append(args, "--ro-bind", bind.Source, bind.Target)
 	}
 	// Class 4: host tmux control is never profile-reachable.
 	// This hide must be last: unlike ProtectedPaths, an ordinary profile may
@@ -1301,10 +1478,13 @@ func bwrapCommand(
 	binary string,
 	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	args, err := bwrapArgs(phase0WriteDirs, plan, privateWriteDirs...)
+	args, err := bwrapArgsWithDaemonFinal(
+		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds)
 	if err != nil {
 		return "", err
 	}

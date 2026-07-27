@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -96,8 +97,27 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	root := filepath.Join(home, "fixture")
 	cwd := filepath.Join(root, "workspace")
 	outside := filepath.Join(root, "outside")
-	require.NoError(t, os.MkdirAll(cwd, 0o700))
-	require.NoError(t, os.MkdirAll(outside, 0o700))
+	ambientData := filepath.Join(home, "data", "opencode")
+	ambientCache := filepath.Join(home, "cache", "opencode")
+	ambientConfig := filepath.Join(home, "config", "opencode")
+	ambientState := filepath.Join(home, "state", "opencode")
+	install := filepath.Join(home, ".opencode")
+	for _, path := range []string{
+		cwd, outside, ambientData, ambientCache, ambientConfig, ambientState, install,
+	} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	for _, path := range []string{
+		filepath.Join(ambientData, "ambient-data-marker"),
+		filepath.Join(ambientCache, "ambient-cache-marker"),
+		filepath.Join(ambientState, "ambient-state-marker"),
+		filepath.Join(ambientConfig, "shared-config-marker"),
+		filepath.Join(install, "shared-install-marker"),
+	} {
+		require.NoError(t, os.WriteFile(path, []byte("marker"), 0o600))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(ambientConfig, ".gitignore"),
+		[]byte("node_modules\npackage.json\npackage-lock.json\n.gitignore\n"), 0o600))
 
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
@@ -113,8 +133,17 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "TCLAUDE_OPENCODE_EXECUTOR_SMOKE", Value: "frozen-profile-value",
 	}}
+	smokeAgentID := db.NewAgentID()
+	allocation, err := allocatePrivateOpenCodeState(smokeAgentID)
+	require.NoError(t, err)
+	siblingAgentID := db.NewAgentID()
+	siblingAllocation, err := allocatePrivateOpenCodeState(siblingAgentID)
+	require.NoError(t, err)
+	siblingMarker := filepath.Join(siblingAllocation.StateRoot, "sibling-marker")
+	require.NoError(t, os.WriteFile(siblingMarker, []byte("sibling"), 0o600))
 	spec, err := openCodeTclaudeLayerLaunchSpec(
-		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot)
+		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot,
+		smokeAgentID)
 	require.NoError(t, err)
 	require.NotNil(t, spec)
 	permissionJSON, err := openCodePermissionJSONForLaunch(
@@ -127,6 +156,10 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeLayerSmokeSessionID, cwd, "OpenCode layer smoke", "", permissionJSON, spec)
+	if err != nil {
+		logOpenCodeLayerSmokeServerLogs(t,
+			filepath.Join(allocation.StateRoot, "data", "opencode", "log"))
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeLayerSmokeSessionID) })
 	require.NotEmpty(t, launch.ConvID)
@@ -143,7 +176,8 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}))
-	expectedAgentID, _, err := db.EnsureAgentForConv(launch.ConvID, "smoke")
+	expectedAgentID, _, err := db.EnsureAgentForConvWithID(
+		launch.ConvID, smokeAgentID, "smoke")
 	require.NoError(t, err)
 
 	runtime, err := db.GetOpenCodeRuntime(openCodeLayerSmokeSessionID)
@@ -155,16 +189,35 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 		"the actual server must retain the compiled permission suffix")
 
 	stopAttach := startOpenCodeLayerSmokeAttach(
-		t, openCodeExecutable, *runtime, launch.ConvID, cwd)
+		t, openCodeExecutable, *runtime, launch.ConvID, cwd,
+		spec.Contract.Environment)
 	t.Cleanup(stopAttach)
 
 	command := fmt.Sprintf(
 		"set -eu; test \"$TCLAUDE_OPENCODE_EXECUTOR_SMOKE\" = frozen-profile-value; "+
-			"printf executor-ok > %s; if printf blocked > %s; then exit 97; fi; "+
-			"if printf planted > \"$HOME/.opencode/bin/opencode\"; then exit 98; fi; "+
+			"test \"$XDG_DATA_HOME\" = %s; test \"$XDG_CACHE_HOME\" = %s; "+
+			"test \"$XDG_CONFIG_HOME\" = %s; test \"$XDG_STATE_HOME\" = %s; "+
+			"printf executor-ok > %s; printf state-ok > \"$XDG_STATE_HOME/opencode/tool-state\"; "+
+			"if printf blocked > %s; then exit 97; fi; "+
+			"for hidden in %s %s %s %s; do if test -r \"$hidden\"; then exit 98; fi; done; "+
+			"test -r %s; test -r %s; "+
+			"if printf planted > %s; then exit 99; fi; "+
+			"if printf planted > %s; then exit 100; fi; "+
 			"%s agent whoami",
+		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "data")),
+		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "cache")),
+		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "config")),
+		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "state")),
 		clcommon.ShellQuoteArg(filepath.Join(cwd, "tool-written")),
 		clcommon.ShellQuoteArg(filepath.Join(outside, "blocked")),
+		clcommon.ShellQuoteArg(siblingMarker),
+		clcommon.ShellQuoteArg(filepath.Join(ambientData, "ambient-data-marker")),
+		clcommon.ShellQuoteArg(filepath.Join(ambientCache, "ambient-cache-marker")),
+		clcommon.ShellQuoteArg(filepath.Join(ambientState, "ambient-state-marker")),
+		clcommon.ShellQuoteArg(filepath.Join(ambientConfig, "shared-config-marker")),
+		clcommon.ShellQuoteArg(filepath.Join(install, "shared-install-marker")),
+		clcommon.ShellQuoteArg(filepath.Join(ambientConfig, "config-write-blocked")),
+		clcommon.ShellQuoteArg(filepath.Join(install, "install-write-blocked")),
 		clcommon.ShellQuoteArg(tclaudeBinary),
 	)
 	output := runOpenCodeLayerSmokeShell(t, *runtime, command)
@@ -172,6 +225,8 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(outside, "blocked"))
 	require.ErrorIs(t, statErr, os.ErrNotExist,
 		"the real OpenCode bash tool must remain inside the server's mount boundary")
+	require.FileExists(t, filepath.Join(allocation.StateRoot, "data", "opencode", "opencode.db"))
+	require.FileExists(t, filepath.Join(allocation.StateRoot, "state", "opencode", "tool-state"))
 
 	var identityLine string
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
@@ -182,6 +237,92 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NotEmptyf(t, identityLine, "tool output did not contain managed identity: %q", output)
 	assert.Equal(t, expectedAgentID, strings.Fields(identityLine)[0],
 		"agentd must resolve the exact managed identity through the wrapped server ancestry")
+}
+
+func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
+	t.Helper()
+	dirFile, err := openOpenCodeLayerSmokeLogDir(dir)
+	if err != nil {
+		t.Logf("read OpenCode smoke log directory %s: %v", dir, err)
+		return
+	}
+	defer dirFile.Close()
+	entries, err := dirFile.ReadDir(-1)
+	if err != nil {
+		t.Logf("enumerate OpenCode smoke log directory %s: %v", dir, err)
+		return
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		raw, readErr := readOpenCodeLayerSmokeLogTailAt(
+			int(dirFile.Fd()), entry.Name())
+		if readErr != nil {
+			t.Logf("read OpenCode smoke log %s: %v", path, readErr)
+			continue
+		}
+		t.Logf("OpenCode smoke log %s:\n%s", path, raw)
+	}
+}
+
+func openOpenCodeLayerSmokeLogDir(path string) (*os.File, error) {
+	fd, err := unix.Open(
+		path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+
+func readOpenCodeLayerSmokeLogTailAt(dirFD int, name string) ([]byte, error) {
+	fd, err := unix.Openat(
+		dirFD, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), name)
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return nil, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	const limit = int64(64 << 10)
+	if stat.Size > limit {
+		if _, err := file.Seek(stat.Size-limit, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	return io.ReadAll(io.LimitReader(file, limit))
+}
+
+func TestReadOpenCodeLayerSmokeLogTailRefusesSpecialFilesAndBounds(t *testing.T) {
+	dir := t.TempDir()
+	large := filepath.Join(dir, "large.log")
+	require.NoError(t, os.WriteFile(large, []byte(
+		strings.Repeat("a", 64<<10)+strings.Repeat("b", 64<<10)), 0o600))
+	dirFile, err := openOpenCodeLayerSmokeLogDir(dir)
+	require.NoError(t, err)
+	defer dirFile.Close()
+	raw, err := readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "large.log")
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("b", 64<<10), string(raw))
+
+	symlink := filepath.Join(dir, "symlink.log")
+	require.NoError(t, os.Symlink(large, symlink))
+	_, err = readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "symlink.log")
+	require.Error(t, err)
+
+	fifo := filepath.Join(dir, "fifo.log")
+	require.NoError(t, unix.Mkfifo(fifo, 0o600))
+	_, err = readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "fifo.log")
+	require.ErrorContains(t, err, "not a regular file")
+
+	dirSymlink := filepath.Join(t.TempDir(), "log")
+	require.NoError(t, os.Symlink(dir, dirSymlink))
+	_, err = openOpenCodeLayerSmokeLogDir(dirSymlink)
+	require.Error(t, err)
 }
 
 func startOpenCodeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {
@@ -214,6 +355,7 @@ func startOpenCodeLayerSmokeAttach(
 	executable string,
 	runtime db.OpenCodeRuntime,
 	convID, cwd string,
+	environment []sandboxpolicy.EnvironmentEntry,
 ) func() {
 	t.Helper()
 	cmd := exec.Command(executable,
@@ -223,6 +365,9 @@ func startOpenCodeLayerSmokeAttach(
 		"OPENCODE_SERVER_USERNAME="+openCodeServerUsername,
 		"OPENCODE_SERVER_PASSWORD="+runtime.Password,
 	)
+	for _, entry := range environment {
+		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
+	}
 	terminal, err := pty.Start(cmd)
 	require.NoError(t, err)
 	copied := make(chan struct{})
@@ -249,6 +394,13 @@ func startOpenCodeLayerSmokeAttach(
 		return processHasOpenCodeServerConnection(cmd.Process.Pid, runtime.ServerURL)
 	}, openCodeLayerSmokeAttachProbe, 25*time.Millisecond,
 		"OpenCode attach did not connect to the managed server")
+	rawEnvironment, err := os.ReadFile(
+		filepath.Join("/proc", strconv.Itoa(cmd.Process.Pid), "environ"))
+	require.NoError(t, err)
+	for _, entry := range environment {
+		assert.Contains(t, string(rawEnvironment), entry.Name+"="+entry.Value+"\x00",
+			"attach and server must receive the same private XDG allocation")
+	}
 	return stop
 }
 
