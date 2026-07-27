@@ -137,22 +137,15 @@ func TestReincarnate_UnreadyPane_TitleAndHandoffStillLand(t *testing.T) {
 	assertNoSendKeysTo(t, f, r.TmuxTarget())
 }
 
-// Scenario: the SAME unready pane, but with the operator's escape hatch
-// (agent.spawn_legacy_injection=true) reverting reincarnate to the legacy
-// inject-after-connect path — which is also the path Codex still takes.
+// Scenario: the operator has agent.spawn_legacy_injection=true for ordinary
+// spawns, and the reincarnated successor's pane is not reading input yet.
 //
-// This is the characterisation test for the bug: it pins that the simulator
-// really does reproduce the merge, so the immunity asserted above is a property
-// of the launch-arg path and not an artifact of a forgiving simulator. The
-// successor ends up titled `<base><the entire handoff nudge>` and the handoff
-// is consumed as rename argument text rather than delivered as a turn.
-//
-// Keeping this failure documented in a test is deliberate: the revert flag is
-// still reachable, and an operator who flips it should be able to find out from
-// the test suite what they are trading away.
-func TestReincarnate_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testing.T) {
+// Expected: the spawn-only escape hatch must not re-enable reincarnation's
+// collision-prone send-keys path. Claude Code still receives its name and
+// required handoff as launch args, with no successor-pane injection.
+func TestReincarnate_SpawnLegacyInjectionDoesNotReenableSendKeys(t *testing.T) {
 	f := newFlow(t)
-	f.World.SpawnInputUnreadyEnters = unreadyPaneEnters
+	f.World.SpawnInputUnreadyEnters = neverReadyPaneEnters
 
 	legacy := true
 	require.NoError(t, config.Save(&config.Config{
@@ -172,21 +165,12 @@ func TestReincarnate_LegacyInjection_UnreadyPaneMergesRenameAndHandoff(t *testin
 
 	r := f.AsHuman().Reincarnate(oldConv, handoff)
 
-	// Legacy path: the title and the handoff are both typed into the pane...
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 10*time.Second)
-	f.AssertSentContains(r.TmuxTarget(), "PROBE-HANDOFF-MARKER", 15*time.Second)
-
-	// ...and against a pane that is not reading yet, they arrive as ONE line:
-	// the successor's title becomes the base name with the whole handoff nudge
-	// welded onto it, so the handoff is never delivered as a turn.
-	merged := successorPaneTitleMatching(t, f, r.NewConv,
-		func(s string) bool { return strings.Contains(s, "PROBE-HANDOFF-MARKER") },
-		15*time.Second)
-	assert.Truef(t, strings.HasPrefix(merged, "worker"),
-		"expected the merged title to start with the base name; got %q", merged)
-	assert.NotEqual(t, "worker", merged,
-		"this test exists to pin the MERGE; if the legacy path stopped merging, "+
-			"the simulator's unready-pane model has regressed")
+	f.AssertSpawnName(r.NewConv, "worker", 10*time.Second)
+	f.AssertSpawnInitialPrompt(r.NewConv, handoff, 10*time.Second)
+	assert.Equal(t, "worker",
+		successorPaneTitle(t, f, r.NewConv, "worker", 10*time.Second))
+	assertHandoffDelivered(t, handoffMessageIDFor(t, r.NewConv))
+	assertNoSendKeysTo(t, f, r.TmuxTarget())
 }
 
 // Scenario: the successor's harness dies on startup — expired auth, a broken
