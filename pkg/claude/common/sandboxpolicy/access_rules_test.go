@@ -42,6 +42,52 @@ func TestMaterializeUnixSocketPathsExpandsOnlyLiveSockets(t *testing.T) {
 	assert.Equal(t, []string{canonicalFirst, canonicalSecond}, got)
 }
 
+func TestUnixSocketLaunchNoticeNamesEveryUnmaterializedEntry(t *testing.T) {
+	root := agentipctest.ShortSocketDir(t)
+	regular := filepath.Join(root, "regular")
+	require.NoError(t, os.WriteFile(regular, []byte("not a socket"), 0o600))
+	missing := filepath.Join(root, "missing.sock")
+	unmatched := filepath.Join(root, "future-*.sock")
+	rules := UnixSocketRules{
+		Mode: AccessModeList,
+		Allow: []SocketAllowEntry{
+			{Path: missing},
+			{Path: regular},
+			{PathGlob: unmatched},
+		},
+	}
+
+	materialized, err := MaterializeUnixSocketList(rules)
+	require.NoError(t, err)
+	assert.Empty(t, materialized.Paths)
+	assert.Equal(t, []string{missing, regular, unmatched}, materialized.Unmaterialized)
+	assert.Equal(t, []int{0, 1, 2}, materialized.Entries)
+
+	notice, err := UnixSocketLaunchNotice(rules)
+	require.NoError(t, err)
+	require.NotNil(t, notice)
+	assert.Equal(t, AccessNoticeClassLaunch, notice.Class)
+	assert.Equal(t, AccessNoticeReasonUnmaterializedEntries, notice.Reason)
+	assert.Equal(t, AccessNoticeEffectNotMaterialized, notice.Effect)
+	assert.Equal(t, []int{0, 1, 2}, notice.Entries)
+	for _, selector := range []string{missing, regular, unmatched} {
+		assert.Contains(t, notice.Detail, selector)
+	}
+}
+
+func TestReplacingLaunchNoticesClearsStaleMaterializationDisclosure(t *testing.T) {
+	composition := compositionNotice("unix_sockets", []string{"global", "worker"})
+	stale := AccessNotice{
+		Class: AccessNoticeClassLaunch, Axis: "unix_sockets",
+		Reason: AccessNoticeReasonUnmaterializedEntries,
+		Effect: AccessNoticeEffectNotMaterialized,
+		Detail: "socket was absent on the previous launch",
+	}
+
+	assert.Equal(t, []AccessNotice{composition},
+		ReplaceAccessLaunchNotices([]AccessNotice{composition, stale}))
+}
+
 func TestNormalizeAccessRules(t *testing.T) {
 	t.Run("network canonical", func(t *testing.T) {
 		got, _, err := NormalizeForPersistence(Profile{

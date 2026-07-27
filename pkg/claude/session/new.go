@@ -1104,16 +1104,28 @@ func runNew(params *NewParams) error {
 		if capsErr != nil {
 			return capsErr
 		}
-		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
+		rendered, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
 		if planErr != nil {
 			return planErr
 		}
-		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-			launchSandbox.Effective.AccessNotices, notices...,
+		launchNotices := []sandboxpolicy.AccessNotice{}
+		launchNotice, launchNoticeErr := sandboxpolicy.UnixSocketLaunchNotice(rendered.UnixSockets)
+		if launchNoticeErr != nil {
+			return launchNoticeErr
+		}
+		if launchNotice != nil {
+			launchNotices = append(launchNotices, *launchNotice)
+		}
+		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
+			sandboxpolicy.ReplaceAccessDegradationNotices(
+				launchSandbox.Effective.AccessNotices, notices...,
+			), launchNotices...,
 		)
 		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
-				effectiveSandbox.Effective.AccessNotices, notices...,
+			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
+				sandboxpolicy.ReplaceAccessDegradationNotices(
+					effectiveSandbox.Effective.AccessNotices, notices...,
+				), launchNotices...,
 			)
 		}
 		if outerLayer {

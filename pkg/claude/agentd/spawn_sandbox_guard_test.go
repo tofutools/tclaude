@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,50 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	regular := filepath.Join(root, "regular")
+	require.NoError(t, os.WriteFile(regular, []byte("not a socket"), 0o600))
+	missing := filepath.Join(root, "missing.sock")
+	unmatched := filepath.Join(root, "future-*.sock")
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		UnixSockets: &sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{
+				{Path: missing},
+				{Path: regular},
+				{PathGlob: unmatched},
+			},
+		},
+	}}
+
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.CodexName,
+		harness.SandboxManagedProfile,
+		snapshot,
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+	)
+	require.Nil(t, failure)
+	var notice *sandboxpolicy.AccessNotice
+	for i := range notices {
+		if notices[i].Class == sandboxpolicy.AccessNoticeClassLaunch {
+			notice = &notices[i]
+			break
+		}
+	}
+	require.NotNil(t, notice)
+	require.Contains(t, snapshot.Effective.AccessNotices, *notice)
+	require.Equal(t, sandboxpolicy.AccessNoticeClassLaunch, notice.Class)
+	require.Equal(t, sandboxpolicy.AccessNoticeReasonUnmaterializedEntries, notice.Reason)
+	require.Equal(t, []int{0, 1, 2}, notice.Entries)
+	for _, selector := range []string{missing, regular, unmatched} {
+		require.True(t, strings.Contains(notice.Detail, selector),
+			"launch notice must name unmaterialized selector %q: %s",
+			selector, notice.Detail)
+	}
+}
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())

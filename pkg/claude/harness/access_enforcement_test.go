@@ -50,10 +50,15 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceFull, caps.socketClosed)
+	assert.Equal(t, EnforcePartial, caps.socketClosed)
 	_, notices, err := PlanAccessEnforcement(closed, caps)
 	require.NoError(t, err)
-	assert.Empty(t, notices)
+	require.Len(t, notices, 1,
+		"claiming Full or suppressing the partial disclosure must fail this guard")
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "readable/writable directories")
+	assert.Contains(t, notices[0].Detail, "remain reachable")
+	assert.Contains(t, notices[0].Detail, "outside")
 
 	explicitOpenSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -92,12 +97,18 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceFull, caps.socketList)
+	assert.Equal(t, EnforcePartial, caps.socketList)
 	rendered, notices, err := PlanAccessEnforcement(closedNetworkSocketList, caps)
 	require.NoError(t, err)
 	assert.Equal(t, closedNetworkSocketList.UnixSockets, rendered.UnixSockets)
-	assert.Empty(t, notices,
-		"the constructed-root socket-list adapter enforces the authored set exactly")
+	require.Len(t, notices, 1,
+		"claiming Full or suppressing the partial disclosure must fail this guard")
+	assert.Equal(t, "partial_mechanism", notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
+	assert.Contains(t, notices[0].Detail, "readable/writable directories")
+	assert.Contains(t, notices[0].Detail, "remain reachable")
+	assert.Contains(t, notices[0].Detail, "outside")
 
 	hostOpenClosedSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},

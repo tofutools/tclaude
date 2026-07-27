@@ -28,6 +28,8 @@ func TestCodexManagedProfileCarriesSnapshotUnixSocketList(t *testing.T) {
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
+	canonicalSocket, err := filepath.EvalSymlinks(socket)
+	require.NoError(t, err)
 
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
 		Global: &sandboxpolicy.Profile{
@@ -51,8 +53,8 @@ func TestCodexManagedProfileCarriesSnapshotUnixSocketList(t *testing.T) {
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"`+socket+`" = "read"`)
-	assert.Contains(t, string(raw), `"`+socket+`" = "allow"`)
+	assert.Contains(t, string(raw), `"`+canonicalSocket+`" = "read"`)
+	assert.Contains(t, string(raw), `"`+canonicalSocket+`" = "allow"`)
 }
 
 func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {

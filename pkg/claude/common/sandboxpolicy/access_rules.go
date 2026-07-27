@@ -72,18 +72,20 @@ type ResolvedAxes struct {
 const (
 	AccessNoticeClassDegradation = "degradation"
 	AccessNoticeClassComposition = "composition"
+	AccessNoticeClassLaunch      = "launch"
 
-	AccessNoticeReasonEmptyIntersection = "empty_intersection"
+	AccessNoticeReasonEmptyIntersection     = "empty_intersection"
+	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 
-	AccessNoticeEffectNotEnforced    = "not_enforced"
-	AccessNoticeEffectEnforcedWider  = "enforced_wider"
-	AccessNoticeEffectNothingAllowed = "nothing_allowed"
+	AccessNoticeEffectNotEnforced     = "not_enforced"
+	AccessNoticeEffectEnforcedWider   = "enforced_wider"
+	AccessNoticeEffectNothingAllowed  = "nothing_allowed"
+	AccessNoticeEffectNotMaterialized = "not_materialized"
 )
 
 // AccessNotice is the single persisted disclosure record used by access
-// enforcement. Composition notices are deliberately distinct from
-// degradations: the former says authored policy composed more narrowly, while
-// the latter says an implementation had to enforce more widely.
+// enforcement. Its class separates authoring composition, target-dependent
+// degradation, and filesystem-dependent launch materialization.
 type AccessNotice struct {
 	Class   string   `json:"class"`
 	Axis    string   `json:"axis"`
@@ -603,6 +605,16 @@ type UnixSocketAccess struct {
 	AllowedGlobs []string
 }
 
+// UnixSocketMaterialization is the launch-time surface produced from an
+// authored socket list. Unmaterialized and Entries retain the authored
+// selectors that did not resolve to any live Unix socket, so launch surfaces
+// can disclose the narrower rendered surface.
+type UnixSocketMaterialization struct {
+	Paths          []string
+	Unmaterialized []string
+	Entries        []int
+}
+
 // ResolveUnixSocketAccess injects the non-removable agentd floor after
 // operator-authored policy has been normalized.
 func ResolveUnixSocketAccess(rules UnixSocketRules) UnixSocketAccess {
@@ -623,7 +635,7 @@ func ResolveUnixSocketAccess(rules UnixSocketRules) UnixSocketAccess {
 	return out
 }
 
-// MaterializeUnixSocketPaths expands one resolved socket list against the
+// MaterializeUnixSocketList expands one resolved socket list against the
 // launch-time filesystem. Missing exact paths and unmatched globs are omitted:
 // socket endpoints are routinely created after a profile is authored. Only
 // actual Unix sockets are returned, so a broad sibling glob cannot
@@ -631,71 +643,122 @@ func ResolveUnixSocketAccess(rules UnixSocketRules) UnixSocketAccess {
 //
 // The agentd floor is not included. Adapters add it independently for every
 // socket posture, preserving the floor even when the authored list is empty.
-func MaterializeUnixSocketPaths(rules UnixSocketRules) ([]string, error) {
+func MaterializeUnixSocketList(rules UnixSocketRules) (UnixSocketMaterialization, error) {
 	if rules.Mode != AccessModeList {
-		return nil, nil
+		return UnixSocketMaterialization{}, nil
 	}
-	candidates := make([]string, 0, len(rules.Allow))
+	result := UnixSocketMaterialization{}
+	protected, err := ProtectedPaths()
+	if err != nil {
+		return UnixSocketMaterialization{}, err
+	}
+	seen := make(map[string]struct{}, len(rules.Allow))
 	for i, entry := range rules.Allow {
+		selector := entry.Path
+		candidates := []string{entry.Path}
 		switch {
 		case entry.Path != "":
-			candidates = append(candidates, entry.Path)
 		case entry.PathGlob != "":
+			selector = entry.PathGlob
 			matches, err := filepath.Glob(entry.PathGlob)
 			if err != nil {
-				return nil, fmt.Errorf(
+				return UnixSocketMaterialization{}, fmt.Errorf(
 					"expand unix_sockets.allow[%d] glob %q: %w",
 					i, entry.PathGlob, err)
 			}
-			candidates = append(candidates, matches...)
+			candidates = matches
 		default:
-			return nil, fmt.Errorf(
+			return UnixSocketMaterialization{}, fmt.Errorf(
 				"unix_sockets.allow[%d] has no path or path_glob", i)
 		}
+		materialized := false
+		for _, candidate := range candidates {
+			candidate = filepath.Clean(candidate)
+			_, statErr := os.Lstat(candidate)
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			if statErr != nil {
+				return UnixSocketMaterialization{}, fmt.Errorf(
+					"inspect unix socket allow path %q: %w", candidate, statErr)
+			}
+			resolved, statErr := filepath.EvalSymlinks(candidate)
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			if statErr != nil {
+				return UnixSocketMaterialization{}, fmt.Errorf(
+					"resolve unix socket allow path %q: %w", candidate, statErr)
+			}
+			resolved = filepath.Clean(resolved)
+			info, statErr := os.Lstat(resolved)
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			if statErr != nil {
+				return UnixSocketMaterialization{}, fmt.Errorf(
+					"inspect resolved unix socket allow path %q: %w", resolved, statErr)
+			}
+			if info.Mode()&os.ModeSocket == 0 {
+				continue
+			}
+			for _, denied := range protected {
+				if PathContainsOrEqual(denied, resolved) {
+					return UnixSocketMaterialization{}, fmt.Errorf(
+						"unix socket allow path %q resolves beneath protected directory %q",
+						candidate, denied)
+				}
+			}
+			materialized = true
+			if _, exists := seen[resolved]; exists {
+				continue
+			}
+			seen[resolved] = struct{}{}
+			result.Paths = append(result.Paths, resolved)
+		}
+		if !materialized {
+			result.Unmaterialized = append(result.Unmaterialized, selector)
+			result.Entries = append(result.Entries, i)
+		}
 	}
+	sort.Strings(result.Paths)
+	return result, nil
+}
 
-	protected, err := ProtectedPaths()
+// MaterializeUnixSocketPaths returns the live socket paths from one launch-time
+// list materialization.
+func MaterializeUnixSocketPaths(rules UnixSocketRules) ([]string, error) {
+	result, err := MaterializeUnixSocketList(rules)
+	return result.Paths, err
+}
+
+// UnixSocketLaunchNotice reports selectors omitted from the launch-time
+// rendered surface. This is launch information, not a degradation-ladder
+// outcome: the supported allowlist remains enforced over the sockets that
+// actually exist.
+func UnixSocketLaunchNotice(rules UnixSocketRules) (*AccessNotice, error) {
+	result, err := MaterializeUnixSocketList(rules)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]struct{}, len(candidates))
-	out := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidate = filepath.Clean(candidate)
-		_, statErr := os.Lstat(candidate)
-		if os.IsNotExist(statErr) {
-			continue
-		}
-		if statErr != nil {
-			return nil, fmt.Errorf("inspect unix socket allow path %q: %w", candidate, statErr)
-		}
-		resolved, statErr := filepath.EvalSymlinks(candidate)
-		if statErr != nil {
-			return nil, fmt.Errorf("resolve unix socket allow path %q: %w", candidate, statErr)
-		}
-		resolved = filepath.Clean(resolved)
-		info, statErr := os.Lstat(resolved)
-		if statErr != nil {
-			return nil, fmt.Errorf("inspect resolved unix socket allow path %q: %w", resolved, statErr)
-		}
-		if info.Mode()&os.ModeSocket == 0 {
-			continue
-		}
-		for _, denied := range protected {
-			if PathContainsOrEqual(denied, resolved) {
-				return nil, fmt.Errorf(
-					"unix socket allow path %q resolves beneath protected directory %q",
-					candidate, denied)
-			}
-		}
-		if _, exists := seen[resolved]; exists {
-			continue
-		}
-		seen[resolved] = struct{}{}
-		out = append(out, resolved)
+	if len(result.Unmaterialized) == 0 {
+		return nil, nil
 	}
-	sort.Strings(out)
-	return out, nil
+	quoted := make([]string, 0, len(result.Unmaterialized))
+	for _, selector := range result.Unmaterialized {
+		quoted = append(quoted, strconv.Quote(selector))
+	}
+	return &AccessNotice{
+		Class:  AccessNoticeClassLaunch,
+		Axis:   "unix_sockets",
+		Reason: AccessNoticeReasonUnmaterializedEntries,
+		Effect: AccessNoticeEffectNotMaterialized,
+		Detail: fmt.Sprintf(
+			"Unix-socket allowlist entries %s were not materialized for this launch; "+
+				"missing, unmatched, or non-socket paths are not reachable",
+			strings.Join(quoted, ", ")),
+		Entries: append([]int(nil), result.Entries...),
+	}, nil
 }
 
 // intersectNetworkRules composes two already-normalized rules without ever
@@ -946,6 +1009,27 @@ func ReplaceAccessDegradationNotices(
 	kept := make([]AccessNotice, 0, len(existing)+len(current))
 	for _, notice := range existing {
 		if notice.Class != AccessNoticeClassDegradation {
+			kept = append(kept, notice)
+		}
+	}
+	out := MergeAccessNotices(kept, current...)
+	if out == nil && (existing != nil || current != nil) {
+		return []AccessNotice{}
+	}
+	return out
+}
+
+// ReplaceAccessLaunchNotices keeps durable authoring/composition and current
+// degradation records while replacing filesystem-dependent launch
+// disclosures. A socket that appears before a later launch must clear its
+// earlier unmaterialized notice.
+func ReplaceAccessLaunchNotices(
+	existing []AccessNotice,
+	current ...AccessNotice,
+) []AccessNotice {
+	kept := make([]AccessNotice, 0, len(existing)+len(current))
+	for _, notice := range existing {
+		if notice.Class != AccessNoticeClassLaunch {
 			kept = append(kept, notice)
 		}
 	}

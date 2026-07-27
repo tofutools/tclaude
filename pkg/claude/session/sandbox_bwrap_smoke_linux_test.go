@@ -47,6 +47,7 @@ const (
 	smokePrivateSiblingDirEnv  = "TCLAUDE_SANDBOX_V2_PRIVATE_SIBLING_DIR"
 	smokeAllowedSocketEnv      = "TCLAUDE_SANDBOX_V2_ALLOWED_SOCKET"
 	smokePeerSocketEnv         = "TCLAUDE_SANDBOX_V2_PEER_SOCKET"
+	smokePositiveRootSocketEnv = "TCLAUDE_SANDBOX_V2_POSITIVE_ROOT_SOCKET"
 	smokeSocketHelperEnv       = "TCLAUDE_SANDBOX_V2_SOCKET_HELPER"
 )
 
@@ -202,10 +203,10 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		privateOwnFile, privateSibling)
 
 	// Two launch-equivalent agents receive disjoint socket lists. Each can
-	// connect to its own bound endpoint while the sibling endpoint is absent
-	// from the constructed root. This is the live disclosure/render guard for
-	// M3: a profile list is neither silently dropped nor widened to every
-	// sibling agent's socket.
+	// connect to its own bound endpoint while the sibling endpoint outside all
+	// positive roots is absent. An unlisted socket beneath the launch cwd's
+	// writable bind remains reachable, proving the categorical remainder
+	// disclosed by Linux's Partial capability.
 	policySocketDir := filepath.Join(root, "policy-sockets")
 	require.NoError(t, os.MkdirAll(policySocketDir, 0o700))
 	policySockets := []string{
@@ -217,10 +218,14 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		require.NoError(t, listenErr)
 		t.Cleanup(func() { _ = listener.Close() })
 	}
+	positiveRootSocket := filepath.Join(allowed, "unlisted-cwd.sock")
+	positiveRootListener, err := net.Listen("unix", positiveRootSocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = positiveRootListener.Close() })
 	for i := range policySockets {
 		runTclaudeLayerSocketVisibilityHelper(
 			t, binary, helperBinary, phase0, plan,
-			policySockets[i], policySockets[1-i],
+			policySockets[i], policySockets[1-i], positiveRootSocket,
 		)
 	}
 }
@@ -479,7 +484,7 @@ func runTclaudeLayerSocketVisibilityHelper(
 	binary, helperBinary string,
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
-	allowedSocket, peerSocket string,
+	allowedSocket, peerSocket, positiveRootSocket string,
 ) {
 	t.Helper()
 	socketPaths := append(sandboxpolicy.AgentdSocketFloor(), allowedSocket)
@@ -494,6 +499,7 @@ func runTclaudeLayerSocketVisibilityHelper(
 		smokeSocketHelperEnv+"=1",
 		smokeAllowedSocketEnv+"="+allowedSocket,
 		smokePeerSocketEnv+"="+peerSocket,
+		smokePositiveRootSocketEnv+"="+positiveRootSocket,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -508,6 +514,7 @@ func TestTclaudeLayerSocketVisibilityHelper(t *testing.T) {
 	}
 	allowed := os.Getenv(smokeAllowedSocketEnv)
 	peer := os.Getenv(smokePeerSocketEnv)
+	positiveRoot := os.Getenv(smokePositiveRootSocketEnv)
 	conn, err := net.DialTimeout("unix", allowed, 250*time.Millisecond)
 	require.NoError(t, err, "the current agent's allowlisted socket must be reachable")
 	require.NoError(t, conn.Close())
@@ -518,6 +525,10 @@ func TestTclaudeLayerSocketVisibilityHelper(t *testing.T) {
 	_, err = os.Lstat(peer)
 	assert.True(t, errors.Is(err, syscall.ENOENT),
 		"the sibling socket must be absent from the constructed root, got %v", err)
+	positiveConn, err := net.DialTimeout("unix", positiveRoot, 250*time.Millisecond)
+	require.NoError(t, err,
+		"an unlisted socket beneath a readable/writable root is the disclosed Linux Partial remainder")
+	require.NoError(t, positiveConn.Close())
 }
 
 func assertTclaudeLayerReapsOrphan(t *testing.T) {
