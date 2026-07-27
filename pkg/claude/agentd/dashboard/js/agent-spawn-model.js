@@ -139,6 +139,16 @@ export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
 
+// SANDBOX_APPARMOR_DOC is the operator guide a hint links to when this host
+// most likely denies the nested bwrap stacked needs. The docs own the
+// explanation, the workaround, and its host-wide trade-off; the hint stays one
+// sentence and points here rather than growing its own copy of them.
+export const SANDBOX_APPARMOR_DOC = {
+  href: 'https://github.com/tofutools/tclaude/blob/main/docs/sandboxing.md'
+    + '#stacked-refuses-on-apparmor-restricted-hosts',
+  label: 'why, and how to allow it',
+};
+
 // The per-harness mode help describes the harness-owned sandbox. Under the
 // tclaude layer that sandbox is deliberately off while the outer OS wall
 // renders the same sandbox-profile policy, so reusing (for example) Claude
@@ -193,6 +203,7 @@ function sandboxImplView(harness, context) {
     sandboxImplHarness: text(harness?.name),
     sandboxImplCanStacked: !!harness?.can_stacked,
     sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
+    sandboxImplStackedAppArmorLikely: !!catalog.stacked_apparmor_nested_bwrap_likely,
     sandboxImplHostAvailable: serverBoundary
       ? catalog.server_host_available !== false
       : catalog.host_available !== false,
@@ -255,7 +266,24 @@ export function sandboxImplHintFor(draft, view) {
       };
     }
     const availability = view.sandboxImplStackedAvailability || {};
+    const appArmor = view.sandboxImplStackedAppArmorLikely
+      ? { doc: SANDBOX_APPARMOR_DOC }
+      : null;
     if (view.sandboxImplHostAvailable && availability.available !== false) {
+      // The availability answer above only resolved the engine, so on a host
+      // carrying Ubuntu's enforcing bwrap policy it says "available" while the
+      // launch probe will refuse. Say so here rather than let the operator
+      // discover it from a failed launch — and say "likely", because reading
+      // the policy file is not the same as watching the deny.
+      if (appArmor) {
+        return {
+          warn: true,
+          ...appArmor,
+          text: 'Experimental, and likely blocked on this host: an enforcing '
+            + 'bwrap-userns-restrict AppArmor policy denies the nested bwrap, so the launch '
+            + 'round-trip will probably refuse. Availability above resolves the engine only.',
+        };
+      }
       return {
         warn: false,
         text: 'Experimental. Launch performs a fresh model-free allowed/denied round-trip through '
@@ -267,7 +295,15 @@ export function sandboxImplHintFor(draft, view) {
       || 'this host cannot create both sandbox walls';
     return {
       warn: true,
-      text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`,
+      ...(appArmor || {}),
+      // The concrete reason keeps the lead — it is what the probe actually
+      // said. The policy is named as a SECOND wall to clear, not as an
+      // explanation of this one, because it is neither.
+      text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`
+        + (appArmor
+          ? ' An enforcing bwrap-userns-restrict AppArmor policy on this host will likely block'
+            + ' the nested sandbox too, once that reason is fixed.'
+          : ''),
     };
   }
   if (value !== SANDBOX_IMPL_TCLAUDE_LAYER) return null;

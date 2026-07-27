@@ -132,6 +132,106 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   assert.match(refused.text, /Apply or launch will refuse/);
 });
 
+test('a likely AppArmor nested-bwrap block warns and links the guide', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = {
+    harnesses,
+    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
+  };
+  const view = model.spawnCapabilityView({ harness: 'claude' }, context);
+
+  // The engine resolved, so per-harness availability still says AVAILABLE on
+  // exactly this host. Without this branch the operator would meet the block
+  // as a failed launch after a green hint.
+  assert.equal(view.sandboxImplStackedAvailability.available, true);
+  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+  assert.equal(hint.warn, true);
+  assert.match(hint.text, /likely blocked on this host/);
+  assert.match(hint.text, /bwrap-userns-restrict/);
+  assert.match(hint.text, /probably refuse/, 'says likely, never asserts the deny');
+  assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
+  assert.match(hint.doc.href, /#stacked-refuses-on-apparmor-restricted-hosts$/);
+
+  // A link to a heading that no longer exists is worse than no link, so the
+  // anchor is pinned to the guide rather than trusted to survive an edit.
+  const guide = readFileSync(new URL('../../../../docs/sandboxing.md', import.meta.url), 'utf8');
+  assert.ok(
+    guide.includes('### Stacked refuses on AppArmor-restricted hosts'),
+    'docs/sandboxing.md must still carry the heading the hint links to',
+  );
+
+  // The hint is scoped to stacked: the single-layer wall works on such a host,
+  // so claiming otherwise under tclaude-layer would be a fresh overclaim.
+  assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).warn, false);
+  assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).doc, undefined);
+
+  // A host without the policy keeps the plain experimental copy and no link.
+  const clean = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
+  const plain = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, clean);
+  assert.equal(plain.warn, false);
+  assert.equal(plain.doc, undefined);
+});
+
+// The hint is only useful if the link actually reaches the DOM. Both the spawn
+// dialog and the profile editor render this component, so one test covers the
+// surfacing for both — and would catch a call site that went back to
+// interpolating plain text and silently dropped the link.
+test('the rendered hint carries its documentation link', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxImplHint } = await harness.importDashboardModule('js/sandbox-impl-hint.js');
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const view = model.spawnCapabilityView({ harness: 'claude' }, {
+    harnesses,
+    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
+  });
+  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+
+  const rendered = await harness.mount(
+    harness.html`<${SandboxImplHint} hint=${hint} id="hint" />`,
+  );
+  const node = rendered.container.querySelector('#hint');
+  assert.ok(node.classList.contains('warn'), 'a warning hint keeps its warn styling');
+  assert.match(node.textContent, /likely blocked on this host/);
+  const link = node.querySelector('a');
+  assert.equal(link.getAttribute('href'), model.SANDBOX_APPARMOR_DOC.href);
+  assert.equal(link.getAttribute('rel'), 'noopener');
+  assert.equal(link.getAttribute('target'), '_blank');
+  assert.equal(link.textContent, model.SANDBOX_APPARMOR_DOC.label);
+
+  // A hint without a doc renders no anchor at all, and no hint renders nothing.
+  const plain = await harness.mount(harness.html`<${SandboxImplHint}
+    hint=${{ warn: false, text: 'Experimental.' }} id="plain" />`);
+  assert.equal(plain.container.querySelector('#plain a'), null);
+  const absent = await harness.mount(harness.html`<${SandboxImplHint} hint=${null} />`);
+  assert.equal(absent.container.textContent, '');
+});
+
+test('the AppArmor link rides along with an already-unavailable stacked reason', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = {
+    harnesses,
+    sandboxImpl: {
+      ...sandboxImpl,
+      stacked_apparmor_nested_bwrap_likely: true,
+      stacked: { ...sandboxImpl.stacked, claude: { available: false, unavailable_reason: 'claude is not on PATH' } },
+    },
+  };
+  const view = model.spawnCapabilityView({ harness: 'claude' }, context);
+
+  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+  assert.equal(hint.warn, true);
+  // The concrete refusal keeps the lead. The policy is named as a SECOND wall
+  // to clear rather than as an explanation of this refusal — it is not one, and
+  // claiming otherwise would send the operator to change host security policy
+  // over a missing binary.
+  assert.match(hint.text, /claude is not on PATH/);
+  assert.match(hint.text, /will likely block the nested sandbox too/);
+  assert.doesNotMatch(hint.text, /likely cause/);
+  assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
+});
+
 test('an unavailable host warns with the concrete reason and the real consequence', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');

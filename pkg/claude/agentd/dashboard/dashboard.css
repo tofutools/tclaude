@@ -4337,6 +4337,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
 }
+/* A hint that links its documentation keeps the hint's own colour, warn variant
+   included: the global anchor blue inside 11px warning-orange copy reads as a
+   second, unrelated message. The underline is what marks it as a link. */
+.spawn-field-hint a { color: inherit; text-decoration: underline; }
 /* Sandbox dropdown help uses the same native title tooltip as the other
    spawn-dialog selects. A dedicated help button reveals the long copy for
    keyboard/touch users without making select hover or focus open an overlay. */

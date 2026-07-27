@@ -53,6 +53,11 @@ const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable
 var tclaudeLayerHostAvailability = session.TclaudeLayerHostAvailability
 var tclaudeLayerServerHostAvailability = session.TclaudeLayerServerHostAvailability
 
+// stackedAppArmorNestedBlockLikely is the same kind of seam for the host
+// heuristic behind the stacked AppArmor hint: a flow test must be able to
+// describe both host shapes without owning the machine it runs on.
+var stackedAppArmorNestedBlockLikely = session.LikelyAppArmorNestedBwrapBlock
+
 // validateSandboxImplementationForHarness normalizes a sandbox-implementation
 // value and gates it on the harness through the capability path
 // (session.ValidateTclaudeLayerHarness), never a harness-name switch here.

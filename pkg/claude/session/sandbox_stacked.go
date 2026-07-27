@@ -142,6 +142,7 @@ func ProbeStackedSandbox(
 				h.NestedSandbox.MechanismName(), stackedSandboxProbeTimeout,
 				strings.TrimSpace(output.String()))
 		}
+		detail += stackedAppArmorLikelyCause(output.String(), bwrapBinary)
 		proof.Cleanup()
 		capability := h.NestedSandbox.CapabilityName()
 		if probe.ClassifyFailure != nil {
@@ -191,6 +192,89 @@ func StackedLaunchOSSandbox(
 		Source:     "Stacked: " + outer + " + " + mechanism,
 		Unverified: unverified,
 	}
+}
+
+// stackedNestedNamespaceSignatures are the ways bwrap reports that it could not
+// build a namespace. They are matched against the probe's own output, never
+// against a guess about the host. The first entry is the message an operator
+// captured from a real failing stacked launch on the confirmed host; the rest
+// are bwrap's neighbouring failures for the same step.
+//
+// The buffer they are matched against is the probe's combined stdout+stderr,
+// which does reach here for both harnesses: the Claude probe redirects only the
+// harness's STDOUT into its result file, so an inner bwrap's complaint on
+// stderr still lands in the refusal detail.
+//
+// They deliberately do NOT distinguish the outer wall from the inner one — the
+// same strings appear either way — so the hint below says a bwrap namespace
+// could not be created, and never claims to know which one.
+var stackedNestedNamespaceSignatures = []string{
+	"no permissions to create a new namespace",
+	"creating new namespace failed",
+	"setting up uid map",
+	"unable to create new namespace",
+}
+
+// appArmorProfiledBwrapPath is the executable Ubuntu's policy attaches to. A
+// bwrap from anywhere else (nix, /usr/local, a local build) is unconfined by
+// it, and fails for a different reason that this hint's workaround would not
+// fix — so the hint stays silent rather than name the wrong mechanism.
+const appArmorProfiledBwrapPath = "/usr/bin/bwrap"
+
+// stackedAppArmorDocURL is the operator guide for the Ubuntu case, kept as one
+// derived pair so a rename touches the path const alone.
+const stackedAppArmorDocPath = "docs/sandboxing.md#stacked-refuses-on-apparmor-restricted-hosts"
+
+var stackedAppArmorDocURL = "https://github.com/tofutools/tclaude/blob/main/" +
+	stackedAppArmorDocPath
+
+// likelyAppArmorNestedBwrap is the host half of the hint, indirected so a test
+// can describe either host without owning the machine it runs on.
+var likelyAppArmorNestedBwrap = LikelyAppArmorNestedBwrapBlock
+
+// stackedAppArmorLikelyCause returns the one-line likely-cause pointer appended
+// to a stacked refusal's detail, or "" when it would be an overclaim.
+//
+// All three conditions must agree: the probe's OWN output must say a bwrap
+// namespace could not be created, the bwrap in play must be the one Ubuntu's
+// policy attaches to, and the host must still carry that policy enforcing. The
+// refusal, its capability names, and its literal shape are unchanged — this
+// only tells the operator where the explanation lives, and says "likely"
+// because nothing reachable from here can be certain.
+func stackedAppArmorLikelyCause(output, bwrapBinary string) string {
+	lowered := strings.ToLower(output)
+	matched := false
+	for _, signature := range stackedNestedNamespaceSignatures {
+		if strings.Contains(lowered, signature) {
+			matched = true
+			break
+		}
+	}
+	if !matched || !bwrapCarriesAppArmorPolicy(bwrapBinary) ||
+		!likelyAppArmorNestedBwrap() {
+		return ""
+	}
+	return "; likely cause: a bwrap namespace could not be created and this host " +
+		"enforces Ubuntu's bwrap-userns-restrict AppArmor policy, which denies " +
+		"capabilities to bwrap's children; workaround and its host-wide trade-off: " +
+		stackedAppArmorDocURL
+}
+
+// bwrapCarriesAppArmorPolicy reports whether the launch's bwrap is the path
+// Ubuntu's policy profiles. Symlinks are resolved so the usr-merge /bin/bwrap
+// still counts.
+func bwrapCarriesAppArmorPolicy(bwrapBinary string) bool {
+	path := strings.TrimSpace(bwrapBinary)
+	if path == "" {
+		return false
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return path == appArmorProfiledBwrapPath
 }
 
 func stackedSandboxRefusal(capability, detail string) error {
