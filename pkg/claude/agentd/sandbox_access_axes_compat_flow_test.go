@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -278,8 +279,16 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	require.NoError(t, json.Unmarshal(warned.Raw, &spawn))
 	require.NotNil(t, spawn.Resolved)
 	require.NotEmpty(t, spawn.Resolved.Warnings)
+	warningLiteral := "host-open network on Linux tclaude-layer"
+	closedLiteral := `unix_sockets \"closed\" cannot be enforced with open network access on Linux tclaude-layer`
+	ambientLiteral := `unix_sockets \"open\" cannot preserve ambient host socket visibility with closed network access`
+	if runtime.GOOS == "darwin" {
+		warningLiteral = "tclaude-layer Seatbelt (process scope)"
+		closedLiteral = `unix_sockets \"closed\" is not yet enforceable with open network access on macOS tclaude-layer`
+		ambientLiteral = `ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer`
+	}
 	assert.Contains(t, spawn.Resolved.Warnings[len(spawn.Resolved.Warnings)-1],
-		"host-open network on Linux tclaude-layer")
+		warningLiteral)
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
@@ -291,10 +300,8 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 		profile string
 		want    string
 	}{
-		{"socket-closed",
-			`unix_sockets \"closed\" cannot be enforced with open network access on Linux tclaude-layer`},
-		{"ambient-sockets",
-			`unix_sockets \"open\" cannot preserve ambient host socket visibility with closed network access`},
+		{"socket-closed", closedLiteral},
+		{"ambient-sockets", ambientLiteral},
 	} {
 		refused := f.AsHuman().SpawnWith("crew", map[string]any{
 			"name": "refused-" + tc.profile, "approval": "bypassPermissions",
