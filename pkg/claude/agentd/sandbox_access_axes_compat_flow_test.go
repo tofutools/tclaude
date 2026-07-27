@@ -140,6 +140,123 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 		"OpenCode's TCL-793 refusal must happen before any prediction is returned")
 }
 
+func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContexts(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	for _, body := range []map[string]any{
+		{
+			"name": "global-net", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "list", "allow": []any{
+				map[string]any{"domain": "github.com"},
+			}},
+		},
+		{
+			"name": "group-net", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "list", "allow": []any{
+				map[string]any{"domain": "api.anthropic.com"},
+			}},
+		},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-net"))
+	_, err = db.SetAgentGroupSandboxProfile("crew", "group-net")
+	require.NoError(t, err)
+	groupProfile, err := db.GetSandboxProfile("group-net")
+	require.NoError(t, err)
+	require.NotNil(t, groupProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id": groupProfile.ID, "name": "renamed-in-editor",
+			"filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "list", "allow": []any{
+				map[string]any{"domain": "api.anthropic.com"},
+			}},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Predicted bool                        `json:"predicted"`
+			Axes      harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string            `json:"context"`
+			Network sandboxpolicy.NetworkRules   `json:"network"`
+			Notices []sandboxpolicy.AccessNotice `json:"notices"`
+		} `json:"contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.True(t, got.Targets[0].Predicted)
+	assert.Equal(t, harness.AccessPredictionNotEnforced, got.Targets[0].Axes.Network.Outcome)
+	require.Len(t, got.Contexts, 1)
+	assert.Equal(t, "crew", got.Contexts[0].Context["group_name"])
+	assert.Equal(t, "renamed-in-editor", got.Contexts[0].Context["group"],
+		"assignment roles follow the stable profile ID through an in-progress rename")
+	assert.Equal(t, sandboxpolicy.AccessModeList, got.Contexts[0].Network.Mode)
+	assert.Empty(t, got.Contexts[0].Network.Allow)
+	require.Len(t, got.Contexts[0].Notices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeClassComposition, got.Contexts[0].Notices[0].Class)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonEmptyIntersection, got.Contexts[0].Notices[0].Reason)
+	assert.ElementsMatch(t, []string{`global "global-net"`, `group "renamed-in-editor"`},
+		got.Contexts[0].Notices[0].Tiers)
+
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile",
+		map[string]any{"name": "group-net"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var assignment struct {
+		Notices []sandboxpolicy.AccessNotice `json:"notices"`
+	}
+	testharness.DecodeJSON(t, rec, &assignment)
+	require.Len(t, assignment.Notices, 1)
+	assert.Contains(t, assignment.Notices[0].Detail, `group "crew"`)
+
+	_, err = db.CreateAgentGroup("second", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("second", "group-net")
+	require.NoError(t, err)
+	rec = profileReq(t, f, http.MethodPut, "/v1/sandbox-profile-default",
+		map[string]any{"name": "global-net"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &assignment)
+	require.Len(t, assignment.Notices, 2,
+		"global assignment checks every group's assigned profile")
+	assert.Contains(t, assignment.Notices[0].Detail, "group")
+
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "default-target-draft", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "closed"},
+		},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var defaulted struct {
+		Targets []struct {
+			Target struct {
+				Implementation string `json:"implementation"`
+				Harness        string `json:"harness"`
+				Platform       string `json:"platform"`
+			} `json:"target"`
+			ResolvedBy string `json:"resolved_by"`
+			Predicted  bool   `json:"predicted"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &defaulted)
+	require.Len(t, defaulted.Targets, 1)
+	assert.Equal(t, "harness-builtin", defaulted.Targets[0].Target.Implementation)
+	assert.Equal(t, "claude", defaulted.Targets[0].Target.Harness)
+	assert.Equal(t, runtime.GOOS, defaulted.Targets[0].Target.Platform)
+	assert.Equal(t, "harness default", defaulted.Targets[0].ResolvedBy)
+	assert.True(t, defaulted.Targets[0].Predicted)
+}
+
 func TestSandboxProfileImportCannotExpressAwayAgentdSocketFloor(t *testing.T) {
 	f := newFlow(t)
 	modes := []sandboxpolicy.AccessMode{

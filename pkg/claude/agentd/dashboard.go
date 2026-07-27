@@ -1942,6 +1942,10 @@ type agentState struct {
 	// sandbox policy at all, so an empty SandboxProfiles above is a genuine
 	// "nothing applied" rather than a row from before the snapshot existed.
 	SandboxProfilesRecorded bool `json:"sandbox_profiles_recorded,omitempty"`
+	// SandboxAccessNotices are the immutable composition/degradation disclosures
+	// frozen into the launch snapshot. The badge tooltip names them so the
+	// dashboard never implies a wider/narrower surface than the launch record.
+	SandboxAccessNotices []sandboxpolicy.AccessNotice `json:"sandbox_access_notices,omitempty"`
 	// SandboxProfilesOmitted reports a launch that carried NO profile tier at
 	// all, for either of the two reasons the daemon collapses into one flag: the
 	// launch MODE cannot combine with the managed permission profile that
@@ -2063,6 +2067,10 @@ func stateForConvInSessionsBatched(
 		// launch/row properties — the dashboard reflects the recorded intent
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
+	}
+	if pick.EffectiveSandbox != nil {
+		out.SandboxAccessNotices = append([]sandboxpolicy.AccessNotice(nil),
+			pick.EffectiveSandbox.Effective.AccessNotices...)
 	}
 	// Codex records collaboration-child lifecycle in its rollout even when an
 	// explicit interrupt does not invoke the configured SubagentStop hook. The

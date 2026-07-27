@@ -11,6 +11,7 @@ import "net/http"
 func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sandbox-profiles", dashboardSandboxProfilesRoute(handleSandboxProfiles))
 	mux.HandleFunc("/api/sandbox-profile-read-exclusions", dashboardSandboxProfilesRoute(handleSandboxCommonRuleCatalog))
+	mux.HandleFunc("POST /api/sandbox-profile-enforcement", dashboardSandboxProfilesRoute(handleSandboxProfileDraftEnforcement))
 	mux.HandleFunc("/api/sandbox-profile-default", dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
 	mux.HandleFunc("POST /api/sandbox-profiles/import/inspect", dashboardSandboxProfilesRoute(handleSandboxProfilesImportInspect))

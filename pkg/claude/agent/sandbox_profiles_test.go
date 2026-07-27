@@ -220,7 +220,10 @@ func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {
 			if method == http.MethodDelete {
 				return 200, "", `{"group":"crew","name":""}`
 			}
-			return 200, "", `{"group":"crew","name":"dev"}`
+			if method == http.MethodGet {
+				return 200, "", `{"group":"crew","name":"dev"}`
+			}
+			return 200, "", `{"group":"crew","name":"dev","notices":[{"class":"composition","axis":"network","reason":"empty_intersection","effect":"nothing_allowed","detail":"group \"crew\": network access lists have an empty intersection","tiers":["global \"base\"","group \"dev\""]}]}`
 		}
 		if method == http.MethodDelete {
 			return 200, "", `{"name":""}`
@@ -260,6 +263,8 @@ func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {
 	require.Equal(t, rcOK, runSandboxProfilesGroupSet(&sandboxProfilesGroupSetParams{Group: "crew", Name: "dev"}, &stdout, &stderr))
 	assert.Equal(t, "/v1/groups/crew/sandbox-profile", calls[len(calls)-1].path)
 	assert.Contains(t, stdout.String(), "crew: sandbox profile set to dev")
+	assert.Contains(t, stdout.String(), "Warning: group \"crew\": network access lists have an empty intersection")
+	assert.Empty(t, stderr.String(), "human assignment output keeps warnings on stdout")
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesGroupClear(&sandboxProfilesGroupClearParams{Group: "crew"}, &stdout, &stderr))
 	assert.Equal(t, http.MethodDelete, calls[len(calls)-1].method)

@@ -405,6 +405,46 @@ test('agent-spawn actions preserve effort memory, HTTP errors, upload retry inpu
   assert.equal(calls.length, beforeWorktreeCalls, 'stale worktree metadata cannot issue a POST');
 });
 
+test('spawn sandbox-policy preview surfaces daemon-owned access warnings before confirmation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
+  const requested = [];
+  const json = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+  const actions = createAgentSpawnActions({
+    fetchImpl: async (url, options = {}) => {
+      requested.push([url, options]);
+      if (url === '/api/sandbox-profile-default') return json({ name: 'net' });
+      if (url.includes('/api/groups/')) return json({ name: '' });
+      if (url === '/api/sandbox-profile-enforcement') return json({
+        targets: [{ axes: {
+          network: { outcome: 'not_enforced', detail: 'resolver says network list is not enforced' },
+          unix_sockets: { outcome: 'enforced', detail: 'socket policy enforced' },
+        } }],
+        contexts: [{ notices: [{ class: 'composition', detail: 'global and group lists have an empty intersection' }] }],
+      });
+      throw new Error(`unexpected URL ${url}`);
+    },
+    prefs: { getItem: () => null, setItem() {} },
+    loadProfiles: async () => [],
+    loadSandboxProfiles: async () => [{
+      id: 7, name: 'net', filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: { mode: 'list', allow: [{ domain: 'example.com' }] },
+      unix_sockets: { mode: 'closed' },
+    }],
+    getDashboardDefaultProfile: () => '',
+    pickDirectory: async () => ({ canceled: true }),
+    openProfileEditor() {}, openPermissions() {}, confirm: async () => true,
+    notify() {}, refresh() {}, openTerminal() {}, celebrateSlop() {}, celebrateWizard() {},
+    recordInteraction() {}, shortID: (value) => value,
+  });
+  const preview = await actions.loadSandboxPolicy('crew', '');
+  assert.match(preview.preview, /empty intersection/);
+  assert.match(preview.preview, /resolver says network list is not enforced/);
+  const prediction = requested.find(([url]) => url === '/api/sandbox-profile-enforcement');
+  assert.equal(prediction[1].method, 'POST');
+  assert.equal(JSON.parse(prediction[1].body).draft.id, 7);
+});
+
 async function mountSpawn(t, overrides = {}) {
   const harness = await createPreactHarness(t);
   const [{ AgentSpawnApp }, { createAgentSpawnState }] = await Promise.all([

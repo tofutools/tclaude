@@ -35,6 +35,7 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 	require.NoError(t, err)
 	for _, req := range []*http.Request{
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil),
+		testharness.JSONRequest(t, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{"draft": map[string]any{"name": "x"}}),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/anything", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/export", nil),
@@ -57,7 +58,7 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".claude"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".tclaude", "data"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(linkedHome, ".claude", "settings.json"), []byte(`{"sandbox":{"enabled":true,"filesystem":{"denyRead":["~/.tclaude/data"],"denyWrite":["~/.tclaude/data"]}}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(linkedHome, ".claude", "settings.json"), []byte(`{"sandbox":{"enabled":true,"filesystem":{"denyRead":["~/.tclaude/data"],"denyWrite":["~/.tclaude/data"]},"network":{"allowedDomains":["api.example.com"],"allowUnixSockets":["/tmp/example.sock"]}}}`), 0o600))
 	rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var catalog struct {
@@ -71,7 +72,15 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 			Access    string   `json:"access"`
 			Harnesses []string `json:"harnesses"`
 		} `json:"global_filesystem"`
-		GlobalWarnings []string `json:"global_config_warnings"`
+		GlobalWarnings   []string         `json:"global_config_warnings"`
+		GlobalNetwork    []map[string]any `json:"global_network"`
+		GlobalSockets    []map[string]any `json:"global_unix_sockets"`
+		NetworkTemplates []struct {
+			ID string `json:"id"`
+		} `json:"network_templates"`
+		SocketTemplates []struct {
+			ID string `json:"id"`
+		} `json:"socket_templates"`
 	}
 	testharness.DecodeJSON(t, rec, &catalog)
 	assert.Equal(t, 1, catalog.Version)
@@ -82,6 +91,14 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
+	require.NotEmpty(t, catalog.GlobalNetwork)
+	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
+	require.NotEmpty(t, catalog.GlobalSockets)
+	assert.Equal(t, []string{"net-github", "net-anthropic", "net-go-modules", "net-npm"},
+		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID})
+	assert.NotContains(t, rec.Body.String(), "net-pypi")
+	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
+		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})
 	var privateState *struct {
 		Path      string   `json:"path"`
 		Access    string   `json:"access"`

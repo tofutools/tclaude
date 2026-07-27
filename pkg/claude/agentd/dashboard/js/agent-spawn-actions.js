@@ -1,4 +1,5 @@
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
+import { sandboxPredictionWarnings, sandboxProfileForWire } from './sandbox-profiles-data.js';
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 
@@ -23,8 +24,8 @@ async function responseError(response, prefix = '') {
   return error;
 }
 
-async function jsonRequest(fetchImpl, path) {
-  const response = await fetchImpl(path, { credentials: 'same-origin' });
+async function jsonRequest(fetchImpl, path, options = {}) {
+  const response = await fetchImpl(path, { credentials: 'same-origin', ...options });
   if (!response.ok) throw await responseError(response);
   return response.json().catch(() => ({}));
 }
@@ -172,10 +173,33 @@ export function createAgentSpawnActions({
         applied.push({ scope: 'explicit', profile: byName[selected] });
       }
       const policy = composeSandboxProfilePolicy(applied, byName);
+      let accessPreview = '';
+      const predictionRoot = byName[selected] || byName[groupDefault.name] || byName[globalDefault.name];
+      if (predictionRoot) {
+        try {
+          const prediction = await jsonRequest(fetchImpl, '/api/sandbox-profile-enforcement', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              draft: sandboxProfileForWire(predictionRoot),
+              targets: [],
+              context: { group: groupName || '' },
+            }),
+          });
+          const warnings = sandboxPredictionWarnings(prediction);
+          const details = [
+            ...warnings.composition.map((notice) => notice.detail),
+            ...warnings.capability,
+          ];
+          if (details.length) accessPreview = ` Warnings: ${[...new Set(details)].join(' · ')}`;
+        } catch (error) {
+          accessPreview = ` Access-axis preview unavailable: ${error?.message || String(error)}`;
+        }
+      }
       return {
         profiles,
         selected: byName[selected] ? selected : '',
-        preview: policy.text,
+        preview: policy.text + accessPreview,
       };
     },
 

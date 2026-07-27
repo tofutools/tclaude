@@ -478,7 +478,8 @@ new `--reason` to replace it on a later disable. Profile writes require
 
 Sandbox profiles are operator-authored bundles of filesystem access rules,
 environment configuration, optional agent-owned directory declarations, and
-an optional `network_access` posture. Filesystem access accepts `read`,
+independent `network` and `unix_sockets` access axes (plus the legacy
+`network_access` compatibility spelling). Filesystem access accepts `read`,
 `write`, or `deny`; deny blocks both reads and writes and dominates an
 exact-path grant from any other applied profile. This lets an explicit
 per-spawn profile subtract access inherited from a global or group profile.
@@ -487,6 +488,15 @@ profiles. Environment values
 are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
+
+`network.mode` and `unix_sockets.mode` accept `open`, `closed`, `list`, or may
+be omitted to preserve the next tier's posture. Network list entries select
+exactly one host, domain, CIDR, or loopback destination and may narrow it to
+integer ports. Unix-socket list entries select an absolute `path` or bounded
+`path_glob` (`**` is refused). The agentd socket is a non-removable floor and
+remains reachable in every mode. Global, group, and explicit list tiers compose
+by intersection; an empty intersection is saved and launched as authored but
+is disclosed as a composition warning.
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the
 harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both

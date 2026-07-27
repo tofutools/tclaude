@@ -27,6 +27,10 @@ type sandboxCommonRuleCatalogJSON struct {
 	Categories           []sandboxpolicy.CommonRule        `json:"categories"`
 	Informational        []map[string]any                  `json:"informational"`
 	GlobalFilesystem     []sandboxGlobalFilesystemRuleJSON `json:"global_filesystem"`
+	GlobalNetwork        []sandboxGlobalAccessRuleJSON     `json:"global_network"`
+	GlobalUnixSockets    []sandboxGlobalAccessRuleJSON     `json:"global_unix_sockets"`
+	NetworkTemplates     []sandboxAccessTemplateJSON       `json:"network_templates"`
+	SocketTemplates      []sandboxAccessTemplateJSON       `json:"socket_templates"`
 	GlobalConfigWarnings []string                          `json:"global_config_warnings"`
 }
 
@@ -55,13 +59,18 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	global := sandboxGlobalFilesystemRules(home)
+	globalAccess := sandboxGlobalAccessRules(home)
 	writeJSON(w, http.StatusOK, sandboxCommonRuleCatalogJSON{
 		Version:              sandboxpolicy.CommonRuleCatalogVersion,
 		Platform:             runtime.GOOS,
 		Home:                 home,
 		Categories:           rules,
 		GlobalFilesystem:     global.Filesystem,
-		GlobalConfigWarnings: global.Warnings,
+		GlobalNetwork:        globalAccess.Network,
+		GlobalUnixSockets:    globalAccess.UnixSockets,
+		NetworkTemplates:     sandboxNetworkTemplates(),
+		SocketTemplates:      sandboxSocketTemplates(),
+		GlobalConfigWarnings: append(global.Warnings, globalAccess.Warnings...),
 		Informational: []map[string]any{
 			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not affected by these rules."},
 			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace and exact verified Git common/admin paths are reopened when a deny covers them. The broader repository container is not reopened, so direct creation of sibling worktrees is unavailable under a home-wide deny; create/broker the worktree before launch."},
@@ -81,6 +90,7 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
+	ID               int64                            `json:"id,omitempty"`
 	Name             string                           `json:"name"`
 	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
 	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
@@ -134,6 +144,7 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		Network:       p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 	}
 	if localFields {
+		out.ID = p.ID
 		if !p.CreatedAt.IsZero() {
 			out.CreatedAt = p.CreatedAt.Format(time.RFC3339)
 		}
@@ -493,6 +504,14 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
+		accessNotices, err := globalSandboxAssignmentCompositionNotices(body.Name)
+		if errors.Is(err, db.ErrSandboxProfileNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
 		if err := db.SetGlobalSandboxProfile(body.Name); errors.Is(err, db.ErrSandboxProfileNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
@@ -500,7 +519,7 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name})
+		writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "notices": accessNotices})
 	case http.MethodDelete:
 		if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
 			return
@@ -561,6 +580,14 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
+		accessNotices, err := groupSandboxAssignmentCompositionNotices(g.Name, body.Name)
+		if errors.Is(err, db.ErrSandboxProfileNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
 		if _, err := db.SetAgentGroupSandboxProfile(g.Name, body.Name); errors.Is(err, db.ErrSandboxProfileNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
@@ -568,7 +595,7 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "name": body.Name})
+		writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "name": body.Name, "notices": accessNotices})
 	case http.MethodDelete:
 		if _, err := db.SetAgentGroupSandboxProfile(g.Name, ""); err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())

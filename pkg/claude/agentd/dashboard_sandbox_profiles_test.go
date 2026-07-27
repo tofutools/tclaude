@@ -129,6 +129,18 @@ func TestDashboardSandboxProfilesCRUDAndAssignments(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), canonicalCache, "snapshot must not expose sandbox-profile payload values")
 }
 
+func TestDashboardSandboxProfileDraftEnforcementUsesSharedAuthenticatedRoute(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	rec := httptest.NewRecorder()
+	serveDashboardSandboxProfiles(rec, dashboardRequest(http.MethodPost,
+		"/api/sandbox-profile-enforcement",
+		`{"draft":{"name":"draft","filesystem":[],"environment":[],"network":{"mode":"closed"}},"targets":[{"implementation":"harness-builtin","harness":"claude","platform":"linux"}]}`))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"predicted":true`)
+	assert.Contains(t, rec.Body.String(), `"contexts"`)
+}
+
 func TestDashboardSandboxProfileMissingDirectoriesCanBeSavedAndCreatedExplicitly(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

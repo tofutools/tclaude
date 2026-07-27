@@ -152,6 +152,18 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: Codex\nProfile: base + team + tight\nClick to temporarily disable',
   },
   {
+    name: 'persisted access notices ride the launch badge',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_profiles_recorded: true,
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network', detail: 'network access list was not enforced',
+      }],
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nWarning: network access list was not enforced\nClick to temporarily disable',
+  },
+  {
     name: 'an offline lock stays informative but non-actionable',
     online: false,
     state: {
