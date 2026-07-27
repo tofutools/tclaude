@@ -16,6 +16,16 @@ go test ./...
 golangci-lint run ./...
 ```
 
+Platform sandbox assumptions are separate hardware-backed hard gates. See
+[Platform assumption tests](docs/sandboxing.md#platform-assumption-tests) for
+the contract and commands. On a compatible Linux host:
+
+```bash
+TCLAUDE_SANDBOX_ASSUMPTIONS=1 \
+  go test ./pkg/claude/sandboxassumptions \
+    -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s
+```
+
 ### Deterministic timing in tests
 
 Make correctness conditions causal. Use a channel, barrier, callback, wait

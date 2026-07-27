@@ -42,11 +42,11 @@ type seatbeltRegionNode struct {
 }
 
 // renderSeatbeltProfile compiles the ordered mount contract into deny-only
-// Seatbelt regions. Seatbelt denies dominate allows, so replaying an ancestor
-// deny followed by a descendant allow would not implement MountPlan order.
-// Instead this compiler first resolves the four precedence classes, then
-// carves every final positive descendant out of the deny predicate that covers
-// its ancestor.
+// Seatbelt regions. Seatbelt rule precedence depends on predicate specificity,
+// so replaying an ancestor deny followed by a descendant allow would leave the
+// MountPlan contract implicit in platform rule selection. Instead this compiler
+// first resolves the four precedence classes, then carves every final positive
+// descendant out of the deny predicate that covers its ancestor.
 //
 // runtimeTempDir is the canonical Darwin $TMPDIR. Its write carveout, plus the
 // fixed /dev runtime carveouts, pierces only the class-1 root write deny. A
@@ -518,8 +518,8 @@ func compileSeatbeltDenyRegions(
 	profile.WriteString("(version 1)\n")
 	profile.WriteString("(allow default)\n\n")
 	profile.WriteString("; Filesystem policy is deny-only. Positive descendants are carved out\n")
-	profile.WriteString("; inside each deny predicate because a Seatbelt deny cannot be reopened\n")
-	profile.WriteString("; by a later allow rule.\n")
+	profile.WriteString("; inside each deny predicate so plan precedence does not depend on\n")
+	profile.WriteString("; Seatbelt allow/deny rule selection.\n")
 
 	params := []seatbeltProfileParam{}
 	if networkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
@@ -650,8 +650,8 @@ func seatbeltDaemonReopenDescendants(
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)
 // to the parameterized agentd Unix socket spellings, and blocks creation of
-// every listener. The exception belongs inside the outbound deny predicate
-// because a broad Seatbelt deny cannot be reopened by a later allow.
+// every listener. The exception belongs inside the outbound deny predicate so
+// connectivity does not depend on Seatbelt allow/deny rule selection.
 //
 // Do not replace these operations with network* or deny system-socket.
 // Creating an AF_UNIX socket descriptor is a pathless system-socket operation,
@@ -659,11 +659,11 @@ func seatbeltDaemonReopenDescendants(
 // network* deny would block the descriptor agentd needs and could not be
 // carved back open.
 //
-// network-inbound is deliberately absent. On real Darwin hardware it blocks
-// agentd replies, and a remote-unix exception parses but does not reopen them.
-// Listener prevention therefore rests on network-bind. A listening descriptor
-// handed in over SCM_RIGHTS would require cooperation from the trusted agentd
-// daemon and is outside this boundary's threat model.
+// network-inbound is deliberately absent: current Darwin hardware does not
+// make it a reliable AF_UNIX reply block, and reply suppression is not part of
+// the isolated contract. Listener prevention rests on network-bind. A listening
+// descriptor handed in over SCM_RIGHTS would require cooperation from the
+// trusted agentd daemon and is outside this boundary's threat model.
 func appendSeatbeltIsolatedNetworkRules(
 	profile *strings.Builder,
 	params []seatbeltProfileParam,

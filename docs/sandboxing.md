@@ -260,8 +260,9 @@ session and needs no relay.
 ### macOS Seatbelt filesystem posture
 
 The Darwin applier compiles the final four-class result into a
-`sandbox-exec` profile. Seatbelt denies dominate allows, so it does not replay
-the plan as a textual sequence of deny then allow rules. Instead it emits
+`sandbox-exec` profile. Seatbelt rule selection depends on predicate
+specificity—a specific allow can reopen a broader deny—so it does not replay
+the plan as a textual sequence of deny and allow rules. Instead it emits
 deny-only read/write regions whose predicates carve out the final narrower
 reopens. This is how a writable child beneath a hidden ancestor keeps the same
 later-shadows-earlier meaning as the Linux mount plan.
@@ -271,11 +272,13 @@ networking and ambient Unix sockets retain their host behavior. In the isolated
 posture, deny rules block outbound connections and listener binds, with only
 the canonical agentd Unix socket and its surviving alias spellings excepted
 from outbound denial. A `network-inbound` deny is intentionally absent:
-hardware testing showed that it blocks agentd replies and its remote-Unix path
-exception does not reopen them. Inbound listener prevention therefore rests on
-the bind deny. A listening descriptor passed through the trusted agentd daemon
-with `SCM_RIGHTS` is outside this boundary's threat model. Mach services remain
-outside this slice. The filesystem baseline is read-only, with narrow
+current hardware does not make it a reliable AF_UNIX reply block, and reply
+suppression is not part of the isolated contract. Inbound listener prevention
+therefore rests on the bind deny. A listening descriptor passed through the
+trusted agentd daemon with `SCM_RIGHTS` is outside this boundary's threat model.
+The earlier reply-loss finding did not reproduce on current CI macOS; see
+TCL-777's hardware evidence before proposing an inbound deny. Mach services
+remain outside this slice. The filesystem baseline is read-only, with narrow
 launch-contract write roots plus the Darwin process runtime paths
 (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical `$TMPDIR` beneath
 `/private/var/folders`). Those runtime exceptions apply only to the baseline;
@@ -463,6 +466,46 @@ be an empty *writable* tmpfs, so a direct write from inside the wall
 silently populated a throwaway database instead of failing. Hidden
 protected roots are now remounted read-only, so such a write fails
 outright and no throwaway database can appear.
+
+## Platform assumption tests
+
+`pkg/claude/sandboxassumptions` is the executable inventory of bubblewrap and
+Seatbelt behavior that production relies on. Each named subtest records the
+specific production functions whose correctness depends on that behavior and
+exercises the operating-system mechanism directly. It never calls tclaude's
+mount-plan, bubblewrap-argument, Seatbelt-profile, or smoke-test renderers to
+make an assumption pass.
+
+An assumption test is appropriate when production depends on behavior supplied
+by bubblewrap, the Linux kernel, or Seatbelt: for example non-recursive
+read-only remounts, `--new-session` terminal semantics, or the way a Seatbelt
+file deny remains separate from an AF_UNIX connect deny. Pure argument/profile
+rendering remains an ordinary unit test. A tclaude composition or
+harness-distribution regression remains beside the code or in an end-to-end
+smoke. Do not turn a scheduler race or one observed errno into a platform
+promise: assert the stable operation or round-trip production needs.
+
+The behavioral suites are env-gated outside their platform jobs. In CI they run
+under the same prerequisites as the real smokes and are hard gates: an unrun or
+skipped suite is red, as is a missing/renamed top-level test or a command that
+exits successfully without the explicit top-level `--- PASS:` line. Helpers
+are Go test re-execs with bounded handshakes; they add no interpreter
+dependency and do not use sleeps as correctness evidence.
+
+Run the Linux assumptions on compatible hardware with:
+
+```bash
+TCLAUDE_SANDBOX_ASSUMPTIONS=1 \
+  go test ./pkg/claude/sandboxassumptions \
+    -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s
+```
+
+Run the equivalent `TestSeatbeltAssumptions` command on macOS. Darwin CI is the
+authoritative hardware route for Seatbelt changes. When a probe discovers a
+new platform behavior that production will rely on, preserve the mechanism
+claim here instead of leaving it only in a throwaway workflow; keep the
+production-level round-trip in its smoke when both layers answer different
+questions.
 
 Both platform smokes are hard CI gates. The Linux job disables Ubuntu's
 AppArmor restriction on unprivileged user namespaces for its ephemeral runner,

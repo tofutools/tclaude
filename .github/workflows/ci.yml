@@ -136,6 +136,24 @@ jobs:
       - name: Build tclaude for authenticated smoke
         run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
 
+      - name: Run bubblewrap platform assumptions
+        env:
+          TCLAUDE_SANDBOX_ASSUMPTIONS: "1"
+        run: |
+          assumption_log="$RUNNER_TEMP/bubblewrap-assumptions.log"
+          go test ./pkg/claude/sandboxassumptions -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s |
+            tee "$assumption_log"
+          if ! grep -q '^--- PASS: TestBubblewrapAssumptions ' "$assumption_log"; then
+            {
+              echo "### Bubblewrap assumption suite did not complete"
+              echo
+              echo "The hardware-backed bubblewrap contract did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestBubblewrapAssumptions did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
@@ -264,6 +282,24 @@ jobs:
 
       - name: Build tclaude for authenticated smoke
         run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run Seatbelt platform assumptions
+        env:
+          TCLAUDE_SANDBOX_ASSUMPTIONS: "1"
+        run: |
+          assumption_log="$RUNNER_TEMP/seatbelt-assumptions.log"
+          go test ./pkg/claude/sandboxassumptions -run '^TestSeatbeltAssumptions$' -count=1 -v -timeout=180s |
+            tee "$assumption_log"
+          if ! grep -q '^--- PASS: TestSeatbeltAssumptions ' "$assumption_log"; then
+            {
+              echo "### Seatbelt assumption suite did not complete"
+              echo
+              echo "The hardware-backed Seatbelt contract did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestSeatbeltAssumptions did not report an explicit pass"
+            exit 1
+          fi
 
       - name: Run sandbox v2 Seatbelt smoke
         env:
