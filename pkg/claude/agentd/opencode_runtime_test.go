@@ -632,6 +632,16 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
 	})
 	require.ErrorContains(t, err, "refusing an unwrapped restart")
+
+	spec.Contract.StateDirs = nil
+	_, missingStateDirs, err := openCodeSandboxRecord(&spec)
+	require.NoError(t, err)
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: missingStateDirs,
+	})
+	require.ErrorContains(t, err, "no mutable state directories")
 }
 
 func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing.T) {

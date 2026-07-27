@@ -18,6 +18,7 @@ import (
 type TclaudeLayerLaunchContract struct {
 	HarnessName       string                          `json:"harness_name"`
 	StateRoot         string                          `json:"state_root"`
+	StateDirs         []string                        `json:"state_dirs,omitempty"`
 	WriteDirs         []string                        `json:"write_dirs"`
 	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
 }
@@ -87,6 +88,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		return TclaudeLayerLaunchSpec{}, err
 	}
 	contractWriteDirs := append(append([]string(nil), gitWriteDirs...), cwd)
+	var stateDirs []string
+	if input.HarnessName == harness.OpenCodeName {
+		stateDirs, err = tclaudeLayerOpenCodeStateDirs()
+		if err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
+		contractWriteDirs = append(contractWriteDirs, stateDirs...)
+	}
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
@@ -99,6 +108,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	contract := TclaudeLayerLaunchContract{
 		HarnessName:       input.HarnessName,
 		StateRoot:         stateRoot,
+		StateDirs:         stateDirs,
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 	}
@@ -242,17 +252,88 @@ func WrapTclaudeLayerSpec(
 	if err != nil {
 		return "", err
 	}
-	if err := validateTclaudeLayerHarnessStateRules(
-		phase0WriteDirs[0],
-		spec.Contract.ProfileFilesystem,
-	); err != nil {
-		return "", err
+	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
+	for _, stateRoot := range stateRoots {
+		if err := validateTclaudeLayerHarnessStateRules(
+			stateRoot,
+			spec.Contract.ProfileFilesystem,
+		); err != nil {
+			return "", err
+		}
 	}
 	breakGlassPaths := make([]string, 0, len(spec.Effective.BreakGlassFilesystem))
 	for _, grant := range spec.Effective.BreakGlassFilesystem {
 		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
 	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+}
+
+// PrepareTclaudeLayerHarnessState materializes only the harness-owned state
+// roots named explicitly by a frozen launch spec. Operator-authored profile
+// paths remain non-creating: a future allow path must not appear on the host
+// merely because a launch mentioned it.
+func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
+	if spec.Version != TclaudeLayerLaunchSpecVersion {
+		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+	}
+	stateDirs := append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
+	if spec.Contract.HarnessName == harness.OpenCodeName && len(spec.Contract.StateDirs) == 0 {
+		return fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
+	}
+	for index, path := range stateDirs {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return fmt.Errorf("tclaude-layer harness state path %q is not absolute", path)
+		}
+		if err := validateTclaudeLayerHarnessStateRules(
+			path, spec.Contract.ProfileFilesystem); err != nil {
+			return err
+		}
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+				return fmt.Errorf(
+					"tclaude-layer harness state path %q is at or below protected root %q",
+					path, protected)
+			}
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare tclaude-layer harness state %q: %w", path, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect tclaude-layer harness state %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("tclaude-layer harness state path %q is not a directory", path)
+		}
+		if index > 0 {
+			resolved := path
+			if evaluated, err := filepath.EvalSymlinks(path); err == nil {
+				resolved = filepath.Clean(evaluated)
+			}
+			inWriteContract := false
+			for _, writeDir := range spec.Contract.WriteDirs {
+				writeDir = filepath.Clean(writeDir)
+				if evaluated, err := filepath.EvalSymlinks(writeDir); err == nil {
+					writeDir = filepath.Clean(evaluated)
+				}
+				if writeDir == resolved {
+					inWriteContract = true
+					break
+				}
+			}
+			if !inWriteContract {
+				return fmt.Errorf(
+					"tclaude-layer harness state path %q is not in the writable launch contract",
+					path)
+			}
+		}
+	}
+	return nil
 }
 
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed
@@ -766,6 +847,71 @@ func tclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 		return filepath.Join(home, ".opencode"), nil
 	default:
 		return "", fmt.Errorf("tclaude-layer has no launch-contract state root for harness %q", harnessName)
+	}
+}
+
+func tclaudeLayerOpenCodeStateDirs() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for OpenCode state: %w", err)
+	}
+	xdgRoot := func(envName string, fallback ...string) string {
+		if root := strings.TrimSpace(os.Getenv(envName)); root != "" {
+			return root
+		}
+		return filepath.Join(append([]string{home}, fallback...)...)
+	}
+	dirs := []string{
+		filepath.Join(xdgRoot("XDG_DATA_HOME", ".local", "share"), "opencode"),
+		filepath.Join(xdgRoot("XDG_CACHE_HOME", ".cache"), "opencode"),
+		filepath.Join(xdgRoot("XDG_CONFIG_HOME", ".config"), "opencode"),
+		filepath.Join(xdgRoot("XDG_STATE_HOME", ".local", "state"), "opencode"),
+	}
+	for index, path := range dirs {
+		path, err = canonicalTclaudeLayerStatePath(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve OpenCode state directory %q: %w", dirs[index], err)
+		}
+		dirs[index] = path
+	}
+	return dirs, nil
+}
+
+func canonicalTclaudeLayerStatePath(path string) (string, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path %q is not absolute", path)
+	}
+	ancestor := path
+	var suffix []string
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(ancestor)
+			if err != nil {
+				return "", err
+			}
+			info, err := os.Stat(resolved)
+			if err != nil {
+				return "", err
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
+			}
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
 	}
 }
 

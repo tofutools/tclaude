@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -425,7 +426,20 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
 	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
-	assert.ElementsMatch(t, []string{cwd, agentDir}, spec.Contract.WriteDirs)
+	assert.ElementsMatch(t, []string{
+		cwd,
+		agentDir,
+		filepath.Join(home, ".local", "share", "opencode"),
+		filepath.Join(home, ".cache", "opencode"),
+		filepath.Join(home, ".config", "opencode"),
+		filepath.Join(home, ".local", "state", "opencode"),
+	}, spec.Contract.WriteDirs)
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+	for _, path := range spec.Contract.StateDirs {
+		info, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+	}
 	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
 		"the authored launch-active rows stay separate from generated contract reopens")
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
@@ -438,6 +452,36 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: agentDir, Access: sandboxpolicy.AccessRead,
 	})
+}
+
+func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, name := range []string{"DATA", "CACHE", "CONFIG", "STATE"} {
+		t.Setenv("XDG_"+name+"_HOME", filepath.Join(home, strings.ToLower(name)))
+	}
+	dirs, err := tclaudeLayerOpenCodeStateDirs()
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		filepath.Join(home, "data", "opencode"),
+		filepath.Join(home, "cache", "opencode"),
+		filepath.Join(home, "config", "opencode"),
+		filepath.Join(home, "state", "opencode"),
+	}, dirs)
+}
+
+func TestTclaudeLayerOpenCodeStateDirsResolveMissingLeafBelowSymlink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	realCache := filepath.Join(home, "real-cache")
+	require.NoError(t, os.MkdirAll(realCache, 0o700))
+	cacheAlias := filepath.Join(home, "cache-alias")
+	require.NoError(t, os.Symlink(realCache, cacheAlias))
+	t.Setenv("XDG_CACHE_HOME", cacheAlias)
+
+	dirs, err := tclaudeLayerOpenCodeStateDirs()
+	require.NoError(t, err)
+	assert.Contains(t, dirs, filepath.Join(realCache, "opencode"))
 }
 
 func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {

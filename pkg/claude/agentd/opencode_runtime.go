@@ -329,6 +329,27 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec state root %q is not absolute",
 			spec.Contract.StateRoot)
 	}
+	if len(spec.Contract.StateDirs) == 0 {
+		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+	}
+	for _, stateDir := range spec.Contract.StateDirs {
+		stateDir = canonicalOpenCodeRuntimePath(stateDir)
+		if stateDir == "" {
+			return nil, fmt.Errorf("OpenCode tclaude-layer launch spec has a non-absolute state directory")
+		}
+		inWriteContract := false
+		for _, writeDir := range spec.Contract.WriteDirs {
+			if canonicalOpenCodeRuntimePath(writeDir) == stateDir {
+				inWriteContract = true
+				break
+			}
+		}
+		if !inWriteContract {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer state directory %q is not in the writable launch contract",
+				stateDir)
+		}
+	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
 	for _, path := range spec.Contract.WriteDirs {
@@ -371,6 +392,11 @@ func startOpenCodeProcess(
 	runtime db.OpenCodeRuntime,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeProcess, error) {
+	if sandboxSpec != nil {
+		if err := session.PrepareTclaudeLayerHarnessState(*sandboxSpec); err != nil {
+			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
+		}
+	}
 	executable, err := harness.OpenCodeExecutable()
 	if err != nil {
 		return nil, fmt.Errorf("find OpenCode executable: %w", err)
