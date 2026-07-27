@@ -392,6 +392,27 @@ const CASES = [
     titleNot: [/Its filesystem rules/],
   },
   {
+    name: 'two tclaude-layer profiles report their outer-mount enforcement in the plural',
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      sandbox_implementation: 'tclaude-layer',
+      os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (bubblewrap; ambient host Unix sockets reachable)',
+      os_sandbox_unverified: true,
+      sandbox_profiles: [
+        { scope: 'global', name: 'tclaude-agent' },
+        { scope: 'group', name: 'squad-tight' },
+      ],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [
+      /Their filesystem rules are enforced as OS mounts by the tclaude layer/,
+      /any environment entries they define also apply/,
+    ],
+    titleNot: [/Its filesystem rules/, /not in force/],
+  },
+  {
     // The inverted failure: managed policy forces the sandbox ON over a launch
     // that asked for `off`. The sandbox IS on — but tclaude emitted
     // {"sandbox":{"enabled":false}} for that launch and, with it, none of the
