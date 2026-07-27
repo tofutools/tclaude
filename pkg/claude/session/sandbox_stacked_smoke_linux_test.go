@@ -19,13 +19,8 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_STACKED_SANDBOX_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_STACKED_SANDBOX_SMOKE=1 with pinned srt, codex, and bwrap on PATH")
 	}
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	base := filepath.Join(home, ".cache")
-	require.NoError(t, os.MkdirAll(base, 0o700))
-	cwd, err := os.MkdirTemp(base, "tclaude-stacked-smoke-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(cwd) })
+	cwd := t.TempDir()
+	var err error
 	cwd, err = filepath.EvalSymlinks(cwd)
 	require.NoError(t, err)
 

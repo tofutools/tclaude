@@ -53,8 +53,8 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     auto_compact_window: seed?.auto_compact_window || '',
     // "" = unset, so the profile stays silent and lower spawn tiers still speak.
     sandbox_implementation: seed?.sandbox_implementation || '',
-    // Set only by a harness switch that discarded a selection. Editor-local —
-    // profilePayload never sends it.
+    // Retained for backward-compatible local draft shape. Harness switches no
+    // longer discard an explicit implementation selection.
     sandbox_implementation_cleared: null,
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
@@ -93,8 +93,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   }
   // Blank omits the key: an untouched row must leave the profile silent rather
   // than pinning harness-builtin over whatever a lower spawn tier would supply.
-  // Gated on the harness capability so a value cannot outlive a harness switch
-  // that made it invalid.
+  // Preserve an explicit value even for an incapable harness. The editor shows
+  // the refusal inline and the server remains the apply authority.
   if (String(draft.sandbox_implementation || '').trim()) {
     body.sandbox_implementation = String(draft.sandbox_implementation).trim();
   }

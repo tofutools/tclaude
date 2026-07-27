@@ -602,10 +602,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// Interim TCL-750 decision: while tclaude owns the outer OS wall, disable
-	// the harness-native sandbox instead of stacking nested sandboxes. The
-	// per-harness disable-vs-stack policy belongs to the nested-sandbox
-	// workstream and will replace this switch.
+	// The single-wall tclaude-layer implementation deliberately disables the
+	// harness-native sandbox. Stacked has already forced the reviewed nested
+	// contract on above and must not pass through this disable switch.
 	if tclaudeLayerOnly {
 		params.PermissionProfile = ""
 		switch h.Name {
@@ -1160,8 +1159,9 @@ func runNew(params *NewParams) error {
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
-		// The inner sandbox is off, so derive the repository grants for the
-		// outer wall independently of the harness-native mode.
+		// Derive repository grants for the outer wall independently of the
+		// harness-native mode. Under stacked, the inner wall receives the same
+		// canonical launch grants through SpawnSpec below.
 		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
 	}
 	if sandboxDenyCoversPath(launchSandbox, cwd) {

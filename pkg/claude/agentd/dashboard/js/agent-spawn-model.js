@@ -161,6 +161,12 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
     return "The harness's own sandbox is off by design. The tclaude layer enforces "
       + 'sandbox-profile filesystem rules as OS mounts; any environment entries also apply.';
   }
+  if (text(implementation) === SANDBOX_IMPL_STACKED
+    && (harnessName === 'claude' || harnessName === 'codex')) {
+    return "The tclaude outer mounts and the harness's real nested OS sandbox both enforce "
+      + 'the launch policy. A fresh engine round-trip must succeed before launch; '
+      + 'environment entries also apply.';
+  }
   return text(help);
 }
 

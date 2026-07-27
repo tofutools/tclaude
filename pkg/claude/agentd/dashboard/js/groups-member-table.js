@@ -221,11 +221,12 @@ function osSandboxBadge(mode, state, source, prefix, unverified, implementation)
     // below: "on" alone, read first, is the claim this case cannot make.
     const posture = unverified ? 'on (unverified)' : 'on';
     return {
-      // The exact implementation value is load-bearing: tclaude-layer has
-      // earned the real lock because the OS wall is established even when its
-      // fidelity caveats remain. Future/unknown implementations must earn
-      // their own badge rather than inheriting this exception by name shape.
-      danger: implementation === 'tclaude-layer'
+      // The exact implementation value is load-bearing: tclaude-layer and a
+      // successfully probed stacked launch have earned their respective real
+      // locks even when fidelity caveats remain. Future/unknown
+      // implementations must earn their own badge rather than inheriting this
+      // exception by name shape.
+      danger: implementation === 'tclaude-layer' || implementation === 'stacked'
         ? false
         : implementation && implementation !== 'harness-builtin'
           ? true
@@ -314,6 +315,21 @@ function sandboxProfileClause(member, withheldBecause) {
     .join(' + ');
   const clause = ` Customized by tclaude sandbox profile ${names}.`;
   const harness = (member.state?.harness || 'claude').trim();
+  const rulesOwnedByStacked =
+    member.state?.sandbox_implementation === 'stacked'
+    && (harness === 'claude' || harness === 'codex');
+  if (rulesOwnedByStacked && member.state?.os_sandbox_state === 'on') {
+    const their = applied.length > 1 ? 'Their' : 'Its';
+    const they = applied.length > 1 ? 'they define' : 'it defines';
+    return clause + ` ${their} filesystem rules are enforced by the tclaude outer mounts`
+      + ` and the harness's nested OS sandbox;`
+      + ` any environment entries ${they} also apply.`;
+  }
+  if (rulesOwnedByStacked) {
+    const their = applied.length > 1 ? 'Their' : 'Its';
+    return clause + ` ${their} filesystem rules are not in force`
+      + ` (the stacked round-trip did not succeed).`;
+  }
   const rulesOwnedByTclaudeLayer =
     member.state?.sandbox_implementation === 'tclaude-layer'
     && (harness === 'claude' || harness === 'codex');
@@ -360,7 +376,10 @@ function sandboxProfilesUnsupported(member) {
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
-  const prefix = offline ? 'Last used sandbox' : 'Sandbox';
+  const stacked = member.state?.sandbox_implementation === 'stacked';
+  const prefix = stacked
+    ? (offline ? 'Last used stacked sandbox' : 'Stacked sandbox')
+    : (offline ? 'Last used sandbox' : 'Sandbox');
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
   // IS its posture) the mode-driven branch below is unchanged.
@@ -373,7 +392,7 @@ function sandboxIndicator(member) {
     // dropped, only moved: every osSandboxBadge title opens with the resolved
     // posture, so the tooltip stays a complete account on its own.
     return {
-      danger: badge.danger, offline,
+      danger: badge.danger, offline, glyph: stacked && !badge.danger ? '🔒²' : '',
       // On the harness-builtin path, a verdict tclaude could not prove says
       // nothing about the profile's rules either way, so the clause makes no
       // fresh enforcement claim. The tclaude-layer branch is different: the
@@ -428,7 +447,7 @@ export function SandboxBadge({ member }) {
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>`;
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span>`;
 }
 
 function statusInfo(state, online) {

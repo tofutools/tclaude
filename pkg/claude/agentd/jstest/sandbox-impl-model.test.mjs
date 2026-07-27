@@ -76,10 +76,9 @@ test('sandbox mode help tells the truth for the selected implementation', async 
     modeHelp['opencode/sandbox/tclaude-layer'],
     'an inherited OpenCode implementation never shadows its dedicated mode help',
   );
-  assert.equal(
+  assert.match(
     model.sandboxModeHelpForImplementation(off, 'stacked', 'claude'),
-    off,
-    'other implementations fail closed to their own mode help',
+    /outer mounts and the harness's real nested OS sandbox both enforce/,
   );
 });
 

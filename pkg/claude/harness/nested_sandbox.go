@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,28 +90,10 @@ func (err *NestedSandboxCapabilityError) Error() string {
 // the descriptor's own capability name for ordinary execution errors.
 func NestedSandboxCapability(err error, fallback string) (string, string) {
 	var capabilityErr *NestedSandboxCapabilityError
-	if AsNestedSandboxCapabilityError(err, &capabilityErr) {
+	if errors.As(err, &capabilityErr) {
 		return capabilityErr.Capability, capabilityErr.Detail
 	}
 	return fallback, err.Error()
-}
-
-// AsNestedSandboxCapabilityError is kept as a small wrapper so callers do not
-// need to import errors merely to format a refusal.
-func AsNestedSandboxCapabilityError(err error, target **NestedSandboxCapabilityError) bool {
-	for err != nil {
-		if typed, ok := err.(*NestedSandboxCapabilityError); ok {
-			*target = typed
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		next, ok := err.(unwrapper)
-		if !ok {
-			return false
-		}
-		err = next.Unwrap()
-	}
-	return false
 }
 
 type claudeNestedSandbox struct{}
@@ -144,6 +127,14 @@ func (claudeNestedSandbox) PrepareProbe(
 		return NestedSandboxProbe{}, fmt.Errorf("prepare Claude SRT probe directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(root) }
+	workspace := filepath.Join(root, "workspace")
+	sibling := filepath.Join(root, "private")
+	for _, dir := range []string{workspace, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			cleanup()
+			return NestedSandboxProbe{}, fmt.Errorf("prepare Claude SRT probe shape: %w", err)
+		}
+	}
 	settingsPath := filepath.Join(root, "settings.json")
 	settings := map[string]any{
 		"network": map[string]any{
@@ -156,9 +147,9 @@ func (claudeNestedSandbox) PrepareProbe(
 			"denyRead":  []string{},
 			"allowRead": []string{},
 			"allowWrite": []string{
-				root,
+				workspace,
 			},
-			"denyWrite": []string{"/etc"},
+			"denyWrite": []string{sibling},
 		},
 		"enableWeakerNestedSandbox": false,
 	}
@@ -171,8 +162,8 @@ func (claudeNestedSandbox) PrepareProbe(
 		cleanup()
 		return NestedSandboxProbe{}, fmt.Errorf("write Claude SRT probe settings: %w", err)
 	}
-	allowed := filepath.Join(root, "allowed")
-	denied := "/etc/.tclaude-stacked-probe-denied"
+	allowed := filepath.Join(workspace, "allowed")
+	denied := filepath.Join(sibling, "denied")
 	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 91; fi" +
@@ -182,7 +173,7 @@ func (claudeNestedSandbox) PrepareProbe(
 		Command: clcommon.ShellQuoteArg(executable.Path) +
 			" --settings " + clcommon.ShellQuoteArg(settingsPath) +
 			" -c " + clcommon.ShellQuoteArg(script),
-		KnownPaths: []string{executable.Path, settingsPath, root},
+		KnownPaths: []string{executable.Path, settingsPath, workspace, sibling},
 		Cleanup:    cleanup,
 	}, nil
 }
@@ -220,7 +211,16 @@ func (codexNestedSandbox) PrepareProbe(
 		return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe directory: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(root) }
-	config := `default_permissions = "stacked-probe"
+	codexHome := filepath.Join(root, "config")
+	workspace := filepath.Join(root, "workspace")
+	sibling := filepath.Join(root, "private")
+	for _, dir := range []string{codexHome, workspace, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			cleanup()
+			return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe shape: %w", err)
+		}
+	}
+	config := fmt.Sprintf(`default_permissions = "stacked-probe"
 
 [features]
 use_legacy_landlock = false
@@ -229,28 +229,28 @@ use_legacy_landlock = false
 extends = ":workspace"
 
 [permissions.stacked-probe.filesystem]
-"/etc" = "none"
+%q = "none"
 
 [permissions.stacked-probe.network]
 enabled = false
-`
-	configPath := filepath.Join(root, "config.toml")
+`, sibling)
+	configPath := filepath.Join(codexHome, "config.toml")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		cleanup()
 		return NestedSandboxProbe{}, fmt.Errorf("write Codex probe profile: %w", err)
 	}
-	allowed := filepath.Join(root, "allowed")
-	denied := "/etc/.tclaude-stacked-probe-denied"
+	allowed := filepath.Join(workspace, "allowed")
+	denied := filepath.Join(sibling, "denied")
 	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 93; fi"
-	command := "CODEX_HOME=" + clcommon.ShellQuoteArg(root) + " " +
+	command := "CODEX_HOME=" + clcommon.ShellQuoteArg(codexHome) + " " +
 		clcommon.ShellQuoteArg(executable.Path) +
-		" sandbox -P stacked-probe -C " + clcommon.ShellQuoteArg(root) +
+		" sandbox -P stacked-probe -C " + clcommon.ShellQuoteArg(workspace) +
 		" -- /bin/sh -c " + clcommon.ShellQuoteArg(script)
 	return NestedSandboxProbe{
 		Command:    command,
-		KnownPaths: []string{executable.Path, configPath, root},
+		KnownPaths: []string{executable.Path, configPath, workspace, sibling},
 		Cleanup:    cleanup,
 	}, nil
 }

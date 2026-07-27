@@ -97,6 +97,8 @@ boundary rather than a full-fidelity lock. The ordered OpenCode permission
 rules remain active as defense in depth. OpenCode `tclaude-layer` currently
 requires the host-open network posture; isolated and filtered profiles are
 refused, and macOS is not supported for this server-wrap topology.
+OpenCode deliberately has no `stacked` contract: profile apply and launch
+refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval
 policy; bash is never auto-approved there. A bare direct `session new --harness
 opencode` is refused because it has no authenticated managed-server handoff;
@@ -148,7 +150,7 @@ instead of slash-command injection).
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with the documented host-open/control-plane caveats; `access-control` (default) remains lexical soft policy; `off` removes scoping |
+| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off`; experimental Linux `stacked` = tclaude bwrap + real SRT bwrap/seccomp after a live probe | ✅ managed profile (default) or raw `--sandbox`; experimental Linux `stacked` = tclaude bwrap + current Codex bwrap managed profile after a live probe | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with documented caveats; `stacked` refuses; `access-control` remains lexical soft policy |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
