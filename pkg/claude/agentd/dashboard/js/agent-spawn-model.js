@@ -170,6 +170,40 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
   return text(help);
 }
 
+// HARNESS_PLACEHOLDER_FALLBACK stands in when no harness is selected. The
+// implementation rows are gated on a selected harness, so this is defensive
+// rather than a state the dialogs render.
+const HARNESS_PLACEHOLDER_FALLBACK = 'the harness';
+
+// fillHarnessPlaceholder substitutes the catalog's "{harness}" placeholder with
+// the display name of the selected harness, so "Harness built-in" reads
+// "Claude Code built-in" instead — the generic word is easily read as tclaude
+// itself being the harness. The copy stays in the Go catalog; only the name is
+// filled here, because the catalog is host-wide while the harness selection
+// changes in the browser without a refetch.
+function fillHarnessPlaceholder(template, displayName) {
+  const raw = text(template);
+  if (!raw.includes('{harness}')) return raw;
+  const name = text(displayName) || HARNESS_PLACEHOLDER_FALLBACK;
+  const filled = raw.replaceAll('{harness}', name);
+  // A sentence-initial placeholder must not start the string lowercase when the
+  // fallback (or an all-lowercase display name) lands there.
+  return raw.startsWith('{harness}')
+    ? filled.charAt(0).toUpperCase() + filled.slice(1)
+    : filled;
+}
+
+// sandboxImplOptionsFor names the harness-owned option after the actual harness.
+// Both the spawn dialog and the profile editor render the same catalog, so both
+// call this rather than each rewriting the copy.
+export function sandboxImplOptionsFor(options, displayName) {
+  return (Array.isArray(options) ? options : []).map((option) => ({
+    ...option,
+    label: fillHarnessPlaceholder(option?.label, displayName),
+    descr: fillHarnessPlaceholder(option?.descr, displayName),
+  }));
+}
+
 // sandboxImplView answers the two halves of "can this launch use the tclaude
 // layer?" from the two places that own them: the HARNESS half from the harness
 // catalog entry (never a harness-name switch here), and the HOST half from the
@@ -184,13 +218,13 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
 // machine where bwrap is not installed yet.
 function sandboxImplView(harness, context) {
   const catalog = context?.sandboxImpl || {};
-  const options = Array.isArray(catalog.options) ? catalog.options : [];
   const serverBoundary = !!harness?.tclaude_layer_server_boundary;
+  const harnessLabel = text(harness?.display_name) || text(harness?.name);
   return {
     showSandboxImpl: !!harness,
-    sandboxImplOptions: options,
+    sandboxImplOptions: sandboxImplOptionsFor(catalog.options, harnessLabel),
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
-    sandboxImplHarness: text(harness?.name),
+    sandboxImplHarness: harnessLabel,
     sandboxImplCanStacked: !!harness?.can_stacked,
     sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
     sandboxImplHostAvailable: serverBoundary

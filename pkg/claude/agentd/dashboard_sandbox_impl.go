@@ -58,6 +58,14 @@ type dashboardStackedAvailability struct {
 
 type dashboardSandboxImplOption struct {
 	Value string `json:"value"`
+	// Label and Descr may contain the literal "{harness}" placeholder, which the
+	// renderer substitutes with the DISPLAY NAME of the harness currently
+	// selected in the dialog ("Claude Code", "Codex", "OpenCode"). The catalog is
+	// host-wide while the harness selection changes client-side without a
+	// refetch, so the substitution cannot happen here — but the copy still lives
+	// in exactly one place, which is what keeps the option text from drifting
+	// away from what the implementation does. The placeholder is the only
+	// templating this copy has; nothing else is interpolated.
 	Label string `json:"label"`
 	Descr string `json:"descr"`
 	// Experimental marks an implementation that is not yet a supported posture.
@@ -142,8 +150,8 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 		Options: []dashboardSandboxImplOption{
 			{
 				Value: string(sandboxpolicy.ImplementationHarnessBuiltin),
-				Label: "Harness built-in",
-				Descr: "Current behavior: the harness owns OS-level containment, using whatever sandbox it provides.",
+				Label: "{harness} built-in",
+				Descr: "Current behavior: {harness} owns OS-level containment, using whatever sandbox it provides.",
 			},
 			{
 				Value:        string(sandboxpolicy.ImplementationTclaudeLayer),
@@ -155,10 +163,10 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 			},
 			{
 				Value:        string(sandboxpolicy.ImplementationStacked),
-				Label:        "Stacked: tclaude + harness (experimental)",
+				Label:        "Stacked: tclaude + {harness} (experimental)",
 				Experimental: true,
 				Descr: "Runs the interactive harness inside tclaude's outer wall and requires a live " +
-					"model-free round-trip through the harness's real nested OS sandbox. Linux Claude/Codex only.",
+					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
 			},
 		},
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
