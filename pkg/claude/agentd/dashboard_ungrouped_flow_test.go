@@ -181,27 +181,28 @@ type dashHarness struct {
 
 // dashState mirrors the relevant fields of agentd.agentState.
 type dashState struct {
-	Status              string  `json:"status,omitempty"`
-	StatusDetail        string  `json:"status_detail,omitempty"`
-	SubagentCount       int     `json:"subagent_count,omitempty"`
-	BgShellCount        int     `json:"bg_shell_count,omitempty"`
-	LastHook            string  `json:"last_hook,omitempty"`
-	ContextPct          float64 `json:"context_pct,omitempty"`
-	TokensInput         int64   `json:"tokens_input,omitempty"`
-	TokensOutput        int64   `json:"tokens_output,omitempty"`
-	ContextWindowSize   int64   `json:"context_window_size,omitempty"`
-	Model               string  `json:"model,omitempty"`
-	EffortLevel         string  `json:"effort_level,omitempty"`
-	CostUSD             float64 `json:"cost_usd,omitempty"`
-	VirtualCostUSD      float64 `json:"virtual_cost_usd,omitempty"`
-	ExitReason          string  `json:"exit_reason,omitempty"`
-	Harness             string  `json:"harness,omitempty"`
-	SandboxMode         string  `json:"sandbox_mode,omitempty"`
-	SandboxModeSource   string  `json:"sandbox_mode_source,omitempty"`
-	OSSandboxState      string  `json:"os_sandbox_state,omitempty"`
-	OSSandboxSource     string  `json:"os_sandbox_source,omitempty"`
-	OSSandboxUnverified bool    `json:"os_sandbox_unverified,omitempty"`
-	SandboxProfiles     []struct {
+	Status                string  `json:"status,omitempty"`
+	StatusDetail          string  `json:"status_detail,omitempty"`
+	SubagentCount         int     `json:"subagent_count,omitempty"`
+	BgShellCount          int     `json:"bg_shell_count,omitempty"`
+	LastHook              string  `json:"last_hook,omitempty"`
+	ContextPct            float64 `json:"context_pct,omitempty"`
+	TokensInput           int64   `json:"tokens_input,omitempty"`
+	TokensOutput          int64   `json:"tokens_output,omitempty"`
+	ContextWindowSize     int64   `json:"context_window_size,omitempty"`
+	Model                 string  `json:"model,omitempty"`
+	EffortLevel           string  `json:"effort_level,omitempty"`
+	CostUSD               float64 `json:"cost_usd,omitempty"`
+	VirtualCostUSD        float64 `json:"virtual_cost_usd,omitempty"`
+	ExitReason            string  `json:"exit_reason,omitempty"`
+	Harness               string  `json:"harness,omitempty"`
+	SandboxMode           string  `json:"sandbox_mode,omitempty"`
+	SandboxImplementation string  `json:"sandbox_implementation,omitempty"`
+	SandboxModeSource     string  `json:"sandbox_mode_source,omitempty"`
+	OSSandboxState        string  `json:"os_sandbox_state,omitempty"`
+	OSSandboxSource       string  `json:"os_sandbox_source,omitempty"`
+	OSSandboxUnverified   bool    `json:"os_sandbox_unverified,omitempty"`
+	SandboxProfiles       []struct {
 		Scope string `json:"scope"`
 		Name  string `json:"name"`
 	} `json:"sandbox_profiles,omitempty"`

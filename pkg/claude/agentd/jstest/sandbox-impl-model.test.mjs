@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // The sandbox-IMPLEMENTATION row (TCL-769) has one job the other launch rows do
@@ -19,6 +20,8 @@ const sandboxImpl = {
   server_host_available: true,
 };
 
+const modeHelp = JSON.parse(readFileSync(new URL('./mode-help-fixture.json', import.meta.url), 'utf8'));
+
 const harnesses = [
   { name: 'claude', display_name: 'Claude Code', models: ['sonnet'], can_tclaude_layer: true },
   {
@@ -27,6 +30,49 @@ const harnesses = [
   },
   { name: 'unsupported', display_name: 'Unsupported Harness', models: [], can_tclaude_layer: false },
 ];
+
+test('sandbox mode help tells the truth for the selected implementation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const off = modeHelp['claude/sandbox/off'];
+
+  const inherited = model.sandboxModeHelpForImplementation(off, '', 'claude');
+  assert.match(inherited, /inherited from the profile chain at launch/);
+  assert.match(inherited, /effect is not known yet/);
+  assert.doesNotMatch(inherited, /runs unconfined|rules as OS mounts/);
+  assert.equal(
+    model.sandboxModeHelpForImplementation(off, 'harness-builtin', 'claude'),
+    off,
+    'the harness-builtin branch keeps the real mode-help fixture, including its unconfined warning',
+  );
+  assert.match(
+    model.sandboxModeHelpForImplementation(off, 'tclaude-layer', 'claude'),
+    /filesystem rules as OS mounts/,
+  );
+  assert.match(
+    model.sandboxModeHelpForImplementation(off, 'tclaude-layer', 'codex'),
+    /harness's own sandbox is off by design/,
+  );
+  assert.equal(
+    model.sandboxModeHelpForImplementation(
+      modeHelp['opencode/sandbox/tclaude-layer'], 'tclaude-layer', 'opencode',
+    ),
+    modeHelp['opencode/sandbox/tclaude-layer'],
+    'OpenCode keeps its dedicated mode-help branch because its soft rules stay on',
+  );
+  assert.equal(
+    model.sandboxModeHelpForImplementation(
+      modeHelp['opencode/sandbox/tclaude-layer'], '', 'opencode',
+    ),
+    modeHelp['opencode/sandbox/tclaude-layer'],
+    'an inherited OpenCode implementation never shadows its dedicated mode help',
+  );
+  assert.equal(
+    model.sandboxModeHelpForImplementation(off, 'stacked', 'claude'),
+    off,
+    'other implementations fail closed to their own mode help',
+  );
+});
 
 test('sandbox-implementation view gates on the harness, discloses on the host', async (t) => {
   const harness = await createPreactHarness(t);

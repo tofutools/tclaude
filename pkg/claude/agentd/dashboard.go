@@ -1812,6 +1812,12 @@ type agentState struct {
 	// the badge could only say "this launch", which is exactly the misattribution
 	// the column exists to remove.
 	SandboxModeSource string `json:"sandbox_mode_source,omitempty"`
+	// SandboxImplementation names who owned OS-level confinement for this
+	// launch. The dashboard needs the resolved implementation, not a source
+	// string heuristic: tclaude-layer renders profile filesystem rules into its
+	// outer wall even though the harness's inner mode is off, while
+	// harness-builtin does not.
+	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the OS sandbox ACTUALLY confined this agent ("on" / "off" /
 	// "unconfigured") and what decided it — the settings file that won the
@@ -1827,8 +1833,9 @@ type agentState struct {
 	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
 	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
 	// deciding tier could have overturned, had tclaude been able to read it. The
-	// badge hedges instead of asserting containment — a padlock on an agent
-	// nothing confines is worse than no padlock at all.
+	// tooltip always keeps that hedge. Harness-builtin uses the warning glyph;
+	// an exact tclaude-layer implementation may still earn the lock because its
+	// separate outer OS wall is established, with fidelity caveats kept in copy.
 	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
 	// SandboxProfiles names the tclaude sandbox profiles that were applied to
 	// this launch, in resolution order (global → group → explicit).
@@ -1836,11 +1843,12 @@ type agentState struct {
 	// The profile is orthogonal to the state above: it does not decide WHETHER
 	// the agent is sandboxed, it supplies the RULES. For Claude Code a profile's
 	// filesystem grants are compiled into the harness's own
-	// `sandbox.filesystem.*` via `--settings`, so they bite only while the OS
-	// sandbox is enabled; its environment entries are plain env vars and apply
-	// either way. The badge tooltip needs both halves — naming only the settings
-	// file that enabled the sandbox reads as "this is your whole sandbox
-	// configuration" when a profile actually shaped it.
+	// `sandbox.filesystem.*` via `--settings` on harness-builtin, while
+	// tclaude-layer renders them into its outer OS wall. Its environment entries
+	// are plain env vars and apply either way. The badge tooltip needs both
+	// halves — naming only the settings file that enabled the sandbox reads as
+	// "this is your whole sandbox configuration" when a profile actually
+	// shaped it.
 	//
 	// Empty means either "no profile applied" or "no snapshot recorded" — the
 	// two are distinguished by SandboxProfilesRecorded, because claiming "none"
@@ -1947,12 +1955,13 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
-		Harness:             pick.Harness,
-		SandboxMode:         pick.SandboxMode,
-		SandboxModeSource:   pick.SandboxModeSource,
-		OSSandboxState:      pick.OSSandboxState,
-		OSSandboxSource:     pick.OSSandboxSource,
-		OSSandboxUnverified: pick.OSSandboxUnverified,
+		Harness:               pick.Harness,
+		SandboxMode:           pick.SandboxMode,
+		SandboxImplementation: pick.SandboxImplementation,
+		SandboxModeSource:     pick.SandboxModeSource,
+		OSSandboxState:        pick.OSSandboxState,
+		OSSandboxSource:       pick.OSSandboxSource,
+		OSSandboxUnverified:   pick.OSSandboxUnverified,
 		// The sandbox profiles ride the same session row the verdict does — the
 		// row cache already bulk-loads it, so naming them costs no extra query
 		// on the poll.

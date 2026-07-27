@@ -92,6 +92,7 @@ const CASES = [
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
       os_sandbox_source: 'this launch (sandbox `on`)', os_sandbox_unverified: true,
+      sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
     // The `on?` the chip used to print survives as the opening hedge.
@@ -102,10 +103,11 @@ const CASES = [
     name: 'the Darwin tclaude layer exposes its Seatbelt-specific partial fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; host network and ambient Unix sockets reachable; no mount namespace; hidden paths remain enumerable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem operations/,
       /hidden paths remain enumerable/, /host network plus ambient Unix sockets remain reachable/],
     titleNot: [/filesystem mounts are enforced/, /could not read a settings file/],
@@ -114,10 +116,11 @@ const CASES = [
     name: 'the Darwin isolated tclaude layer reports its platform deltas without claiming host network access',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; no PID isolation; no constructed root; hidden paths remain enumerable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem and network operations/,
       /no PID isolation or constructed root/, /hidden paths remain enumerable/],
     titleNot: [/host network plus ambient Unix sockets remain reachable/, /could not read a settings file/],
@@ -126,10 +129,11 @@ const CASES = [
     name: 'the OpenCode executor layer reports the split server and attach boundary',
     state: {
       harness: 'opencode', sandbox_mode: 'tclaude-layer', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /tool-executing server/,
       /attach pane stays outside/, /loopback control plane remains reachable/,
       /host networking plus ambient host Unix sockets remain available/],
@@ -139,13 +143,44 @@ const CASES = [
     name: 'the experimental tclaude layer exposes its partial socket fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (bubblewrap; ambient host Unix sockets reachable)',
       os_sandbox_unverified: true,
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: filesystem mounts are enforced/,
+      /ambient host Unix sockets remain connectable/,
+      /Its filesystem rules are enforced as OS mounts by the tclaude layer \(the inner harness sandbox is off by design\)/,
+      /any environment entries it defines also apply/],
+    titleNot: [/Bash is confined/, /could not read a settings file/, /not in force/],
+  },
+  {
+    name: 'a stacked or unknown implementation does not inherit the tclaude-layer lock',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'stacked',
+      os_sandbox_source: 'stacked sandbox implementation',
     },
     glyph: '⚠', danger: true,
-    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: filesystem mounts are enforced/,
-      /ambient host Unix sockets remain connectable/],
-    titleNot: [/Bash is confined/, /could not read a settings file/],
+    title: [/^Sandbox: on —/],
+  },
+  {
+    name: 'an unavailable tclaude layer does not claim its profile mounts are enforced',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      sandbox_implementation: 'tclaude-layer',
+      os_sandbox_source: 'tclaude-layer unavailable',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [
+      /^Sandbox: off —/,
+      /Its filesystem rules are not in force \(the tclaude layer is not active\)/,
+    ],
+    titleNot: [/enforced as OS mounts/, /environment entries/],
   },
   {
     name: 'a verified on keeps the plain padlock and the confinement claim',
@@ -160,7 +195,10 @@ const CASES = [
     // A pre-verdict Claude row: `off` is Claude-only and means the sandbox is
     // disabled outright, so the padlock was wrong there for the same reason.
     name: 'a legacy Claude off row with no verdict is a danger badge too',
-    state: { harness: 'claude', sandbox_mode: 'off' },
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      sandbox_implementation: 'harness-builtin',
+    },
     glyph: '⚠', danger: true, title: [/^Sandbox: off —/],
   },
   {
@@ -369,6 +407,27 @@ const CASES = [
     glyph: '⚠', danger: true,
     title: [/Their filesystem rules are not in force/, /any environment entries they define still apply/],
     titleNot: [/Its filesystem rules/],
+  },
+  {
+    name: 'two tclaude-layer profiles report their outer-mount enforcement in the plural',
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      sandbox_implementation: 'tclaude-layer',
+      os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (bubblewrap; ambient host Unix sockets reachable)',
+      os_sandbox_unverified: true,
+      sandbox_profiles: [
+        { scope: 'global', name: 'tclaude-agent' },
+        { scope: 'group', name: 'squad-tight' },
+      ],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [
+      /Their filesystem rules are enforced as OS mounts by the tclaude layer/,
+      /any environment entries they define also apply/,
+    ],
+    titleNot: [/Its filesystem rules/, /not in force/],
   },
   {
     // The inverted failure: managed policy forces the sandbox ON over a launch
