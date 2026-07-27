@@ -2,6 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { syncBotAnimations } from './helpers.js';
+import { dashPrefs } from './prefs.js';
 import { ActivityModes } from './activity-bots.js';
 import {
   footerMetaView,
@@ -11,6 +12,21 @@ import {
 } from './shell-model.js';
 
 const html = htm.bind(h);
+const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return 'unknown';
+  if (milliseconds <= 0) return 'expired';
+  const totalMinutes = Math.ceil(milliseconds / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  return [
+    days ? `${days}d` : '',
+    hours ? `${hours}h` : '',
+    (!days && minutes) ? `${minutes}m` : '',
+  ].filter(Boolean).join(' ');
+}
 
 function UsageToken({ token }) {
   if (token.kind === 'cost') {
@@ -86,12 +102,34 @@ function MessagesBadge({ state }) {
 
 function FooterMeta({ state }) {
   const view = footerMetaView(state.snapshot.value);
+  const [expanded, setExpanded] = useState(() => dashPrefs.getItem(FOOTER_SESSION_EXPANDED_PREF) === '1');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!expanded || !view?.authSession?.expires_at) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, [expanded, view?.authSession?.expires_at]);
   if (!view) return html`<span class="meta" id="meta">loading…</span>`;
+  const auth = view.authSession;
+  const toggle = () => {
+    const next = !expanded;
+    setNow(Date.now());
+    setExpanded(next);
+    dashPrefs.setItem(FOOTER_SESSION_EXPANDED_PREF, next ? '1' : '0');
+  };
   return html`
     <span class="meta" id="meta">
       <span class="meta-version">tclaude version ${view.version}</span>
       <span class="meta-sep"> · </span><span class="meta-base">${view.base}</span>
       <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>
+      <button class="footer-session-toggle" type="button" aria-expanded=${expanded ? 'true' : 'false'} aria-controls="footer-session-panel" onClick=${toggle}>auth ${expanded ? '▾' : '▴'}</button>
+      ${expanded && auth ? html`
+        <span class="footer-session-panel" id="footer-session-panel">
+          <span>auth cookie expires ${auth.expires_at ? `in ${formatDuration(new Date(auth.expires_at).getTime() - now)}` : 'when this browser session closes'}</span>
+          <span>minted ${new Date(auth.minted_at).toLocaleString()}</span>
+          ${!auth.expires_at ? html`<span class="footer-session-note">after a clean daemon restart, the prior cookie is accepted for up to 30m and rotated on reconnect</span>` : null}
+        </span>
+      ` : null}
     </span>
   `;
 }

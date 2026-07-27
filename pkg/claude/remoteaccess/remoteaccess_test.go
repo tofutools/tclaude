@@ -123,6 +123,13 @@ func TestSignedCookie(t *testing.T) {
 	if !ok || sub != "human" {
 		t.Fatalf("round-trip: ok=%v sub=%q", ok, sub)
 	}
+	sub, expiresAt, ok := remoteaccess.VerifyCookieExpiry(key, tok)
+	if !ok || sub != "human" {
+		t.Fatalf("metadata round-trip: ok=%v sub=%q", ok, sub)
+	}
+	if want := time.Now().Add(time.Hour); expiresAt.Before(want.Add(-2*time.Second)) || expiresAt.After(want.Add(2*time.Second)) {
+		t.Fatalf("expiry=%v, want about %v", expiresAt, want)
+	}
 	// Wrong key fails.
 	if _, ok := remoteaccess.VerifyCookie([]byte("different-key-different-key-xxxx"), tok); ok {
 		t.Error("cookie verified under the wrong key")
