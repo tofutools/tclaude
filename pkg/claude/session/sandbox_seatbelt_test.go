@@ -409,11 +409,15 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 		`(require-not (subpath (param "`+currentParam+`")))`,
 	))
 	for _, param := range params {
-		if param.name == parentParam+"_REOPEN_0" {
+		if strings.HasPrefix(param.name, parentParam+"_REOPEN_") {
 			assert.Equal(t, current, param.path,
 				"ordinary rules and break-glass must not become exceptions to the daemon-only parent hide")
 		}
 	}
+	assert.Equal(t, 4, strings.Count(profile, `(param "`+parentParam+`_REOPEN_0")`),
+		"the paired file-read/remote-unix deny must share exactly one daemon reopen")
+	assert.NotContains(t, profile, `(param "`+parentParam+`_REOPEN_1")`,
+		"the break-glass sibling must not become a private-parent exception")
 }
 
 func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {

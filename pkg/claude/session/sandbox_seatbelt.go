@@ -31,6 +31,7 @@ type seatbeltRegion struct {
 	policy           bool
 	networkException bool
 	denyBoundary     bool
+	daemonReopen     bool
 	unshadowable     bool
 }
 
@@ -214,7 +215,10 @@ func renderSeatbeltProfile(
 				// carveout while still reopening exactly the current child.
 				denyBoundary: true,
 			},
-			seatbeltRegion{path: current, mode: sandboxpolicy.MountRW},
+			seatbeltRegion{
+				path: current, mode: sandboxpolicy.MountRW,
+				daemonReopen: true,
+			},
 		)
 	}
 
@@ -431,6 +435,7 @@ func expandSeatbeltAliasRegions(
 				policy:           region.policy,
 				networkException: region.networkException,
 				denyBoundary:     region.denyBoundary,
+				daemonReopen:     region.daemonReopen,
 				unshadowable:     region.unshadowable,
 			})
 		}
@@ -526,14 +531,11 @@ func compileSeatbeltDenyRegions(
 	normalWriteRule := make(map[int]bool, len(writeRules))
 	for index, nodeIndex := range writeRules {
 		normalWriteRule[nodeIndex] = true
-		exceptions := []int(nil)
-		if !nodes[nodeIndex].unshadowable {
-			exceptions = seatbeltFirstAllowedDescendants(
-				nodes,
-				nodeIndex,
-				func(mode sandboxpolicy.MountMode) bool { return mode != sandboxpolicy.MountRW },
-			)
-		}
+		exceptions := seatbeltDenyExceptions(
+			nodes,
+			nodeIndex,
+			func(mode sandboxpolicy.MountMode) bool { return mode != sandboxpolicy.MountRW },
+		)
 		rootBaseline := nodes[nodeIndex].parent == -1 &&
 			nodes[nodeIndex].path == string(filepath.Separator)
 		params = appendSeatbeltDenyRule(
@@ -583,14 +585,11 @@ func compileSeatbeltDenyRegions(
 		return mode == sandboxpolicy.MountHide
 	})
 	for index, nodeIndex := range readRules {
-		exceptions := []int(nil)
-		if !nodes[nodeIndex].unshadowable {
-			exceptions = seatbeltFirstAllowedDescendants(
-				nodes,
-				nodeIndex,
-				func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
-			)
-		}
+		exceptions := seatbeltDenyExceptions(
+			nodes,
+			nodeIndex,
+			func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
+		)
 		params = appendSeatbeltDenyRule(
 			&profile,
 			params,
@@ -610,6 +609,43 @@ func compileSeatbeltDenyRegions(
 		)
 	}
 	return profile.String(), params
+}
+
+func seatbeltDenyExceptions(
+	nodes []seatbeltRegionNode,
+	root int,
+	denied func(sandboxpolicy.MountMode) bool,
+) []int {
+	switch {
+	case nodes[root].unshadowable:
+		return nil
+	case nodes[root].denyBoundary:
+		return seatbeltDaemonReopenDescendants(nodes, root)
+	default:
+		return seatbeltFirstAllowedDescendants(nodes, root, denied)
+	}
+}
+
+func seatbeltDaemonReopenDescendants(
+	nodes []seatbeltRegionNode,
+	root int,
+) []int {
+	out := []int{}
+	var walk func(int)
+	walk = func(nodeIndex int) {
+		for _, child := range nodes[nodeIndex].children {
+			if nodes[child].daemonReopen {
+				out = append(out, child)
+				continue
+			}
+			walk(child)
+		}
+	}
+	walk(root)
+	sort.Slice(out, func(i, j int) bool {
+		return nodes[out[i]].path < nodes[out[j]].path
+	})
+	return out
 }
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)

@@ -3671,6 +3671,11 @@ type spawnParams struct {
 	// continuation may reuse that exact root; every fresh inline spawn must
 	// instead create a new root so a label collision cannot cross generations.
 	privateAttachmentRootReserved bool
+	// privateAttachmentRootCleanup transfers the deferred pass's pre-created
+	// root into executeSpawn. Registering it at function entry covers early
+	// validation failures; the launch-success flag preserves it after the pane
+	// exists, including later enrollment/claim failures.
+	privateAttachmentRootCleanup func()
 	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
 	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
 	// records it onto the new actor's agents.initial_spawn_config so there is a
@@ -4227,6 +4232,16 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
 	groupName := spawnGroupName(g)
+	privateAttachmentCleanup := func() {}
+	if p.privateAttachmentRootCleanup != nil {
+		privateAttachmentCleanup = p.privateAttachmentRootCleanup
+	}
+	privateAttachmentsLaunched := false
+	defer func() {
+		if !privateAttachmentsLaunched {
+			privateAttachmentCleanup()
+		}
+	}()
 	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -4359,13 +4374,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// The deferred server-authoritative continuation arrives with its label
 	// already reserved (it keys the pending_spawns row the response returned),
 	// so that label is authoritative and must not be re-minted.
-	privateAttachmentCleanup := func() {}
-	privateAttachmentsLaunched := false
-	defer func() {
-		if !privateAttachmentsLaunched {
-			privateAttachmentCleanup()
-		}
-	}()
 	layeredLaunch := p.SandboxImplementation ==
 		string(sandboxpolicy.ImplementationTclaudeLayer)
 	label := p.pendingSpawnLabel
@@ -5037,6 +5045,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	continuation.pendingSpawnLabel = label
 	continuation.privateAttachmentRootReserved =
 		p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
+	continuation.privateAttachmentRootCleanup = privateRootCleanup
 	*syncProofCleanup = false // the continuation owns the proof markers now
 
 	type deferredResult struct {
@@ -5053,14 +5062,11 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	goBackground(func() {
 		out, fail := executeSpawn(g, continuation)
 		if fail != nil {
-			// executeSpawn normally owns this cleanup after it reaches the
-			// reserved-label phase. Keep the outer ownership as a backstop for
-			// any earlier validation failure in the continuation.
-			privateRootCleanup()
-			// No pane will ever write a session row for this label, so the
-			// reservation must not linger as a forever-Pending ghost. Success
-			// paths clear it via the atomic claim (or the sweeper); a delete
-			// after a late failure is an idempotent no-op there.
+			// The failed continuation cannot claim this reservation. Do not
+			// leave a forever-Pending ghost; a delete after a concurrent claim
+			// is an idempotent no-op. The private-root cleanup is separately
+			// launch-aware inside executeSpawn, because a late enrollment
+			// failure can coexist with an already-running pane.
 			if err := db.DeletePendingSpawn(label); err != nil {
 				slog.Warn("spawn: failed to remove reservation after deferred launch failure",
 					"label", label, "error", err)
