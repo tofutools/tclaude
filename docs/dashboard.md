@@ -49,6 +49,44 @@ Other entry points:
 The `--print` URL carries a single-use token that expires in ~60 seconds, so
 use it immediately.
 
+## Terminal UI instead of the browser
+
+`tclaude agentd serve --tui` runs a small text UI in the daemon's own terminal
+instead of the browser dashboard. It covers the two moves the dashboard is most
+often opened for — see which agents exist, and start a new one — and nothing
+else:
+
+```
+n   start a new agent (group, name, directory, harness, startup brief)
+r   refresh now (the list also polls every 2s)
+?   key help
+q   quit — this SHUTS DOWN the daemon (it asks first)
+```
+
+The UI is deliberately plain: no colour scheme, no theming, no per-terminal
+palette. The cursor row is inverse video and that is the whole visual system.
+Everything it shows or does goes through the daemon's own API, so a spawn
+started here is the same spawn the CLI and the browser dashboard perform —
+same defaults, same validation, same audit entry.
+
+`--tui` **replaces** the web dashboard rather than sitting beside it: no
+dashboard HTTP listener is started at all. Consequences worth knowing before
+you use it:
+
+- `tclaude agent dashboard` and the tray's **Open dashboard** have nothing to
+  open, and any `agent.auto_launch_dashboard` config setting is ignored.
+- An agent's `--ask-human` approval request has no surface to appear on and
+  fails closed (denied). Grant access with `tclaude agent permissions grant`
+  instead while the daemon runs in this mode.
+- Quitting the UI stops the daemon — `agentd serve` is a foreground process
+  and the UI is its face.
+
+Because there is no listener to configure, `--tui` refuses to start alongside
+`--auto-launch-dashboard`, `--slop`, `--wizard`, `--dashboard-port` or
+`--dashboard-bind`. It also refuses `--no-print-human-token`: the UI takes over
+the screen, so the startup banner is the only place left to read the operator
+token from.
+
 ## Fixed loopback port
 
 By default the dashboard (and the approval popup it shares a listener with)

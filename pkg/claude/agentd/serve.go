@@ -42,6 +42,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents and starts new ones. It REPLACES the web dashboard: no HTTP dashboard listener is started, so browser deep links and in-dashboard human-approval requests are unavailable for this daemon lifetime. Quitting the TUI shuts the daemon down. Cannot be combined with --auto-launch-dashboard, --slop, --wizard, --dashboard-port, --dashboard-bind or --no-print-human-token."`
 }
 
 func serveCmd() *cobra.Command {
@@ -185,7 +186,52 @@ func configureServeSocketEnv(requested string) error {
 	return nil
 }
 
+// validateTUIFlags rejects the serve flags that only make sense with the web
+// dashboard when --tui is in play. In TUI mode the dashboard HTTP listener is
+// never started (see runServe), so a bind host, a fixed port, a browser
+// auto-launch and its two cosmetic re-skins have nothing left to configure —
+// accepting them silently would leave the operator believing a listener came
+// up. --no-print-human-token joins them for the opposite reason: the TUI takes
+// over the screen and offers no other place to read the operator token, so the
+// startup banner is the only chance to see it and suppressing it would leave
+// the human with no token for `tclaude agent …` in another window.
+//
+// A --dashboard-port of 0 is "not set" everywhere else in this file (see
+// resolveDashboardPort), so it is not treated as a conflict here either.
+func validateTUIFlags(p *serveParams) error {
+	if !p.TUI {
+		return nil
+	}
+	var conflicts []string
+	if p.AutoLaunchDashboard {
+		conflicts = append(conflicts, "--auto-launch-dashboard")
+	}
+	if p.Slop {
+		conflicts = append(conflicts, "--slop")
+	}
+	if p.Wizard {
+		conflicts = append(conflicts, "--wizard")
+	}
+	if p.DashboardPort > 0 {
+		conflicts = append(conflicts, "--dashboard-port")
+	}
+	if strings.TrimSpace(p.DashboardBind) != "" {
+		conflicts = append(conflicts, "--dashboard-bind")
+	}
+	if p.NoPrintHumanToken {
+		conflicts = append(conflicts, "--no-print-human-token")
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--tui cannot be combined with %s: the TUI replaces the web dashboard, "+
+		"which is not started in TUI mode", strings.Join(conflicts, ", "))
+}
+
 func runServe(p *serveParams) error {
+	if err := validateTUIFlags(p); err != nil {
+		return err
+	}
 	if err := configureServeSocketEnv(p.Socket); err != nil {
 		return err
 	}
@@ -292,22 +338,39 @@ func runServe(p *serveParams) error {
 	// startup, not silently degrade to a random port (which would break the
 	// bookmark / reverse-proxy / firewall rule the fixed port was set up
 	// for). An out-of-range port likewise fails the bind and aborts here.
-	dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
-	dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
-	dashboardBindHost = dashBind
-	popupSrv, popupURL, err := startPopupServer(dashBind, dashPort)
-	if err != nil {
-		return fmt.Errorf("start dashboard/approval-popup server (port source: %s, bind source: %s): %w", dashPortSrc, dashBindSrc, err)
-	}
-	popupBaseURL = popupURL
-	if isLoopbackHost(dashBind) {
-		slog.Info("dashboard listener", "bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
+	//
+	// --tui replaces that whole surface with an in-terminal console, so the
+	// listener is not started at all and popupBaseURL stays empty. Every
+	// reader of popupBaseURL already handles the empty case (the tray's
+	// dashboard entry, `tclaude agent dashboard`, /v1/info) — with one
+	// consequence worth stating plainly: an agent's ask-human approval
+	// request has no surface to appear on and fails closed, so grants must
+	// come from `tclaude agent permissions grant` while the daemon runs in
+	// TUI mode. Any configured agent.dashboard_port / dashboard_bind is
+	// inert here; the conflicting FLAGS are refused up front by
+	// validateTUIFlags.
+	var popupSrv *http.Server
+	if p.TUI {
+		slog.Info("dashboard listener disabled by --tui; the terminal UI is the operator surface")
 	} else {
-		// A non-loopback bind is network-exposed — call it out loudly so an
-		// accidental 0.0.0.0 (no auth in front) can't hide in a quiet log line.
-		slog.Warn("dashboard listener bound NON-LOOPBACK — exposed on the network; put your own auth (reverse proxy / VPN) in front",
-			"bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
-		fmt.Printf("  ⚠ dashboard bound to %s (non-loopback) — network-exposed; front it with your own auth\n", dashBind)
+		dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
+		dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
+		dashboardBindHost = dashBind
+		srv, popupURL, err := startPopupServer(dashBind, dashPort)
+		if err != nil {
+			return fmt.Errorf("start dashboard/approval-popup server (port source: %s, bind source: %s): %w", dashPortSrc, dashBindSrc, err)
+		}
+		popupSrv = srv
+		popupBaseURL = popupURL
+		if isLoopbackHost(dashBind) {
+			slog.Info("dashboard listener", "bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
+		} else {
+			// A non-loopback bind is network-exposed — call it out loudly so an
+			// accidental 0.0.0.0 (no auth in front) can't hide in a quiet log line.
+			slog.Warn("dashboard listener bound NON-LOOPBACK — exposed on the network; put your own auth (reverse proxy / VPN) in front",
+				"bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
+			fmt.Printf("  ⚠ dashboard bound to %s (non-loopback) — network-exposed; front it with your own auth\n", dashBind)
+		}
 	}
 
 	// Operator token — positively authenticates the human operator on the
@@ -328,7 +391,10 @@ func runServe(p *serveParams) error {
 	// agent.auto_launch_dashboard config field. Saves a separate
 	// `tclaude agent dashboard` after every daemon start. Best-effort:
 	// a failed launch is logged, never fatal.
-	if shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
+	// Skipped entirely in TUI mode: there is no dashboard listener to open,
+	// and the config field can request the launch on its own (the --tui/--auto-
+	// launch-dashboard flag conflict alone would not cover that).
+	if !p.TUI && shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		// slop and wizard are mutually exclusive re-skins; slop wins if both
 		// flags are set, matching the client's applySlopThemeIfRequested.
 		theme := ""
@@ -543,6 +609,17 @@ func runServe(p *serveParams) error {
 
 	quit := newQuitter()
 
+	// Terminal UI (--tui): the simplified in-terminal dashboard. It runs on
+	// its own goroutine — the main goroutine still belongs to the tray loop —
+	// and stops when the daemon-wide quit channel closes, whichever end
+	// requests the shutdown first. Started after the banner above so the
+	// operator token stays on the scrollback the alt-screen restores on exit.
+	stopTUI := func() error { return nil }
+	if p.TUI {
+		stopTUI = startServeTUI(quit)
+	}
+	defer func() { _ = stopTUI() }()
+
 	// Translate any of: SIGINT/SIGTERM, the socket server dying,
 	// "Quit" from the tray menu, into a single shutdown signal.
 	go func() {
@@ -603,6 +680,12 @@ func runServe(p *serveParams) error {
 		}
 	}
 
+	// Give the terminal back before the drain below: shutdown can take
+	// several seconds, and the operator should not be watching a frozen
+	// alt-screen while it runs. Idempotent — the deferred call is only a
+	// backstop for the early-return paths above.
+	tuiErr := stopTUI()
+
 	// Graceful shutdown.
 	stopCodexContextRefreshes()
 	if err := preserveDashboardSessionForRestart(); err != nil {
@@ -635,7 +718,10 @@ func runServe(p *serveParams) error {
 		slog.Info("codex-telemetry: flushed checkpoints on graceful shutdown",
 			"saved", saved, "module", "agentd")
 	}
-	return unexpectedTrayErr
+	// Both are nil on an ordinary shutdown; errors.Join keeps whichever
+	// surface actually failed (a tray panic, a console that could not run)
+	// in the exit status.
+	return errors.Join(unexpectedTrayErr, tuiErr)
 }
 
 // openDatabaseReportingMigrations opens the singleton SQLite DB, printing
