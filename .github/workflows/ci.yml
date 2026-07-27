@@ -38,7 +38,7 @@ jobs:
           version: v2.12.2
 
   sandbox-v2-smoke:
-    name: Sandbox v2 host smoke
+    name: Sandbox v2 bubblewrap smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -84,9 +84,9 @@ jobs:
               bwrap_output="<no output>"
             fi
             {
-              echo "### Sandbox v2 host smoke prerequisite failed"
+              echo "### Sandbox v2 bubblewrap smoke prerequisite failed"
               echo
-              echo "The real host smoke was not executed. The GitHub runner image or AppArmor policy likely changed."
+              echo "The real bubblewrap smoke was not executed. The GitHub runner image or AppArmor policy likely changed."
               echo
               printf '**Image:** %s %s\n\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
               echo "**Kernel:**"
@@ -106,14 +106,14 @@ jobs:
               printf '%s\n' "$bwrap_output"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::sandbox v2 host smoke prerequisite failed; see the step summary for runner diagnostics"
+            echo "::error::sandbox v2 bubblewrap smoke prerequisite failed; see the step summary for runner diagnostics"
             exit 1
           fi
 
       - name: Build tclaude for authenticated smoke
         run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
 
-      - name: Run sandbox v2 host smoke
+      - name: Run sandbox v2 bubblewrap smoke
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
@@ -123,7 +123,7 @@ jobs:
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerHostSmoke ' "$smoke_log"; then
             {
-              echo "### Sandbox v2 host smoke did not complete"
+              echo "### Sandbox v2 bubblewrap smoke did not complete"
               echo
               echo "The test command exited successfully without reporting that the named real smoke passed."
               echo "The test name, build constraints, or smoke gate likely changed; see the test log."

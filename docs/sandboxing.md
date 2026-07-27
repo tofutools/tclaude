@@ -415,7 +415,7 @@ outright and no throwaway database can appear.
 
 Both platform smokes are hard CI gates. The Linux job disables Ubuntu's
 AppArmor restriction on unprivileged user namespaces for its ephemeral runner,
-verifies bubblewrap can create the namespace, and runs the real host smoke. If
+verifies bubblewrap can create the namespace, and runs the real bubblewrap smoke. If
 the unlock or capability probe stops working, the job fails with runner
 diagnostics instead of skipping. To repeat the smoke on a compatible Linux host
 with `bwrap` installed:
