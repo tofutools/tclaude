@@ -12,7 +12,13 @@ import (
 )
 
 const (
-	codexContextRefreshMinInterval       = time.Second
+	codexContextRefreshMinInterval = time.Second
+	// A durable checkpoint only bounds restart replay; the in-memory follower
+	// remains authoritative while agentd is alive. Avoid turning every changed
+	// rollout observed by the two-second dashboard poll into its own SQLite
+	// commit. Thirty seconds keeps restart replay small while moving routine
+	// checkpoint fsyncs out of the poll's median path.
+	codexCheckpointPersistMinInterval    = 30 * time.Second
 	codexCheckpointFailureEvictThreshold = 3
 )
 
@@ -22,20 +28,21 @@ var codexContextRefreshMu struct {
 }
 
 type codexReadThroughSnapshot struct {
-	at                   time.Time
-	interruptedSubagents map[string]struct{}
-	follower             *harness.CodexTelemetryFollower
-	refreshing           bool
-	checkpointLoaded     bool
-	checkpointData       string
-	checkpointFailures   int
-	sessionConvID        string
-	sessionCreatedAt     time.Time
-	persistedConvID      string
-	persistedCreatedAt   time.Time
-	persistedContext     harness.ContextTelemetry
-	persistedHasContext  bool
-	persistedReset       bool
+	at                    time.Time
+	interruptedSubagents  map[string]struct{}
+	follower              *harness.CodexTelemetryFollower
+	refreshing            bool
+	checkpointLoaded      bool
+	checkpointData        string
+	checkpointFailures    int
+	checkpointPersistedAt time.Time
+	sessionConvID         string
+	sessionCreatedAt      time.Time
+	persistedConvID       string
+	persistedCreatedAt    time.Time
+	persistedContext      harness.ContextTelemetry
+	persistedHasContext   bool
+	persistedReset        bool
 }
 
 // codexTelemetryTiming is accumulated across every live Codex row rendered by
@@ -115,6 +122,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 			releaseCodexRuntimeRefresh(sess.ID)
 		}
 	}()
+	checkpointLoadedThisRefresh := false
 	if !cached.checkpointLoaded {
 		loadStarted := time.Now()
 		checkpoint, err := db.LoadCodexTelemetryCheckpoint(sess.ID)
@@ -132,10 +140,17 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 			} else {
 				cached.checkpointData = string(checkpoint.Data)
 				cached.checkpointFailures = checkpoint.FailureCount
+				cached.checkpointPersistedAt = started
 			}
 		}
 		cached.checkpointLoaded = true
-		cacheCodexCheckpointLoad(sess.ID, cached.checkpointData, cached.checkpointFailures)
+		cacheCodexCheckpointLoad(
+			sess.ID,
+			cached.checkpointData,
+			cached.checkpointFailures,
+			cached.checkpointPersistedAt,
+		)
+		checkpointLoadedThisRefresh = true
 		timing.checkpointLoad = time.Since(loadStarted)
 	}
 
@@ -158,6 +173,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	}
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
+	checkpointPersistedAt := cached.checkpointPersistedAt
 	if cached.sessionConvID != "" &&
 		(cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt)) {
 		// Session pruning cascades to its durable follower checkpoint. A later
@@ -166,49 +182,61 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		// look dirty and repopulate the new row.
 		checkpointData = ""
 		checkpointFailures = 0
+		checkpointPersistedAt = time.Time{}
 	}
-	checkpointEncodeStarted := time.Now()
-	if checkpoint, ok, checkpointErr := cached.follower.Checkpoint(); checkpointErr != nil {
-		timing.checkpointEncode = time.Since(checkpointEncodeStarted)
-		slog.Warn("codex-telemetry: failed to encode durable follower checkpoint",
-			"session_id", sess.ID, "error", checkpointErr, "module", "agentd")
-		if errors.Is(checkpointErr, harness.ErrCodexTelemetryCheckpointTooLarge) && checkpointData != "" {
+	checkpointDue := checkpointLoadedThisRefresh || checkpointData == "" || checkpointFailures > 0 ||
+		checkpointPersistedAt.IsZero() || started.Sub(checkpointPersistedAt) >= codexCheckpointPersistMinInterval
+	if checkpointDue {
+		checkpointEncodeStarted := time.Now()
+		if checkpoint, ok, checkpointErr := cached.follower.Checkpoint(); checkpointErr != nil {
+			timing.checkpointEncode = time.Since(checkpointEncodeStarted)
+			slog.Warn("codex-telemetry: failed to encode durable follower checkpoint",
+				"session_id", sess.ID, "error", checkpointErr, "module", "agentd")
+			if errors.Is(checkpointErr, harness.ErrCodexTelemetryCheckpointTooLarge) && checkpointData != "" {
+				checkpointWriteStarted := time.Now()
+				if deleteErr := db.DeleteCodexTelemetryCheckpoint(sess.ID); deleteErr != nil {
+					slog.Warn("codex-telemetry: failed to delete oversized durable follower checkpoint",
+						"session_id", sess.ID, "error", deleteErr, "module", "agentd")
+				} else {
+					checkpointData = ""
+					checkpointFailures = 0
+				}
+				timing.checkpointWrite += time.Since(checkpointWriteStarted)
+			}
+		} else if ok && (string(checkpoint) != checkpointData || checkpointFailures > 0) {
+			timing.checkpointEncode = time.Since(checkpointEncodeStarted)
+			checkpointWriteStarted := time.Now()
+			if saveErr := db.SaveCodexTelemetryCheckpoint(sess.ID, checkpoint); saveErr != nil {
+				slog.Warn("codex-telemetry: failed to persist durable follower checkpoint",
+					"session_id", sess.ID, "error", saveErr, "module", "agentd")
+			} else {
+				checkpointData = string(checkpoint)
+				checkpointFailures = 0
+				checkpointPersistedAt = time.Now()
+			}
+			timing.checkpointWrite += time.Since(checkpointWriteStarted)
+		} else if !ok && checkpointData != "" {
+			timing.checkpointEncode = time.Since(checkpointEncodeStarted)
+			// Archived/missing/replaced paths may leave no tail-able cursor. Do
+			// not keep retrying an obsolete checkpoint on every daemon restart.
 			checkpointWriteStarted := time.Now()
 			if deleteErr := db.DeleteCodexTelemetryCheckpoint(sess.ID); deleteErr != nil {
-				slog.Warn("codex-telemetry: failed to delete oversized durable follower checkpoint",
+				slog.Warn("codex-telemetry: failed to delete obsolete durable follower checkpoint",
 					"session_id", sess.ID, "error", deleteErr, "module", "agentd")
 			} else {
 				checkpointData = ""
 				checkpointFailures = 0
 			}
 			timing.checkpointWrite += time.Since(checkpointWriteStarted)
-		}
-	} else if ok && (string(checkpoint) != checkpointData || cached.checkpointFailures > 0) {
-		timing.checkpointEncode = time.Since(checkpointEncodeStarted)
-		checkpointWriteStarted := time.Now()
-		if saveErr := db.SaveCodexTelemetryCheckpoint(sess.ID, checkpoint); saveErr != nil {
-			slog.Warn("codex-telemetry: failed to persist durable follower checkpoint",
-				"session_id", sess.ID, "error", saveErr, "module", "agentd")
 		} else {
-			checkpointData = string(checkpoint)
-			checkpointFailures = 0
+			timing.checkpointEncode = time.Since(checkpointEncodeStarted)
+			if ok && checkpointData != "" {
+				// The durable bytes already describe the current follower. Treat
+				// the comparison as a fresh persistence check so an idle rollout
+				// is not re-encoded on every later dashboard poll.
+				checkpointPersistedAt = started
+			}
 		}
-		timing.checkpointWrite += time.Since(checkpointWriteStarted)
-	} else if !ok && checkpointData != "" {
-		timing.checkpointEncode = time.Since(checkpointEncodeStarted)
-		// Archived/missing/replaced paths may leave no tail-able cursor. Do
-		// not keep retrying an obsolete checkpoint on every daemon restart.
-		checkpointWriteStarted := time.Now()
-		if deleteErr := db.DeleteCodexTelemetryCheckpoint(sess.ID); deleteErr != nil {
-			slog.Warn("codex-telemetry: failed to delete obsolete durable follower checkpoint",
-				"session_id", sess.ID, "error", deleteErr, "module", "agentd")
-		} else {
-			checkpointData = ""
-			checkpointFailures = 0
-		}
-		timing.checkpointWrite += time.Since(checkpointWriteStarted)
-	} else {
-		timing.checkpointEncode = time.Since(checkpointEncodeStarted)
 	}
 
 	persistedConvID := cached.persistedConvID
@@ -255,6 +283,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		snap.InterruptedSubagents,
 		checkpointData,
 		checkpointFailures,
+		checkpointPersistedAt,
 		sess.ConvID,
 		sess.CreatedAt,
 		persistedConvID,
@@ -286,13 +315,19 @@ func claimCodexContextRefresh(sessionID string, now time.Time) (codexReadThrough
 	return prev, true
 }
 
-func cacheCodexCheckpointLoad(sessionID, checkpointData string, checkpointFailures int) {
+func cacheCodexCheckpointLoad(
+	sessionID,
+	checkpointData string,
+	checkpointFailures int,
+	checkpointPersistedAt time.Time,
+) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	prev := codexContextRefreshMu.last[sessionID]
 	prev.checkpointLoaded = true
 	prev.checkpointData = checkpointData
 	prev.checkpointFailures = checkpointFailures
+	prev.checkpointPersistedAt = checkpointPersistedAt
 	codexContextRefreshMu.last[sessionID] = prev
 }
 
@@ -336,6 +371,7 @@ func cacheCodexRuntimeRefresh(
 	interrupted map[string]struct{},
 	checkpointData string,
 	checkpointFailures int,
+	checkpointPersistedAt time.Time,
 	sessionConvID string,
 	sessionCreatedAt time.Time,
 	persistedConvID string,
@@ -355,6 +391,7 @@ func cacheCodexRuntimeRefresh(
 	prev.checkpointLoaded = true
 	prev.checkpointData = checkpointData
 	prev.checkpointFailures = checkpointFailures
+	prev.checkpointPersistedAt = checkpointPersistedAt
 	prev.sessionConvID = sessionConvID
 	prev.sessionCreatedAt = sessionCreatedAt
 	prev.persistedConvID = persistedConvID

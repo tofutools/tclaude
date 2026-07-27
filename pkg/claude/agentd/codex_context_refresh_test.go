@@ -133,6 +133,64 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	assert.Equal(t, int64(9000), contextSnapshot.TokensInput)
 }
 
+func TestCodexContextRefreshRateLimitsDurableCheckpointWrites(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-rate-limited-checkpoint-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354fe"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+	firstCheckpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, firstCheckpoint)
+
+	appendCodexRefreshTokenCount(t, path, 9000, 900)
+	resetCodexRefreshPollThrottleForTest(sessionID)
+	var deferred codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+		deferred = timing
+	})
+	assert.Zero(t, deferred.checkpointEncode)
+	assert.Zero(t, deferred.checkpointWrite,
+		"a fresh durable cursor suppresses checkpoint work on the dashboard poll")
+	contextSnapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(9000), contextSnapshot.TokensInput,
+		"live context persistence is independent from checkpoint durability")
+	stillFirst, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, stillFirst)
+	assert.Equal(t, string(firstCheckpoint.Data), string(stillFirst.Data))
+
+	resetCodexRefreshThrottleForTest(sessionID)
+	var due codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+		due = timing
+	})
+	assert.Positive(t, due.checkpointEncode)
+	assert.Positive(t, due.checkpointWrite)
+	updated, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.NotEqual(t, string(firstCheckpoint.Data), string(updated.Data),
+		"the latest in-memory cursor is persisted once its interval is due")
+}
+
 func TestCodexContextRefreshReplacesMalformedFollowerCheckpoint(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
@@ -367,6 +425,15 @@ func resetCodexContextRefreshStateForTest() {
 }
 
 func resetCodexRefreshThrottleForTest(sessionID string) {
+	codexContextRefreshMu.Lock()
+	defer codexContextRefreshMu.Unlock()
+	state := codexContextRefreshMu.last[sessionID]
+	state.at = time.Time{}
+	state.checkpointPersistedAt = time.Time{}
+	codexContextRefreshMu.last[sessionID] = state
+}
+
+func resetCodexRefreshPollThrottleForTest(sessionID string) {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	state := codexContextRefreshMu.last[sessionID]
