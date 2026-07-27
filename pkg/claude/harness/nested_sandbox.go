@@ -2,9 +2,12 @@ package harness
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,9 +35,10 @@ type NestedSandboxContract interface {
 // NestedSandboxExecutable freezes the exact engine entry point and the identity
 // disclosure captured before a live stacked probe.
 type NestedSandboxExecutable struct {
-	Path     string
-	Version  string
-	fileInfo os.FileInfo
+	Path        string
+	Version     string
+	RuntimeRoot string
+	fileInfo    os.FileInfo
 }
 
 // Identity is stable enough for the short-lived dashboard disclosure cache and
@@ -108,7 +112,11 @@ func (claudeNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandbox
 			Detail:     "macOS Seatbelt refuses applying a second harness sandbox inside tclaude's Seatbelt profile",
 		}
 	}
-	return resolveNestedExecutable(ctx, "srt", "stacked_claude_srt_probe")
+	// The launch authority is the exact Claude executable whose embedded SRT
+	// runs the probe. A separately installed `srt` CLI is not representative:
+	// Claude does not expose a supported switch that binds its tool runner to
+	// that external package.
+	return resolveNestedExecutable(ctx, "claude", "stacked_claude_srt_probe")
 }
 
 func (claudeNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
@@ -137,21 +145,29 @@ func (claudeNestedSandbox) PrepareProbe(
 	}
 	settingsPath := filepath.Join(root, "settings.json")
 	settings := map[string]any{
-		"network": map[string]any{
-			"allowedDomains":      []string{},
-			"deniedDomains":       []string{"*"},
-			"strictAllowlist":     true,
-			"allowAllUnixSockets": false,
-		},
-		"filesystem": map[string]any{
-			"denyRead":  []string{},
-			"allowRead": []string{},
-			"allowWrite": []string{
-				workspace,
+		"sandbox": map[string]any{
+			"enabled":                   true,
+			"failIfUnavailable":         true,
+			"allowUnsandboxedCommands":  false,
+			"enableWeakerNestedSandbox": false,
+			"network": map[string]any{
+				"allowedDomains":      []string{},
+				"deniedDomains":       []string{"*"},
+				"strictAllowlist":     true,
+				"allowAllUnixSockets": false,
 			},
-			"denyWrite": []string{sibling},
+			"filesystem": map[string]any{
+				"denyRead":  []string{},
+				"allowRead": []string{},
+				"allowWrite": []string{
+					workspace,
+				},
+				"denyWrite": []string{sibling},
+			},
 		},
-		"enableWeakerNestedSandbox": false,
+		"permissions": map[string]any{
+			"allow": []string{"Bash"},
+		},
 	}
 	encoded, err := json.Marshal(settings)
 	if err != nil {
@@ -162,21 +178,155 @@ func (claudeNestedSandbox) PrepareProbe(
 		cleanup()
 		return NestedSandboxProbe{}, fmt.Errorf("write Claude SRT probe settings: %w", err)
 	}
+	serverPath := filepath.Join(root, "stub.py")
+	if err := os.WriteFile(serverPath, []byte(stackedClaudeProbeServer), 0o600); err != nil {
+		cleanup()
+		return NestedSandboxProbe{}, fmt.Errorf("write Claude SRT probe stub: %w", err)
+	}
+	secretBytes := make([]byte, 24)
+	if _, err := rand.Read(secretBytes); err != nil {
+		cleanup()
+		return NestedSandboxProbe{}, fmt.Errorf("create Claude SRT probe endpoint secret: %w", err)
+	}
+	secret := hex.EncodeToString(secretBytes)
+	readyPath := filepath.Join(root, "endpoint")
+	resultPath := filepath.Join(root, "result.json")
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		cleanup()
+		return NestedSandboxProbe{}, fmt.Errorf("prepare Claude SRT probe config: %w", err)
+	}
 	allowed := filepath.Join(workspace, "allowed")
 	denied := filepath.Join(sibling, "denied")
+	marker := "TCLAUDE_STACKED_INNER_OK_" + secret
 	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 91; fi" +
 		"; if python3 -c " + clcommon.ShellQuoteArg("import socket; socket.socket(socket.AF_UNIX)") +
-		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92; fi"
+		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92; fi" +
+		"; echo " + clcommon.ShellQuoteArg(marker)
+	pathValue := strings.TrimSpace(os.Getenv("PATH"))
+	if pathValue == "" {
+		pathValue = "/usr/local/bin:/usr/bin:/bin"
+	}
+	startStub := "python3 " + clcommon.ShellQuoteArg(serverPath) +
+		" " + clcommon.ShellQuoteArg(readyPath) +
+		" " + clcommon.ShellQuoteArg(secret) +
+		" " + clcommon.ShellQuoteArg(script) +
+		" " + clcommon.ShellQuoteArg(marker) +
+		" & stub_pid=$!; trap 'kill \"$stub_pid\" 2>/dev/null || true' EXIT"
+	waitStub := "; i=0; while [ ! -s " + clcommon.ShellQuoteArg(readyPath) +
+		" ]; do i=$((i+1)); [ \"$i\" -le 100 ] || exit 94; sleep 0.05; done" +
+		"; endpoint=$(cat " + clcommon.ShellQuoteArg(readyPath) + ")" +
+		"; case \"$endpoint\" in http://127.0.0.1:*) ;; *) exit 95 ;; esac"
+	runClaude := "; env -i" +
+		" PATH=" + clcommon.ShellQuoteArg(pathValue) +
+		" HOME=" + clcommon.ShellQuoteArg(configDir) +
+		" CLAUDE_CONFIG_DIR=" + clcommon.ShellQuoteArg(configDir) +
+		" ANTHROPIC_BASE_URL=\"$endpoint/" + secret + "\"" +
+		" ANTHROPIC_API_KEY=" + clcommon.ShellQuoteArg("tclaude-stacked-"+secret) +
+		" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" +
+		" " + clcommon.ShellQuoteArg(executable.Path) +
+		" --bare --safe-mode --setting-sources '' --no-session-persistence" +
+		" -p " + clcommon.ShellQuoteArg("Run the Bash command supplied by the local capability service.") +
+		" --settings " + clcommon.ShellQuoteArg(settingsPath) +
+		" --output-format json --max-turns 2" +
+		" --model claude-sonnet-4-5-20250929" +
+		" >" + clcommon.ShellQuoteArg(resultPath) +
+		"; grep -F " + clcommon.ShellQuoteArg("TCLAUDE_STACKED_STUB_OK_"+secret) +
+		" " + clcommon.ShellQuoteArg(resultPath) + " >/dev/null"
 	return NestedSandboxProbe{
-		Command: clcommon.ShellQuoteArg(executable.Path) +
-			" --settings " + clcommon.ShellQuoteArg(settingsPath) +
-			" -c " + clcommon.ShellQuoteArg(script),
-		KnownPaths: []string{executable.Path, settingsPath, workspace, sibling},
-		Cleanup:    cleanup,
+		Command: startStub + waitStub + runClaude,
+		KnownPaths: []string{
+			executable.Path, settingsPath, serverPath, configDir, workspace, sibling,
+		},
+		Cleanup: cleanup,
 	}, nil
 }
+
+// stackedClaudeProbeServer is a launch-owned, credential-free Messages stub.
+// Its per-launch path secret prevents an ambient local process from driving the
+// probe, and it exists only until PrepareProbe's cleanup runs. The stub never
+// consults a model: it deterministically asks the exact Claude CLI to execute
+// one Bash tool and returns success only when the sandboxed tool result carries
+// the launch nonce emitted after every posture assertion.
+const stackedClaudeProbeServer = `import http.server
+import json
+import sys
+
+ready_path, secret, command, marker = sys.argv[1:5]
+success = "TCLAUDE_STACKED_STUB_OK_" + secret
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def authorized(self):
+        return self.path.startswith("/" + secret + "/")
+
+    def do_HEAD(self):
+        if not self.authorized():
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        if not self.authorized():
+            self.send_error(404)
+            return
+        length = int(self.headers.get("content-length", "0"))
+        request = json.loads(self.rfile.read(length))
+        results = [
+            block
+            for message in request.get("messages", [])
+            for block in (
+                message.get("content", [])
+                if isinstance(message.get("content"), list)
+                else []
+            )
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+        ]
+        if not results:
+            content = [{
+                "type": "tool_use",
+                "id": "toolu_tclaude_stacked",
+                "name": "Bash",
+                "input": {"command": command},
+            }]
+            stop_reason = "tool_use"
+        else:
+            valid = any(
+                not result.get("is_error", False)
+                and marker in str(result.get("content", ""))
+                for result in results
+            )
+            content = [{"type": "text", "text": success if valid else "probe refused"}]
+            stop_reason = "end_turn"
+        response = json.dumps({
+            "id": "msg_tclaude_stacked",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": content,
+            "stop_reason": stop_reason,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+with open(ready_path, "w") as ready:
+    ready.write("http://127.0.0.1:" + str(server.server_port))
+server.serve_forever()
+`
 
 type codexNestedSandbox struct{}
 
@@ -190,7 +340,11 @@ func (codexNestedSandbox) ResolveExecutable(ctx context.Context) (NestedSandboxE
 			Detail:     "macOS Seatbelt refuses applying Codex Seatbelt inside tclaude's Seatbelt profile",
 		}
 	}
-	return resolveNestedExecutable(ctx, "codex", "stacked_codex_bwrap_backend")
+	launcher, err := resolveNestedExecutable(ctx, "codex", "stacked_codex_bwrap_backend")
+	if err != nil {
+		return NestedSandboxExecutable{}, err
+	}
+	return resolveCodexNativeExecutable(ctx, launcher)
 }
 
 func (codexNestedSandbox) PrepareLaunch(spec SpawnSpec) SpawnSpec {
@@ -210,11 +364,27 @@ func (codexNestedSandbox) PrepareProbe(
 	if err != nil {
 		return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe directory: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(root) }
-	codexHome := filepath.Join(root, "config")
+	codexStateRoot, err := codexConfigDir()
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return NestedSandboxProbe{}, fmt.Errorf("resolve Codex probe state root: %w", err)
+	}
+	if err := os.MkdirAll(codexStateRoot, 0o700); err != nil {
+		_ = os.RemoveAll(root)
+		return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe state root: %w", err)
+	}
+	codexHome, err := os.MkdirTemp(codexStateRoot, ".tclaude-stacked-probe-")
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe home: %w", err)
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(root)
+		_ = os.RemoveAll(codexHome)
+	}
 	workspace := filepath.Join(root, "workspace")
 	sibling := filepath.Join(root, "private")
-	for _, dir := range []string{codexHome, workspace, sibling} {
+	for _, dir := range []string{workspace, sibling} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			cleanup()
 			return NestedSandboxProbe{}, fmt.Errorf("prepare Codex probe shape: %w", err)
@@ -266,7 +436,14 @@ func resolveNestedExecutable(
 			Detail:     fmt.Sprintf("model-free %s entry point is not on PATH: %v", name, err),
 		}
 	}
-	path, err = filepath.Abs(path)
+	return inspectNestedExecutable(ctx, path, name, capability)
+}
+
+func inspectNestedExecutable(
+	ctx context.Context,
+	path, name, capability string,
+) (NestedSandboxExecutable, error) {
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
 			Capability: capability,
@@ -304,6 +481,154 @@ func resolveNestedExecutable(
 		Version:  boundedNestedOutput(output),
 		fileInfo: info,
 	}, nil
+}
+
+func resolveCodexNativeExecutable(
+	ctx context.Context,
+	launcher NestedSandboxExecutable,
+) (NestedSandboxExecutable, error) {
+	const capability = "stacked_codex_bwrap_backend"
+	file, err := os.Open(launcher.Path)
+	if err != nil {
+		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail:     fmt.Sprintf("open Codex entry point %q: %v", launcher.Path, err),
+		}
+	}
+	var magic [4]byte
+	_, readErr := io.ReadFull(file, magic[:])
+	closeErr := file.Close()
+	if readErr == nil && string(magic[:]) == "\x7fELF" {
+		runtimeRoot, rootErr := codexNativeRuntimeRoot(launcher.Path)
+		if rootErr != nil {
+			return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+				Capability: capability,
+				Detail:     rootErr.Error(),
+			}
+		}
+		launcher.RuntimeRoot = runtimeRoot
+		return launcher, nil
+	}
+	if closeErr != nil {
+		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail:     fmt.Sprintf("close Codex entry point %q: %v", launcher.Path, closeErr),
+		}
+	}
+	packageName, targetTriple, err := codexLinuxNativeTarget()
+	if err != nil {
+		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail:     err.Error(),
+		}
+	}
+	nativePath, err := findCodexNPMNativeBackend(
+		launcher.Path,
+		packageName,
+		targetTriple,
+	)
+	if err != nil {
+		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail: fmt.Sprintf(
+				"resolve the native backend behind Codex entry point %q: %v",
+				launcher.Path,
+				err,
+			),
+		}
+	}
+	native, err := inspectNestedExecutable(
+		ctx,
+		nativePath,
+		"codex native backend",
+		capability,
+	)
+	if err != nil {
+		return NestedSandboxExecutable{}, err
+	}
+	runtimeRoot, err := codexNativeRuntimeRoot(native.Path)
+	if err != nil {
+		return NestedSandboxExecutable{}, &NestedSandboxCapabilityError{
+			Capability: capability,
+			Detail:     err.Error(),
+		}
+	}
+	native.RuntimeRoot = runtimeRoot
+	return native, nil
+}
+
+func codexLinuxNativeTarget() (string, string, error) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "@openai/codex-linux-x64", "x86_64-unknown-linux-musl", nil
+	case "arm64":
+		return "@openai/codex-linux-arm64", "aarch64-unknown-linux-musl", nil
+	default:
+		return "", "", fmt.Errorf(
+			"the official Codex npm launcher has no pinned Linux backend for architecture %s",
+			runtime.GOARCH,
+		)
+	}
+}
+
+func findCodexNPMNativeBackend(
+	launcherPath, packageName, targetTriple string,
+) (string, error) {
+	packageParts := strings.Split(packageName, "/")
+	if len(packageParts) != 2 || packageParts[0] != "@openai" ||
+		strings.TrimSpace(packageParts[1]) == "" {
+		return "", fmt.Errorf("invalid Codex platform package %q", packageName)
+	}
+	current := filepath.Dir(filepath.Clean(launcherPath))
+	for {
+		candidate := filepath.Join(
+			current,
+			"node_modules",
+			packageParts[0],
+			packageParts[1],
+			"vendor",
+			targetTriple,
+			"bin",
+			"codex",
+		)
+		if evaluated, evalErr := filepath.EvalSymlinks(candidate); evalErr == nil {
+			if info, statErr := os.Stat(evaluated); statErr == nil && info.Mode().IsRegular() {
+				return evaluated, nil
+			}
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", fmt.Errorf("official npm platform package %s is missing", packageName)
+}
+
+func codexNativeRuntimeRoot(nativePath string) (string, error) {
+	if filepath.Base(nativePath) != "codex" ||
+		filepath.Base(filepath.Dir(nativePath)) != "bin" {
+		return "", fmt.Errorf(
+			"codex native backend %q has no recognized runtime layout",
+			nativePath,
+		)
+	}
+	root := filepath.Dir(filepath.Dir(nativePath))
+	for _, relative := range []string{
+		"codex-package.json",
+		filepath.Join("codex-path", "rg"),
+		filepath.Join("codex-resources", "bwrap"),
+	} {
+		path := filepath.Join(root, relative)
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return "", fmt.Errorf(
+				"codex native runtime closure is missing %q",
+				path,
+			)
+		}
+	}
+	return root, nil
 }
 
 func boundedNestedOutput(output []byte) string {

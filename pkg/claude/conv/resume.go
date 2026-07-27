@@ -186,10 +186,20 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// with `codex resume <id>`, Claude Code with `claude --resume <id>`.
 	// Resolution failures (an unknown / unspawnable harness) surface here
 	// rather than spawning a broken command (JOH-218).
-	launchCmd, profilePath, h, err := resumeLaunchCmd(rc.Harness, sessionID, rc.ConvID, clcommon.ExtractClaudeExtraArgs())
+	var stackedProof *session.StackedSandboxProof
+	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
+		rc.Harness,
+		sessionID,
+		rc.ConvID,
+		clcommon.ExtractClaudeExtraArgs(),
+		&stackedProof,
+	)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
+	}
+	if stackedProof != nil {
+		defer stackedProof.Cleanup()
 	}
 	approvalPolicy, autoReview, err := resumeApprovalState(h, rc.ConvID)
 	if err != nil {
@@ -241,10 +251,29 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// resume command carries the same env exports and sandbox dir lists as a
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
+	if stackedProof != nil {
+		if err := stackedProof.Revalidate(); err != nil {
+			fmt.Fprintf(stderr, "%v\n", session.StackedEngineBindingRefusal(h, err))
+			return 1
+		}
+	}
 	if err := session.LaunchDetachedTmuxSession(tmuxSession, rc.ProjectPath, launchCmd,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1
+	}
+	if stackedProof != nil {
+		if err := session.WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
+			_ = clcommon.TmuxCommand(
+				"kill-session",
+				"-t",
+				clcommon.ExactTarget(tmuxSession),
+			).Run()
+			fmt.Fprintf(stderr, "%v\n", session.StackedEngineBindingRefusal(h, err))
+			return 1
+		}
+		stackedProof.Cleanup()
+		stackedProof = nil
 	}
 
 	// Get PID and save state (starts as idle, waiting for user input).

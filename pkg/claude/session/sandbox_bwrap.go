@@ -415,6 +415,38 @@ func cleanTclaudeLayerPrivateWriteDirs(
 	return out, nil
 }
 
+// WrapTclaudeLayerStackedSpec renders the exact outer launch boundary and
+// carries a launch-owned nested-engine proof into the Linux relay. The relay
+// revalidates the staged bytes into a sealed memfd immediately before
+// bubblewrap, binds that immutable descriptor at the command's fixed
+// executable path, and optionally consumes the staging names for the final
+// launch.
+func WrapTclaudeLayerStackedSpec(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	manifestPath, manifestSHA256, readyPath string,
+	consume bool,
+	harnessCommand string,
+) (string, error) {
+	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+		tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return "", err
+	}
+	return tclaudeLayerStackedCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		manifestPath,
+		manifestSHA256,
+		readyPath,
+		consume,
+		harnessCommand,
+	)
+}
+
 // WrapTclaudeLayerServerSpec renders a materialized launch spec for a
 // non-interactive, agentd-owned server. Unlike the pane renderer it does not
 // add the terminal WINCH relay: the server has no terminal to resize, and

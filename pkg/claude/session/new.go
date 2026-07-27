@@ -1214,7 +1214,6 @@ func runNew(params *NewParams) error {
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)
 	}
-	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
 	var privateAttachmentWriteDirs []TclaudeLayerPrivateWriteDir
 	if outerLayer {
 		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
@@ -1237,6 +1236,13 @@ func runNew(params *NewParams) error {
 			Current: privateAttachmentDir,
 		}}
 	}
+	var stackedProof *StackedSandboxProof
+	defer func() {
+		if stackedProof != nil {
+			stackedProof.Cleanup()
+		}
+	}()
+	var layerSpec TclaudeLayerLaunchSpec
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
@@ -1248,19 +1254,30 @@ func runNew(params *NewParams) error {
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
+		layerSpec = spec
 		if stacked {
-			if err := ProbeStackedSandbox(bwrapBinary, spec, h, cwd); err != nil {
+			stackedProof, err = ProbeStackedSandbox(bwrapBinary, spec, h, cwd)
+			if err != nil {
 				return err
 			}
-			launchOSSandbox = StackedLaunchOSSandbox(h, tclaudeLayerPosture)
-			state.OSSandboxState = launchOSSandbox.State
-			state.OSSandboxSource = launchOSSandbox.Source
-			state.OSSandboxUnverified = launchOSSandbox.Unverified
-			if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
-				return fmt.Errorf("record successful stacked sandbox probe: %w", err)
-			}
+			spawnSpec.ExecutablePath = stackedProof.Executable.Path
 		}
-		harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, spec, harnessCmd)
+	}
+	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		if stacked {
+			harnessCmd, err = WrapTclaudeLayerStackedSpec(
+				bwrapBinary,
+				layerSpec,
+				stackedProof.ManifestPath,
+				stackedProof.ManifestSHA256,
+				stackedProof.ReadyPath,
+				true,
+				harnessCmd,
+			)
+		} else {
+			harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, layerSpec, harnessCmd)
+		}
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
@@ -1311,6 +1328,11 @@ func runNew(params *NewParams) error {
 	// managed Codex launch-profile path (when any) rides as an inert argv
 	// marker so the approval monitor's startup recovery can match the live
 	// pane to its profile (see CodexProfileMarkerArgs).
+	if stackedProof != nil {
+		if err := stackedProof.Revalidate(); err != nil {
+			return StackedEngineBindingRefusal(h, err)
+		}
+	}
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
@@ -1321,6 +1343,30 @@ func runNew(params *NewParams) error {
 	killLaunchPane := func() {
 		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+	}
+	if stackedProof != nil {
+		if err := WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
+			killLaunchPane()
+			capability := "stacked_" + h.Name + "_engine_binding"
+			if h.Name == harness.DefaultName {
+				capability = "stacked_claude_engine_binding"
+			}
+			return stackedSandboxRefusal(capability, err.Error())
+		}
+		stackedProof.Cleanup()
+		stackedProof = nil
+		launchOSSandbox = StackedLaunchOSSandbox(h, tclaudeLayerPosture)
+		state.OSSandboxState = launchOSSandbox.State
+		state.OSSandboxSource = launchOSSandbox.Source
+		state.OSSandboxUnverified = launchOSSandbox.Unverified
+		if err := SaveSessionStateForLaunch(
+			state,
+			exitGeneration,
+			db.SessionExitGateUngated,
+		); err != nil {
+			killLaunchPane()
+			return fmt.Errorf("record successful stacked sandbox binding: %w", err)
+		}
 	}
 	exitGuard.armPaneHook()
 	exitGuard.bind()
@@ -2227,6 +2273,28 @@ func waitForSpawnCwdReadiness(path string) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for spawn cwd bootstrap")
+}
+
+// WaitForStackedBindingReadiness waits until the outer relay reports that
+// bubblewrap has materialized the exec-bound engine and started its sandbox
+// child. Resume paths use the same gate before persisting a successful lock.
+func WaitForStackedBindingReadiness(path string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		switch {
+		case err == nil && strings.TrimSpace(string(raw)) == "ready":
+			return nil
+		case err == nil:
+			return fmt.Errorf("stacked relay returned invalid binding readiness")
+		case os.IsNotExist(err):
+			time.Sleep(10 * time.Millisecond)
+			continue
+		default:
+			return fmt.Errorf("read stacked binding readiness: %w", err)
+		}
+	}
+	return fmt.Errorf("timed out waiting for the exec-bound nested engine")
 }
 
 // applyTmuxWindowTitle sets this session's tmux window title to

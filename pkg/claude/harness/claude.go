@@ -85,7 +85,11 @@ func (claudeSpawner) Binary() string { return "claude" }
 // anyway; the passthrough args are shell-quoted individually. Kept pure
 // so the "unset omits the flag" guarantee is unit-testable without tmux.
 func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
-	cmd := spec.EnvExports + "claude"
+	binary := "claude"
+	if spec.ExecutablePath != "" {
+		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
+	}
+	cmd := spec.EnvExports + binary
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}

@@ -2253,7 +2253,29 @@ func sortEntriesByModifiedDesc(entries []SessionEntry) {
 // can't be relaunched, so an unknown/unspawnable tag fails with a clear error
 // here rather than silently spawning `claude --resume` against a foreign conv
 // id. An empty tag resolves to the default harness (Claude Code).
-func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) (string, string, *harness.Harness, error) {
+func resumeLaunchCmd(
+	harnessName, sessionID, convID string,
+	extraArgs []string,
+) (string, string, *harness.Harness, error) {
+	var proof *session.StackedSandboxProof
+	cmd, cleanupPath, h, err := resumeLaunchCmdWithStackedProof(
+		harnessName,
+		sessionID,
+		convID,
+		extraArgs,
+		&proof,
+	)
+	if proof != nil {
+		proof.Cleanup()
+	}
+	return cmd, cleanupPath, h, err
+}
+
+func resumeLaunchCmdWithStackedProof(
+	harnessName, sessionID, convID string,
+	extraArgs []string,
+	proofOut **session.StackedSandboxProof,
+) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
@@ -2577,16 +2599,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if stacked {
 		spec = h.NestedSandbox.PrepareLaunch(spec)
 	}
-	cmd := h.Spawn.BuildCommand(spec)
-	if cleanupPath != "" {
-		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
-	}
+	var stackedProof *session.StackedSandboxProof
+	var layerSpec session.TclaudeLayerLaunchSpec
+	binary := ""
 	if outerLayer {
 		posture, postureErr := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
-		binary, _, resolveErr := session.ResolveTclaudeLayer(posture)
+		var resolveErr error
+		binary, _, resolveErr = session.ResolveTclaudeLayer(posture)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
@@ -2599,15 +2621,49 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if specErr != nil {
 			return "", "", nil, fmt.Errorf("build resumed tclaude-layer launch spec: %w", specErr)
 		}
+		layerSpec = launchSpec
 		if stacked {
-			if err := session.ProbeStackedSandbox(binary, launchSpec, h, resumeCwd); err != nil {
+			stackedProof, err = session.ProbeStackedSandbox(
+				binary,
+				launchSpec,
+				h,
+				resumeCwd,
+			)
+			if err != nil {
 				return "", "", nil, err
 			}
+			spec.ExecutablePath = stackedProof.Executable.Path
 		}
-		cmd, err = session.WrapTclaudeLayerSpec(binary, launchSpec, cmd)
+	}
+	cmd := h.Spawn.BuildCommand(spec)
+	if cleanupPath != "" {
+		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
+	}
+	if outerLayer {
+		if stacked {
+			cmd, err = session.WrapTclaudeLayerStackedSpec(
+				binary,
+				layerSpec,
+				stackedProof.ManifestPath,
+				stackedProof.ManifestSHA256,
+				stackedProof.ReadyPath,
+				true,
+				cmd,
+			)
+		} else {
+			cmd, err = session.WrapTclaudeLayerSpec(binary, layerSpec, cmd)
+		}
 		if err != nil {
+			if stackedProof != nil {
+				stackedProof.Cleanup()
+			}
 			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)
 		}
+	}
+	if proofOut != nil {
+		*proofOut = stackedProof
+	} else if stackedProof != nil {
+		stackedProof.Cleanup()
 	}
 	return cmd, cleanupPath, h, nil
 }
@@ -2945,9 +3001,19 @@ func createSessionForConv(conv *SessionEntry) error {
 	// relaunched with `codex resume <id>`, the way the web-dashboard / agentd
 	// resume path already does (JOH-217). Resolution failures (an unspawnable
 	// or unknown harness) surface here rather than spawning a broken command.
-	launchCmd, profilePath, h, err := resumeLaunchCmd(conv.Harness, sessionID, conv.SessionID, clcommon.ExtractClaudeExtraArgs())
+	var stackedProof *session.StackedSandboxProof
+	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
+		conv.Harness,
+		sessionID,
+		conv.SessionID,
+		clcommon.ExtractClaudeExtraArgs(),
+		&stackedProof,
+	)
 	if err != nil {
 		return err
+	}
+	if stackedProof != nil {
+		defer stackedProof.Cleanup()
 	}
 	approvalPolicy, autoReview, err := resumeApprovalState(h, conv.SessionID)
 	if err != nil {
@@ -2975,9 +3041,26 @@ func createSessionForConv(conv *SessionEntry) error {
 	// resume command carries the same env exports and sandbox dir lists as a
 	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
 	// ps-visible-credentials exposure the spawn path already fixed.
+	if stackedProof != nil {
+		if err := stackedProof.Revalidate(); err != nil {
+			return session.StackedEngineBindingRefusal(h, err)
+		}
+	}
 	if err := session.LaunchDetachedTmuxSession(tmuxSession, cwd, launchCmd,
 		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		return err
+	}
+	if stackedProof != nil {
+		if err := session.WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
+			_ = clcommon.TmuxCommand(
+				"kill-session",
+				"-t",
+				clcommon.ExactTarget(tmuxSession),
+			).Run()
+			return session.StackedEngineBindingRefusal(h, err)
+		}
+		stackedProof.Cleanup()
+		stackedProof = nil
 	}
 
 	pid := session.ParsePIDFromTmux(tmuxSession)

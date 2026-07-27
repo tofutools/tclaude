@@ -29,6 +29,21 @@ func tclaudeLayerCommand(
 	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
 }
 
+func tclaudeLayerStackedCommand(
+	string,
+	[]string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	sandboxpolicy.MountPlan,
+	string,
+	string,
+	string,
+	bool,
+	string,
+) (string, error) {
+	return "", fmt.Errorf("stacked tclaude-layer is not supported on this platform")
+}
+
 func tclaudeLayerServerCommand(
 	string,
 	[]string,

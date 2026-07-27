@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
 const stackedSandboxProbeTimeout = 20 * time.Second
@@ -55,16 +55,21 @@ func ProbeStackedSandbox(
 	spec TclaudeLayerLaunchSpec,
 	h *harness.Harness,
 	cwd string,
-) error {
+) (*StackedSandboxProof, error) {
 	executable, err := StackedSandboxAvailability(h)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	probe, err := h.NestedSandbox.PrepareProbe(cwd, executable)
+	proof, err := prepareStackedSandboxProof(h, executable)
 	if err != nil {
+		return nil, err
+	}
+	probe, err := h.NestedSandbox.PrepareProbe(cwd, proof.Executable)
+	if err != nil {
+		proof.Cleanup()
 		capability, detail := harness.NestedSandboxCapability(
 			err, h.NestedSandbox.CapabilityName())
-		return stackedSandboxRefusal(capability, detail)
+		return nil, stackedSandboxRefusal(capability, detail)
 	}
 	if probe.Cleanup != nil {
 		defer probe.Cleanup()
@@ -73,17 +78,33 @@ func ProbeStackedSandbox(
 		fmt.Fprintf(os.Stderr, "stacked sandbox namespace warning: %s\n", warning)
 	}
 	if err := PrepareTclaudeLayerHarnessState(spec); err != nil {
-		return stackedSandboxRefusal("stacked_outer_launch_spec",
+		proof.Cleanup()
+		return nil, stackedSandboxRefusal("stacked_outer_launch_spec",
 			fmt.Sprintf("prepare exact outer probe boundary: %v", err))
 	}
-	wrapped, err := WrapTclaudeLayerServerSpec(bwrapBinary, spec, probe.Command)
+	wrapped, err := WrapTclaudeLayerStackedSpec(
+		bwrapBinary,
+		spec,
+		proof.ManifestPath,
+		proof.ManifestSHA256,
+		"",
+		false,
+		probe.Command,
+	)
 	if err != nil {
-		return stackedSandboxRefusal("stacked_outer_launch_spec",
+		proof.Cleanup()
+		return nil, stackedSandboxRefusal("stacked_outer_launch_spec",
 			fmt.Sprintf("render exact outer probe boundary: %v", err))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), stackedSandboxProbeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", wrapped)
+	cmd := executil.CommandContextWithGrace(
+		ctx,
+		time.Second,
+		"/bin/sh",
+		"-c",
+		wrapped,
+	)
 	cmd.Dir = cwd
 	cmd.Env = append([]string(nil), os.Environ()...)
 	for _, entry := range spec.Effective.Environment {
@@ -100,12 +121,14 @@ func ProbeStackedSandbox(
 				h.NestedSandbox.MechanismName(), stackedSandboxProbeTimeout,
 				strings.TrimSpace(output.String()))
 		}
-		return stackedSandboxRefusal(h.NestedSandbox.CapabilityName(), detail)
+		proof.Cleanup()
+		capability := h.NestedSandbox.CapabilityName()
+		if h.Name == harness.DefaultName {
+			capability = "stacked_claude_inner_policy"
+		}
+		return nil, stackedSandboxRefusal(capability, detail)
 	}
-	if err := executable.Revalidate(); err != nil {
-		return stackedSandboxRefusal(h.NestedSandbox.CapabilityName(), err.Error())
-	}
-	return nil
+	return proof, nil
 }
 
 // StackedLaunchOSSandbox is recorded only after the real nested round-trip
@@ -136,6 +159,20 @@ func stackedSandboxRefusal(capability, detail string) error {
 	return fmt.Errorf(
 		"stacked requested — refused: missing capability %s: %s; refusing rather than falling back to tclaude-layer or harness-builtin",
 		capability, detail)
+}
+
+// StackedEngineBindingRefusal names the harness-specific failure to carry the
+// probed engine bytes into the actual outer launch.
+func StackedEngineBindingRefusal(h *harness.Harness, err error) error {
+	name := "unknown"
+	if h != nil {
+		name = h.Name
+	}
+	capability := "stacked_" + name + "_engine_binding"
+	if name == harness.DefaultName {
+		capability = "stacked_claude_engine_binding"
+	}
+	return stackedSandboxRefusal(capability, err.Error())
 }
 
 func stackedNamespaceWarnings(

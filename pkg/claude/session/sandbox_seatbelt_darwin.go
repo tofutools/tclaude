@@ -118,6 +118,22 @@ func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
 		"tclaude-layer server wrapping requires Linux and bubblewrap")
 }
 
+func tclaudeLayerStackedCommand(
+	string,
+	[]string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	sandboxpolicy.MountPlan,
+	string,
+	string,
+	string,
+	bool,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"stacked tclaude-layer is refused on macOS: nested Seatbelt is unsupported")
+}
+
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,

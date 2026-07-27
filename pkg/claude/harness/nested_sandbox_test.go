@@ -1,8 +1,11 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,6 +40,65 @@ func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
 	assert.Contains(t, command, "features.use_legacy_landlock=false")
 }
 
+func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Codex stacked sandbox is Linux-only")
+	}
+	packageName, targetTriple, err := codexLinuxNativeTarget()
+	require.NoError(t, err)
+	root := t.TempDir()
+	launcher := filepath.Join(
+		root,
+		"node_modules",
+		"@openai",
+		"codex",
+		"bin",
+		"codex.js",
+	)
+	require.NoError(t, os.MkdirAll(filepath.Dir(launcher), 0o700))
+	require.NoError(t, os.WriteFile(
+		launcher,
+		[]byte("#!/usr/bin/env node\n"),
+		0o700,
+	))
+	packageParts := strings.Split(packageName, "/")
+	native := filepath.Join(
+		root,
+		"node_modules",
+		packageParts[0],
+		packageParts[1],
+		"vendor",
+		targetTriple,
+		"bin",
+		"codex",
+	)
+	require.NoError(t, os.MkdirAll(filepath.Dir(native), 0o700))
+	require.NoError(t, os.WriteFile(
+		native,
+		[]byte("#!/bin/sh\necho codex-cli test-native\n"),
+		0o700,
+	))
+	nativeRoot := filepath.Dir(filepath.Dir(native))
+	for _, relative := range []string{
+		"codex-package.json",
+		filepath.Join("codex-path", "rg"),
+		filepath.Join("codex-resources", "bwrap"),
+	} {
+		path := filepath.Join(nativeRoot, relative)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(relative), 0o700))
+	}
+
+	resolved, err := resolveCodexNativeExecutable(
+		context.Background(),
+		NestedSandboxExecutable{Path: launcher, Version: "launcher"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, native, resolved.Path)
+	assert.Equal(t, "codex-cli test-native", resolved.Version)
+	assert.Equal(t, nativeRoot, resolved.RuntimeRoot)
+}
+
 func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 	executable := NestedSandboxExecutable{Path: "/usr/bin/engine"}
 	for _, tc := range []struct {
@@ -46,7 +108,15 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 	}{
 		{
 			name: "claude", contract: claudeNestedSandbox{},
-			contains: []string{"--settings", "enableWeakerNestedSandbox", "socket.AF_UNIX"},
+			contains: []string{
+				"--settings",
+				"enableWeakerNestedSandbox",
+				"socket.AF_UNIX",
+				"env -i",
+				"ANTHROPIC_BASE_URL=",
+				"--bare --safe-mode",
+				"TCLAUDE_STACKED_STUB_OK_",
+			},
 		},
 		{
 			name: "codex", contract: codexNestedSandbox{},
@@ -54,6 +124,9 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "codex" {
+				t.Setenv("CODEX_HOME", t.TempDir())
+			}
 			probe, err := tc.contract.PrepareProbe(t.TempDir(), executable)
 			require.NoError(t, err)
 			t.Cleanup(probe.Cleanup)
@@ -73,4 +146,26 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 			assert.NotContains(t, joined, "prompt")
 		})
 	}
+}
+
+func TestCodexNestedProbeKeepsStateHomeOutsideTemporaryWorkspace(t *testing.T) {
+	stateRoot := t.TempDir()
+	t.Setenv("CODEX_HOME", stateRoot)
+	workspaceRoot := t.TempDir()
+	probe, err := (codexNestedSandbox{}).PrepareProbe(
+		workspaceRoot,
+		NestedSandboxExecutable{Path: "/usr/bin/codex"},
+	)
+	require.NoError(t, err)
+	t.Cleanup(probe.Cleanup)
+	var configPath string
+	for _, path := range probe.KnownPaths {
+		if filepath.Base(path) == "config.toml" {
+			configPath = path
+			break
+		}
+	}
+	require.NotEmpty(t, configPath)
+	assert.True(t, strings.HasPrefix(configPath, stateRoot+string(os.PathSeparator)))
+	assert.False(t, strings.HasPrefix(configPath, workspaceRoot+string(os.PathSeparator)))
 }

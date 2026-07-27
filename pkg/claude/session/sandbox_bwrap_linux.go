@@ -15,6 +15,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var tclaudeLayerRelayPrefix = func() string {
+	return clcommon.DetectAbsoluteCmd("session", tclaudeLayerWinchRelayCommand)
+}
+
 // bwrapProbeTimeout bounds the capability probe. The probe does trivial work
 // (fork bwrap, stat one path, attempt one write), so anything approaching this
 // means the namespace setup itself is wedged — a hung LSM, a stuck /tmp — and
@@ -131,7 +135,39 @@ func tclaudeLayerCommand(
 	if err != nil {
 		return "", err
 	}
-	relay := clcommon.DetectAbsoluteCmd("session", tclaudeLayerWinchRelayCommand)
+	relay := tclaudeLayerRelayPrefix()
+	return relay + " -- " + command, nil
+}
+
+func tclaudeLayerStackedCommand(
+	binary string,
+	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	plan sandboxpolicy.MountPlan,
+	manifestPath, manifestSHA256, readyPath string,
+	consume bool,
+	harnessCommand string,
+) (string, error) {
+	command, err := bwrapCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		harnessCommand,
+	)
+	if err != nil {
+		return "", err
+	}
+	relay := tclaudeLayerRelayPrefix()
+	relay += " --stacked-binding " + clcommon.ShellQuoteArg(manifestPath)
+	relay += " --stacked-binding-sha256 " + clcommon.ShellQuoteArg(manifestSHA256)
+	if consume {
+		relay += " --stacked-consume"
+	}
+	if readyPath != "" {
+		relay += " --stacked-ready " + clcommon.ShellQuoteArg(readyPath)
+	}
 	return relay + " -- " + command, nil
 }
 

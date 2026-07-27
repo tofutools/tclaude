@@ -168,8 +168,9 @@ current-backend Codex on Linux. It uses the same frozen
 sandbox active underneath it:
 
 - Claude Code is forced to sandbox `on` with
-  `enableWeakerNestedSandbox: false`; launch requires the model-free `srt`
-  entry point and a real SRT bwrap/seccomp round-trip.
+  `enableWeakerNestedSandbox: false`. A launch-owned, credential-free loopback
+  stub drives the exact pinned Claude CLI through one deterministic Bash tool,
+  proving its embedded SRT's bwrap/seccomp behavior without calling a model.
 - Codex is forced onto a launch-unique managed profile with
   `features.use_legacy_landlock=false`; launch requires a real
   `codex sandbox -P …` bwrap round-trip. Legacy Landlock is not a substitute.
@@ -177,9 +178,17 @@ sandbox active underneath it:
 Each fresh launch and resume probes live *inside the exact outer mount/network
 spec* before the pane is committed. The probe must write an allowed marker and
 fail a denied write; the Claude probe also verifies SRT's AF_UNIX seccomp deny.
-Executable identity is checked again after the probe. A missing engine, changed
-executable, failed round-trip, OpenCode selection, or macOS nested Seatbelt
-attempt produces:
+The harness executable is copied into launch-owned staging, probed there, then
+reopened and re-hashed immediately before bubblewrap. The outer relay binds the
+open descriptor at a private read-only executable path, so the final process
+executes the proved bytes rather than resolving `PATH` again. For Claude, every
+managed-policy JSON file is likewise snapshotted and descriptor-bound into a
+fresh read-only `/etc/claude-code`; unreadable policy and any override that
+disables or weakens the required inner posture fail closed. The successful
+lock is recorded only after the relay reports that this final binding has been
+materialized. A missing engine, changed executable, unprovable effective
+policy, failed round-trip, OpenCode selection, or macOS nested Seatbelt attempt
+produces:
 
 ```text
 stacked requested — refused: missing capability <name>: <detail>; refusing rather than falling back to tclaude-layer or harness-builtin

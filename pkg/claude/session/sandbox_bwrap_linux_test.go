@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"golang.org/x/sys/unix"
 )
 
@@ -51,6 +53,105 @@ func TestResolveTclaudeLayerRefusesMissingBwrapAndRecordsOffVerdict(t *testing.T
 	})
 	assert.Equal(t, "off", row.OSSandboxState)
 	assert.Equal(t, "tclaude-layer unavailable", row.OSSandboxSource)
+}
+
+func TestStackedRelayBindsRehashedOpenEngineDescriptor(t *testing.T) {
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.CodexName),
+		codexBindingTestExecutable(t),
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
+		ManifestPath:   proof.ManifestPath,
+		ManifestSHA256: proof.ManifestSHA256,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		for _, file := range files {
+			_ = file.Close()
+		}
+	})
+	require.NotEmpty(t, files)
+	seals, err := unix.FcntlInt(files[0].Fd(), unix.F_GET_SEALS, 0)
+	require.NoError(t, err)
+	assert.Equal(t,
+		unix.F_SEAL_SEAL|unix.F_SEAL_SHRINK|unix.F_SEAL_GROW|unix.F_SEAL_WRITE,
+		seals,
+	)
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined,
+		"--tmpfs "+stackedBoundCodexRuntimeRoot)
+	assert.Contains(t, joined,
+		"--perms 0500 --file 4 "+proof.Executable.Path)
+	assert.Contains(t, joined,
+		filepath.Join(stackedBoundCodexRuntimeRoot, "codex-resources", "bwrap"))
+	assert.Contains(t, joined,
+		"--remount-ro "+stackedBoundCodexRuntimeRoot)
+	assert.NotContains(t, joined,
+		"--ro-bind-data 4 "+proof.Executable.Path)
+	assert.NotContains(t, joined, "/proc/self/fd/")
+}
+
+func TestStackedRelayRefusesChangedManifestAuthority(t *testing.T) {
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.CodexName),
+		codexBindingTestExecutable(t),
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	manifest := readStackedBindingManifest(t, proof.ManifestPath)
+	manifest.Engine.SHA256 = strings.Repeat("0", 64)
+	writeStackedBindingManifest(t, proof.ManifestPath, manifest)
+
+	_, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
+		ManifestPath:   proof.ManifestPath,
+		ManifestSHA256: proof.ManifestSHA256,
+	})
+	for _, file := range files {
+		_ = file.Close()
+	}
+	require.ErrorContains(t, err, "manifest changed after capability probe")
+}
+
+func TestStackedRelayCreatesFreshClaudePolicyRootWithoutHostDirectory(t *testing.T) {
+	managed := t.TempDir()
+	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
+	t.Cleanup(restore)
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.DefaultName),
+		harness.NestedSandboxExecutable{
+			Path:    os.Args[0],
+			Version: "test",
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
+		ManifestPath:   proof.ManifestPath,
+		ManifestSHA256: proof.ManifestSHA256,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		for _, file := range files {
+			_ = file.Close()
+		}
+	})
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined, "--tmpfs /etc")
+	assert.Contains(t, joined, "--dir /etc/claude-code")
+	assert.Contains(t, joined, "--remount-ro /etc")
+	assert.NotContains(t, joined, "--tmpfs /etc/claude-code")
+	assert.Contains(t, joined,
+		"--tmpfs "+stackedBoundExecutableRoot)
+	assert.Contains(t, joined,
+		"--perms 0500 --file 4 "+proof.Executable.Path)
+	assert.Contains(t, joined,
+		"--remount-ro "+stackedBoundExecutableRoot)
+	assert.NotContains(t, joined, "/proc/self/fd/")
 }
 
 func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
@@ -200,7 +301,11 @@ func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing
 	}
 	done := make(chan result, 1)
 	go func() {
-		code, err := runTclaudeLayerWinchRelay([]string{fakeBwrap}, winch)
+		code, err := runTclaudeLayerWinchRelay(
+			[]string{fakeBwrap},
+			winch,
+			stackedRelayBindingOptions{},
+		)
 		done <- result{code: code, err: err}
 	}()
 	require.Eventually(t, func() bool {

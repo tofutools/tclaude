@@ -945,13 +945,13 @@ func validateSpawnSandboxImplementation(h *harness.Harness, raw string) (string,
 	if err != nil {
 		return "", err
 	}
-	if implementation.UsesTclaudeLayer() {
-		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+	if implementation.UsesNestedHarnessSandbox() {
+		if err := session.ValidateStackedSandboxHarness(h); err != nil {
 			return "", err
 		}
 	}
-	if implementation.UsesNestedHarnessSandbox() {
-		if err := session.ValidateStackedSandboxHarness(h); err != nil {
+	if implementation.UsesTclaudeLayer() {
+		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", err
 		}
 	}

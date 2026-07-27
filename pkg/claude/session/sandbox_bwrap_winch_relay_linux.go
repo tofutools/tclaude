@@ -3,6 +3,8 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -22,11 +27,19 @@ type bwrapChildStatus struct {
 	ChildPID int `json:"child-pid"`
 }
 
+type stackedRelayBindingOptions struct {
+	ManifestPath   string
+	ManifestSHA256 string
+	Consume        bool
+	ReadyPath      string
+}
+
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
 // I/O path. Bubblewrap inherits stdin/stdout/stderr directly; this process only
 // turns the host PTY's SIGWINCH notification into the same fixed signal for the
 // disconnected sandbox process group.
 func tclaudeLayerWinchRelayCmd() *cobra.Command {
+	var binding stackedRelayBindingOptions
 	cmd := &cobra.Command{
 		Use:    tclaudeLayerWinchRelayCommand + " -- <bwrap> [args...]",
 		Short:  "Relay terminal resize notifications into tclaude-layer (internal)",
@@ -37,7 +50,7 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 			signal.Notify(winch, syscall.SIGWINCH)
 			defer signal.Stop(winch)
 
-			code, err := runTclaudeLayerWinchRelay(args, winch)
+			code, err := runTclaudeLayerWinchRelay(args, winch, binding)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "tclaude: terminal resize relay: %v\n", err)
 				os.Exit(125)
@@ -45,6 +58,30 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 			os.Exit(code)
 		},
 	}
+	cmd.Flags().StringVar(
+		&binding.ManifestPath,
+		"stacked-binding",
+		"",
+		"launch-owned stacked binding manifest (internal)",
+	)
+	cmd.Flags().StringVar(
+		&binding.ManifestSHA256,
+		"stacked-binding-sha256",
+		"",
+		"probe-pinned stacked binding manifest digest (internal)",
+	)
+	cmd.Flags().BoolVar(
+		&binding.Consume,
+		"stacked-consume",
+		false,
+		"unlink stacked staging names after opening them (internal)",
+	)
+	cmd.Flags().StringVar(
+		&binding.ReadyPath,
+		"stacked-ready",
+		"",
+		"write after the final binding fds reach bubblewrap (internal)",
+	)
 	return cmd
 }
 
@@ -54,10 +91,23 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 // the reported process is load-bearing because bubblewrap's --new-session
 // helper is the group leader while production runs the TUI beneath
 // `sh -c <harness command>`.
-func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, error) {
+func runTclaudeLayerWinchRelay(
+	argv []string,
+	winch <-chan os.Signal,
+	binding stackedRelayBindingOptions,
+) (int, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return 125, fmt.Errorf("missing bubblewrap command")
 	}
+	bindingArgs, bindingFiles, err := prepareStackedRelayBinding(binding)
+	if err != nil {
+		return 125, err
+	}
+	defer func() {
+		for _, file := range bindingFiles {
+			_ = file.Close()
+		}
+	}()
 
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
@@ -65,14 +115,35 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 	}
 	defer func() { _ = statusR.Close() }()
 
-	childArgs := make([]string, 0, len(argv)+2)
+	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+2)
 	childArgs = append(childArgs, "--json-status-fd", "3")
-	childArgs = append(childArgs, argv[1:]...)
+	if len(bindingArgs) == 0 {
+		childArgs = append(childArgs, argv[1:]...)
+	} else {
+		commandIndex := -1
+		for index, arg := range argv[1:] {
+			if arg == "--" {
+				commandIndex = index + 1
+				break
+			}
+		}
+		if commandIndex < 0 {
+			return 125, fmt.Errorf("stacked binding requires a bubblewrap command separator")
+		}
+		childArgs = append(childArgs, argv[1:commandIndex]...)
+		childArgs = append(childArgs, bindingArgs...)
+		childArgs = append(childArgs, argv[commandIndex:]...)
+	}
 	child := exec.Command(argv[0], childArgs...)
 	child.Stdin = os.Stdin
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
-	child.ExtraFiles = []*os.File{statusW}
+	// ExtraFiles are installed consecutively from fd 3. Bubblewrap owns fd 3
+	// for its status stream; the verified binding descriptors follow it.
+	// Every --file/--ro-bind-data operation names its descriptor explicitly,
+	// so bubblewrap preserves them during startup even on the minimum
+	// supported 0.9.x series.
+	child.ExtraFiles = append([]*os.File{statusW}, bindingFiles...)
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
 		return 125, fmt.Errorf("start bubblewrap: %w", err)
@@ -105,6 +176,11 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 	if status.ChildPID <= 0 {
 		return 125, fmt.Errorf("bubblewrap reported invalid child pid %d", status.ChildPID)
 	}
+	if binding.ReadyPath != "" {
+		if err := writeStackedBindingReady(binding.ReadyPath); err != nil {
+			return 125, err
+		}
+	}
 	childPidfd, err := unix.PidfdOpen(status.ChildPID, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ESRCH) {
@@ -132,6 +208,290 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 			return tclaudeLayerRelayExitCode(waitErr)
 		}
 	}
+}
+
+func prepareStackedRelayBinding(
+	options stackedRelayBindingOptions,
+) ([]string, []*os.File, error) {
+	if strings.TrimSpace(options.ManifestPath) == "" {
+		if strings.TrimSpace(options.ManifestSHA256) != "" ||
+			options.Consume || strings.TrimSpace(options.ReadyPath) != "" {
+			return nil, nil, fmt.Errorf("stacked binding flags require a manifest")
+		}
+		return nil, nil, nil
+	}
+	expectedDigest := strings.ToLower(strings.TrimSpace(options.ManifestSHA256))
+	if decoded, decodeErr := hex.DecodeString(expectedDigest); decodeErr != nil ||
+		len(decoded) != sha256.Size {
+		return nil, nil, fmt.Errorf("stacked binding manifest digest is invalid")
+	}
+	manifestPath, err := filepath.Abs(options.ManifestPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve stacked binding manifest: %w", err)
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read stacked binding manifest: %w", err)
+	}
+	if stackedBindingDigest(data) != expectedDigest {
+		return nil, nil, fmt.Errorf("stacked binding manifest changed after capability probe")
+	}
+	var manifest stackedSandboxBindingManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, nil, fmt.Errorf("parse stacked binding manifest: %w", err)
+	}
+	root := filepath.Clean(manifest.StageRoot)
+	if manifest.Version != stackedSandboxBindingVersion ||
+		!filepath.IsAbs(root) ||
+		filepath.Dir(manifestPath) != root {
+		return nil, nil, fmt.Errorf("stacked binding manifest has invalid authority")
+	}
+
+	files := make([]*os.File, 0, 1+len(manifest.ManagedPolicy))
+	closeFiles := func() {
+		for _, file := range files {
+			_ = file.Close()
+		}
+	}
+	openBinding := func(binding stackedSandboxBindingFile) (*os.File, error) {
+		path := filepath.Clean(binding.StagePath)
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil || relative == "." || relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("stacked binding path %q escapes its launch root", path)
+		}
+		source, openErr := os.Open(path)
+		if openErr != nil {
+			return nil, openErr
+		}
+		info, statErr := source.Stat()
+		if statErr != nil {
+			_ = source.Close()
+			return nil, statErr
+		}
+		if !info.Mode().IsRegular() || info.Size() != binding.Size {
+			_ = source.Close()
+			return nil, fmt.Errorf("stacked binding file %q changed shape", path)
+		}
+		memfd, memfdErr := unix.MemfdCreate(
+			"tclaude-stacked-binding",
+			unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING,
+		)
+		if memfdErr != nil {
+			_ = source.Close()
+			return nil, fmt.Errorf("create immutable stacked binding: %w", memfdErr)
+		}
+		file := os.NewFile(uintptr(memfd), "tclaude-stacked-binding")
+		mode := os.FileMode(binding.Mode)
+		if mode != 0o400 && mode != 0o500 {
+			_ = source.Close()
+			_ = file.Close()
+			return nil, fmt.Errorf(
+				"stacked binding file %q has invalid mode %04o",
+				path,
+				binding.Mode,
+			)
+		}
+		if chmodErr := file.Chmod(mode); chmodErr != nil {
+			_ = source.Close()
+			_ = file.Close()
+			return nil, fmt.Errorf("set immutable stacked binding mode: %w", chmodErr)
+		}
+		hash := sha256.New()
+		written, copyErr := io.Copy(io.MultiWriter(file, hash), source)
+		closeSourceErr := source.Close()
+		if copyErr != nil {
+			_ = file.Close()
+			return nil, copyErr
+		}
+		if closeSourceErr != nil {
+			_ = file.Close()
+			return nil, closeSourceErr
+		}
+		if written != binding.Size ||
+			fmt.Sprintf("%x", hash.Sum(nil)) != binding.SHA256 {
+			_ = file.Close()
+			return nil, fmt.Errorf(
+				"stacked binding file %q changed after capability probe",
+				path,
+			)
+		}
+		const immutableSeals = unix.F_SEAL_SEAL |
+			unix.F_SEAL_SHRINK |
+			unix.F_SEAL_GROW |
+			unix.F_SEAL_WRITE
+		if _, sealErr := unix.FcntlInt(file.Fd(), unix.F_ADD_SEALS, immutableSeals); sealErr != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("seal immutable stacked binding %q: %w", path, sealErr)
+		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			_ = file.Close()
+			return nil, seekErr
+		}
+		files = append(files, file)
+		return file, nil
+	}
+
+	if manifest.Engine.Destination != stackedBoundExecutablePath &&
+		manifest.Engine.Destination !=
+			filepath.Join(stackedBoundCodexRuntimeRoot, "bin", "codex") {
+		return nil, nil, fmt.Errorf("stacked binding manifest has invalid engine destination")
+	}
+	if manifest.Engine.Destination == stackedBoundExecutablePath &&
+		len(manifest.RuntimeFiles) != 0 {
+		return nil, nil, fmt.Errorf("non-Codex stacked binding carries runtime files")
+	}
+	if manifest.Engine.Destination != stackedBoundExecutablePath &&
+		len(manifest.RuntimeFiles) == 0 {
+		return nil, nil, fmt.Errorf("codex stacked binding omits its runtime closure")
+	}
+	_, err = openBinding(manifest.Engine)
+	if err != nil {
+		closeFiles()
+		return nil, nil, fmt.Errorf("stacked engine binding: %w", err)
+	}
+	childFDFor := func() string {
+		const firstBindingChildFD = 4 // fd 3 is bubblewrap's JSON status pipe.
+		return strconv.Itoa(firstBindingChildFD + len(files) - 1)
+	}
+	imageRoot := stackedBoundExecutableRoot
+	if manifest.Engine.Destination != stackedBoundExecutablePath {
+		imageRoot = stackedBoundCodexRuntimeRoot
+	}
+	// --file copies each sealed descriptor to a linked path in this
+	// launch-private filesystem. The final remount makes the complete runtime
+	// image immutable before bubblewrap starts the harness.
+	args := []string{"--tmpfs", imageRoot}
+	destinationDirs := make(map[string]struct{})
+	addDestinationDirs := func(destination string) {
+		parent := filepath.Dir(destination)
+		var parents []string
+		for parent != imageRoot && parent != "/" && parent != "/tmp" && parent != "." {
+			parents = append(parents, parent)
+			parent = filepath.Dir(parent)
+		}
+		for index := len(parents) - 1; index >= 0; index-- {
+			if _, exists := destinationDirs[parents[index]]; exists {
+				continue
+			}
+			destinationDirs[parents[index]] = struct{}{}
+			args = append(args, "--dir", parents[index])
+		}
+	}
+	addDestinationDirs(manifest.Engine.Destination)
+	args = append(args,
+		"--perms", fmt.Sprintf("%04o", manifest.Engine.Mode),
+		"--file", childFDFor(), manifest.Engine.Destination,
+	)
+
+	for _, binding := range manifest.RuntimeFiles {
+		destination := filepath.Clean(binding.Destination)
+		relative, relativeErr := filepath.Rel(stackedBoundCodexRuntimeRoot, destination)
+		if relativeErr != nil || relative == "." || relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) ||
+			destination == manifest.Engine.Destination {
+			closeFiles()
+			return nil, nil, fmt.Errorf(
+				"stacked Codex runtime destination %q is invalid",
+				binding.Destination,
+			)
+		}
+		_, openErr := openBinding(binding)
+		if openErr != nil {
+			closeFiles()
+			return nil, nil, fmt.Errorf(
+				"stacked Codex runtime binding %q: %w",
+				destination,
+				openErr,
+			)
+		}
+		addDestinationDirs(destination)
+		args = append(args,
+			"--perms", fmt.Sprintf("%04o", binding.Mode),
+			"--file", childFDFor(), destination,
+		)
+	}
+	args = append(args, "--remount-ro", imageRoot)
+
+	if manifest.FreezeClaudeManagedPolicy {
+		etcEntries, readEtcErr := os.ReadDir("/etc")
+		if readEtcErr != nil {
+			closeFiles()
+			return nil, nil, fmt.Errorf("snapshot host /etc entries: %w", readEtcErr)
+		}
+		args = append(args, "--tmpfs", "/etc")
+		for _, entry := range etcEntries {
+			if entry.Name() == "claude-code" {
+				continue
+			}
+			args = append(args,
+				"--ro-bind",
+				filepath.Join("/etc", entry.Name()),
+				filepath.Join("/etc", entry.Name()),
+			)
+		}
+		args = append(args, "--dir", "/etc/claude-code")
+		for _, binding := range manifest.ManagedPolicy {
+			destination := filepath.Clean(binding.Destination)
+			if filepath.IsAbs(destination) || destination == "." ||
+				destination == ".." ||
+				strings.HasPrefix(destination, ".."+string(filepath.Separator)) ||
+				(destination != "managed-settings.json" &&
+					!strings.HasPrefix(destination, "managed-settings.d"+string(filepath.Separator))) {
+				closeFiles()
+				return nil, nil, fmt.Errorf(
+					"stacked managed-policy destination %q is invalid",
+					binding.Destination,
+				)
+			}
+			_, openErr := openBinding(binding)
+			if openErr != nil {
+				closeFiles()
+				return nil, nil, fmt.Errorf(
+					"stacked managed-policy binding %q: %w",
+					destination,
+					openErr,
+				)
+			}
+			if strings.HasPrefix(destination, "managed-settings.d"+string(filepath.Separator)) {
+				args = append(args, "--dir", "/etc/claude-code/managed-settings.d")
+			}
+			args = append(args,
+				"--perms",
+				fmt.Sprintf("%04o", binding.Mode),
+				"--ro-bind-data",
+				childFDFor(),
+				filepath.Join("/etc/claude-code", destination),
+			)
+		}
+		args = append(args, "--remount-ro", "/etc")
+	}
+	if options.Consume {
+		if err := os.RemoveAll(root); err != nil {
+			closeFiles()
+			return nil, nil, fmt.Errorf("consume stacked binding staging root: %w", err)
+		}
+	}
+	return args, files, nil
+}
+
+func writeStackedBindingReady(path string) error {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return fmt.Errorf("stacked binding readiness path is not absolute")
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("write stacked binding readiness: %w", err)
+	}
+	if _, err := file.WriteString("ready\n"); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write stacked binding readiness: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close stacked binding readiness: %w", err)
+	}
+	return nil
 }
 
 // signalPinnedTclaudeLayerGroup resolves the child's current process group,

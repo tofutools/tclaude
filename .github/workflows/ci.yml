@@ -57,9 +57,9 @@ jobs:
       - name: Install bubblewrap
         run: |
           sudo apt-get update
-          # SRT's secure Linux engine discovers rg and socat at runtime; keep
-          # them explicit so a runner-image change cannot turn the real nested
-          # smoke into an accidental dependency check.
+          # Claude's embedded SRT discovers rg and socat at runtime; keep them
+          # explicit so a runner-image change cannot turn the real nested smoke
+          # into an accidental dependency check.
           sudo apt-get install --yes bubblewrap ripgrep socat
 
       - name: Install pinned OpenCode smoke binary
@@ -70,9 +70,11 @@ jobs:
       - name: Install pinned stacked sandbox engines
         run: |
           npm install --global \
-            @anthropic-ai/sandbox-runtime@0.0.67 \
+            @anthropic-ai/claude-code@2.1.220 \
             @openai/codex@0.145.0
-          srt --version
+          claude install 2.1.220 --force
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
           codex --version
 
       - name: Unlock and probe bubblewrap user namespace support
@@ -175,6 +177,7 @@ jobs:
       - name: Run stacked real-engine smoke
         env:
           TCLAUDE_STACKED_SANDBOX_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           smoke_log="$RUNNER_TEMP/stacked-sandbox-smoke.log"
           go test ./pkg/claude/session -run '^TestStackedSandboxHostSmoke$' -count=1 -v -timeout=180s |
@@ -183,7 +186,7 @@ jobs:
             {
               echo "### Stacked sandbox smoke did not complete"
               echo
-              echo "The real SRT/Codex nested-engine matrix did not report an explicit pass."
+              echo "The exact Claude embedded-SRT/Codex nested-engine matrix did not report an explicit pass."
               echo "Both host-open and isolated tclaude outer postures are hard requirements."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestStackedSandboxHostSmoke did not report an explicit pass"
