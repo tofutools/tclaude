@@ -35,7 +35,11 @@ func TestMaterializeUnixSocketPathsExpandsOnlyLiveSockets(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{first, second}, got)
+	canonicalFirst, err := filepath.EvalSymlinks(first)
+	require.NoError(t, err)
+	canonicalSecond, err := filepath.EvalSymlinks(second)
+	require.NoError(t, err)
+	assert.Equal(t, []string{canonicalFirst, canonicalSecond}, got)
 }
 
 func TestNormalizeAccessRules(t *testing.T) {
