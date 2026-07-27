@@ -16,7 +16,9 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
@@ -597,6 +599,66 @@ func TestRandomOpenCodePassword(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, first, 43)
 	assert.NotEqual(t, first, second)
+}
+
+func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
+	previousResolve := resolveOpenCodeTclaudeLayer
+	previousWrap := wrapOpenCodeTclaudeLayer
+	t.Cleanup(func() {
+		resolveOpenCodeTclaudeLayer = previousResolve
+		wrapOpenCodeTclaudeLayer = previousWrap
+	})
+	resolveOpenCodeTclaudeLayer = func(
+		posture sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		require.Equal(t, sandboxpolicy.NetworkHostOpen, posture)
+		return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+	}
+	var capturedCommand string
+	wrapOpenCodeTclaudeLayer = func(
+		binary string,
+		spec session.TclaudeLayerLaunchSpec,
+		command string,
+	) (string, error) {
+		assert.Equal(t, "/usr/bin/bwrap", binary)
+		assert.Equal(t, session.TclaudeLayerLaunchSpecVersion, spec.Version)
+		capturedCommand = command
+		return "wrapped-opencode-server", nil
+	}
+	spec := &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			NetworkAccess: sandboxpolicy.NetworkAccessInherit,
+		},
+	}
+
+	command, args, err := openCodeServeExec("/tmp/open code", "43210", spec)
+	require.NoError(t, err)
+	assert.Equal(t, "sh", command)
+	assert.Equal(t, []string{"-c", "exec wrapped-opencode-server"}, args)
+	assert.Contains(t, capturedCommand, "'/tmp/open code' serve")
+	assert.Contains(t, capturedCommand, "--hostname 127.0.0.1")
+	assert.Contains(t, capturedCommand, "--port 43210")
+}
+
+func TestOpenCodeServeExecRefusesNonHostOpenBeforeResolve(t *testing.T) {
+	previousResolve := resolveOpenCodeTclaudeLayer
+	t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+	resolveOpenCodeTclaudeLayer = func(
+		sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		t.Fatal("host capability must not be probed for an unsupported OpenCode posture")
+		return "", harness.LaunchOSSandbox{}, nil
+	}
+	spec := &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			NetworkAccess: sandboxpolicy.NetworkAccessNone,
+		},
+	}
+
+	_, _, err := openCodeServeExec("/usr/bin/opencode", "43210", spec)
+	require.ErrorContains(t, err, "host-open loopback control plane")
 }
 
 func TestOpenCodeCredentialHandoffNeverEntersWrapperArgv(t *testing.T) {

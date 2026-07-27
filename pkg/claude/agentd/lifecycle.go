@@ -4394,7 +4394,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 				"could not build OpenCode access-control policy: " + err.Error()}
 		}
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(label, p.Cwd, p.Name, "", permissionJSON)
+		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
+			p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
+		}
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+			label, p.Cwd, p.Name, "", permissionJSON, sandboxSpec)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + err.Error()}
@@ -4903,6 +4909,11 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox); err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
+	}
+	if _, err := openCodeTclaudeLayerLaunchSpec(
+		p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox); err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_network", err.Error()}
 	}
 
 	label := generateSpawnLabel()
@@ -6624,8 +6635,14 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if policyErr != nil {
 			return policyErr
 		}
+		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
+			a.SandboxImplementation, a.Cwd, a.GitWorktreeWriteDirs, a.EffectiveSandbox)
+		if sandboxErr != nil {
+			return sandboxErr
+		}
 		var err error
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(a.ConvID, a.Cwd, "", a.ConvID, permissionJSON)
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON, sandboxSpec)
 		if err != nil {
 			return err
 		}
