@@ -414,7 +414,14 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 		"/home/dev/.tclaude/data/logs/agentd.log",
 		"/home/dev/.tclaude/data/db.sqlite",
 	} {
-		if mode, _ := EffectiveMountModeAt(plan, path); mode != MountHide {
+		// The found flag matters: MountHide is MountMode's zero value, so
+		// EffectiveMountModeAt returns it for a path NO entry covers. Ignoring
+		// found would make this loop pass against an empty plan.
+		mode, found := EffectiveMountModeAt(plan, path)
+		if !found {
+			t.Fatalf("protected path %s: no plan entry covers it, so asserting hide proves nothing", path)
+		}
+		if mode != MountHide {
 			t.Fatalf("protected path %s: mode %s, want hide; nothing may reopen protected tclaude state", path, mode)
 		}
 	}

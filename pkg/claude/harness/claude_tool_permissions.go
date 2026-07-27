@@ -54,11 +54,9 @@ func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs []string) (rule
 	// which used to contribute a second, protected-root-based source of paths
 	// beneath a deny. Nothing outside these grant sets can sit under a deny any
 	// more, so the shape check below sees the complete picture from readDirs and
-	// writeDirs alone. The copy is defensive — normalizedSandboxWriteDirs is free
-	// to reorder what it is handed, and readDirs belongs to the caller.
-	reopenReads := append([]string{}, readDirs...)
+	// writeDirs alone.
 	grants := sandboxpolicy.GrantsFromDirs(
-		normalizedSandboxWriteDirs(reopenReads),
+		normalizedSandboxWriteDirs(readDirs),
 		normalizedSandboxWriteDirs(writeDirs),
 		denies,
 	)

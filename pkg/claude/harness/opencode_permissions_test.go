@@ -38,10 +38,13 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 		Worktree:       "/repo",
 		SandboxMode:    OpenCodeSandboxAccessControl,
 		ApprovalPolicy: OpenCodeApprovalAllowTools,
-		ReadDirs:       []string{"/outside/read"},
-		WriteDirs:      []string{"/outside/write"},
-		DenyDirs:       []string{"/repo/service/secret"},
-		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+		// protectedChild is passed as both a read and a write grant on purpose:
+		// the assertions below claim the renderer SUPPRESSES a reopen beneath a
+		// protected root, and that claim is empty unless something asks for one.
+		ReadDirs:      []string{"/outside/read", protectedChild},
+		WriteDirs:     []string{"/outside/write", protectedChild},
+		DenyDirs:      []string{"/repo/service/secret"},
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, rules)
@@ -73,11 +76,19 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	// Nothing reopens beneath the protected root. TCL-791 removed break-glass,
 	// which was the only input that could emit such an allow, so a rule here
 	// would mean a reopen path came back.
-	assert.NotContains(t, rules, OpenCodePermissionRule{
-		Permission: "read",
-		Pattern:    relativeOpenCodeTestPattern(t, "/repo", protectedChild) + "/*",
-		Action:     "allow",
-	})
+	//
+	// Asserted as EFFECTIVE access, not rule absence. The grants above do emit
+	// allow rules for the child — OpenCode applies the last matching rule, and
+	// the protected denies are rendered after every ordinary grant precisely so
+	// they dominate one. Checking for the absence of an allow rule would
+	// therefore fail on a renderer that is behaving correctly; what has to hold
+	// is that the child resolves to deny anyway.
+	childFile := relativeOpenCodeTestPattern(t, "/repo", protectedChild) + "/notes.txt"
+	for _, permission := range []string{"read", "edit"} {
+		assert.Equalf(t, openCodeActionDeny, lastMatchingOpenCodeAction(rules, permission, childFile),
+			"%s beneath protected root %s must resolve to deny; a reopen path came back",
+			permission, protected[0])
+	}
 
 	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
 		assert.Contains(t, rules,

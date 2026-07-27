@@ -198,10 +198,9 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 		"bypasses it reintroduces break-glass under a new name."
 
 	for _, tc := range []struct {
-		name  string
-		typ   reflect.Type
-		want  []string
-		notes string
+		name string
+		typ  reflect.Type
+		want []string
 	}{
 		{
 			name: "Profile",

@@ -4226,6 +4226,13 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   color: #8b949e; overflow-wrap: anywhere;
 }
 .sbx-common-rule-informational { color: #8b949e; font-size: 12px; margin-top: 8px; }
+/* Was .sbx-bg-intro until TCL-791. The name meant "break-glass intro", but the
+   style is plain muted body text and the informational common-rule list — which
+   has nothing to do with break-glass — was its only surviving consumer, so
+   deleting it with the rest of the break-glass CSS left that list unstyled. */
+.sbx-common-rule-informational .sbx-rule-note {
+	color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px;
+}
 /* The feed is optional, so its failure stays inside the menu it belongs to
    rather than in the editor's shared error line, where it would displace a
    save or validation refusal. */

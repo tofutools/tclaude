@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
@@ -225,7 +226,12 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 // sessions stay absent. It survives TCL-791 unchanged — it grants nothing an
 // operator can ask for, which is precisely what break-glass did.
 func TestBwrapArgsPrivateWriteDirOverridesPolicyButPrecedesHostControl(t *testing.T) {
-	home := t.TempDir()
+	// Canonicalized: ProtectedPaths resolves symlinks, so on macOS (where
+	// TempDir sits under /var → /private/var) an unresolved HOME would build
+	// protected paths that never match the ones the renderer hides, and the
+	// assertions below would stop testing anything.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
 	protected := filepath.Join(home, ".tclaude", "data")
@@ -1002,4 +1008,99 @@ func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")
 	assert.Contains(t, got, "--new-session")
+}
+
+// TestLaunchContractReachesExactlyOneProtectedRootPath is the enumeration the
+// protected-root invariant needs in order to be checkable rather than merely
+// asserted (TCL-791, required by the sandbox-v2 lead before merge).
+//
+// The invariant is absolute for POLICY input: no profile, include,
+// acknowledgement, or flag reaches a protected root. The launch contract is
+// the one channel that does, exactly once — the per-session spawn-attachment
+// drop-box, which is daemon-owned, path-derived from the session identity, and
+// bound on top of the hide that already covers the rest of the root.
+//
+// Prose cannot guard that. This test enumerates EVERY bwrap operation that
+// makes host content visible inside the sandbox at or below a protected root
+// and asserts the resulting set is exactly {drop-box child}. A second such
+// path — from any channel, whether a new launch-contract field, a plan entry,
+// or a repair mount — fails here with the offending path named.
+func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	for _, relative := range []string{
+		filepath.Join(".tclaude", "data"),
+		filepath.Join(".claude", "sessions"),
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.NotEmpty(t, protected)
+
+	// The real drop-box paths, so relocating them without revisiting this
+	// invariant fails here rather than silently widening the allowed set.
+	dropBoxParent := common.SpawnAttachmentsPrivateBase()
+	dropBoxChild := common.SpawnAttachmentsPrivateDir("session-under-test")
+	require.NoError(t, os.MkdirAll(dropBoxChild, 0o700))
+	require.Truef(t, underAnyProtectedRoot(protected, dropBoxChild),
+		"precondition: the drop-box %s must itself sit under a protected root, "+
+			"or this test proves nothing", dropBoxChild)
+
+	// The widest legal policy shape: deny the ancestor, reopen an ordinary
+	// child. Built through Normalize and RenderMountPlan because that is the
+	// path a reintroduced reopen would have to travel.
+	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name: "deny-home-reopen-work",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: workspace, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	require.NoError(t, err)
+	plan, err := sandboxpolicy.RenderMountPlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: normalized.Filesystem,
+	})
+	require.NoError(t, err)
+
+	args, err := bwrapArgs([]string{workspace}, plan, TclaudeLayerPrivateWriteDir{
+		Parent: dropBoxParent, Current: dropBoxChild,
+	})
+	require.NoError(t, err)
+
+	// --bind and --ro-bind are the only forms that expose host content. --tmpfs
+	// and --dir hide or create empty state; --remount-ro narrows.
+	reached := map[string]string{}
+	for i := 0; i+2 < len(args); i++ {
+		flag, dst := args[i], args[i+2]
+		if flag != "--bind" && flag != "--ro-bind" {
+			continue
+		}
+		if underAnyProtectedRoot(protected, dst) {
+			reached[dst] = flag
+		}
+	}
+
+	require.Contains(t, reached, dropBoxChild,
+		"the drop-box bind must actually land, or the equality below is vacuous")
+	for dst, flag := range reached {
+		assert.Equalf(t, dropBoxChild, dst,
+			"%s %s reaches protected state through the launch contract. The "+
+				"spawn-attachment drop-box is the ONLY sanctioned path below a "+
+				"protected root (TCL-791). If this is deliberate, it needs a ruling "+
+				"and this test updated — not a silent second exception.", flag, dst)
+	}
+	assert.Len(t, reached, 1)
+}
+
+func underAnyProtectedRoot(protected []string, path string) bool {
+	for _, root := range protected {
+		if sandboxpolicy.PathContainsOrEqual(root, path) {
+			return true
+		}
+	}
+	return false
 }

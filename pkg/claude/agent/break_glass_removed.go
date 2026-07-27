@@ -1,6 +1,6 @@
 package agent
 
-import "fmt"
+import "errors"
 
 // TCL-791 removed break-glass. These tombstones exist so the removal is LOUD.
 //
@@ -21,7 +21,7 @@ import "fmt"
 // daemon's wire rejection, so an operator gets one consistent explanation
 // whichever surface they hit first.
 func breakGlassFlagRemoved() error {
-	return fmt.Errorf(
+	return errors.New(
 		"--i-understand-break-glass-risk no longer exists: the break-glass feature was removed. " +
 			"Protected tclaude/harness state (~/.tclaude/data, ~/.claude/sessions) is unreachable from a " +
 			"sandboxed agent, with no profile, include, acknowledgement, or flag that reopens it. " +

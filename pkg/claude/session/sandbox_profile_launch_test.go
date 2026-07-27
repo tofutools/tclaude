@@ -421,6 +421,11 @@ func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	// rendered Codex profile was expected to contain. Nothing may name a
 	// protected child any more, so its absence is now the assertion.
 	assert.NotContains(t, content, protectedChild)
+	// The child's absence alone would also hold if the protected root had simply
+	// dropped out of the profile entirely, which would be a far worse bug than
+	// the one above. Assert the root is present AND denied.
+	assert.Contains(t, content, `"`+private+`" = "none"`,
+		"the protected root itself must still be denied, not merely unmentioned")
 }
 
 // Regression: effective grants are fully symlink-resolved by normalization, so

@@ -255,6 +255,23 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	for _, root := range protectedRoots {
 		grants[root] = "none"
 	}
+	// Setting the root itself to "none" is not enough. A grant naming a CHILD
+	// of a protected root is a different map key, so it would render as
+	// read/write right next to the root's own "none" and reopen exactly what
+	// the deny is there to close. normalizeFilesystem already refuses any
+	// read/write rule intersecting a protected root, and TCL-791 removed
+	// break-glass, the one input that could previously carry such a path — so
+	// nothing upstream should reach here with one. This prunes it anyway: it is
+	// the point where the invariant stops depending on every caller having
+	// normalized first. Only read/write entries are dropped; a "none" beneath a
+	// protected root is a deny and strictly narrowing.
+	for _, root := range append(append([]string{}, protectedRoots...), privateStateDir) {
+		for dir, access := range grants {
+			if access != "none" && dir != root && sandboxpolicy.PathContainsOrEqual(root, dir) {
+				delete(grants, dir)
+			}
+		}
+	}
 	if tmuxSocketDir != "" {
 		// The tmux socket directory is host-control authority — a strictly more
 		// severe class than protected state. It stays denied unconditionally,

@@ -145,8 +145,14 @@ func TestCodexHomeRulesPinBackendAndKeepNarrowReopens(t *testing.T) {
 	for _, dir := range []string{private, filepath.Dir(socket), workspace, debug} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
+	// debug is passed as BOTH a read and a write grant on purpose. An earlier
+	// revision of this test only created the directory and asserted the rules
+	// were absent, which they trivially were — nothing had asked for them. The
+	// renderer must actively suppress a child of a protected root, so the child
+	// has to be an input for the assertions below to mean anything.
 	content, err := codexAgentProfileContentForRules("home-test", socket, private, CodexSandboxRules{
-		WriteDirs: []string{workspace}, DenyDirs: []string{home}, RequireSplitPolicy: true,
+		ReadDirs:  []string{debug},
+		WriteDirs: []string{workspace, debug}, DenyDirs: []string{home}, RequireSplitPolicy: true,
 	}, sandboxpolicy.NetworkAccessInherit, "linux")
 	require.NoError(t, err)
 	assert.Contains(t, content, "use_legacy_landlock = false")

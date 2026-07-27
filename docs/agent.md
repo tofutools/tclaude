@@ -688,8 +688,9 @@ policy reopen: the spawn-attachment drop-box
 (`~/.tclaude/data/spawn-attachments/<session hash>`). Attachments have to reach
 the agent, its path is derived from the session identity rather than named by
 any profile or agent, and it is bound on top of the hide that already covers
-the rest of the root — so what becomes visible is one empty daemon-created
-directory, never the protected state beneath it.
+the rest of the root — so what becomes visible is that session's own attachment
+area (daemon-created, session-writable, holding the promoted attachment batch),
+never the database or another session's state beneath it.
 
 `~/.codex` is **not** a protected root — it is ordinary harness state that an
 agent normally needs to read. An ordinary `deny` row may cover it, and a
