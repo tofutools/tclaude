@@ -5,11 +5,14 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"golang.org/x/sys/unix"
 )
 
 // bwrapProbeTimeout bounds the capability probe. The probe does trivial work
@@ -40,6 +43,13 @@ var (
 			return err
 		}
 		return nil
+	}
+	probeTclaudeLayerPidfd = func() error {
+		fd, err := unix.PidfdOpen(os.Getpid(), 0)
+		if err != nil {
+			return err
+		}
+		return unix.Close(fd)
 	}
 )
 
@@ -89,6 +99,9 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
+	if err := probeTclaudeLayerPidfd(); err != nil {
+		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+	}
 	return binary, nil
 }
 
@@ -98,7 +111,12 @@ func tclaudeLayerCommand(
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	command, err := bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	if err != nil {
+		return "", err
+	}
+	relay := clcommon.DetectAbsoluteCmd("session", tclaudeLayerWinchRelayCommand)
+	return relay + " " + command, nil
 }
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
