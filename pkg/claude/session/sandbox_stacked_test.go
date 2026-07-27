@@ -60,7 +60,7 @@ func TestStackedLaunchOSSandboxNamesBothMechanisms(t *testing.T) {
 		{
 			name: "claude host open", harness: harness.DefaultName,
 			posture: sandboxpolicy.NetworkHostOpen,
-			wantSource: "Stacked: tclaude bwrap (host-open; ambient host Unix sockets reachable) + " +
+			wantSource: "Stacked: tclaude bwrap (host-open) + " +
 				"Claude SRT bwrap/seccomp",
 			unverified: true,
 		},
@@ -73,7 +73,7 @@ func TestStackedLaunchOSSandboxNamesBothMechanisms(t *testing.T) {
 		{
 			name: "codex host open", harness: harness.CodexName,
 			posture: sandboxpolicy.NetworkHostOpen,
-			wantSource: "Stacked: tclaude bwrap (host-open; ambient host Unix sockets reachable) + " +
+			wantSource: "Stacked: tclaude bwrap (host-open) + " +
 				"Codex bwrap managed profile",
 			unverified: true,
 		},

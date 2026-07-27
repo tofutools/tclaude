@@ -408,8 +408,9 @@ case-sensitive APFS volume keeps distinct objects distinct. Persisted registry
 profiles may already have discarded their operator spelling; that separate
 limitation remains tracked by TCL-762.
 
-The launch badge deliberately reports the Darwin-specific partial boundary as
-unverified. Seatbelt filesystem policy is active and paths remain enumerable.
+The launch badge deliberately reports the Darwin-specific partial boundary in
+its own `⚠ Partial fidelity:` sentence rather than as an unverified posture:
+Seatbelt filesystem policy is active and paths remain enumerable.
 Host-open retains the host network and ambient Unix sockets; isolated blocks
 network operations except the agentd socket but still has no PID isolation or
 constructed root. `sandbox-exec` is deprecated but still functional and is the

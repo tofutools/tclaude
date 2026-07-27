@@ -251,9 +251,10 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 	if harnessName == harness.OpenCodeName {
 		return harness.LaunchOSSandbox{
 			State: "on",
-			Source: "tclaude-layer (bubblewrap; OpenCode tool-executing server confined; " +
-				"attach pane outside the boundary; loopback control plane reachable; " +
-				"host network and ambient host Unix sockets reachable)",
+			// The pane, control-plane and networking caveats live in the badge's
+			// partial-fidelity sentence rather than here, so each is stated once
+			// (TCL-790).
+			Source:     "tclaude-layer (bubblewrap; OpenCode tool-executing server confined)",
 			Unverified: true,
 		}
 	}

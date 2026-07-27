@@ -329,20 +329,21 @@ func darwinSeatbeltLstatIdentity(path string) (seatbeltFileIdentity, bool) {
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
 	switch posture {
+	// Source names the mechanism and posture that decided. The Darwin fidelity
+	// caveats — no PID isolation, no constructed root, no mount namespace,
+	// enumerable hidden paths, host reachability — belong to the badge's
+	// partial-fidelity sentence and are stated there, once (TCL-790).
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		return harness.LaunchOSSandbox{
 			State: "on",
-			Source: "tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; " +
-				"isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; " +
-				"no PID isolation; no constructed root; hidden paths remain enumerable)",
+			Source: "tclaude-layer (Seatbelt/sandbox-exec; isolated network; " +
+				"host loopback/IDE bridge unavailable; agentd socket allowlisted)",
 			Unverified: true,
 		}
 	case sandboxpolicy.NetworkHostOpen:
 		return harness.LaunchOSSandbox{
-			State: "on",
-			Source: "tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; " +
-				"host network and ambient Unix sockets reachable; no mount namespace; " +
-				"hidden paths remain enumerable)",
+			State:      "on",
+			Source:     "tclaude-layer (Seatbelt/sandbox-exec; host network)",
 			Unverified: true,
 		}
 	default:
