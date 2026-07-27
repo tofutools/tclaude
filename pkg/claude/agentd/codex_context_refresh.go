@@ -43,11 +43,62 @@ type codexReadThroughSnapshot struct {
 	checkpointPersistedAt time.Time
 	sessionConvID         string
 	sessionCreatedAt      time.Time
+	runtimeContext        harness.ContextTelemetry
+	runtimeHasContext     bool
+	runtimeReset          bool
 	persistedConvID       string
 	persistedCreatedAt    time.Time
 	persistedContext      harness.ContextTelemetry
 	persistedHasContext   bool
 	persistedReset        bool
+}
+
+type codexContextRefreshResult struct {
+	interruptedSubagents map[string]struct{}
+	context              *harness.ContextTelemetry
+	contextReset         bool
+}
+
+func codexContextRefreshResultFromCache(
+	sess *db.SessionRow,
+	cached codexReadThroughSnapshot,
+) codexContextRefreshResult {
+	result := codexContextRefreshResult{
+		interruptedSubagents: cached.interruptedSubagents,
+	}
+	if cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt) {
+		return result
+	}
+	result.contextReset = cached.runtimeReset
+	if cached.runtimeHasContext && !cached.runtimeReset {
+		context := cached.runtimeContext
+		result.context = &context
+	}
+	return result
+}
+
+type codexContextPersistenceState struct {
+	convID     string
+	createdAt  time.Time
+	context    harness.ContextTelemetry
+	hasContext bool
+	reset      bool
+}
+
+type pendingCodexContextPersistence struct {
+	sessionID        string
+	operationIndex   int
+	invalidateOnNoop bool
+	before           codexContextPersistenceState
+	after            codexContextPersistenceState
+}
+
+// codexContextWriteBatch is lazy: an idle snapshot opens no write
+// transaction. Once one Codex row needs persistence, later rows share the same
+// transaction and the snapshot pays one WAL durability commit in flush.
+type codexContextWriteBatch struct {
+	dbBatch *db.ContextSnapshotWriteBatch
+	pending []pendingCodexContextPersistence
 }
 
 // codexTelemetryTiming is accumulated across every live Codex row rendered by
@@ -64,6 +115,7 @@ type codexTelemetryTiming struct {
 	contextReset     contextWriteTiming
 	contextFast      contextWriteTiming
 	contextProject   contextWriteTiming
+	contextBatch     contextWriteTiming
 }
 
 type contextWriteTiming struct {
@@ -113,15 +165,19 @@ func contextWriteOther(total time.Duration, accounted ...time.Duration) time.Dur
 }
 
 func (t contextWriteTiming) fastPerfPhase() perfPhase {
+	children := []perfPhase{{Name: "open", Ms: durMs(t.open)}}
+	if t.update > 0 {
+		children = append(children, perfPhase{Name: "exec", Ms: durMs(t.update)})
+	}
+	if t.execCommit > 0 {
+		children = append(children, perfPhase{Name: "exec_commit", Ms: durMs(t.execCommit)})
+	}
+	children = append(children,
+		perfPhase{Name: "result", Ms: durMs(t.result)},
+		perfPhase{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.update, t.execCommit, t.result))},
+	)
 	return perfPhase{
-		Name: "fast_update",
-		Ms:   durMs(t.total),
-		Children: []perfPhase{
-			{Name: "open", Ms: durMs(t.open)},
-			{Name: "exec_commit", Ms: durMs(t.execCommit)},
-			{Name: "result", Ms: durMs(t.result)},
-			{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.execCommit, t.result))},
-		},
+		Name: "fast_update", Ms: durMs(t.total), Children: children,
 	}
 }
 
@@ -143,13 +199,30 @@ func (t contextWriteTiming) projectPerfPhase() perfPhase {
 }
 
 func (t contextWriteTiming) resetPerfPhase() perfPhase {
+	children := []perfPhase{{Name: "open", Ms: durMs(t.open)}}
+	if t.update > 0 {
+		children = append(children, perfPhase{Name: "exec", Ms: durMs(t.update)})
+	}
+	if t.execCommit > 0 {
+		children = append(children, perfPhase{Name: "exec_commit", Ms: durMs(t.execCommit)})
+	}
+	children = append(children, perfPhase{
+		Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.update, t.execCommit)),
+	})
 	return perfPhase{
-		Name: "reset",
+		Name: "reset", Ms: durMs(t.total), Children: children,
+	}
+}
+
+func (t contextWriteTiming) batchPerfPhase() perfPhase {
+	return perfPhase{
+		Name: "batch_transaction",
 		Ms:   durMs(t.total),
 		Children: []perfPhase{
 			{Name: "open", Ms: durMs(t.open)},
-			{Name: "exec_commit", Ms: durMs(t.execCommit)},
-			{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.execCommit))},
+			{Name: "begin", Ms: durMs(t.begin)},
+			{Name: "commit", Ms: durMs(t.commit)},
+			{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.begin, t.commit))},
 		},
 	}
 }
@@ -165,6 +238,7 @@ func (t codexTelemetryTiming) add(other codexTelemetryTiming) codexTelemetryTimi
 	t.contextReset = t.contextReset.add(other.contextReset)
 	t.contextFast = t.contextFast.add(other.contextFast)
 	t.contextProject = t.contextProject.add(other.contextProject)
+	t.contextBatch = t.contextBatch.add(other.contextBatch)
 	return t
 }
 
@@ -185,7 +259,10 @@ func (t codexTelemetryTiming) perfPhases() []perfPhase {
 	if t.contextProject.total > 0 {
 		contextChildren = append(contextChildren, t.contextProject.projectPerfPhase())
 	}
-	contextAccounted := t.contextReset.total + t.contextFast.total + t.contextProject.total
+	if t.contextBatch.total > 0 {
+		contextChildren = append(contextChildren, t.contextBatch.batchPerfPhase())
+	}
+	contextAccounted := t.contextReset.total + t.contextFast.total + t.contextProject.total + t.contextBatch.total
 	if contextOther := contextWriteOther(t.contextWrite, contextAccounted); contextOther > 0 {
 		contextChildren = append(contextChildren, perfPhase{
 			Name: "other",
@@ -215,8 +292,17 @@ func refreshCodexContextSnapshotOnRead(sess *db.SessionRow, alive bool) map[stri
 }
 
 func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, record func(codexTelemetryTiming)) map[string]struct{} {
+	return refreshCodexContextSnapshotOnReadBatched(sess, alive, nil, record).interruptedSubagents
+}
+
+func refreshCodexContextSnapshotOnReadBatched(
+	sess *db.SessionRow,
+	alive bool,
+	batch *codexContextWriteBatch,
+	record func(codexTelemetryTiming),
+) codexContextRefreshResult {
 	if sess == nil || !alive || sess.Harness != harness.CodexName || sess.ID == "" || sess.ConvID == "" {
-		return nil
+		return codexContextRefreshResult{}
 	}
 	started := time.Now()
 	timing := codexTelemetryTiming{}
@@ -230,7 +316,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	cached, refresh := claimCodexContextRefresh(sess.ID, started)
 	timing.claim = time.Since(claimStarted)
 	if !refresh {
-		return cached.interruptedSubagents
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	completed := false
 	defer func() {
@@ -274,7 +360,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	if err != nil {
 		slog.Warn("codex-telemetry: cannot resolve home for read-through refresh",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-		return cached.interruptedSubagents
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	rolloutStarted := time.Now()
 	snap, err := cached.follower.RuntimeTelemetry(home, sess.ConvID)
@@ -285,7 +371,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		checkpointWriteStarted := time.Now()
 		recordCodexCheckpointFailure(sess.ID, cached.checkpointData)
 		timing.checkpointWrite = time.Since(checkpointWriteStarted)
-		return cached.interruptedSubagents
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
@@ -361,12 +447,25 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	persistedHasContext := cached.persistedHasContext
 	persistedReset := cached.persistedReset
 	sameSessionGeneration := persistedConvID == sess.ConvID && persistedCreatedAt.Equal(sess.CreatedAt)
+	beforePersistence := codexContextPersistenceState{
+		convID: persistedConvID, createdAt: persistedCreatedAt, context: persistedContext,
+		hasContext: persistedHasContext, reset: persistedReset,
+	}
+	contextPersistenceDeferred := false
+	deferredOperationIndex := -1
+	deferredFastUpdate := false
 	if snap.ContextReset {
 		if !sameSessionGeneration || !persistedReset {
 			contextWriteStarted := time.Now()
-			if err := db.ResetCompactTimed(sess.ID, func(detail db.ContextSnapshotWriteTiming) {
-				timing.contextReset = contextWriteTimingFromDB(detail)
-			}); err != nil {
+			var err error
+			if batch == nil {
+				err = db.ResetCompactTimed(sess.ID, func(detail db.ContextSnapshotWriteTiming) {
+					timing.contextReset = contextWriteTimingFromDB(detail)
+				})
+			} else {
+				deferredOperationIndex, err = batch.resetCompact(sess.ID, sess.ConvID, sess.CreatedAt)
+			}
+			if err != nil {
 				slog.Warn("codex-telemetry: failed to persist compaction reset",
 					"session_id", sess.ID, "error", err, "module", "agentd")
 			} else {
@@ -375,6 +474,17 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 				persistedContext = harness.ContextTelemetry{}
 				persistedHasContext = false
 				persistedReset = true
+				if batch != nil {
+					contextPersistenceDeferred = true
+					batch.pending = append(batch.pending, pendingCodexContextPersistence{
+						sessionID:      sess.ID,
+						operationIndex: deferredOperationIndex,
+						before:         beforePersistence,
+						after: codexContextPersistenceState{
+							convID: sess.ConvID, createdAt: sess.CreatedAt, reset: true,
+						},
+					})
+				}
 			}
 			timing.contextWrite += time.Since(contextWriteStarted)
 		}
@@ -386,29 +496,36 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		var err error
 		if sameSessionGeneration && !persistedReset && persistedHasContext &&
 			persistedContext.WindowSize == ctx.WindowSize {
-			contextPersisted, err = db.UpdateContextSnapshotIfWindowUnchangedTimed(
-				sess.ID,
-				sess.ConvID,
-				sess.CreatedAt,
-				ctx.Pct,
-				ctx.TokensInput,
-				ctx.TokensOutput,
-				ctx.WindowSize,
-				func(detail db.ContextSnapshotWriteTiming) {
-					timing.contextFast = contextWriteTimingFromDB(detail)
-				},
-			)
+			if batch == nil {
+				contextPersisted, err = db.UpdateContextSnapshotIfWindowUnchangedTimed(
+					sess.ID, sess.ConvID, sess.CreatedAt,
+					ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
+					func(detail db.ContextSnapshotWriteTiming) {
+						timing.contextFast = contextWriteTimingFromDB(detail)
+					},
+				)
+			} else {
+				deferredFastUpdate = true
+				deferredOperationIndex, err = batch.updateIfWindowUnchanged(
+					sess.ID, sess.ConvID, sess.CreatedAt,
+					ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
+				)
+				contextPersisted = err == nil
+			}
 		} else {
-			err = db.UpdateContextSnapshotTimed(
-				sess.ID,
-				ctx.Pct,
-				ctx.TokensInput,
-				ctx.TokensOutput,
-				ctx.WindowSize,
-				func(detail db.ContextSnapshotWriteTiming) {
-					timing.contextProject = contextWriteTimingFromDB(detail)
-				},
-			)
+			if batch == nil {
+				err = db.UpdateContextSnapshotTimed(
+					sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
+					func(detail db.ContextSnapshotWriteTiming) {
+						timing.contextProject = contextWriteTimingFromDB(detail)
+					},
+				)
+			} else {
+				deferredOperationIndex, err = batch.updateContextSnapshot(
+					sess.ID, sess.ConvID, sess.CreatedAt,
+					ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
+				)
+			}
 			contextPersisted = err == nil
 		}
 		if err != nil {
@@ -420,6 +537,18 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 			persistedContext = ctx
 			persistedHasContext = true
 			persistedReset = false
+			if batch != nil {
+				contextPersistenceDeferred = true
+				batch.pending = append(batch.pending, pendingCodexContextPersistence{
+					sessionID:        sess.ID,
+					operationIndex:   deferredOperationIndex,
+					invalidateOnNoop: deferredFastUpdate,
+					before:           beforePersistence,
+					after: codexContextPersistenceState{
+						convID: sess.ConvID, createdAt: sess.CreatedAt, context: ctx, hasContext: true,
+					},
+				})
+			}
 		} else {
 			// The row generation or window changed after the dashboard preload.
 			// Force the next poll through the full projecting path.
@@ -428,6 +557,18 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		timing.contextWrite += time.Since(contextWriteStarted)
 	}
 
+	cachePersistedConvID := persistedConvID
+	cachePersistedCreatedAt := persistedCreatedAt
+	cachePersistedContext := persistedContext
+	cachePersistedHasContext := persistedHasContext
+	cachePersistedReset := persistedReset
+	if contextPersistenceDeferred {
+		cachePersistedConvID = beforePersistence.convID
+		cachePersistedCreatedAt = beforePersistence.createdAt
+		cachePersistedContext = beforePersistence.context
+		cachePersistedHasContext = beforePersistence.hasContext
+		cachePersistedReset = beforePersistence.reset
+	}
 	cacheCodexRuntimeRefresh(
 		sess.ID,
 		time.Now(),
@@ -437,14 +578,137 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		checkpointPersistedAt,
 		sess.ConvID,
 		sess.CreatedAt,
-		persistedConvID,
-		persistedCreatedAt,
-		persistedContext,
-		persistedHasContext,
-		persistedReset,
+		snap.Context,
+		snap.HasContext,
+		snap.ContextReset,
+		contextPersistenceDeferred,
+		cachePersistedConvID,
+		cachePersistedCreatedAt,
+		cachePersistedContext,
+		cachePersistedHasContext,
+		cachePersistedReset,
 	)
 	completed = true
-	return snap.InterruptedSubagents
+	result := codexContextRefreshResult{
+		interruptedSubagents: snap.InterruptedSubagents,
+		contextReset:         snap.ContextReset,
+	}
+	if snap.HasContext && !snap.ContextReset {
+		ctx := snap.Context
+		result.context = &ctx
+	}
+	return result
+}
+
+func (b *codexContextWriteBatch) ensureDBBatch() error {
+	if b.dbBatch != nil {
+		return nil
+	}
+	b.dbBatch = db.NewContextSnapshotWriteBatch()
+	return nil
+}
+
+func (b *codexContextWriteBatch) resetCompact(
+	sessionID, convID string,
+	createdAt time.Time,
+) (int, error) {
+	if err := b.ensureDBBatch(); err != nil {
+		return 0, err
+	}
+	return b.dbBatch.ResetCompact(sessionID, convID, createdAt), nil
+}
+
+func (b *codexContextWriteBatch) updateIfWindowUnchanged(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) (int, error) {
+	if err := b.ensureDBBatch(); err != nil {
+		return 0, err
+	}
+	return b.dbBatch.UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize,
+	), nil
+}
+
+func (b *codexContextWriteBatch) updateContextSnapshot(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) (int, error) {
+	if err := b.ensureDBBatch(); err != nil {
+		return 0, err
+	}
+	return b.dbBatch.UpdateContextSnapshot(
+		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize,
+	), nil
+}
+
+// flush commits all context updates discovered by one dashboard snapshot and
+// reports both the per-operation work and the one shared transaction.
+func (b *codexContextWriteBatch) flush() (codexTelemetryTiming, error) {
+	if b == nil || b.dbBatch == nil {
+		return codexTelemetryTiming{}, nil
+	}
+	defer func() {
+		released := make(map[string]struct{}, len(b.pending))
+		for _, pending := range b.pending {
+			if _, ok := released[pending.sessionID]; ok {
+				continue
+			}
+			released[pending.sessionID] = struct{}{}
+			releaseCodexRuntimeRefresh(pending.sessionID)
+		}
+	}()
+	result, err := b.dbBatch.Commit()
+	timing := codexTelemetryTiming{
+		contextReset:   contextWriteTimingFromDB(result.Reset),
+		contextFast:    contextWriteTimingFromDB(result.Fast),
+		contextProject: contextWriteTimingFromDB(result.Project),
+		contextBatch:   contextWriteTimingFromDB(result.Transaction),
+	}
+	timing.contextBatch.total = timing.contextBatch.open + timing.contextBatch.begin + timing.contextBatch.commit
+	timing.contextWrite = timing.contextReset.total + timing.contextFast.total +
+		timing.contextProject.total + timing.contextBatch.total
+	timing.total = timing.contextWrite
+	if err == nil {
+		for _, pending := range b.pending {
+			if pending.operationIndex >= 0 &&
+				pending.operationIndex < len(result.Applied) &&
+				result.Applied[pending.operationIndex] {
+				cacheCodexContextPersistence(pending)
+			} else if pending.invalidateOnNoop {
+				pending.after = pending.before
+				pending.after.hasContext = false
+				cacheCodexContextPersistence(pending)
+			}
+		}
+	}
+	return timing, errors.Join(append([]error{err}, result.OperationErrors...)...)
+}
+
+func cacheCodexContextPersistence(pending pendingCodexContextPersistence) {
+	codexContextRefreshMu.Lock()
+	defer codexContextRefreshMu.Unlock()
+	state := codexContextRefreshMu.last[pending.sessionID]
+	current := codexContextPersistenceState{
+		convID: state.persistedConvID, createdAt: state.persistedCreatedAt,
+		context: state.persistedContext, hasContext: state.persistedHasContext,
+		reset: state.persistedReset,
+	}
+	if current != pending.before ||
+		state.sessionConvID != pending.after.convID ||
+		!state.sessionCreatedAt.Equal(pending.after.createdAt) {
+		return
+	}
+	state.persistedConvID = pending.after.convID
+	state.persistedCreatedAt = pending.after.createdAt
+	state.persistedContext = pending.after.context
+	state.persistedHasContext = pending.after.hasContext
+	state.persistedReset = pending.after.reset
+	codexContextRefreshMu.last[pending.sessionID] = state
 }
 
 func claimCodexContextRefresh(sessionID string, now time.Time) (codexReadThroughSnapshot, bool) {
@@ -526,6 +790,10 @@ func cacheCodexRuntimeRefresh(
 	checkpointPersistedAt time.Time,
 	sessionConvID string,
 	sessionCreatedAt time.Time,
+	runtimeContext harness.ContextTelemetry,
+	runtimeHasContext bool,
+	runtimeReset bool,
+	keepRefreshing bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
 	persistedContext harness.ContextTelemetry,
@@ -546,12 +814,15 @@ func cacheCodexRuntimeRefresh(
 	prev.checkpointPersistedAt = checkpointPersistedAt
 	prev.sessionConvID = sessionConvID
 	prev.sessionCreatedAt = sessionCreatedAt
+	prev.runtimeContext = runtimeContext
+	prev.runtimeHasContext = runtimeHasContext
+	prev.runtimeReset = runtimeReset
 	prev.persistedConvID = persistedConvID
 	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext
 	prev.persistedHasContext = persistedHasContext
 	prev.persistedReset = persistedReset
-	prev.refreshing = false
+	prev.refreshing = keepRefreshing
 	codexContextRefreshMu.last[sessionID] = prev
 }
 

@@ -36,6 +36,7 @@ type snapshotRowCache struct {
 	memo map[string]*convRowBundle
 
 	codexTelemetryTiming codexTelemetryTiming
+	codexContextBatch    codexContextWriteBatch
 }
 
 // convRowBundle is the fully-resolved per-conv row the dashboard renders,
@@ -182,11 +183,19 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		Loc:     loc,
 		Links:   branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
 		Online:  isConvOnlineInSessions(rc.sessions[convID], rc.alive),
-		State: stateForConvInSessionsTimed(rc.sessions[convID], rc.alive, func(timing codexTelemetryTiming) {
+		State: stateForConvInSessionsBatched(rc.sessions[convID], rc.alive, &rc.codexContextBatch, func(timing codexTelemetryTiming) {
 			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
 		}),
 	}
 	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode
 	rc.memo[convID] = b
 	return b
+}
+
+func (rc *snapshotRowCache) flushCodexContextWrites() error {
+	timing, err := rc.codexContextBatch.flush()
+	if timing.total > 0 {
+		rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
+	}
+	return err
 }
