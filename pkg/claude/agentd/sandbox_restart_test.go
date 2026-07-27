@@ -309,6 +309,12 @@ func TestDurableRelaunchRecoversImplementationAfterFailedRestore(t *testing.T) {
 		SandboxMode: normalMode, SandboxImplementation: overwritten,
 		ApprovalPolicy: approval, CreatedAt: time.Now(),
 	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "after-plain-off-resume", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusIdle,
+		SandboxMode: normalMode, SandboxImplementation: overwritten,
+		ApprovalPolicy: approval, CreatedAt: time.Now().Add(time.Second),
+	}))
 	// The faulty restore has already cleared TemporarySandboxMode, leaving a
 	// plain-OFF durable record even though the earlier session proves the
 	// agent's exact normal implementation was the TClaude outer layer.

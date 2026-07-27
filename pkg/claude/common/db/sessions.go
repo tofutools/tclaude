@@ -631,27 +631,25 @@ func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, erro
 		return "", nil
 	}
 	temporaryTail := latest.source == TemporarySandboxModeSource
-	if !temporaryTail {
-		previous, previousOK, previousErr := next()
-		if previousErr != nil {
-			return "", previousErr
-		}
-		temporaryTail = previousOK &&
-			previous.implementation == string(sandboxpolicy.ImplementationHarnessBuiltin) &&
-			previous.source == TemporarySandboxModeSource
-	}
-	if !temporaryTail {
-		return "", nil
-	}
 	for {
 		item, itemOK, itemErr := next()
 		if itemErr != nil || !itemOK {
 			return "", itemErr
 		}
 		switch item.implementation {
+		case string(sandboxpolicy.ImplementationHarnessBuiltin):
+			temporaryTail = temporaryTail ||
+				item.source == TemporarySandboxModeSource
 		case string(sandboxpolicy.ImplementationTclaudeLayer),
 			string(sandboxpolicy.ImplementationStacked):
+			if !temporaryTail {
+				return "", nil
+			}
 			return item.implementation, nil
+		default:
+			// An unknown implementation breaks the launch-history tail. Do not
+			// infer across evidence this version cannot interpret.
+			return "", nil
 		}
 	}
 }
