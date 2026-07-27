@@ -95,13 +95,18 @@ The theme flags (`--slop`, `--wizard`) work as always — they re-skin the
 browser dashboard and never touch the terminal UI, which has no theming at all.
 On their own they do not start a listener.
 
-When both surfaces run, the **operator token** is printed *inside* the terminal
-UI rather than on stdout: you need it to sign in to the browser, and the UI's
-alt screen covers anything printed before it. It appears at the top on startup,
-disappears on your first keystroke, and `?` brings it back for as long as the
-daemon runs. A terminal-UI-only daemon keeps the ordinary stdout banner (there
-is nothing to sign in to, and the banner is on the scrollback the alt screen
-restores on exit), and `--no-print-human-token` still suppresses it everywhere.
+### Output under `--tui`
+
+The console owns the terminal, so `--tui` prints **nothing** to stdout: no
+migration progress, no socket paths, no dashboard URL. Those events still go to
+`~/.tclaude/data/output.log` (the dashboard's **Logs** tab reads the same file),
+and real failures still go to stderr.
+
+The one thing you do need from startup — the **operator token**, for signing in
+to the web dashboard or exporting to a CLI in another window — is therefore
+shown *inside* the UI. It appears at the top on startup, disappears on your
+first keystroke, and `?` brings it back for as long as the daemon runs.
+`--no-print-human-token` suppresses it there as everywhere else.
 
 With **no** dashboard listener (a bare `--tui`), two things are worth knowing:
 

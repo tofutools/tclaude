@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -524,16 +526,13 @@ func TestTUIViewNamesACoRunningDashboard(t *testing.T) {
 }
 
 func TestTokenBannerInTUI(t *testing.T) {
-	t.Run("console plus dashboard moves the banner into the console", func(t *testing.T) {
+	t.Run("any console takes the banner, dashboard or not", func(t *testing.T) {
+		// stdout is discarded under --tui, so the console is the only place
+		// the token can be read from.
+		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true}))
 		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, AutoLaunchDashboard: true}))
 		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, DashboardPort: 8321}))
 		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, DashboardBind: "0.0.0.0"}))
-	})
-
-	t.Run("a console with no dashboard keeps the stdout banner", func(t *testing.T) {
-		// Nothing to sign in to, and the banner survives on the scrollback the
-		// alt screen restores when the daemon exits.
-		assert.False(t, tokenBannerInTUI(&serveParams{TUI: true}))
 	})
 
 	t.Run("no console keeps the stdout banner", func(t *testing.T) {
@@ -542,10 +541,21 @@ func TestTokenBannerInTUI(t *testing.T) {
 	})
 
 	t.Run("--no-print-human-token still means no banner anywhere", func(t *testing.T) {
+		assert.False(t, tokenBannerInTUI(&serveParams{TUI: true, NoPrintHumanToken: true}))
 		assert.False(t, tokenBannerInTUI(&serveParams{
 			TUI: true, AutoLaunchDashboard: true, NoPrintHumanToken: true,
 		}))
 	})
+}
+
+// Startup narration goes to the terminal only when the console is not using
+// it. Discarding is what keeps `--tui` from opening on a screen full of
+// migration progress and socket paths.
+func TestServeStdout(t *testing.T) {
+	assert.Equal(t, os.Stdout, serveStdout(&serveParams{}))
+	assert.Equal(t, os.Stdout, serveStdout(&serveParams{DashboardPort: 8321}))
+	assert.Equal(t, io.Discard, serveStdout(&serveParams{TUI: true}))
+	assert.Equal(t, io.Discard, serveStdout(&serveParams{TUI: true, DashboardPort: 8321}))
 }
 
 func TestTUIOperatorTokenLines(t *testing.T) {

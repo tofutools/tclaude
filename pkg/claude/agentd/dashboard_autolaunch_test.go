@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"io"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestAutoLaunchDashboard_OpensSingleUseTokenURL(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard("")
+	autoLaunchDashboard("", io.Discard)
 
 	const prefix = base + "/?init_token="
 	if !strings.HasPrefix(opened, prefix) {
@@ -88,7 +89,7 @@ func TestAutoLaunchDashboard_SlopMode(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard("slop")
+	autoLaunchDashboard("slop", io.Discard)
 
 	if !strings.HasSuffix(opened, "&slop=1") {
 		t.Fatalf("opened URL %q missing &slop=1 suffix", opened)
@@ -117,7 +118,7 @@ func TestAutoLaunchDashboard_WizardMode(t *testing.T) {
 	dashboardBrowserOpener = func(u string) error { opened = u; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard("wizard")
+	autoLaunchDashboard("wizard", io.Discard)
 
 	if !strings.HasSuffix(opened, "&wizard=1") {
 		t.Fatalf("opened URL %q missing &wizard=1 suffix", opened)
@@ -148,7 +149,7 @@ func TestAutoLaunchDashboard_NoLoopbackURL(t *testing.T) {
 	dashboardBrowserOpener = func(string) error { called = true; return nil }
 	t.Cleanup(func() { dashboardBrowserOpener = prevOpener })
 
-	autoLaunchDashboard("")
+	autoLaunchDashboard("", io.Discard)
 
 	if called {
 		t.Fatal("autoLaunchDashboard opened a browser with no loopback URL bound")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -42,7 +43,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Quitting the TUI shuts the daemon down."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down."`
 }
 
 func serveCmd() *cobra.Command {
@@ -211,22 +212,38 @@ func dashboardRequested(p *serveParams) bool {
 		strings.TrimSpace(p.DashboardBind) != ""
 }
 
+// serveStdout is where serve's startup narration goes: the operator's terminal
+// normally, nowhere under --tui. The console owns that screen — its alt screen
+// hides anything printed before it and anything printed after it lands on top
+// of the UI — so narrating into it is at best invisible and at worst damage.
+// Nothing is lost: slog keeps the durable record in output.log either way, and
+// the one line the operator genuinely needs from startup, the operator token,
+// moves into the console itself (see tokenBannerInTUI).
+func serveStdout(p *serveParams) io.Writer {
+	if p.TUI {
+		return io.Discard
+	}
+	return os.Stdout
+}
+
 // tokenBannerInTUI reports whether the operator-token banner belongs inside
-// the terminal console instead of on stdout.
-//
-// It applies when the console and the web dashboard are up together: the token
-// is what signs the operator in to the browser, and stdout is the one place
-// they cannot read it from, since the console's alt screen covers everything
-// printed before it. A console with no dashboard keeps the stdout banner —
-// there is no login to perform, and the banner is on the scrollback the alt
-// screen restores when the daemon exits.
+// the terminal console instead of on stdout. It always does when the console
+// is running: stdout is discarded there (see serveStdout), so the console is
+// the only place the operator can read the token — to sign in to the web
+// dashboard when one is up, or to export for a CLI in another window when one
+// is not.
 //
 // --no-print-human-token still means what it says: no banner anywhere.
 func tokenBannerInTUI(p *serveParams) bool {
-	return p.TUI && dashboardRequested(p) && !p.NoPrintHumanToken
+	return p.TUI && !p.NoPrintHumanToken
 }
 
 func runServe(p *serveParams) error {
+	// Startup narration target. Under --tui this is io.Discard: the console
+	// owns the terminal, so every fmt.Fprintf below goes nowhere while slog
+	// still records the same events in output.log.
+	out := serveStdout(p)
+
 	if err := configureServeSocketEnv(p.Socket); err != nil {
 		return err
 	}
@@ -280,7 +297,7 @@ func runServe(p *serveParams) error {
 	// first surfaces their progress (and which one failed) on the operator's
 	// terminal. CLI commands install no reporter, so they migrate silently —
 	// this output is agentd-only.
-	if err := openDatabaseReportingMigrations(); err != nil {
+	if err := openDatabaseReportingMigrations(out); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	// The Take2 runtime keeps one checkpoint schema and no migrators: a schema
@@ -366,7 +383,7 @@ func runServe(p *serveParams) error {
 			// accidental 0.0.0.0 (no auth in front) can't hide in a quiet log line.
 			slog.Warn("dashboard listener bound NON-LOOPBACK — exposed on the network; put your own auth (reverse proxy / VPN) in front",
 				"bind", dashBind, "bind_source", dashBindSrc, "port", dashPort, "port_source", dashPortSrc, "url", popupBaseURL)
-			fmt.Printf("  ⚠ dashboard bound to %s (non-loopback) — network-exposed; front it with your own auth\n", dashBind)
+			fmt.Fprintf(out, "  ⚠ dashboard bound to %s (non-loopback) — network-exposed; front it with your own auth\n", dashBind)
 		}
 	}
 
@@ -402,7 +419,7 @@ func runServe(p *serveParams) error {
 		} else if p.Wizard {
 			theme = "wizard"
 		}
-		autoLaunchDashboard(theme)
+		autoLaunchDashboard(theme, out)
 	}
 
 	// Optional network-exposed dashboard listener (LAN / mesh / tunnel),
@@ -418,7 +435,7 @@ func runServe(p *serveParams) error {
 		} else {
 			remoteSrv = rs
 			slog.Info("remote-access listener started", "bind", cfg.RemoteAccessBind())
-			fmt.Printf("  remote access (mTLS+passphrase): https://%s\n", cfg.RemoteAccessBind())
+			fmt.Fprintf(out, "  remote access (mTLS+passphrase): https://%s\n", cfg.RemoteAccessBind())
 		}
 	}
 
@@ -452,7 +469,7 @@ func runServe(p *serveParams) error {
 	// (tier 1) overrides it here. Resolve then runs the one-time
 	// terminal detection now, at startup, so every later agent spawn
 	// opens a window with no fresh PATH / bundle / osascript lookups.
-	resolveTerminalPreference(p.Terminal)
+	resolveTerminalPreference(p.Terminal, out)
 
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.
@@ -586,10 +603,10 @@ func runServe(p *serveParams) error {
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
 	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", legacySockPaths, "popup", popupBaseURL)
-	fmt.Printf("tclaude agentd listening on %s\n", sockPath)
+	fmt.Fprintf(out, "tclaude agentd listening on %s\n", sockPath)
 	for _, legacy := range legacySockPaths {
 		if legacy != "" && filepath.Clean(legacy) != filepath.Clean(sockPath) {
-			fmt.Printf("  legacy compatibility socket: %s\n", legacy)
+			fmt.Fprintf(out, "  legacy compatibility socket: %s\n", legacy)
 		}
 	}
 	if popupBaseURL != "" {
@@ -597,12 +614,12 @@ func runServe(p *serveParams) error {
 		if !isLoopbackHost(dashboardBindHost) {
 			dashLoc = "bind " + dashboardBindHost
 		}
-		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
-		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
+		fmt.Fprintf(out, "  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
+		fmt.Fprintf(out, "  human approvals + access requests appear in the dashboard's Messages tab\n")
 	}
-	// With the console AND the web dashboard both up, the token moves into the
-	// console (see tokenBannerInTUI): the operator needs it to sign in to the
-	// browser, and the alt screen hides anything printed here.
+	// With a console running, the token always moves into it (see
+	// tokenBannerInTUI): stdout is discarded there, so this banner would go
+	// nowhere.
 	if !tokenBannerInTUI(p) {
 		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
 	}
@@ -750,37 +767,37 @@ func runServe(p *serveParams) error {
 // AlreadyCurrent) rather than staying silent, so the operator can always tell a
 // clean no-op apart from a migration that failed before reporting. It is set
 // only here, before the first Open(), so no CLI command ever inherits it.
-func openDatabaseReportingMigrations() error {
+func openDatabaseReportingMigrations(out io.Writer) error {
 	db.SetMigrationReporter(&db.MigrationReporter{
 		AlreadyCurrent: func(version, head int) {
 			if version > head {
 				// The DB schema was written by a NEWER tclaude than this
 				// binary: we applied nothing, and this older binary may not
 				// understand the newer schema. Flag it rather than reassure.
-				fmt.Printf("WARNING: database schema is v%d, newer than this binary (v%d); no migrations applied\n", version, head)
+				fmt.Fprintf(out, "WARNING: database schema is v%d, newer than this binary (v%d); no migrations applied\n", version, head)
 				slog.Warn("db: schema newer than this binary; no migrations applied", "db_version", version, "binary_version", head)
 				return
 			}
-			fmt.Printf("database schema already up to date (v%d); no migrations needed\n", version)
+			fmt.Fprintf(out, "database schema already up to date (v%d); no migrations needed\n", version)
 			slog.Info("db: schema already up to date; no migrations applied", "version", version)
 		},
 		Begin: func(from, to int) {
 			slog.Info("db: applying schema migrations", "from", from, "to", to)
-			fmt.Printf("migrating database schema v%d → v%d…\n", from, to)
+			fmt.Fprintf(out, "migrating database schema v%d → v%d…\n", from, to)
 		},
 		Applying: func(version int) {
 			// No trailing newline: reportApplied / reportFailed completes the line.
-			fmt.Printf("  applying migration v%d… ", version)
+			fmt.Fprintf(out, "  applying migration v%d… ", version)
 		},
 		Applied: func(_ int) {
-			fmt.Println("ok")
+			fmt.Fprintln(out, "ok")
 		},
 		Failed: func(version int, err error) {
-			fmt.Printf("FAILED: %v\n", err)
+			fmt.Fprintf(out, "FAILED: %v\n", err)
 			slog.Error("db: schema migration failed", "version", version, "error", err)
 		},
 		Done: func(to int) {
-			fmt.Printf("database schema up to date (v%d)\n", to)
+			fmt.Fprintf(out, "database schema up to date (v%d)\n", to)
 			slog.Info("db: schema migrations complete", "version", to)
 		},
 	})
@@ -834,7 +851,7 @@ func (q *quitter) signal() {
 // An unknown --terminal value is warned about, not fatal — auto-detect
 // still applies. A detection failure is logged but never aborts
 // startup; the daemon runs fine, agent shell windows just won't open.
-func resolveTerminalPreference(flagValue string) {
+func resolveTerminalPreference(flagValue string, out io.Writer) {
 	if flagValue != "" {
 		if id := terminal.CanonicalTerminalID(flagValue); id != "" {
 			terminal.SetPreferred(id)
@@ -848,7 +865,7 @@ func resolveTerminalPreference(flagValue string) {
 			"error", err)
 		return
 	}
-	fmt.Printf("selected terminal: %s/%s\n", runtime.GOOS, terminal.ResolvedTerminal())
+	fmt.Fprintf(out, "selected terminal: %s/%s\n", runtime.GOOS, terminal.ResolvedTerminal())
 }
 
 // resolveCloneCooldown resolves the clone cooldown — the minimum
