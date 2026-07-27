@@ -301,6 +301,8 @@ func runDarwinSeatbeltSmokeHelper(
 		binary,
 		phase0WriteDirs,
 		nil,
+		nil,
+		nil,
 		plan,
 		helperCommand,
 	)
