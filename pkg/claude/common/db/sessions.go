@@ -996,6 +996,28 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return nil
 	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	// Token counts change on every API response, but only the model's context
+	// window is part of the durable relaunch profile. Keep the common path to a
+	// single session-row update; a changed/unknown window falls through to the
+	// existing transactional update + profile projection below.
+	result, err := d.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ? AND context_window_size = ?`,
+		pct, tokensInput, tokensOutput, windowSize, sessionID, windowSize)
+	if err != nil {
+		return err
+	}
+	unchangedWindow, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if unchangedWindow > 0 {
+		return nil
+	}
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{}, `UPDATE sessions
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
