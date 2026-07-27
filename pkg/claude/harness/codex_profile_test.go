@@ -18,6 +18,7 @@ import (
 // networking and agentd remain available while the tclaude tmux server socket
 // directory is denied.
 func TestCodexAgentProfileContent(t *testing.T) {
+	t.Setenv("HOME", "/home/dev")
 	tmuxBase := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
@@ -72,6 +73,11 @@ func TestCodexAgentProfileContent(t *testing.T) {
 	network := parsed.Permissions[CodexAgentProfile].Network
 	if parsed.DefaultPermissions != CodexAgentProfile || !network.Enabled || network.UnixSockets[sock] != "allow" {
 		t.Fatalf("generated profile did not parse to the enforced socket policy: %+v", parsed)
+	}
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		if network.UnixSockets[floorSocket] != "allow" {
+			t.Fatalf("generated profile omitted agentd socket floor entry %q: %+v", floorSocket, network.UnixSockets)
+		}
 	}
 }
 

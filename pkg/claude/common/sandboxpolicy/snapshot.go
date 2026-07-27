@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-// SnapshotVersion 7 removes break_glass_filesystem, the one sanctioned
+// SnapshotVersion 8 adds the network and Unix-socket access axes plus their
+// persisted access notices. Version 7 removes break_glass_filesystem, the one sanctioned
 // exception to the protected-root wall (TCL-791). Version 6 added
 // ProfilesOmitted, a lifecycle-significant launch contract that prevents
 // ambient sandbox-profile tiers from reappearing on resume/reincarnation; that
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 7
+const SnapshotVersion = 8
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -91,8 +92,23 @@ func RequireContained(parent, child Snapshot) error {
 			return fmt.Errorf("environment variable %q is new or changed from the parent snapshot", entry.Name)
 		}
 	}
-	if !networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
+	if parent.Effective.Network == nil && child.Effective.Network == nil &&
+		!networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
 		return fmt.Errorf("network access %q is not contained by parent access %q", child.Effective.NetworkAccess, parent.Effective.NetworkAccess)
+	}
+	parentAxes, err := deriveEffectiveAccessAxes(parent.Effective)
+	if err != nil {
+		return fmt.Errorf("parent access axes: %w", err)
+	}
+	childAxes, err := deriveEffectiveAccessAxes(child.Effective)
+	if err != nil {
+		return fmt.Errorf("child access axes: %w", err)
+	}
+	if !networkRulesContained(parentAxes.Network, childAxes.Network) {
+		return fmt.Errorf("network rules are not contained by the parent snapshot")
+	}
+	if !unixSocketRulesContained(parentAxes.UnixSockets, childAxes.UnixSockets) {
+		return fmt.Errorf("unix-socket rules are not contained by the parent snapshot")
 	}
 	return nil
 }
@@ -108,6 +124,156 @@ func networkAccessContained(parent, child NetworkAccess) bool {
 	return parent == child
 }
 
+func deriveEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error) {
+	return DeriveAccessAxes(Profile{
+		Name:          "effective-sandbox-access",
+		NetworkAccess: effective.NetworkAccess,
+		Network:       effective.Network,
+		UnixSockets:   effective.UnixSockets,
+	})
+}
+
+// EffectiveAccessAxes derives the concrete access intent from a resolved
+// profile while preserving the legacy network_access compatibility table.
+func EffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error) {
+	return deriveEffectiveAccessAxes(effective)
+}
+
+// PlannedEffectiveAccessAxes applies persisted widening notices to authored
+// intent at the final renderer seam. A renderer never guesses capability:
+// without an explicit degradation record, a list remains a list and the
+// reserved/unimplemented IR continues to refuse.
+func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error) {
+	axes, err := deriveEffectiveAccessAxes(effective)
+	if err != nil {
+		return ResolvedAxes{}, err
+	}
+	for _, notice := range effective.AccessNotices {
+		if notice.Class != AccessNoticeClassDegradation {
+			continue
+		}
+		switch notice.Axis {
+		case "network":
+			if axes.Network.Mode != AccessModeList {
+				continue
+			}
+			switch notice.Reason {
+			case "no_mechanism", "selector_unsupported", "platform_path_blind":
+				axes.Network = NetworkRules{Mode: AccessModeOpen}
+			case "ports_unsupported":
+				if len(notice.Entries) == 0 {
+					for i := range axes.Network.Allow {
+						axes.Network.Allow[i].Ports = nil
+					}
+				} else {
+					for _, i := range notice.Entries {
+						if i >= 0 && i < len(axes.Network.Allow) {
+							axes.Network.Allow[i].Ports = nil
+						}
+					}
+				}
+			}
+		case "unix_sockets":
+			if axes.UnixSockets.Mode != AccessModeList {
+				continue
+			}
+			switch notice.Reason {
+			case "no_mechanism", "platform_path_blind":
+				axes.UnixSockets = UnixSocketRules{Mode: AccessModeOpen}
+			}
+		}
+	}
+	return axes, nil
+}
+
+func networkRulesContained(parent, child NetworkRules) bool {
+	if child.Mode == AccessModeUnset {
+		return parent.Mode == AccessModeUnset || parent.Mode == AccessModeOpen
+	}
+	if parent.Mode == AccessModeUnset {
+		return child.Mode == AccessModeClosed || child.Mode == AccessModeList
+	}
+	if child.Mode == AccessModeClosed {
+		return true
+	}
+	// An authored empty allow list is semantically as narrow as closed. It is
+	// kept as list in the model so the composition warning remains truthful,
+	// but it never adds authority beneath a closed parent.
+	if child.Mode == AccessModeList && len(child.Allow) == 0 {
+		return true
+	}
+	if parent.Mode == AccessModeOpen {
+		return true
+	}
+	if parent.Mode == AccessModeClosed || child.Mode == AccessModeOpen {
+		return false
+	}
+	if parent.Mode != AccessModeList || child.Mode != AccessModeList {
+		return false
+	}
+	for _, entry := range child.Allow {
+		covered := false
+		for _, allowed := range parent.Allow {
+			selector, ok := intersectNetworkSelector(allowed, entry)
+			if !ok {
+				continue
+			}
+			ports, ok := intersectPorts(allowed.Ports, entry.Ports)
+			if !ok {
+				continue
+			}
+			selector.Ports = ports
+			if networkEntryKey(selector) != networkEntryKey(entry) {
+				continue
+			}
+			covered = true
+			break
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+func unixSocketRulesContained(parent, child UnixSocketRules) bool {
+	if child.Mode == AccessModeUnset {
+		return parent.Mode == AccessModeUnset || parent.Mode == AccessModeOpen
+	}
+	if parent.Mode == AccessModeUnset {
+		return child.Mode == AccessModeClosed || child.Mode == AccessModeList
+	}
+	if child.Mode == AccessModeClosed {
+		return true
+	}
+	if child.Mode == AccessModeList && len(child.Allow) == 0 {
+		return true
+	}
+	if parent.Mode == AccessModeOpen {
+		return true
+	}
+	if parent.Mode == AccessModeClosed || child.Mode == AccessModeOpen {
+		return false
+	}
+	if parent.Mode != AccessModeList || child.Mode != AccessModeList {
+		return false
+	}
+	for _, entry := range child.Allow {
+		covered := false
+		for _, allowed := range parent.Allow {
+			intersection, ok := intersectSocketSelector(allowed, entry)
+			if ok && intersection == entry {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
 // HasCapabilities reports whether a resolved snapshot adds inherited host
 // filesystem, literal environment, or explicit Internet authority. Deny and
 // offline entries are restrictions, and agent-owned directories are fresh
@@ -119,7 +285,13 @@ func HasCapabilities(snapshot Snapshot) bool {
 		}
 	}
 	return len(snapshot.Effective.Environment) > 0 ||
-		snapshot.Effective.NetworkAccess == NetworkAccessInternet
+		snapshot.Effective.NetworkAccess == NetworkAccessInternet ||
+		(snapshot.Effective.Network != nil &&
+			(snapshot.Effective.Network.Mode == AccessModeOpen ||
+				(snapshot.Effective.Network.Mode == AccessModeList && len(snapshot.Effective.Network.Allow) > 0))) ||
+		(snapshot.Effective.UnixSockets != nil &&
+			(snapshot.Effective.UnixSockets.Mode == AccessModeOpen ||
+				(snapshot.Effective.UnixSockets.Mode == AccessModeList && len(snapshot.Effective.UnixSockets.Allow) > 0)))
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
@@ -177,9 +349,13 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.MountAliases = nil
 	effective.AgentDirectories = nil
 	effective.NetworkAccess = NetworkAccessInherit
+	effective.Network = nil
+	effective.UnixSockets = nil
+	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
+	effective.Provenance.UnixSockets = nil
 	out := NewSnapshot(effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	return out
@@ -202,7 +378,10 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		len(in.Effective.MountAliases) > 0 ||
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
-		in.Effective.NetworkAccess != NetworkAccessInherit) {
+		in.Effective.NetworkAccess != NetworkAccessInherit ||
+		in.Effective.Network != nil ||
+		in.Effective.UnixSockets != nil ||
+		len(in.Effective.AccessNotices) > 0) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
@@ -210,6 +389,8 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		Filesystem:    in.Effective.Filesystem,
 		Environment:   in.Effective.Environment,
 		NetworkAccess: in.Effective.NetworkAccess,
+		Network:       in.Effective.Network,
+		UnixSockets:   in.Effective.UnixSockets,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -249,6 +430,12 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if normalized.NetworkAccess != in.Effective.NetworkAccess {
 		return Snapshot{}, fmt.Errorf("effective sandbox network access changed since resolution")
 	}
+	if !reflect.DeepEqual(normalized.Network, in.Effective.Network) {
+		return Snapshot{}, fmt.Errorf("effective sandbox network rules changed since resolution")
+	}
+	if !reflect.DeepEqual(normalized.UnixSockets, in.Effective.UnixSockets) {
+		return Snapshot{}, fmt.Errorf("effective sandbox Unix-socket rules changed since resolution")
+	}
 	agentDirectories, err := normalizeAgentDirectories(in.Effective.AgentDirectories, nil)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox agent directories: %w", err)
@@ -286,7 +473,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// snapshots instead would strand live agents on upgrade for no security
 	// gain, and there is no operator present at decode time to receive an error
 	// — the v163 migration's durable disclosure is what informs them.
-	case 1, 2, 3, 4, 5, 6, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -328,12 +515,16 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		Environment:      append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories: append([]string{}, in.AgentDirectories...),
 		NetworkAccess:    in.NetworkAccess,
+		Network:          cloneNetworkRulesPtr(in.Network),
+		UnixSockets:      cloneUnixSocketRulesPtr(in.UnixSockets),
+		AccessNotices:    cloneAccessNotices(in.AccessNotices),
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
+			UnixSockets:      nil,
 		},
 	}
 	for path, sources := range in.Provenance.Filesystem {
@@ -349,9 +540,26 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		source := cloneProfileSource(*in.Provenance.Network)
 		out.Provenance.Network = &source
 	}
+	if in.Provenance.UnixSockets != nil {
+		source := cloneProfileSource(*in.Provenance.UnixSockets)
+		out.Provenance.UnixSockets = &source
+	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
+	return out
+}
+
+func cloneAccessNotices(in []AccessNotice) []AccessNotice {
+	if in == nil {
+		return nil
+	}
+	out := make([]AccessNotice, len(in))
+	for i, notice := range in {
+		out[i] = notice
+		out[i].Entries = append([]int(nil), notice.Entries...)
+		out[i].Tiers = append([]string(nil), notice.Tiers...)
+	}
 	return out
 }
 

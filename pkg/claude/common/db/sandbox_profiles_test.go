@@ -92,6 +92,47 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	assert.Nil(t, missing)
 }
 
+func TestSandboxProfileAccessAxesRoundTripWithoutMaterializingAbsentFields(t *testing.T) {
+	setupTestDB(t)
+	legacyID, err := CreateSandboxProfile(&SandboxProfile{
+		Name: "legacy", NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	})
+	require.NoError(t, err)
+	scopedID, err := CreateSandboxProfile(&SandboxProfile{
+		Name: "scoped",
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "Example.COM", IncludeSubdomains: true, Ports: []int{443, 80, 443},
+			}},
+		},
+		UnixSockets: &sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{{
+				Path: filepath.Join(os.Getenv("HOME"), "service.sock"),
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	legacy, err := GetSandboxProfileByID(legacyID)
+	require.NoError(t, err)
+	assert.Nil(t, legacy.Network)
+	assert.Nil(t, legacy.UnixSockets)
+	assert.Equal(t, sandboxpolicy.NetworkAccessInternet, legacy.NetworkAccess)
+
+	scoped, err := GetSandboxProfileByID(scopedID)
+	require.NoError(t, err)
+	require.NotNil(t, scoped.Network)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Domain: "example.com", IncludeSubdomains: true, Ports: []int{80, 443},
+	}}, scoped.Network.Allow)
+	require.NotNil(t, scoped.UnixSockets)
+	assert.Equal(t, []sandboxpolicy.SocketAllowEntry{{
+		Path: filepath.Join(os.Getenv("HOME"), "service.sock"),
+	}}, scoped.UnixSockets.Allow)
+}
+
 func TestUpdateSandboxProfileIfUnchanged(t *testing.T) {
 	setupTestDB(t)
 	id, err := CreateSandboxProfile(&SandboxProfile{

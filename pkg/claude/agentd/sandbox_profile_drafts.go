@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Sandbox-profile scribe drafts are deliberately ephemeral daemon state. They
@@ -68,6 +70,11 @@ func handleSandboxProfileDraftSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 		return
 	}
+	accessNotices, err := db.SandboxProfileCompositionNotices(p)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
 	body.Profile = sandboxProfileToJSON(p, false)
 
 	sandboxProfileDraftMu.Lock()
@@ -94,6 +101,7 @@ func handleSandboxProfileDraftSubmit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted": true,
 		"message":  "draft validated and handed to the dashboard; it has not been saved",
+		"notices":  accessNotices,
 	})
 }
 

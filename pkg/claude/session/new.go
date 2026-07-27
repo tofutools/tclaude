@@ -553,7 +553,9 @@ func runNew(params *NewParams) error {
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !outerLayer {
+	hasNewAccessAxes := launchSandbox != nil &&
+		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil)
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !hasNewAccessAxes && !outerLayer {
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {
@@ -570,7 +572,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
 		}
 	}
-	if outerLayer {
+	if outerLayer && !hasNewAccessAxes {
 		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: networkAccess}
 		if launchSandbox != nil {
 			effective = launchSandbox.Effective
@@ -1073,6 +1075,8 @@ func runNew(params *NewParams) error {
 		if bwrapCapabilityErr == nil && !stacked {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
 		}
+	}
+	if outerLayer {
 		if h.Name == harness.OpenCodeName {
 			switch os.Getenv(clcommon.OpenCodeStateIsolationEnv) {
 			case "private":
@@ -1086,6 +1090,41 @@ func runNew(params *NewParams) error {
 				State:  "off",
 				Source: "stacked requested; live nested engine round-trip pending",
 			}
+		}
+	}
+	if launchSandbox != nil &&
+		(launchSandbox.Effective.Network != nil || launchSandbox.Effective.UnixSockets != nil) {
+		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
+		if axesErr != nil {
+			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
+		}
+		caps, capsErr := harness.ResolveAccessEnforcement(
+			h, sandboxImplementation, axes, launchOSSandbox, effectiveSandboxMode,
+		)
+		if capsErr != nil {
+			return capsErr
+		}
+		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
+		if planErr != nil {
+			return planErr
+		}
+		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			launchSandbox.Effective.AccessNotices, notices...,
+		)
+		if effectiveSandbox != nil {
+			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+				effectiveSandbox.Effective.AccessNotices, notices...,
+			)
+		}
+		if outerLayer {
+			if err := ValidateTclaudeLayerNetwork(h, launchSandbox.Effective); err != nil {
+				return err
+			}
+		}
+	}
+	if launchSandbox != nil {
+		for _, notice := range launchSandbox.Effective.AccessNotices {
+			fmt.Fprintf(os.Stdout, "Warning: %s\n", notice.Detail)
 		}
 	}
 

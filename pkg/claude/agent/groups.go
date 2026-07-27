@@ -956,12 +956,13 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 		Group   string `json:"group"`
 		Action  string `json:"action"`
 		Members []struct {
-			AgentID string `json:"agent_id,omitempty"`
-			ConvID  string `json:"conv_id"`
-			Title   string `json:"title,omitempty"`
-			Action  string `json:"action"`
-			Detail  string `json:"detail,omitempty"`
-			TmuxSes string `json:"tmux_session,omitempty"`
+			AgentID  string   `json:"agent_id,omitempty"`
+			ConvID   string   `json:"conv_id"`
+			Title    string   `json:"title,omitempty"`
+			Action   string   `json:"action"`
+			Detail   string   `json:"detail,omitempty"`
+			TmuxSes  string   `json:"tmux_session,omitempty"`
+			Warnings []string `json:"warnings,omitempty"`
 		} `json:"members"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
@@ -992,6 +993,12 @@ func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer
 	}
 	fmt.Fprintf(stdout, "Group %q — %s:\n", resp.Group, resp.Action)
 	fmt.Fprintln(stdout, tbl.Render())
+	for _, member := range resp.Members {
+		for _, warning := range member.Warnings {
+			fmt.Fprintf(stdout, "Warning (%s): %s\n",
+				shortAgentID(member.AgentID, member.ConvID), warning)
+		}
+	}
 	return rcOK
 }
 

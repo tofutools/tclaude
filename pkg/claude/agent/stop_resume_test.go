@@ -42,7 +42,7 @@ func TestRunResumePassesAskHumanToDaemon(t *testing.T) {
 		assert.Equal(t, "/v1/agent/worker/resume", path)
 		assert.Nil(t, in)
 		gotOpts = opts
-		return json.Unmarshal([]byte(`{"conv_id":"worker-conv","action":"resumed"}`), out)
+		return json.Unmarshal([]byte(`{"conv_id":"worker-conv","action":"resumed","warnings":["persisted access warning"]}`), out)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -50,6 +50,8 @@ func TestRunResumePassesAskHumanToDaemon(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
 	assert.Contains(t, stdout.String(), "worker-c: resumed")
+	assert.Contains(t, stdout.String(), "Warning: persisted access warning")
+	assert.Empty(t, stderr.String())
 	assert.NotContains(t, stdout.String(), "Waiting up to",
 		"resume must not claim an approval request exists before the daemon actually denies")
 }
@@ -71,7 +73,7 @@ func TestRunGroupsResumePassesAskHumanWithoutCallerProof(t *testing.T) {
 		assert.Equal(t, "/v1/groups/team/resume", path)
 		assert.Nil(t, in)
 		gotOpts = opts
-		return json.Unmarshal([]byte(`{"group":"team","action":"resume","members":[{"conv_id":"worker-conv","action":"resumed"}]}`), out)
+		return json.Unmarshal([]byte(`{"group":"team","action":"resume","members":[{"conv_id":"worker-conv","action":"resumed","warnings":["persisted access warning"]}]}`), out)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -79,5 +81,7 @@ func TestRunGroupsResumePassesAskHumanWithoutCallerProof(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
 	assert.Contains(t, stdout.String(), "resumed")
+	assert.Contains(t, stdout.String(), "Warning (worker-c): persisted access warning")
+	assert.Empty(t, stderr.String())
 	assert.NotContains(t, stdout.String(), "Waiting up to")
 }

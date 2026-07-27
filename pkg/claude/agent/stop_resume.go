@@ -165,11 +165,12 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		path += "?recreate=1"
 	}
 	var resp struct {
-		ConvID        string `json:"conv_id"`
-		CallerConv    string `json:"caller_conv,omitempty"`
-		CallerAgentID string `json:"caller_agent_id,omitempty"`
-		Action        string `json:"action"`
-		Detail        string `json:"detail,omitempty"`
+		ConvID        string   `json:"conv_id"`
+		CallerConv    string   `json:"caller_conv,omitempty"`
+		CallerAgentID string   `json:"caller_agent_id,omitempty"`
+		Action        string   `json:"action"`
+		Detail        string   `json:"detail,omitempty"`
+		Warnings      []string `json:"warnings,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -178,6 +179,9 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%s: %s\n", short(resp.ConvID), resp.Action)
 	if resp.Detail != "" {
 		fmt.Fprintf(stdout, "  detail: %s\n", resp.Detail)
+	}
+	for _, warning := range resp.Warnings {
+		fmt.Fprintf(stdout, "  Warning: %s\n", warning)
 	}
 	// The recorded launch dir was deleted; the daemon did nothing rather than
 	// wedge the agent at startup. Point the human at the recreate opt-in.

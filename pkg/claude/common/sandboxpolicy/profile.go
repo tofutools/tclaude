@@ -79,6 +79,8 @@ type Profile struct {
 	Environment      []EnvironmentEntry `json:"environment,omitempty"`
 	AgentDirectories []string           `json:"agent_directories,omitempty"`
 	NetworkAccess    NetworkAccess      `json:"network_access,omitempty"`
+	Network          *NetworkRules      `json:"network,omitempty"`
+	UnixSockets      *UnixSocketRules   `json:"unix_sockets,omitempty"`
 	Includes         []string           `json:"includes,omitempty"`
 }
 
@@ -153,9 +155,25 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	network, err := normalizeNetworkRules(in.Network)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	if network != nil {
+		if err := validateLegacyNetworkAgreement(networkAccess, network.Mode); err != nil {
+			return Profile{}, nil, err
+		}
+	}
+	unixSockets, socketMissing, err := normalizeUnixSocketRules(in.UnixSockets, allowMissing)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	missing = append(missing, socketMissing...)
+	sort.Strings(missing)
 	return Profile{
 		Name: name, Filesystem: filesystem,
-		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes,
+		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
+		Network: network, UnixSockets: unixSockets, Includes: includes,
 	}, missing, nil
 }
 

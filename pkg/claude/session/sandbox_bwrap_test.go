@@ -753,10 +753,12 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	socket := agentipc.CanonicalSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
-	listener, err := net.Listen("unix", socket)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
 
 	stateRoot := filepath.Join(home, ".codex")
 	workspace := filepath.Join(home, "work")
@@ -803,6 +805,11 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	assert.Less(t, stateRepairs[1], homeRemount)
 	assert.Less(t, socketBinds[1], homeRemount,
 		"the child socket bind must land before its hidden parent becomes read-only")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		binds := indicesOfBwrapTriplet(got, "--ro-bind", floorSocket)
+		require.Lenf(t, binds, 2, "every live agentd socket spelling must survive the ancestor deny: %s", floorSocket)
+		assert.Less(t, binds[1], rootRemount)
+	}
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)

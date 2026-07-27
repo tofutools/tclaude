@@ -14,6 +14,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -27,6 +28,8 @@ type sandboxProfileJSON struct {
 	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
 	AgentDirectories []string                         `json:"agent_directories,omitempty"`
 	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Network          *sandboxpolicy.NetworkRules      `json:"network,omitempty"`
+	UnixSockets      *sandboxpolicy.UnixSocketRules   `json:"unix_sockets,omitempty"`
 	Includes         []string                         `json:"includes,omitempty"`
 	CreatedAt        string                           `json:"created_at,omitempty"`
 	UpdatedAt        string                           `json:"updated_at,omitempty"`
@@ -82,21 +85,22 @@ func runSandboxProfilesLs(p *sandboxProfilesLsParams, stdout, stderr io.Writer) 
 		fmt.Fprintln(stdout, "(no sandbox profiles)")
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %10s  %8s  %8s\n", "NAME", "FILESYSTEM", "ENVIRONMENT", "AGENT DIRS", "INCLUDES", "NETWORK")
-	fmt.Fprintln(stdout, strings.Repeat("─", 83))
+	fmt.Fprintf(stdout, "%-24s  %10s  %11s  %10s  %8s  %10s  %10s\n",
+		"NAME", "FILESYSTEM", "ENVIRONMENT", "AGENT DIRS", "INCLUDES", "NETWORK", "SOCKETS")
+	fmt.Fprintln(stdout, strings.Repeat("─", 97))
 	for _, profile := range profiles {
-		network := string(profile.NetworkAccess)
-		if network == "" {
-			network = "inherit"
-		}
-		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %10d  %8d  %8s\n", truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment), len(profile.AgentDirectories), len(profile.Includes), network)
+		network, sockets := sandboxProfileAxisLabels(profile)
+		fmt.Fprintf(stdout, "%-24s  %10d  %11d  %10d  %8d  %10s  %10s\n",
+			truncate(profile.Name, 24), len(profile.Filesystem), len(profile.Environment),
+			len(profile.AgentDirectories), len(profile.Includes), network, sockets)
 	}
 	return rcOK
 }
 
 type sandboxProfilesShowParams struct {
-	Name string `pos:"true" help:"Sandbox profile name"`
-	JSON bool   `long:"json" help:"Emit the stable profile JSON instead of the human view"`
+	Name string   `pos:"true" help:"Sandbox profile name"`
+	JSON bool     `long:"json" help:"Emit the stable profile JSON instead of the human view"`
+	For  []string `long:"for" optional:"true" help:"Predict enforcement for implementation[/harness[/platform]]; repeat to compare targets. 'all' is not supported."`
 }
 
 func sandboxProfilesShowCmd() *cobra.Command {
@@ -116,6 +120,23 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	var enforcement *sandboxProfileEnforcementJSON
+	if len(p.For) > 0 {
+		query := url.Values{}
+		for _, target := range p.For {
+			query.Add("for", target)
+		}
+		var predicted sandboxProfileEnforcementJSON
+		if err := DaemonRequest(http.MethodGet,
+			"/v1/sandbox-profiles/"+url.PathEscape(name)+"/enforcement?"+query.Encode(),
+			nil, &predicted, DaemonOpts{}); err != nil {
+			return printSandboxProfileDaemonError(stderr, err)
+		}
+		enforcement = &predicted
+		if p.JSON {
+			return writeSandboxProfileJSON(stdout, stderr, predicted)
+		}
+	}
 	var profile sandboxProfileJSON
 	if err := DaemonRequest(http.MethodGet, "/v1/sandbox-profiles/"+url.PathEscape(name), nil, &profile, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
@@ -124,16 +145,63 @@ func runSandboxProfilesShow(p *sandboxProfilesShowParams, stdout, stderr io.Writ
 		return writeSandboxProfileJSON(stdout, stderr, profile)
 	}
 	printSandboxProfileHuman(stdout, profile)
+	if enforcement != nil {
+		printSandboxProfileEnforcement(stdout, *enforcement)
+	}
 	return rcOK
+}
+
+type sandboxProfileEnforcementJSON struct {
+	Profile string                                `json:"profile"`
+	Targets []sandboxProfileEnforcementTargetJSON `json:"targets"`
+}
+
+type sandboxProfileEnforcementTargetJSON struct {
+	Implementation string                      `json:"implementation"`
+	Harness        string                      `json:"harness"`
+	Platform       string                      `json:"platform"`
+	Predicted      bool                        `json:"predicted"`
+	Axes           harness.PredictedAccessAxes `json:"axes"`
+	Caveat         string                      `json:"caveat,omitempty"`
+}
+
+func printSandboxProfileEnforcement(w io.Writer, result sandboxProfileEnforcementJSON) {
+	for _, target := range result.Targets {
+		fmt.Fprintf(w, "  enforcement for %s/%s/%s:\n",
+			target.Implementation, target.Harness, target.Platform)
+		printPredictedAccessAxis(w, "network", target.Axes.Network)
+		printPredictedAccessAxis(w, "Unix sockets", target.Axes.UnixSockets)
+		if target.Caveat != "" {
+			fmt.Fprintf(w, "    %s\n", target.Caveat)
+		}
+	}
+}
+
+func printPredictedAccessAxis(w io.Writer, label string, axis harness.PredictedAccessAxis) {
+	outcome := map[string]string{
+		harness.AccessPredictionEnforced:        "ENFORCED",
+		harness.AccessPredictionEnforcedPartial: "ENFORCED (PARTIAL)",
+		harness.AccessPredictionNotEnforced:     "NOT ENFORCED",
+		harness.AccessPredictionRefused:         "REFUSED at launch",
+	}[axis.Outcome]
+	if outcome == "" {
+		outcome = strings.ToUpper(axis.Outcome)
+	}
+	fmt.Fprintf(w, "    %-13s %s — %s: %s\n",
+		label+":", axis.Tier, outcome, axis.Detail)
 }
 
 func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 	fmt.Fprintf(w, "Sandbox profile: %s\n", profile.Name)
-	network := string(profile.NetworkAccess)
-	if network == "" {
-		network = "inherit"
-	}
+	network, sockets := sandboxProfileAxisLabels(profile)
 	fmt.Fprintf(w, "  network: %s\n", network)
+	fmt.Fprintf(w, "  Unix sockets: %s\n", sockets)
+	if profile.Network != nil && profile.Network.Mode == sandboxpolicy.AccessModeList {
+		printSandboxNetworkAllow(w, profile.Network.Allow)
+	}
+	if profile.UnixSockets != nil && profile.UnixSockets.Mode == sandboxpolicy.AccessModeList {
+		printSandboxSocketAllow(w, profile.UnixSockets.Allow)
+	}
 	if len(profile.Includes) > 0 {
 		// Order matters: later includes — and then this profile's own entries —
 		// override same-path/same-name values from earlier ones.
@@ -171,6 +239,71 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 	}
 	if profile.UpdatedAt != "" {
 		fmt.Fprintf(w, "  updated: %s\n", profile.UpdatedAt)
+	}
+}
+
+func sandboxProfileAxisLabels(profile sandboxProfileJSON) (string, string) {
+	axes, err := sandboxpolicy.DeriveAccessAxes(sandboxpolicy.Profile{
+		NetworkAccess: profile.NetworkAccess,
+		Network:       profile.Network,
+		UnixSockets:   profile.UnixSockets,
+	})
+	if err != nil {
+		return "invalid", "invalid"
+	}
+	network := string(axes.Network.Mode)
+	if network == "" {
+		network = "inherit"
+	}
+	sockets := string(axes.UnixSockets.Mode)
+	if sockets == "" {
+		sockets = "inherit"
+	}
+	return network, sockets
+}
+
+func printSandboxNetworkAllow(w io.Writer, allow []sandboxpolicy.NetworkAllowEntry) {
+	if len(allow) == 0 {
+		fmt.Fprintln(w, "    allow: (empty)")
+		return
+	}
+	fmt.Fprintln(w, "    allow:")
+	for _, entry := range allow {
+		selector := entry.Host
+		switch {
+		case entry.Domain != "":
+			selector = entry.Domain
+			if entry.IncludeSubdomains {
+				selector = "*." + selector
+			}
+		case entry.CIDR != "":
+			selector = entry.CIDR
+		case entry.Loopback:
+			selector = "loopback"
+		}
+		if len(entry.Ports) > 0 {
+			ports := make([]string, len(entry.Ports))
+			for i, port := range entry.Ports {
+				ports[i] = fmt.Sprint(port)
+			}
+			selector += ":" + strings.Join(ports, ",")
+		}
+		fmt.Fprintf(w, "      %s\n", selector)
+	}
+}
+
+func printSandboxSocketAllow(w io.Writer, allow []sandboxpolicy.SocketAllowEntry) {
+	if len(allow) == 0 {
+		fmt.Fprintln(w, "    allow: (empty)")
+		return
+	}
+	fmt.Fprintln(w, "    allow:")
+	for _, entry := range allow {
+		value := entry.Path
+		if value == "" {
+			value = entry.PathGlob
+		}
+		fmt.Fprintf(w, "      %s\n", value)
 	}
 }
 
@@ -213,12 +346,16 @@ func runSandboxProfilesDraft(p *sandboxProfilesDraftParams, stdin io.Reader, std
 		Profile json.RawMessage `json:"profile"`
 	}{Profile: profile}
 	var resp struct {
-		Message string `json:"message"`
+		Message       string                       `json:"message"`
+		AccessNotices []sandboxpolicy.AccessNotice `json:"notices,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/sandbox-profile-drafts/"+url.PathEscape(token), body, &resp, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
 	}
 	fmt.Fprintln(stdout, "Draft validated and sent to the dashboard. It has not been saved; the human must preview and explicitly save it.")
+	for _, notice := range resp.AccessNotices {
+		fmt.Fprintln(stderr, "Warning: "+notice.Detail)
+	}
 	return rcOK
 }
 
@@ -240,13 +377,15 @@ func runSandboxProfilesCreate(p *sandboxProfilesFileParams, stdin io.Reader, std
 		return rc
 	}
 	var resp struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID            int64                        `json:"id"`
+		Name          string                       `json:"name"`
+		AccessNotices []sandboxpolicy.AccessNotice `json:"notices,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPost, "/v1/sandbox-profiles", profile, &resp, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
 	}
 	fmt.Fprintf(stdout, "Created sandbox profile %q (#%d)\n", resp.Name, resp.ID)
+	echoSandboxAccessNotices(stdout, resp.AccessNotices)
 	return rcOK
 }
 
@@ -278,8 +417,9 @@ func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdou
 		return rc
 	}
 	var resp struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID            int64                        `json:"id"`
+		Name          string                       `json:"name"`
+		AccessNotices []sandboxpolicy.AccessNotice `json:"notices,omitempty"`
 	}
 	if err := DaemonRequest(http.MethodPatch, "/v1/sandbox-profiles/"+url.PathEscape(name), profile, &resp, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
@@ -289,6 +429,7 @@ func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdou
 	} else {
 		fmt.Fprintf(stdout, "Updated sandbox profile %q → renamed to %q\n", name, resp.Name)
 	}
+	echoSandboxAccessNotices(stdout, resp.AccessNotices)
 	return rcOK
 }
 
@@ -597,6 +738,9 @@ func runSandboxProfilesImport(p *sandboxProfilesImportParams, stdin io.Reader, s
 		return printSandboxProfileDaemonError(stderr, err)
 	}
 	if p.JSON {
+		for _, warning := range resp.Warnings {
+			fmt.Fprintln(stderr, "Warning: "+warning)
+		}
 		return writeSandboxProfileJSON(stdout, stderr, resp)
 	}
 	fmt.Fprintf(stdout, "Imported %d sandbox profile(s)", len(resp.Imported))
@@ -608,6 +752,12 @@ func runSandboxProfilesImport(p *sandboxProfilesImportParams, stdin io.Reader, s
 		fmt.Fprintf(stdout, "Warning: %s\n", warning)
 	}
 	return rcOK
+}
+
+func echoSandboxAccessNotices(stdout io.Writer, notices []sandboxpolicy.AccessNotice) {
+	for _, notice := range notices {
+		fmt.Fprintln(stdout, "Warning: "+notice.Detail)
+	}
 }
 
 // loadSandboxProfileBody reads a profile document and forwards it VERBATIM.

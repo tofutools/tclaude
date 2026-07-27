@@ -210,9 +210,21 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	if profileName == "" {
 		return "", fmt.Errorf("codex permission profile name is required")
 	}
-	if err := validateCodexProfilePath("agentd socket path", socketPath); err != nil {
-		return "", err
+	socketPaths := append([]string{socketPath}, agentipc.LegacySocketPaths()...)
+	seenSockets := make(map[string]struct{}, len(socketPaths))
+	normalizedSocketPaths := make([]string, 0, len(socketPaths))
+	for _, path := range socketPaths {
+		path = filepath.Clean(path)
+		if _, exists := seenSockets[path]; exists {
+			continue
+		}
+		if err := validateCodexProfilePath("agentd socket path", path); err != nil {
+			return "", err
+		}
+		seenSockets[path] = struct{}{}
+		normalizedSocketPaths = append(normalizedSocketPaths, path)
 	}
+	socketPaths = normalizedSocketPaths
 	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
 		return "", err
 	}
@@ -318,7 +330,9 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
 	fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
-	fmt.Fprintf(&b, "%q = \"read\"\n", socketPath)
+	for _, path := range socketPaths {
+		fmt.Fprintf(&b, "%q = \"read\"\n", path)
+	}
 	if len(grantPaths) > 0 {
 		for _, dir := range grantPaths {
 			fmt.Fprintf(&b, "%q = %q\n", dir, grants[dir])
@@ -330,7 +344,9 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	fmt.Fprintf(&b, "[permissions.%s.network]\n", p)
 	fmt.Fprintf(&b, "enabled = %t\n\n", networkAccess != sandboxpolicy.NetworkAccessNone || useOfflineProxy)
 	fmt.Fprintf(&b, "[permissions.%s.network.unix_sockets]\n", p)
-	fmt.Fprintf(&b, "%q = \"allow\"\n", socketPath)
+	for _, path := range socketPaths {
+		fmt.Fprintf(&b, "%q = \"allow\"\n", path)
+	}
 	return b.String(), nil
 }
 

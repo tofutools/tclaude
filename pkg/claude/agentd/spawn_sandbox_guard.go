@@ -9,7 +9,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+var resolveTclaudeLayerAccessVerdict = func(
+	harnessName string,
+	posture sandboxpolicy.NetworkPosture,
+) (harness.LaunchOSSandbox, error) {
+	if session.TclaudeLayerUsesServerBoundary(harnessName) {
+		_, verdict, err := session.ResolveTclaudeLayerServer(posture)
+		return verdict, err
+	}
+	_, verdict, err := session.ResolveTclaudeLayer(posture)
+	return verdict, err
+}
 
 // spawnSandboxLineageFailure prevents an agent that can spawn peers from
 // minting a child with a looser launch sandbox than the caller currently has.
@@ -76,7 +89,9 @@ func sandboxProfileCapabilityFailure(
 	if err := harness.ValidateSandboxReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, filesystem); err != nil {
 		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReopenUnderDeny)
 	}
-	hasNetworkPolicy := snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
+	hasNetworkPolicy := snapshot.Effective.Network == nil &&
+		snapshot.Effective.UnixSockets == nil &&
+		snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
 	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && !hasNetworkPolicy {
 		return nil
 	}
@@ -126,6 +141,60 @@ func sandboxProfileCapabilityFailure(
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
 	}
+}
+
+func planSandboxProfileAccessForLaunch(
+	harnessName, sandboxMode string,
+	snapshot *sandboxpolicy.Snapshot,
+	rawImplementation string,
+) ([]sandboxpolicy.AccessNotice, *spawnFailure) {
+	if snapshot == nil ||
+		(snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil) {
+		return nil, nil
+	}
+	h, err := harness.Resolve(harnessOrDefault(harnessName))
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_access", err.Error()}
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"invalid_sandbox_implementation", err.Error()}
+	}
+	axes, err := sandboxpolicy.EffectiveAccessAxes(snapshot.Effective)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"invalid_sandbox_profile", err.Error()}
+	}
+	var verdict harness.LaunchOSSandbox
+	if implementation.UsesTclaudeLayer() {
+		posture := sandboxpolicy.NetworkHostOpen
+		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
+			posture = sandboxpolicy.NetworkIsolatedWithAgentd
+		}
+		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity,
+				sandboxImplementationUnavailableKind, err.Error()}
+		}
+	}
+	caps, err := harness.ResolveAccessEnforcement(
+		h, implementation, axes, verdict, sandboxMode,
+	)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_access", err.Error()}
+	}
+	_, notices, err := harness.PlanAccessEnforcement(axes, caps)
+	if err != nil {
+		return nil, sandboxCapabilitySpawnFailure(
+			err, "unsupported_sandbox_profile_access")
+	}
+	snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+		snapshot.Effective.AccessNotices, notices...,
+	)
+	return notices, nil
 }
 
 // sandboxProfilesDisabled reports launch modes whose explicit contract omits
