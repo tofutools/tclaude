@@ -17,6 +17,7 @@ func TestNormalizeImplementation(t *testing.T) {
 		{name: "empty defaults to legacy behavior", want: ImplementationHarnessBuiltin},
 		{name: "harness builtin", value: " harness-builtin ", want: ImplementationHarnessBuiltin},
 		{name: "tclaude layer", value: "tclaude-layer", want: ImplementationTclaudeLayer},
+		{name: "stacked", value: "stacked", want: ImplementationStacked},
 		{name: "invalid", value: "automatic", wantErr: "invalid sandbox implementation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

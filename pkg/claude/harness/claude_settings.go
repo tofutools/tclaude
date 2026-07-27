@@ -29,6 +29,9 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 	// a read acknowledgement must not clear denyWrite.
 	if block := claudeSandboxBlockWithBreakGlass(spec.SandboxMode,
 		spec.SandboxBreakGlassReadDirs, spec.SandboxBreakGlassWriteDirs); block != nil {
+		if spec.StrongNestedSandbox {
+			block["enableWeakerNestedSandbox"] = false
+		}
 		settings["sandbox"] = block
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxWriteDirs); len(dirs) > 0 &&

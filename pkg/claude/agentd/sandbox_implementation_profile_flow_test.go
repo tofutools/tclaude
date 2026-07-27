@@ -210,10 +210,16 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
-		require.Len(t, options, 2)
-		var sawExperimental bool
+		require.Len(t, options, 3)
+		var sawExperimental, sawStacked bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
+			if option["value"] == "stacked" {
+				sawStacked = true
+				assert.Equal(t, "Stacked: tclaude + harness (experimental)", option["label"])
+				assert.Equal(t, true, option["experimental"])
+				continue
+			}
 			if option["value"] != "tclaude-layer" {
 				continue
 			}
@@ -225,6 +231,7 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 				"the platform caveat must be stated, not implied")
 		}
 		assert.True(t, sawExperimental, "the catalog must offer the tclaude layer")
+		assert.True(t, sawStacked, "the catalog must always offer stacked")
 	})
 }
 

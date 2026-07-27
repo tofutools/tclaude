@@ -74,6 +74,9 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		// (codexSandbox.ValidateMode), never free text, but quoted defensively.
 		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.SandboxMode)
 	}
+	if spec.StrongNestedSandbox {
+		cmd += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
+	}
 	if spec.ApprovalPolicy != "" {
 		// `--ask-for-approval {untrusted|on-failure|on-request|never}` (the
 		// short is `-a`) selects Codex's approval policy for THIS invocation

@@ -95,7 +95,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   // than pinning harness-builtin over whatever a lower spawn tier would supply.
   // Gated on the harness capability so a value cannot outlive a harness switch
   // that made it invalid.
-  if ((!h || h.can_tclaude_layer) && String(draft.sandbox_implementation || '').trim()) {
+  if (String(draft.sandbox_implementation || '').trim()) {
     body.sandbox_implementation = String(draft.sandbox_implementation).trim();
   }
   const trust = (!h || h.can_dir_trust) ? readTri(draft.trust_dir) : null;

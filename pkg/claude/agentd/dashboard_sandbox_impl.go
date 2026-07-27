@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // dashboardSandboxImpl is the sandbox-IMPLEMENTATION catalog the spawn dialog
@@ -42,6 +44,16 @@ type dashboardSandboxImpl struct {
 	// from being presented as an OpenCode executor refusal.
 	ServerHostAvailable         bool   `json:"server_host_available"`
 	ServerHostUnavailableReason string `json:"server_host_unavailable_reason,omitempty"`
+	// Stacked is per-harness because each descriptor owns a different real
+	// engine entry point. It is disclosure only; launch always re-resolves and
+	// completes the nested round-trip inside the exact outer spec.
+	Stacked map[string]dashboardStackedAvailability `json:"stacked"`
+}
+
+type dashboardStackedAvailability struct {
+	Available          bool   `json:"available"`
+	UnavailableReason  string `json:"unavailable_reason,omitempty"`
+	ExecutableIdentity string `json:"executable_identity,omitempty"`
 }
 
 type dashboardSandboxImplOption struct {
@@ -69,6 +81,11 @@ type sandboxImplHostProbeCache struct {
 
 var sandboxImplHostProbe sandboxImplHostProbeCache
 var sandboxImplServerHostProbe sandboxImplHostProbeCache
+var sandboxImplStackedProbeMu sync.Mutex
+var sandboxImplStackedProbe = map[string]struct {
+	checkedAt time.Time
+	value     dashboardStackedAvailability
+}{}
 
 // sandboxImplHostProbeNow is the clock, indirected so a test can age the cache
 // without sleeping.
@@ -136,8 +153,16 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 					"(the whole pane for interactive harnesses, or OpenCode's managed server). Linux only; " +
 					"requires bwrap and unprivileged user namespaces.",
 			},
+			{
+				Value:        string(sandboxpolicy.ImplementationStacked),
+				Label:        "Stacked: tclaude + harness (experimental)",
+				Experimental: true,
+				Descr: "Runs the interactive harness inside tclaude's outer wall and requires a live " +
+					"model-free round-trip through the harness's real nested OS sandbox. Linux Claude/Codex only.",
+			},
 		},
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
+		Stacked: map[string]dashboardStackedAvailability{},
 	}
 	if err := cachedTclaudeLayerHostAvailability(); err != nil {
 		out.HostUnavailableReason = err.Error()
@@ -149,7 +174,41 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 	} else {
 		out.ServerHostAvailable = true
 	}
+	for _, name := range harness.Names() {
+		h, err := harness.ResolveSpawnable(name)
+		if err != nil {
+			continue
+		}
+		out.Stacked[name] = cachedStackedSandboxAvailability(h)
+	}
 	return out
+}
+
+func cachedStackedSandboxAvailability(h *harness.Harness) dashboardStackedAvailability {
+	now := sandboxImplHostProbeNow()
+	sandboxImplStackedProbeMu.Lock()
+	cached, ok := sandboxImplStackedProbe[h.Name]
+	if ok && now.Sub(cached.checkedAt) < sandboxImplHostProbeTTL {
+		sandboxImplStackedProbeMu.Unlock()
+		return cached.value
+	}
+	sandboxImplStackedProbeMu.Unlock()
+
+	value := dashboardStackedAvailability{}
+	executable, err := session.StackedSandboxAvailability(h)
+	if err != nil {
+		value.UnavailableReason = err.Error()
+	} else {
+		value.Available = true
+		value.ExecutableIdentity = executable.Identity()
+	}
+	sandboxImplStackedProbeMu.Lock()
+	sandboxImplStackedProbe[h.Name] = struct {
+		checkedAt time.Time
+		value     dashboardStackedAvailability
+	}{checkedAt: now, value: value}
+	sandboxImplStackedProbeMu.Unlock()
+	return value
 }
 
 // resetSandboxImplHostProbeCache drops the disclosure cache. Test-only: a test
@@ -165,4 +224,10 @@ func resetSandboxImplHostProbeCache() {
 		cache.err = nil
 		cache.Unlock()
 	}
+	sandboxImplStackedProbeMu.Lock()
+	sandboxImplStackedProbe = map[string]struct {
+		checkedAt time.Time
+		value     dashboardStackedAvailability
+	}{}
+	sandboxImplStackedProbeMu.Unlock()
 }

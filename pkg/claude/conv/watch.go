@@ -2262,8 +2262,9 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
-	if tclaudeLayer {
+	outerLayer := implementation.UsesTclaudeLayer()
+	stacked := implementation.UsesNestedHarnessSandbox()
+	if outerLayer {
 		// OpenCode's outer wall belongs around agentd's authoritative serve
 		// process, not this interactive attach pane. The agentd resume path
 		// starts and authenticates that server before launching `session new`;
@@ -2276,6 +2277,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		}
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", "", nil, err
+		}
+		if stacked {
+			if err := session.ValidateStackedSandboxHarness(h); err != nil {
+				return "", "", nil, err
+			}
 		}
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
@@ -2343,7 +2349,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			}
 		}
 	}
-	if tclaudeLayer {
+	if outerLayer {
 		// Mirror the spawn seam: hook callbacks go through agentd for a
 		// launch whose namespace hides the database (TCL-754). Applied after
 		// the recorded profile environment so a stale or hostile profile
@@ -2403,7 +2409,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	if !tclaudeLayer {
+	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
 			return "", "", nil, err
 		}
@@ -2413,21 +2419,21 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			}
 		}
 	}
-	if !tclaudeLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
+	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
+	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
-	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
+	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if !tclaudeLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
+	if !outerLayer && networkAccess != sandboxpolicy.NetworkAccessInherit {
 		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
-	if tclaudeLayer {
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
 		switch h.Name {
 		case harness.DefaultName:
 			sandboxMode = harness.ClaudeSandboxOff
@@ -2436,13 +2442,20 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		default:
 			return "", "", nil, fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
 		}
+	} else if stacked {
+		switch h.Name {
+		case harness.DefaultName:
+			sandboxMode = harness.ClaudeSandboxOn
+		case harness.CodexName:
+			sandboxMode = harness.SandboxManagedProfile
+		}
 	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every
 	// sibling repo beneath the deny.
 	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
 	var tclaudeLayerContractWriteDirs []string
-	if tclaudeLayer ||
+	if outerLayer ||
 		(h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
@@ -2450,11 +2463,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
-		if tclaudeLayer {
+		if outerLayer {
 			tclaudeLayerContractWriteDirs = append(tclaudeLayerContractWriteDirs, gitWriteDirs...)
 		}
 	}
-	if tclaudeLayer {
+	if outerLayer {
 		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
 			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
 			tclaudeLayerContractWriteDirs = appendUniqueResumeDir(tclaudeLayerContractWriteDirs, workspace)
@@ -2478,7 +2491,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// above can introduce a reopen beneath a deny that the authored profile did
 	// not contain. Mirrors the spawn path.
 	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
-	if !tclaudeLayer {
+	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
 			return "", "", nil, err
 		}
@@ -2523,7 +2536,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
-	if !tclaudeLayer && h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+	if (!outerLayer || stacked) && h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
@@ -2553,7 +2566,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			spec.ExecutablePath = splitCapability.ExecutablePath
 		}
 		cleanupPath = profilePath
-	} else if !tclaudeLayer && h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
+	} else if !outerLayer && h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if splitCapability != nil {
@@ -2561,16 +2574,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("revalidate strict-Home Codex resume capability: %w", err)
 		}
 	}
+	if stacked {
+		spec = h.NestedSandbox.PrepareLaunch(spec)
+	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
-	if tclaudeLayer {
-		profileFilesystem := append(
-			[]sandboxpolicy.FilesystemGrant(nil),
-			effectiveProfile.Filesystem...,
-		)
-		effectiveProfile.Filesystem = renderedGrants
+	if outerLayer {
 		posture, postureErr := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
 		if postureErr != nil {
 			return "", "", nil, postureErr
@@ -2579,11 +2590,21 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
-		cmd, err = session.WrapTclaudeLayer(binary, effectiveProfile, session.TclaudeLayerLaunchContract{
-			HarnessName:       h.Name,
-			WriteDirs:         tclaudeLayerContractWriteDirs,
-			ProfileFilesystem: profileFilesystem,
-		}, cmd)
+		launchSpec, specErr := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+			HarnessName:  h.Name,
+			Cwd:          resumeCwd,
+			GitWriteDirs: tclaudeLayerContractWriteDirs,
+			Snapshot:     effectiveSandbox,
+		})
+		if specErr != nil {
+			return "", "", nil, fmt.Errorf("build resumed tclaude-layer launch spec: %w", specErr)
+		}
+		if stacked {
+			if err := session.ProbeStackedSandbox(binary, launchSpec, h, resumeCwd); err != nil {
+				return "", "", nil, err
+			}
+		}
+		cmd, err = session.WrapTclaudeLayerSpec(binary, launchSpec, cmd)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)
 		}
@@ -2976,6 +2997,10 @@ func createSessionForConv(conv *SessionEntry) error {
 	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
 			resumeTclaudeLayerNetworkPosture(conv.SessionID),
+		)
+	} else if resumeImplementation == sandboxpolicy.ImplementationStacked {
+		launchOSSandbox = session.StackedLaunchOSSandbox(
+			h, resumeTclaudeLayerNetworkPosture(conv.SessionID),
 		)
 	}
 	state := &session.SessionState{

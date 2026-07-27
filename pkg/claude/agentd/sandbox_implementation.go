@@ -72,8 +72,13 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	if err != nil {
 		return "", err
 	}
-	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+	if implementation.UsesTclaudeLayer() {
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
+			return "", err
+		}
+	}
+	if implementation.UsesNestedHarnessSandbox() {
+		if err := session.ValidateStackedSandboxHarness(h); err != nil {
 			return "", err
 		}
 	}
@@ -108,7 +113,8 @@ func resolveOpenCodeSandboxImplementationMode(
 // metadata), where a stale answer costs nothing because the launch still
 // refuses.
 func sandboxImplementationHostFailure(harnessName, implementation string) *spawnFailure {
-	if strings.TrimSpace(implementation) != string(sandboxpolicy.ImplementationTclaudeLayer) {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil || !normalized.UsesTclaudeLayer() {
 		return nil
 	}
 	availability := tclaudeLayerHostAvailability
@@ -116,11 +122,27 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		availability = tclaudeLayerServerHostAvailability
 	}
 	if err := availability(); err != nil {
+		if normalized.UsesNestedHarnessSandbox() {
+			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
+				fmt.Sprintf("stacked requested — refused: missing capability stacked_outer_tclaude_layer: %v; "+
+					"refusing rather than falling back to tclaude-layer or harness-builtin", err)}
+		}
 		return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+
 				"refusing the launch rather than falling back to %s",
 				sandboxpolicy.ImplementationTclaudeLayer, err,
 				sandboxpolicy.ImplementationHarnessBuiltin)}
+	}
+	if normalized.UsesNestedHarnessSandbox() {
+		h, resolveErr := harness.ResolveSpawnable(harnessName)
+		if resolveErr != nil {
+			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
+				resolveErr.Error()}
+		}
+		if _, availabilityErr := session.StackedSandboxAvailability(h); availabilityErr != nil {
+			return &spawnFailure{http.StatusUnprocessableEntity,
+				sandboxImplementationUnavailableKind, availabilityErr.Error()}
+		}
 	}
 	return nil
 }

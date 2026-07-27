@@ -14,16 +14,25 @@ const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: 'Harness built-in', descr: 'current behavior' },
     { value: 'tclaude-layer', label: 'tclaude layer (experimental)', experimental: true, descr: 'Linux only' },
+    { value: 'stacked', label: 'Stacked: tclaude + harness (experimental)', experimental: true },
   ],
   default: 'harness-builtin',
   host_available: true,
   server_host_available: true,
+  stacked: {
+    claude: { available: true, executable_identity: '/bin/srt|1' },
+    opencode: { available: false, unavailable_reason: 'no reviewed nested OS-sandbox contract' },
+    unsupported: { available: false, unavailable_reason: 'no reviewed nested OS-sandbox contract' },
+  },
 };
 
 const modeHelp = JSON.parse(readFileSync(new URL('./mode-help-fixture.json', import.meta.url), 'utf8'));
 
 const harnesses = [
-  { name: 'claude', display_name: 'Claude Code', models: ['sonnet'], can_tclaude_layer: true },
+  {
+    name: 'claude', display_name: 'Claude Code', models: ['sonnet'],
+    can_tclaude_layer: true, can_stacked: true,
+  },
   {
     name: 'opencode', display_name: 'OpenCode', models: [], can_tclaude_layer: true,
     tclaude_layer_server_boundary: true,
@@ -82,7 +91,10 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   const claude = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
   assert.equal(claude.showSandboxImpl, true);
   assert.equal(claude.sandboxImplDefault, 'harness-builtin');
-  assert.deepEqual(claude.sandboxImplOptions.map((o) => o.value), ['harness-builtin', 'tclaude-layer']);
+  assert.deepEqual(
+    claude.sandboxImplOptions.map((o) => o.value),
+    ['harness-builtin', 'tclaude-layer', 'stacked'],
+  );
 
   // Read from the capability flag, not the harness NAME — so a later workstream
   // that teaches the layer a new topology needs no dashboard edit.
@@ -111,6 +123,14 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // OpenCode has a row backed by the relay-free server capability.
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, context);
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, oc).warn, false);
+
+  const stacked = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+  assert.equal(stacked.warn, false);
+  assert.match(stacked.text, /fresh model-free allowed\/denied round-trip/);
+
+  const refused = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, oc);
+  assert.equal(refused.warn, true);
+  assert.match(refused.text, /Apply or launch will refuse/);
 });
 
 test('an unavailable host warns with the concrete reason and the real consequence', async (t) => {
@@ -129,7 +149,7 @@ test('an unavailable host warns with the concrete reason and the real consequenc
   // Still selectable — the row is rendered and the option list is intact.
   assert.equal(view.showSandboxImpl, true);
   assert.equal(view.sandboxImplHostAvailable, false);
-  assert.equal(view.sandboxImplOptions.length, 2);
+  assert.equal(view.sandboxImplOptions.length, 3);
 
   const hint = model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view);
   assert.equal(hint.warn, true);
@@ -180,6 +200,8 @@ test('the spawn request omits an untouched row and sends an explicit one', async
 
   const layered = model.buildSpawnRequest({ ...base, sandboxImpl: 'tclaude-layer' }, context, null);
   assert.equal(layered.body.sandbox_implementation, 'tclaude-layer');
+  const stacked = model.buildSpawnRequest({ ...base, sandboxImpl: 'stacked' }, context, null);
+  assert.equal(stacked.body.sandbox_implementation, 'stacked');
 
   // OpenCode supports the layer through its managed server topology.
   const oc = model.buildSpawnRequest(
@@ -187,88 +209,27 @@ test('the spawn request omits an untouched row and sends an explicit one', async
   );
   assert.equal(oc.body.sandbox_implementation, 'tclaude-layer');
 
-  // A harness that cannot host the layer never sends a stale draft value.
+  // The browser never erases an incapable selection: the server is the refusal
+  // authority and the inline warning tells the operator what apply will do.
   const unsupported = model.buildSpawnRequest(
-    { ...base, harness: 'unsupported', sandboxImpl: 'tclaude-layer' }, context, null,
+    { ...base, harness: 'unsupported', sandboxImpl: 'stacked' }, context, null,
   );
-  assert.equal('sandbox_implementation' in unsupported.body, false);
+  assert.equal(unsupported.body.sandbox_implementation, 'stacked');
 });
 
-test('switching to a harness without the layer clears the selection', async (t) => {
+test('switching to an incapable harness preserves stacked and keeps its warning visible', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
 
   const switched = model.selectSpawnHarness(
-    { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' }, 'unsupported', context,
+    { group: 'crew', harness: 'claude', sandboxImpl: 'stacked' }, 'unsupported', context,
   );
-  assert.equal(switched.sandboxImpl, '');
-});
-
-// A harness switch that discards a sandbox-implementation selection ALSO hides
-// the row that held it — so the one control that could show the loss is gone at
-// the instant there is something to show. Left silent, that is the dialog
-// deciding by erasure: the server's loud refusal for an explicitly incompatible
-// request is unreachable precisely because the value never reaches it.
-//
-// These three pin the notice that closes that hole.
-
-test('the notice appears when a harness switch clears a selection', async (t) => {
-  const harness = await createPreactHarness(t);
-  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
-
-  const before = { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' };
-  assert.equal(model.sandboxImplClearedNoticeFor(before), null, 'nothing to disclose yet');
-
-  const after = model.selectSpawnHarness(before, 'unsupported', context);
-  assert.equal(after.sandboxImpl, '', 'the incompatible value is still dropped');
-
-  // The row is gone, which is exactly why the notice has to exist.
-  const view = model.spawnCapabilityView(after, context);
-  assert.equal(view.showSandboxImpl, false);
-
-  const notice = model.sandboxImplClearedNoticeFor(after);
-  assert.ok(notice, 'the loss must be disclosed even though the row is hidden');
-  assert.equal(notice.warn, true);
-});
-
-test('the notice names the implementation that was dropped and the harness that dropped it', async (t) => {
-  const harness = await createPreactHarness(t);
-  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
-
-  const after = model.selectSpawnHarness(
-    { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' }, 'unsupported', context,
-  );
-  const notice = model.sandboxImplClearedNoticeFor(after);
-
-  assert.match(notice.text, /tclaude-layer/, 'names the implementation that was dropped');
-  assert.match(notice.text, /Unsupported Harness/, 'names the harness that dropped it (display name)');
-  assert.match(notice.text, /harness-builtin/, 'states what the agent will actually launch with');
-});
-
-test('the notice is gone after an explicit re-pick, and after switching back', async (t) => {
-  const harness = await createPreactHarness(t);
-  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
-  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
-
-  const cleared = model.selectSpawnHarness(
-    { group: 'crew', harness: 'claude', sandboxImpl: 'tclaude-layer' }, 'unsupported', context,
-  );
-  assert.ok(model.sandboxImplClearedNoticeFor(cleared), 'precondition: the notice stands');
-
-  // Speaking for the field again retires it — the state it describes no longer holds.
-  const repicked = model.setSpawnSandboxImpl(cleared, 'harness-builtin');
-  assert.equal(repicked.sandboxImpl, 'harness-builtin');
-  assert.equal(model.sandboxImplClearedNoticeFor(repicked), null);
-
-  // So does an explicit clear back to "inherit" — still the operator speaking.
-  assert.equal(model.sandboxImplClearedNoticeFor(model.setSpawnSandboxImpl(cleared, '')), null);
-
-  // And so does returning to a harness that can host the layer.
-  const back = model.selectSpawnHarness(cleared, 'claude', context);
-  assert.equal(model.sandboxImplClearedNoticeFor(back), null);
+  assert.equal(switched.sandboxImpl, 'stacked');
+  const view = model.spawnCapabilityView(switched, context);
+  assert.equal(view.showSandboxImpl, true);
+  assert.equal(model.sandboxImplHintFor(switched, view).warn, true);
+  assert.equal(model.sandboxImplClearedNoticeFor(switched), null);
 });
 
 test('a harness switch with nothing selected raises no notice', async (t) => {

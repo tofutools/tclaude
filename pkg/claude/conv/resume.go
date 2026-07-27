@@ -266,6 +266,10 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
 			resumeTclaudeLayerNetworkPosture(rc.ConvID),
 		)
+	} else if resumeImplementation == sandboxpolicy.ImplementationStacked {
+		launchOSSandbox = session.StackedLaunchOSSandbox(
+			h, resumeTclaudeLayerNetworkPosture(rc.ConvID),
+		)
 	}
 	state := &session.SessionState{
 		ID:                     sessionID,
