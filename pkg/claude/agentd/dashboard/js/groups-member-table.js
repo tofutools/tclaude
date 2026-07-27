@@ -324,13 +324,15 @@ function sandboxProfileClause(member, withheldBecause) {
       + ` (the inner harness sandbox is off by design);`
       + ` any environment entries ${they} also apply.`;
   }
-  const reason = rulesOwnedByTclaudeLayer
-    ? 'the tclaude layer is not active'
-    : withheldBecause;
-  if (!reason) return clause;
+  if (rulesOwnedByTclaudeLayer) {
+    const their = applied.length > 1 ? 'Their' : 'Its';
+    return clause + ` ${their} filesystem rules are not in force`
+      + ` (the tclaude layer is not active).`;
+  }
+  if (!withheldBecause) return clause;
   const their = applied.length > 1 ? 'Their' : 'Its';
   const they = applied.length > 1 ? 'they define' : 'it defines';
-  return clause + ` ${their} filesystem rules are not in force (${reason});`
+  return clause + ` ${their} filesystem rules are not in force (${withheldBecause});`
     + ` any environment entries ${they} still apply.`;
 }
 

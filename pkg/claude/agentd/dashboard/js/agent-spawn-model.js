@@ -150,6 +150,7 @@ export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 // neutral rather than guessing a branch whose copy may say the opposite.
 export function sandboxModeHelpForImplementation(help, implementation, harness) {
   const harnessName = text(harness);
+  if (harnessName === 'opencode') return text(help);
   if (!text(implementation)) {
     return 'Sandbox implementation is inherited from the profile chain at launch, '
       + "so this mode's effect is not known yet.";

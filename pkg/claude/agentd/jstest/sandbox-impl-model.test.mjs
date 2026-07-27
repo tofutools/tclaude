@@ -61,6 +61,13 @@ test('sandbox mode help tells the truth for the selected implementation', async 
     'OpenCode keeps its dedicated mode-help branch because its soft rules stay on',
   );
   assert.equal(
+    model.sandboxModeHelpForImplementation(
+      modeHelp['opencode/sandbox/off'], '', 'opencode',
+    ),
+    modeHelp['opencode/sandbox/off'],
+    'an inherited OpenCode implementation never shadows its dedicated mode help',
+  );
+  assert.equal(
     model.sandboxModeHelpForImplementation(off, 'stacked', 'claude'),
     off,
     'other implementations fail closed to their own mode help',

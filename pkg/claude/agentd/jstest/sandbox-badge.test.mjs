@@ -178,9 +178,8 @@ const CASES = [
     title: [
       /^Sandbox: off —/,
       /Its filesystem rules are not in force \(the tclaude layer is not active\)/,
-      /any environment entries it defines still apply/,
     ],
-    titleNot: [/enforced as OS mounts/],
+    titleNot: [/enforced as OS mounts/, /environment entries/],
   },
   {
     name: 'a verified on keeps the plain padlock and the confinement claim',
