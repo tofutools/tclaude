@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -424,4 +425,103 @@ func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
 	assert.Nil(t, cmd)
 	assert.Contains(t, got.notice, "not loaded yet")
 	assert.NotContains(t, got.notice, "groups create")
+}
+
+// stubAttach swaps the terminal handover for a recorder and returns the
+// target the console asked for.
+func stubAttach(t *testing.T) *tuiAttachRecord {
+	t.Helper()
+	rec := &tuiAttachRecord{}
+	prev := tuiAttachToPane
+	tuiAttachToPane = func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+		rec.called = true
+		rec.agent, rec.session, rec.inTmux = agentName, tmuxSession, inTmux
+		return func() tea.Msg {
+			return tuiAttachedMsg{agent: agentName, session: tmuxSession}
+		}
+	}
+	t.Cleanup(func() { tuiAttachToPane = prev })
+	return rec
+}
+
+type tuiAttachRecord struct {
+	called  bool
+	agent   string
+	session string
+	inTmux  bool
+}
+
+// Enter on a row with no live pane must say so, not silently do nothing.
+func TestTUIAttachWithoutALivePaneSaysSo(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+	m.agents = []tuiAgentRow{{ConvID: "no-such-conv", Title: "worker"}}
+
+	got, cmd := m.attachSelected()
+	assert.Nil(t, cmd)
+	assert.False(t, rec.called)
+	assert.Contains(t, got.notice, "worker has no live tmux session")
+}
+
+// Attaching is an operator move: a console the daemon classifies as an agent
+// must not be able to reach a peer's pane through it.
+func TestTUIAttachIsRefusedForANonOperatorConsole(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = false
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+
+	got, cmd := m.attachSelected()
+	assert.Nil(t, cmd)
+	assert.False(t, rec.called, "no session lookup, no handover")
+	assert.Contains(t, got.notice, "Only an operator console")
+}
+
+func TestTUIAttachOnAnEmptyListDoesNothing(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+	got, cmd := m.attachSelected()
+	assert.Nil(t, cmd)
+	assert.False(t, rec.called)
+	assert.Empty(t, got.notice)
+}
+
+// Coming back from a pane refreshes: the agent may have exited while the
+// operator was looking at it.
+func TestTUIReturnFromAPaneRefreshes(t *testing.T) {
+	m := newTUIModel(nil)
+	updated, cmd := m.Update(tuiAttachedMsg{agent: "worker", session: "cc-dev-1"})
+	got := updated.(tuiModel)
+	assert.Contains(t, got.notice, "cc-dev-1")
+	assert.Contains(t, got.notice, "worker")
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd)
+}
+
+func TestTUIAttachFailureIsReported(t *testing.T) {
+	m := newTUIModel(nil)
+	updated, cmd := m.Update(tuiAttachedMsg{
+		agent: "worker", session: "cc-dev-1", err: errors.New("no server running"),
+	})
+	got := updated.(tuiModel)
+	assert.Contains(t, got.notice, "Could not reach cc-dev-1")
+	assert.Contains(t, got.notice, "no server running")
+	assert.Nil(t, cmd)
+}
+
+// The key line only advertises enter when it will actually do something.
+func TestTUIKeyHintAdvertisesEnterOnlyWhenItWorks(t *testing.T) {
+	m := newTUIModel(nil)
+	m.operator = true
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+	assert.Contains(t, m.keyHintLine(), "enter")
+
+	m.agents = nil
+	assert.NotContains(t, m.keyHintLine(), "enter")
+
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+	m.operator = false
+	assert.NotContains(t, m.keyHintLine(), "enter")
 }

@@ -1368,3 +1368,13 @@ func tuiKeyForTest(t *testing.T, key string) tea.KeyPressMsg {
 	}
 	return tea.KeyPressMsg{Code: runes[0], Text: key}
 }
+
+// SetTUIAttachForTest replaces the console's terminal handover with a
+// recorder, so a flow test can assert which tmux session `enter` aims at
+// without a tmux server or a real terminal to give away. Returns a restore
+// function tests schedule via t.Cleanup.
+func SetTUIAttachForTest(fn func(agentName, tmuxSession string, inTmux bool) tea.Cmd) func() {
+	prev := tuiAttachToPane
+	tuiAttachToPane = fn
+	return func() { tuiAttachToPane = prev }
+}

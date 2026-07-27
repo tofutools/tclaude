@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -98,6 +99,43 @@ func TestTUIConsoleListsExistingAgents(t *testing.T) {
 	c.Refresh()
 	assert.Contains(t, c.View(), "offline")
 	assert.Contains(t, c.View(), "1 agents (0 online)")
+}
+
+// Enter goes to the selected agent's tmux session, the way `session watch`
+// does. The handover itself is stubbed — a flow test has no terminal to give
+// away — but the target comes from the real session rows the daemon wrote
+// when it spawned the agent.
+func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+
+	var gotAgent, gotSession string
+	var gotInTmux, called bool
+	t.Cleanup(agentd.SetTUIAttachForTest(func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+		called = true
+		gotAgent, gotSession, gotInTmux = agentName, tmuxSession, inTmux
+		return nil
+	}))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	c.Press(t, "enter")
+
+	require.True(t, called, "enter on an online agent asks for its pane")
+	assert.Equal(t, sp.TmuxSession, gotSession)
+	assert.NotEmpty(t, gotAgent)
+	assert.Equal(t, os.Getenv("TMUX") != "", gotInTmux,
+		"switch-client inside tmux, attach outside it")
+
+	// An agent whose pane is gone has nothing to go to, and the console says
+	// so instead of handing the terminal to a dead session.
+	called = false
+	f.MarkOffline(sp.TmuxSession)
+	c.Refresh()
+	c.Press(t, "enter")
+	assert.False(t, called)
+	assert.Contains(t, c.View(), "no live tmux session")
 }
 
 // Quitting is confirmed first, because it shuts the daemon down.

@@ -10,7 +10,10 @@ package agentd
 // Everything it shows or does goes through the daemon's own /v1 HTTP API
 // (tuiAPI), not through the DB or the spawn internals, so the TUI cannot
 // drift from — or quietly skip — the validation, permission and audit paths
-// every other spawn surface runs.
+// every other spawn surface runs. The one exception is attachSelected, which
+// hands this very terminal to an agent's tmux session: there is no HTTP shape
+// for a local terminal takeover, so it reads the session row directly and is
+// gated on the console being the operator instead.
 
 import (
 	"bytes"
@@ -23,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -31,6 +35,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -135,19 +140,26 @@ func newTUIAPI() *tuiAPI {
 	}
 }
 
-// identityWarning explains, in one line, a console the daemon will not treat
-// as the operator — empty when it will. Without it, a console started from
-// the wrong place just answers every keystroke with a bare 403 and no hint
-// about why or what to do instead.
-func (a *tuiAPI) identityWarning() string {
-	switch classify(&peer{
+// callerClass is how the daemon classifies this console — the same verdict
+// its requests get, computed once so the UI can say up front what the operator
+// is working as.
+func (a *tuiAPI) callerClass() callerClass {
+	return classify(&peer{
 		PID:               a.pid,
 		ConvID:            a.convID,
 		HasClaudeAncestor: a.hasHarnessAncestor,
 		// The console always presents the live token, so it is valid
 		// whenever the daemon managed to mint one.
 		HumanTokenValid: currentOperatorToken() != "",
-	}) {
+	})
+}
+
+// identityWarning explains, in one line, a console the daemon will not treat
+// as the operator — empty when it will. Without it, a console started from
+// the wrong place just answers every keystroke with a bare 403 and no hint
+// about why or what to do instead.
+func (a *tuiAPI) identityWarning() string {
+	switch a.callerClass() {
 	case classHuman:
 		return ""
 	case classAgent:
@@ -384,6 +396,9 @@ type tuiModel struct {
 	// identityWarning is fixed for the console's lifetime: it says the
 	// daemon will not treat this console as the operator, and why.
 	identityWarning string
+	// operator is true when the daemon classifies this console as the human.
+	// Attaching to a pane is gated on it — see attachSelected.
+	operator bool
 	// refreshing / spawning keep the periodic tick from stacking requests
 	// and the operator from firing two spawns at once.
 	refreshing  bool
@@ -424,12 +439,20 @@ type (
 		resp  agent.SpawnResponse
 		err   error
 	}
+	// tuiAttachedMsg carries the outcome of putting the operator on an
+	// agent's pane — after they detach, in the attach case.
+	tuiAttachedMsg struct {
+		agent   string
+		session string
+		err     error
+	}
 )
 
 func newTUIModel(api *tuiAPI) tuiModel {
 	m := tuiModel{api: api}
 	if api != nil {
 		m.identityWarning = api.identityWarning()
+		m.operator = api.callerClass() == classHuman
 	}
 	return m
 }
@@ -649,6 +672,78 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	return m, tuiSpawnCmd(m.api, group, req)
 }
 
+// tuiAttachToPane hands this terminal to the tmux session named by target,
+// indirected through a package var so tests can observe the target without a
+// tmux server. inTmux reports whether agentd itself is running inside tmux.
+var tuiAttachToPane = realTUIAttachToPane
+
+// realTUIAttachToPane is the production handover, and it has two shapes
+// because agentd's own terminal may already be a tmux client:
+//
+//   - Inside tmux, `switch-client` moves that client to the agent's session.
+//     It returns immediately and the console keeps running in its own window,
+//     so the operator can switch back with tmux's own keys. Attaching instead
+//     would nest one session inside another, which tmux refuses.
+//   - Outside tmux, `attach-session` under tea.ExecProcess: bubbletea releases
+//     the terminal, tmux owns it until the operator detaches, and the console
+//     repaints itself afterwards.
+func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+	target := clcommon.ExactTarget(tmuxSession)
+	if inTmux {
+		return func() tea.Msg {
+			out, err := clcommon.TmuxCommand("switch-client", "-t", target).CombinedOutput()
+			if err != nil {
+				err = fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+			}
+			return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err}
+		}
+	}
+	cmd := clcommon.TmuxCommand("attach-session", "-t", target)
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		// tmux exits 1 on a plain detach, which is not a failure — the same
+		// reading session.attachToSessionWithFlags applies.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			err = nil
+		}
+		return tuiAttachedMsg{agent: agentName, session: tmuxSession, err: err}
+	})
+}
+
+// insideTmux reports whether this process is itself a tmux client.
+func insideTmux() bool { return os.Getenv("TMUX") != "" }
+
+// attachSelected puts the operator on the selected agent's tmux session — the
+// console's answer to "let me actually go look at what this agent is doing".
+//
+// The target is resolved from the daemon's own session rows rather than over
+// the API: which tmux session an agent is on is local process state, and the
+// action itself is a takeover of THIS terminal, which no HTTP shape can
+// express. Both halves are therefore gated on the console being the operator,
+// so a console that the daemon classifies as an agent cannot use it to reach a
+// peer's pane and drive it.
+func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
+	if len(m.agents) == 0 || m.cursor >= len(m.agents) {
+		return m, nil
+	}
+	row := m.agents[m.cursor]
+	if !m.operator {
+		m.notice = "Only an operator console can attach to an agent's terminal."
+		return m, nil
+	}
+	sess := pickAliveSession(row.ConvID)
+	if sess == nil || sess.TmuxSession == "" {
+		m.notice = row.name() + " has no live tmux session to attach to."
+		return m, nil
+	}
+	if insideTmux() {
+		m.notice = "Switching to " + sess.TmuxSession + "…"
+	} else {
+		m.notice = "Attached to " + sess.TmuxSession + " — detach (ctrl-b d) to come back."
+	}
+	return m, tuiAttachToPane(row.name(), sess.TmuxSession, insideTmux())
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -688,6 +783,20 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.notice = tuiSpawnSummary(msg)
 		// Pull the new agent in now rather than waiting out the tick.
+		m.refreshing = true
+		return m, m.refreshCmd()
+
+	case tuiAttachedMsg:
+		if msg.err != nil {
+			m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
+			return m, nil
+		}
+		if insideTmux() {
+			m.notice = "Switched to " + msg.session + " (" + msg.agent + ")."
+		} else {
+			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
+		}
+		// The pane may have ended while the operator was on it.
 		m.refreshing = true
 		return m, m.refreshCmd()
 
@@ -753,6 +862,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 			m.ensureCursorVisible()
 		}
+	case "enter":
+		m.notice = ""
+		return m.attachSelected()
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
@@ -865,12 +977,26 @@ func (m tuiModel) renderList() string {
 	if m.notice != "" {
 		b.WriteString("  " + m.notice + "\n")
 	}
-	b.WriteString("\n  n new agent • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)\n")
+	b.WriteString("\n  " + m.keyHintLine() + "\n")
 
 	if m.mode == tuiModeConfirmQuit {
 		b.WriteString("\n  Quit and shut down agentd? [y / any other key = cancel]\n")
 	}
 	return b.String()
+}
+
+// keyHintLine names enter only when it can do something — an agent-class
+// console cannot attach, and an empty list has nothing to attach to.
+func (m tuiModel) keyHintLine() string {
+	hints := "n new agent • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
+	if m.operator && len(m.agents) > 0 {
+		verb := "attach"
+		if insideTmux() {
+			verb = "switch to"
+		}
+		hints = "enter " + verb + " • " + hints
+	}
+	return hints
 }
 
 func (m tuiModel) summaryLine() string {
@@ -963,6 +1089,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n  tclaude agentd terminal UI — keys\n\n")
 	b.WriteString("  List\n")
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
+	b.WriteString("    enter      Go to the selected agent's tmux session — switch-client\n")
+	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
+	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
 	b.WriteString("    n          Start a new agent\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")

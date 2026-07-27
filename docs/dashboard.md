@@ -57,11 +57,19 @@ often opened for — see which agents exist, and start a new one — and nothing
 else:
 
 ```
-n   start a new agent (group, name, directory, harness, startup brief)
-r   refresh now (the list also polls every 2s)
-?   key help
-q   quit — this SHUTS DOWN the daemon (it asks first)
+enter  go to the selected agent's tmux session
+n      start a new agent (group, name, directory, harness, startup brief)
+r      refresh now (the list also polls every 2s)
+?      key help
+q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
+
+**enter** does what it does in `tclaude session watch` — it puts you on the
+selected agent's pane. When agentd itself runs inside tmux it uses
+`switch-client`, so the console stays live in its own window and tmux's own
+keys bring you back; outside tmux it attaches, and the console repaints when
+you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
+an operator console can do this (see the identity note below).
 
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.
