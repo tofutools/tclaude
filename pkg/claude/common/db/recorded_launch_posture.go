@@ -3,6 +3,8 @@ package db
 import (
 	"maps"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // ComposeAgentRelaunchProfile overlays one relaunch profile onto another, FIELD
@@ -116,15 +118,77 @@ func RecordedLaunchPostureForConv(convID string) (*AgentRelaunchProfile, error) 
 	}
 	posture = ComposeAgentRelaunchProfile(posture, agent)
 	if posture != nil && recordedPostureIsComplete(posture) {
-		return posture, nil
+		return activeRecordedLaunchPostureForConv(convID, posture)
 	}
 	// Only pay for the session lookup when something is still unknown; the
 	// legacy row is the weakest tier, so it goes underneath what we already have.
 	legacy, err := legacySessionLaunchPosture(convID)
 	if err != nil || legacy == nil {
-		return posture, err
+		if err != nil {
+			return posture, err
+		}
+		return activeRecordedLaunchPostureForConv(convID, posture)
 	}
-	return ComposeAgentRelaunchProfile(legacy, posture), nil
+	return activeRecordedLaunchPostureForConv(
+		convID, ComposeAgentRelaunchProfile(legacy, posture),
+	)
+}
+
+// NormalSandboxImplementationForConv resolves the durable implementation
+// independently of a process-only temporary override. The historical lookup
+// repairs the specific projection bug fingerprint while leaving an intentional
+// harness-builtin transition alone.
+func NormalSandboxImplementationForConv(
+	convID string,
+	posture *AgentRelaunchProfile,
+) (sandboxpolicy.Implementation, error) {
+	implementation := sandboxpolicy.ImplementationHarnessBuiltin
+	if posture != nil && posture.SandboxImplementation != nil {
+		var err error
+		implementation, err = sandboxpolicy.NormalizeImplementation(
+			*posture.SandboxImplementation,
+		)
+		if err != nil {
+			return "", err
+		}
+	}
+	if implementation != sandboxpolicy.ImplementationHarnessBuiltin {
+		return implementation, nil
+	}
+	historical, err := PreTemporaryUnlockSandboxImplementationForConv(convID)
+	if err != nil || strings.TrimSpace(historical) == "" {
+		return implementation, err
+	}
+	return sandboxpolicy.NormalizeImplementation(historical)
+}
+
+// activeRecordedLaunchPostureForConv returns a copy whose implementation is
+// ready for a process launch. Temporary off always means harness-builtin plus
+// the harness's off mode: replaying the durable TClaude value would silently
+// turn the outer wall back on. The normal value remains stored on the agent for
+// exact restore and clone semantics.
+func activeRecordedLaunchPostureForConv(
+	convID string,
+	posture *AgentRelaunchProfile,
+) (*AgentRelaunchProfile, error) {
+	if posture == nil {
+		return nil, nil
+	}
+	// Preserve the tri-state contract for a genuinely unknown legacy field.
+	if posture.SandboxImplementation == nil && posture.TemporarySandboxMode == nil {
+		return posture, nil
+	}
+	implementation, err := NormalSandboxImplementationForConv(convID, posture)
+	if err != nil {
+		return nil, err
+	}
+	if posture.TemporarySandboxMode != nil {
+		implementation = sandboxpolicy.ImplementationHarnessBuiltin
+	}
+	effective := *posture
+	value := string(implementation)
+	effective.SandboxImplementation = &value
+	return &effective, nil
 }
 
 // recordedPostureIsComplete reports whether every field the legacy session tier

@@ -515,7 +515,15 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 			p.SandboxMode = *durable.SandboxMode
 		}
 		if durable.SandboxImplementation != nil {
-			p.SandboxImplementation = *durable.SandboxImplementation
+			implementation, implementationErr :=
+				NormalSandboxImplementationForConv(convID, durable)
+			if implementationErr != nil {
+				return SessionLaunchProfile{}, implementationErr
+			}
+			if durable.TemporarySandboxMode != nil {
+				implementation = sandboxpolicy.ImplementationHarnessBuiltin
+			}
+			p.SandboxImplementation = string(implementation)
 		}
 		if durable.SandboxModeSource != nil {
 			p.SandboxModeSource = *durable.SandboxModeSource
@@ -569,41 +577,83 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 }
 
 // PreTemporaryUnlockSandboxImplementationForConv returns the newest recorded
-// outer-layer implementation that predates a process launched by the temporary
-// dashboard unlock. Requiring that later, explicitly-attributed unlock row is
-// the damage fingerprint: an operator who deliberately changed a formerly
-// layered agent to harness-builtin must not have that choice undone merely
-// because an older TClaude session exists.
+// outer-layer implementation that predates the tail temporary-unlock
+// transition. Stable-agent lookup spans every conversation generation because
+// the override survives reincarnation while the only remaining outer-layer
+// proof may belong to its predecessor. Requiring the attributed unlock at the
+// history tail is the damage fingerprint: an operator who deliberately changed
+// a formerly layered agent to harness-builtin must not have that later choice
+// undone merely because an older TClaude session exists.
 func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, error) {
 	d, err := Open()
 	if err != nil {
 		return "", err
 	}
-	var implementation string
-	err = d.QueryRow(`SELECT outer_session.sandbox_implementation
-		FROM sessions outer_session
-		WHERE outer_session.conv_id = ?
-			AND outer_session.sandbox_implementation IN (?, ?)
-			AND EXISTS (
-				SELECT 1
-				FROM sessions temporary_session
-				WHERE temporary_session.conv_id = outer_session.conv_id
-					AND temporary_session.rowid > outer_session.rowid
-					AND temporary_session.sandbox_implementation = ?
-					AND temporary_session.sandbox_mode_source = ?
-			)
-		ORDER BY outer_session.rowid DESC
-		LIMIT 1`,
-		strings.TrimSpace(convID),
-		string(sandboxpolicy.ImplementationTclaudeLayer),
-		string(sandboxpolicy.ImplementationStacked),
-		string(sandboxpolicy.ImplementationHarnessBuiltin),
-		TemporarySandboxModeSource,
-	).Scan(&implementation)
-	if errors.Is(err, sql.ErrNoRows) {
+	scope := "conv_id = ?"
+	scopeValue := strings.TrimSpace(convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return "", err
+	}
+	if agentID != "" {
+		scope = `conv_id IN (
+			SELECT conv_id FROM agent_conversations WHERE agent_id = ?
+		)`
+		scopeValue = agentID
+	}
+	rows, err := d.Query(`SELECT sandbox_implementation, sandbox_mode_source
+		FROM sessions
+		WHERE `+scope+`
+		ORDER BY rowid DESC`, scopeValue)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	type evidence struct {
+		implementation string
+		source         string
+	}
+	next := func() (evidence, bool, error) {
+		if !rows.Next() {
+			return evidence{}, false, rows.Err()
+		}
+		var item evidence
+		if err := rows.Scan(&item.implementation, &item.source); err != nil {
+			return evidence{}, false, err
+		}
+		return item, true, nil
+	}
+	latest, ok, err := next()
+	if err != nil || !ok {
+		return "", err
+	}
+	if latest.implementation != string(sandboxpolicy.ImplementationHarnessBuiltin) {
 		return "", nil
 	}
-	return implementation, err
+	temporaryTail := latest.source == TemporarySandboxModeSource
+	if !temporaryTail {
+		previous, previousOK, previousErr := next()
+		if previousErr != nil {
+			return "", previousErr
+		}
+		temporaryTail = previousOK &&
+			previous.implementation == string(sandboxpolicy.ImplementationHarnessBuiltin) &&
+			previous.source == TemporarySandboxModeSource
+	}
+	if !temporaryTail {
+		return "", nil
+	}
+	for {
+		item, itemOK, itemErr := next()
+		if itemErr != nil || !itemOK {
+			return "", itemErr
+		}
+		switch item.implementation {
+		case string(sandboxpolicy.ImplementationTclaudeLayer),
+			string(sandboxpolicy.ImplementationStacked):
+			return item.implementation, nil
+		}
+	}
 }
 
 // LatestInsertedSessionIDForConv returns the newest distinct session row for a

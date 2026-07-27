@@ -342,6 +342,19 @@ func TestDurableRelaunchDoesNotUndoExplicitHarnessBuiltinChange(t *testing.T) {
 		ApprovalPolicy: approval,
 	}))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "historical-temporary-unlock", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusExited,
+		SandboxMode: harness.ClaudeSandboxOff, SandboxImplementation: builtin,
+		SandboxModeSource: db.TemporarySandboxModeSource,
+		ApprovalPolicy:    approval,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "successfully-restored-layered", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusExited,
+		SandboxMode: mode, SandboxImplementation: layered,
+		ApprovalPolicy: approval,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "intentional-builtin", ConvID: convID, Cwd: t.TempDir(),
 		Harness: harness.DefaultName, Status: session.StatusIdle,
 		SandboxMode: mode, SandboxImplementation: builtin,

@@ -386,6 +386,8 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	launch, err := SessionLaunchProfileForConv(oldConv)
 	require.NoError(t, err)
 	assert.Equal(t, override, launch.SandboxMode)
+	assert.Equal(t, "harness-builtin", launch.SandboxImplementation,
+		"non-daemon relaunches must not re-enable the durable outer layer while temporarily off")
 	assert.Equal(t, TemporarySandboxModeSource, launch.SandboxModeSource)
 
 	_, err = RotateAgentConv(oldConv, newConv, "clear")
