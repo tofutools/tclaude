@@ -21,6 +21,7 @@ import (
 
 const (
 	relayFakeBwrapEnv    = "TCLAUDE_RELAY_FAKE_BWRAP"
+	relayFakeChildEnv    = "TCLAUDE_RELAY_FAKE_CHILD"
 	relayFakeReporterEnv = "TCLAUDE_RELAY_FAKE_REPORTER"
 	relayFakeReadyEnv    = "TCLAUDE_RELAY_FAKE_READY"
 	relayFakeResizedEnv  = "TCLAUDE_RELAY_FAKE_RESIZED"
@@ -139,6 +140,10 @@ func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing
 		runRelayFakeBwrap(t)
 		return
 	}
+	if os.Getenv(relayFakeChildEnv) == "1" {
+		runRelayFakeChild(t)
+		return
+	}
 	if os.Getenv(relayFakeReporterEnv) == "1" {
 		runRelayFakeReporter(t)
 		return
@@ -192,14 +197,26 @@ func runRelayFakeBwrap(t *testing.T) {
 	require.NoError(t, err)
 	status := os.NewFile(3, "bwrap-status")
 	require.NotNil(t, status)
-	_, err = fmt.Fprintf(status, "{\"child-pid\":%d}\n", os.Getpid())
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit$")
+	cmd.Env = append(os.Environ(), relayFakeBwrapEnv+"=0", relayFakeChildEnv+"=1")
+	cmd.ExtraFiles = []*os.File{status}
+	require.NoError(t, cmd.Run())
+	os.Exit(37)
+}
+
+func runRelayFakeChild(t *testing.T) {
+	t.Helper()
+	status := os.NewFile(3, "bwrap-status")
+	require.NotNil(t, status)
+	_, err := fmt.Fprintf(status, "{\"child-pid\":%d}\n", os.Getpid())
 	require.NoError(t, err)
 	require.NoError(t, status.Close())
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit$")
-	cmd.Env = append(os.Environ(), relayFakeBwrapEnv+"=0", relayFakeReporterEnv+"=1")
+	cmd.Env = append(os.Environ(), relayFakeChildEnv+"=0", relayFakeReporterEnv+"=1")
 	require.NoError(t, cmd.Run())
-	os.Exit(37)
+	os.Exit(0)
 }
 
 func runRelayFakeReporter(t *testing.T) {

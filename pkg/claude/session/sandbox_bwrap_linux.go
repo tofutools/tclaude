@@ -116,7 +116,7 @@ func tclaudeLayerCommand(
 		return "", err
 	}
 	relay := clcommon.DetectAbsoluteCmd("session", tclaudeLayerWinchRelayCommand)
-	return relay + " " + command, nil
+	return relay + " -- " + command, nil
 }
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {

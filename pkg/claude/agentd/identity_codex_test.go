@@ -93,7 +93,9 @@ func TestConvIDForPID_TclaudeLayerTraversesWrapperAncestry(t *testing.T) {
 		peerPID   = 8101
 		claudePID = 8050
 		innerSh   = 8040
+		bwrapInit = 8035
 		bwrapPID  = 8030
+		relayPID  = 8025
 		paneSh    = 8020
 		convID    = "75000000-0000-4000-8000-000000000750"
 	)
@@ -105,13 +107,17 @@ func TestConvIDForPID_TclaudeLayerTraversesWrapperAncestry(t *testing.T) {
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
 		Status:                "working",
 	}))
+	// Execute the resolver against the production relay-inserted topology:
+	// pane sh -> tclaude relay -> bwrap parent -> bwrap session helper ->
+	// inner sh -> harness -> socket client.
 	fakeProcTree{
 		name: map[int]string{
 			peerPID: "tclaude", claudePID: "claude", innerSh: "sh",
-			bwrapPID: "bwrap", paneSh: "sh",
+			bwrapInit: "bwrap", bwrapPID: "bwrap", relayPID: "tclaude", paneSh: "sh",
 		},
 		parent: map[int]int{
-			peerPID: claudePID, claudePID: innerSh, innerSh: bwrapPID, bwrapPID: paneSh,
+			peerPID: claudePID, claudePID: innerSh, innerSh: bwrapInit,
+			bwrapInit: bwrapPID, bwrapPID: relayPID, relayPID: paneSh,
 		},
 	}.install(t)
 

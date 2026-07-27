@@ -28,11 +28,10 @@ type bwrapChildStatus struct {
 // disconnected sandbox process group.
 func tclaudeLayerWinchRelayCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                tclaudeLayerWinchRelayCommand + " <bwrap> [args...]",
-		Short:              "Relay terminal resize notifications into tclaude-layer (internal)",
-		Hidden:             true,
-		DisableFlagParsing: true,
-		Args:               cobra.MinimumNArgs(1),
+		Use:    tclaudeLayerWinchRelayCommand + " -- <bwrap> [args...]",
+		Short:  "Relay terminal resize notifications into tclaude-layer (internal)",
+		Hidden: true,
+		Args:   cobra.MinimumNArgs(1),
 		Run: func(_ *cobra.Command, args []string) {
 			winch := make(chan os.Signal, 1)
 			signal.Notify(winch, syscall.SIGWINCH)
@@ -51,9 +50,9 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 
 // runTclaudeLayerWinchRelay launches one bubblewrap argv, learns the
 // host-visible identity of its initial sandbox process from bubblewrap itself,
-// and forwards SIGWINCH to that process group. --new-session makes the
-// reported child its own process-group leader; signaling the group rather than
-// the one process is load-bearing because production runs the TUI beneath
+// and forwards SIGWINCH to that process group. Signaling the group rather than
+// the reported process is load-bearing because bubblewrap's --new-session
+// helper is the group leader while production runs the TUI beneath
 // `sh -c <harness command>`.
 func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, error) {
 	if len(argv) == 0 || argv[0] == "" {
@@ -106,7 +105,7 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 	if status.ChildPID <= 0 {
 		return 125, fmt.Errorf("bubblewrap reported invalid child pid %d", status.ChildPID)
 	}
-	pidfd, err := unix.PidfdOpen(status.ChildPID, 0)
+	childPidfd, err := unix.PidfdOpen(status.ChildPID, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			waitErr := <-waitCh
@@ -115,7 +114,7 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 		}
 		return 125, fmt.Errorf("pin bubblewrap child pid %d: %w", status.ChildPID, err)
 	}
-	defer func() { _ = unix.Close(pidfd) }()
+	defer func() { _ = unix.Close(childPidfd) }()
 
 	pgid, err := unix.Getpgid(status.ChildPID)
 	if err != nil {
@@ -126,12 +125,20 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 		}
 		return 125, fmt.Errorf("resolve bubblewrap child process group: %w", err)
 	}
-	if pgid != status.ChildPID {
-		return 125, fmt.Errorf(
-			"bubblewrap --new-session child pid %d is not its process-group leader (pgid %d)",
-			status.ChildPID, pgid,
-		)
+	if pgid <= 0 {
+		return 125, fmt.Errorf("bubblewrap child pid %d has invalid process group %d",
+			status.ChildPID, pgid)
 	}
+	groupLeaderPidfd, err := unix.PidfdOpen(pgid, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			waitErr := <-waitCh
+			waited = true
+			return tclaudeLayerRelayExitCode(waitErr)
+		}
+		return 125, fmt.Errorf("pin bubblewrap process-group leader pid %d: %w", pgid, err)
+	}
+	defer func() { _ = unix.Close(groupLeaderPidfd) }()
 
 	for {
 		select {
@@ -140,7 +147,9 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 				winch = nil
 				continue
 			}
-			if err := signalPinnedTclaudeLayerGroup(pidfd, pgid); err != nil &&
+			if err := signalPinnedTclaudeLayerGroup(
+				childPidfd, groupLeaderPidfd, status.ChildPID, pgid,
+			); err != nil &&
 				!errors.Is(err, syscall.ESRCH) {
 				return 125, fmt.Errorf("forward SIGWINCH to sandbox process group: %w", err)
 			}
@@ -151,13 +160,23 @@ func runTclaudeLayerWinchRelay(argv []string, winch <-chan os.Signal) (int, erro
 	}
 }
 
-// signalPinnedTclaudeLayerGroup verifies that the pidfd-pinned group leader is
-// still alive before addressing its process group. No user-selected PID or
-// signal reaches this sink: both the pidfd and pgid came from bubblewrap and
-// SIGWINCH is a compile-time constant.
-func signalPinnedTclaudeLayerGroup(pidfd, pgid int) error {
-	if err := unix.PidfdSendSignal(pidfd, 0, nil, 0); err != nil {
+// signalPinnedTclaudeLayerGroup verifies that both bubblewrap's reported child
+// and its pidfd-pinned process-group leader remain alive before addressing the
+// group. No user-selected PID or signal reaches this sink: the child identity
+// came from bubblewrap, the pgid came from the kernel, and SIGWINCH is fixed.
+func signalPinnedTclaudeLayerGroup(childPidfd, groupLeaderPidfd, childPID, pgid int) error {
+	if err := unix.PidfdSendSignal(childPidfd, 0, nil, 0); err != nil {
 		return err
+	}
+	if err := unix.PidfdSendSignal(groupLeaderPidfd, 0, nil, 0); err != nil {
+		return err
+	}
+	currentPGID, err := unix.Getpgid(childPID)
+	if err != nil {
+		return err
+	}
+	if currentPGID != pgid {
+		return fmt.Errorf("bubblewrap child moved from process group %d to %d", pgid, currentPGID)
 	}
 	return unix.Kill(-pgid, syscall.SIGWINCH)
 }

@@ -247,12 +247,12 @@ func assertTclaudeLayerResizeRoundTrip(
 
 	// Keep the reporter beneath a live sh wrapper instead of letting sh exec
 	// it as its final command. This is the production topology: bubblewrap's
-	// reported process-group leader is `sh -c <harness command>`, and the TUI
-	// may be a descendant that only a process-group signal reaches.
+	// reported child is `sh -c <harness command>`, while the TUI is a
+	// descendant that only a process-group signal reliably reaches.
 	reporterCommand := clcommon.ShellQuoteArg(helperBinary) +
-		" -test.run=^TestTclaudeLayerResizeSmokeReporter$ & " +
-		"tclaude_resize_reporter=$!; wait \"$tclaude_resize_reporter\""
-	relayArgs := []string{"session", tclaudeLayerWinchRelayCommand, bwrapBinary}
+		" -test.run=^TestTclaudeLayerResizeSmokeReporter$; " +
+		"tclaude_resize_status=$?; exit \"$tclaude_resize_status\""
+	relayArgs := []string{"session", tclaudeLayerWinchRelayCommand, "--", bwrapBinary}
 	relayArgs = append(relayArgs, args...)
 	relayArgs = append(relayArgs, "--", "sh", "-c", reporterCommand)
 
