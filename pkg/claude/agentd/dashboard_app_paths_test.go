@@ -44,7 +44,7 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, rec.Code, "exchange body=%s", rec.Body.String())
 	var cookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardCookieName {
+		if isDashboardCookieName(c.Name) {
 			cookie = c
 		}
 	}

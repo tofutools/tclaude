@@ -214,6 +214,15 @@ func runServe(p *serveParams) error {
 	if err := migrateStateIntoDataDir(); err != nil {
 		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
+	if name, err := loadOrCreateDashboardCookieName(config.DataDir()); err != nil {
+		// Cookie isolation is defense against independent loopback dashboards,
+		// not a prerequisite for serving this one. The deterministic
+		// per-data-directory fallback remains stable across local restarts.
+		slog.Warn("dashboard session: could not load cookie namespace; using data-directory fallback",
+			"error", err)
+	} else {
+		dashboardCookieName = name
+	}
 	// P0 intentionally wipes only obsolete process run data. The process root
 	// also holds template versions, heads, layout-bearing sources, and
 	// authorship; those authoring paths must survive the engine replacement.

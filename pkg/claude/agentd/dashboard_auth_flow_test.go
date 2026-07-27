@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,10 +14,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// dashboardCookieName is the wire-contract cookie the dashboard
-// session rides on. Duplicated here (the const is unexported) so the
-// test asserts the real header an agent would have to forge.
-const dashboardCookieName = "tclaude_dashboard_session"
+// dashboardCookieNamePrefix is the wire-contract prefix for the dashboard's
+// per-data-directory cookie. The suffix is deliberately internal: these
+// black-box tests discover the exact cookie minted by the exchange.
+const dashboardCookieNamePrefix = "tclaude_dashboard_session_"
+
+func isDashboardCookieName(name string) bool {
+	return strings.HasPrefix(name, dashboardCookieNamePrefix)
+}
 
 // Scenario: an agent (a caller with a Claude Code ancestor) is refused
 // the dashboard init token. This is the load-bearing gate — the
@@ -97,7 +102,7 @@ func TestDashboardAuth_TokenExchangeFlow(t *testing.T) {
 		"exchange must 303-redirect; body=%s", rec.Body.String())
 	var cookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardCookieName {
+		if isDashboardCookieName(c.Name) {
 			cookie = c
 		}
 	}

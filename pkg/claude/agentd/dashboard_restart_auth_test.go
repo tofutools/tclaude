@@ -2,7 +2,9 @@ package agentd
 
 import (
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,37 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestDashboardCookieNameIsolatesLoopbackDashboards(t *testing.T) {
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	firstName, err := loadOrCreateDashboardCookieName(firstDir)
+	require.NoError(t, err)
+	restartedName, err := loadOrCreateDashboardCookieName(firstDir)
+	require.NoError(t, err)
+	secondName, err := loadOrCreateDashboardCookieName(secondDir)
+	require.NoError(t, err)
+	require.NotEqual(t, firstName, secondName)
+	assert.Equal(t, firstName, restartedName,
+		"the same daemon state needs a stable name across restarts")
+
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	firstURL, err := url.Parse("http://127.0.0.1:4567/")
+	require.NoError(t, err)
+	secondURL, err := url.Parse("http://127.0.0.1:8910/")
+	require.NoError(t, err)
+	jar.SetCookies(firstURL, []*http.Cookie{{Name: firstName, Value: "first"}})
+	jar.SetCookies(secondURL, []*http.Cookie{{Name: secondName, Value: "second"}})
+
+	got := map[string]string{}
+	for _, cookie := range jar.Cookies(firstURL) {
+		got[cookie.Name] = cookie.Value
+	}
+	assert.Equal(t, "first", got[firstName])
+	assert.Equal(t, "second", got[secondName],
+		"the jar demonstrates that ports share a cookie scope")
+}
 
 func withDashboardRestartAuthTest(t *testing.T, now time.Time) {
 	t.Helper()
@@ -31,6 +64,25 @@ func withDashboardRestartAuthTest(t *testing.T, now time.Time) {
 	dashboardGraceSessionHashes = map[string]time.Time{}
 	popupBaseURL = "http://127.0.0.1:4567"
 	dashboardBindHost = defaultDashboardBind
+}
+
+func TestDashboardLegacyCookieMigratesThroughRestartGrace(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	withDashboardRestartAuthTest(t, now)
+	dashboardSessionToken = "current-cookie"
+	dashboardGraceSessionHashes[dashboardTokenHash("pre-namespace-cookie")] = now.Add(time.Minute)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/snapshot", nil)
+	req.Header.Set("Origin", popupBaseURL)
+	req.AddCookie(&http.Cookie{
+		Name: legacyDashboardCookieName, Value: "pre-namespace-cookie",
+	})
+	rec := httptest.NewRecorder()
+	require.True(t, checkDashboardAuth(rec, req))
+	rotated := rec.Result().Cookies()
+	require.Len(t, rotated, 1)
+	assert.Equal(t, dashboardCookieName, rotated[0].Name)
+	assert.Equal(t, "current-cookie", rotated[0].Value)
 }
 
 func TestDashboardGraceCookieRotatesOnWebSocketUpgrade(t *testing.T) {

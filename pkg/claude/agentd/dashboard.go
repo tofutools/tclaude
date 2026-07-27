@@ -129,7 +129,30 @@ func handleDashboardInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"instance_id": daemonInstanceID})
 }
 
-const dashboardCookieName = "tclaude_dashboard_session"
+const (
+	legacyDashboardCookieName = "tclaude_dashboard_session"
+	dashboardCookieNamePrefix = legacyDashboardCookieName + "_"
+)
+
+// dashboardCookieName is stable across restarts of this agentd, but distinct
+// for another tclaude installation on the same browser host. HTTP cookies are
+// scoped by host + path, never by port: without this namespace, opening a
+// second loopback dashboard on another port overwrites the first dashboard's
+// credential and its next poll is forced through re-authentication.
+//
+// runServe replaces the deterministic availability fallback with a persisted
+// random installation namespace before the listener starts. The old
+// unnamespaced cookie remains accepted below only as a one-way upgrade path.
+var dashboardCookieName = dashboardCookieNameForDataDir(config.DataDir())
+
+func dashboardCookieNameForDataDir(dataDir string) string {
+	digest := sha256.Sum256([]byte(dataDir))
+	return dashboardCookieNameForNamespace(hex.EncodeToString(digest[:16]))
+}
+
+func dashboardCookieNameForNamespace(namespace string) string {
+	return dashboardCookieNamePrefix + namespace
+}
 
 func initDashboardToken() {
 	if dashboardSessionToken != "" {
@@ -197,6 +220,37 @@ func dashboardSessionCookieMatch(value string) (valid, refresh bool) {
 		return false, false
 	}
 	return true, true
+}
+
+// dashboardRequestSessionMatch finds a usable cookie for this agentd. Prefer
+// the namespaced cookie, then accept the pre-namespace wire name so a browser
+// authenticated by the previous release can cross one more clean restart.
+//
+// present distinguishes "no dashboard credential" from "one was sent but is
+// stale"; both authenticate identically, but the root handler uses it to keep
+// its explanatory branches accurate. A valid legacy cookie always requests a
+// refresh even when its value happens to equal the current process token:
+// migration is complete only once the browser stores the namespaced name.
+func dashboardRequestSessionMatch(r *http.Request) (present, valid, refresh bool) {
+	var legacy *http.Cookie
+	for _, cookie := range r.Cookies() {
+		switch cookie.Name {
+		case dashboardCookieName:
+			present = true
+			if ok, rotate := dashboardSessionCookieMatch(cookie.Value); ok {
+				return true, true, rotate
+			}
+		case legacyDashboardCookieName:
+			present = true
+			legacy = cookie
+		}
+	}
+	if legacy != nil {
+		if ok, _ := dashboardSessionCookieMatch(legacy.Value); ok {
+			return true, true, true
+		}
+	}
+	return present, false, false
 }
 
 // registerDashboardRoutes wires the dashboard onto the popup-server
@@ -373,8 +427,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 
 	// Already authenticated: an existing valid cookie (refresh / new
 	// tab in the same browser) just gets the page.
-	if c, err := r.Cookie(dashboardCookieName); err == nil {
-		valid, refresh := dashboardSessionCookieMatch(c.Value)
+	if present, valid, refresh := dashboardRequestSessionMatch(r); present {
 		if !valid {
 			renderDashboardLoginPage(w, r, http.StatusForbidden, "")
 			return
@@ -741,10 +794,8 @@ func checkDashboardAuth(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, msg, code)
 		return false
 	}
-	if c, err := r.Cookie(dashboardCookieName); err == nil {
-		if _, refresh := dashboardSessionCookieMatch(c.Value); refresh {
-			setDashboardSessionCookie(w)
-		}
+	if _, _, refresh := dashboardRequestSessionMatch(r); refresh {
+		setDashboardSessionCookie(w)
 	}
 	return true
 }
@@ -762,11 +813,11 @@ func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int
 	if dashboardSessionToken == "" {
 		return false, false, http.StatusServiceUnavailable, "dashboard not initialised"
 	}
-	c, err := r.Cookie(dashboardCookieName)
-	if err != nil {
+	present, valid, _ := dashboardRequestSessionMatch(r)
+	if !present {
 		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
-	if valid, _ := dashboardSessionCookieMatch(c.Value); !valid {
+	if !valid {
 		return false, true, http.StatusForbidden, "missing or invalid dashboard cookie; load / first"
 	}
 	// Non-loopback bind: host-relative same-origin (mirror the remote

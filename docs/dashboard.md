@@ -77,7 +77,10 @@ them, access is gated by an **init-token exchange**:
    a `403`; the human gets a URL carrying a one-shot `init_token`.
 2. Opening that URL exchanges the token for an `HttpOnly` / `SameSite=Strict`
    session cookie, then 303-redirects to the bare path so the token never
-   lingers in the address bar, browser history, or an access log.
+   lingers in the address bar, browser history, or an access log. The cookie
+   name carries a persisted installation namespace, so another loopback
+   dashboard on the same host cannot overwrite it merely by using a different
+   port (cookies themselves are not port-scoped).
 3. Subsequent `/api/*` calls are authorised by that cookie. A bare `GET /` with
    neither a token nor a cookie is refused — the cookie is never handed out for
    free.

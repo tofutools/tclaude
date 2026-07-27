@@ -17,7 +17,7 @@ import (
 // dashboard rides on (see dashboard_auth_flow_test.go).
 func operatorLoginCookie(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == dashboardCookieName {
+		if isDashboardCookieName(c.Name) {
 			return c
 		}
 	}
