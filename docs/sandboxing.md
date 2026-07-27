@@ -200,8 +200,13 @@ load-bearing precedence classes:
 Later plan entries shadow earlier ones, allowing a more-specific allow to
 reopen beneath a deny and a more-specific deny to hide beneath an allow.
 Missing read/write bind sources are skipped without creating anything on the
-host; hide entries are still applied. The wrapper also starts a new terminal
-session to prevent terminal-input injection.
+host; hide entries are still applied. On Linux the wrapper also starts a new
+terminal session to prevent terminal-input injection. A tclaude process outside
+bubblewrap stays in the pane's foreground process group and relays only
+`SIGWINCH` to bubblewrap's disconnected process group, so TUIs still learn when
+the inherited terminal's size changes. The relay does not proxy terminal I/O or
+give the sandbox a controlling terminal. Seatbelt does not detach the process
+from its terminal session and needs no relay.
 
 ### macOS Seatbelt filesystem posture
 

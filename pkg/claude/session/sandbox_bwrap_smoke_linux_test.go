@@ -3,13 +3,16 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -24,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -38,6 +43,7 @@ const (
 	smokeHostPIDEnv            = "TCLAUDE_SANDBOX_V2_HOST_PID"
 	smokeLoopbackAddrEnv       = "TCLAUDE_SANDBOX_V2_LOOPBACK_ADDR"
 	smokeTclaudeBinaryEnv      = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
+	smokeResizeReporterEnv     = "TCLAUDE_SANDBOX_V2_RESIZE_REPORTER"
 )
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
@@ -153,6 +159,21 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		WriteDirs:   []string{allowed},
 	}, effective)
 	require.NoError(t, err)
+	hostOpenPlan := plan
+	hostOpenPlan.NetworkPosture = sandboxpolicy.NetworkHostOpen
+	for _, tc := range []struct {
+		name string
+		plan sandboxpolicy.MountPlan
+	}{
+		{name: "host-open", plan: resizePlanClone(hostOpenPlan)},
+		{name: "isolated", plan: resizePlanClone(plan)},
+	} {
+		t.Run("terminal-resize-"+tc.name, func(t *testing.T) {
+			assertTclaudeLayerResizeRoundTrip(
+				t, binary, tclaudeBinary, helperBinary, phase0, tc.plan,
+			)
+		})
+	}
 	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, false, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
 		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary)
@@ -206,6 +227,123 @@ func runTclaudeLayerSmokeHelper(
 		t.Fatal("tclaude-layer host smoke timed out")
 	}
 	require.NoErrorf(t, err, "tclaude-layer host smoke output: %s", output)
+}
+
+func resizePlanClone(plan sandboxpolicy.MountPlan) sandboxpolicy.MountPlan {
+	plan.Entries = append([]sandboxpolicy.MountEntry(nil), plan.Entries...)
+	plan.Aliases = append([]sandboxpolicy.MountAlias(nil), plan.Aliases...)
+	return plan
+}
+
+func assertTclaudeLayerResizeRoundTrip(
+	t *testing.T,
+	bwrapBinary, tclaudeBinary, helperBinary string,
+	phase0WriteDirs []string,
+	plan sandboxpolicy.MountPlan,
+) {
+	t.Helper()
+	args, err := bwrapArgs(phase0WriteDirs, nil, plan)
+	require.NoError(t, err)
+
+	// Keep the reporter beneath a live sh wrapper instead of letting sh exec
+	// it as its final command. This is the production topology: bubblewrap's
+	// reported child is `sh -c <harness command>`, while the TUI is a
+	// descendant that only a process-group signal reliably reaches.
+	reporterCommand := clcommon.ShellQuoteArg(helperBinary) +
+		" -test.run=^TestTclaudeLayerResizeSmokeReporter$; " +
+		"tclaude_resize_status=$?; exit \"$tclaude_resize_status\""
+	relayArgs := []string{"session", tclaudeLayerWinchRelayCommand, "--", bwrapBinary}
+	relayArgs = append(relayArgs, args...)
+	relayArgs = append(relayArgs, "--", "sh", "-c", reporterCommand)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tclaudeBinary, relayArgs...)
+	cmd.Env = append(os.Environ(), smokeResizeReporterEnv+"=1")
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 24, Cols: 80})
+	require.NoError(t, err)
+	defer func() { _ = ptmx.Close() }()
+
+	lines := make(chan string, 32)
+	go func() {
+		scanner := bufio.NewScanner(ptmx)
+		for scanner.Scan() {
+			lines <- strings.TrimSpace(scanner.Text())
+		}
+		close(lines)
+	}()
+	observed := make([]string, 0, 8)
+	waitLine := func(prefix string) string {
+		t.Helper()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatalf("resize reporter exited before %s; output=%q", prefix, observed)
+				}
+				observed = append(observed, line)
+				if strings.HasPrefix(line, prefix) {
+					return line
+				}
+			case <-timer.C:
+				t.Fatalf("timed out waiting for %s; output=%q", prefix, observed)
+			}
+		}
+	}
+
+	ready := waitLine("READY ")
+	assert.Contains(t, ready, "rows=24 cols=80")
+	assert.Contains(t, ready, "parent=sh")
+	assert.Contains(t, ready, "tty_fg=ENOTTY",
+		"--new-session must keep the sandbox disconnected from the host controlling tty")
+
+	require.NoError(t, pty.Setsize(ptmx, &pty.Winsize{Rows: 37, Cols: 113}))
+	resized := waitLine("RESIZED ")
+	assert.Contains(t, resized, "rows=37 cols=113")
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	select {
+	case err := <-waitCh:
+		require.NoErrorf(t, err, "resize relay output: %q", observed)
+	case <-ctx.Done():
+		t.Fatalf("resize relay did not exit after reporter completed; output=%q", observed)
+	}
+}
+
+func TestTclaudeLayerResizeSmokeReporter(t *testing.T) {
+	if os.Getenv(smokeResizeReporterEnv) != "1" {
+		t.Skip("host-smoke terminal resize reporter")
+	}
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	defer signal.Stop(winch)
+
+	fd := int(os.Stdin.Fd())
+	size, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	require.NoError(t, err)
+	_, err = unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+	require.Error(t, err, "sandbox unexpectedly reacquired a controlling tty")
+	require.ErrorIs(t, err, syscall.ENOTTY)
+
+	parentComm, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(os.Getppid()), "comm"))
+	require.NoError(t, err)
+	fmt.Printf(
+		"READY rows=%d cols=%d parent=%s tty_fg=ENOTTY pid=%d ppid=%d pgrp=%d\n",
+		size.Row, size.Col, strings.TrimSpace(string(parentComm)),
+		os.Getpid(), os.Getppid(), unix.Getpgrp(),
+	)
+
+	select {
+	case <-winch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("wrapped descendant did not receive SIGWINCH")
+	}
+	size, err = unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	require.NoError(t, err)
+	fmt.Printf("RESIZED rows=%d cols=%d\n", size.Row, size.Col)
 }
 
 func TestTclaudeLayerSmokeHelper(t *testing.T) {

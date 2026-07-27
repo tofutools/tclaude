@@ -181,6 +181,7 @@ func Cmd() *cobra.Command {
 			NotifyListenCmd(),
 			codexProfileCleanupCmd(),
 			exitCallbackCmd(),
+			tclaudeLayerWinchRelayCmd(),
 		},
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
 			// Default to interactive watch mode
