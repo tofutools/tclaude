@@ -103,7 +103,8 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 }
 
 func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	for _, relative := range []string{filepath.Join(".tclaude", "data"), filepath.Join(".claude", "sessions")} {
 		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))

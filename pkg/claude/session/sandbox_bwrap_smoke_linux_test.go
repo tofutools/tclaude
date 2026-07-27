@@ -425,8 +425,12 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	assert.True(t, errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.EROFS),
 		"hidden-path write must fail with ENOENT or EROFS, got %v", err)
 	if !protectedReadable {
-		err = os.MkdirAll(filepath.Dir(protectedFile), 0o700)
-		require.Error(t, err, "an ancestor-denied protected path must not be creatable")
+		forbiddenProtectedSibling := filepath.Join(
+			filepath.Dir(protectedFile),
+			"forbidden-sibling",
+		)
+		err = os.MkdirAll(forbiddenProtectedSibling, 0o700)
+		require.Error(t, err, "a new ancestor-denied protected sibling must not be creatable")
 		assert.True(t, errors.Is(err, syscall.EROFS),
 			"ancestor-denied protected path creation must fail with EROFS, got %v", err)
 	}
