@@ -78,9 +78,11 @@ runs:
             # package list — the partition cannot drift from the shard
             # definitions, and a removed/renamed shard target fails here
             # loudly instead of silently dropping packages.
+            all_pkgs="$(go list ./...)"
+            sharded_pkgs="$(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... ./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/...)"
             pkgs="$(comm -23 \
-              <(go list ./... | sort) \
-              <(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... ./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/... | sort))"
+              <(printf '%s\n' "$all_pkgs" | sort) \
+              <(printf '%s\n' "$sharded_pkgs" | sort))"
             ;;
           *) echo "unknown shard: ${{ inputs.shard }}" >&2; exit 1 ;;
         esac
