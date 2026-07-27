@@ -295,8 +295,8 @@ func Open() (*sql.DB, error) {
 	// no longer wait for a WAL fsync. Recent commits may roll back after an OS
 	// crash or power loss; ordinary application crashes remain durable, and
 	// checkpoints still sync both the WAL and main database. This is the
-	// intended performance/durability tradeoff for tclaude's reconstructable
-	// local state.
+	// intended performance/durability tradeoff for tclaude's local
+	// coordination state.
 	synchronous := "NORMAL"
 	// Test binaries use synchronous(OFF): the suite opens a fresh DB and
 	// issues many small writes per test. Tests cannot observe power-loss
