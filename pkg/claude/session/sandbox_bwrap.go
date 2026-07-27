@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -1193,8 +1192,6 @@ func appendTclaudeLayerOpaqueState(
 	if !filepath.IsAbs(root) || len(stateDirs) == 0 {
 		return nil, fmt.Errorf("invalid OpenCode v4 opaque state contract")
 	}
-	const stagingRoot = "/tmp/.tclaude-opencode-v4-state"
-	args = append(args, "--dir", stagingRoot)
 	cleanDirs := make([]string, len(stateDirs))
 	for i, stateDir := range stateDirs {
 		stateDir = filepath.Clean(stateDir)
@@ -1203,24 +1200,23 @@ func appendTclaudeLayerOpaqueState(
 			return nil, fmt.Errorf("OpenCode v4 state-only reopen %q is outside %q",
 				stateDir, root)
 		}
-		stage := filepath.Join(stagingRoot, strconv.Itoa(i))
-		args = append(args, "--dir", stage, "--bind", stateDir, stage)
 		cleanDirs[i] = stateDir
 	}
 	// Cover the host agent child, including control.sock, then reopen only the
-	// mutable XDG state directories from staging mounts. The staging names are
-	// hidden before exec, so the inherited listener fd is the sole control
-	// authority inside the server namespace.
+	// mutable XDG state directories. Bubblewrap resolves bind sources from the
+	// host mount namespace before applying the operations, while destinations
+	// are resolved in the new namespace; a same-path bind therefore reopens the
+	// original host directory beneath the tmpfs without exposing control.sock.
+	// The inherited listener fd remains the sole control authority inside the
+	// server namespace.
 	args = append(args, "--tmpfs", root)
-	for i, stateDir := range cleanDirs {
-		stage := filepath.Join(stagingRoot, strconv.Itoa(i))
+	for _, stateDir := range cleanDirs {
 		args = append(args,
 			"--dir", filepath.Dir(stateDir),
 			"--dir", stateDir,
-			"--bind", stage, stateDir,
+			"--bind", stateDir, stateDir,
 		)
 	}
-	args = append(args, "--tmpfs", stagingRoot)
 	return args, nil
 }
 

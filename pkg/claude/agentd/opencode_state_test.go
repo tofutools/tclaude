@@ -144,6 +144,8 @@ func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T)
 			"the relay executable and listener must retain their exact fd mapping")
 		assert.NotContains(t, serverJoined, controlPath,
 			"the server namespace must receive only the inherited control fd")
+		assert.NotContains(t, serverJoined, ".tclaude-opencode-v4-state",
+			"the server mount plan must not rely on a namespace-created bind source")
 		assert.NotContains(t, serverJoined, "--ro-bind "+controlPath+" "+controlPath)
 		assert.NotContains(t, serverJoined, "--bind "+controlPath+" "+controlPath)
 	}
