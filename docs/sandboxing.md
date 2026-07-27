@@ -260,8 +260,9 @@ session and needs no relay.
 ### macOS Seatbelt filesystem posture
 
 The Darwin applier compiles the final four-class result into a
-`sandbox-exec` profile. Seatbelt denies dominate allows, so it does not replay
-the plan as a textual sequence of deny then allow rules. Instead it emits
+`sandbox-exec` profile. Seatbelt rule selection depends on predicate
+specificity—a specific allow can reopen a broader deny—so it does not replay
+the plan as a textual sequence of deny and allow rules. Instead it emits
 deny-only read/write regions whose predicates carve out the final narrower
 reopens. This is how a writable child beneath a hidden ancestor keeps the same
 later-shadows-earlier meaning as the Linux mount plan.

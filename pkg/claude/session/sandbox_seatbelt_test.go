@@ -38,8 +38,8 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 (allow default)
 
 ; Filesystem policy is deny-only. Positive descendants are carved out
-; inside each deny predicate because a Seatbelt deny cannot be reopened
-; by a later allow rule.
+; inside each deny predicate so plan precedence does not depend on
+; Seatbelt allow/deny rule selection.
 
 (deny file-write*
   (require-all

@@ -36,10 +36,10 @@ func TestSeatbeltAssumptions(t *testing.T) {
 		"session.probeDarwinSeatbeltCapability, session.resolveBwrapBinary (darwin), "+
 			"session.tclaudeLayerCommand",
 		assumeSandboxExecDeny)
-	runDarwinAssumption(t, "DenyDominatesLaterAllow",
+	runDarwinAssumption(t, "SpecificAllowCanReopenBroadDeny",
 		"session.renderSeatbeltProfile, session.compileSeatbeltDenyRegions, "+
 			"session.appendSeatbeltDenyRule",
-		assumeSeatbeltDenyDominance)
+		assumeSeatbeltSpecificAllow)
 	runDarwinAssumption(t, "FileReadDenyDoesNotBlockUnixConnect",
 		"session.appendSeatbeltUnixConnectDenyRule",
 		assumeFileReadDoesNotDenyUnixConnect)
@@ -54,7 +54,7 @@ func TestSeatbeltAssumptions(t *testing.T) {
 		"session.seatbeltSamePath, session.seatbeltPathContains, "+
 			"session.darwinSeatbeltLstatIdentity",
 		assumeCaseAndNFCIdentity)
-	runDarwinAssumption(t, "SymlinkPredicateUsesResolvedTarget",
+	runDarwinAssumption(t, "SymlinkPredicateChecksAliasAndTarget",
 		"session.expandSeatbeltAliasRegions and session.canonicalSeatbeltOwnedPath",
 		assumeSymlinkPredicateIdentity)
 	runDarwinAssumption(t, "RuntimeWriteCarveoutsCanBeStrictlyRedenied",
@@ -89,7 +89,7 @@ func assumeSandboxExecDeny(t *testing.T) {
 		"write-denied", map[string]string{"ASSUME_PATH": probe}, nil)
 }
 
-func assumeSeatbeltDenyDominance(t *testing.T) {
+func assumeSeatbeltSpecificAllow(t *testing.T) {
 	t.Helper()
 	root := canonicalTempDir(t)
 	path := filepath.Join(root, "allowed-later")
@@ -102,12 +102,12 @@ func assumeSeatbeltDenyDominance(t *testing.T) {
 (allow file-read* (literal (param "FILE")))
 `
 	runSeatbeltHelper(t, profile, map[string]string{"ROOT": root, "FILE": path},
-		"read-denied", map[string]string{"ASSUME_PATH": path}, nil)
+		"read-allowed", map[string]string{"ASSUME_PATH": path}, nil)
 }
 
 func assumeFileReadDoesNotDenyUnixConnect(t *testing.T) {
 	t.Helper()
-	root := canonicalTempDir(t)
+	root := shortDarwinTempDir(t)
 	socket := filepath.Join(root, "echo.sock")
 	stop := startUnixEchoServer(t, socket)
 	defer stop()
@@ -131,7 +131,7 @@ func assumeFileReadDoesNotDenyUnixConnect(t *testing.T) {
 
 func assumeInboundDenyBlocksReply(t *testing.T) {
 	t.Helper()
-	root := canonicalTempDir(t)
+	root := shortDarwinTempDir(t)
 	socket := filepath.Join(root, "echo.sock")
 	stop := startUnixEchoServer(t, socket)
 	defer stop()
@@ -161,7 +161,7 @@ func assumeInboundDenyBlocksReply(t *testing.T) {
 
 func assumeOutboundExceptionAndBindDeny(t *testing.T) {
 	t.Helper()
-	root := canonicalTempDir(t)
+	root := shortDarwinTempDir(t)
 	allowed := filepath.Join(root, "allowed.sock")
 	blocked := filepath.Join(root, "blocked.sock")
 	listenPath := filepath.Join(root, "listener.sock")
@@ -246,11 +246,13 @@ func assumeSymlinkPredicateIdentity(t *testing.T) {
 (allow default)
 (deny file-read* (literal (param "DENY")))
 `
-	// Seatbelt evaluates the vnode operation against the resolved target. A
-	// predicate written only with the symlink spelling is therefore not the
-	// authority production intends to enforce.
+	// Seatbelt checks the path operation under both the symlink spelling and
+	// its resolved target. Production expands both identities so neither the
+	// alias nor direct-target spelling can bypass policy.
 	runSeatbeltHelper(t, profile, map[string]string{"DENY": alias},
-		"read-allowed", map[string]string{"ASSUME_PATH": alias}, nil)
+		"read-denied", map[string]string{"ASSUME_PATH": alias}, nil)
+	runSeatbeltHelper(t, profile, map[string]string{"DENY": alias},
+		"read-allowed", map[string]string{"ASSUME_PATH": target}, nil)
 	runSeatbeltHelper(t, profile, map[string]string{"DENY": target},
 		"read-denied", map[string]string{"ASSUME_PATH": alias}, nil)
 }
@@ -519,6 +521,24 @@ func startUnixEchoServer(t *testing.T, path string) func() {
 		}
 		_ = os.Remove(path)
 	}
+}
+
+func shortDarwinTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "tclaude-sa-")
+	if err != nil {
+		t.Fatalf("create short Darwin temp directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove short Darwin temp directory: %v", err)
+		}
+	})
+	canonical, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("canonicalize short Darwin temp directory: %v", err)
+	}
+	return canonical
 }
 
 func echoUnixConnection(conn net.Conn) {
