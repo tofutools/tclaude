@@ -134,7 +134,9 @@ func TestContextSnapshotWriteBatchCommitsFullAndFastUpdatesTogether(t *testing.T
 	require.NoError(t, UpdateContextSnapshot(fastSession, 20, 20, 2, 200_000))
 
 	batch := NewContextSnapshotWriteBatch()
-	fullIndex := batch.UpdateContextSnapshot(fullSession, 40, 400, 40, 1_000_000)
+	fullIndex := batch.UpdateContextSnapshot(
+		fullSession, fullConv, time.Time{}, 40, 400, 40, 1_000_000,
+	)
 	fastIndex := batch.UpdateContextSnapshotIfWindowUnchanged(
 		fastSession, fastConv, time.Time{}, 30, 300, 30, 200_000,
 	)
@@ -166,6 +168,104 @@ func TestContextSnapshotWriteBatchCommitsFullAndFastUpdatesTogether(t *testing.T
 	require.NotNil(t, profile.FallbackRelaunch)
 	require.NotNil(t, profile.FallbackRelaunch.ContextWindowSize)
 	assert.Equal(t, int64(1_000_000), *profile.FallbackRelaunch.ContextWindowSize)
+}
+
+func TestContextSnapshotWriteBatchIsolatesProjectionFailure(t *testing.T) {
+	setupTestDB(t)
+	const (
+		badConv     = "context-batch-bad-conv"
+		badSession  = "context-batch-bad-session"
+		goodConv    = "context-batch-good-conv"
+		goodSession = "context-batch-good-session"
+	)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: badSession, ConvID: badConv, Cwd: "/tmp/context-batch-bad",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: goodSession, ConvID: goodConv, Cwd: "/tmp/context-batch-good",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, UpdateContextSnapshot(goodSession, 20, 20, 2, 200_000))
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE conversation_resume_profiles
+		SET profile_json = '{"version":99}', updated_at = 'now'
+		WHERE conv_id = ?`, badConv)
+	require.NoError(t, err)
+
+	batch := NewContextSnapshotWriteBatch()
+	badIndex := batch.UpdateContextSnapshot(
+		badSession, badConv, time.Time{}, 40, 400, 40, 1_000_000,
+	)
+	goodIndex := batch.UpdateContextSnapshotIfWindowUnchanged(
+		goodSession, goodConv, time.Time{}, 30, 300, 30, 200_000,
+	)
+	result, err := batch.Commit()
+	require.NoError(t, err, "an operation error must not abort the outer transaction")
+	require.Len(t, result.OperationErrors, 1)
+	assert.ErrorContains(t, result.OperationErrors[0], "unsupported conversation resume profile version 99")
+	assert.False(t, result.Applied[badIndex])
+	assert.True(t, result.Applied[goodIndex])
+
+	badSnapshot, err := GetContextSnapshot(badSession)
+	require.NoError(t, err)
+	assert.Zero(t, badSnapshot.ContextWindowSize,
+		"the failed operation's session update must roll back to its savepoint")
+	goodSnapshot, err := GetContextSnapshot(goodSession)
+	require.NoError(t, err)
+	assert.Equal(t, float64(30), goodSnapshot.ContextPct)
+	assert.Equal(t, int64(300), goodSnapshot.TokensInput)
+}
+
+func TestContextSnapshotWriteBatchGuardsGenerationAndAllZeroSnapshot(t *testing.T) {
+	setupTestDB(t)
+	const (
+		oldConv     = "context-batch-old-generation"
+		newConv     = "context-batch-new-generation"
+		sessionID   = "context-batch-reused-session"
+		zeroConv    = "context-batch-zero-guard-conv"
+		zeroSession = "context-batch-zero-guard-session"
+	)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: oldConv, Cwd: "/tmp/context-batch-old",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	staleBatch := NewContextSnapshotWriteBatch()
+	staleUpdate := staleBatch.UpdateContextSnapshot(
+		sessionID, oldConv, time.Time{}, 70, 700, 70, 1_000_000,
+	)
+	staleReset := staleBatch.ResetCompact(sessionID, oldConv, time.Time{})
+	require.NoError(t, DeleteSession(sessionID))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: newConv, Cwd: "/tmp/context-batch-new",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	staleResult, err := staleBatch.Commit()
+	require.NoError(t, err)
+	assert.False(t, staleResult.Applied[staleUpdate])
+	assert.False(t, staleResult.Applied[staleReset])
+	recreated, err := GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, recreated.ContextWindowSize,
+		"deferred operations must not modify a replacement session generation")
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: zeroSession, ConvID: zeroConv, Cwd: "/tmp/context-batch-zero",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, UpdateContextSnapshot(zeroSession, 25, 250, 25, 200_000))
+	zeroBatch := NewContextSnapshotWriteBatch()
+	zeroIndex := zeroBatch.UpdateContextSnapshot(
+		zeroSession, zeroConv, time.Time{}, 0, 0, 0, 0,
+	)
+	zeroResult, err := zeroBatch.Commit()
+	require.NoError(t, err)
+	assert.True(t, zeroResult.Applied[zeroIndex])
+	preserved, err := GetContextSnapshot(zeroSession)
+	require.NoError(t, err)
+	assert.Equal(t, float64(25), preserved.ContextPct)
+	assert.Equal(t, int64(200_000), preserved.ContextWindowSize)
 }
 
 func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.T) {

@@ -194,11 +194,8 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 
 func (rc *snapshotRowCache) flushCodexContextWrites() error {
 	timing, err := rc.codexContextBatch.flush()
-	if err != nil {
-		return err
-	}
 	if timing.total > 0 {
 		rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
 	}
-	return nil
+	return err
 }

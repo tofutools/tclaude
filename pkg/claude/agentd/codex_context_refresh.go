@@ -463,7 +463,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 					timing.contextReset = contextWriteTimingFromDB(detail)
 				})
 			} else {
-				deferredOperationIndex, err = batch.resetCompact(sess.ID)
+				deferredOperationIndex, err = batch.resetCompact(sess.ID, sess.ConvID, sess.CreatedAt)
 			}
 			if err != nil {
 				slog.Warn("codex-telemetry: failed to persist compaction reset",
@@ -522,7 +522,8 @@ func refreshCodexContextSnapshotOnReadBatched(
 				)
 			} else {
 				deferredOperationIndex, err = batch.updateContextSnapshot(
-					sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
+					sess.ID, sess.ConvID, sess.CreatedAt,
+					ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize,
 				)
 			}
 			contextPersisted = err == nil
@@ -608,12 +609,13 @@ func (b *codexContextWriteBatch) ensureDBBatch() error {
 }
 
 func (b *codexContextWriteBatch) resetCompact(
-	sessionID string,
+	sessionID, convID string,
+	createdAt time.Time,
 ) (int, error) {
 	if err := b.ensureDBBatch(); err != nil {
 		return 0, err
 	}
-	return b.dbBatch.ResetCompact(sessionID), nil
+	return b.dbBatch.ResetCompact(sessionID, convID, createdAt), nil
 }
 
 func (b *codexContextWriteBatch) updateIfWindowUnchanged(
@@ -631,7 +633,8 @@ func (b *codexContextWriteBatch) updateIfWindowUnchanged(
 }
 
 func (b *codexContextWriteBatch) updateContextSnapshot(
-	sessionID string,
+	sessionID, convID string,
+	createdAt time.Time,
 	pct float64,
 	tokensInput, tokensOutput, windowSize int64,
 ) (int, error) {
@@ -639,7 +642,7 @@ func (b *codexContextWriteBatch) updateContextSnapshot(
 		return 0, err
 	}
 	return b.dbBatch.UpdateContextSnapshot(
-		sessionID, pct, tokensInput, tokensOutput, windowSize,
+		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize,
 	), nil
 }
 
@@ -684,7 +687,7 @@ func (b *codexContextWriteBatch) flush() (codexTelemetryTiming, error) {
 	timing.contextWrite = timing.contextReset.total + timing.contextFast.total +
 		timing.contextProject.total + timing.contextBatch.total
 	timing.total = timing.contextWrite
-	return timing, nil
+	return timing, errors.Join(result.OperationErrors...)
 }
 
 func cacheCodexContextPersistence(pending pendingCodexContextPersistence) {

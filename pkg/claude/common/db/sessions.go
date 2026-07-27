@@ -1014,6 +1014,9 @@ type ContextSnapshotWriteBatchResult struct {
 	Fast        ContextSnapshotWriteTiming
 	Project     ContextSnapshotWriteTiming
 	Applied     []bool
+	// OperationErrors are isolated by per-operation savepoints. They do not
+	// prevent other queued sessions from committing.
+	OperationErrors []error
 }
 
 func addContextSnapshotWriteTiming(
@@ -1038,13 +1041,18 @@ func NewContextSnapshotWriteBatch() *ContextSnapshotWriteBatch {
 
 // UpdateContextSnapshot queues a full context update and relaunch projection.
 func (b *ContextSnapshotWriteBatch) UpdateContextSnapshot(
-	sessionID string,
+	sessionID, convID string,
+	createdAt time.Time,
 	pct float64,
 	tokensInput, tokensOutput, windowSize int64,
 ) int {
 	index := len(b.operations)
+	kind := "project"
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		kind = "noop"
+	}
 	b.operations = append(b.operations, contextSnapshotWriteOperation{
-		kind: "project", sessionID: sessionID, pct: pct,
+		kind: kind, sessionID: sessionID, convID: convID, createdAt: createdAt, pct: pct,
 		tokensInput: tokensInput, tokensOutput: tokensOutput, window: windowSize,
 	})
 	return index
@@ -1058,18 +1066,25 @@ func (b *ContextSnapshotWriteBatch) UpdateContextSnapshotIfWindowUnchanged(
 	tokensInput, tokensOutput, windowSize int64,
 ) int {
 	index := len(b.operations)
+	kind := "fast"
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		kind = "fast_noop"
+	}
 	b.operations = append(b.operations, contextSnapshotWriteOperation{
-		kind: "fast", sessionID: sessionID, convID: convID, createdAt: createdAt, pct: pct,
+		kind: kind, sessionID: sessionID, convID: convID, createdAt: createdAt, pct: pct,
 		tokensInput: tokensInput, tokensOutput: tokensOutput, window: windowSize,
 	})
 	return index
 }
 
-// ResetCompact queues a compaction reset.
-func (b *ContextSnapshotWriteBatch) ResetCompact(sessionID string) int {
+// ResetCompact queues a generation-guarded compaction reset.
+func (b *ContextSnapshotWriteBatch) ResetCompact(
+	sessionID, convID string,
+	createdAt time.Time,
+) int {
 	index := len(b.operations)
 	b.operations = append(b.operations, contextSnapshotWriteOperation{
-		kind: "reset", sessionID: sessionID,
+		kind: "reset", sessionID: sessionID, convID: convID, createdAt: createdAt,
 	})
 	return index
 }
@@ -1099,16 +1114,33 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 	}
 	defer func() { _ = tx.Rollback() }()
 	for index, operation := range b.operations {
+		if _, err = tx.Exec("SAVEPOINT context_snapshot_operation"); err != nil {
+			result.Transaction.Total = time.Since(started)
+			return result, err
+		}
 		operationStarted := time.Now()
 		timing := ContextSnapshotWriteTiming{}
 		stageStarted = time.Now()
 		switch operation.kind {
+		case "noop":
+			result.Applied[index] = true
+			timing.Total = time.Since(operationStarted)
+		case "fast_noop":
+			timing.Total = time.Since(operationStarted)
 		case "reset":
-			_, err = tx.Exec(`UPDATE sessions
+			var execResult sql.Result
+			execResult, err = tx.Exec(`UPDATE sessions
 				SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
-				WHERE id = ?`, operation.sessionID)
+				WHERE id = ? AND conv_id = ? AND created_at = ?`,
+				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
 			timing.Update = time.Since(stageStarted)
-			result.Applied[index] = err == nil
+			if err == nil {
+				stageStarted = time.Now()
+				var affected int64
+				affected, err = execResult.RowsAffected()
+				timing.Result = time.Since(stageStarted)
+				result.Applied[index] = affected > 0
+			}
 			timing.Total = time.Since(operationStarted)
 			addContextSnapshotWriteTiming(&result.Reset, timing)
 		case "fast":
@@ -1130,24 +1162,43 @@ func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchRe
 			timing.Total = time.Since(operationStarted)
 			addContextSnapshotWriteTiming(&result.Fast, timing)
 		case "project":
-			_, err = tx.Exec(`UPDATE sessions
+			var execResult sql.Result
+			execResult, err = tx.Exec(`UPDATE sessions
 				SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
-				WHERE id = ?`,
+				WHERE id = ? AND conv_id = ? AND created_at = ?`,
 				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
-				operation.sessionID)
+				operation.sessionID, operation.convID, operation.createdAt.Format(time.RFC3339Nano))
 			timing.Update = time.Since(stageStarted)
 			if err == nil {
 				stageStarted = time.Now()
-				err = projectSessionRelaunchProfilesTx(tx, operation.sessionID, relaunchProjectionOptions{})
-				timing.Projection = time.Since(stageStarted)
+				var affected int64
+				affected, err = execResult.RowsAffected()
+				timing.Result = time.Since(stageStarted)
+				if err == nil && affected > 0 {
+					stageStarted = time.Now()
+					err = projectSessionRelaunchProfilesTx(tx, operation.sessionID, relaunchProjectionOptions{})
+					timing.Projection = time.Since(stageStarted)
+					result.Applied[index] = err == nil
+				}
 			}
-			result.Applied[index] = err == nil
 			timing.Total = time.Since(operationStarted)
 			addContextSnapshotWriteTiming(&result.Project, timing)
 		default:
 			err = fmt.Errorf("unknown context snapshot batch operation %q", operation.kind)
 		}
 		if err != nil {
+			operationErr := fmt.Errorf("%s %q: %w", operation.kind, operation.sessionID, err)
+			_, rollbackErr := tx.Exec("ROLLBACK TO context_snapshot_operation")
+			_, releaseErr := tx.Exec("RELEASE context_snapshot_operation")
+			if rollbackErr != nil || releaseErr != nil {
+				result.Transaction.Total = time.Since(started)
+				return result, errors.Join(operationErr, rollbackErr, releaseErr)
+			}
+			result.OperationErrors = append(result.OperationErrors, operationErr)
+			err = nil
+			continue
+		}
+		if _, err = tx.Exec("RELEASE context_snapshot_operation"); err != nil {
 			result.Transaction.Total = time.Since(started)
 			return result, err
 		}
