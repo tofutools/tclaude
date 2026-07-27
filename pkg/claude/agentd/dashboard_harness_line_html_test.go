@@ -113,11 +113,12 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// settings.json), the badge describes whether the agent is ACTUALLY
 	// confined. Behaviour is covered by jstest/sandbox-badge.test.mjs; these
 	// pin the production wiring.
-	must("function osSandboxBadge(mode, state, source, prefix, unverified)", "the recorded-verdict badge decision is defined")
+	must("function osSandboxBadge(mode, state, source, prefix, unverified, implementation)", "the recorded-verdict badge decision is defined")
 	must("member.state?.os_sandbox_state", "SandboxBadge reads the recorded OS-sandbox verdict off the agent's state")
 	must("member.state?.os_sandbox_source", "the badge can name whatever decided the verdict")
 	// A verdict tclaude could not prove must not render as a plain padlock.
 	must("member.state?.os_sandbox_unverified", "the badge reads whether the verdict could be verified")
+	must("member.state?.sandbox_implementation", "the badge reads the implementation that earned the verdict")
 	must("source.includes('Seatbelt/sandbox-exec')",
 		"the Darwin tclaude layer gets its own fidelity explanation")
 	must("source.includes('isolated network')",
