@@ -735,8 +735,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// to_agent ” and would drop out of the actor-keyed inbox at the NEXT
 	// rotation without this.
 	//
-	// Legacy path (Codex, or the config revert): queue the follow-up as an
-	// agent_messages row BEFORE the post-spawn goroutine runs — the row is
+	// Post-connect path (Codex): queue the follow-up as an agent_messages row
+	// BEFORE the post-spawn goroutine runs — the row is
 	// written so the rename can land first and the flush delivery picks the
 	// message up next. A solo (groupless) successor still gets a row: group_id 0
 	// is a direct message, the universal-inbox transport. (decodeReincarnateBody
@@ -913,7 +913,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	resp["follow_up"] = followUp
 	// Describe how the successor actually got its name + first turn: baked into
 	// the launch command (launch enrollment) or typed into the pane afterwards
-	// (the legacy inject-after-connect path Codex and the config revert keep).
+	// (the post-connect path Codex requires).
 	named, receives := "will be /renamed to", "then receive"
 	if launchEnroll {
 		named, receives = "launched named", "with"

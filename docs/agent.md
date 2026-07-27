@@ -1256,8 +1256,8 @@ inbox, inlined into the launch prompt when it fits
 the same rule spawn briefings follow. A **Codex** successor keeps the older
 post-connect flow because Codex cannot preset a conv-id and renames
 out-of-band. The `agent.spawn_legacy_injection` escape hatch is deliberately
-spawn-only: it cannot put a Claude Code reincarnation back onto the unsafe
-two-stream `/rename` + handoff injection path.
+ignored for reincarnation: it cannot put a Claude Code successor back onto the
+unsafe two-stream `/rename` + handoff injection path.
 
 **How a clone is named + handed off.** A Claude Code clone given a `follow_up`
 takes the same launch-enrollment path, on both branches: `--no-copy-conv`
