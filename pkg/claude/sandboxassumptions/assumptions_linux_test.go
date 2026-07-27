@@ -188,6 +188,8 @@ func assumeNewSessionDisconnectsTTY(t *testing.T, bwrap string) {
 	if err := pty.Setsize(ptmx, &pty.Winsize{Rows: 37, Cols: 113}); err != nil {
 		t.Fatalf("resize pty: %v", err)
 	}
+	// StartWithSize leaves the slave in canonical mode, so every bounded
+	// handshake phase must send and consume a complete newline-delimited record.
 	if _, err := ptmx.Write([]byte("probe\n")); err != nil {
 		t.Fatalf("trigger helper winsize read: %v", err)
 	}
