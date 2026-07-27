@@ -138,7 +138,7 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 	// busy taskbar; it pairs with greenIcon as the "off" frame.
 	redIcon := makeTrayIcon(color.RGBA{R: 220, G: 40, B: 40, A: 255})
 
-	onReady := func() {
+	onReadyUnsafe := func() {
 		systray.SetIcon(greenIcon)
 		systray.SetTitle("")
 		systray.SetTooltip("tclaude agentd")
@@ -296,7 +296,7 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 					}
 				}
 			}); err != nil {
-				slog.Warn("tray: state poller stopped", "error", err)
+				slog.Error("tray: state poller stopped", "error", err)
 			}
 		}()
 
@@ -345,9 +345,18 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 					}
 				}
 			}); err != nil {
-				slog.Warn("tray: menu worker stopped", "error", err)
+				slog.Error("tray: menu worker stopped", "error", err)
 			}
 		}()
+	}
+	// fyne/systray invokes onReady in its own goroutine, outside the
+	// runSystrayLoop recovery boundary. Protect initialization separately:
+	// every Set*/Add* mutation can hit the same closed Linux DBus connection
+	// as the long-running workers below.
+	onReady := func() {
+		if err := runTrayWorker(onReadyUnsafe); err != nil {
+			slog.Error("tray: initialization stopped", "error", err)
+		}
 	}
 
 	return runSystrayLoop(func() {
