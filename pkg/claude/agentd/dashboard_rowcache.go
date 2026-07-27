@@ -35,7 +35,7 @@ type snapshotRowCache struct {
 	locs map[string]agentLocationView
 	memo map[string]*convRowBundle
 
-	codexTelemetryDuration time.Duration
+	codexTelemetryTiming codexTelemetryTiming
 }
 
 // convRowBundle is the fully-resolved per-conv row the dashboard renders,
@@ -182,8 +182,8 @@ func (rc *snapshotRowCache) viewFor(convID string) *convRowBundle {
 		Loc:     loc,
 		Links:   branchLinksForRow(convID, loc, rc.workspaces[convID], rc.gitCache),
 		Online:  isConvOnlineInSessions(rc.sessions[convID], rc.alive),
-		State: stateForConvInSessionsTimed(rc.sessions[convID], rc.alive, func(d time.Duration) {
-			rc.codexTelemetryDuration += d
+		State: stateForConvInSessionsTimed(rc.sessions[convID], rc.alive, func(timing codexTelemetryTiming) {
+			rc.codexTelemetryTiming = rc.codexTelemetryTiming.add(timing)
 		}),
 	}
 	b.State.TemporarySandboxMode = rc.agents[convID].TemporarySandboxMode

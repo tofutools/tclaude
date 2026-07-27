@@ -62,6 +62,54 @@ func TestCodexContextRefreshPersistsAndRestoresFollowerCheckpoint(t *testing.T) 
 	assert.NotEqual(t, string(firstCheckpoint.Data), string(secondCheckpoint.Data))
 }
 
+func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-unchanged-context-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354fd"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+
+	var first codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+		first = timing
+	})
+	assert.Positive(t, first.contextWrite, "the first observed snapshot is persisted")
+
+	resetCodexRefreshThrottleForTest(sessionID)
+	var unchanged codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+		unchanged = timing
+	})
+	assert.Zero(t, unchanged.contextWrite,
+		"an unchanged rollout must not rewrite the same context snapshot on every dashboard poll")
+
+	appendCodexRefreshTokenCount(t, path, 9000, 900)
+	resetCodexRefreshThrottleForTest(sessionID)
+	var changed codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+		changed = timing
+	})
+	assert.Positive(t, changed.contextWrite, "new token telemetry is persisted")
+	contextSnapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(9000), contextSnapshot.TokensInput)
+}
+
 func TestCodexContextRefreshReplacesMalformedFollowerCheckpoint(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()

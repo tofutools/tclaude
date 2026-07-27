@@ -109,6 +109,17 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	preload := snap.Phases[1]
 	require.NotEmpty(t, preload.Children, "preload exposes its concurrent reads as nested phases")
 	assert.Equal(t, 2, preload.Children[0].Count)
+	codexTelemetry := snap.Phases[3]
+	require.NotEmpty(t, codexTelemetry.Children,
+		"Codex telemetry exposes cache, rollout, checkpoint, and context persistence timings")
+	var codexChildNames []string
+	for _, child := range codexTelemetry.Children {
+		codexChildNames = append(codexChildNames, child.Name)
+	}
+	assert.Equal(t, []string{
+		"claim", "checkpoint_load", "rollout_read", "checkpoint_encode",
+		"checkpoint_write", "context_write", "other",
+	}, codexChildNames)
 	collectors := snap.Phases[6]
 	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
 	var usage perfPhaseJSON

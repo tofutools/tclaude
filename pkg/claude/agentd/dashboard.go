@@ -1923,7 +1923,7 @@ func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{})
 	return stateForConvInSessionsTimed(rows, aliveSet, nil)
 }
 
-func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]struct{}, recordCodexTelemetry func(time.Duration)) agentState {
+func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]struct{}, recordCodexTelemetry func(codexTelemetryTiming)) agentState {
 	if len(rows) == 0 {
 		return agentState{}
 	}
@@ -2676,7 +2676,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			func(m dashboardMember) string { return m.ConvID })
 		out.Groups = append(out.Groups, dg)
 	}
-	codexTelemetryInGroups := rc.codexTelemetryDuration
+	codexTelemetryInGroups := rc.codexTelemetryTiming.total
 	span.markExcluding("groups", codexTelemetryInGroups)
 	for convID, slugs := range allGrants {
 		addAgent(convID)
@@ -2748,8 +2748,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// All calls to rc.viewFor (group rows plus the grants/active-agent roster)
 	// have completed, so this nested metric is the request's total Codex
 	// telemetry cost rather than only the grouped subset.
-	span.addDuration("codex_telemetry", rc.codexTelemetryDuration)
-	span.markExcluding("roster", rc.codexTelemetryDuration-codexTelemetryInGroups)
+	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)
+	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
+	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexTelemetryInGroups)
 
 	out.Ungrouped = []dashboardAgent{}
 	for _, a := range agentRows {
