@@ -655,8 +655,10 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	}
 	verdict := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", verdict.State)
-	assert.Contains(t, verdict.Source, "ambient host Unix sockets reachable")
-	assert.True(t, verdict.Unverified, "the dashboard must not present a full-fidelity padlock")
+	assert.Equal(t, "tclaude-layer (bubblewrap; host network)", verdict.Source)
+	assert.NotContains(t, verdict.Source, "ambient host Unix sockets reachable",
+		"the socket caveat is the badge's partial-fidelity sentence to state, once")
+	assert.True(t, verdict.Unverified, "the badge must render the partial-fidelity caveat")
 
 	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
 	assert.Equal(t, "on", isolated.State)
@@ -670,7 +672,7 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", openCode.State)
 	assert.Equal(t,
-		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)",
+		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined)",
 		openCode.Source)
 	assert.True(t, openCode.Unverified)
 }

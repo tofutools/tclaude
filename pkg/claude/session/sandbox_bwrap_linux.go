@@ -198,7 +198,11 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 	default:
 		return harness.LaunchOSSandbox{
 			State:      "on",
-			Source:     "tclaude-layer (bubblewrap; host network; ambient host Unix sockets reachable)",
+			// Source names the mechanism and posture that decided; the badge's
+			// own partial-fidelity sentence is the single home of the ambient
+			// host Unix socket caveat, so repeating it here would print the same
+			// warning twice in one tooltip (TCL-790).
+			Source:     "tclaude-layer (bubblewrap; host network)",
 			Unverified: true,
 		}
 	}

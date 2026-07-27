@@ -439,14 +439,17 @@ as the warning above, and records it on the session row. The badge then reads:
 | `⚠` | `Sandbox: off — this launch asked for the OS sandbox to be ON, but …` | The launch asked for the sandbox to be **on** and did not get it — only managed policy settings can do this. The agent is unconfined despite what was requested. |
 | `⚠` | `Sandbox: on (unverified)` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
 
-Experimental `tclaude-layer` verdicts also use the unverified warning for a
-known partial boundary. The Linux host-open tooltip says that filesystem mounts
-are enforced while ambient host Unix sockets remain connectable. The macOS
-tooltip is deliberately different: Seatbelt enforces filesystem operations,
-but hidden paths remain enumerable and the host network plus ambient Unix
-sockets remain reachable. Do not read either warning as the generic
-"unreadable settings file" case; the tooltip names the actual platform
-boundary.
+Experimental `tclaude-layer` verdicts are a different case and say so
+differently. Their boundary is established — the launch probes the exact frozen
+outer spec before committing the pane — so their tooltip reads `Sandbox: on`,
+claims `Bash is confined.`, and then names the known limits of that boundary in
+a `⚠ Partial fidelity:` sentence. The Linux host-open tooltip says filesystem
+mounts are enforced while ambient host Unix sockets remain connectable. The
+macOS tooltip is deliberately different: Seatbelt enforces filesystem
+operations, but there is no mount namespace, hidden paths remain enumerable,
+and the host network plus ambient Unix sockets remain reachable. Neither is the
+`(unverified)` case above — that word is reserved for a posture tclaude could
+not establish, and partial fidelity is a boundary it did.
 
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
 something is off; hover for which of the three it is. The one exception to

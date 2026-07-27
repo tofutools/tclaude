@@ -177,7 +177,9 @@ func StackedLaunchOSSandbox(
 	h *harness.Harness,
 	posture sandboxpolicy.NetworkPosture,
 ) harness.LaunchOSSandbox {
-	outer := "tclaude bwrap (host-open; ambient host Unix sockets reachable)"
+	// The ambient host Unix socket caveat is stated once, in the badge's
+	// partial-fidelity sentence, rather than also here (TCL-790).
+	outer := "tclaude bwrap (host-open)"
 	unverified := true
 	if posture == sandboxpolicy.NetworkIsolatedWithAgentd {
 		outer = "tclaude bwrap (isolated network/PIDs; constructed root)"

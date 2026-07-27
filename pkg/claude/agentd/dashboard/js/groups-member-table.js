@@ -173,27 +173,56 @@ export function HarnessLine({ member }) {
 // exactly the case — a request that lost — where it matters most.
 function osSandboxBadge(mode, state, source, prefix, unverified, implementation) {
   const via = source ? ` (${source})` : '';
-  // On harness-builtin, a settings file outranking the one that decided could
-  // not be read, so a policy tclaude never saw may say the opposite. The layer
-  // verdicts reuse `unverified` for their explicit partial-fidelity copy; their
-  // separate outer OS wall still earns the lock below.
+  // `unverified` arrives carrying two unrelated meanings, and only one of them
+  // is doubt (TCL-790):
+  //
+  //   (a) harness-builtin — ResolveLaunchOSSandbox sets it when a settings file
+  //       OUTRANKING the one that decided could not be read, so a policy tclaude
+  //       never saw may say the opposite. The POSTURE ITSELF is unproven.
+  //   (b) the tclaude-layer / Seatbelt / OpenCode / stacked producers hard-set
+  //       the same flag as a partial-fidelity marker. Nothing is in doubt there:
+  //       the launch probed the exact frozen outer spec before committing the
+  //       pane, and what remains is an enumerated, known limit of a boundary
+  //       that IS established. Their separate outer OS wall earns the lock below.
+  //
+  // The two cannot co-occur on one row — layer/stacked verdicts are constructed
+  // whole by their producers and never carry harness settings diagnostics — so
+  // matching (b) first and treating the remainder as (a) cannot mask real doubt.
+  //
+  // Each match keeps its pre-TCL-790 `source` substring alongside the trimmed
+  // spelling: `os_sandbox_source` is durable in SQLite, and a row recorded
+  // before the trim must still reach its partial-fidelity branch rather than
+  // falling through to the harness-builtin copy, which would be a fresh lie
+  // about a row tclaude confined perfectly well.
   const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
   const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
   const openCodeExecutorLayer = unverified
     && source.includes('OpenCode tool-executing server confined');
   const partialLinuxTclaudeLayer = unverified
-    && source.includes('ambient host Unix sockets reachable');
+    && (source.includes('bubblewrap; host network')
+      || source.includes('tclaude bwrap (host-open')
+      || source.includes('ambient host Unix sockets reachable'));
+  // A stacked row's outer bwrap is what enforces the mounts; its inner harness
+  // sandbox is named separately by sandboxProfileClause.
+  const outerMounts = implementation === 'stacked'
+    ? 'filesystem mounts are enforced by the outer layer'
+    : 'filesystem mounts are enforced';
   const caveat = openCodeExecutorLayer
     ? ` ⚠ Partial fidelity: filesystem mounts confine OpenCode's tool-executing server, but the attach pane stays outside the boundary, the authenticated loopback control plane remains reachable, and host networking plus ambient host Unix sockets remain available.`
     : partialDarwinIsolated
     ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem and network operations, but there is no PID isolation or constructed root, and hidden paths remain enumerable.`
     : partialDarwinTclaudeLayer
-    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but hidden paths remain enumerable and the host network plus ambient Unix sockets remain reachable.`
+    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but there is no mount namespace, hidden paths remain enumerable, and the host network plus ambient Unix sockets remain reachable.`
     : partialLinuxTclaudeLayer
-      ? ` ⚠ Partial fidelity: filesystem mounts are enforced, but ambient host Unix sockets remain connectable.`
+      ? ` ⚠ Partial fidelity: ${outerMounts}, but ambient host Unix sockets remain connectable.`
       : unverified
         ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
         : '';
+  // Meaning (a) alone. This is what may hedge the posture and withhold the
+  // containment claim; a partial-fidelity row states both plainly and lets the
+  // ⚠ sentence above name its limits.
+  const unprovenPosture = unverified && !openCodeExecutorLayer && !partialDarwinTclaudeLayer
+    && !partialLinuxTclaudeLayer;
   if (state === 'on') {
     // `source` for a launch-decided verdict names the tier that CHOSE the mode
     // in place of the anonymous actor: `global default profile "agents"
@@ -216,10 +245,16 @@ function osSandboxBadge(mode, state, source, prefix, unverified, implementation)
     // settings and the applied profile resolved to, and the profile clause
     // below names that; asserting a fixed one here was the same over-claim as
     // naming a single settings file and calling it the configuration.
-    const confined = unverified ? '' : ' Bash is confined.';
+    // Withheld only where the posture itself is unproven. A tclaude-layer or
+    // stacked row confines Bash — that is what the mounts and the Seatbelt
+    // policy DO — and suppressing the claim there, as the single overloaded
+    // flag used to, understated a boundary the launch had already proved.
+    const confined = unprovenPosture ? '' : ' Bash is confined.';
     // The hedge rides in the opening posture rather than only in the caveat
-    // below: "on" alone, read first, is the claim this case cannot make.
-    const posture = unverified ? 'on (unverified)' : 'on';
+    // below: "on" alone, read first, is the claim this case cannot make. A
+    // partial-fidelity row CAN make it — its limits are known, not doubted —
+    // so "(unverified)" now appears on exactly the one variant it is true of.
+    const posture = unprovenPosture ? 'on (unverified)' : 'on';
     return {
       // The exact implementation value is load-bearing: tclaude-layer and a
       // successfully probed stacked launch have earned their respective real
@@ -314,41 +349,49 @@ function sandboxProfileClause(member, withheldBecause) {
     .map((p) => `“${p.name}” (${SANDBOX_SCOPE_LABELS[p.scope] || p.scope})`)
     .join(' + ');
   const clause = ` Customized by tclaude sandbox profile ${names}.`;
+  // The same opening without its full stop, for the branches that continue into
+  // what became of the profile's rules. Two sentences said in one is the whole
+  // of the trim (TCL-790): a tooltip is skimmed, and "Customized by X. Its
+  // filesystem rules are …" spent a sentence boundary on a single thought.
+  const opening = ` Customized by tclaude sandbox profile ${names}`;
   const harness = (member.state?.harness || 'claude').trim();
   const rulesOwnedByStacked =
     member.state?.sandbox_implementation === 'stacked'
     && (harness === 'claude' || harness === 'codex');
   if (rulesOwnedByStacked && member.state?.os_sandbox_state === 'on') {
-    const their = applied.length > 1 ? 'Their' : 'Its';
+    const their = applied.length > 1 ? 'their' : 'its';
     const they = applied.length > 1 ? 'they define' : 'it defines';
-    return clause + ` ${their} filesystem rules are enforced by the tclaude outer mounts`
+    return opening + ` — ${their} filesystem rules are enforced by the tclaude outer mounts`
       + ` and the harness's nested OS sandbox;`
       + ` any environment entries ${they} also apply.`;
   }
   if (rulesOwnedByStacked) {
-    const their = applied.length > 1 ? 'Their' : 'Its';
-    return clause + ` ${their} filesystem rules are not in force`
+    const their = applied.length > 1 ? 'their' : 'its';
+    return opening + ` — ${their} filesystem rules are not in force`
       + ` (the stacked round-trip did not succeed).`;
   }
   const rulesOwnedByTclaudeLayer =
     member.state?.sandbox_implementation === 'tclaude-layer'
     && (harness === 'claude' || harness === 'codex');
   if (rulesOwnedByTclaudeLayer && member.state?.os_sandbox_state === 'on') {
-    const their = applied.length > 1 ? 'Their' : 'Its';
+    const their = applied.length > 1 ? 'their' : 'its';
     const they = applied.length > 1 ? 'they define' : 'it defines';
-    return clause + ` ${their} filesystem rules are enforced as OS mounts by the tclaude layer`
-      + ` (the inner harness sandbox is off by design);`
+    // The inner harness sandbox is off by design here, but saying so confused
+    // more operators than it helped — the tooltip's job is what IS enforcing
+    // this agent's rules, not which mechanism deliberately is not (TCL-790,
+    // operator ruling).
+    return opening + ` — ${their} filesystem rules are enforced as the tclaude layer's OS mounts;`
       + ` any environment entries ${they} also apply.`;
   }
   if (rulesOwnedByTclaudeLayer) {
-    const their = applied.length > 1 ? 'Their' : 'Its';
-    return clause + ` ${their} filesystem rules are not in force`
+    const their = applied.length > 1 ? 'their' : 'its';
+    return opening + ` — ${their} filesystem rules are not in force`
       + ` (the tclaude layer is not active).`;
   }
   if (!withheldBecause) return clause;
-  const their = applied.length > 1 ? 'Their' : 'Its';
+  const their = applied.length > 1 ? 'their' : 'its';
   const they = applied.length > 1 ? 'they define' : 'it defines';
-  return clause + ` ${their} filesystem rules are not in force (${withheldBecause});`
+  return opening + ` — ${their} filesystem rules are not in force (${withheldBecause});`
     + ` any environment entries ${they} still apply.`;
 }
 

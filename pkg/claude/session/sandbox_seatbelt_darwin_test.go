@@ -146,9 +146,7 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	hostOpen := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
 	assert.Equal(t, "on", hostOpen.State)
 	assert.Equal(t,
-		"tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; "+
-			"host network and ambient Unix sockets reachable; no mount namespace; "+
-			"hidden paths remain enumerable)",
+		"tclaude-layer (Seatbelt/sandbox-exec; host network)",
 		hostOpen.Source,
 	)
 	assert.True(t, hostOpen.Unverified)
@@ -157,9 +155,8 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
 	assert.Equal(t, "on", isolated.State)
 	assert.Equal(t,
-		"tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; "+
-			"isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; "+
-			"no PID isolation; no constructed root; hidden paths remain enumerable)",
+		"tclaude-layer (Seatbelt/sandbox-exec; isolated network; "+
+			"host loopback/IDE bridge unavailable; agentd socket allowlisted)",
 		isolated.Source,
 	)
 	assert.True(t, isolated.Unverified)
