@@ -123,6 +123,7 @@ func tclaudeLayerCommand(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
@@ -132,6 +133,7 @@ func tclaudeLayerCommand(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		harnessCommand,
 	)
@@ -148,6 +150,7 @@ func tclaudeLayerStackedCommand(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	manifestPath, manifestSHA256, readyPath string,
 	consume bool,
@@ -159,6 +162,7 @@ func tclaudeLayerStackedCommand(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		harnessCommand,
 	)
@@ -183,6 +187,7 @@ func tclaudeLayerServerCommand(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
@@ -192,6 +197,7 @@ func tclaudeLayerServerCommand(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		serverCommand,
 	)

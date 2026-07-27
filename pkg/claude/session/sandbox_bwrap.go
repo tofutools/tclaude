@@ -354,7 +354,7 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -365,6 +365,7 @@ func WrapTclaudeLayerSpec(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		harnessCommand,
 	)
@@ -469,7 +470,7 @@ func WrapTclaudeLayerStackedSpec(
 	consume bool,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -480,6 +481,7 @@ func WrapTclaudeLayerStackedSpec(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		manifestPath,
 		manifestSHA256,
@@ -499,7 +501,7 @@ func WrapTclaudeLayerServerSpec(
 	spec TclaudeLayerLaunchSpec,
 	serverCommand string,
 ) (string, error) {
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -510,6 +512,7 @@ func WrapTclaudeLayerServerSpec(
 		privateWriteDirs,
 		finalHideDirs,
 		readOnlyBinds,
+		socketPaths,
 		plan,
 		serverCommand,
 	)
@@ -531,7 +534,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	if preserveFDs != 2 || len(serverArgv) == 0 {
 		return nil, fmt.Errorf("unix-relay server renderer requires inherited descriptors and a command")
 	}
-	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return nil, err
@@ -546,7 +549,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	}
 	args, err := bwrapArgsWithDaemonFinal(
 		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
-		opaqueStateRoot, opaqueStateDirs)
+		socketPaths, opaqueStateRoot, opaqueStateDirs)
 	if err != nil {
 		return nil, err
 	}
@@ -565,24 +568,25 @@ func tclaudeLayerSpecRenderInput(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	error,
 ) {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
 	}
 	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
 	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
@@ -591,34 +595,34 @@ func tclaudeLayerSpecRenderInput(
 			stateRoot,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
-			return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 		}
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
 	)
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	finalHideDirs, err := cleanTclaudeLayerAbsoluteDirs(
 		"daemon-final hide", spec.Contract.FinalHideDirs)
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	readOnlyBinds, err := cleanTclaudeLayerReadOnlyBinds(spec.Contract.ReadOnlyBinds)
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
-		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("resolve protected paths for daemon-final read-only binds: %w", err)
 	}
 	for _, bind := range readOnlyBinds {
 		for _, path := range []string{bind.Source, bind.Target} {
 			for _, protected := range protectedRoots {
 				if sandboxpolicy.PathContainsOrEqual(protected, path) {
-					return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+					return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 						fmt.Errorf(
 							"daemon-final read-only bind path %q is at or below protected root %q",
 							path, protected)
@@ -626,11 +630,24 @@ func tclaudeLayerSpecRenderInput(
 			}
 			if err := validateTclaudeLayerHarnessStateRules(
 				path, spec.Contract.ProfileFilesystem); err != nil {
-				return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
+				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 			}
 		}
 	}
-	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, nil
+	socketPaths := sandboxpolicy.AgentdSocketFloor()
+	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd &&
+		spec.Effective.UnixSockets != nil {
+		authoredSockets, socketErr := sandboxpolicy.MaterializeUnixSocketPaths(
+			*spec.Effective.UnixSockets)
+		if socketErr != nil {
+			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+				fmt.Errorf("materialize tclaude-layer unix socket allowlist: %w", socketErr)
+		}
+		for _, socket := range authoredSockets {
+			socketPaths = appendUniqueDir(socketPaths, socket)
+		}
+	}
+	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, socketPaths, plan, nil
 }
 
 func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
@@ -719,7 +736,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 // ValidateTclaudeLayerLaunchSpec applies the renderer's complete structural
 // validation without producing a platform command.
 func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
-	_, _, _, _, _, err := tclaudeLayerSpecRenderInput(spec)
+	_, _, _, _, _, _, err := tclaudeLayerSpecRenderInput(spec)
 	return err
 }
 
@@ -917,7 +934,8 @@ func bwrapArgs(
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) ([]string, error) {
 	return bwrapArgsWithDaemonFinal(
-		phase0WriteDirs, plan, privateWriteDirs, nil, nil, "", nil)
+		phase0WriteDirs, plan, privateWriteDirs, nil, nil,
+		sandboxpolicy.AgentdSocketFloor(), "", nil)
 }
 
 func bwrapArgsWithDaemonFinal(
@@ -926,6 +944,7 @@ func bwrapArgsWithDaemonFinal(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	opaqueStateRoot string,
 	opaqueStateDirs []string,
 ) ([]string, error) {
@@ -1026,9 +1045,9 @@ func bwrapArgsWithDaemonFinal(
 	for _, root := range protectedRoots {
 		args = hideRemounts.appendHide(args, root)
 	}
-	socketPaths := []string(nil)
+	liveSocketPaths := make([]string, 0, len(socketPaths))
 	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
-		for i, socket := range sandboxpolicy.AgentdSocketFloor() {
+		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
 			}
@@ -1043,7 +1062,7 @@ func bwrapArgsWithDaemonFinal(
 				continue
 			}
 			args = append(args, "--ro-bind", socket, socket)
-			socketPaths = append(socketPaths, socket)
+			liveSocketPaths = append(liveSocketPaths, socket)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
@@ -1108,7 +1127,7 @@ func bwrapArgsWithDaemonFinal(
 			args = appendTclaudeLayerSocketRepairs(
 				args,
 				path,
-				socketPaths,
+				liveSocketPaths,
 				&hideRemounts,
 			)
 		default:
@@ -1675,12 +1694,13 @@ func bwrapCommand(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
 	args, err := bwrapArgsWithDaemonFinal(
 		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
-		"", nil)
+		socketPaths, "", nil)
 	if err != nil {
 		return "", err
 	}

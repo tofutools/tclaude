@@ -1,6 +1,7 @@
 package session
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +11,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestCodexManagedProfileCarriesSnapshotUnixSocketList(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	tmuxBase := filepath.Join(home, "tmux")
+	require.NoError(t, os.MkdirAll(tmuxBase, 0o700))
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	socket := filepath.Join(home, "services", "build.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
+		Global: &sandboxpolicy.Profile{
+			Name: "build-socket",
+			UnixSockets: &sandboxpolicy.UnixSocketRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.SocketAllowEntry{{
+					Path: socket,
+				}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{
+		PermissionProfile:          harness.CodexAgentProfile,
+		GitWorktreeWriteDirsPinned: true,
+	}
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(
+		params, home, "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"`+socket+`" = "read"`)
+	assert.Contains(t, string(raw), `"`+socket+`" = "allow"`)
+}
 
 func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())

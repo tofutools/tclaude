@@ -2,6 +2,7 @@ package sandboxpolicy
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,7 +10,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
+
+func TestMaterializeUnixSocketPathsExpandsOnlyLiveSockets(t *testing.T) {
+	root := agentipctest.ShortSocketDir(t)
+	first := filepath.Join(root, "service-a.sock")
+	second := filepath.Join(root, "service-b.sock")
+	for _, path := range []string{first, second} {
+		listener, err := net.Listen("unix", path)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "service-not-a-socket"), []byte("secret"), 0o600))
+	alias := filepath.Join(root, "alias.sock")
+	require.NoError(t, os.Symlink(first, alias))
+
+	got, err := MaterializeUnixSocketPaths(UnixSocketRules{
+		Mode: AccessModeList,
+		Allow: []SocketAllowEntry{
+			{PathGlob: filepath.Join(root, "service-*")},
+			{Path: alias},
+			{Path: filepath.Join(root, "future.sock")},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{first, second}, got)
+}
 
 func TestNormalizeAccessRules(t *testing.T) {
 	t.Run("network canonical", func(t *testing.T) {

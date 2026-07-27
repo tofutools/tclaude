@@ -2551,6 +2551,7 @@ func resumeLaunchCmdWithStackedProof(
 			ReadDirs:           readDirs,
 			WriteDirs:          resumeWriteDirs,
 			DenyDirs:           denyDirs,
+			UnixSockets:        effectiveProfile.UnixSockets,
 			RequireSplitPolicy: requireSplitPolicy,
 		}, networkAccess, session.GenerateSessionID())
 		if err != nil {

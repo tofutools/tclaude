@@ -230,10 +230,12 @@ func accessEnforcementTable(
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull
+			// M3 materializes the resolved list at launch: bubblewrap binds
+			// only those socket inodes into its constructed root, while
+			// Seatbelt adds the same paths as parameterized remote
+			// unix-socket exceptions beneath its deny-network posture.
+			caps.SocketList = EnforceFull
 			caps.SocketOpen = EnforceNone
-			caps.SocketListRefusal =
-				"unix-socket access lists are not yet enforceable under closed network access on macOS tclaude-layer; " +
-					"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
 			caps.SocketOpenRefusal =
 				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
 					`leave unix_sockets unset (agentd only) or use open network access`
@@ -244,9 +246,6 @@ func accessEnforcementTable(
 				caps.SocketOpenRefusal =
 					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
 						`use a socket access list or leave unix_sockets unset`
-				caps.SocketListRefusal =
-					"unix-socket access lists are not yet enforceable under closed network access on Linux tclaude-layer; " +
-						"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
 			}
 		} else {
 			if goos == "linux" {
@@ -300,13 +299,10 @@ func accessEnforcementTable(
 				`ambient unix-socket access is not yet enforceable in the Codex managed profile; ` +
 					`leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets`
 			caps.SocketClosed = EnforceFull
-			caps.SocketListRefusal =
-				"unix-socket access-list widening is not yet enforceable in the Codex managed profile; " +
-					"leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets " +
-					"(list degrades, unenforced)"
-			// Profile-authored socket lists are connected in M3. The Codex
-			// TOML mechanism exists today, but M1 cannot truthfully claim that
-			// a field no adapter consumes is enforced.
+			// M3 feeds the launch-materialized profile list through Codex's
+			// existing per-path filesystem read and network.unix_sockets
+			// permission tables.
+			caps.SocketList = EnforceFull
 		}
 		return caps, nil
 	default:

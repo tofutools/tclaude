@@ -623,6 +623,81 @@ func ResolveUnixSocketAccess(rules UnixSocketRules) UnixSocketAccess {
 	return out
 }
 
+// MaterializeUnixSocketPaths expands one resolved socket list against the
+// launch-time filesystem. Missing exact paths and unmatched globs are omitted:
+// socket endpoints are routinely created after a profile is authored. Only
+// actual Unix sockets are returned, so a broad sibling glob cannot
+// accidentally turn ordinary files into read grants in an adapter.
+//
+// The agentd floor is not included. Adapters add it independently for every
+// socket posture, preserving the floor even when the authored list is empty.
+func MaterializeUnixSocketPaths(rules UnixSocketRules) ([]string, error) {
+	if rules.Mode != AccessModeList {
+		return nil, nil
+	}
+	candidates := make([]string, 0, len(rules.Allow))
+	for i, entry := range rules.Allow {
+		switch {
+		case entry.Path != "":
+			candidates = append(candidates, entry.Path)
+		case entry.PathGlob != "":
+			matches, err := filepath.Glob(entry.PathGlob)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"expand unix_sockets.allow[%d] glob %q: %w",
+					i, entry.PathGlob, err)
+			}
+			candidates = append(candidates, matches...)
+		default:
+			return nil, fmt.Errorf(
+				"unix_sockets.allow[%d] has no path or path_glob", i)
+		}
+	}
+
+	protected, err := ProtectedPaths()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		_, statErr := os.Lstat(candidate)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect unix socket allow path %q: %w", candidate, statErr)
+		}
+		resolved, statErr := filepath.EvalSymlinks(candidate)
+		if statErr != nil {
+			return nil, fmt.Errorf("resolve unix socket allow path %q: %w", candidate, statErr)
+		}
+		resolved = filepath.Clean(resolved)
+		info, statErr := os.Lstat(resolved)
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect resolved unix socket allow path %q: %w", resolved, statErr)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			continue
+		}
+		for _, denied := range protected {
+			if PathContainsOrEqual(denied, resolved) {
+				return nil, fmt.Errorf(
+					"unix socket allow path %q resolves beneath protected directory %q",
+					candidate, denied)
+			}
+		}
+		if _, exists := seen[resolved]; exists {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		out = append(out, resolved)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // intersectNetworkRules composes two already-normalized rules without ever
 // widening either side. Unset is absorbed; closed dominates; two lists retain
 // only selector and port overlap.

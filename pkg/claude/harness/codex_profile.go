@@ -187,9 +187,10 @@ func validateCodexAgentNetworkAccessForOS(networkAccess sandboxpolicy.NetworkAcc
 // []string, and transposing two of them would silently produce a
 // wrong-but-valid sandbox.
 type CodexSandboxRules struct {
-	ReadDirs  []string
-	WriteDirs []string
-	DenyDirs  []string
+	ReadDirs    []string
+	WriteDirs   []string
+	DenyDirs    []string
+	UnixSockets *sandboxpolicy.UnixSocketRules
 	// RequireSplitPolicy pins the Linux backend away from legacy Landlock. A
 	// reopen-under-deny profile sets it only after the isolated behavioral probe
 	// proved denied-parent/narrower-reopen semantics for this Codex executable.
@@ -211,6 +212,13 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		return "", fmt.Errorf("codex permission profile name is required")
 	}
 	socketPaths := append([]string{socketPath}, agentipc.LegacySocketPaths()...)
+	if rules.UnixSockets != nil {
+		authoredSockets, socketErr := sandboxpolicy.MaterializeUnixSocketPaths(*rules.UnixSockets)
+		if socketErr != nil {
+			return "", fmt.Errorf("materialize Codex unix socket allowlist: %w", socketErr)
+		}
+		socketPaths = append(socketPaths, authoredSockets...)
+	}
 	seenSockets := make(map[string]struct{}, len(socketPaths))
 	normalizedSocketPaths := make([]string, 0, len(socketPaths))
 	for _, path := range socketPaths {
@@ -218,7 +226,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		if _, exists := seenSockets[path]; exists {
 			continue
 		}
-		if err := validateCodexProfilePath("agentd socket path", path); err != nil {
+		if err := validateCodexProfilePath("unix socket path", path); err != nil {
 			return "", err
 		}
 		seenSockets[path] = struct{}{}

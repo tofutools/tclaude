@@ -1783,6 +1783,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		ReadDirs:           readDirs,
 		WriteDirs:          writeDirs,
 		DenyDirs:           denyDirs,
+		UnixSockets:        sandboxSnapshotUnixSockets(effectiveSandbox),
 		RequireSplitPolicy: requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
@@ -1843,6 +1844,17 @@ func sandboxSnapshotNetworkAccess(snapshot *sandboxpolicy.Snapshot) sandboxpolic
 		return sandboxpolicy.NetworkAccessInherit
 	}
 	return snapshot.Effective.NetworkAccess
+}
+
+func sandboxSnapshotUnixSockets(
+	snapshot *sandboxpolicy.Snapshot,
+) *sandboxpolicy.UnixSocketRules {
+	if snapshot == nil || snapshot.Effective.UnixSockets == nil {
+		return nil
+	}
+	rules := *snapshot.Effective.UnixSockets
+	rules.Allow = append([]sandboxpolicy.SocketAllowEntry(nil), rules.Allow...)
+	return &rules
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {

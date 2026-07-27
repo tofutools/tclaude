@@ -45,6 +45,9 @@ const (
 	smokeResizeReporterEnv     = "TCLAUDE_SANDBOX_V2_RESIZE_REPORTER"
 	smokePrivateOwnFileEnv     = "TCLAUDE_SANDBOX_V2_PRIVATE_OWN_FILE"
 	smokePrivateSiblingDirEnv  = "TCLAUDE_SANDBOX_V2_PRIVATE_SIBLING_DIR"
+	smokeAllowedSocketEnv      = "TCLAUDE_SANDBOX_V2_ALLOWED_SOCKET"
+	smokePeerSocketEnv         = "TCLAUDE_SANDBOX_V2_PEER_SOCKET"
+	smokeSocketHelperEnv       = "TCLAUDE_SANDBOX_V2_SOCKET_HELPER"
 )
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
@@ -197,6 +200,29 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
 		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
 		privateOwnFile, privateSibling)
+
+	// Two launch-equivalent agents receive disjoint socket lists. Each can
+	// connect to its own bound endpoint while the sibling endpoint is absent
+	// from the constructed root. This is the live disclosure/render guard for
+	// M3: a profile list is neither silently dropped nor widened to every
+	// sibling agent's socket.
+	policySocketDir := filepath.Join(root, "policy-sockets")
+	require.NoError(t, os.MkdirAll(policySocketDir, 0o700))
+	policySockets := []string{
+		filepath.Join(policySocketDir, "agent-a.sock"),
+		filepath.Join(policySocketDir, "agent-b.sock"),
+	}
+	for _, socket := range policySockets {
+		listener, listenErr := net.Listen("unix", socket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	for i := range policySockets {
+		runTclaudeLayerSocketVisibilityHelper(
+			t, binary, helperBinary, phase0, plan,
+			policySockets[i], policySockets[1-i],
+		)
+	}
 }
 
 func runTclaudeLayerSmokeHelper(
@@ -446,6 +472,52 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
 		"agentd must resolve a stable managed identity through bwrap ancestry; got %q", whoami)
+}
+
+func runTclaudeLayerSocketVisibilityHelper(
+	t *testing.T,
+	binary, helperBinary string,
+	phase0WriteDirs []string,
+	plan sandboxpolicy.MountPlan,
+	allowedSocket, peerSocket string,
+) {
+	t.Helper()
+	socketPaths := append(sandboxpolicy.AgentdSocketFloor(), allowedSocket)
+	args, err := bwrapArgsWithDaemonFinal(
+		phase0WriteDirs, plan, nil, nil, nil, socketPaths, "", nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary,
+		append(args, "--", helperBinary, "-test.run=^TestTclaudeLayerSocketVisibilityHelper$")...)
+	cmd.Env = append(os.Environ(),
+		smokeSocketHelperEnv+"=1",
+		smokeAllowedSocketEnv+"="+allowedSocket,
+		smokePeerSocketEnv+"="+peerSocket,
+	)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("tclaude-layer socket visibility smoke timed out")
+	}
+	require.NoErrorf(t, err, "tclaude-layer socket visibility smoke output: %s", output)
+}
+
+func TestTclaudeLayerSocketVisibilityHelper(t *testing.T) {
+	if os.Getenv(smokeSocketHelperEnv) != "1" {
+		t.Skip("host-smoke socket-list helper subprocess")
+	}
+	allowed := os.Getenv(smokeAllowedSocketEnv)
+	peer := os.Getenv(smokePeerSocketEnv)
+	conn, err := net.DialTimeout("unix", allowed, 250*time.Millisecond)
+	require.NoError(t, err, "the current agent's allowlisted socket must be reachable")
+	require.NoError(t, conn.Close())
+	if peerConn, peerErr := net.DialTimeout("unix", peer, 250*time.Millisecond); peerErr == nil {
+		_ = peerConn.Close()
+		t.Fatal("a sibling agent's non-allowlisted socket remained reachable")
+	}
+	_, err = os.Lstat(peer)
+	assert.True(t, errors.Is(err, syscall.ENOENT),
+		"the sibling socket must be absent from the constructed root, got %v", err)
 }
 
 func assertTclaudeLayerReapsOrphan(t *testing.T) {
