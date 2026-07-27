@@ -269,15 +269,42 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		(!sameSessionGeneration || persistedReset || !persistedHasContext || persistedContext != snap.Context) {
 		ctx := snap.Context
 		contextWriteStarted := time.Now()
-		if err := db.UpdateContextSnapshot(sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize); err != nil {
+		contextPersisted := false
+		var err error
+		if sameSessionGeneration && !persistedReset && persistedHasContext &&
+			persistedContext.WindowSize == ctx.WindowSize {
+			contextPersisted, err = db.UpdateContextSnapshotIfWindowUnchanged(
+				sess.ID,
+				sess.ConvID,
+				sess.CreatedAt,
+				ctx.Pct,
+				ctx.TokensInput,
+				ctx.TokensOutput,
+				ctx.WindowSize,
+			)
+		} else {
+			err = db.UpdateContextSnapshot(
+				sess.ID,
+				ctx.Pct,
+				ctx.TokensInput,
+				ctx.TokensOutput,
+				ctx.WindowSize,
+			)
+			contextPersisted = err == nil
+		}
+		if err != nil {
 			slog.Warn("codex-telemetry: failed to persist read-through snapshot",
 				"session_id", sess.ID, "error", err, "module", "agentd")
-		} else {
+		} else if contextPersisted {
 			persistedConvID = sess.ConvID
 			persistedCreatedAt = sess.CreatedAt
 			persistedContext = ctx
 			persistedHasContext = true
 			persistedReset = false
+		} else {
+			// The row generation or window changed after the dashboard preload.
+			// Force the next poll through the full projecting path.
+			persistedHasContext = false
 		}
 		timing.contextWrite += time.Since(contextWriteStarted)
 	}

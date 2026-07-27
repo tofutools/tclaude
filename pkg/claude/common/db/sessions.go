@@ -1001,6 +1001,36 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
 }
 
+// UpdateContextSnapshotIfWindowUnchanged is the token-only fast path for a
+// caller that has already successfully projected this session generation and
+// context window. It intentionally does not touch durable relaunch profiles.
+// The generation and window predicates make a stale caller a no-op; false tells
+// it to retry through UpdateContextSnapshot.
+func UpdateContextSnapshotIfWindowUnchanged(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) (bool, error) {
+	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE sessions
+		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+		WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
+		pct, tokensInput, tokensOutput, windowSize,
+		sessionID, convID, createdAt.Format(time.RFC3339Nano), windowSize)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	return updated > 0, err
+}
+
 // UpdateStatuslineSnapshot stores the verbatim raw JSON of the most recent
 // statusline callback for a session onto sessions.last_statusline_json,
 // keyed by the tclaude session id — overwritten every render (latest-wins,
