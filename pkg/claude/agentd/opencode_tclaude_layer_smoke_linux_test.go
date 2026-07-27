@@ -111,6 +111,8 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	} {
 		require.NoError(t, os.MkdirAll(path, 0o700))
 	}
+	identityProbeBinary := filepath.Join(cwd, "tclaude-agent-probe")
+	copyOpenCodeLayerSmokeExecutable(t, tclaudeBinary, identityProbeBinary)
 	for _, path := range []string{
 		filepath.Join(ambientData, "ambient-data-marker"),
 		filepath.Join(ambientCache, "ambient-cache-marker"),
@@ -134,10 +136,6 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
 	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
 		{Path: outside, Access: sandboxpolicy.AccessDeny},
-		// The identity probe deliberately enters agentd through the real CLI.
-		// CI builds it outside the otherwise-visible runtime roots, so grant
-		// exactly that executable rather than its runner-temp parent.
-		{Path: tclaudeBinary, Access: sandboxpolicy.AccessRead},
 	}
 	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "TCLAUDE_OPENCODE_EXECUTOR_SMOKE", Value: "frozen-profile-value",
@@ -245,7 +243,7 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 		clcommon.ShellQuoteArg(filepath.Join(install, "install-write-blocked")),
 		clcommon.ShellQuoteArg(runtime.ControlSocketPath),
 		clcommon.ShellQuoteArg(siblingControlPath),
-		clcommon.ShellQuoteArg(tclaudeBinary),
+		clcommon.ShellQuoteArg(identityProbeBinary),
 	)
 	output := runOpenCodeLayerSmokeShell(t, *runtime, command)
 	require.FileExists(t, filepath.Join(cwd, "tool-written"))
@@ -264,6 +262,18 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NotEmptyf(t, identityLine, "tool output did not contain managed identity: %q", output)
 	assert.Equal(t, expectedAgentID, strings.Fields(identityLine)[0],
 		"agentd must resolve the exact managed identity through the wrapped server ancestry")
+}
+
+func copyOpenCodeLayerSmokeExecutable(t *testing.T, source, destination string) {
+	t.Helper()
+	sourceFile, err := os.Open(source)
+	require.NoError(t, err)
+	defer sourceFile.Close()
+	destinationFile, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	require.NoError(t, err)
+	_, err = io.Copy(destinationFile, sourceFile)
+	require.NoError(t, err)
+	require.NoError(t, destinationFile.Close())
 }
 
 func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
