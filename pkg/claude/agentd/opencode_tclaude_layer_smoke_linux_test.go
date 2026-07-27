@@ -134,6 +134,10 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
 	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
 		{Path: outside, Access: sandboxpolicy.AccessDeny},
+		// The identity probe deliberately enters agentd through the real CLI.
+		// CI builds it outside the otherwise-visible runtime roots, so grant
+		// exactly that executable rather than its runner-temp parent.
+		{Path: tclaudeBinary, Access: sandboxpolicy.AccessRead},
 	}
 	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "TCLAUDE_OPENCODE_EXECUTOR_SMOKE", Value: "frozen-profile-value",
