@@ -79,6 +79,9 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
 		{Path: outside, Access: sandboxpolicy.AccessDeny},
 	}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "TCLAUDE_OPENCODE_EXECUTOR_SMOKE", Value: "frozen-profile-value",
+	}}
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot)
 	require.NoError(t, err)
@@ -125,7 +128,10 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	t.Cleanup(stopAttach)
 
 	command := fmt.Sprintf(
-		"set -eu; printf executor-ok > %s; if printf blocked > %s; then exit 97; fi; %s agent whoami",
+		"set -eu; test \"$TCLAUDE_OPENCODE_EXECUTOR_SMOKE\" = frozen-profile-value; "+
+			"printf executor-ok > %s; if printf blocked > %s; then exit 97; fi; "+
+			"if printf planted > \"$HOME/.opencode/bin/opencode\"; then exit 98; fi; "+
+			"%s agent whoami",
 		clcommon.ShellQuoteArg(filepath.Join(cwd, "tool-written")),
 		clcommon.ShellQuoteArg(filepath.Join(outside, "blocked")),
 		clcommon.ShellQuoteArg(tclaudeBinary),

@@ -135,6 +135,19 @@ func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 		"the resize fix must preserve bubblewrap's input-injection defense")
 }
 
+func TestTclaudeLayerServerCommandOmitsTerminalRelay(t *testing.T) {
+	got, err := tclaudeLayerServerCommand(
+		"/usr/bin/bwrap", nil, nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		"exec opencode serve",
+	)
+	require.NoError(t, err)
+	assert.NotContains(t, got, tclaudeLayerWinchRelayCommand)
+	assert.Contains(t, got, "/usr/bin/bwrap")
+	assert.Contains(t, got, "--new-session")
+	assert.Contains(t, got, "exec opencode serve")
+}
+
 func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing.T) {
 	if os.Getenv(relayFakeBwrapEnv) == "1" {
 		runRelayFakeBwrap(t)

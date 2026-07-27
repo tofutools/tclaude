@@ -119,6 +119,15 @@ func tclaudeLayerCommand(
 	return relay + " -- " + command, nil
 }
 
+func tclaudeLayerServerCommand(
+	binary string,
+	phase0WriteDirs, breakGlassPaths []string,
+	plan sandboxpolicy.MountPlan,
+	serverCommand string,
+) (string, error) {
+	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, serverCommand)
+}
+
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
 	switch posture {
 	case sandboxpolicy.NetworkIsolatedWithAgentd:

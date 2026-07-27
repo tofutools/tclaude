@@ -19,6 +19,7 @@ type TclaudeLayerLaunchContract struct {
 	HarnessName       string                          `json:"harness_name"`
 	StateRoot         string                          `json:"state_root"`
 	StateDirs         []string                        `json:"state_dirs,omitempty"`
+	ReadOnlyStateDirs []string                        `json:"read_only_state_dirs,omitempty"`
 	WriteDirs         []string                        `json:"write_dirs"`
 	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
 }
@@ -33,7 +34,7 @@ type TclaudeLayerLaunchSpec struct {
 	Contract  TclaudeLayerLaunchContract     `json:"contract"`
 }
 
-const TclaudeLayerLaunchSpecVersion = 1
+const TclaudeLayerLaunchSpecVersion = 2
 
 // TclaudeLayerLaunchInput carries the trusted launch identities used to build
 // a TclaudeLayerLaunchSpec. GitWriteDirs must already be daemon-pinned for a
@@ -80,22 +81,50 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		launchContractReadDirs...,
 	)
 	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
-	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
-		launchReadDirs, launchWriteDirs, launchDenyDirs)
-
 	stateRoot, err := tclaudeLayerHarnessStateRoot(input.HarnessName)
 	if err != nil {
 		return TclaudeLayerLaunchSpec{}, err
 	}
+	stateRoot, err = canonicalTclaudeLayerStatePath(stateRoot)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+			"resolve tclaude-layer harness state root: %w", err)
+	}
 	contractWriteDirs := append(append([]string(nil), gitWriteDirs...), cwd)
 	var stateDirs []string
+	var readOnlyStateDirs []string
 	if input.HarnessName == harness.OpenCodeName {
 		stateDirs, err = tclaudeLayerOpenCodeStateDirs()
 		if err != nil {
 			return TclaudeLayerLaunchSpec{}, err
 		}
 		contractWriteDirs = append(contractWriteDirs, stateDirs...)
+		// ~/.opencode is mutable harness state, but its bin subtree is also
+		// OpenCodeExecutable's supported fallback install location. Reopen it
+		// read-only after the parent state bind so a confined tool cannot plant
+		// a binary that a later human invocation executes outside the wall.
+		binState, stateErr := canonicalTclaudeLayerStatePath(
+			filepath.Join(stateRoot, "bin"))
+		if stateErr != nil {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+				"resolve OpenCode executable state: %w", stateErr)
+		}
+		if !sandboxpolicy.PathContainsOrEqual(stateRoot, binState) {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+				"OpenCode executable state %q resolves outside state root %q",
+				binState, stateRoot)
+		}
+		readOnlyStateDirs = []string{binState}
+		launchReadDirs = append(launchReadDirs, readOnlyStateDirs...)
+		// The executor's tool subprocesses are the managed agent. Keep their
+		// authenticated coordination path reachable even when /tmp or an
+		// authored Home deny hides the socket's ancestors.
+		if socket := agentipc.CanonicalSocketPath(); filepath.IsAbs(socket) {
+			launchReadDirs = append(launchReadDirs, socket)
+		}
 	}
+	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
+		launchReadDirs, launchWriteDirs, launchDenyDirs)
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
@@ -109,6 +138,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		HarnessName:       input.HarnessName,
 		StateRoot:         stateRoot,
 		StateDirs:         stateDirs,
+		ReadOnlyStateDirs: readOnlyStateDirs,
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 	}
@@ -241,31 +271,62 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
-	if spec.Version != TclaudeLayerLaunchSpecVersion {
-		return "", fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
-	}
-	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
-	if err != nil {
-		return "", fmt.Errorf("render mount plan: %w", err)
-	}
-	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
+	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
+	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+}
+
+// WrapTclaudeLayerServerSpec renders a materialized launch spec for a
+// non-interactive, agentd-owned server. Unlike the pane renderer it does not
+// add the terminal WINCH relay: the server has no terminal to resize, and
+// keeping that extra tclaude process out of its ancestry makes the persisted
+// wrapper PID the actual containment boundary.
+func WrapTclaudeLayerServerSpec(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	serverCommand string,
+) (string, error) {
+	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return "", err
+	}
+	return tclaudeLayerServerCommand(
+		binary, phase0WriteDirs, breakGlassPaths, plan, serverCommand)
+}
+
+func tclaudeLayerSpecRenderInput(
+	spec TclaudeLayerLaunchSpec,
+) ([]string, []string, sandboxpolicy.MountPlan, error) {
+	if spec.Version != TclaudeLayerLaunchSpecVersion {
+		return nil, nil, sandboxpolicy.MountPlan{},
+			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+	}
+	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
+	if err != nil {
+		return nil, nil, sandboxpolicy.MountPlan{},
+			fmt.Errorf("render mount plan: %w", err)
+	}
+	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
+	if err != nil {
+		return nil, nil, sandboxpolicy.MountPlan{}, err
+	}
 	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
+	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
 	for _, stateRoot := range stateRoots {
 		if err := validateTclaudeLayerHarnessStateRules(
 			stateRoot,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
-			return "", err
+			return nil, nil, sandboxpolicy.MountPlan{}, err
 		}
 	}
 	breakGlassPaths := make([]string, 0, len(spec.Effective.BreakGlassFilesystem))
 	for _, grant := range spec.Effective.BreakGlassFilesystem {
 		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
-	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	return phase0WriteDirs, breakGlassPaths, plan, nil
 }
 
 // PrepareTclaudeLayerHarnessState materializes only the harness-owned state
@@ -279,6 +340,10 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	stateDirs := append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
 	if spec.Contract.HarnessName == harness.OpenCodeName && len(spec.Contract.StateDirs) == 0 {
 		return fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+	}
+	if spec.Contract.HarnessName == harness.OpenCodeName &&
+		len(spec.Contract.ReadOnlyStateDirs) == 0 {
+		return fmt.Errorf("OpenCode tclaude-layer launch spec does not protect its executable state")
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -331,6 +396,38 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 					"tclaude-layer harness state path %q is not in the writable launch contract",
 					path)
 			}
+		}
+	}
+	stateRoot := filepath.Clean(spec.Contract.StateRoot)
+	for _, path := range spec.Contract.ReadOnlyStateDirs {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return fmt.Errorf("tclaude-layer read-only harness state path %q is not absolute", path)
+		}
+		if path == stateRoot || !sandboxpolicy.PathContainsOrEqual(stateRoot, path) {
+			return fmt.Errorf(
+				"tclaude-layer read-only harness state path %q is not below state root %q",
+				path, stateRoot)
+		}
+		if err := validateTclaudeLayerHarnessStateRules(
+			path, spec.Contract.ProfileFilesystem); err != nil {
+			return err
+		}
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+				return fmt.Errorf(
+					"tclaude-layer read-only harness state path %q is at or below protected root %q",
+					path, protected)
+			}
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare tclaude-layer read-only harness state %q: %w", path, err)
+		}
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
+		if !covered || access != sandboxpolicy.AccessRead {
+			return fmt.Errorf(
+				"tclaude-layer read-only harness state path %q is not read-only in the rendered launch contract",
+				path)
 		}
 	}
 	return nil

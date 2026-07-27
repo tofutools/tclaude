@@ -365,11 +365,15 @@ With sandbox implementation `tclaude-layer` on Linux, agentd starts that
 the exact versioned launch spec beside the runtime row. The attach command is
 not wrapped. The launch contract makes OpenCode's `~/.opencode` and XDG
 data/cache/config/state directories writable without widening the rest of
-Home. A restart revalidates and replays that persisted spec; a wrapped
-row with a missing, corrupt, or no-longer-valid spec is refused rather than
-restarted unwrapped. The mode is normalized to `tclaude-layer` in the launch
-record; pairing that mode with `harness-builtin`, or pairing `off` with the
-outer implementation, is a launch error.
+Home, then re-hardens `~/.opencode/bin` read-only so a confined tool cannot
+replace the executable used by a later host invocation. The frozen profile
+environment, including generated agent-directory variables, is applied to the
+server because its children execute the tools; the attach client remains only
+a UI. A restart revalidates and replays that persisted spec; a wrapped row with
+a missing, corrupt, or no-longer-valid spec is refused rather than restarted
+unwrapped. The mode is normalized to `tclaude-layer` in the launch record;
+pairing that mode with `harness-builtin`, or pairing `off` with the outer
+implementation, is a launch error.
 
 agentd waits for authenticated health, asks the server to mint the conversation
 ID, delivers the startup prompt through `prompt_async`, consumes the

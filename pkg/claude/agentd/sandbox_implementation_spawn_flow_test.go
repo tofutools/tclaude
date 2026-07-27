@@ -3,7 +3,6 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,15 +259,6 @@ func decodeFailure(t *testing.T, raw []byte) struct {
 	}
 	require.NoErrorf(t, json.Unmarshal(raw, &failure), "decode failure body=%s", raw)
 	return failure
-}
-
-func hasNoteAbout(notes []string, field string) bool {
-	for _, note := range notes {
-		if strings.Contains(note, field) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability: refuse-don't-degrade.

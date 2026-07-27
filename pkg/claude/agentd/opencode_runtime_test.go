@@ -642,6 +642,49 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 		SandboxLaunchSpecJSON: missingStateDirs,
 	})
 	require.ErrorContains(t, err, "no mutable state directories")
+
+	freshSpec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, freshSpec)
+	freshSpec.Contract.ReadOnlyStateDirs = nil
+	_, missingReadOnlyState, err := openCodeSandboxRecord(freshSpec)
+	require.NoError(t, err)
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: missingReadOnlyState,
+	})
+	require.ErrorContains(t, err, "does not protect its executable state")
+}
+
+func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{
+		Effective: sandboxpolicy.EffectiveProfile{
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "PROFILE_VALUE", Value: "frozen"},
+				{Name: "GOCACHE", Value: "/tmp/agent-cache"},
+			},
+		},
+	}
+	env := openCodeServerEnvironment([]string{
+		"PATH=/usr/bin",
+		"PROFILE_VALUE=ambient",
+	}, spec)
+	assert.Equal(t, "frozen", lastOpenCodeEnvironmentValue(env, "PROFILE_VALUE"))
+	assert.Equal(t, "/tmp/agent-cache", lastOpenCodeEnvironmentValue(env, "GOCACHE"))
+	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(env, "PATH"))
+}
+
+func lastOpenCodeEnvironmentValue(environment []string, name string) string {
+	prefix := name + "="
+	var value string
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			value = strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return value
 }
 
 func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing.T) {

@@ -23,6 +23,17 @@ func tclaudeLayerCommand(
 	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
 }
 
+func tclaudeLayerServerCommand(
+	string,
+	[]string,
+	[]string,
+	sandboxpolicy.MountPlan,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
 	return harness.LaunchOSSandbox{
 		State:  "off",

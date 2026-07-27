@@ -179,6 +179,17 @@ func tclaudeLayerCommand(
 	return command, nil
 }
 
+func tclaudeLayerServerCommand(
+	string,
+	[]string,
+	[]string,
+	sandboxpolicy.MountPlan,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func existingSeatbeltPositivePaths(label string, paths []string) ([]string, error) {
 	out := make([]string, 0, len(paths))
 	for i, path := range paths {

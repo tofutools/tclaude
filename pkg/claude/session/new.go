@@ -1184,7 +1184,7 @@ func runNew(params *NewParams) error {
 		RemoteControl:              remoteControl,
 		InitialPrompt:              params.InitialPrompt,
 	})
-	if tclaudeLayer {
+	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:  h.Name,
 			Cwd:          cwd,

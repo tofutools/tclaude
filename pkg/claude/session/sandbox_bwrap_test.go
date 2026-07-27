@@ -402,6 +402,11 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
 	cwd := filepath.Join(home, "work")
 	agentDir := filepath.Join(home, "agent-cache")
 	for _, path := range []string{cwd, agentDir, filepath.Join(home, ".opencode")} {
@@ -426,6 +431,8 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
 	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
+	assert.Equal(t, []string{filepath.Join(home, ".opencode", "bin")},
+		spec.Contract.ReadOnlyStateDirs)
 	assert.ElementsMatch(t, []string{
 		cwd,
 		agentDir,
@@ -440,6 +447,14 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		require.NoError(t, statErr)
 		assert.True(t, info.IsDir())
 	}
+	for _, path := range spec.Contract.ReadOnlyStateDirs {
+		info, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
+		assert.True(t, covered)
+		assert.Equal(t, sandboxpolicy.AccessRead, access)
+	}
 	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
 		"the authored launch-active rows stay separate from generated contract reopens")
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
@@ -452,10 +467,23 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: agentDir, Access: sandboxpolicy.AccessRead,
 	})
+	wrapped, err := WrapTclaudeLayerServerSpec("/usr/bin/bwrap", spec, "opencode serve")
+	require.NoError(t, err)
+	stateBind := strings.Index(wrapped,
+		"--bind "+clcommon.ShellQuoteArg(spec.Contract.StateRoot)+" "+
+			clcommon.ShellQuoteArg(spec.Contract.StateRoot))
+	binReadOnly := strings.Index(wrapped,
+		"--ro-bind "+clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0])+" "+
+			clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0]))
+	require.GreaterOrEqual(t, stateBind, 0)
+	require.GreaterOrEqual(t, binReadOnly, 0)
+	assert.Less(t, stateBind, binReadOnly,
+		"the executable subtree must be re-hardened after the mutable state bind")
 }
 
 func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	for _, name := range []string{"DATA", "CACHE", "CONFIG", "STATE"} {
 		t.Setenv("XDG_"+name+"_HOME", filepath.Join(home, strings.ToLower(name)))
@@ -471,7 +499,8 @@ func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
 }
 
 func TestTclaudeLayerOpenCodeStateDirsResolveMissingLeafBelowSymlink(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	realCache := filepath.Join(home, "real-cache")
 	require.NoError(t, os.MkdirAll(realCache, 0o700))
@@ -482,6 +511,30 @@ func TestTclaudeLayerOpenCodeStateDirsResolveMissingLeafBelowSymlink(t *testing.
 	dirs, err := tclaudeLayerOpenCodeStateDirs()
 	require.NoError(t, err)
 	assert.Contains(t, dirs, filepath.Join(realCache, "opencode"))
+}
+
+func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+	stateRoot := filepath.Join(home, ".opencode")
+	outside := filepath.Join(home, "outside-bin")
+	cwd := filepath.Join(home, "work")
+	for _, path := range []string{stateRoot, outside, cwd} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	require.NoError(t, os.Symlink(outside, filepath.Join(stateRoot, "bin")))
+
+	_, err = BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         cwd,
+	})
+	require.ErrorContains(t, err, "resolves outside state root")
 }
 
 func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {

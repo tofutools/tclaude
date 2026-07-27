@@ -80,18 +80,19 @@ func TestSpawnProfile_RejectsUnknownSandboxImplementation(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid sandbox implementation")
 }
 
-// TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness: a profile carries its
-// OWN harness, so the harness gate is checkable at save — and a profile that
-// could never launch is worth refusing before it is saved.
-func TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness(t *testing.T) {
+// OpenCode's authoritative server is now the process inside the outer layer,
+// so profile authoring accepts the same implementation pin as the pane-owned
+// harnesses. Host capability remains a launch-time concern.
+func TestSpawnProfile_AcceptsTclaudeLayerForOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
 
 	rec := createProfile(t, f, map[string]any{
 		"name": "oc-layered", "harness": "opencode", "sandbox_implementation": "tclaude-layer",
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code,
-		"tclaude-layer on an OpenCode profile must be refused at save; body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "OpenCode")
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"OpenCode executor-layer intent must be accepted at save; body=%s", rec.Body.String())
+	got := readProfile(t, f, "oc-layered")
+	assert.Equal(t, "tclaude-layer", got["sandbox_implementation"])
 }
 
 // TestSpawnProfile_SandboxImplementationSavesOnHostWithoutCapability: the

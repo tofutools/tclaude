@@ -131,7 +131,7 @@ var (
 	startOpenCodeRuntimeForSpawn = startOpenCodeRuntime
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
 	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayer
-	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerSpec
+	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
 )
 
 func startOpenCodeRuntime(
@@ -350,6 +350,26 @@ func openCodeRuntimeSandboxSpec(
 				stateDir)
 		}
 	}
+	if len(spec.Contract.ReadOnlyStateDirs) == 0 {
+		return nil, fmt.Errorf(
+			"OpenCode tclaude-layer launch spec does not protect its executable state")
+	}
+	stateRoot := canonicalOpenCodeRuntimePath(spec.Contract.StateRoot)
+	for _, stateDir := range spec.Contract.ReadOnlyStateDirs {
+		stateDir = canonicalOpenCodeRuntimePath(stateDir)
+		if stateDir == "" || stateDir == stateRoot ||
+			!sandboxpolicy.PathContainsOrEqual(stateRoot, stateDir) {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer launch spec has invalid read-only state directory %q",
+				stateDir)
+		}
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, stateDir)
+		if !covered || access != sandboxpolicy.AccessRead {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer read-only state directory %q is not protected in the rendered contract",
+				stateDir)
+		}
+	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
 	for _, path := range spec.Contract.WriteDirs {
@@ -415,7 +435,8 @@ func startOpenCodeProcess(
 	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = runtime.Cwd
-	cmd.Env = append(os.Environ(),
+	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
+	cmd.Env = append(cmd.Env,
 		"OPENCODE_SERVER_USERNAME="+openCodeServerUsername,
 		"OPENCODE_SERVER_PASSWORD="+runtime.Password)
 	cmd.Stdout = io.Discard
@@ -464,6 +485,20 @@ func startOpenCodeProcess(
 	stopOpenCodeProcess(runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
+}
+
+func openCodeServerEnvironment(
+	ambient []string,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) []string {
+	out := append([]string(nil), ambient...)
+	if sandboxSpec == nil {
+		return out
+	}
+	for _, entry := range sandboxSpec.Effective.Environment {
+		out = append(out, entry.Name+"="+entry.Value)
+	}
+	return out
 }
 
 func openCodeServeExec(
