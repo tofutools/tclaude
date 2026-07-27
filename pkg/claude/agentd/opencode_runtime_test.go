@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -599,6 +600,62 @@ func TestRandomOpenCodePassword(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, first, 43)
 	assert.NotEqual(t, first, second)
+}
+
+func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "project")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         cwd,
+		Snapshot:    &snapshot,
+	})
+	require.NoError(t, err)
+	implementation, encoded, err := openCodeSandboxRecord(&spec)
+	require.NoError(t, err)
+
+	decoded, err := openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: implementation,
+		SandboxLaunchSpecJSON: encoded,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decoded)
+	assert.Equal(t, spec, *decoded)
+
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	})
+	require.ErrorContains(t, err, "refusing an unwrapped restart")
+}
+
+func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing.T) {
+	setupTestDB(t)
+	previousResolve := resolveOpenCodeTclaudeLayer
+	t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+	resolveOpenCodeTclaudeLayer = func(
+		sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		t.Fatal("a wrapped runtime without its launch spec must refuse before any restart")
+		return "", harness.LaunchOSSandbox{}, nil
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-wrapped-missing-spec",
+		ConvID:                "ses-wrapped-missing-spec",
+		ServerURL:             "http://127.0.0.1:1",
+		Password:              "private",
+		Cwd:                   "/tmp/project",
+		PID:                   99_999_999,
+		PermissionJSON:        openCodeTestPermissionJSON,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+
+	assert.False(t, reconcileOpenCodeRuntime("spwn-wrapped-missing-spec"))
 }
 
 func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
