@@ -15,6 +15,12 @@ type OpenCodeRuntime struct {
 	Password  string
 	PID       int
 	Cwd       string
+	// SandboxImplementation records whether the managed server itself was
+	// launched behind the outer wall. Legacy rows are harness-builtin.
+	SandboxImplementation string
+	// SandboxLaunchSpecJSON is the exact versioned renderer input required to
+	// reproduce a tclaude-layer restart. It is empty for harness-builtin rows.
+	SandboxLaunchSpecJSON string
 	// PermissionJSON is the exact ordered OpenCode session ruleset agentd
 	// verifies and re-applies after healthy reuse or a serve restart.
 	PermissionJSON string
@@ -34,18 +40,22 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 	runtime.UpdatedAt = now
 	_, err = d.Exec(`
 		INSERT INTO opencode_runtimes
-			(session_id, conv_id, server_url, password, pid, cwd, permission_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
+			 sandbox_launch_spec_json, permission_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			conv_id = excluded.conv_id,
 			server_url = excluded.server_url,
 			password = excluded.password,
 			pid = excluded.pid,
 			cwd = excluded.cwd,
+			sandbox_implementation = excluded.sandbox_implementation,
+			sandbox_launch_spec_json = excluded.sandbox_launch_spec_json,
 			permission_json = excluded.permission_json,
 			updated_at = excluded.updated_at
 	`, runtime.SessionID, runtime.ConvID, runtime.ServerURL, runtime.Password,
-		runtime.PID, runtime.Cwd, runtime.PermissionJSON, runtime.CreatedAt.Format(time.RFC3339Nano),
+		runtime.PID, runtime.Cwd, runtime.SandboxImplementation, runtime.SandboxLaunchSpecJSON,
+		runtime.PermissionJSON, runtime.CreatedAt.Format(time.RFC3339Nano),
 		runtime.UpdatedAt.Format(time.RFC3339Nano))
 	return err
 }
@@ -56,7 +66,8 @@ func GetOpenCodeRuntime(sessionID string) (*OpenCodeRuntime, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT session_id, conv_id, server_url, password, pid, cwd, permission_json, created_at, updated_at
+		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
+			sandbox_launch_spec_json, permission_json, created_at, updated_at
 		FROM opencode_runtimes WHERE session_id = ?
 	`, sessionID)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -72,7 +83,8 @@ func GetOpenCodeRuntimeByConvID(convID string) (*OpenCodeRuntime, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT session_id, conv_id, server_url, password, pid, cwd, permission_json, created_at, updated_at
+		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
+			sandbox_launch_spec_json, permission_json, created_at, updated_at
 		FROM opencode_runtimes WHERE conv_id = ? ORDER BY created_at DESC LIMIT 1
 	`, convID)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -96,7 +108,8 @@ func FindOpenCodeRuntimeByPID(pid int) (*OpenCodeRuntime, error) {
 		return nil, err
 	}
 	row := d.QueryRow(`
-		SELECT session_id, conv_id, server_url, password, pid, cwd, permission_json, created_at, updated_at
+		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
+			sandbox_launch_spec_json, permission_json, created_at, updated_at
 		FROM opencode_runtimes WHERE pid = ? ORDER BY updated_at DESC LIMIT 1
 	`, pid)
 	runtime, err := scanOpenCodeRuntime(row)
@@ -112,7 +125,8 @@ func ListOpenCodeRuntimes() ([]OpenCodeRuntime, error) {
 		return nil, err
 	}
 	rows, err := d.Query(`
-		SELECT session_id, conv_id, server_url, password, pid, cwd, permission_json, created_at, updated_at
+		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
+			sandbox_launch_spec_json, permission_json, created_at, updated_at
 		FROM opencode_runtimes ORDER BY created_at
 	`)
 	if err != nil {
@@ -147,7 +161,8 @@ func scanOpenCodeRuntime(row openCodeRuntimeScanner) (*OpenCodeRuntime, error) {
 	var runtime OpenCodeRuntime
 	var created, updated string
 	if err := row.Scan(&runtime.SessionID, &runtime.ConvID, &runtime.ServerURL,
-		&runtime.Password, &runtime.PID, &runtime.Cwd, &runtime.PermissionJSON, &created, &updated); err != nil {
+		&runtime.Password, &runtime.PID, &runtime.Cwd, &runtime.SandboxImplementation,
+		&runtime.SandboxLaunchSpecJSON, &runtime.PermissionJSON, &created, &updated); err != nil {
 		return nil, err
 	}
 	runtime.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

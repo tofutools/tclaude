@@ -125,10 +125,9 @@ func SandboxOffMode(h *Harness) (string, error) {
 //   - Claude Code: an unattended command-running permission mode paired with an
 //     OS sandbox tclaude cannot prove is active (TCL-586) — see
 //     UnsandboxedAutonomyWarnings, which also reads settings.json under cwd.
-//   - OpenCode: the `access-control` mode reads like a sandbox but only does
-//     soft lexical path matching, and tclaude sandbox profiles compile into
-//     those same toothless rules rather than an OS sandbox — see
-//     openCodeSandboxWarnings.
+//   - OpenCode: `access-control` only does soft lexical path matching, while
+//     `tclaude-layer` confines the tool executor but leaves the attach/control
+//     boundary outside — see openCodeSandboxWarnings.
 //
 // Codex resolves autonomy and sandbox together against its managed profile, so
 // it has no such gap and returns nil. approvalPolicy and sandboxMode must be

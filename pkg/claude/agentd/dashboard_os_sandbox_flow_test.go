@@ -245,7 +245,8 @@ func TestDashboardSnapshot_AppliedSandboxProfilesSurface(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: label, TmuxSession: "tmux-sbx6", ConvID: convID, Cwd: f.TestCwd("sbx6"),
 		Status: "running", Harness: "claude",
-		OSSandboxState: "on", OSSandboxSource: "~/.claude/settings.json",
+		SandboxImplementation: "tclaude-layer",
+		OSSandboxState:        "on", OSSandboxSource: "~/.claude/settings.json",
 		EffectiveSandbox: &snapshot,
 	}), "stamp a launch whose rules came from sandbox profiles")
 	f.HaveMember("profiled", convID)
@@ -256,6 +257,8 @@ func TestDashboardSnapshot_AppliedSandboxProfilesSurface(t *testing.T) {
 		"Agents[]":  requireDashAgentState(t, snap, convID),
 		"Members[]": requireDashMemberState(t, snap, "profiled", convID),
 	} {
+		assert.Equal(t, "tclaude-layer", state.SandboxImplementation,
+			"%s: the confinement owner reaches the browser without source-string inference", name)
 		require.Len(t, state.SandboxProfiles, 2, "%s: both applied profiles reach the browser", name)
 		assert.Equal(t, "global", state.SandboxProfiles[0].Scope,
 			"%s: the recorded tier order survives to the browser", name)

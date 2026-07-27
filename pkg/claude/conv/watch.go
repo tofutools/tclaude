@@ -2264,6 +2264,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
 	if tclaudeLayer {
+		// OpenCode's outer wall belongs around agentd's authoritative serve
+		// process, not this interactive attach pane. The agentd resume path
+		// starts and authenticates that server before launching `session new`;
+		// the standalone conversation/watch resume path has no such lifecycle
+		// authority and must not manufacture an unwrapped server or wrap the
+		// harmless client instead.
+		if h.Name == harness.OpenCodeName {
+			return "", "", nil, fmt.Errorf(
+				"OpenCode tclaude-layer resume requires the agentd-owned server lifecycle; resume this managed agent through agentd")
+		}
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", "", nil, err
 		}

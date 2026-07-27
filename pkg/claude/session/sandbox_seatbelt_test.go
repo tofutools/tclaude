@@ -358,6 +358,68 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 	)
 }
 
+func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {
+	const (
+		parent  = "/Users/dev/.tclaude/data/spawn-attachments"
+		current = parent + "/current-session"
+		sibling = parent + "/sibling-session"
+	)
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		[]string{parent, sibling},
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{
+				{Path: parent, Mode: sandboxpolicy.MountRW},
+				{Path: sibling, Mode: sandboxpolicy.MountRW},
+			},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		TclaudeLayerPrivateWriteDir{Parent: parent, Current: current},
+	)
+	require.NoError(t, err)
+
+	parentParam := ""
+	currentParam := ""
+	for _, param := range params {
+		switch {
+		case param.path == parent && strings.HasPrefix(param.name, "READ_DENY_"):
+			parentParam = param.name
+		case param.path == current && strings.Contains(param.name, "READ_DENY_"):
+			currentParam = param.name
+		}
+	}
+	require.NotEmpty(t, parentParam, "the shared parent must emit a read hide")
+	require.Equal(t, parentParam+"_REOPEN_0", currentParam,
+		"the current session child must be the hide's exact carveout")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-any (literal (param "`+parentParam+`")) (subpath (param "`+parentParam+`")))`,
+	), "file-read and remote-unix denies must use the identical parent parameter")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (literal (param "`+currentParam+`")))`,
+	), "file-read and remote-unix denies must use the identical child exception")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (subpath (param "`+currentParam+`")))`,
+	))
+	for _, param := range params {
+		if strings.HasPrefix(param.name, parentParam+"_REOPEN_") {
+			assert.Equal(t, current, param.path,
+				"ordinary rules and break-glass must not become exceptions to the daemon-only parent hide")
+		}
+	}
+	assert.Equal(t, 4, strings.Count(profile, `(param "`+parentParam+`_REOPEN_0")`),
+		"the paired file-read/remote-unix deny must share exactly one daemon reopen")
+	assert.NotContains(t, profile, `(param "`+parentParam+`_REOPEN_1")`,
+		"the break-glass sibling must not become a private-parent exception")
+}
+
 func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
 	const tmuxDir = "/private/tmp/tmux-501"
 	profile, params, err := renderSeatbeltProfile(

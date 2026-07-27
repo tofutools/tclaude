@@ -39,7 +39,10 @@ type OpenCodeRuntimeFixture struct {
 func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string) (OpenCodeRuntimeFixture, error)) func() {
 	previousStart := startOpenCodeRuntimeForSpawn
 	previousSend := sendOpenCodePromptForSpawn
-	startOpenCodeRuntimeForSpawn = func(sessionID, cwd, title, resumeID, _ string) (*openCodeLaunch, error) {
+	startOpenCodeRuntimeForSpawn = func(
+		sessionID, cwd, title, resumeID, _ string,
+		_ *session.TclaudeLayerLaunchSpec,
+	) (*openCodeLaunch, error) {
 		fixture, err := start(sessionID, cwd, title, resumeID)
 		if err != nil {
 			return nil, err
@@ -416,6 +419,7 @@ func ResetCodexContextRefreshForTest() {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	codexContextRefreshMu.last = nil
+	codexContextRefreshMu.stopping = false
 }
 
 // AsHumanPeer attaches a synthetic peer context that classify() resolves
@@ -696,11 +700,22 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 // for t.Cleanup (which resets the cache again, so tests cannot leak an answer
 // into each other).
 func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
+	return SetTclaudeLayerHostAvailabilitiesForTest(fn, fn)
+}
+
+// SetTclaudeLayerHostAvailabilitiesForTest independently controls the
+// interactive-pane and relay-free-server capability disclosures.
+func SetTclaudeLayerHostAvailabilitiesForTest(
+	interactive, server func() error,
+) func() {
 	prev := tclaudeLayerHostAvailability
-	tclaudeLayerHostAvailability = fn
+	prevServer := tclaudeLayerServerHostAvailability
+	tclaudeLayerHostAvailability = interactive
+	tclaudeLayerServerHostAvailability = server
 	resetSandboxImplHostProbeCache()
 	return func() {
 		tclaudeLayerHostAvailability = prev
+		tclaudeLayerServerHostAvailability = prevServer
 		resetSandboxImplHostProbeCache()
 	}
 }

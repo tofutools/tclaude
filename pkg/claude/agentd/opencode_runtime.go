@@ -16,15 +16,19 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const (
@@ -38,6 +42,7 @@ const (
 	openCodeMaxSSEEventBytes  = 4 << 20
 	openCodeHookRowWait       = 2 * time.Second
 	openCodeHookRowRetryDelay = 25 * time.Millisecond
+	openCodeSandboxSpecMax    = 4 << 20
 )
 
 type openCodeLaunch struct {
@@ -126,9 +131,14 @@ var openCodeSSEHTTPClient = &http.Client{
 var (
 	startOpenCodeRuntimeForSpawn = startOpenCodeRuntime
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
+	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayerServer
+	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
 )
 
-func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string) (*openCodeLaunch, error) {
+func startOpenCodeRuntime(
+	sessionID, cwd, title, resumeID, permissionJSON string,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (*openCodeLaunch, error) {
 	permissionJSON = strings.TrimSpace(permissionJSON)
 	if permissionJSON == "" {
 		return nil, fmt.Errorf("OpenCode permission policy is required")
@@ -138,6 +148,10 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string
 	}
 	var err error
 	cwd, err = resolveOpenCodeLaunchCwd(cwd)
+	if err != nil {
+		return nil, err
+	}
+	sandboxImplementation, sandboxSpecJSON, err := openCodeSandboxRecord(sandboxSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +165,12 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string
 		// patching a policy compiled for cwd B through cwd A would be ambiguous
 		// and could silently target the wrong session instance.
 		sameCwd := strings.TrimSpace(existing.Cwd) != "" && existing.Cwd == cwd
-		if sameCwd && openCodeHealthyAfterRetries(*existing,
+		existingImplementation, implementationErr := normalizeOpenCodeRuntimeSandboxImplementation(
+			existing.SandboxImplementation)
+		sameSandbox := implementationErr == nil &&
+			string(existingImplementation) == sandboxImplementation &&
+			existing.SandboxLaunchSpecJSON == sandboxSpecJSON
+		if sameCwd && sameSandbox && openCodeHealthyAfterRetries(*existing,
 			openCodeHealthAttempts, openCodeHealthRetryDelay) {
 			if existing.PermissionJSON != permissionJSON {
 				existing.PermissionJSON = permissionJSON
@@ -197,14 +216,16 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string
 			return nil, err
 		}
 		runtime := db.OpenCodeRuntime{
-			SessionID:      sessionID,
-			ConvID:         resumeID,
-			ServerURL:      serverURL,
-			Password:       password,
-			Cwd:            cwd,
-			PermissionJSON: permissionJSON,
+			SessionID:             sessionID,
+			ConvID:                resumeID,
+			ServerURL:             serverURL,
+			Password:              password,
+			Cwd:                   cwd,
+			PermissionJSON:        permissionJSON,
+			SandboxImplementation: sandboxImplementation,
+			SandboxLaunchSpecJSON: sandboxSpecJSON,
 		}
-		process, err := startOpenCodeProcess(runtime)
+		process, err := startOpenCodeProcess(runtime, sandboxSpec)
 		if err != nil {
 			lastErr = err
 			continue
@@ -238,7 +259,165 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string
 	return nil, fmt.Errorf("start OpenCode server after 3 port attempts: %w", lastErr)
 }
 
-func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) {
+func openCodeSandboxRecord(
+	spec *session.TclaudeLayerLaunchSpec,
+) (string, string, error) {
+	if spec == nil {
+		return string(sandboxpolicy.ImplementationHarnessBuiltin), "", nil
+	}
+	encoded, err := json.Marshal(spec)
+	if err != nil {
+		return "", "", fmt.Errorf("encode OpenCode tclaude-layer launch spec: %w", err)
+	}
+	return string(sandboxpolicy.ImplementationTclaudeLayer), string(encoded), nil
+}
+
+func normalizeOpenCodeRuntimeSandboxImplementation(raw string) (sandboxpolicy.Implementation, error) {
+	if strings.TrimSpace(raw) == "" {
+		return sandboxpolicy.ImplementationHarnessBuiltin, nil
+	}
+	return sandboxpolicy.NormalizeImplementation(raw)
+}
+
+func openCodeRuntimeSandboxSpec(
+	runtime db.OpenCodeRuntime,
+) (*session.TclaudeLayerLaunchSpec, error) {
+	implementation, err := normalizeOpenCodeRuntimeSandboxImplementation(
+		runtime.SandboxImplementation)
+	if err != nil {
+		return nil, fmt.Errorf("OpenCode runtime sandbox implementation: %w", err)
+	}
+	switch implementation {
+	case sandboxpolicy.ImplementationHarnessBuiltin:
+		if strings.TrimSpace(runtime.SandboxLaunchSpecJSON) != "" {
+			return nil, fmt.Errorf(
+				"OpenCode harness-builtin runtime unexpectedly carries a tclaude-layer launch spec")
+		}
+		return nil, nil
+	case sandboxpolicy.ImplementationTclaudeLayer:
+	default:
+		return nil, fmt.Errorf("unsupported OpenCode runtime sandbox implementation %q", implementation)
+	}
+	raw := strings.TrimSpace(runtime.SandboxLaunchSpecJSON)
+	if raw == "" {
+		return nil, fmt.Errorf(
+			"OpenCode tclaude-layer runtime has no persisted launch spec; refusing an unwrapped restart")
+	}
+	if len(raw) > openCodeSandboxSpecMax {
+		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec exceeds %d bytes", openCodeSandboxSpecMax)
+	}
+	var spec session.TclaudeLayerLaunchSpec
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&spec); err != nil {
+		return nil, fmt.Errorf("decode OpenCode tclaude-layer launch spec: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = fmt.Errorf("multiple JSON values")
+		}
+		return nil, fmt.Errorf("decode OpenCode tclaude-layer launch spec trailer: %w", err)
+	}
+	if spec.Version != session.TclaudeLayerLaunchSpecVersion {
+		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer launch spec version %d", spec.Version)
+	}
+	if spec.Contract.HarnessName != harness.OpenCodeName {
+		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec names harness %q",
+			spec.Contract.HarnessName)
+	}
+	if !filepath.IsAbs(spec.Contract.StateRoot) {
+		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec state root %q is not absolute",
+			spec.Contract.StateRoot)
+	}
+	if len(spec.Contract.StateDirs) == 0 {
+		return nil, fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+	}
+	for _, stateDir := range spec.Contract.StateDirs {
+		stateDir = canonicalOpenCodeRuntimePath(stateDir)
+		if stateDir == "" {
+			return nil, fmt.Errorf("OpenCode tclaude-layer launch spec has a non-absolute state directory")
+		}
+		inWriteContract := false
+		for _, writeDir := range spec.Contract.WriteDirs {
+			if canonicalOpenCodeRuntimePath(writeDir) == stateDir {
+				inWriteContract = true
+				break
+			}
+		}
+		if !inWriteContract {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer state directory %q is not in the writable launch contract",
+				stateDir)
+		}
+	}
+	if len(spec.Contract.ReadOnlyStateDirs) == 0 {
+		return nil, fmt.Errorf(
+			"OpenCode tclaude-layer launch spec does not protect its executable state")
+	}
+	stateRoot := canonicalOpenCodeRuntimePath(spec.Contract.StateRoot)
+	for _, stateDir := range spec.Contract.ReadOnlyStateDirs {
+		stateDir = canonicalOpenCodeRuntimePath(stateDir)
+		if stateDir == "" || stateDir == stateRoot ||
+			!sandboxpolicy.PathContainsOrEqual(stateRoot, stateDir) {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer launch spec has invalid read-only state directory %q",
+				stateDir)
+		}
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, stateDir)
+		if !covered || access != sandboxpolicy.AccessRead {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer read-only state directory %q is not protected in the rendered contract",
+				stateDir)
+		}
+	}
+	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
+	hasCwd := false
+	for _, path := range spec.Contract.WriteDirs {
+		if canonicalOpenCodeRuntimePath(path) == cwd {
+			hasCwd = true
+			break
+		}
+	}
+	if cwd == "" || !hasCwd {
+		return nil, fmt.Errorf(
+			"OpenCode tclaude-layer launch spec does not preserve runtime cwd %q as a writable contract path",
+			runtime.Cwd)
+	}
+	snapshot := sandboxpolicy.NewSnapshot(spec.Effective, nil)
+	revalidated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("revalidate OpenCode tclaude-layer launch spec: %w", err)
+	}
+	spec.Effective = revalidated.Effective
+	posture, err := sandboxpolicy.NetworkPostureForAccess(spec.Effective.NetworkAccess)
+	if err != nil {
+		return nil, err
+	}
+	if posture != sandboxpolicy.NetworkHostOpen {
+		return nil, fmt.Errorf(
+			"unsupported_sandbox_profile_network: OpenCode tclaude-layer restart requires the host-open loopback control plane and endpoint-ownership proof")
+	}
+	return &spec, nil
+}
+
+func canonicalOpenCodeRuntimePath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
+}
+
+func startOpenCodeProcess(
+	runtime db.OpenCodeRuntime,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (*openCodeProcess, error) {
+	if sandboxSpec != nil {
+		if err := session.PrepareTclaudeLayerHarnessState(*sandboxSpec); err != nil {
+			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
+		}
+	}
 	executable, err := harness.OpenCodeExecutable()
 	if err != nil {
 		return nil, fmt.Errorf("find OpenCode executable: %w", err)
@@ -251,10 +430,14 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 	if err != nil {
 		return nil, fmt.Errorf("parse OpenCode server endpoint: %w", err)
 	}
-	cmd := exec.Command(executable, "serve",
-		"--hostname", "127.0.0.1", "--port", port, "--log-level", "ERROR")
+	command, args, err := openCodeServeExec(executable, port, sandboxSpec)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(command, args...)
 	cmd.Dir = runtime.Cwd
-	cmd.Env = append(os.Environ(),
+	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
+	cmd.Env = append(cmd.Env,
 		"OPENCODE_SERVER_USERNAME="+openCodeServerUsername,
 		"OPENCODE_SERVER_PASSWORD="+runtime.Password)
 	cmd.Stdout = io.Discard
@@ -303,6 +486,101 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 	stopOpenCodeProcess(runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
+}
+
+func openCodeServerEnvironment(
+	ambient []string,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) []string {
+	out := append([]string(nil), ambient...)
+	if sandboxSpec == nil {
+		return out
+	}
+	for _, entry := range sandboxSpec.Effective.Environment {
+		out = append(out, entry.Name+"="+entry.Value)
+	}
+	return out
+}
+
+func openCodeServeExec(
+	executable, port string,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (string, []string, error) {
+	serveArgs := []string{
+		"serve", "--hostname", "127.0.0.1",
+		"--port", port, "--log-level", "ERROR",
+	}
+	if sandboxSpec == nil {
+		return executable, serveArgs, nil
+	}
+	if sandboxSpec.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit &&
+		sandboxSpec.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInternet {
+		return "", nil, fmt.Errorf(
+			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires the host-open loopback control plane and endpoint-ownership proof",
+		)
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	if err != nil {
+		return "", nil, err
+	}
+	serveCommand := clcommon.ShellQuoteArg(executable)
+	for _, arg := range serveArgs {
+		serveCommand += " " + clcommon.ShellQuoteArg(arg)
+	}
+	wrapped, err := wrapOpenCodeTclaudeLayer(bwrapBinary, *sandboxSpec, serveCommand)
+	if err != nil {
+		return "", nil, fmt.Errorf("wrap OpenCode server with tclaude-layer: %w", err)
+	}
+	// exec makes the PID agentd records the top wrapper rather than an
+	// intermediate shell. Stop/recovery can therefore target the boundary,
+	// while endpoint ownership continues to prove the listener in its subtree.
+	return "sh", []string{"-c", "exec " + wrapped}, nil
+}
+
+func openCodeTclaudeLayerLaunchSpec(
+	implementation, cwd string,
+	gitWriteDirs []string,
+	snapshot *sandboxpolicy.Snapshot,
+	privateSessionIDs ...string,
+) (*session.TclaudeLayerLaunchSpec, error) {
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil {
+		return nil, err
+	}
+	if normalized != sandboxpolicy.ImplementationTclaudeLayer {
+		return nil, nil
+	}
+	network := sandboxpolicy.NetworkAccessInherit
+	if snapshot != nil {
+		network = snapshot.Effective.NetworkAccess
+	}
+	posture, err := sandboxpolicy.NetworkPostureForAccess(network)
+	if err != nil {
+		return nil, err
+	}
+	if posture != sandboxpolicy.NetworkHostOpen {
+		return nil, fmt.Errorf(
+			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking because agentd and the attach pane use its authenticated loopback control plane and endpoint-ownership proof",
+		)
+	}
+	var privateWriteDirs []session.TclaudeLayerPrivateWriteDir
+	if len(privateSessionIDs) > 0 && strings.TrimSpace(privateSessionIDs[0]) != "" {
+		privateWriteDirs = []session.TclaudeLayerPrivateWriteDir{{
+			Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
+			Current: tclcommon.SpawnAttachmentsPrivateDir(privateSessionIDs[0]),
+		}}
+	}
+	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		HarnessName:      harness.OpenCodeName,
+		Cwd:              cwd,
+		GitWriteDirs:     gitWriteDirs,
+		Snapshot:         snapshot,
+		PrivateWriteDirs: privateWriteDirs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &spec, nil
 }
 
 // finishOpenCodeProcessExit records a managed server's exit. It flags the
@@ -735,13 +1013,19 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 		ensureOpenCodeSSE(*runtime)
 		return true
 	}
+	sandboxSpec, err := openCodeRuntimeSandboxSpec(*runtime)
+	if err != nil {
+		slog.Error("OpenCode server restart refused: sandbox cannot be reproduced",
+			"session", sessionID, "error", err)
+		return false
+	}
 	stopOpenCodeProcess(*runtime, nil)
 	if !waitForOpenCodeEndpointRelease(runtime.ServerURL, openCodeEndpointCloseWait) {
 		slog.Error("OpenCode server endpoint remained occupied after stop",
 			"session", sessionID, "endpoint", runtime.ServerURL)
 		return false
 	}
-	process, err := startOpenCodeProcess(*runtime)
+	process, err := startOpenCodeProcess(*runtime, sandboxSpec)
 	if err != nil {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
 		return false

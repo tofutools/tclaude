@@ -3,6 +3,8 @@ package harness
 import (
 	"fmt"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 const (
@@ -12,6 +14,11 @@ const (
 	// disk access through tools without path-scoped permission keys are not
 	// contained.
 	OpenCodeSandboxAccessControl = "access-control"
+
+	// OpenCodeSandboxTclaudeLayer records that the agentd-owned, tool-executing
+	// OpenCode server runs inside tclaude's OS boundary. OpenCode's ordered
+	// permission rules remain active as defense in depth.
+	OpenCodeSandboxTclaudeLayer = "tclaude-layer"
 
 	// OpenCodeSandboxOff disables directory scoping. Approval policy still
 	// applies, so selecting off does not erase the fail-closed tool posture.
@@ -27,13 +34,15 @@ type openCodeSandbox struct{}
 func (openCodeSandbox) DefaultMode() string { return OpenCodeSandboxAccessControl }
 
 func (openCodeSandbox) Modes() []string {
-	return []string{OpenCodeSandboxAccessControl, OpenCodeSandboxOff}
+	return []string{OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff}
 }
 
 func (openCodeSandbox) ModeHelp(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case OpenCodeSandboxAccessControl:
 		return "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules."
+	case OpenCodeSandboxTclaudeLayer:
+		return "Linux OS containment for the agentd-owned, tool-executing OpenCode server. The attach pane stays outside the boundary; authenticated loopback control traffic, host networking, and ambient host Unix sockets remain reachable. Ordered OpenCode permission rules stay active as defense in depth."
 	case OpenCodeSandboxOff:
 		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 	default:
@@ -44,34 +53,70 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 func (openCodeSandbox) ValidateMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	switch mode {
-	case "", OpenCodeSandboxAccessControl, OpenCodeSandboxOff:
+	case "", OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("invalid opencode sandbox mode %q (want %s|%s)",
-			mode, OpenCodeSandboxAccessControl, OpenCodeSandboxOff)
+		return "", fmt.Errorf("invalid opencode sandbox mode %q (want %s|%s|%s)",
+			mode, OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff)
 	}
 }
 
+// ResolveOpenCodeSandboxImplementationMode keeps OpenCode's persisted sandbox
+// mode truthful about which component owns OS confinement. The normal
+// access-control default becomes tclaude-layer when the outer implementation
+// is selected; contradictory explicit pairs fail rather than silently choosing
+// one axis.
+func ResolveOpenCodeSandboxImplementationMode(
+	harnessName, mode string,
+	implementation sandboxpolicy.Implementation,
+) (string, error) {
+	mode = strings.TrimSpace(mode)
+	if harnessName != OpenCodeName {
+		return mode, nil
+	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		switch mode {
+		case "", OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer:
+			return OpenCodeSandboxTclaudeLayer, nil
+		case OpenCodeSandboxOff:
+			return "", fmt.Errorf(
+				"OpenCode sandbox %q is incompatible with sandbox implementation %q",
+				mode, implementation)
+		default:
+			return "", fmt.Errorf("invalid opencode sandbox mode %q", mode)
+		}
+	}
+	if mode == OpenCodeSandboxTclaudeLayer {
+		return "", fmt.Errorf(
+			"OpenCode sandbox %q requires sandbox implementation %q",
+			mode, sandboxpolicy.ImplementationTclaudeLayer)
+	}
+	return mode, nil
+}
+
 // openCodeSandboxWarnings returns the operator-facing line for an OpenCode
-// launch whose selected sandbox mode gives a false impression of containment,
-// or nil when the mode makes the lack of a sandbox self-evident.
+// launch whose selected sandbox mode needs a containment caveat, or nil when
+// the explicit off mode is already self-explanatory.
 //
 // It fires for the `access-control` mode — OpenCode's DEFAULT, and the mode a
 // blank spawn resolves to — because that mode reads like a sandbox but is not
-// one. tclaude's filesystem/network sandbox profiles, when attached to an
-// OpenCode agent, are compiled into these same soft rules rather than into an
-// OS sandbox (bubblewrap/Seatbelt) the way Claude Code's and Codex's are, so
-// "sandboxing" an OpenCode agent does not confine it. The `off` mode does not
-// warn here: it already carries its own ⚠ in ModeHelp and the operator has
-// explicitly disabled scoping, so there is no false sense of security to
-// correct.
+// one. tclaude's filesystem/network sandbox profiles alone compile into these
+// same soft rules. The `tclaude-layer` mode instead names its split boundary:
+// the tool-executing server is confined while the attach pane and control plane
+// stay outside/reachable. The `off` mode already carries its own ⚠ in ModeHelp.
 //
 // The concrete failure modes named here — shell redirection, symlinks, and
 // subprocess binaries reaching disk outside the allowed paths — match the
 // OpenCode shell implementation, which only inspects path arguments of a fixed
 // built-in command set and omits redirection targets.
 func openCodeSandboxWarnings(sandboxMode string) []string {
-	if strings.TrimSpace(sandboxMode) != OpenCodeSandboxAccessControl {
+	switch strings.TrimSpace(sandboxMode) {
+	case OpenCodeSandboxTclaudeLayer:
+		return []string{
+			"ℹ OpenCode's tool-executing server runs inside tclaude-layer; the attach pane remains outside the boundary, and the authenticated loopback control plane remains reachable.",
+		}
+	case OpenCodeSandboxAccessControl:
+	default:
 		return nil
 	}
 	return []string{
@@ -80,6 +125,6 @@ func openCodeSandboxWarnings(sandboxMode string) []string {
 			"so shell redirection, symlinks, and subprocesses still reach files and the " +
 			"network outside the allowed directories. Treat this agent as effectively " +
 			"unsandboxed — use a container or a restricted OS account for real isolation " +
-			"— until tclaude adds an OpenCode sandbox layer.",
+			"— or select the tclaude-layer sandbox implementation on Linux.",
 	}
 }

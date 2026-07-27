@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +17,10 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
@@ -597,6 +601,203 @@ func TestRandomOpenCodePassword(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, first, 43)
 	assert.NotEqual(t, first, second)
+}
+
+func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "project")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	snapshot := sandboxpolicy.EmptySnapshot()
+	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         cwd,
+		Snapshot:    &snapshot,
+	})
+	require.NoError(t, err)
+	implementation, encoded, err := openCodeSandboxRecord(&spec)
+	require.NoError(t, err)
+
+	decoded, err := openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: implementation,
+		SandboxLaunchSpecJSON: encoded,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decoded)
+	assert.Equal(t, spec, *decoded)
+	assert.Empty(t, decoded.Contract.PrivateWriteDirs,
+		"a new binary must accept pre-field v2 specs with no private roots")
+	protectedPaths, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	privateParentProtected := false
+	for _, protected := range protectedPaths {
+		if sandboxpolicy.PathContainsOrEqual(
+			protected,
+			tclcommon.SpawnAttachmentsPrivateBase(),
+		) {
+			privateParentProtected = true
+			break
+		}
+	}
+	assert.True(t, privateParentProtected,
+		"pre-field v2 servers must inherit the existing daemon-data hide over the private parent")
+
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	})
+	require.ErrorContains(t, err, "refusing an unwrapped restart")
+
+	spec.Contract.StateDirs = nil
+	_, missingStateDirs, err := openCodeSandboxRecord(&spec)
+	require.NoError(t, err)
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: missingStateDirs,
+	})
+	require.ErrorContains(t, err, "no mutable state directories")
+
+	privateRoot, _, err := tclcommon.PrepareSpawnAttachmentsPrivateDir("spwn-opencode")
+	require.NoError(t, err)
+	freshSpec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd,
+		nil,
+		nil,
+		"spwn-opencode",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, freshSpec)
+	require.Equal(t, []session.TclaudeLayerPrivateWriteDir{{
+		Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
+		Current: privateRoot,
+	}}, freshSpec.Contract.PrivateWriteDirs,
+		"the persisted server spec must carry the tool executor's attachment root")
+	freshSpec.Contract.ReadOnlyStateDirs = nil
+	_, missingReadOnlyState, err := openCodeSandboxRecord(freshSpec)
+	require.NoError(t, err)
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: missingReadOnlyState,
+	})
+	require.ErrorContains(t, err, "does not protect its executable state")
+}
+
+func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{
+		Effective: sandboxpolicy.EffectiveProfile{
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "PROFILE_VALUE", Value: "frozen"},
+				{Name: "GOCACHE", Value: "/tmp/agent-cache"},
+			},
+		},
+	}
+	env := openCodeServerEnvironment([]string{
+		"PATH=/usr/bin",
+		"PROFILE_VALUE=ambient",
+	}, spec)
+	assert.Equal(t, "frozen", lastOpenCodeEnvironmentValue(env, "PROFILE_VALUE"))
+	assert.Equal(t, "/tmp/agent-cache", lastOpenCodeEnvironmentValue(env, "GOCACHE"))
+	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(env, "PATH"))
+}
+
+func lastOpenCodeEnvironmentValue(environment []string, name string) string {
+	prefix := name + "="
+	var value string
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			value = strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return value
+}
+
+func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing.T) {
+	setupTestDB(t)
+	previousResolve := resolveOpenCodeTclaudeLayer
+	t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+	resolveOpenCodeTclaudeLayer = func(
+		sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		t.Fatal("a wrapped runtime without its launch spec must refuse before any restart")
+		return "", harness.LaunchOSSandbox{}, nil
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-wrapped-missing-spec",
+		ConvID:                "ses-wrapped-missing-spec",
+		ServerURL:             "http://127.0.0.1:1",
+		Password:              "private",
+		Cwd:                   "/tmp/project",
+		PID:                   99_999_999,
+		PermissionJSON:        openCodeTestPermissionJSON,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+
+	assert.False(t, reconcileOpenCodeRuntime("spwn-wrapped-missing-spec"))
+}
+
+func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
+	previousResolve := resolveOpenCodeTclaudeLayer
+	previousWrap := wrapOpenCodeTclaudeLayer
+	t.Cleanup(func() {
+		resolveOpenCodeTclaudeLayer = previousResolve
+		wrapOpenCodeTclaudeLayer = previousWrap
+	})
+	resolveOpenCodeTclaudeLayer = func(
+		posture sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		require.Equal(t, sandboxpolicy.NetworkHostOpen, posture)
+		return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+	}
+	var capturedCommand string
+	wrapOpenCodeTclaudeLayer = func(
+		binary string,
+		spec session.TclaudeLayerLaunchSpec,
+		command string,
+	) (string, error) {
+		assert.Equal(t, "/usr/bin/bwrap", binary)
+		assert.Equal(t, session.TclaudeLayerLaunchSpecVersion, spec.Version)
+		capturedCommand = command
+		return "wrapped-opencode-server", nil
+	}
+	spec := &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			NetworkAccess: sandboxpolicy.NetworkAccessInherit,
+		},
+	}
+
+	command, args, err := openCodeServeExec("/tmp/open code", "43210", spec)
+	require.NoError(t, err)
+	assert.Equal(t, "sh", command)
+	assert.Equal(t, []string{"-c", "exec wrapped-opencode-server"}, args)
+	assert.Contains(t, capturedCommand, "'/tmp/open code' serve")
+	assert.Contains(t, capturedCommand, "--hostname 127.0.0.1")
+	assert.Contains(t, capturedCommand, "--port 43210")
+}
+
+func TestOpenCodeServeExecRefusesNonHostOpenBeforeResolve(t *testing.T) {
+	previousResolve := resolveOpenCodeTclaudeLayer
+	t.Cleanup(func() { resolveOpenCodeTclaudeLayer = previousResolve })
+	resolveOpenCodeTclaudeLayer = func(
+		sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		t.Fatal("host capability must not be probed for an unsupported OpenCode posture")
+		return "", harness.LaunchOSSandbox{}, nil
+	}
+	spec := &session.TclaudeLayerLaunchSpec{
+		Version: session.TclaudeLayerLaunchSpecVersion,
+		Effective: sandboxpolicy.EffectiveProfile{
+			NetworkAccess: sandboxpolicy.NetworkAccessNone,
+		},
+	}
+
+	_, _, err := openCodeServeExec("/usr/bin/opencode", "43210", spec)
+	require.ErrorContains(t, err, "host-open loopback control plane")
 }
 
 func TestOpenCodeCredentialHandoffNeverEntersWrapperArgv(t *testing.T) {

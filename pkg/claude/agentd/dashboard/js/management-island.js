@@ -16,7 +16,8 @@ import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeploy
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
 import {
-  autoCompactWindowHintFor, sandboxImplHintFor, sandboxImplClearedNoticeFor,
+  autoCompactWindowHintFor, sandboxModeHelpForImplementation,
+  sandboxImplHintFor, sandboxImplClearedNoticeFor,
 } from './agent-spawn-model.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
@@ -232,7 +233,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const toolsID = profile ? 'profile-editor-tools' : 'role-editor-tools';
   const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
-  const sandboxHelp = hEntry?.sandbox_mode_help?.[draft.sandbox] || '';
+  const sandboxHelp = sandboxModeHelpForImplementation(
+    hEntry?.sandbox_mode_help?.[draft.sandbox],
+    draft.sandbox_implementation
+      || (hEntry?.can_tclaude_layer ? '' : sandboxImpl?.default || 'harness-builtin'),
+    draft.harness,
+  );
   const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';
   const askTimeoutHelp = hEntry?.ask_timeout_mode_help?.[draft.ask_user_question_timeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(
@@ -251,8 +257,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     {
       showSandboxImpl: !!hEntry?.can_tclaude_layer,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
-      sandboxImplHostAvailable: sandboxImpl?.host_available !== false,
-      sandboxImplHostReason: sandboxImpl?.host_unavailable_reason || '',
+      sandboxImplHostAvailable: hEntry?.tclaude_layer_server_boundary
+        ? sandboxImpl?.server_host_available !== false
+        : sandboxImpl?.host_available !== false,
+      sandboxImplHostReason: hEntry?.tclaude_layer_server_boundary
+        ? sandboxImpl?.server_host_unavailable_reason || ''
+        : sandboxImpl?.host_unavailable_reason || '',
     },
   );
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);

@@ -49,10 +49,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up Node for OpenCode smoke
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Install bubblewrap
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+
+      - name: Install pinned OpenCode smoke binary
+        run: |
+          npm install --global opencode-ai@1.18.6
+          opencode --version
 
       - name: Unlock and probe bubblewrap user namespace support
         shell: bash
@@ -129,6 +139,25 @@ jobs:
               echo "The test name, build constraints, or smoke gate likely changed; see the test log."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::Sandbox v2 bubblewrap smoke did not report an explicit pass (TestTclaudeLayerHostSmoke)"
+            exit 1
+          fi
+
+      - name: Run OpenCode executor sandbox smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-tclaude-layer-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerExecutorSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeTclaudeLayerExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode executor sandbox smoke did not complete"
+              echo
+              echo "The real OpenCode serve/attach/tool/identity smoke did not report an explicit pass."
+              echo "The job provisions a pinned OpenCode binary and uses the same AppArmor userns unlock as the sandbox v2 host smoke."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeTclaudeLayerExecutorSmoke did not report an explicit pass"
             exit 1
           fi
 

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // TestOpenCodePeerIdentity_WhoamiAndInbox is the TCL-694 flow regression.
@@ -163,6 +164,120 @@ func TestConvIDForPID_OpenCodeRuntimeResolvesViaMatchedAncestorParent(t *testing
 	assert.True(t, hasAncestor)
 	assert.Equal(t, convID, gotConv,
 		"the matched OpenCode ancestor's parent must be checked against opencode_runtimes")
+}
+
+func TestConvIDForPID_OpenCodeWrappedRuntimeResolvesThroughBoundedAncestors(t *testing.T) {
+	setupTestDB(t)
+	const (
+		peerPID       = 8800
+		openCodeChild = 8700
+		bwrapChild    = 8600
+		wrapperPID    = 8500
+	)
+	const convID = "ses_opencode_wrapped_runtime"
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-wrapped-runtime",
+		ConvID:                convID,
+		ServerURL:             "http://127.0.0.1:43215",
+		Password:              "private",
+		PID:                   wrapperPID,
+		Cwd:                   "/tmp/project",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			peerPID:       "tclaude",
+			openCodeChild: "opencode",
+			bwrapChild:    "bwrap",
+			wrapperPID:    "sh",
+		},
+		parent: map[int]int{
+			peerPID:       openCodeChild,
+			openCodeChild: bwrapChild,
+			bwrapChild:    wrapperPID,
+		},
+	}.install(t)
+	withOpenCodeRuntimeVerified(t, true)
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Equal(t, convID, gotConv)
+}
+
+func TestConvIDForPID_OpenCodeWrapperWalkRequiresRecordedLayer(t *testing.T) {
+	setupTestDB(t)
+	const (
+		peerPID       = 7800
+		openCodeChild = 7700
+		bwrapChild    = 7600
+		wrapperPID    = 7500
+	)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-unwrapped-runtime",
+		ConvID:                "ses_must_not_cross_wrappers",
+		ServerURL:             "http://127.0.0.1:43216",
+		Password:              "private",
+		PID:                   wrapperPID,
+		Cwd:                   "/tmp/project",
+		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin),
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			peerPID:       "tclaude",
+			openCodeChild: "opencode",
+			bwrapChild:    "bwrap",
+			wrapperPID:    "sh",
+		},
+		parent: map[int]int{
+			peerPID:       openCodeChild,
+			openCodeChild: bwrapChild,
+			bwrapChild:    wrapperPID,
+		},
+	}.install(t)
+	withOpenCodeRuntimeVerified(t, true)
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Empty(t, gotConv)
+}
+
+func TestConvIDForPID_OpenCodeWrapperWalkStopsAtHopLimit(t *testing.T) {
+	setupTestDB(t)
+	const (
+		peerPID       = 6800
+		openCodeChild = 6700
+		runtimePID    = 6683
+	)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-too-deep-runtime",
+		ConvID:                "ses_must_not_cross_unbounded_wrappers",
+		ServerURL:             "http://127.0.0.1:43217",
+		Password:              "private",
+		PID:                   runtimePID,
+		Cwd:                   "/tmp/project",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+	tree := fakeProcTree{
+		name: map[int]string{
+			peerPID:       "tclaude",
+			openCodeChild: "opencode",
+			runtimePID:    "sh",
+		},
+		parent: map[int]int{
+			peerPID:       openCodeChild,
+			openCodeChild: 6699,
+		},
+	}
+	for pid := 6699; pid > runtimePID; pid-- {
+		tree.name[pid] = "wrapper"
+		tree.parent[pid] = pid - 1
+	}
+	tree.install(t)
+	withOpenCodeRuntimeVerified(t, true)
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	assert.True(t, hasAncestor)
+	assert.Empty(t, gotConv)
 }
 
 // TestConvIDForPID_OpenCodeAttachResolvesViaPaneSessionPID proves the

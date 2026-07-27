@@ -1,11 +1,22 @@
 package agentd
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // TestDashboardTerminalInteractionsWired pins the three browser surfaces to the
@@ -50,7 +61,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"term.options.linkHandler = linkHandler",
 		"url.protocol === 'http:' || url.protocol === 'https:'",
 		"host.addEventListener('paste', onPaste, true)",
-		"fetch('/api/terminal-attachments'",
+		"`/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`",
 		"term.paste(paths.join(' ') + ' ')",
 		"if (controller.signal.aborted || generation !== myGeneration) return",
 		"uploadController.abort()",
@@ -144,6 +155,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	}
 	for _, needle := range []string{
 		"const interactions = interactionsFactory({",
+		"terminalPath: wsPath",
 		"if (disposed) return",
 		"try { interactions.dispose(); }",
 	} {
@@ -163,6 +175,7 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 
 	r := newSpawnAttachUpload(t, []uploadPart{{filename: "pasted-image.png", data: []byte("png")}})
 	r.URL.Path = "/api/terminal-attachments"
+	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/term-ws/agent?which=current")
 	mux := http.NewServeMux()
 	registerDashboardSpawnAttachmentRoutes(mux)
 	w := httptest.NewRecorder()
@@ -172,5 +185,109 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "pasted-image.png") {
 		t.Errorf("terminal attachment response missing stored file: %s", w.Body.String())
+	}
+}
+
+func TestTerminalAttachmentsRouteUsesLayerVisibleSessionRoot(t *testing.T) {
+	withDashboardAuth(t)
+	isolateSpawnAttachmentsBase(t)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	const label = "layer-terminal"
+	now := time.Now()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    label,
+		TmuxSession:           "tmux-layer-terminal",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Status:                "working",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}))
+	privateRoot := tclcommon.SpawnAttachmentsPrivateDir(label)
+	require.NoError(t, os.MkdirAll(privateRoot, 0o700))
+
+	r := newSpawnAttachUpload(t, []uploadPart{{
+		filename: "pasted-image.png",
+		data:     []byte("png"),
+	}})
+	r.URL.Path = "/api/terminal-attachments"
+	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/spawn-focus-ws/"+label)
+	w := httptest.NewRecorder()
+	base, createBase, status, err := terminalAttachmentBase(
+		"/api/spawn-focus-ws/"+label,
+		func(tmux string) bool { return tmux == "tmux-layer-terminal" },
+	)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, privateRoot, base)
+	assert.False(t, createBase)
+
+	// Exercise the HTTP storage seam with the same resolved base while avoiding
+	// a real tmux subprocess in this focused unit test.
+	storeDashboardAttachments(w, r, base, createBase)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	var response spawnAttachmentsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(t, response.Files, 1)
+	assert.Equal(t, privateRoot, filepath.Dir(response.Dir))
+	assert.True(t, strings.HasPrefix(response.Files[0].Path, privateRoot+string(filepath.Separator)))
+}
+
+func TestTerminalAttachmentBaseRejectsStaleUnknownAndHostileTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+	now := time.Now()
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    "unknown-layer",
+		TmuxSession:           "tmux-unknown",
+		SandboxImplementation: "future-sandbox",
+		Status:                "working",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          "legacy-builtin",
+		TmuxSession: "tmux-builtin",
+		Status:      "working",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}))
+
+	base, createBase, status, err := terminalAttachmentBase(
+		"/api/spawn-focus-ws/legacy-builtin",
+		func(string) bool { return true },
+	)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, spawnAttachmentsBaseDir(), base)
+	assert.True(t, createBase)
+
+	_, _, status, err = terminalAttachmentBase(
+		"/api/spawn-focus-ws/unknown-layer",
+		func(string) bool { return true },
+	)
+	require.ErrorContains(t, err, "unknown sandbox implementation")
+	assert.Equal(t, http.StatusConflict, status)
+
+	_, _, status, err = terminalAttachmentBase(
+		"/api/spawn-focus-ws/unknown-layer",
+		func(string) bool { return false },
+	)
+	require.ErrorContains(t, err, "not live")
+	assert.Equal(t, http.StatusNotFound, status)
+
+	for _, hostile := range []string{
+		"",
+		"https://example.test/api/spawn-focus-ws/unknown-layer",
+		"/api/other-terminal/unknown-layer",
+		"/api/spawn-focus-ws/unknown-layer/extra",
+	} {
+		_, _, status, err = terminalAttachmentBase(hostile, func(string) bool { return true })
+		require.Error(t, err, hostile)
+		assert.Equal(t, http.StatusBadRequest, status, hostile)
 	}
 }

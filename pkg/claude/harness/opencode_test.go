@@ -104,8 +104,14 @@ func TestOpenCodeSandboxCatalog(t *testing.T) {
 	if got := h.Sandbox.DefaultMode(); got != OpenCodeSandboxAccessControl {
 		t.Fatalf("DefaultMode() = %q, want %q", got, OpenCodeSandboxAccessControl)
 	}
-	if got := h.Sandbox.Modes(); !slices.Equal(got, []string{OpenCodeSandboxAccessControl, OpenCodeSandboxOff}) {
-		t.Fatalf("Modes() = %v, want [%s %s]", got, OpenCodeSandboxAccessControl, OpenCodeSandboxOff)
+	if got := h.Sandbox.Modes(); !slices.Equal(got, []string{
+		OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff,
+	}) {
+		t.Fatalf("Modes() = %v, want [%s %s %s]", got,
+			OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer, OpenCodeSandboxOff)
+	}
+	if help := h.Sandbox.ModeHelp(OpenCodeSandboxTclaudeLayer); !strings.Contains(help, "tool-executing") {
+		t.Fatalf("ModeHelp(%q) = %q, want the executor boundary", OpenCodeSandboxTclaudeLayer, help)
 	}
 	if help := h.Sandbox.ModeHelp(OpenCodeSandboxOff); !strings.Contains(help, "No directory scoping or OS containment") {
 		t.Fatalf("ModeHelp(%q) = %q, want explicit no-containment warning", OpenCodeSandboxOff, help)

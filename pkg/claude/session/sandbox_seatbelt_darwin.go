@@ -113,9 +113,15 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return darwinSeatbeltExecutable, nil
 }
 
+func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
@@ -157,6 +163,20 @@ func tclaudeLayerCommand(
 	if err != nil {
 		return "", err
 	}
+	canonicalPrivateWriteDirs := make(
+		[]TclaudeLayerPrivateWriteDir,
+		0,
+		len(privateWriteDirs),
+	)
+	for _, privateDir := range privateWriteDirs {
+		canonicalPrivateWriteDirs = append(
+			canonicalPrivateWriteDirs,
+			TclaudeLayerPrivateWriteDir{
+				Parent:  canonicalSeatbeltOwnedPath(privateDir.Parent),
+				Current: canonicalSeatbeltOwnedPath(privateDir.Current),
+			},
+		)
+	}
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
 		[]string{canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath())},
@@ -166,6 +186,7 @@ func tclaudeLayerCommand(
 		tmuxSocketDir,
 		runtimeTempDir,
 		darwinSeatbeltLstatIdentity,
+		canonicalPrivateWriteDirs...,
 	)
 	if err != nil {
 		return "", err
@@ -177,6 +198,18 @@ func tclaudeLayerCommand(
 	}
 	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil
+}
+
+func tclaudeLayerServerCommand(
+	string,
+	[]string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	sandboxpolicy.MountPlan,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
 }
 
 func existingSeatbeltPositivePaths(label string, paths []string) ([]string, error) {
@@ -302,4 +335,12 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 			Source: "tclaude-layer unavailable",
 		}
 	}
+}
+
+func validateTclaudeLayerHarness(harnessName string) error {
+	if harnessName == harness.OpenCodeName {
+		return fmt.Errorf(
+			"tclaude-layer does not support OpenCode on macOS: agentd-owned server wrapping requires the Linux bubblewrap executor boundary")
+	}
+	return nil
 }

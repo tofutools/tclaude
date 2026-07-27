@@ -253,6 +253,24 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 	}
 }
 
+func TestBuildOpenCodePermissionRulesTclaudeLayerKeepsDefenseInDepth(t *testing.T) {
+	spec := OpenCodePermissionSpec{
+		Cwd:            "/repo/service",
+		Worktree:       "/repo",
+		SandboxMode:    OpenCodeSandboxAccessControl,
+		ApprovalPolicy: OpenCodeApprovalDeny,
+		DenyDirs:       []string{"/repo/service/secret"},
+		NetworkAccess:  sandboxpolicy.NetworkAccessNone,
+	}
+	softRules, err := BuildOpenCodePermissionRules(spec)
+	require.NoError(t, err)
+	spec.SandboxMode = OpenCodeSandboxTclaudeLayer
+	layerRules, err := BuildOpenCodePermissionRules(spec)
+	require.NoError(t, err)
+	assert.Equal(t, softRules, layerRules,
+		"the OS wall supplements rather than replaces OpenCode's ordered permissions")
+}
+
 func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
 		Cwd:            "/repo",

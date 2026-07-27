@@ -40,6 +40,18 @@ func sandboxProfileCapabilityFailure(
 	snapshot *sandboxpolicy.Snapshot,
 	sandboxImplementation ...string,
 ) *spawnFailure {
+	rawImplementation := ""
+	if len(sandboxImplementation) > 0 {
+		rawImplementation = sandboxImplementation[0]
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox_implementation", err.Error()}
+	}
+	if _, err := harness.ResolveOpenCodeSandboxImplementationMode(
+		harnessOrDefault(harnessName), sandboxMode, implementation); err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox", err.Error()}
+	}
 	if snapshot == nil {
 		return nil
 	}
@@ -47,8 +59,7 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
-	tclaudeLayer := len(sandboxImplementation) > 0 &&
-		strings.TrimSpace(sandboxImplementation[0]) == string(sandboxpolicy.ImplementationTclaudeLayer)
+	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
 	if tclaudeLayer {
 		// The outer applier, not the harness-native sandbox catalog, represents
 		// filesystem and network policy. Keep launch-time break-glass existence
@@ -230,8 +241,13 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 		switch parent.Mode {
 		case harness.OpenCodeSandboxOff:
 			return true
+		case harness.OpenCodeSandboxTclaudeLayer:
+			return child.Harness == harness.OpenCodeName && child.Mode == harness.OpenCodeSandboxTclaudeLayer ||
+				childIsClaude(child, harness.ClaudeSandboxOn) ||
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
 		case harness.OpenCodeSandboxAccessControl:
-			return child.Harness == harness.OpenCodeName && child.Mode == harness.OpenCodeSandboxAccessControl ||
+			return child.Harness == harness.OpenCodeName &&
+				modeIn(child.Mode, harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer) ||
 				childIsClaude(child, harness.ClaudeSandboxOn) ||
 				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
 		}
@@ -258,7 +274,7 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 		}
 	case harness.OpenCodeName:
 		switch s.Mode {
-		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxOff:
+		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer, harness.OpenCodeSandboxOff:
 			return s, true
 		}
 	}

@@ -1,9 +1,11 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,4 +63,30 @@ func TestCodexTelemetryCheckpointRoundTrip(t *testing.T) {
 	got, err = LoadCodexTelemetryCheckpoint("codex-session")
 	require.NoError(t, err)
 	assert.Nil(t, got)
+}
+
+func TestSaveCodexTelemetryCheckpointForSessionGenerationContextHonorsCancellation(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "codex-canceled-checkpoint", ConvID: "codex-conv", Status: "idle",
+	}))
+	initial := json.RawMessage(`{"version":1,"offset":42}`)
+	require.NoError(t, SaveCodexTelemetryCheckpoint("codex-canceled-checkpoint", initial))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	persisted, err := SaveCodexTelemetryCheckpointForSessionGenerationContext(
+		ctx,
+		"codex-canceled-checkpoint",
+		"codex-conv",
+		time.Time{},
+		json.RawMessage(`{"version":1,"offset":84}`),
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, persisted)
+
+	got, err := LoadCodexTelemetryCheckpoint("codex-canceled-checkpoint")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.JSONEq(t, string(initial), string(got.Data))
 }

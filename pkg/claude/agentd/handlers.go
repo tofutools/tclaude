@@ -2184,7 +2184,9 @@ const maxSpawnAttachments = 50
 // daemon never opens the files — the spawned agent reads them itself, as the
 // same user — so an arbitrary path only ever tells the new agent "look here".
 // Returns the cleaned list, or a non-empty error message describing the first
-// rejection.
+// rejection. A tclaude-layer spawn later accepts only exact daemon-issued
+// staging paths and securely copies them into its private namespace-visible
+// root; harness-builtin spawns retain the historical path-only behavior.
 func sanitizeSpawnAttachments(paths []string) ([]string, string) {
 	if len(paths) > maxSpawnAttachments {
 		return nil, fmt.Sprintf("too many attachments: %d (max %d)", len(paths), maxSpawnAttachments)

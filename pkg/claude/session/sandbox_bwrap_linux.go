@@ -87,6 +87,17 @@ func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, erro
 }
 
 func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
+	binary, err := resolveBwrapServerBinary(posture)
+	if err != nil {
+		return "", err
+	}
+	if err := probeTclaudeLayerPidfd(); err != nil {
+		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+	}
+	return binary, nil
+}
+
+func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
 		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
@@ -99,24 +110,46 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
-	if err := probeTclaudeLayerPidfd(); err != nil {
-		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
-	}
 	return binary, nil
 }
 
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	command, err := bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	command, err := bwrapCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		harnessCommand,
+	)
 	if err != nil {
 		return "", err
 	}
 	relay := clcommon.DetectAbsoluteCmd("session", tclaudeLayerWinchRelayCommand)
 	return relay + " -- " + command, nil
+}
+
+func tclaudeLayerServerCommand(
+	binary string,
+	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	plan sandboxpolicy.MountPlan,
+	serverCommand string,
+) (string, error) {
+	return bwrapCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		serverCommand,
+	)
 }
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
@@ -133,4 +166,8 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 			Unverified: true,
 		}
 	}
+}
+
+func validateTclaudeLayerHarness(string) error {
+	return nil
 }

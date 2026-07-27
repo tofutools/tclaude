@@ -460,6 +460,12 @@ func runNew(params *NewParams) error {
 	}
 	params.SandboxImpl = string(sandboxImplementation)
 	tclaudeLayer := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
+		h.Name, sandboxMode, sandboxImplementation)
+	if err != nil {
+		return err
+	}
+	params.Sandbox = sandboxMode
 	if tclaudeLayer {
 		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return err
@@ -971,7 +977,7 @@ func runNew(params *NewParams) error {
 	// found nothing that confines it; applyRecordedLaunchPosture separately
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
-	if !tclaudeLayer {
+	if !tclaudeLayer || h.Name == harness.OpenCodeName {
 		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
@@ -1001,7 +1007,14 @@ func runNew(params *NewParams) error {
 	bwrapBinary := ""
 	var bwrapCapabilityErr error
 	if tclaudeLayer {
-		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+		if tclaudeLayerWrapsPane(h.Name) {
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+		} else {
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(tclaudeLayerPosture)
+		}
+		if bwrapCapabilityErr == nil {
+			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
+		}
 	}
 
 	// Ensure the managed profile file exists before launch (self-healing —
@@ -1123,7 +1136,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
-	if tclaudeLayer {
+	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
 		// The inner sandbox is off, so derive the repository grants for the
 		// outer wall independently of the harness-native mode.
 		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
@@ -1175,18 +1188,40 @@ func runNew(params *NewParams) error {
 		RemoteControl:              remoteControl,
 		InitialPrompt:              params.InitialPrompt,
 	})
+	var privateAttachmentWriteDirs []TclaudeLayerPrivateWriteDir
 	if tclaudeLayer {
-		effective := sandboxpolicy.EffectiveProfile{}
-		if launchSandbox != nil {
-			effective = launchSandbox.Effective
+		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
+			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
+		if prepareErr != nil {
+			return fmt.Errorf(
+				"prepare tclaude-layer private attachment directory: %w",
+				prepareErr,
+			)
 		}
-		profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
-		effective.Filesystem = sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)
-		harnessCmd, err = WrapTclaudeLayer(bwrapBinary, effective, TclaudeLayerLaunchContract{
-			HarnessName:       h.Name,
-			WriteDirs:         append(append([]string{}, launchGitWriteDirs...), cwd),
-			ProfileFilesystem: profileFilesystem,
-		}, harnessCmd)
+		defer func() {
+			if privateAttachmentDirCreated && !launchRowCommitted {
+				// Never recursively delete a root that gained an upload while
+				// launch was in flight; os.Remove succeeds only while empty.
+				_ = os.Remove(privateAttachmentDir)
+			}
+		}()
+		privateAttachmentWriteDirs = []TclaudeLayerPrivateWriteDir{{
+			Parent:  common.SpawnAttachmentsPrivateBase(),
+			Current: privateAttachmentDir,
+		}}
+	}
+	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
+		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+			HarnessName:      h.Name,
+			Cwd:              cwd,
+			GitWriteDirs:     launchGitWriteDirs,
+			Snapshot:         launchSandbox,
+			PrivateWriteDirs: privateAttachmentWriteDirs,
+		})
+		if specErr != nil {
+			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
+		}
+		harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, spec, harnessCmd)
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}

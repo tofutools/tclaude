@@ -38,6 +38,7 @@ import {
   syncSpawnWorktree,
   validateSpawnDraft,
   autoCompactWindowHintFor,
+  sandboxModeHelpForImplementation,
   sandboxImplHintFor,
   sandboxImplClearedNoticeFor,
   setSpawnSandboxImpl,
@@ -693,7 +694,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
 
   const selectedModel = modelSelectValue(draft, context);
-  const sandboxHelp = view.sandbox.help[draft.sandbox] || '';
+  const sandboxHelp = sandboxModeHelpForImplementation(
+    view.sandbox.help[draft.sandbox],
+    draft.sandboxImpl || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
+    draft.harness,
+  );
   const approvalHelp = view.approval.help[draft.approval] || '';
   const reviewerHelp = approvalReviewerHelp(draft.approvalReviewer, draft.approval);
   const toolsHelp = view.tools.help[draft.tools] || '';

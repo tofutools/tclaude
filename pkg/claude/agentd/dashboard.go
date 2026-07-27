@@ -1221,14 +1221,14 @@ type dashboardHarness struct {
 	// spawn dialog and profile editor gate their token-window input on it.
 	CanAutoCompactWindow bool `json:"can_auto_compact_window"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
-	// implementation can wrap this harness — false for a harness whose
-	// tool-executing process lives outside the pane the layer wraps (OpenCode).
+	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
-	// never a harness-name switch in the dialog, so a later workstream that
-	// teaches the layer a new topology flips this with no dashboard edit. The
-	// spawn dialog and profile editor gate their sandbox-implementation row on
-	// it: with only one implementation left there is no choice to render.
+	// never a harness-name switch in the dialog.
 	CanTclaudeLayer bool `json:"can_tclaude_layer"`
+	// TclaudeLayerServerBoundary tells disclosure surfaces to use the
+	// relay-free server capability probe rather than the interactive pane
+	// probe. It does not grant the capability; CanTclaudeLayer remains the gate.
+	TclaudeLayerServerBoundary bool `json:"tclaude_layer_server_boundary,omitempty"`
 	// AutoCompactWindowMin / Max are the accepted bounds, so the dialog can set
 	// the input's own min/max and reject a slipped digit before the round trip.
 	// Both 0 for a harness that cannot pin a window.
@@ -1286,9 +1286,10 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAutoMemory:    h.CanAutoMemory(),
 			CanSSHWorkaround: h.CanSSHWorkaround(),
 
-			CanContextFeatures:   h.CanContextFeatures(),
-			CanAutoCompactWindow: h.CanAutoCompactWindow(),
-			CanTclaudeLayer:      session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			CanContextFeatures:         h.CanContextFeatures(),
+			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
+			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow
@@ -1811,6 +1812,12 @@ type agentState struct {
 	// the badge could only say "this launch", which is exactly the misattribution
 	// the column exists to remove.
 	SandboxModeSource string `json:"sandbox_mode_source,omitempty"`
+	// SandboxImplementation names who owned OS-level confinement for this
+	// launch. The dashboard needs the resolved implementation, not a source
+	// string heuristic: tclaude-layer renders profile filesystem rules into its
+	// outer wall even though the harness's inner mode is off, while
+	// harness-builtin does not.
+	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the OS sandbox ACTUALLY confined this agent ("on" / "off" /
 	// "unconfigured") and what decided it — the settings file that won the
@@ -1826,8 +1833,9 @@ type agentState struct {
 	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
 	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
 	// deciding tier could have overturned, had tclaude been able to read it. The
-	// badge hedges instead of asserting containment — a padlock on an agent
-	// nothing confines is worse than no padlock at all.
+	// tooltip always keeps that hedge. Harness-builtin uses the warning glyph;
+	// an exact tclaude-layer implementation may still earn the lock because its
+	// separate outer OS wall is established, with fidelity caveats kept in copy.
 	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
 	// SandboxProfiles names the tclaude sandbox profiles that were applied to
 	// this launch, in resolution order (global → group → explicit).
@@ -1835,11 +1843,12 @@ type agentState struct {
 	// The profile is orthogonal to the state above: it does not decide WHETHER
 	// the agent is sandboxed, it supplies the RULES. For Claude Code a profile's
 	// filesystem grants are compiled into the harness's own
-	// `sandbox.filesystem.*` via `--settings`, so they bite only while the OS
-	// sandbox is enabled; its environment entries are plain env vars and apply
-	// either way. The badge tooltip needs both halves — naming only the settings
-	// file that enabled the sandbox reads as "this is your whole sandbox
-	// configuration" when a profile actually shaped it.
+	// `sandbox.filesystem.*` via `--settings` on harness-builtin, while
+	// tclaude-layer renders them into its outer OS wall. Its environment entries
+	// are plain env vars and apply either way. The badge tooltip needs both
+	// halves — naming only the settings file that enabled the sandbox reads as
+	// "this is your whole sandbox configuration" when a profile actually
+	// shaped it.
 	//
 	// Empty means either "no profile applied" or "no snapshot recorded" — the
 	// two are distinguished by SandboxProfilesRecorded, because claiming "none"
@@ -1946,12 +1955,13 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// Harness + sandbox are launch properties of the row, surfaced
 		// regardless of liveness (a dead Codex agent is still Codex). The
 		// exited override below only touches Status/StatusDetail.
-		Harness:             pick.Harness,
-		SandboxMode:         pick.SandboxMode,
-		SandboxModeSource:   pick.SandboxModeSource,
-		OSSandboxState:      pick.OSSandboxState,
-		OSSandboxSource:     pick.OSSandboxSource,
-		OSSandboxUnverified: pick.OSSandboxUnverified,
+		Harness:               pick.Harness,
+		SandboxMode:           pick.SandboxMode,
+		SandboxImplementation: pick.SandboxImplementation,
+		SandboxModeSource:     pick.SandboxModeSource,
+		OSSandboxState:        pick.OSSandboxState,
+		OSSandboxSource:       pick.OSSandboxSource,
+		OSSandboxUnverified:   pick.OSSandboxUnverified,
 		// The sandbox profiles ride the same session row the verdict does — the
 		// row cache already bulk-loads it, so naming them costs no extra query
 		// on the poll.
