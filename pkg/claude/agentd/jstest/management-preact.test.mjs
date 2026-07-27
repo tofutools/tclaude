@@ -959,6 +959,56 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
   unmount();
 });
 
+test('blank new sandbox drafts do not request an enforcement prediction', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
+  let predictionCalls = 0;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() { predictionCalls++; throw new Error('blank drafts must not reach prediction'); },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictionCalls, 0);
+  assert.equal(host.querySelector('.sbx-capability-error'), null);
+  unmount();
+});
+
+test('raw access JSON can repair a structured access validation error', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'repair', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'https://invalid.example/path' }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true);
+  assert.ok(host.querySelector('.sbx-access-validation'));
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
+    'the stale structured error cannot make raw repair unreachable');
+  assert.equal(host.querySelector('.sbx-access-validation'), null);
+  const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  rawNetwork.value = '{"mode":"closed"}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.network, { mode: 'closed' });
+  unmount();
+});
+
 test('global harness filesystem rows start folded, remain immutable, and are never saved', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
