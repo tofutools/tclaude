@@ -254,7 +254,7 @@ func TestSpawn_OpenCodeAcceptsLayerFromLowerTier(t *testing.T) {
 		assert.Equal(t, harness.OpenCodeSandboxAccessControl, mode,
 			"the skipped ambient pin must fall through to OpenCode's default")
 		assert.Contains(t, string(resp.Raw),
-			"sandbox_implementation ignored (not valid for opencode)",
+			"sandbox_implementation ignored (not supported for OpenCode on macOS)",
 			"the platform-driven tier skip must be disclosed")
 		return
 	}

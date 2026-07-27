@@ -3922,9 +3922,23 @@ func resolveStringLaunchField(
 			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
 				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 		}
-		notes = append(notes, fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName))
+		notes = append(notes, stringLaunchFieldSkipNote(
+			tier.source, field, harnessName, err))
 	}
 	return "", agent.ProvHarnessDefault, strings.Join(notes, "; "), nil
+}
+
+func stringLaunchFieldSkipNote(source, field, harnessName string, validationErr error) string {
+	reason := fmt.Sprintf("not valid for %s", harnessName)
+	// OpenCode tclaude-layer is a supported harness/value pairing on Linux.
+	// Its Darwin validator rejects the platform topology, so the generic
+	// harness-invalid disclosure would lie about why this ambient tier fell
+	// through.
+	if field == sandboxImplementationField &&
+		strings.Contains(validationErr.Error(), "does not support OpenCode on macOS") {
+		reason = "not supported for OpenCode on macOS"
+	}
+	return fmt.Sprintf("%s %s ignored (%s)", source, field, reason)
 }
 
 func resolveBoolLaunchField(
