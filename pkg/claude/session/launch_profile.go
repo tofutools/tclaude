@@ -32,6 +32,7 @@ func (e explicitLaunchFields) has(flag string) bool { return e[flag] }
 func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 	explicit := explicitLaunchFields{}
 	cmd.Flags().Visit(func(f *pflag.Flag) { explicit[f.Name] = true })
+	params.sandboxImplExplicit = explicit.has("sandbox-impl")
 	return runNewWithGlobalDefault(params, explicit)
 }
 
@@ -53,6 +54,8 @@ func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
 // overwrite the record with those defaults, which is not recoverable), and a
 // carried posture that changes the launch is disclosed on os.Stderr.
 func RunNew(params *NewParams) error {
+	// Capture caller intent before resume carryover fills an omitted field.
+	params.sandboxImplExplicit = strings.TrimSpace(params.SandboxImpl) != ""
 	if err := applyRecordedLaunchPosture(params, nil); err != nil {
 		return err
 	}

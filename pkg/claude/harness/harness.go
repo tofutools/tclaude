@@ -28,6 +28,7 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -98,6 +99,12 @@ type Harness struct {
 	// which case the spawn path passes no sandbox flag and rejects an
 	// explicit mode. See JOH-192.
 	Sandbox SandboxCatalog
+	// BuiltinOSSandbox reports that the harness really owns an OS-enforced
+	// sandbox behind its Sandbox catalog. It is deliberately separate from
+	// Sandbox itself: OpenCode has a useful access-control/tclaude-layer/off
+	// mode catalog, but its built-in access control is only a command filter,
+	// not confinement. Claude Code (SRT) and Codex (native --sandbox) set this.
+	BuiltinOSSandbox bool
 	// Approval names the launch-time approval policies this harness accepts
 	// (Codex's --ask-for-approval) and its non-escalating default. nil for
 	// harnesses whose approval handling is configured out of band (Claude
@@ -412,13 +419,66 @@ func (h *Harness) UsesAuthoritativeServer() bool {
 	return h != nil && h.ServerAuthoritative && h.Spawn != nil
 }
 
-// SupportsSandbox reports whether the harness has a launch-time sandbox
+// SupportsSandbox reports whether the harness has a launch-time sandbox-mode
 // catalog. Callers gate sandbox handling on this. Codex supplies native
 // --sandbox modes and Claude Code supplies inherit/on/off through a `--settings`
-// override. OpenCode supplies soft tool-level access-control/off modes; that
-// catalog does not imply an OS sandbox.
+// override. OpenCode supplies access-control/tclaude-layer/off modes; that
+// catalog is real, but its built-in access-control mode is only a command
+// filter and does not imply an OS sandbox. Use SupportsBuiltinOSSandbox for
+// that narrower capability.
 func (h *Harness) SupportsSandbox() bool {
 	return h != nil && h.Sandbox != nil
+}
+
+// SupportsBuiltinOSSandbox reports whether the harness itself owns a real,
+// OS-enforced sandbox. It is narrower than SupportsSandbox: OpenCode has a
+// sandbox-mode catalog but no built-in OS sandbox.
+func (h *Harness) SupportsBuiltinOSSandbox() bool {
+	return h != nil && h.BuiltinOSSandbox
+}
+
+// BuiltinOSSandboxInvalidError marks the semantic mismatch between the
+// harness-builtin implementation and a harness with no built-in OS sandbox.
+// Callers use the type to distinguish a typed 422 applicability refusal from a
+// malformed sandbox-implementation enum (400).
+type BuiltinOSSandboxInvalidError struct {
+	Harness string
+}
+
+func (e *BuiltinOSSandboxInvalidError) Error() string {
+	name := e.Harness
+	if name == "" {
+		name = "the selected harness"
+	}
+	return fmt.Sprintf(
+		"sandbox implementation %q is invalid for %s: %s has no built-in OS sandbox; "+
+			"its access-control mode is a command filter, not confinement; "+
+			"use tclaude-layer or spawn with the sandbox off",
+		"harness-builtin", name, name)
+}
+
+// ValidateHarnessBuiltinOSSandbox rejects a harness-builtin pin when the
+// descriptor says no such OS sandbox exists. It is capability-based so launch
+// callers never need a harness-name switch.
+func ValidateHarnessBuiltinOSSandbox(h *Harness) error {
+	if h.SupportsBuiltinOSSandbox() {
+		return nil
+	}
+	name := ""
+	if h != nil {
+		name = h.DisplayName
+		if name == "" {
+			name = h.Name
+		}
+	}
+	return &BuiltinOSSandboxInvalidError{Harness: name}
+}
+
+// IsBuiltinOSSandboxInvalid reports whether err is the semantic applicability
+// refusal returned by ValidateHarnessBuiltinOSSandbox.
+func IsBuiltinOSSandboxInvalid(err error) bool {
+	var target *BuiltinOSSandboxInvalidError
+	return errors.As(err, &target)
 }
 
 // SupportsApproval reports whether the harness has a launch-time approval /

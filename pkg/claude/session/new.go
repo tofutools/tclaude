@@ -111,9 +111,14 @@ type NewParams struct {
 	Sandbox string `long:"sandbox" optional:"true" help:"Launch containment (per-harness). Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
-	// is the legacy harness-owned path; tclaude-layer is an experimental
-	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS).
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback)"`
+	// is the harness's historical behavior; tclaude-layer is an experimental
+	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
+	// historical behavior is a command filter, not confinement.
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	// sandboxImplExplicit preserves the decision/replay boundary after
+	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
+	// It is internal state, not a CLI parameter.
+	sandboxImplExplicit bool
 
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`
@@ -456,6 +461,18 @@ func runNew(params *NewParams) error {
 
 	sandboxImplementation, err := sandboxpolicy.NormalizeImplementation(params.SandboxImpl)
 	if err != nil {
+		return err
+	}
+	// A set harness-builtin on a fresh launch (or an explicit override on a
+	// resume) is a new applicability decision and must be truthful. A flagless
+	// resume may carry the exact same spelling from a legacy/default record;
+	// that pure replay is deliberately grandfathered because historical rows
+	// never persisted setness and OpenCode gains no privilege from the spelling.
+	freshSandboxImplementationResolution :=
+		strings.TrimSpace(params.Resume) == "" || params.sandboxImplExplicit
+	if err := validateSandboxImplementationDecision(
+		h, params.SandboxImpl, sandboxImplementation, freshSandboxImplementationResolution,
+	); err != nil {
 		return err
 	}
 	params.SandboxImpl = string(sandboxImplementation)
@@ -1453,6 +1470,20 @@ func runNew(params *NewParams) error {
 	// (an attach failure below must not delete it).
 	launchRowCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func validateSandboxImplementationDecision(
+	h *harness.Harness,
+	raw string,
+	implementation sandboxpolicy.Implementation,
+	freshResolution bool,
+) error {
+	if !freshResolution ||
+		strings.TrimSpace(raw) == "" ||
+		implementation != sandboxpolicy.ImplementationHarnessBuiltin {
+		return nil
+	}
+	return harness.ValidateHarnessBuiltinOSSandbox(h)
 }
 
 func gitWorktreeWriteDirs(params *NewParams, harnessName, sandboxMode, cwd string) []string {

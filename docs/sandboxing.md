@@ -132,6 +132,13 @@ default remains
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
 
+That legacy name is not a claim that every harness contains an OS sandbox.
+Claude Code and Codex do; OpenCode does not. For OpenCode, leaving the
+implementation unset preserves its historical command filter + warning, while
+an explicit `harness-builtin` pin is invalid: its access-control mode is a
+command filter, not confinement. Use `tclaude-layer` on a supported host, or
+spawn with the sandbox off.
+
 ### Selecting it per spawn
 
 The same choice is available wherever an agent is spawned, so the layer does not
@@ -145,13 +152,17 @@ have to be driven through `session new` by hand:
 Like every other launch field it resolves through one precedence chain, highest
 first: the explicit flag or dialog selection, then `--profile`, then the group's
 default spawn profile, then the global default profile, then the harness
-default. Leaving it unset everywhere means `harness-builtin`, so a spawn that
-says nothing behaves exactly as it did before the field existed.
+default. Leaving it unset everywhere keeps the field unpinned, so a spawn that
+says nothing behaves exactly as it did before the field existed. Claude Code
+and Codex then keep their built-in sandbox behavior; OpenCode keeps its command
+filter plus the explicit no-confinement warning.
 
 Unset and `harness-builtin` are different values on purpose. Unset falls through
 to the next tier; an explicit `harness-builtin` **pins** the legacy
 implementation, which is how one spawn opts out of a group default that would
-otherwise put it on the experimental layer.
+otherwise put it on the experimental layer. That explicit pin is accepted only
+when the selected harness really owns an OS sandbox; OpenCode refuses it rather
+than manufacturing a confinement claim.
 
 An unavailable **host** refuses the launch outright, from whichever tier the
 value came from, naming the missing capability. It never falls through to

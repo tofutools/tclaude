@@ -40,7 +40,8 @@ type Harness struct {
     Life           Lifecycle          // name the in-pane slash commands (or report unsupported)
     Convs          ConvStore          // assemble conversation metadata from the harness's storage
     Hooks          HookInstaller      // install/check/repair the tclaude callback (+ trust)
-    Sandbox        SandboxCatalog     // launch-time OS-sandbox modes
+    Sandbox        SandboxCatalog     // launch-time sandbox-mode catalog
+    BuiltinOSSandbox bool             // true only for a real harness-owned OS sandbox
     Approval       ApprovalCatalog    // launch-time approval policy / permission mode
     AskTimeout     AskTimeoutCatalog  // launch-time AskUserQuestion idle-timeout override
     ToolGovernance ToolGovernanceCatalog // uniform allow/ask/deny over a built-in tool group
@@ -76,6 +77,14 @@ be launched and resumed, but nothing else. Here is what each nil field costs:
 | `Approval`       | No launch-time approval/permission flag; an explicit one is rejected. |
 | `AskTimeout`     | No AskUserQuestion idle-timeout override; an explicit value is rejected and the dashboard hides the selector. |
 | `ToolGovernance` | No uniform built-in-tool allow/ask/deny axis (`SupportsToolGovernance` false). |
+
+`Sandbox` and `BuiltinOSSandbox` answer different questions. A harness can
+offer meaningful sandbox-mode choices without owning an OS boundary: OpenCode
+uses its catalog for `access-control` / `tclaude-layer` / `off`, while
+`BuiltinOSSandbox` remains false because `access-control` is a command filter,
+not confinement. Set `BuiltinOSSandbox: true` only when the harness itself
+launches under a real OS-enforced sandbox; otherwise an explicit
+`sandbox_implementation=harness-builtin` is rejected.
 
 ## The contracts
 

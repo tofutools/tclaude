@@ -26,7 +26,8 @@ import {
 // may pin the layer on a host that cannot run it — that is legitimate authoring
 // — so the editor discloses instead of refusing.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for agents launched from this '
-  + 'profile. harness-builtin is the current behavior. tclaude-layer is EXPERIMENTAL: it runs the '
+  + 'profile. harness-builtin is offered only when the selected harness owns a real OS sandbox. '
+  + 'tclaude-layer is EXPERIMENTAL: it runs the '
   + "whole harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — a '
   + 'host without them refuses the launch instead of falling back. '
@@ -246,7 +247,9 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     },
   );
   const harnessLabel = hEntry?.display_name || hEntry?.name || '';
-  const sandboxImplOptions = sandboxImplOptionsFor(sandboxImpl?.options, harnessLabel);
+  const sandboxImplOptions = sandboxImplOptionsFor(
+    sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
+  );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
   );
@@ -255,6 +258,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     {
       showSandboxImpl: !!hEntry,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
+      sandboxImplCanBuiltin: hEntry?.can_builtin_os_sandbox !== false,
       sandboxImplHarness: harnessLabel,
       sandboxImplCanStacked: !!hEntry?.can_stacked,
       sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},

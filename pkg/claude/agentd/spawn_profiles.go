@@ -62,9 +62,10 @@ type spawnProfileJSON struct {
 	// "harness-builtin" (the legacy default) or the EXPERIMENTAL
 	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next
 	// precedence tier at spawn — distinct from an explicit "harness-builtin",
-	// which pins the legacy implementation against a lower tier. A
-	// tclaude-layer value on a profile whose harness cannot host the layer
-	// (OpenCode) is a 400 at save. Host capability is NOT checked at save:
+	// which pins the legacy implementation against a lower tier and is valid
+	// only for a harness that owns a real built-in OS sandbox. A tclaude-layer
+	// value on a profile whose harness cannot host the layer is a 400 at save.
+	// Host capability is NOT checked at save:
 	// pinning it before bwrap is installed is legitimate authoring, and the
 	// launch refuses loudly if the host still cannot run it. See TCL-769.
 	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
@@ -264,7 +265,11 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	// still cannot run it. Blank stays blank so it falls through at spawn.
 	sandboxImplementation, err := validateSandboxImplementationForHarness(h, body.SandboxImplementation)
 	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_" + sandboxImplementationField, err.Error()}
+		return nil, &spawnFailure{
+			sandboxImplementationValidationStatus(err),
+			"invalid_" + sandboxImplementationField,
+			err.Error(),
+		}
 	}
 	approval, err := harness.ValidateApprovalPolicy(h, body.Approval)
 	if err != nil {

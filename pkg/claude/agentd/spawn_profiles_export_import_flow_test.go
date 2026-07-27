@@ -156,6 +156,22 @@ func TestSpawnProfilesImport_V4RequiresExplicitDisabledState(t *testing.T) {
 	}
 }
 
+func TestSpawnProfilesImport_RejectsOpenCodeHarnessBuiltin(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles/import", map[string]any{
+		"format": "tclaude-spawn-profiles", "format_version": 4,
+		"profiles": []map[string]any{{
+			"name": "false-wall", "harness": "opencode", "disabled": false,
+			"sandbox_implementation": "harness-builtin",
+		}},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"import must revalidate fresh profile state; body=%s", rec.Body.String())
+	failure := decodeFailure(t, rec.Body.Bytes())
+	assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+	assert.Contains(t, failure.Error, "is invalid for OpenCode")
+}
+
 func TestSpawnProfilesImport_RejectsExistingAliasCollision(t *testing.T) {
 	f := newFlow(t)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/spawn-profiles",

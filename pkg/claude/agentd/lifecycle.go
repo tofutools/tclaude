@@ -3912,7 +3912,11 @@ func resolveStringLaunchField(
 	if raw := strings.TrimSpace(explicitValue); raw != "" {
 		value, err := validate(raw)
 		if err != nil {
-			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+			status := http.StatusBadRequest
+			if field == sandboxImplementationField {
+				status = sandboxImplementationValidationStatus(err)
+			}
+			return "", "", "", &spawnFailure{status, "invalid_" + field, err.Error()}
 		}
 		return value, agent.ProvExplicit, "", nil
 	}
@@ -3930,7 +3934,11 @@ func resolveStringLaunchField(
 			return value, tier.source, strings.Join(notes, "; "), nil
 		}
 		if profileMatchesHarness(tier.profile, harnessName) {
-			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+			status := http.StatusBadRequest
+			if field == sandboxImplementationField {
+				status = sandboxImplementationValidationStatus(err)
+			}
+			return "", "", "", &spawnFailure{status, "invalid_" + field,
 				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 		}
 		notes = append(notes, stringLaunchFieldSkipNote(

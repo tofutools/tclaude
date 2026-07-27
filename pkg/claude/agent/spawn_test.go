@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestRunSpawn_AskHumanDoesNotClaimPendingPopupBeforeLineageDenial(t *testing.T) {
@@ -83,6 +85,22 @@ func TestRunSpawn_SandboxProfileAndOmissionMutuallyExclusive(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Equal(t, rcInvalidArg, rc)
 	assert.Contains(t, stderr.String(), "mutually exclusive")
+}
+
+func TestValidateSpawnSandboxImplementation_RejectsOpenCodeBuiltinOnlyWhenSet(t *testing.T) {
+	opencode, ok := harness.Get(harness.OpenCodeName)
+	require.True(t, ok)
+
+	_, err := validateSpawnSandboxImplementation(
+		opencode, string(sandboxpolicy.ImplementationHarnessBuiltin))
+	require.EqualError(t, err,
+		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
+			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
+			`not confinement; use tclaude-layer or spawn with the sandbox off`)
+
+	got, err := validateSpawnSandboxImplementation(opencode, "")
+	require.NoError(t, err)
+	assert.Empty(t, got, "unset must remain unset for daemon-side tier resolution")
 }
 
 // The spawn command's long help must state the default-resolution chain once,

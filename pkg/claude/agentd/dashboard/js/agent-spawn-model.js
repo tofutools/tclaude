@@ -132,9 +132,9 @@ export function launchSetting(harness, key) {
   };
 }
 
-// SANDBOX_IMPL_DEFAULT mirrors sandboxpolicy.ImplementationHarnessBuiltin. It is
-// the value a launch resolves to when nothing pins one, and the only value this
-// dialog ever sends when the row is hidden.
+// SANDBOX_IMPL_DEFAULT mirrors sandboxpolicy.ImplementationHarnessBuiltin. It
+// is the historical normalized default, but a blank dialog value remains
+// unpinned so profile resolution and harness-specific behavior stay intact.
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
@@ -206,12 +206,15 @@ function fillHarnessPlaceholder(template, displayName) {
 // sandboxImplOptionsFor names the harness-owned option after the actual harness.
 // Both the spawn dialog and the profile editor render the same catalog, so both
 // call this rather than each rewriting the copy.
-export function sandboxImplOptionsFor(options, displayName) {
-  return (Array.isArray(options) ? options : []).map((option) => ({
-    ...option,
-    label: fillHarnessPlaceholder(option?.label, displayName),
-    descr: fillHarnessPlaceholder(option?.descr, displayName),
-  }));
+export function sandboxImplOptionsFor(options, displayName, canBuiltinOSSandbox = true) {
+  return (Array.isArray(options) ? options : [])
+    .filter((option) => canBuiltinOSSandbox
+      || text(option?.value) !== SANDBOX_IMPL_DEFAULT)
+    .map((option) => ({
+      ...option,
+      label: fillHarnessPlaceholder(option?.label, displayName),
+      descr: fillHarnessPlaceholder(option?.descr, displayName),
+    }));
 }
 
 // sandboxImplView answers the two halves of "can this launch use the tclaude
@@ -230,10 +233,19 @@ function sandboxImplView(harness, context) {
   const catalog = context?.sandboxImpl || {};
   const serverBoundary = !!harness?.tclaude_layer_server_boundary;
   const harnessLabel = text(harness?.display_name) || text(harness?.name);
+  // Missing means an older snapshot that predates this capability bit; retain
+  // its old catalog rather than hiding a valid option for every harness.
+  const canBuiltinOSSandbox = harness?.can_builtin_os_sandbox !== false;
   return {
     showSandboxImpl: !!harness,
-    sandboxImplOptions: sandboxImplOptionsFor(catalog.options, harnessLabel),
+    sandboxImplOptions: sandboxImplOptionsFor(
+      catalog.options, harnessLabel, canBuiltinOSSandbox,
+    ),
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
+    sandboxImplCanBuiltin: canBuiltinOSSandbox,
+    sandboxImplInheritLabel: canBuiltinOSSandbox
+      ? `profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
+      : 'profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
     sandboxImplHarness: harnessLabel,
     sandboxImplCanStacked: !!harness?.can_stacked,
     sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
@@ -253,8 +265,8 @@ function sandboxImplView(harness, context) {
 // It exists because the row itself DISAPPEARS in that moment: the row is gated
 // on the new harness's can_tclaude_layer, so the one control that could have
 // shown the loss is gone at exactly the instant there is something to show. The
-// selection is dropped, the launch proceeds on harness-builtin, and nothing
-// anywhere says so.
+// selection is dropped, the launch proceeds with the harness's historical
+// default behavior, and nothing anywhere says so.
 //
 // That is the dialog deciding by erasure. The server's loud refusal for an
 // explicitly incompatible request is unreachable precisely BECAUSE the dialog
@@ -271,7 +283,7 @@ export function sandboxImplClearedNoticeFor(draft) {
   return {
     warn: true,
     text: `${text(cleared.implementation)} is not available for ${harnessLabel} — `
-      + 'the selection was cleared, so this agent launches with the harness-builtin sandbox.',
+      + "the selection was cleared, so this agent launches with the harness's historical default behavior.",
   };
 }
 
@@ -291,6 +303,18 @@ export function setSpawnSandboxImpl(draft, value) {
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
   const value = text(draft.sandboxImpl) || view.sandboxImplDefault;
+  if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {
+    const explicit = text(draft.sandboxImpl) === SANDBOX_IMPL_DEFAULT;
+    const harnessLabel = view.sandboxImplHarness || 'this harness';
+    return {
+      warn: true,
+      text: explicit
+        ? `harness-builtin is invalid for ${harnessLabel}: ${harnessLabel} has no built-in OS sandbox; `
+          + 'its access-control mode is a command filter, not confinement; '
+          + 'use tclaude-layer or spawn with the sandbox off.'
+        : 'No built-in OS sandbox; access-control is a command filter, not confinement.',
+    };
+  }
   if (value === SANDBOX_IMPL_STACKED) {
     if (!view.sandboxImplCanStacked) {
       return {

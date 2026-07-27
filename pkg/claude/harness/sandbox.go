@@ -200,7 +200,7 @@ type LaunchOSSandbox struct {
 //     mode and its real posture lives in ~/.codex/config.toml, which tclaude does
 //     not read; that gap is the Codex analogue of the one this fixes for Claude,
 //     and is out of scope here.)
-//   - OpenCode's `access-control` is a soft tool-level policy, not an OS
+//   - OpenCode's `access-control` is a command filter, not confinement or an OS
 //     sandbox; claiming a verdict for it would dress it up as containment (the
 //     distinction openCodeSandboxWarnings exists to make).
 //
