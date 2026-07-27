@@ -24,6 +24,13 @@ export async function loadSandboxProfiles() { const value = await request(API); 
 // ordinary rows, plus provenance-rich harness-global rows it renders read-only.
 // The endpoint keeps its historical read-exclusions path.
 export function loadSandboxCommonRules() { return request('/api/sandbox-profile-read-exclusions'); }
+export function predictSandboxProfile(draft, targets = [], context = {}) {
+  return request('/api/sandbox-profile-enforcement', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draft: sandboxProfileForWire(draft), targets, context }),
+  });
+}
 export async function previewSandboxProfile(name, body) {
   const target = name ? `${API}/${encodeURIComponent(name)}` : API;
   return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -45,6 +52,96 @@ export function sandboxProfileSummary(profile) {
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
-  if (profile.network_access) parts.push(`network ${profile.network_access}`);
+  const axes = sandboxAccessAxes(profile);
+  if (axes.network.mode) parts.push(`network ${axes.network.mode}${axes.network.mode === 'list' ? ` (${axes.network.allow.length})` : ''}`);
+  if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
+}
+
+export function sandboxAccessAxes(profile = {}) {
+  const legacy = profile.network_access || '';
+  const network = profile.network
+    ? structuredClone(profile.network)
+    : { mode: legacy === 'internet' ? 'open' : legacy === 'none' ? 'closed' : '', allow: [] };
+  const unixSockets = profile.unix_sockets
+    ? structuredClone(profile.unix_sockets)
+    : { mode: legacy === 'none' ? 'closed' : '', allow: [] };
+  network.allow ||= [];
+  unixSockets.allow ||= [];
+  return { network, unix_sockets: unixSockets };
+}
+
+function portsForWire(value) {
+  if (Array.isArray(value)) return value.map(Number);
+  const text = String(value || '').trim();
+  return text ? text.split(',').map((part) => Number(part.trim())) : [];
+}
+
+export function sandboxProfileForWire(draft) {
+  const value = structuredClone(draft || {});
+  if (!Object.hasOwn(value, 'network') && !Object.hasOwn(value, 'unix_sockets')) return value;
+  value.network ||= { mode: '', allow: [] };
+  value.unix_sockets ||= { mode: '', allow: [] };
+  value.network.allow = (value.network.allow || []).map((entry) => ({
+    ...(entry.host ? { host: entry.host } : {}),
+    ...(entry.domain ? { domain: entry.domain, include_subdomains: !!entry.include_subdomains } : {}),
+    ...(entry.cidr ? { cidr: entry.cidr } : {}),
+    ...(entry.loopback ? { loopback: true } : {}),
+    ...(portsForWire(entry.ports).length ? { ports: portsForWire(entry.ports) } : {}),
+  }));
+  value.unix_sockets.allow = (value.unix_sockets.allow || []).map((entry) =>
+    entry.path_glob ? { path_glob: entry.path_glob } : { path: entry.path || '' });
+  value.network_access = '';
+  return value;
+}
+
+function dnsError(value) {
+  if (!value || value !== value.trim() || value.length > 253 || /[/:*]/.test(value)
+      || value.startsWith('.') || value.endsWith('.') || !/^[\x00-\x7f]+$/.test(value)) {
+    return 'must be an ASCII host/domain without scheme, path, port, or wildcard';
+  }
+  if (!value.split('.').every((label) =>
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label))) {
+    return 'must use DNS letters, digits, and interior hyphens';
+  }
+  return '';
+}
+
+export function sandboxAccessDraftErrors(draft) {
+  const errors = [];
+  const axes = sandboxAccessAxes(draft);
+  if (!['', 'open', 'closed', 'list'].includes(axes.network.mode)) errors.push('Network mode is invalid.');
+  if (!['', 'open', 'closed', 'list'].includes(axes.unix_sockets.mode)) errors.push('Unix-socket mode is invalid.');
+  if (axes.network.mode !== 'list' && axes.network.allow.length) errors.push('Network entries require Access list mode.');
+  if (axes.unix_sockets.mode !== 'list' && axes.unix_sockets.allow.length) errors.push('Unix-socket entries require Access list mode.');
+  axes.network.allow.forEach((entry, index) => {
+    const selectors = ['host', 'domain', 'cidr'].filter((key) => entry[key]).length + (entry.loopback ? 1 : 0);
+    if (selectors !== 1) errors.push(`Network row ${index + 1} must set exactly one selector.`);
+    if (entry.host && dnsError(entry.host)) errors.push(`Network row ${index + 1} host ${dnsError(entry.host)}.`);
+    if (entry.domain && dnsError(entry.domain)) errors.push(`Network row ${index + 1} domain ${dnsError(entry.domain)}.`);
+    if (entry.cidr && !/^([0-9a-f:.]+)\/\d{1,3}$/i.test(entry.cidr)) errors.push(`Network row ${index + 1} CIDR is invalid.`);
+    const rawPorts = Array.isArray(entry.ports) ? entry.ports : String(entry.ports || '').split(',').filter((part) => part.trim());
+    if (rawPorts.some((port) => !/^\d+$/.test(String(port).trim()) || Number(port) < 1 || Number(port) > 65535)) {
+      errors.push(`Network row ${index + 1} ports must be comma-separated values from 1 to 65535.`);
+    }
+  });
+  axes.unix_sockets.allow.forEach((entry, index) => {
+    const value = entry.path_glob || entry.path || '';
+    if (!value.startsWith('/')) errors.push(`Unix-socket row ${index + 1} must be an absolute path.`);
+    if (value.includes('**')) errors.push(`Unix-socket row ${index + 1} must not contain **.`);
+    if (entry.path_glob && !entry.path_glob.includes('*')) errors.push(`Unix-socket row ${index + 1} glob must contain *.`);
+  });
+  return errors;
+}
+
+export function sandboxPredictionWarnings(prediction) {
+  const capability = [];
+  for (const target of prediction?.targets || []) {
+    for (const axis of ['network', 'unix_sockets']) {
+      const verdict = target.axes?.[axis];
+      if (verdict && verdict.outcome !== 'enforced') capability.push(verdict.detail);
+    }
+  }
+  const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
+  return { capability: [...new Set(capability)], composition };
 }

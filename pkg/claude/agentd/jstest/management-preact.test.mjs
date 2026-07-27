@@ -733,7 +733,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   const state = createManagementState(); const calls = []; let refreshed = 0; let genericConfirms = 0;
   const sandboxAPI = {
     loadSandboxProfiles: async () => [{ name: 'safe' }],
-    previewSandboxProfile: async (name, body) => { calls.push(['preview', name, body]); return { before: null, after: body, revision: 'r1' }; },
+    previewSandboxProfile: async (name, body) => { calls.push(['preview', name, body]); return {
+      before: null, after: body, revision: 'r1',
+      notices: [{ class: 'composition', detail: 'authoritative preview composition warning' }],
+    }; },
     saveSandboxProfile: async (...args) => { calls.push(['save', ...args]); }, deleteSandboxProfile: async (name) => calls.push(['delete', name]),
     inspectSandboxImport: async (value) => ({ profiles: value.profiles }), importSandboxProfiles: async (...args) => { calls.push(['import', ...args]); return {}; },
   };
@@ -744,7 +747,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   // entirely (TCL-791).
   const body = { ...draft };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
-  assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
+  assert.deepEqual(state.sandboxDiff.value, {
+    before: null, after: body,
+    notices: [{ class: 'composition', detail: 'authoritative preview composition warning' }],
+  }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
   assert.deepEqual(calls[0], ['preview', '', body]); assert.deepEqual(calls[1], ['save', '', body, 'r1']); assert.equal(refreshed, 1);
   const replacement = { ...draft, name: 'renamed' }; const replacementBody = { ...body, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
@@ -755,6 +761,35 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   await actions.removeSandbox('safe'); assert.deepEqual(calls.find((call) => call[0] === 'delete'), ['delete', 'safe']);
   assert.equal(genericConfirms, 1, 'ordinary destructive confirmations still use the shared prompt');
   await actions.importSandboxBundle({ profiles: [draft] }, 'skip'); assert.equal(calls.find((call) => call[0] === 'import')[2], 'skip');
+});
+
+test('sandbox access-axis model preserves legacy meaning and validates structured rows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/sandbox-profiles-data.js');
+  assert.deepEqual(model.sandboxAccessAxes({ network_access: 'none' }), {
+    network: { mode: 'closed', allow: [] },
+    unix_sockets: { mode: 'closed', allow: [] },
+  });
+  const draft = {
+    name: 'scoped', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'api.example.com', include_subdomains: true, ports: '443, 8443' }] },
+    unix_sockets: { mode: 'list', allow: [{ path_glob: '/tmp/ssh-*/agent.*' }] },
+  };
+  assert.deepEqual(model.sandboxAccessDraftErrors(draft), []);
+  assert.deepEqual(model.sandboxProfileForWire(draft).network.allow[0].ports, [443, 8443]);
+  const broken = structuredClone(draft);
+  broken.network.allow[0].domain = 'https://example.com';
+  broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
+  assert.match(model.sandboxAccessDraftErrors(broken).join(' '), /scheme.*absolute.*\*\*/i);
+  const warnings = model.sandboxPredictionWarnings({
+    targets: [{ axes: {
+      network: { outcome: 'not_enforced', detail: 'network detail from resolver' },
+      unix_sockets: { outcome: 'enforced', detail: 'socket detail' },
+    } }],
+    contexts: [{ notices: [{ class: 'composition', detail: 'empty intersection detail' }] }],
+  });
+  assert.deepEqual(warnings.capability, ['network detail from resolver']);
+  assert.equal(warnings.composition[0].detail, 'empty intersection detail');
 });
 
 test('sandbox import accepts the current v2 export envelope', async (t) => {
@@ -791,10 +826,14 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   const after = { name: 'dev', filesystem: [{ path: '/cache', access: 'write' }], environment: [] };
   const submit = host.querySelector('#sandbox-profile-editor-submit'); submit.focus(); state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve());
   const harnessFocus = submit.focus; Object.defineProperty(submit, 'focus', { configurable: true, value() { if (!this.disabled && !this.closest('[inert]')) harnessFocus.call(this); } });
-  const decision = state.confirmSandboxDiff(before, after); await harness.act(() => Promise.resolve());
+  const decision = state.confirmSandboxDiff(before, after, [
+    { class: 'composition', detail: 'server-authoritative empty intersection warning' },
+  ]); await harness.act(() => Promise.resolve());
   const modal = host.querySelector('#sandbox-profile-diff-modal');
   assert.ok(modal); assert.equal(modal.querySelectorAll('.dl.add').length, 1); assert.equal(modal.querySelectorAll('.dl.del').length, 1); assert.ok(modal.querySelectorAll('.dl.ctx').length > 0);
   assert.match(modal.querySelector('#sandbox-profile-diff-sub').textContent, /1 line\(s\) added, 1 removed/);
+  assert.match(modal.querySelector('.sbx-composition-warning').textContent,
+    /server-authoritative empty intersection warning/);
   assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
   const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
   modal.querySelector('#sandbox-profile-diff-cancel').click(); state.busy.value = ''; await harness.act(() => Promise.resolve());
@@ -812,7 +851,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
-  const network = host.querySelector('#sandbox-profile-editor-network'); assert.ok(network.querySelector('option[value="internet"]')); network.querySelector('option[value="none"]').selected = true; network.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
+  const network = host.querySelector('#sandbox-profile-editor-network-mode'); assert.ok(network.querySelector('option[value="open"]')); network.querySelector('option[value="closed"]').selected = true; network.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
   host.querySelector('.sbx-section .sbx-add-row').click(); await harness.act(() => Promise.resolve());
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
@@ -828,7 +867,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
-  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network_access, 'none'); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
+  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.mode, 'closed'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -854,6 +893,10 @@ const COMMON_RULES = {
       { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', access: 'write', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
   ],
+  global_network: [{ mode: 'list', entry: { domain: 'global.example' }, origin: { harness: 'claude', setting: 'sandbox.network.allowedDomains' } }],
+  global_unix_sockets: [{ mode: 'list', entry: { path: '/tmp/global.sock' }, origin: { harness: 'claude', setting: 'sandbox.network.allowUnixSockets' } }],
+  network_templates: [{ id: 'net-anthropic', label: 'Anthropic API', mode: 'list', entries: [{ domain: 'api.anthropic.com' }], note: 'official API endpoint' }],
+  socket_templates: [{ id: 'sockets-agentd-only', label: 'tclaude agentd only', mode: 'closed', entries: [], note: 'floor is always reachable' }],
   global_config_warnings: [],
 };
 
@@ -868,6 +911,7 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
       async loadCommonRuleCatalog() { return COMMON_RULES; },
       async inspectDirectories() { return { missing: [], creatable: [] }; },
       async createDirectories() {},
+      async predictSandbox() { return { targets: [], contexts: [] }; },
       async saveSandbox() {},
       configureSandboxWithAgent() {},
       ...overrides,
@@ -878,6 +922,148 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   });
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
+
+test('sandbox editor renders both access axes, authoritative prediction, and non-blocking composition warnings', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    id: 41, name: 'access', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'api.anthropic.com', ports: [443] }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: { group: 'crew' } });
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox(draft, targets, context) {
+      predictions.push({ draft, targets, context });
+      return {
+        targets: [{ target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' }, resolved_by: 'harness default', predicted: true, axes: {
+          network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
+          unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
+        } }],
+        contexts: [{ context: { global: 'base', group: 'access', group_name: 'crew' }, network: { mode: 'list', allow: [] }, unix_sockets: { mode: 'closed' }, agentd_socket: 'always reachable', notices: [{
+          class: 'composition', axis: 'network', reason: 'empty_intersection', effect: 'nothing_allowed',
+          detail: 'global “base” ∩ group “access” leaves no network destinations', tiers: ['global "base"', 'group "access"'],
+        }] }],
+      };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.ok(host.querySelector('#sandbox-profile-editor-network-mode'));
+  assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
+  assert.equal(host.querySelector('.sbx-network-ports').value, '443');
+  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned network detail/);
+  assert.match(host.querySelector('.sbx-composition-warning').textContent, /leaves no network destinations/);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
+    'empty intersections warn but never block save');
+  assert.equal(predictions[0].draft.id, 41);
+  assert.equal(predictions[0].context.group, 'crew');
+  assert.match(host.querySelector('.sbx-effective-values').textContent, /always reachable/);
+  const rawToggle = host.querySelector('.sbx-advanced-toggle');
+  rawToggle.click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-network').value, /api\.anthropic\.com/);
+  assert.match(host.querySelector('#sandbox-profile-editor-unix-sockets').value, /closed/);
+  unmount();
+});
+
+test('blank new sandbox drafts do not request an enforcement prediction', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
+  let predictionCalls = 0;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() { predictionCalls++; throw new Error('blank drafts must not reach prediction'); },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictionCalls, 0);
+  assert.equal(host.querySelector('.sbx-capability-error'), null);
+  unmount();
+});
+
+test('raw access JSON can repair a structured access validation error', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'repair', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'https://invalid.example/path' }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  let saved = null;
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+    async predictSandbox(draft) {
+      predictions.push(draft);
+      return {
+        targets: [],
+        contexts: draft.network.mode === 'list' && draft.network.allow.length === 0
+          ? [{
+            context: {}, network: { mode: 'list', allow: [] },
+            unix_sockets: { mode: 'closed' }, agentd_socket: 'always reachable',
+            notices: [{ class: 'composition', detail: 'raw policy leaves an empty intersection' }],
+          }]
+          : [],
+      };
+    },
+  });
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true);
+  assert.ok(host.querySelector('.sbx-access-validation'));
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
+    'the stale structured error cannot make raw repair unreachable');
+  assert.equal(host.querySelector('.sbx-access-validation'), null);
+  const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  rawNetwork.value = '{"mode":"list","allow":[]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.deepEqual(predictions.at(-1).network, { mode: 'list', allow: [] },
+    'prediction consumes the authoritative raw access value');
+  assert.match(host.querySelector('.sbx-composition-warning').textContent,
+    /raw policy leaves an empty intersection/);
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.network, { mode: 'list', allow: [] });
+  unmount();
+});
+
+test('closed socket template clears incompatible authored list rows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'socket-list', filesystem: [], environment: [], includes: [], agent_directories: [],
+    unix_sockets: { mode: 'list', allow: [{ path: '/tmp/old.sock' }] },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+  const template = [...host.querySelectorAll('.sbx-access-template-add')]
+    .find((button) => button.textContent.includes('agentd only'));
+  assert.ok(template);
+  template.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelectorAll('.sbx-socket-row').length, 0);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
+  assert.match(host.querySelector('.sbx-access-axis .sbx-common-rule-notice').textContent,
+    /1 incompatible existing row removed/);
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(JSON.parse(host.querySelector('#sandbox-profile-editor-unix-sockets').value),
+    { mode: 'closed', allow: [] });
+  unmount();
+});
 
 test('global harness filesystem rows start folded, remain immutable, and are never saved', async (t) => {
   const harness = await createPreactHarness(t);

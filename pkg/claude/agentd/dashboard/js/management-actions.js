@@ -12,6 +12,8 @@ import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
+  predictSandboxProfile,
+  sandboxProfileForWire,
   previewSandboxProfile,
   saveSandboxProfile,
   deleteSandboxProfile,
@@ -90,6 +92,7 @@ export function createManagementActions({
   const sandbox = {
     loadSandboxProfiles,
     loadSandboxCommonRules,
+    predictSandboxProfile,
     previewSandboxProfile,
     saveSandboxProfile,
     deleteSandboxProfile,
@@ -834,6 +837,10 @@ export function createManagementActions({
         agent_directories: draft.agent_directories,
         network_access: draft.network_access || '',
       };
+      if (draft.id) body.id = draft.id;
+      if (draft.network !== undefined) body.network = draft.network;
+      if (draft.unix_sockets !== undefined) body.unix_sockets = draft.unix_sockets;
+      Object.assign(body, sandboxProfileForWire(body));
       if (!body.name) throw new Error('name is required');
       const targetName = options.editExisting === false
         ? ''
@@ -849,6 +856,7 @@ export function createManagementActions({
       const ok = await state.confirmSandboxDiff(
         preview.before || null,
         preview.after,
+        preview.notices || [],
       );
       if (!ok) {
         notify('Sandbox profile save cancelled');
@@ -983,6 +991,7 @@ export function createManagementActions({
     saveProfile,
     saveRole,
     saveSandbox,
+    predictSandbox: sandbox.predictSandboxProfile,
     saveTemplate,
     removeProfile,
     removeRole,

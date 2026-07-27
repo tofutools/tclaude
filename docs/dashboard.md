@@ -528,6 +528,16 @@ environment values. Values are ordinary non-secret configuration — do not put
 credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
+
+The editor has separate **Network** and **Unix sockets** fieldsets with
+unset/open/closed/list modes, editable list rows, inherited harness-global
+context, and audited insert-only presets. Its **Effective policy preview**
+shows the real global/group/explicit intersection and asks the daemon to
+predict the selected implementation/harness/platform. Empty list intersections
+are loud warnings, never save blockers. Capability warnings use the daemon's
+exact resolver detail; the editor does not guess support from the selected
+mode. The raw JSON view includes both `network` and `unix_sockets`.
+
 The selector's **none** choice explicitly omits every tclaude sandbox-profile
 tier for that launch, including global/group environment values and agent-owned
 directories; blank instead inherits the global and group tiers. Selecting Codex

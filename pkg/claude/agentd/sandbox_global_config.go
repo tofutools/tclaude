@@ -43,6 +43,170 @@ type sandboxGlobalFilesystemRuleCandidate struct {
 	origin sandboxGlobalFilesystemRuleOriginJSON
 }
 
+type sandboxGlobalAccessRuleOriginJSON struct {
+	Harness string `json:"harness"`
+	Source  string `json:"source"`
+	Setting string `json:"setting"`
+	Note    string `json:"note,omitempty"`
+}
+
+type sandboxGlobalAccessRuleJSON struct {
+	Mode   string                            `json:"mode,omitempty"`
+	Entry  any                               `json:"entry,omitempty"`
+	Origin sandboxGlobalAccessRuleOriginJSON `json:"origin"`
+}
+
+type sandboxGlobalAccessRulesJSON struct {
+	Network     []sandboxGlobalAccessRuleJSON `json:"network"`
+	UnixSockets []sandboxGlobalAccessRuleJSON `json:"unix_sockets"`
+	Warnings    []string                      `json:"warnings"`
+}
+
+type sandboxAccessTemplateJSON struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Mode    string `json:"mode"`
+	Entries any    `json:"entries"`
+	Note    string `json:"note"`
+	Warning string `json:"warning,omitempty"`
+}
+
+func sandboxGlobalAccessRules(home string) sandboxGlobalAccessRulesJSON {
+	out := sandboxGlobalAccessRulesJSON{
+		Network:     []sandboxGlobalAccessRuleJSON{},
+		UnixSockets: []sandboxGlobalAccessRuleJSON{},
+		Warnings:    []string{},
+	}
+	path := session.ClaudeSettingsPath()
+	if path != "" {
+		data, err := os.ReadFile(path)
+		switch {
+		case os.IsNotExist(err):
+		case err != nil:
+			out.Warnings = append(out.Warnings, "Could not read Claude Code's global sandbox access settings: "+err.Error())
+		default:
+			var settings struct {
+				Sandbox struct {
+					Network struct {
+						AllowedDomains      []string `json:"allowedDomains"`
+						AllowUnixSockets    []string `json:"allowUnixSockets"`
+						AllowAllUnixSockets bool     `json:"allowAllUnixSockets"`
+					} `json:"network"`
+				} `json:"sandbox"`
+			}
+			if err := json.Unmarshal(data, &settings); err != nil {
+				out.Warnings = append(out.Warnings, "Could not parse Claude Code's global sandbox access settings: settings.json is not valid JSON.")
+			} else {
+				source := displaySandboxGlobalPath(home, sandboxGlobalPathIdentity(home, path))
+				for _, domain := range settings.Sandbox.Network.AllowedDomains {
+					domain = strings.TrimSpace(domain)
+					if domain == "" {
+						continue
+					}
+					includeSubdomains := strings.HasPrefix(domain, "*.")
+					domain = strings.TrimPrefix(domain, "*.")
+					out.Network = append(out.Network, sandboxGlobalAccessRuleJSON{
+						Mode:  "list",
+						Entry: sandboxpolicy.NetworkAllowEntry{Domain: domain, IncludeSubdomains: includeSubdomains},
+						Origin: sandboxGlobalAccessRuleOriginJSON{
+							Harness: "claude", Source: source, Setting: "sandbox.network.allowedDomains",
+							Note: "Inherited by Claude Code when its built-in sandbox is enabled.",
+						},
+					})
+				}
+				if settings.Sandbox.Network.AllowAllUnixSockets {
+					out.UnixSockets = append(out.UnixSockets, sandboxGlobalAccessRuleJSON{
+						Mode: "open",
+						Origin: sandboxGlobalAccessRuleOriginJSON{
+							Harness: "claude", Source: source, Setting: "sandbox.network.allowAllUnixSockets",
+							Note: "Claude Code permits ambient Unix sockets globally.",
+						},
+					})
+				}
+				for _, socketPath := range settings.Sandbox.Network.AllowUnixSockets {
+					socketPath = strings.TrimSpace(socketPath)
+					if socketPath == "" {
+						continue
+					}
+					out.UnixSockets = append(out.UnixSockets, sandboxGlobalAccessRuleJSON{
+						Mode:  "list",
+						Entry: sandboxpolicy.SocketAllowEntry{Path: socketPath},
+						Origin: sandboxGlobalAccessRuleOriginJSON{
+							Harness: "claude", Source: source, Setting: "sandbox.network.allowUnixSockets",
+							Note: "Inherited by Claude Code when its built-in sandbox is enabled.",
+						},
+					})
+				}
+			}
+		}
+	}
+	for _, socketPath := range sandboxpolicy.AgentdSocketFloor() {
+		out.UnixSockets = append(out.UnixSockets, sandboxGlobalAccessRuleJSON{
+			Mode:  "list",
+			Entry: sandboxpolicy.SocketAllowEntry{Path: socketPath},
+			Origin: sandboxGlobalAccessRuleOriginJSON{
+				Harness: "codex", Source: "generated tclaude-agent-<launch-id>.config.toml",
+				Setting: "permissions.tclaude-agent-<launch-id>.network.unix_sockets",
+				Note:    "Generated from tclaude's canonical managed Codex baseline; the same agentd floor is non-removable for every profile.",
+			},
+		})
+	}
+	return out
+}
+
+func sandboxNetworkTemplates() []sandboxAccessTemplateJSON {
+	return []sandboxAccessTemplateJSON{
+		{
+			ID: "net-github", Label: "GitHub essentials", Mode: "list",
+			Entries: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "github.com"}, {Domain: "api.github.com"}, {Domain: "codeload.github.com"},
+			},
+			Note:    "GitHub documents these domains for essential API and source-download operations: https://docs.github.com/en/actions/reference/runners/self-hosted-runners",
+			Warning: "GitHub documents additional domains for Actions, releases, LFS, packages, and artifacts; add only the services this profile actually needs.",
+		},
+		{
+			ID: "net-anthropic", Label: "Anthropic API", Mode: "list",
+			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "api.anthropic.com"}},
+			Note:    "Anthropic documents the direct Claude API at https://api.anthropic.com: https://platform.claude.com/docs/en/api/overview",
+		},
+		{
+			ID: "net-go-modules", Label: "Public Go modules", Mode: "list",
+			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "proxy.golang.org"}, {Domain: "sum.golang.org"}},
+			Note:    "The Go module reference documents proxy.golang.org and sum.golang.org as the public defaults: https://go.dev/ref/mod",
+			Warning: "The default GOPROXY also falls back to direct VCS hosts; this preset intentionally omits those unbounded destinations.",
+		},
+		{
+			ID: "net-npm", Label: "Public npm registry", Mode: "list",
+			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "registry.npmjs.org"}},
+			Note:    "npm documents https://registry.npmjs.org as the default public registry: https://docs.npmjs.com/cli/npm-doctor/",
+		},
+	}
+}
+
+func sandboxSocketTemplates() []sandboxAccessTemplateJSON {
+	templates := []sandboxAccessTemplateJSON{{
+		ID: "sockets-agentd-only", Label: "tclaude agentd only", Mode: "closed",
+		Entries: []sandboxpolicy.SocketAllowEntry{},
+		Note:    "The agentd socket floor is injected outside editable policy and remains reachable in every mode.",
+	}}
+	if path := strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK")); filepath.IsAbs(path) {
+		templates = append(templates, sandboxAccessTemplateJSON{
+			ID: "sockets-ssh-agent", Label: "Current SSH agent", Mode: "list",
+			Entries: []sandboxpolicy.SocketAllowEntry{{Path: path}},
+			Note:    "Captured from this daemon's SSH_AUTH_SOCK environment value; verify it remains valid for future launches.",
+			Warning: "SSH agent socket paths often rotate between logins.",
+		})
+	} else {
+		templates = append(templates, sandboxAccessTemplateJSON{
+			ID: "sockets-ssh-agent", Label: "Current SSH agent", Mode: "list",
+			Entries: []sandboxpolicy.SocketAllowEntry{},
+			Note:    "SSH_AUTH_SOCK is not an absolute path in the daemon environment, so no socket entry was guessed.",
+			Warning: "Set or select the current absolute SSH_AUTH_SOCK path before using this preset.",
+		})
+	}
+	return templates
+}
+
 // sandboxGlobalFilesystemRules reads only the filesystem portions of the two
 // harness configs that compose beneath a named sandbox profile:
 //

@@ -36,8 +36,9 @@ type sandboxProfileJSON struct {
 }
 
 type sandboxProfileAssignmentJSON struct {
-	Group string `json:"group,omitempty"`
-	Name  string `json:"name"`
+	Group         string                       `json:"group,omitempty"`
+	Name          string                       `json:"name"`
+	AccessNotices []sandboxpolicy.AccessNotice `json:"notices,omitempty"`
 }
 
 func sandboxProfilesCmd() *cobra.Command {
@@ -620,6 +621,7 @@ func mutateSandboxProfileAssignment(method, path, group, name string, stdout, st
 			fmt.Fprintf(stdout, "%s: sandbox profile set to %s\n", resp.Group, resp.Name)
 		}
 	}
+	echoSandboxAccessNotices(stdout, resp.AccessNotices)
 	return rcOK
 }
 

@@ -229,6 +229,9 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
     `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
   ];
+  for (const notice of member.state?.sandbox_access_notices || []) {
+    if (notice?.detail) lines.push(`Warning: ${notice.detail}`);
+  }
   if (actionable) {
     lines.push(unlocked ? 'Click to restore normal sandbox' : 'Click to temporarily disable');
   }
