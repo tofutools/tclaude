@@ -56,6 +56,7 @@ func renderSeatbeltProfile(
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
 	identity seatbeltIdentityLookup,
+	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) (string, []seatbeltProfileParam, error) {
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
@@ -183,6 +184,30 @@ func renderSeatbeltProfile(
 				}
 			}
 		}
+	}
+
+	// This shared daemon-owned parent is a hide region like every other hide:
+	// its filesystem read deny and remote-unix network deny receive the same
+	// descendant exceptions. Only the current session's child is carved out.
+	for i, privateDir := range privateWriteDirs {
+		parent, cleanErr := cleanSeatbeltPath(
+			fmt.Sprintf("private write entry %d parent", i),
+			privateDir.Parent,
+		)
+		if cleanErr != nil {
+			return "", nil, cleanErr
+		}
+		current, cleanErr := cleanSeatbeltPath(
+			fmt.Sprintf("private write entry %d current", i),
+			privateDir.Current,
+		)
+		if cleanErr != nil {
+			return "", nil, cleanErr
+		}
+		ordered = append(ordered,
+			seatbeltRegion{path: parent, mode: sandboxpolicy.MountHide},
+			seatbeltRegion{path: current, mode: sandboxpolicy.MountRW},
+		)
 	}
 
 	// Class 4 is last and receives no carveout, including break-glass.

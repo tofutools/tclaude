@@ -121,6 +121,7 @@ func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
@@ -162,6 +163,20 @@ func tclaudeLayerCommand(
 	if err != nil {
 		return "", err
 	}
+	canonicalPrivateWriteDirs := make(
+		[]TclaudeLayerPrivateWriteDir,
+		0,
+		len(privateWriteDirs),
+	)
+	for _, privateDir := range privateWriteDirs {
+		canonicalPrivateWriteDirs = append(
+			canonicalPrivateWriteDirs,
+			TclaudeLayerPrivateWriteDir{
+				Parent:  canonicalSeatbeltOwnedPath(privateDir.Parent),
+				Current: canonicalSeatbeltOwnedPath(privateDir.Current),
+			},
+		)
+	}
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
 		[]string{canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath())},
@@ -171,6 +186,7 @@ func tclaudeLayerCommand(
 		tmuxSocketDir,
 		runtimeTempDir,
 		darwinSeatbeltLstatIdentity,
+		canonicalPrivateWriteDirs...,
 	)
 	if err != nil {
 		return "", err
@@ -188,6 +204,7 @@ func tclaudeLayerServerCommand(
 	string,
 	[]string,
 	[]string,
+	[]TclaudeLayerPrivateWriteDir,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {

@@ -116,10 +116,18 @@ func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, err
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	command, err := bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	command, err := bwrapCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		harnessCommand,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -130,10 +138,18 @@ func tclaudeLayerCommand(
 func tclaudeLayerServerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
-	return bwrapCommand(binary, phase0WriteDirs, breakGlassPaths, plan, serverCommand)
+	return bwrapCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		serverCommand,
+	)
 }
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {

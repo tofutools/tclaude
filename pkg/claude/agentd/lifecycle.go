@@ -30,6 +30,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // memberOpResult is the per-member outcome of a bulk lifecycle op
@@ -4358,6 +4359,47 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		label = generateSpawnLabel()
 	}
 
+	privateAttachmentCleanup := func() {}
+	privateAttachmentsLaunched := false
+	defer func() {
+		if !privateAttachmentsLaunched {
+			privateAttachmentCleanup()
+		}
+	}()
+	if p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		_, privateRootCreated, prepareErr :=
+			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+		if prepareErr != nil {
+			return nil, &spawnFailure{
+				http.StatusInternalServerError,
+				"spawn",
+				"could not prepare private attachment root: " + prepareErr.Error(),
+			}
+		}
+		if privateRootCreated {
+			privateAttachmentCleanup = func() {
+				_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
+			}
+		}
+		if len(p.Attachments) > 0 {
+			promoted, batchCleanup, promoteErr :=
+				promoteSpawnAttachments(label, p.Attachments)
+			if promoteErr != nil {
+				return nil, &spawnFailure{
+					http.StatusBadRequest,
+					"invalid_attachments",
+					"could not promote daemon-staged attachments: " + promoteErr.Error(),
+				}
+			}
+			rootCleanup := privateAttachmentCleanup
+			privateAttachmentCleanup = func() {
+				batchCleanup()
+				rootCleanup()
+			}
+			p.Attachments = promoted
+		}
+	}
+
 	// Agent-directory declarations are resolved only once a unique launch key
 	// exists. Freeze their literal paths into the snapshot before enrollment or
 	// the session-new handoff so every persistence/resume path sees the same
@@ -4421,7 +4463,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				"could not build OpenCode access-control policy: " + err.Error()}
 		}
 		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
-			p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox)
+			p.SandboxImplementation,
+			p.Cwd,
+			p.GitWorktreeWriteDirs,
+			p.EffectiveSandbox,
+			label,
+		)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
 		}
@@ -4598,6 +4645,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
+		privateAttachmentCleanup()
+		privateAttachmentCleanup = func() {}
 		if pendingHeld {
 			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
 				slog.Warn("spawn: failed to remove reservation after launch failure",
@@ -4622,6 +4671,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return launchFailed(err)
 	}
 	agentDirectoriesLaunched = true
+	privateAttachmentsLaunched = true
 	if openCodeLaunch != nil {
 		if err := sendOpenCodePromptForSpawn(openCodeLaunch, p.Cwd,
 			spawnArgs.InitialPrompt, p.Model, p.Effort); err != nil {
@@ -6649,6 +6699,13 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 // or rejects the detached launch, so callers learn whether this resume won the
 // launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
+	privateAttachmentRootCreated := false
+	resumeLaunched := false
+	defer func() {
+		if privateAttachmentRootCreated && !resumeLaunched {
+			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(a.ConvID))
+		}
+	}()
 	var openCodeLaunch *openCodeLaunch
 	if a.Harness == harness.OpenCodeName {
 		resolvedCwd, cwdErr := resolveOpenCodeLaunchCwd(a.Cwd)
@@ -6661,8 +6718,27 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if policyErr != nil {
 			return policyErr
 		}
+		implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
+			a.SandboxImplementation,
+		)
+		if implementationErr != nil {
+			return implementationErr
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+			_, created, prepareErr :=
+				tclcommon.PrepareSpawnAttachmentsPrivateDir(a.ConvID)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			privateAttachmentRootCreated = created
+		}
 		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
-			a.SandboxImplementation, a.Cwd, a.GitWorktreeWriteDirs, a.EffectiveSandbox)
+			a.SandboxImplementation,
+			a.Cwd,
+			a.GitWorktreeWriteDirs,
+			a.EffectiveSandbox,
+			a.ConvID,
+		)
 		if sandboxErr != nil {
 			return sandboxErr
 		}
@@ -6718,6 +6794,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
+	resumeLaunched = true
 	return nil
 }
 

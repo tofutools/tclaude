@@ -390,6 +390,7 @@ export function mountTerminalWidget({
   const interactions = interactionsFactory({
     term,
     host,
+    terminalPath: wsPath,
     copyButton: null,
     setStatus,
     baseStatus: () => ws && ws.readyState === WebSocketCtor.OPEN ? 'connected' : 'disconnected',

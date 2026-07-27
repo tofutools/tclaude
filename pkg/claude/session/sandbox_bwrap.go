@@ -22,6 +22,15 @@ type TclaudeLayerLaunchContract struct {
 	ReadOnlyStateDirs []string                        `json:"read_only_state_dirs,omitempty"`
 	WriteDirs         []string                        `json:"write_dirs"`
 	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
+	PrivateWriteDirs  []TclaudeLayerPrivateWriteDir   `json:"private_write_dirs,omitempty"`
+}
+
+// TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
+// only the current session's child. It is applied after policy replay so
+// profile and break-glass grants cannot expose sibling sessions.
+type TclaudeLayerPrivateWriteDir struct {
+	Parent  string `json:"parent"`
+	Current string `json:"current"`
 }
 
 // TclaudeLayerLaunchSpec is the complete, versioned input to the outer-layer
@@ -40,10 +49,11 @@ const TclaudeLayerLaunchSpecVersion = 2
 // a TclaudeLayerLaunchSpec. GitWriteDirs must already be daemon-pinned for a
 // managed launch; direct human launches derive them before this seam.
 type TclaudeLayerLaunchInput struct {
-	HarnessName  string
-	Cwd          string
-	GitWriteDirs []string
-	Snapshot     *sandboxpolicy.Snapshot
+	HarnessName      string
+	Cwd              string
+	GitWriteDirs     []string
+	Snapshot         *sandboxpolicy.Snapshot
+	PrivateWriteDirs []TclaudeLayerPrivateWriteDir
 }
 
 // BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem and
@@ -142,6 +152,11 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 	}
+	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(input.PrivateWriteDirs)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	contract.PrivateWriteDirs = privateWriteDirs
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(contract, effective)
 	if err != nil {
 		return TclaudeLayerLaunchSpec{}, err
@@ -296,11 +311,102 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
+	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
-	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+	return tclaudeLayerCommand(
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		harnessCommand,
+	)
+}
+
+func cleanTclaudeLayerPrivateWriteDirs(
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+) ([]TclaudeLayerPrivateWriteDir, error) {
+	out := make([]TclaudeLayerPrivateWriteDir, 0, len(privateWriteDirs))
+	for i, privateDir := range privateWriteDirs {
+		parent := filepath.Clean(strings.TrimSpace(privateDir.Parent))
+		current := filepath.Clean(strings.TrimSpace(privateDir.Current))
+		if parent == "." || !filepath.IsAbs(parent) {
+			return nil, fmt.Errorf(
+				"private write entry %d has non-absolute parent %q",
+				i,
+				parent,
+			)
+		}
+		if current == "." || !filepath.IsAbs(current) {
+			return nil, fmt.Errorf(
+				"private write entry %d has non-absolute current path %q",
+				i,
+				current,
+			)
+		}
+		relative, err := filepath.Rel(parent, current)
+		if err != nil || relative == "." || relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) ||
+			filepath.Dir(relative) != "." {
+			return nil, fmt.Errorf(
+				"private write entry %d current path %q must be a direct child of parent %q",
+				i,
+				current,
+				parent,
+			)
+		}
+		for _, item := range []struct {
+			label string
+			path  string
+		}{
+			{label: "parent", path: parent},
+			{label: "current", path: current},
+		} {
+			label, path := item.label, item.path
+			info, statErr := os.Lstat(path)
+			if statErr != nil {
+				return nil, fmt.Errorf(
+					"private write entry %d %s %q: %w",
+					i,
+					label,
+					path,
+					statErr,
+				)
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return nil, fmt.Errorf(
+					"private write entry %d %s %q is not a real directory",
+					i,
+					label,
+					path,
+				)
+			}
+		}
+		resolvedParent, err := filepath.EvalSymlinks(parent)
+		if err != nil {
+			return nil, fmt.Errorf("resolve private write entry %d parent: %w", i, err)
+		}
+		resolvedCurrent, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			return nil, fmt.Errorf("resolve private write entry %d current: %w", i, err)
+		}
+		resolvedRelative, err := filepath.Rel(resolvedParent, resolvedCurrent)
+		if err != nil || filepath.Dir(resolvedRelative) != "." ||
+			resolvedRelative == "." || resolvedRelative == ".." {
+			return nil, fmt.Errorf(
+				"private write entry %d current path resolves outside its direct parent",
+				i,
+			)
+		}
+		out = append(out, TclaudeLayerPrivateWriteDir{
+			Parent:  parent,
+			Current: current,
+		})
+	}
+	return out, nil
 }
 
 // WrapTclaudeLayerServerSpec renders a materialized launch spec for a
@@ -313,29 +419,42 @@ func WrapTclaudeLayerServerSpec(
 	spec TclaudeLayerLaunchSpec,
 	serverCommand string,
 ) (string, error) {
-	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
+	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
 	}
 	return tclaudeLayerServerCommand(
-		binary, phase0WriteDirs, breakGlassPaths, plan, serverCommand)
+		binary,
+		phase0WriteDirs,
+		breakGlassPaths,
+		privateWriteDirs,
+		plan,
+		serverCommand,
+	)
 }
 
 func tclaudeLayerSpecRenderInput(
 	spec TclaudeLayerLaunchSpec,
-) ([]string, []string, sandboxpolicy.MountPlan, error) {
+) (
+	[]string,
+	[]string,
+	[]TclaudeLayerPrivateWriteDir,
+	sandboxpolicy.MountPlan,
+	error,
+) {
 	if spec.Version != TclaudeLayerLaunchSpecVersion {
-		return nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
 	}
 	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
 	if err != nil {
-		return nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
 	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
@@ -344,14 +463,20 @@ func tclaudeLayerSpecRenderInput(
 			stateRoot,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
-			return nil, nil, sandboxpolicy.MountPlan{}, err
+			return nil, nil, nil, sandboxpolicy.MountPlan{}, err
 		}
 	}
 	breakGlassPaths := make([]string, 0, len(spec.Effective.BreakGlassFilesystem))
 	for _, grant := range spec.Effective.BreakGlassFilesystem {
 		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
-	return phase0WriteDirs, breakGlassPaths, plan, nil
+	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
+		spec.Contract.PrivateWriteDirs,
+	)
+	if err != nil {
+		return nil, nil, nil, sandboxpolicy.MountPlan{}, err
+	}
+	return phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, nil
 }
 
 // PrepareTclaudeLayerHarnessState materializes only the harness-owned state
@@ -477,6 +602,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 func bwrapArgs(
 	phase0WriteDirs, breakGlassPaths []string,
 	plan sandboxpolicy.MountPlan,
+	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) ([]string, error) {
 	var hideRemounts tclaudeLayerHideRemounts
 	args := []string{
@@ -659,6 +785,15 @@ func bwrapArgs(
 		default:
 			return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}
+	}
+	// The attachment parent is daemon-owned shared state. Hide it after all
+	// policy and break-glass mounts, then reopen only this session's direct
+	// child. The parent's read-only remount is non-recursive, so the child
+	// remains writable while sibling names stay absent.
+	for _, privateDir := range privateWriteDirs {
+		args = hideRemounts.appendHide(args, privateDir.Parent)
+		args = append(args, "--bind", privateDir.Current, privateDir.Current)
+		hideRemounts.noteReplacement(privateDir.Current)
 	}
 	// Class 4: host tmux control is never profile- or break-glass-reachable.
 	// This hide must be last: unlike ProtectedPaths, an ordinary profile may
@@ -1130,10 +1265,11 @@ func bwrapBindSourceExists(path string) (bool, error) {
 func bwrapCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan)
+	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan, privateWriteDirs...)
 	if err != nil {
 		return "", err
 	}

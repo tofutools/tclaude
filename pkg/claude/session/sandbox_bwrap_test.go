@@ -187,6 +187,62 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 	assert.Less(t, parentRemount, finalHide)
 }
 
+func TestBwrapArgsPrivateWriteDirOverridesPolicyButPrecedesHostControl(t *testing.T) {
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	parent := filepath.Join(t.TempDir(), "spawn-attachments")
+	current := filepath.Join(parent, "current-session")
+	require.NoError(t, os.MkdirAll(current, 0o700))
+
+	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+		Entries: []sandboxpolicy.MountEntry{{
+			Path: parent,
+			Mode: sandboxpolicy.MountRW,
+		}},
+	}, TclaudeLayerPrivateWriteDir{Parent: parent, Current: current})
+	require.NoError(t, err)
+
+	policyGrant := indexOfBwrapTriplet(got, "--bind", parent)
+	privateHide := indexOfBwrapTriplet(got, "--tmpfs", parent)
+	currentReopen := indexOfBwrapTriplet(got, "--bind", current)
+	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", parent)
+	tmuxHide := indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t))
+	require.NotEqual(t, -1, policyGrant)
+	require.NotEqual(t, -1, privateHide)
+	require.NotEqual(t, -1, currentReopen)
+	require.NotEqual(t, -1, parentRemount)
+	require.NotEqual(t, -1, tmuxHide)
+	assert.Less(t, policyGrant, privateHide,
+		"private sibling concealment must beat ordinary policy and break-glass replay")
+	assert.Less(t, privateHide, currentReopen)
+	assert.Less(t, currentReopen, parentRemount)
+	assert.Less(t, parentRemount, tmuxHide,
+		"host tmux control remains the final unshadowable phase")
+}
+
+func TestCleanTclaudeLayerPrivateWriteDirsRequiresExistingDirectChild(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "private")
+	current := filepath.Join(parent, "current")
+	require.NoError(t, os.MkdirAll(current, 0o700))
+	got, err := cleanTclaudeLayerPrivateWriteDirs([]TclaudeLayerPrivateWriteDir{{
+		Parent: parent, Current: current,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []TclaudeLayerPrivateWriteDir{{Parent: parent, Current: current}}, got)
+
+	symlinkCurrent := filepath.Join(parent, "symlink-current")
+	require.NoError(t, os.Symlink(current, symlinkCurrent))
+	for _, invalid := range []TclaudeLayerPrivateWriteDir{
+		{Parent: parent, Current: filepath.Join(parent, "nested", "current")},
+		{Parent: parent, Current: filepath.Dir(parent)},
+		{Parent: "relative", Current: current},
+		{Parent: parent, Current: filepath.Join(parent, "missing")},
+		{Parent: parent, Current: symlinkCurrent},
+	} {
+		_, err := cleanTclaudeLayerPrivateWriteDirs([]TclaudeLayerPrivateWriteDir{invalid})
+		require.Error(t, err, invalid)
+	}
+}
+
 func TestBwrapArgsDeferredRemountTracksTopmostExactMount(t *testing.T) {
 	path := t.TempDir()
 	for _, tc := range []struct {
@@ -860,7 +916,7 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
-	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
+	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")

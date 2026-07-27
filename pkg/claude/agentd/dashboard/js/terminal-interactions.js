@@ -225,14 +225,15 @@ function clipboardImages(e) {
   return { files, unsupported };
 }
 
-async function uploadImages(files, signal) {
+async function uploadImages(files, signal, terminalPath) {
   const fd = new FormData();
   const stamp = Date.now();
   files.forEach((file, i) => {
     const ext = IMAGE_TYPES.get(file.type);
     fd.append('file', file, `pasted-image-${stamp}-${i + 1}.${ext}`);
   });
-  const res = await fetch('/api/terminal-attachments', {
+  const endpoint = `/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`;
+  const res = await fetch(endpoint, {
     method: 'POST', credentials: 'same-origin', body: fd, signal,
   });
   if (!res.ok) throw new Error((await res.text().catch(() => '')) || `HTTP ${res.status}`);
@@ -244,6 +245,7 @@ async function uploadImages(files, signal) {
 // disposer for DOM listeners; xterm-owned handlers/addons die with term.dispose.
 export function attachTerminalInteractions({
   term, host, copyButton, setStatus, baseStatus = () => '',
+  terminalPath,
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
 }) {
@@ -467,7 +469,7 @@ export function attachTerminalInteractions({
     uploadController = controller;
     flash(files.length === 1 ? 'uploading image…' : `uploading ${files.length} images…`, 30000);
     try {
-      const paths = await uploadImages(files, controller.signal);
+      const paths = await uploadImages(files, controller.signal, terminalPath);
       // The fallback modal reuses one xterm across sessions. close/reopen calls
       // invalidate(), so a slow upload from the old session can never paste its
       // path through the replacement session's WebSocket.

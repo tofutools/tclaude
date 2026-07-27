@@ -44,6 +44,8 @@ const (
 	smokeLoopbackAddrEnv       = "TCLAUDE_SANDBOX_V2_LOOPBACK_ADDR"
 	smokeTclaudeBinaryEnv      = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	smokeResizeReporterEnv     = "TCLAUDE_SANDBOX_V2_RESIZE_REPORTER"
+	smokePrivateOwnFileEnv     = "TCLAUDE_SANDBOX_V2_PRIVATE_OWN_FILE"
+	smokePrivateSiblingDirEnv  = "TCLAUDE_SANDBOX_V2_PRIVATE_SIBLING_DIR"
 )
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
@@ -72,12 +74,22 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	protectedDir := filepath.Join(smokeHome, ".tclaude", "data")
 	protectedFile := filepath.Join(protectedDir, "private")
 	tmuxBase := filepath.Join(root, "tmux-base")
+	privateParent := filepath.Join(root, "spawn-attachments")
+	privateOwn := filepath.Join(privateParent, "own-session")
+	privateSibling := filepath.Join(privateParent, "sibling-session")
 	for _, dir := range []string{
 		allowed, outside, realTools, filepath.Join(smokeHome, ".tclaude", "api"), protectedDir, tmuxBase,
-		filepath.Join(smokeHome, ".claude", "sessions"),
+		filepath.Join(smokeHome, ".claude", "sessions"), privateOwn, privateSibling,
 	} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
+	privateOwnFile := filepath.Join(privateOwn, "pasted-image.png")
+	require.NoError(t, os.WriteFile(privateOwnFile, []byte("own-session-image"), 0o600))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(privateSibling, "sibling-secret.png"),
+		[]byte("sibling-session-image"),
+		0o600,
+	))
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	tclaudeBinary := strings.TrimSpace(os.Getenv(smokeTclaudeBinaryEnv))
@@ -174,9 +186,11 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			)
 		})
 	}
-	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, false, allowed, outside,
+	privateWriteDir := TclaudeLayerPrivateWriteDir{Parent: privateParent, Current: privateOwn}
+	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, privateWriteDir, false, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
-		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary)
+		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
+		privateOwnFile, privateSibling)
 
 	breakGlassEffective := effective
 	breakGlassEffective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
@@ -184,9 +198,10 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	}}
 	breakGlassPlan, err := sandboxpolicy.RenderMountPlan(breakGlassEffective)
 	require.NoError(t, err)
-	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, breakGlassPlan, true, allowed, outside,
+	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, breakGlassPlan, privateWriteDir, true, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
-		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary)
+		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
+		privateOwnFile, privateSibling)
 }
 
 func runTclaudeLayerSmokeHelper(
@@ -194,16 +209,17 @@ func runTclaudeLayerSmokeHelper(
 	binary, helperBinary string,
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
+	privateWriteDir TclaudeLayerPrivateWriteDir,
 	protectedReadable bool,
 	allowed, outside, aliasFile, protectedFile, tmuxSocket, runtimeSocket,
-	hostPID, hostLoopbackAddr, tclaudeBinary string,
+	hostPID, hostLoopbackAddr, tclaudeBinary, privateOwnFile, privateSiblingDir string,
 ) {
 	t.Helper()
 	var breakGlassPaths []string
 	if protectedReadable {
 		breakGlassPaths = []string{filepath.Dir(protectedFile)}
 	}
-	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan)
+	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan, privateWriteDir)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -221,6 +237,8 @@ func runTclaudeLayerSmokeHelper(
 		smokeHostPIDEnv+"="+hostPID,
 		smokeLoopbackAddrEnv+"="+hostLoopbackAddr,
 		smokeTclaudeBinaryEnv+"="+tclaudeBinary,
+		smokePrivateOwnFileEnv+"="+privateOwnFile,
+		smokePrivateSiblingDirEnv+"="+privateSiblingDir,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -360,14 +378,23 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	hostPID := os.Getenv(smokeHostPIDEnv)
 	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
 	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
+	privateOwnFile := os.Getenv(smokePrivateOwnFileEnv)
+	privateSiblingDir := os.Getenv(smokePrivateSiblingDirEnv)
 
+	privateImage, err := os.ReadFile(privateOwnFile)
+	require.NoError(t, err, "the current session's private attachment must be readable")
+	assert.Equal(t, "own-session-image", string(privateImage))
+	_, err = os.Stat(privateSiblingDir)
+	require.Error(t, err, "a sibling session's private subtree must be absent")
+	assert.True(t, errors.Is(err, syscall.ENOENT),
+		"sibling private subtree must fail with ENOENT, got %v", err)
 	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600),
 		"a writable child reopen inside an ordinary hide must stay writable")
 	if err := os.WriteFile(filepath.Join(outside, "blocked"), []byte("no"), 0o600); err == nil {
 		t.Fatal("write outside the allowed root unexpectedly succeeded")
 	}
 	deniedRootWrite := filepath.Join(filepath.Dir(outside), "blocked-at-denied-root")
-	err := os.WriteFile(deniedRootWrite, []byte("must-fail"), 0o600)
+	err = os.WriteFile(deniedRootWrite, []byte("must-fail"), 0o600)
 	require.Error(t, err, "the topmost denied-root tmpfs must reject writes")
 	assert.True(t, errors.Is(err, syscall.EROFS),
 		"denied-root tmpfs write must fail with EROFS, got %v", err)

@@ -5,13 +5,20 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // Spawn-attachment upload — the dashboard's "📎 Attach files" + paste-a-
@@ -55,6 +62,39 @@ var spawnAttachmentsBase = filepath.Join(os.TempDir(), "tclaude-spawn-attachment
 
 func spawnAttachmentsBaseDir() string { return spawnAttachmentsBase }
 
+var daemonStagedAttachments = struct {
+	sync.RWMutex
+	paths map[string]os.FileInfo
+}{paths: make(map[string]os.FileInfo)}
+
+func registerDaemonStagedAttachment(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	daemonStagedAttachments.Lock()
+	daemonStagedAttachments.paths[path] = info
+	daemonStagedAttachments.Unlock()
+}
+
+func daemonStagedAttachmentIdentity(path string) (os.FileInfo, bool) {
+	daemonStagedAttachments.RLock()
+	info, issued := daemonStagedAttachments.paths[path]
+	daemonStagedAttachments.RUnlock()
+	return info, issued
+}
+
+func forgetDaemonStagedBatch(dir string) {
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	daemonStagedAttachments.Lock()
+	for path := range daemonStagedAttachments.paths {
+		if strings.HasPrefix(path, prefix) {
+			delete(daemonStagedAttachments.paths, path)
+		}
+	}
+	daemonStagedAttachments.Unlock()
+}
+
 // spawnAttachmentFile is one stored upload in the JSON response.
 type spawnAttachmentFile struct {
 	Name string `json:"name"`
@@ -73,10 +113,7 @@ type spawnAttachmentsResponse struct {
 
 func registerDashboardSpawnAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-attachments", handleDashboardSpawnAttachments)
-	// Web terminals use the same authenticated, bounded temporary-file path.
-	// Keep a purpose-specific route so neither client depends on another UI's
-	// endpoint name; the storage and hygiene contract intentionally stays shared.
-	mux.HandleFunc("/api/terminal-attachments", handleDashboardSpawnAttachments)
+	mux.HandleFunc("/api/terminal-attachments", handleDashboardTerminalAttachments)
 }
 
 // handleDashboardSpawnAttachments receives a multipart/form-data POST whose
@@ -96,8 +133,128 @@ func handleDashboardSpawnAttachments(w http.ResponseWriter, r *http.Request) {
 
 	// Best-effort hygiene: drop batches from earlier spawns before adding a new
 	// one. A failure here is non-fatal — the OS reclaims the temp dir anyway.
-	sweepStaleSpawnAttachmentBatches()
+	sweepStaleAttachmentBatches(spawnAttachmentsBaseDir())
+	sweepStalePrivateAttachmentRoots()
+	storeDashboardAttachments(w, r, spawnAttachmentsBaseDir(), true)
+}
 
+func handleDashboardTerminalAttachments(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	base, createBase, status, err := terminalAttachmentBase(
+		r.URL.Query().Get("terminal"),
+		session.IsTmuxSessionAlive,
+	)
+	if err != nil {
+		writeError(w, status, "terminal", err.Error())
+		return
+	}
+	if !createBase {
+		info, statErr := os.Stat(base)
+		if statErr != nil || !info.IsDir() {
+			writeError(w, http.StatusConflict, "terminal",
+				"live tclaude-layer attachment root is unavailable")
+			return
+		}
+	}
+	sweepStalePrivateAttachmentRoots()
+	sweepStaleAttachmentBatches(base)
+	storeDashboardAttachments(w, r, base, createBase)
+}
+
+func terminalAttachmentBase(
+	rawTerminalPath string,
+	isTmuxSessionAlive func(string) bool,
+) (string, bool, int, error) {
+	rawTerminalPath = strings.TrimSpace(rawTerminalPath)
+	if rawTerminalPath == "" {
+		return "", false, http.StatusBadRequest, fmt.Errorf("terminal path is required")
+	}
+	terminalURL, err := url.ParseRequestURI(rawTerminalPath)
+	if err != nil || terminalURL.IsAbs() || terminalURL.Host != "" ||
+		terminalURL.Fragment != "" || !strings.HasPrefix(terminalURL.Path, "/api/") {
+		return "", false, http.StatusBadRequest, fmt.Errorf("invalid same-origin terminal path")
+	}
+	path := terminalURL.Path
+	switch {
+	case strings.HasPrefix(path, "/api/term-ws/"),
+		strings.HasPrefix(path, "/api/group-term-ws/"):
+		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
+	}
+
+	var sess *db.SessionRow
+	switch {
+	case strings.HasPrefix(path, "/api/open-window-ws/"):
+		selector, unescapeErr := url.PathUnescape(strings.TrimPrefix(path, "/api/open-window-ws/"))
+		if unescapeErr != nil || selector == "" || strings.Contains(selector, "/") {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid agent terminal path")
+		}
+		resolved, _, resolveErr := agent.ResolveSelectorCached(selector)
+		if resolveErr != nil {
+			return "", false, http.StatusNotFound, fmt.Errorf("terminal agent is unavailable")
+		}
+		candidates, findErr := db.FindSessionsByConvID(resolved.ConvID)
+		if findErr == nil {
+			for _, candidate := range candidates {
+				if candidate.TmuxSession != "" && isTmuxSessionAlive(candidate.TmuxSession) {
+					sess = candidate
+					break
+				}
+			}
+		}
+	case strings.HasPrefix(path, "/api/spawn-focus-ws/"):
+		label, unescapeErr := url.PathUnescape(strings.TrimPrefix(path, "/api/spawn-focus-ws/"))
+		if unescapeErr != nil || label == "" || strings.Contains(label, "/") {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid spawn terminal path")
+		}
+		sess, err = db.LoadSession(label)
+		if err != nil {
+			sess = nil
+		}
+		if sess != nil && (sess.TmuxSession == "" || !isTmuxSessionAlive(sess.TmuxSession)) {
+			sess = nil
+		}
+	default:
+		return "", false, http.StatusBadRequest, fmt.Errorf("unknown terminal path")
+	}
+	if sess == nil {
+		return "", false, http.StatusNotFound, fmt.Errorf("terminal session is not live")
+	}
+	implementation, normalizeErr := sandboxpolicy.NormalizeImplementation(
+		sess.SandboxImplementation,
+	)
+	if normalizeErr != nil {
+		return "", false, http.StatusConflict, fmt.Errorf(
+			"terminal session has unknown sandbox implementation %q",
+			sess.SandboxImplementation,
+		)
+	}
+	switch implementation {
+	case sandboxpolicy.ImplementationHarnessBuiltin:
+		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
+	case sandboxpolicy.ImplementationTclaudeLayer:
+		privateRoot := tclcommon.SpawnAttachmentsPrivateDir(sess.ID)
+		if !filepath.IsAbs(privateRoot) {
+			return "", false, http.StatusConflict, fmt.Errorf(
+				"terminal session private attachment root is unavailable",
+			)
+		}
+		return privateRoot, false, http.StatusOK, nil
+	}
+	return "", false, http.StatusConflict, fmt.Errorf("terminal session sandbox is unavailable")
+}
+
+func storeDashboardAttachments(
+	w http.ResponseWriter,
+	r *http.Request,
+	base string,
+	createBase bool,
+) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "multipart",
@@ -106,8 +263,13 @@ func handleDashboardSpawnAttachments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := convops.GenerateUUID()
-	dir := filepath.Join(spawnAttachmentsBaseDir(), token)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir := filepath.Join(base, token)
+	if createBase {
+		err = os.MkdirAll(dir, 0o700)
+	} else {
+		err = os.Mkdir(dir, 0o700)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"failed to create attachment dir: "+err.Error())
 		return
@@ -162,6 +324,11 @@ func handleDashboardSpawnAttachments(w http.ResponseWriter, r *http.Request) {
 		cleanup()
 		writeError(w, http.StatusBadRequest, "empty", "no files in the upload")
 		return
+	}
+	if filepath.Clean(base) == filepath.Clean(spawnAttachmentsBaseDir()) {
+		for _, file := range files {
+			registerDaemonStagedAttachment(file.Path)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, spawnAttachmentsResponse{Token: token, Dir: dir, Files: files})
@@ -265,7 +432,10 @@ func uniqueAttachmentName(name string, used map[string]bool) string {
 // than spawnAttachmentBatchTTL. Best-effort: every error is logged at debug and
 // swallowed — a leaked temp dir is harmless and the OS reclaims it eventually.
 func sweepStaleSpawnAttachmentBatches() {
-	base := spawnAttachmentsBaseDir()
+	sweepStaleAttachmentBatches(spawnAttachmentsBaseDir())
+}
+
+func sweepStaleAttachmentBatches(base string) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return // base doesn't exist yet, or is unreadable — nothing to sweep
@@ -282,6 +452,8 @@ func sweepStaleSpawnAttachmentBatches() {
 		if rerr := os.RemoveAll(filepath.Join(base, e.Name())); rerr != nil {
 			slog.Debug("spawn-attachments: failed to sweep stale batch",
 				"dir", e.Name(), "error", rerr)
+		} else if filepath.Clean(base) == filepath.Clean(spawnAttachmentsBaseDir()) {
+			forgetDaemonStagedBatch(filepath.Join(base, e.Name()))
 		}
 	}
 }

@@ -358,6 +358,51 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 	)
 }
 
+func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {
+	const (
+		parent  = "/Users/dev/Library/Caches/tclaude/spawn-attachments"
+		current = parent + "/current-session"
+	)
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		TclaudeLayerPrivateWriteDir{Parent: parent, Current: current},
+	)
+	require.NoError(t, err)
+
+	parentParam := ""
+	currentParam := ""
+	for _, param := range params {
+		switch {
+		case param.path == parent && strings.HasPrefix(param.name, "READ_DENY_"):
+			parentParam = param.name
+		case param.path == current && strings.Contains(param.name, "READ_DENY_"):
+			currentParam = param.name
+		}
+	}
+	require.NotEmpty(t, parentParam, "the shared parent must emit a read hide")
+	require.Equal(t, parentParam+"_REOPEN_0", currentParam,
+		"the current session child must be the hide's exact carveout")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-any (literal (param "`+parentParam+`")) (subpath (param "`+parentParam+`")))`,
+	), "file-read and remote-unix denies must use the identical parent parameter")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (literal (param "`+currentParam+`")))`,
+	), "file-read and remote-unix denies must use the identical child exception")
+	assert.Equal(t, 2, strings.Count(
+		profile,
+		`(require-not (subpath (param "`+currentParam+`")))`,
+	))
+}
+
 func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
 	const tmuxDir = "/private/tmp/tmux-501"
 	profile, params, err := renderSeatbeltProfile(
