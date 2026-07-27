@@ -137,7 +137,7 @@ test('a likely AppArmor nested-bwrap block warns and links the guide', async (t)
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = {
     harnesses,
-    sandboxImpl: { ...sandboxImpl, stacked_apparmor_userns_likely: true },
+    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
   };
   const view = model.spawnCapabilityView({ harness: 'claude' }, context);
 
@@ -173,6 +173,40 @@ test('a likely AppArmor nested-bwrap block warns and links the guide', async (t)
   assert.equal(plain.doc, undefined);
 });
 
+// The hint is only useful if the link actually reaches the DOM. Both the spawn
+// dialog and the profile editor render this component, so one test covers the
+// surfacing for both — and would catch a call site that went back to
+// interpolating plain text and silently dropped the link.
+test('the rendered hint carries its documentation link', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { SandboxImplHint } = await harness.importDashboardModule('js/sandbox-impl-hint.js');
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const view = model.spawnCapabilityView({ harness: 'claude' }, {
+    harnesses,
+    sandboxImpl: { ...sandboxImpl, stacked_apparmor_nested_bwrap_likely: true },
+  });
+  const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
+
+  const rendered = await harness.mount(
+    harness.html`<${SandboxImplHint} hint=${hint} id="hint" />`,
+  );
+  const node = rendered.container.querySelector('#hint');
+  assert.ok(node.classList.contains('warn'), 'a warning hint keeps its warn styling');
+  assert.match(node.textContent, /likely blocked on this host/);
+  const link = node.querySelector('a');
+  assert.equal(link.getAttribute('href'), model.SANDBOX_APPARMOR_DOC.href);
+  assert.equal(link.getAttribute('rel'), 'noopener');
+  assert.equal(link.getAttribute('target'), '_blank');
+  assert.equal(link.textContent, model.SANDBOX_APPARMOR_DOC.label);
+
+  // A hint without a doc renders no anchor at all, and no hint renders nothing.
+  const plain = await harness.mount(harness.html`<${SandboxImplHint}
+    hint=${{ warn: false, text: 'Experimental.' }} id="plain" />`);
+  assert.equal(plain.container.querySelector('#plain a'), null);
+  const absent = await harness.mount(harness.html`<${SandboxImplHint} hint=${null} />`);
+  assert.equal(absent.container.textContent, '');
+});
+
 test('the AppArmor link rides along with an already-unavailable stacked reason', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
@@ -180,7 +214,7 @@ test('the AppArmor link rides along with an already-unavailable stacked reason',
     harnesses,
     sandboxImpl: {
       ...sandboxImpl,
-      stacked_apparmor_userns_likely: true,
+      stacked_apparmor_nested_bwrap_likely: true,
       stacked: { ...sandboxImpl.stacked, claude: { available: false, unavailable_reason: 'claude is not on PATH' } },
     },
   };

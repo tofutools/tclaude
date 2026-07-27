@@ -10,19 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The likely-cause pointer is a disclosure, so it may only appear when BOTH
-// halves agree: the probe's own output says the inner namespace could not be
-// created, and the host still carries the enforcing policy. Either half alone
-// would be tclaude guessing at the operator's failure.
-func TestStackedAppArmorLikelyCauseNeedsBothHalves(t *testing.T) {
-	t.Run("both halves", func(t *testing.T) {
+// The likely-cause pointer is a disclosure, so it may only appear when ALL
+// THREE conditions agree: the probe's own output says a bwrap namespace could
+// not be created, the bwrap in play is the one Ubuntu's policy profiles, and
+// the host still carries that policy enforcing. Any one alone would be tclaude
+// guessing at the operator's failure.
+func TestStackedAppArmorLikelyCauseNeedsEveryCondition(t *testing.T) {
+	const namespaceFailure = "bwrap: No permissions to create a new namespace, " +
+		"likely because the kernel does not allow non-privileged user namespaces"
+
+	t.Run("every condition", func(t *testing.T) {
 		t.Cleanup(setLikelyAppArmorNestedBwrapForTest(true))
-		hint := stackedAppArmorLikelyCause(
-			"bwrap: No permissions to create a new namespace, likely because " +
-				"the kernel does not allow non-privileged user namespaces")
+		hint := stackedAppArmorLikelyCause(namespaceFailure, appArmorProfiledBwrapPath)
 		require.NotEmpty(t, hint)
 		assert.Contains(t, hint, "likely cause")
 		assert.Contains(t, hint, "bwrap-userns-restrict")
+		assert.NotContains(t, hint, "nested bwrap cannot",
+			"the probe output cannot tell the outer wall from the inner one, "+
+				"so the hint must not claim to know which failed")
 		assert.True(t, strings.HasSuffix(hint, stackedAppArmorDocURL),
 			"the line must end with the docs URL so the operator can follow it, got %q", hint)
 		assert.Contains(t, stackedAppArmorDocURL,
@@ -31,15 +36,29 @@ func TestStackedAppArmorLikelyCauseNeedsBothHalves(t *testing.T) {
 
 	t.Run("unrelated failure on a restricted host", func(t *testing.T) {
 		t.Cleanup(setLikelyAppArmorNestedBwrapForTest(true))
-		assert.Empty(t, stackedAppArmorLikelyCause("claude: command not found"),
+		assert.Empty(t,
+			stackedAppArmorLikelyCause("claude: command not found", appArmorProfiledBwrapPath),
 			"an unrelated failure must not be blamed on the policy")
 	})
 
 	t.Run("namespace failure on an unrestricted host", func(t *testing.T) {
 		t.Cleanup(setLikelyAppArmorNestedBwrapForTest(false))
 		assert.Empty(t,
-			stackedAppArmorLikelyCause("bwrap: Creating new namespace failed: Operation not permitted"),
+			stackedAppArmorLikelyCause(
+				"bwrap: Creating new namespace failed: Operation not permitted",
+				appArmorProfiledBwrapPath),
 			"a host without the enforcing policy must not be told it has one")
+	})
+
+	// The policy attaches by path. A bwrap from nix, /usr/local, or a local
+	// build is unconfined by it and fails for a different reason, which the
+	// published workaround would not fix.
+	t.Run("a bwrap the policy does not profile", func(t *testing.T) {
+		t.Cleanup(setLikelyAppArmorNestedBwrapForTest(true))
+		for _, path := range []string{"/usr/local/bin/bwrap", "/nix/store/abc-bubblewrap/bin/bwrap", ""} {
+			assert.Emptyf(t, stackedAppArmorLikelyCause(namespaceFailure, path),
+				"bwrap at %q is outside the profile's attachment path", path)
+		}
 	})
 }
 
@@ -51,7 +70,7 @@ func TestStackedAppArmorLikelyCauseKeepsRefusalShape(t *testing.T) {
 		"bwrap: setting up uid map: Permission denied"
 	err := stackedSandboxRefusal(
 		"stacked_claude_inner_policy",
-		detail+stackedAppArmorLikelyCause(detail),
+		detail+stackedAppArmorLikelyCause(detail, appArmorProfiledBwrapPath),
 	)
 	assert.Contains(t, err.Error(),
 		"stacked requested — refused: missing capability stacked_claude_inner_policy: ")
@@ -81,7 +100,7 @@ func TestStackedAppArmorDocAnchorResolves(t *testing.T) {
 	require.NoError(t, err, "the refusal points at %s", path)
 
 	var found bool
-	for _, line := range strings.Split(string(doc), "\n") {
+	for line := range strings.SplitSeq(string(doc), "\n") {
 		heading, isHeading := strings.CutPrefix(line, "### ")
 		if !isHeading {
 			continue

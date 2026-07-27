@@ -263,8 +263,9 @@ On a stock Ubuntu 24.04 or newer host, `--sandbox-impl stacked` refuses at
 launch even though everything it needs looks installed. This is the host, not a
 broken install, and the refusal is the correct outcome.
 
-**Symptom.** The launch ends with the named capability refusal —
-`stacked_claude_inner_policy` for Claude Code, `stacked_codex_bwrap_backend`
+**Symptom.** The launch ends with a named capability refusal —
+`stacked_claude_inner_policy` or `stacked_claude_srt_probe` for Claude Code
+(which one depends on how far the inner harness got), `stacked_codex_bwrap_backend`
 for Codex — and the detail carries an inner `bwrap` complaint along the lines
 of *No permissions to create a new namespace*. Ordinary single-layer
 `tclaude-layer` on the same host works fine: the outer wall is not the problem.
@@ -273,12 +274,13 @@ of *No permissions to create a new namespace*. Ordinary single-layer
 `/etc/apparmor.d/bwrap-userns-restrict`, whose whole purpose is to let `bwrap`
 create a user namespace while denying capabilities to what runs inside it. The
 outer bwrap is permitted; its children are pivoted into the policy's
-`unpriv_bwrap` child profile, which denies `capability sys_admin`. The inner
-bwrap needs `CAP_SYS_ADMIN` *within the user namespace it just created* —
-normally free, because it owns that namespace — but AppArmor's `capable` check
-applies to the profile regardless of namespace ownership. So the second wall
-can never be built while that policy is enforcing. The kernel audit line is the
-proof:
+`unpriv_bwrap` child profile, whose rule is `audit deny capability,` — all
+capabilities, not one. The inner bwrap needs `CAP_SYS_ADMIN` *within the user
+namespace it just created* — normally free, because it owns that namespace —
+but AppArmor's `capable` check applies to the profile regardless of namespace
+ownership. So the second wall can never be built while that policy is
+enforcing. The kernel audit line, which names whichever capability was asked
+for first, is the proof:
 
 ```text
 apparmor="DENIED" operation="capable" class="cap" profile="unpriv_bwrap" comm="bwrap" capname="sys_admin"
@@ -298,6 +300,7 @@ it, this is almost certainly what you are hitting:
 ls -l /etc/apparmor.d/bwrap-userns-restrict   # present on stock Ubuntu 24.04+
 ls -l /etc/apparmor.d/disable/                # an entry here means it is unloaded
 ls -l /etc/apparmor.d/force-complain/         # an entry here means it only logs
+grep -n 'flags=(' /etc/apparmor.d/bwrap-userns-restrict   # `complain` here means the same
 ```
 
 Confirm it, with root, from the audit log and the loaded-profile list:
@@ -307,8 +310,13 @@ sudo dmesg | grep -F 'profile="unpriv_bwrap"'
 sudo aa-status | grep -F bwrap
 ```
 
-**Workaround, and what it costs.** Both halves are required; either one alone
-leaves stacked refusing. Persist the sysctl and unload the policy:
+**Workaround, and what it costs.** Both halves are required, and the reason is
+worth understanding before you run them: the policy is also what *grants*
+`/usr/bin/bwrap` its `userns` permission. Unload it and bwrap becomes
+unconfined — at which point the global unprivileged-userns restriction, which
+the profile had been standing in front of, applies to it. So unloading alone
+breaks the outer wall too, and the sysctl alone leaves the child-profile deny
+in place. Persist the sysctl and unload the policy:
 
 ```bash
 echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \

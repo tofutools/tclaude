@@ -15,6 +15,7 @@ import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './manageme
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
+import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   autoCompactWindowHintFor, sandboxModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplClearedNoticeFor,
@@ -256,6 +257,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       sandboxImplHarness: hEntry?.name || '',
       sandboxImplCanStacked: !!hEntry?.can_stacked,
       sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},
+      // A profile may legitimately pin stacked for a DIFFERENT machine — that
+      // is the whole reason this editor discloses instead of refusing — so the
+      // AppArmor answer is passed as what it is: a fact about the host running
+      // this dashboard. The hint copy says "on this host" for the same reason.
+      sandboxImplStackedAppArmorLikely: !!sandboxImpl?.stacked_apparmor_nested_bwrap_likely,
       sandboxImplHostAvailable: hEntry?.tclaude_layer_server_boundary
         ? sandboxImpl?.server_host_available !== false
         : sandboxImpl?.host_available !== false,
@@ -285,8 +291,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   }))}
           options=${[['', 'Unset (inherit at spawn)'],
     ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
-        ${sandboxImplHint && html`<div
-          class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>`}
+        <${SandboxImplHint} hint=${sandboxImplHint} />
       </div>
     </${Row}>`}
     ${profile && sandboxImplCleared && html`<div class="cron-create-row"

@@ -71,4 +71,33 @@ func TestLikelyAppArmorNestedBwrapBlockHostShapes(t *testing.T) {
 		require.NoError(t, os.Symlink(policy, complain))
 		assert.False(t, likelyAppArmorNestedBwrapBlock(enabled, policy, disabled, complain))
 	})
+
+	// The temporary form the guide publishes is `aa-complain`, which edits the
+	// flag list in the profile itself rather than dropping a symlink. A
+	// stat-only heuristic would keep warning at an operator who had already
+	// done exactly what it told them to do.
+	t.Run("operator ran aa-complain", func(t *testing.T) {
+		enabled, policy, disabled, complain := shape(t)
+		require.NoError(t, os.WriteFile(policy, []byte(
+			"profile bwrap /usr/bin/bwrap flags=(attach_disconnected,mediate_deleted,complain) {\n}\n",
+		), 0o600))
+		assert.False(t, likelyAppArmorNestedBwrapBlock(enabled, policy, disabled, complain))
+	})
+}
+
+func TestAppArmorProfileInComplainMode(t *testing.T) {
+	assert.True(t, appArmorProfileInComplainMode("profile bwrap flags=(complain) {\n}\n"))
+	assert.True(t, appArmorProfileInComplainMode(
+		"profile bwrap flags=(attach_disconnected, complain, mediate_deleted) {\n}\n"))
+	assert.True(t, appArmorProfileInComplainMode(
+		"profile bwrap flags=(attach_disconnected) {\n}\nprofile unpriv_bwrap flags=(complain) {\n}\n"),
+		"a later profile in the same file still counts")
+
+	assert.False(t, appArmorProfileInComplainMode(
+		"profile bwrap flags=(attach_disconnected,mediate_deleted) {\n}\n"))
+	assert.False(t, appArmorProfileInComplainMode(
+		"# complain mode is not set here\nprofile bwrap {\n}\n"),
+		"the word alone, outside a flag list, is not the flag")
+	assert.False(t, appArmorProfileInComplainMode("profile bwrap flags=(complain\n"),
+		"an unterminated flag list is not a claim either way")
 }

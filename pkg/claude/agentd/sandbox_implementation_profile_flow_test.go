@@ -234,7 +234,7 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		catalog := snapshotSandboxImpl(t, f)
 		assert.Equal(t, true, catalog["host_available"],
 			"the heuristic must not be confused with an unavailable host")
-		assert.Equal(t, true, catalog["stacked_apparmor_userns_likely"])
+		assert.Equal(t, true, catalog["stacked_apparmor_nested_bwrap_likely"])
 	})
 
 	t.Run("no AppArmor claim on a host without the policy", func(t *testing.T) {
@@ -243,7 +243,7 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		t.Cleanup(agentd.SetStackedAppArmorLikelyForTest(false))
 
 		catalog := snapshotSandboxImpl(t, f)
-		_, present := catalog["stacked_apparmor_userns_likely"]
+		_, present := catalog["stacked_apparmor_nested_bwrap_likely"]
 		assert.False(t, present, "silence, rather than a false claim, is the default")
 	})
 

@@ -203,7 +203,7 @@ function sandboxImplView(harness, context) {
     sandboxImplHarness: text(harness?.name),
     sandboxImplCanStacked: !!harness?.can_stacked,
     sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
-    sandboxImplStackedAppArmorLikely: !!catalog.stacked_apparmor_userns_likely,
+    sandboxImplStackedAppArmorLikely: !!catalog.stacked_apparmor_nested_bwrap_likely,
     sandboxImplHostAvailable: serverBoundary
       ? catalog.server_host_available !== false
       : catalog.host_available !== false,

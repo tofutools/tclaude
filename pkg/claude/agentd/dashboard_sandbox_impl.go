@@ -58,7 +58,7 @@ type dashboardSandboxImpl struct {
 	// and reports AVAILABLE on exactly these hosts, because nothing short of
 	// the launch-time round-trip tries the nested wall. Hence "likely": the
 	// dashboard may point at the guide, never decide.
-	StackedAppArmorLikely bool `json:"stacked_apparmor_userns_likely,omitempty"`
+	StackedAppArmorLikely bool `json:"stacked_apparmor_nested_bwrap_likely,omitempty"`
 }
 
 type dashboardStackedAvailability struct {

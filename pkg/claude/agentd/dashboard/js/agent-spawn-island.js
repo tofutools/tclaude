@@ -47,6 +47,7 @@ import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import { HelpField } from './help-field.js';
+import { SandboxImplHint } from './sandbox-impl-hint.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
@@ -921,10 +922,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}${
-  sandboxImplHint.doc && html` <a id="agent-spawn-sandbox-impl-hint-doc"
-    href=${sandboxImplHint.doc.href} target="_blank" rel="noopener"
-    >${sandboxImplHint.doc.label}</a>`}</div>
+          <${SandboxImplHint} hint=${sandboxImplHint} id="agent-spawn-sandbox-impl-hint" />
         </div>
       </div>`}
     ${sandboxImplCleared && html`
