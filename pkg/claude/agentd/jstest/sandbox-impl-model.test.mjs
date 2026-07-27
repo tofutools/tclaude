@@ -12,9 +12,9 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const sandboxImpl = {
   options: [
-    { value: 'harness-builtin', label: 'Harness built-in', descr: 'current behavior' },
+    { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
     { value: 'tclaude-layer', label: 'tclaude layer (experimental)', experimental: true, descr: 'Linux only' },
-    { value: 'stacked', label: 'Stacked: tclaude + harness (experimental)', experimental: true },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
   ],
   default: 'harness-builtin',
   host_available: true,
@@ -100,6 +100,39 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   const opencode = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
   assert.equal(opencode.showSandboxImpl, true);
   assert.equal(opencode.sandboxImplHostAvailable, true);
+});
+
+test('the harness-owned option is named after the actual harness', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+
+  // "Harness built-in" reads as if tclaude were the harness. The option must
+  // name the one the operator picked.
+  const claude = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
+  const builtin = claude.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
+  assert.equal(builtin.label, 'Claude Code built-in');
+  assert.equal(builtin.descr, 'Current behavior: Claude Code owns containment.');
+  assert.equal(
+    claude.sandboxImplOptions.find((o) => o.value === 'stacked').label,
+    'Stacked: tclaude + Claude Code (experimental)',
+  );
+  // Options without the placeholder are passed through untouched.
+  assert.equal(
+    claude.sandboxImplOptions.find((o) => o.value === 'tclaude-layer').label,
+    'tclaude layer (experimental)',
+  );
+
+  const oc = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
+  assert.equal(
+    oc.sandboxImplOptions.find((o) => o.value === 'harness-builtin').label,
+    'OpenCode built-in',
+  );
+
+  // Defensive only: the rows are gated on a selected harness, but a missing
+  // name must still produce a readable, capitalized label.
+  const orphan = model.sandboxImplOptionsFor(sandboxImpl.options, '');
+  assert.equal(orphan[0].label, 'The harness built-in');
+  assert.equal(orphan[0].descr, 'Current behavior: the harness owns containment.');
 });
 
 test('sandbox-implementation hint stays silent for the default and warns honestly', async (t) => {

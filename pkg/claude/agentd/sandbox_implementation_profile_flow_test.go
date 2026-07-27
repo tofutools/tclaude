@@ -256,12 +256,22 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
 		require.Len(t, options, 3)
-		var sawExperimental, sawStacked bool
+		var sawExperimental, sawStacked, sawBuiltin bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
+			if option["value"] == "harness-builtin" {
+				sawBuiltin = true
+				// The renderer fills {harness} with the selected harness's
+				// display name, so the option reads "Claude Code built-in"
+				// rather than a generic "harness" the operator could mistake
+				// for tclaude itself.
+				assert.Equal(t, "{harness} built-in", option["label"])
+				assert.Contains(t, option["descr"], "{harness} owns OS-level containment")
+				continue
+			}
 			if option["value"] == "stacked" {
 				sawStacked = true
-				assert.Equal(t, "Stacked: tclaude + harness (experimental)", option["label"])
+				assert.Equal(t, "Stacked: tclaude + {harness} (experimental)", option["label"])
 				assert.Equal(t, true, option["experimental"])
 				continue
 			}
@@ -277,6 +287,7 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		}
 		assert.True(t, sawExperimental, "the catalog must offer the tclaude layer")
 		assert.True(t, sawStacked, "the catalog must always offer stacked")
+		assert.True(t, sawBuiltin, "the catalog must always offer the harness-owned option")
 	})
 }
 

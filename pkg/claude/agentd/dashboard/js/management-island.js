@@ -18,7 +18,7 @@ import { HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   autoCompactWindowHintFor, sandboxModeHelpForImplementation,
-  sandboxImplHintFor, sandboxImplClearedNoticeFor,
+  sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
 } from './agent-spawn-model.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
@@ -245,7 +245,8 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       autoCompactWindowMax: Number(hEntry?.auto_compact_window_max) || 0,
     },
   );
-  const sandboxImplOptions = Array.isArray(sandboxImpl?.options) ? sandboxImpl.options : [];
+  const harnessLabel = hEntry?.display_name || hEntry?.name || '';
+  const sandboxImplOptions = sandboxImplOptionsFor(sandboxImpl?.options, harnessLabel);
   const sandboxImplCleared = sandboxImplClearedNoticeFor(
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
   );
@@ -254,7 +255,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     {
       showSandboxImpl: !!hEntry,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
-      sandboxImplHarness: hEntry?.name || '',
+      sandboxImplHarness: harnessLabel,
       sandboxImplCanStacked: !!hEntry?.can_stacked,
       sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},
       // A profile may legitimately pin stacked for a DIFFERENT machine — that
