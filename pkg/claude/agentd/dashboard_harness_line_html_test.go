@@ -128,7 +128,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("function sandboxProfileLabel(member)", "the compact tooltip derives applied profile names")
 	must("names.join(' + ')", "multiple profile names retain resolution order")
 	must("function sandboxTooltip(member, badge, actionable, unlocked)", "the compact tooltip has a dedicated formatter")
-	must("`Status: ${badge.danger ? 'OFF' : 'ON'}`", "the first tooltip line is the binary sandbox status")
+	must("`Status: ${badge.status}`", "the first tooltip line is the binary sandbox status")
 	must("`Implementation: ${sandboxImplementationLabel(member)}`", "the second tooltip line names the implementation")
 	must("`Profile: ${sandboxProfileLabel(member)}`", "the third tooltip line names the applied profiles")
 	must("`Click to temporarily ${unlocked ? 're-enable' : 'disable'}`", "clickable badges explain their temporary action")

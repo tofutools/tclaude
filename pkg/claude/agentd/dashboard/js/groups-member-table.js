@@ -162,6 +162,7 @@ export function HarnessLine({ member }) {
 function osSandboxBadge(mode, state, unverified, implementation) {
   if (state === 'on') {
     return {
+      status: 'ON',
       danger: implementation === 'tclaude-layer' || implementation === 'stacked'
         ? false
         : implementation && implementation !== 'harness-builtin'
@@ -169,7 +170,7 @@ function osSandboxBadge(mode, state, unverified, implementation) {
           : unverified,
     };
   }
-  if (mode === 'on' || mode === 'off') return { danger: true };
+  if (mode === 'on' || mode === 'off') return { status: 'OFF', danger: true };
   return null;
 }
 
@@ -187,14 +188,17 @@ function sandboxIndicator(member) {
     const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
-    return { danger: badge.danger, offline, glyph: stacked && !badge.danger ? '🔒²' : '' };
+    return {
+      status: badge.status, danger: badge.danger, offline,
+      glyph: stacked && !badge.danger ? '🔒²' : '',
+    };
   }
   if (!mode || mode === 'inherit') return null;
   // `off` is Claude-only (no other harness offers it) and means the OS sandbox
   // is disabled outright, so it is a danger glyph on a pre-verdict row too —
   // otherwise every legacy `off` agent keeps a padlock it has not earned.
   const danger = mode === 'danger-full-access' || mode === 'off';
-  return { danger, offline };
+  return { status: danger ? 'OFF' : 'ON', danger, offline };
 }
 
 function sandboxImplementationLabel(member) {
@@ -212,7 +216,7 @@ function sandboxProfileLabel(member) {
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
   const lines = [
-    `Status: ${badge.danger ? 'OFF' : 'ON'}`,
+    `Status: ${badge.status}`,
     `Implementation: ${sandboxImplementationLabel(member)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
   ];

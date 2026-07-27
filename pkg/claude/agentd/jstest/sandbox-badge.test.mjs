@@ -55,7 +55,7 @@ const CASES = [
       os_sandbox_unverified: true, sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: ON\nImplementation: CC\nProfile: None',
   },
   {
     name: 'a tclaude outer layer earns a lock',
@@ -84,7 +84,7 @@ const CASES = [
       sandbox_implementation: 'future-layer',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: ON\nImplementation: CC\nProfile: None',
   },
   {
     name: 'an unavailable tclaude layer reports off with its profile',
