@@ -599,6 +599,20 @@ reasons — check both: the `sandbox.filesystem.allowRead` entry for
   This guide closes the *easy* path (direct file edits through ordinary
   agent tooling); it does not turn the guardrail into a boundary.
 
+## Agentd runtime dependency invariant
+
+Agentd-owned production paths do not launch Python, directly or through a
+tclaude-authored shell command. In particular, the stacked Claude capability
+probe uses a Go-native, launch-owned Messages stub and a kernel-sealed copy of
+the running tclaude image for its inner AF_UNIX/seccomp assertion. A host
+without Python therefore has the same agentd startup and launch behavior.
+
+This is a production-ownership boundary, not a ban on Python elsewhere in the
+repository or on the machine. Tests, documentation examples, and CI tooling
+may use it. A human may also put any command they choose in the dashboard's
+human-managed plugin registry or an interactive terminal; those commands are
+operator input, not an agentd runtime dependency.
+
 ## See also
 
 - [Sandboxing](sandboxing.md) — the operator mental model for sandbox profiles:

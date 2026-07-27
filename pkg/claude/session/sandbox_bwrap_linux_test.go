@@ -3,6 +3,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"golang.org/x/sys/unix"
 )
 
@@ -116,6 +118,40 @@ func TestStackedRelayRefusesChangedManifestAuthority(t *testing.T) {
 	require.ErrorContains(t, err, "manifest changed after capability probe")
 }
 
+func TestStackedRelayOmitsConsumedProbeHelperFromFinalClaudeLaunch(t *testing.T) {
+	managed := t.TempDir()
+	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
+	t.Cleanup(restore)
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.DefaultName),
+		harness.NestedSandboxExecutable{
+			Path:    os.Args[0],
+			Version: "test",
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	require.NoError(t, proof.completeProbe())
+	manifest := readStackedBindingManifest(t, proof.ManifestPath)
+	require.Nil(t, manifest.ProbeHelper)
+	data, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	require.Equal(t, proof.ManifestSHA256, stackedBindingDigest(data))
+
+	args, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
+		ManifestPath:   proof.ManifestPath,
+		ManifestSHA256: proof.ManifestSHA256,
+	})
+	require.NoError(t, err)
+	for _, file := range files {
+		_ = file.Close()
+	}
+	joined := strings.Join(args, " ")
+	assert.NotContains(t, joined, probehelper.BoundPath)
+	assert.Contains(t, joined, "--perms 0500 --file 4 "+proof.Executable.Path)
+}
+
 func TestStackedRelayRefusesReadinessInsideConsumedStageRoot(t *testing.T) {
 	proof, err := prepareStackedSandboxProof(
 		harness.MustGet(harness.CodexName),
@@ -179,6 +215,8 @@ func TestStackedRelayCreatesFreshClaudePolicyRootWithoutHostDirectory(t *testing
 		"--tmpfs "+stackedBoundExecutableRoot)
 	assert.Contains(t, joined,
 		"--perms 0500 --file 4 "+proof.Executable.Path)
+	assert.Contains(t, joined,
+		"--perms 0500 --file 5 "+probehelper.BoundPath)
 	assert.Contains(t, joined,
 		"--remount-ro "+stackedBoundExecutableRoot)
 	assert.NotContains(t, joined, "/proc/self/fd/")
