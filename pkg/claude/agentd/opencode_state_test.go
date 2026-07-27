@@ -205,6 +205,10 @@ func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T
 		session.TclaudeLayerReadOnlyBind{Source: config, Target: config})
 	assert.Contains(t, spec.Contract.ReadOnlyBinds,
 		session.TclaudeLayerReadOnlyBind{Source: install, Target: install})
+	raw, err := os.ReadFile(filepath.Join(install, openCodeInstallBootstrapFile))
+	require.NoError(t, err)
+	assert.Equal(t, openCodeInstallGitignore, string(raw),
+		"legacy replay must bootstrap before applying the same read-only install bind")
 }
 
 func TestPrivateOpenCodeCredentialSeedNeverOverwritesAndRefusesSymlink(t *testing.T) {

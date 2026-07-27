@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -246,20 +247,58 @@ func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
 		return
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
 		path := filepath.Join(dir, entry.Name())
-		raw, readErr := os.ReadFile(path)
+		raw, readErr := readOpenCodeLayerSmokeLogTail(path)
 		if readErr != nil {
 			t.Logf("read OpenCode smoke log %s: %v", path, readErr)
 			continue
 		}
-		if len(raw) > 64<<10 {
-			raw = raw[len(raw)-(64<<10):]
-		}
 		t.Logf("OpenCode smoke log %s:\n%s", path, raw)
 	}
+}
+
+func readOpenCodeLayerSmokeLogTail(path string) ([]byte, error) {
+	fd, err := unix.Open(
+		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return nil, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	const limit = int64(64 << 10)
+	if stat.Size > limit {
+		if _, err := file.Seek(stat.Size-limit, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	return io.ReadAll(io.LimitReader(file, limit))
+}
+
+func TestReadOpenCodeLayerSmokeLogTailRefusesSpecialFilesAndBounds(t *testing.T) {
+	dir := t.TempDir()
+	large := filepath.Join(dir, "large.log")
+	require.NoError(t, os.WriteFile(large, []byte(
+		strings.Repeat("a", 64<<10)+strings.Repeat("b", 64<<10)), 0o600))
+	raw, err := readOpenCodeLayerSmokeLogTail(large)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("b", 64<<10), string(raw))
+
+	symlink := filepath.Join(dir, "symlink.log")
+	require.NoError(t, os.Symlink(large, symlink))
+	_, err = readOpenCodeLayerSmokeLogTail(symlink)
+	require.Error(t, err)
+
+	fifo := filepath.Join(dir, "fifo.log")
+	require.NoError(t, unix.Mkfifo(fifo, 0o600))
+	_, err = readOpenCodeLayerSmokeLogTail(fifo)
+	require.ErrorContains(t, err, "not a regular file")
 }
 
 func startOpenCodeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {

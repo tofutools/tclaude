@@ -209,6 +209,11 @@ func openCodeStateLayoutForAllocation(
 				if resolveErr != nil {
 					return nil, fmt.Errorf("resolve shared OpenCode path %q: %w", path, resolveErr)
 				}
+				if path == layout.ambient.install {
+					if err := ensureOpenCodeInstallGitignore(resolved); err != nil {
+						return nil, err
+					}
+				}
 				layout.readOnlyBinds = append(layout.readOnlyBinds,
 					session.TclaudeLayerReadOnlyBind{Source: resolved, Target: resolved})
 			} else if statErr != nil && !os.IsNotExist(statErr) {
