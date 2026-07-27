@@ -362,7 +362,7 @@ func seedOpenCodeCredential(source, destination string) error {
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		if err == unix.EEXIST {
-			return nil
+			return validateExistingOpenCodeCredential(destination)
 		}
 		return fmt.Errorf("create private OpenCode credential %q: %w", destination, err)
 	}
@@ -381,5 +381,23 @@ func seedOpenCodeCredential(source, destination string) error {
 		return fmt.Errorf("sync private OpenCode credential %q: %w", destination, err)
 	}
 	keep = true
+	return nil
+}
+
+func validateExistingOpenCodeCredential(path string) error {
+	fd, err := unix.Open(
+		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("inspect existing private OpenCode credential %q: %w", path, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return fmt.Errorf("inspect existing private OpenCode credential %q: %w", path, err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fmt.Errorf("existing private OpenCode credential %q is not a regular file", path)
+	}
 	return nil
 }

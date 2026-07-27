@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"golang.org/x/sys/unix"
 )
 
 func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
@@ -220,6 +221,22 @@ func TestPrivateOpenCodeCredentialSeedNeverOverwritesAndRefusesSymlink(t *testin
 	require.NoError(t, os.Symlink("real-mcp.json", filepath.Join(sourceDir, "mcp-auth.json")))
 	err = seedOpenCodeCredentials(sourceDir, destinationDir)
 	require.ErrorContains(t, err, "ambient OpenCode credential")
+
+	symlinkDestinationSourceDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(symlinkDestinationSourceDir, "auth.json"), []byte("ambient"), 0o600))
+	symlinkDestinationDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(symlinkDestinationDir, "elsewhere.json"), []byte("elsewhere"), 0o600))
+	require.NoError(t, os.Symlink(
+		"elsewhere.json", filepath.Join(symlinkDestinationDir, "auth.json")))
+	err = seedOpenCodeCredentials(symlinkDestinationSourceDir, symlinkDestinationDir)
+	require.ErrorContains(t, err, "existing private OpenCode credential")
+
+	fifoDestinationDir := t.TempDir()
+	require.NoError(t, unix.Mkfifo(filepath.Join(fifoDestinationDir, "auth.json"), 0o600))
+	err = seedOpenCodeCredentials(symlinkDestinationSourceDir, fifoDestinationDir)
+	require.ErrorContains(t, err, "not a regular file")
 }
 
 func TestOpenCodeServerEnvironmentPinsPrivateXDGAfterProfile(t *testing.T) {

@@ -962,7 +962,10 @@ func runNew(params *NewParams) error {
 		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
 			return fmt.Errorf("invalid internal OpenCode server URL")
 		}
-		applyOpenCodeAttachEnvironment(additionalEnv)
+		applyOpenCodeAttachEnvironment(
+			additionalEnv,
+			os.Getenv(clcommon.OpenCodeStateIsolationEnv),
+		)
 		envExports = clcommon.BuildEnvExports(additionalEnv)
 	}
 
@@ -1481,7 +1484,10 @@ func validateSandboxImplementationDecision(
 	return harness.ValidateHarnessBuiltinOSSandbox(h)
 }
 
-func applyOpenCodeAttachEnvironment(environment map[string]string) {
+func applyOpenCodeAttachEnvironment(environment map[string]string, isolation string) {
+	if isolation != db.OpenCodeStatePrivate {
+		return
+	}
 	for _, name := range []string{
 		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
 	} {
