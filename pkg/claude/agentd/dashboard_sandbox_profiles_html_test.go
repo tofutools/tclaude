@@ -37,7 +37,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-unix-sockets-mode"`:                                "structured Unix-socket posture selector",
 		`id="sandbox-profile-editor-evaluate-for"`:                                     "authoritative target prediction picker",
 		`id="sandbox-profile-editor-unix-sockets"`:                                     "raw Unix-socket JSON editor",
-		`actions.predictSandbox(draft, targets`:                                        "editor prediction uses the server route",
+		`actions.predictSandbox(predictionDraft, targets`:                              "editor prediction uses the authoritative structured or raw draft",
 		`warnings.composition.map(`:                                                    "empty intersections have their own warning surface",
 		`id="sandbox-profile-scribe-open"`:                                             "new-profile agent configuration",
 		`id="sandbox-profile-editor-scribe"`:                                           "current-draft agent configuration",
