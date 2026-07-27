@@ -213,6 +213,12 @@ func runRelayFakeChild(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, status.Close())
 
+	// Bubblewrap emits child-pid before --new-session finishes the child's
+	// process-group transition. Reproduce that ordering so a relay that pins
+	// the pre-transition pgid cannot satisfy this regression.
+	_, err = unix.Setsid()
+	require.NoError(t, err)
+
 	cmd := exec.Command(os.Args[0], "-test.run=^TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit$")
 	cmd.Env = append(os.Environ(), relayFakeChildEnv+"=0", relayFakeReporterEnv+"=1")
 	require.NoError(t, cmd.Run())
