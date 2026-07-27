@@ -90,6 +90,9 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 		first = timing
 	})
 	assert.Positive(t, first.contextWrite, "the first observed snapshot is persisted")
+	assert.Positive(t, first.contextProject.total,
+		"the first observation records the full self-healing projection")
+	assert.Zero(t, first.contextFast.total)
 
 	resetCodexRefreshThrottleForTest(sessionID)
 	var unchanged codexTelemetryTiming
@@ -129,6 +132,11 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 		changed = timing
 	})
 	assert.Positive(t, changed.contextWrite, "new token telemetry is persisted")
+	assert.Positive(t, changed.contextFast.total,
+		"same-generation token changes record the conditional fast update")
+	assert.Positive(t, changed.contextFast.execCommit,
+		"fast update exposes its SQLite execution and implicit commit")
+	assert.Zero(t, changed.contextProject.total)
 	contextSnapshot, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(9000), contextSnapshot.TokensInput)

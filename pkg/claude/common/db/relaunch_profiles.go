@@ -776,22 +776,53 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 // durable projection atomically. The SQL text is compile-time caller-owned;
 // values remain bound parameters.
 func execSessionUpdateAndProject(sessionID string, opts relaunchProjectionOptions, stmt string, args ...any) error {
+	return execSessionUpdateAndProjectTimed(sessionID, opts, nil, stmt, args...)
+}
+
+func execSessionUpdateAndProjectTimed(
+	sessionID string,
+	opts relaunchProjectionOptions,
+	record func(ContextSnapshotWriteTiming),
+	stmt string,
+	args ...any,
+) (err error) {
+	started := time.Now()
+	timing := ContextSnapshotWriteTiming{}
+	defer func() {
+		timing.Total = time.Since(started)
+		if record != nil {
+			record(timing)
+		}
+	}()
+	stageStarted := time.Now()
 	d, err := Open()
+	timing.Open = time.Since(stageStarted)
 	if err != nil {
 		return err
 	}
+	stageStarted = time.Now()
 	tx, err := d.Begin()
+	timing.Begin = time.Since(stageStarted)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	stageStarted = time.Now()
 	if _, err := tx.Exec(stmt, args...); err != nil {
+		timing.Update = time.Since(stageStarted)
 		return err
 	}
+	timing.Update = time.Since(stageStarted)
+	stageStarted = time.Now()
 	if err := projectSessionRelaunchProfilesTx(tx, sessionID, opts); err != nil {
+		timing.Projection = time.Since(stageStarted)
 		return err
 	}
-	return tx.Commit()
+	timing.Projection = time.Since(stageStarted)
+	stageStarted = time.Now()
+	err = tx.Commit()
+	timing.Commit = time.Since(stageStarted)
+	return err
 }
 
 // seedAgentRelaunchProfileFromSpawnConfigTx records only fields explicitly
