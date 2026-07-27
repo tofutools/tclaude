@@ -92,6 +92,15 @@ func Dispatch(args []string) (bool, int) {
 			return true, stubFailureExit
 		}
 		return true, 0
+	case opencodeapi.UnixLaunchMode:
+		if len(args) < 5 || args[3] != "--" {
+			return true, invalidInvocationExit
+		}
+		if err := opencodeapi.ExecUnixRelayLaunch(args[2], args[4:]); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "tclaude OpenCode Unix launcher: %v\n", err)
+			return true, stubFailureExit
+		}
+		return true, 0
 	case opencodeapi.UnixAttachShimMode:
 		if len(args) < 9 || args[7] != "--" {
 			return true, invalidInvocationExit

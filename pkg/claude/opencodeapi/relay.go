@@ -2,6 +2,7 @@ package opencodeapi
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,44 @@ import (
 
 const InheritedUnixRelayMode = "__tclaude_stacked_probe_opencode_unix_relay"
 const UnixAttachShimMode = "__tclaude_stacked_probe_opencode_unix_attach"
+const UnixLaunchMode = "__tclaude_stacked_probe_opencode_unix_launch"
 const AttachURLPlaceholder = "__TCLAUDE_OPENCODE_ATTACH_URL__"
+
+type UnixLaunchAuthority struct {
+	Device int64
+	Inode  int64
+}
+
+func WriteUnixLaunchAuthority(writer io.Writer, authority UnixLaunchAuthority) error {
+	var encoded [16]byte
+	binary.LittleEndian.PutUint64(encoded[:8], uint64(authority.Device))
+	binary.LittleEndian.PutUint64(encoded[8:], uint64(authority.Inode))
+	written, err := writer.Write(encoded[:])
+	if err != nil {
+		return fmt.Errorf("report OpenCode Unix launch authority: %w", err)
+	}
+	if written != len(encoded) {
+		return fmt.Errorf("report OpenCode Unix launch authority: %w", io.ErrShortWrite)
+	}
+	return nil
+}
+
+func ReadUnixLaunchAuthority(reader io.Reader) (UnixLaunchAuthority, error) {
+	var encoded [16]byte
+	if _, err := io.ReadFull(reader, encoded[:]); err != nil {
+		return UnixLaunchAuthority{}, fmt.Errorf(
+			"read OpenCode Unix launch authority: %w", err)
+	}
+	authority := UnixLaunchAuthority{
+		Device: int64(binary.LittleEndian.Uint64(encoded[:8])),
+		Inode:  int64(binary.LittleEndian.Uint64(encoded[8:])),
+	}
+	if authority.Device <= 0 || authority.Inode <= 0 {
+		return UnixLaunchAuthority{}, fmt.Errorf(
+			"OpenCode Unix launcher reported invalid authority")
+	}
+	return authority, nil
+}
 
 // ServeInheritedUnixRelay owns an inherited, already-bound Unix listener and
 // forwards each stream to an OpenCode loopback listener in the same network

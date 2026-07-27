@@ -5,6 +5,7 @@ package opencodeapi
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -66,6 +67,79 @@ func CreateUnixListener(path string) (*net.UnixListener, int64, int64, error) {
 		return fail(fmt.Errorf("OpenCode control socket was replaced during creation"))
 	}
 	return listener, device, inode, nil
+}
+
+// ExecUnixRelayLaunch binds the control listener in the direct child whose PID
+// agentd records, reports its replay authority, waits for durable persistence,
+// then execs bubblewrap without changing PID. The accepted connection's
+// SO_PEERCRED therefore names the recorded runtime root rather than agentd.
+func ExecUnixRelayLaunch(path string, command []string) error {
+	if len(command) == 0 {
+		return fmt.Errorf("OpenCode Unix launcher has no bubblewrap command")
+	}
+	status := os.NewFile(3, "opencode-unix-launch-status")
+	gate := os.NewFile(4, "opencode-unix-launch-gate")
+	if status == nil || gate == nil {
+		return fmt.Errorf("OpenCode Unix launcher has incomplete handshake descriptors")
+	}
+	listener, device, inode, err := CreateUnixListener(path)
+	if err != nil {
+		return err
+	}
+	runtime := db.OpenCodeRuntime{
+		Transport: db.OpenCodeTransportUnixRelay, ControlSocketPath: path,
+		ControlSocketDevice: device, ControlSocketInode: inode,
+	}
+	fail := func(err error) error {
+		_ = listener.Close()
+		_ = RemoveUnixSocket(runtime)
+		_ = status.Close()
+		_ = gate.Close()
+		return err
+	}
+	listenerFile, err := listener.File()
+	if err != nil {
+		return fail(fmt.Errorf("duplicate OpenCode Unix launch listener: %w", err))
+	}
+	defer listenerFile.Close()
+	selfPath, err := os.Executable()
+	if err != nil {
+		return fail(fmt.Errorf("resolve OpenCode Unix launcher executable: %w", err))
+	}
+	selfFile, err := os.Open(selfPath)
+	if err != nil {
+		return fail(fmt.Errorf("open OpenCode Unix launcher executable: %w", err))
+	}
+	defer selfFile.Close()
+	if err := WriteUnixLaunchAuthority(status, UnixLaunchAuthority{
+		Device: device, Inode: inode,
+	}); err != nil {
+		return fail(err)
+	}
+	_ = status.Close()
+	var acknowledgement [1]byte
+	if _, err := io.ReadFull(gate, acknowledgement[:]); err != nil ||
+		acknowledgement[0] != 1 {
+		return fail(fmt.Errorf(
+			"OpenCode Unix launch authority was not durably acknowledged"))
+	}
+	_ = gate.Close()
+	if err := unix.Dup3(int(listenerFile.Fd()), 3, 0); err != nil {
+		return fail(fmt.Errorf("install OpenCode Unix listener as fd 3: %w", err))
+	}
+	if err := unix.Dup3(int(selfFile.Fd()), 4, 0); err != nil {
+		_ = unix.Close(3)
+		return fail(fmt.Errorf("install OpenCode Unix relay executable as fd 4: %w", err))
+	}
+	_ = listenerFile.Close()
+	_ = selfFile.Close()
+	_ = listener.Close()
+	if err := unix.Exec(command[0], command, os.Environ()); err != nil {
+		_ = unix.Close(3)
+		_ = unix.Close(4)
+		return fail(fmt.Errorf("exec bubblewrap for OpenCode Unix relay: %w", err))
+	}
+	return nil
 }
 
 // RemoveUnixSocket removes only the exact inode recorded for this runtime.

@@ -121,29 +121,31 @@ func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T)
 			resolveOpenCodeTclaudeLayer = previousResolver
 			openCodeRelayExecutable = previousRelayExecutable
 		})
-		command, args, extraFiles, cleanup, renderErr := openCodeServeProcessExec(
+		command, args, extraFiles, handshake, cleanup, renderErr := openCodeServeProcessExec(
 			"/usr/bin/opencode", "43210", &v4Runtime, spec)
 		require.NoError(t, renderErr)
-		require.Equal(t, "/usr/bin/bwrap", command)
+		require.NotEmpty(t, command)
 		require.Len(t, extraFiles, 2,
-			"ExtraFiles must map listener→fd3 and tclaude relay executable→fd4")
+			"ExtraFiles must map authority status→fd3 and durable-ack gate→fd4")
+		require.NotNil(t, handshake)
 		t.Cleanup(func() {
 			cleanup()
-			require.NoError(t, opencodeapi.RemoveUnixSocket(v4Runtime))
 		})
 		argv := append([]string{command}, args...)
 		joined := strings.Join(argv, " ")
-		assert.Contains(t, joined, "--unshare-net")
-		assert.Contains(t, joined, "--unshare-pid")
-		assert.NotContains(t, joined, "--preserve-fds",
+		serverJoined := strings.Join(args[3:], " ")
+		assert.Contains(t, joined, opencodeapi.UnixLaunchMode+" "+controlPath+" -- /usr/bin/bwrap")
+		assert.Contains(t, serverJoined, "--unshare-net")
+		assert.Contains(t, serverJoined, "--unshare-pid")
+		assert.NotContains(t, serverJoined, "--preserve-fds",
 			"upstream bubblewrap preserves inherited non-CLOEXEC fds without a flag")
-		assert.Contains(t, joined,
+		assert.Contains(t, serverJoined,
 			"/proc/self/fd/4 "+opencodeapi.InheritedUnixRelayMode+" 3 ",
 			"the relay executable and listener must retain their exact fd mapping")
-		assert.NotContains(t, joined, controlPath,
+		assert.NotContains(t, serverJoined, controlPath,
 			"the server namespace must receive only the inherited control fd")
-		assert.NotContains(t, joined, "--ro-bind "+controlPath+" "+controlPath)
-		assert.NotContains(t, joined, "--bind "+controlPath+" "+controlPath)
+		assert.NotContains(t, serverJoined, "--ro-bind "+controlPath+" "+controlPath)
+		assert.NotContains(t, serverJoined, "--bind "+controlPath+" "+controlPath)
 	}
 
 	missing := *spec

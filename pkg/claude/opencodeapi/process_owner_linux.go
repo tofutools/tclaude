@@ -51,6 +51,10 @@ func ProcessInSubtree(rootPID, candidatePID int) bool {
 	return false
 }
 
+func RecordedProcessSubtree(rootPID int) []int {
+	return processTreePIDs(rootPID)
+}
+
 func endpointPort(endpoint string) (string, bool) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {

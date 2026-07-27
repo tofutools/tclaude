@@ -8,3 +8,10 @@ func ProcessOwnsEndpoint(_ int, _ string) bool {
 }
 
 func ProcessInSubtree(_, _ int) bool { return false }
+
+func RecordedProcessSubtree(rootPID int) []int {
+	if rootPID <= 1 {
+		return nil
+	}
+	return []int{rootPID}
+}

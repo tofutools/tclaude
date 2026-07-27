@@ -5,8 +5,10 @@ package opencodeapi
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -77,6 +79,123 @@ func TestUnixTransportRefusesPathReplacementDuringConnect(t *testing.T) {
 	require.ErrorContains(t, err, "identity changed during connect")
 	assert.Zero(t, captured.Load())
 	assert.Zero(t, replacementCaptured.Load())
+}
+
+func TestInheritedUnixListenerPeerIsRecordedLauncherPID(t *testing.T) {
+	parent := filepath.Join(shortTempDir(t),
+		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	path := filepath.Join(parent, "control.sock")
+	statusR, statusW, err := os.Pipe()
+	require.NoError(t, err)
+	gateR, gateW, err := os.Pipe()
+	require.NoError(t, err)
+	cmd := exec.Command(os.Args[0],
+		"-test.run=^TestUnixLaunchCreatorHelper$", "--", path)
+	cmd.Env = append(os.Environ(), "TCLAUDE_UNIX_LAUNCH_HELPER=creator")
+	cmd.ExtraFiles = []*os.File{statusW, gateR}
+	require.NoError(t, cmd.Start())
+	_ = statusW.Close()
+	_ = gateR.Close()
+	t.Cleanup(func() {
+		_ = gateW.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = statusR.Close()
+		_ = os.Remove(path)
+	})
+	authority, err := ReadUnixLaunchAuthority(statusR)
+	require.NoError(t, err)
+	runtime := db.OpenCodeRuntime{
+		PID: cmd.Process.Pid, ServerURL: "http://127.0.0.1:43210",
+		Password: "secret", Transport: db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: path, ControlSocketDevice: authority.Device,
+		ControlSocketInode: authority.Inode,
+	}
+	_, err = gateW.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, gateW.Close())
+	require.Eventually(t, func() bool {
+		request, requestErr := NewRequest(http.MethodGet,
+			runtime.ServerURL+"/global/health", runtime, nil)
+		if requestErr != nil {
+			return false
+		}
+		response, requestErr := Do(&http.Client{Timeout: time.Second}, request, runtime)
+		if requestErr != nil {
+			return false
+		}
+		_ = response.Body.Close()
+		return response.StatusCode == http.StatusOK
+	}, 3*time.Second, 25*time.Millisecond)
+}
+
+func TestUnixLauncherRemovesSocketWhenDurableAckDisappears(t *testing.T) {
+	parent := filepath.Join(shortTempDir(t),
+		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, os.Mkdir(parent, 0o700))
+	path := filepath.Join(parent, "control.sock")
+	statusR, statusW, err := os.Pipe()
+	require.NoError(t, err)
+	gateR, gateW, err := os.Pipe()
+	require.NoError(t, err)
+	cmd := exec.Command(os.Args[0],
+		"-test.run=^TestUnixLaunchCreatorHelper$", "--", path)
+	cmd.Env = append(os.Environ(), "TCLAUDE_UNIX_LAUNCH_HELPER=creator-no-ack")
+	cmd.ExtraFiles = []*os.File{statusW, gateR}
+	require.NoError(t, cmd.Start())
+	_ = statusW.Close()
+	_ = gateR.Close()
+	t.Cleanup(func() {
+		_ = gateW.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = statusR.Close()
+		_ = os.Remove(path)
+	})
+	_, err = ReadUnixLaunchAuthority(statusR)
+	require.NoError(t, err)
+	require.NoError(t, gateW.Close(),
+		"closing the gate simulates agentd disappearing before durable ack")
+	require.NoError(t, cmd.Wait())
+	_, err = os.Lstat(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestUnixLaunchCreatorHelper(t *testing.T) {
+	mode := os.Getenv("TCLAUDE_UNIX_LAUNCH_HELPER")
+	if mode != "creator" && mode != "creator-no-ack" {
+		return
+	}
+	path := os.Args[len(os.Args)-1]
+	err := ExecUnixRelayLaunch(path, []string{
+		os.Args[0], "-test.run=^TestUnixLaunchAcceptedPeerHelper$",
+	})
+	if mode == "creator-no-ack" {
+		require.Error(t, err)
+		return
+	}
+	require.NoError(t, err)
+}
+
+func TestUnixLaunchAcceptedPeerHelper(t *testing.T) {
+	if os.Getenv("TCLAUDE_UNIX_LAUNCH_HELPER") != "creator" {
+		return
+	}
+	file := os.NewFile(3, "inherited-opencode-control")
+	require.NotNil(t, file)
+	listener, err := net.FileListener(file)
+	require.NoError(t, err)
+	_ = file.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		if !ok || username != ServerUsername || password != "secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"healthy":true}`)
+	})}
+	require.NoError(t, server.Serve(listener))
 }
 
 func TestRemoveUnixSocketPreservesReplacement(t *testing.T) {

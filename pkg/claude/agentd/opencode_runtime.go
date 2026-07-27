@@ -58,6 +58,11 @@ type openCodeLaunch struct {
 	ControlSocketInode  int64
 }
 
+type openCodeUnixLaunchHandshake struct {
+	authority   *os.File
+	acknowledge *os.File
+}
+
 type openCodeTUICommand string
 
 const (
@@ -204,7 +209,9 @@ func startOpenCodeRuntime(
 			return nil, fmt.Errorf(
 				"refusing to replace live OpenCode Unix runtime without socket ownership proof")
 		}
-		_ = stopOpenCodeRuntime(sessionID)
+		if err := stopOpenCodeRuntime(sessionID); err != nil {
+			return nil, fmt.Errorf("retire prior OpenCode runtime: %w", err)
+		}
 	}
 	// A fresh launch is keyed by its temporary tclaude session label because
 	// the server has not minted the conversation ID yet. A later resume is
@@ -498,7 +505,7 @@ func startOpenCodeProcess(
 	if err != nil {
 		return nil, fmt.Errorf("parse OpenCode server endpoint: %w", err)
 	}
-	command, args, extraFiles, cleanup, err := openCodeServeProcessExec(
+	command, args, extraFiles, unixHandshake, cleanup, err := openCodeServeProcessExec(
 		executable, port, runtime, sandboxSpec)
 	if err != nil {
 		return nil, err
@@ -515,8 +522,10 @@ func startOpenCodeProcess(
 	cmd.Stderr = stderr
 	cmd.ExtraFiles = extraFiles
 	if err := cmd.Start(); err != nil {
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
 		return nil, err
+	}
+	for _, file := range extraFiles {
+		_ = file.Close()
 	}
 	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1), convID: runtime.ConvID}
 	openCodeProcesses.Lock()
@@ -529,6 +538,45 @@ func startOpenCodeProcess(
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
 	}()
 	runtime.PID = cmd.Process.Pid
+	if unixHandshake != nil {
+		type authorityResult struct {
+			authority opencodeapi.UnixLaunchAuthority
+			err       error
+		}
+		authorityReady := make(chan authorityResult, 1)
+		go func() {
+			authority, readErr := opencodeapi.ReadUnixLaunchAuthority(
+				unixHandshake.authority)
+			authorityReady <- authorityResult{authority: authority, err: readErr}
+		}()
+		var result authorityResult
+		select {
+		case result = <-authorityReady:
+		case processErr := <-process.done:
+			if processErr == nil {
+				processErr = fmt.Errorf("unix launcher exited before authority handshake")
+			}
+			stopOpenCodeProcess(*runtime, process)
+			return nil, fmt.Errorf("OpenCode Unix launcher failed: %w: %s",
+				processErr, stderr.String())
+		case <-time.After(openCodeStartupTimeout):
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, fmt.Errorf("OpenCode Unix launcher authority handshake timed out")
+		}
+		if result.err != nil {
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, result.err
+		}
+		if err := persistAndAcknowledgeOpenCodeUnixLaunch(
+			runtime, result.authority, unixHandshake.acknowledge); err != nil {
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, err
+		}
+		_ = unixHandshake.acknowledge.Close()
+	}
 	deadline := time.Now().Add(openCodeStartupTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -566,50 +614,25 @@ func openCodeServeProcessExec(
 	executable, port string,
 	runtime *db.OpenCodeRuntime,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
-) (string, []string, []*os.File, func(), error) {
+) (string, []string, []*os.File, *openCodeUnixLaunchHandshake, func(), error) {
 	noCleanup := func() {}
 	if runtime.Transport != db.OpenCodeTransportUnixRelay {
 		command, args, err := openCodeServeExec(executable, port, sandboxSpec)
-		return command, args, nil, noCleanup, err
+		return command, args, nil, nil, noCleanup, err
 	}
 	if sandboxSpec == nil || sandboxSpec.Version != session.TclaudeLayerUnixRelaySpecVersion {
-		return "", nil, nil, noCleanup, fmt.Errorf(
+		return "", nil, nil, nil, noCleanup, fmt.Errorf(
 			"unix-relay OpenCode runtime requires a tclaude-layer v4 spec")
-	}
-	listener, device, inode, err := opencodeapi.CreateUnixListener(runtime.ControlSocketPath)
-	if err != nil {
-		return "", nil, nil, noCleanup, err
-	}
-	runtime.ControlSocketDevice = device
-	runtime.ControlSocketInode = inode
-	listenerFile, err := listener.File()
-	if err != nil {
-		_ = listener.Close()
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
-		return "", nil, nil, noCleanup, fmt.Errorf("duplicate OpenCode Unix listener: %w", err)
 	}
 	selfPath, err := openCodeRelayExecutable()
 	if err != nil {
-		_ = listenerFile.Close()
-		_ = listener.Close()
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
-		return "", nil, nil, noCleanup, fmt.Errorf("resolve tclaude relay executable: %w", err)
-	}
-	selfFile, err := os.Open(selfPath)
-	if err != nil {
-		_ = listenerFile.Close()
-		_ = listener.Close()
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
-		return "", nil, nil, noCleanup, fmt.Errorf("open tclaude relay executable: %w", err)
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("resolve tclaude relay executable: %w", err)
 	}
 	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
 		sandboxpolicy.NetworkIsolatedWithAgentd)
 	if err != nil {
-		_ = selfFile.Close()
-		_ = listenerFile.Close()
-		_ = listener.Close()
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
-		return "", nil, nil, noCleanup, err
+		return "", nil, nil, nil, noCleanup, err
 	}
 	serveArgs := []string{
 		"serve", "--hostname", "127.0.0.1",
@@ -623,18 +646,55 @@ func openCodeServeProcessExec(
 	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
 		bwrapBinary, *sandboxSpec, 2, relayArgv)
 	if err != nil {
-		_ = selfFile.Close()
-		_ = listenerFile.Close()
-		_ = listener.Close()
-		_ = opencodeapi.RemoveUnixSocket(*runtime)
-		return "", nil, nil, noCleanup, err
+		return "", nil, nil, nil, noCleanup, err
+	}
+	authorityR, authorityW, err := os.Pipe()
+	if err != nil {
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("create OpenCode Unix authority pipe: %w", err)
+	}
+	gateR, gateW, err := os.Pipe()
+	if err != nil {
+		_ = authorityR.Close()
+		_ = authorityW.Close()
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("create OpenCode Unix launch gate: %w", err)
 	}
 	cleanup := func() {
-		_ = selfFile.Close()
-		_ = listenerFile.Close()
-		_ = listener.Close()
+		_ = authorityR.Close()
+		_ = authorityW.Close()
+		_ = gateR.Close()
+		_ = gateW.Close()
 	}
-	return argv[0], argv[1:], []*os.File{listenerFile, selfFile}, cleanup, nil
+	launcherArgs := []string{
+		opencodeapi.UnixLaunchMode, runtime.ControlSocketPath, "--",
+	}
+	launcherArgs = append(launcherArgs, argv...)
+	return selfPath, launcherArgs, []*os.File{authorityW, gateR},
+		&openCodeUnixLaunchHandshake{
+			authority: authorityR, acknowledge: gateW,
+		}, cleanup, nil
+}
+
+func persistAndAcknowledgeOpenCodeUnixLaunch(
+	runtime *db.OpenCodeRuntime,
+	authority opencodeapi.UnixLaunchAuthority,
+	acknowledge io.Writer,
+) error {
+	runtime.ControlSocketDevice = authority.Device
+	runtime.ControlSocketInode = authority.Inode
+	if err := db.UpsertOpenCodeRuntime(*runtime); err != nil {
+		return fmt.Errorf(
+			"persist provisional OpenCode Unix launch authority: %w", err)
+	}
+	written, err := acknowledge.Write([]byte{1})
+	if err != nil {
+		return fmt.Errorf("acknowledge OpenCode Unix launch authority: %w", err)
+	}
+	if written != 1 {
+		return fmt.Errorf("acknowledge OpenCode Unix launch authority: %w", io.ErrShortWrite)
+	}
+	return nil
 }
 
 func openCodeServerEnvironment(
@@ -1424,12 +1484,25 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
+	if runtime.Transport == db.OpenCodeTransportUnixRelay {
+		if session.IsProcessAlive(runtime.PID) {
+			return fmt.Errorf(
+				"OpenCode recovered process remains alive; retaining Unix replay authority")
+		}
+		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
+			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
+		}
+	}
 	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
 func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
+	removeControlSocket := true
 	defer func() {
+		if !removeControlSocket {
+			return
+		}
 		if err := opencodeapi.RemoveUnixSocket(runtime); err != nil {
 			slog.Warn("OpenCode Unix control socket cleanup refused",
 				"session", runtime.SessionID, "error", err)
@@ -1507,8 +1580,14 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if runtime.PID > 1 && runtime.PID != os.Getpid() {
 		switch {
 		case openCodeRuntimeVerified(runtime):
+			recordedTree := opencodeapi.RecordedProcessSubtree(runtime.PID)
 			if recovered, err := os.FindProcess(runtime.PID); err == nil {
 				_ = recovered.Kill()
+			}
+			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
+				removeControlSocket = false
+				slog.Warn("OpenCode recovered process tree did not exit; control authority retained",
+					"session", runtime.SessionID, "pid", runtime.PID)
 			}
 		case session.IsProcessAlive(runtime.PID):
 			// The pid is still alive but we cannot prove it is our managed server
@@ -1529,13 +1608,39 @@ func waitForOpenCodeRuntimeRelease(runtime db.OpenCodeRuntime, timeout time.Dura
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if _, err := os.Lstat(runtime.ControlSocketPath); os.IsNotExist(err) {
+		if !session.IsProcessAlive(runtime.PID) &&
+			openCodeControlPathAbsent(runtime.ControlSocketPath) {
 			return true
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	_, err := os.Lstat(runtime.ControlSocketPath)
+	return !session.IsProcessAlive(runtime.PID) &&
+		openCodeControlPathAbsent(runtime.ControlSocketPath)
+}
+
+func openCodeControlPathAbsent(path string) bool {
+	_, err := os.Lstat(path)
 	return os.IsNotExist(err)
+}
+
+func waitForOpenCodePIDsExit(pids []int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		allExited := true
+		for _, pid := range pids {
+			if session.IsProcessAlive(pid) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func scheduleOpenCodeConversationStateCleanup(runtime db.OpenCodeRuntime) {
