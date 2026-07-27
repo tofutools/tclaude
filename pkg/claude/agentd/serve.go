@@ -43,7 +43,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down."`
 }
 
 func serveCmd() *cobra.Command {
@@ -219,6 +219,9 @@ func dashboardRequested(p *serveParams) bool {
 // Nothing is lost: slog keeps the durable record in output.log either way, and
 // the one line the operator genuinely needs from startup, the operator token,
 // moves into the console itself (see tokenBannerInTUI).
+//
+// Schema migrations are the deliberate exception and print to os.Stdout
+// regardless — see their call site in runServe.
 func serveStdout(p *serveParams) io.Writer {
 	if p.TUI {
 		return io.Discard
@@ -297,7 +300,12 @@ func runServe(p *serveParams) error {
 	// first surfaces their progress (and which one failed) on the operator's
 	// terminal. CLI commands install no reporter, so they migrate silently —
 	// this output is agentd-only.
-	if err := openDatabaseReportingMigrations(out); err != nil {
+	// Migrations are the one startup narration that survives --tui, so this
+	// takes os.Stdout rather than `out`. They run BEFORE the console starts,
+	// so they cannot land on its screen; a first run can spend a while in
+	// here; and a schema upgrade the operator cannot see is exactly the wait
+	// that looks like a hang.
+	if err := openDatabaseReportingMigrations(os.Stdout); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
 	// The Take2 runtime keeps one checkpoint schema and no migrators: a schema
@@ -756,7 +764,8 @@ func runServe(p *serveParams) error {
 }
 
 // openDatabaseReportingMigrations opens the singleton SQLite DB, printing
-// schema-migration progress to the operator's terminal as it goes. It is the
+// schema-migration progress to out — the operator's terminal, including under
+// --tui, where every other startup line is discarded (see serveStdout). It is the
 // first thing runServe does so a migration failure aborts startup before any
 // listener, dashboard, or goroutine comes up (see the call site).
 //

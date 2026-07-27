@@ -97,10 +97,14 @@ On their own they do not start a listener.
 
 ### Output under `--tui`
 
-The console owns the terminal, so `--tui` prints **nothing** to stdout: no
-migration progress, no socket paths, no dashboard URL. Those events still go to
-`~/.tclaude/data/output.log` (the dashboard's **Logs** tab reads the same file),
-and real failures still go to stderr.
+The console owns the terminal, so `--tui` keeps stdout clear of the usual
+startup narration — no socket paths, no dashboard URL, no selected terminal.
+Those events still go to `~/.tclaude/data/output.log` (the dashboard's **Logs**
+tab reads the same file), and real failures still go to stderr.
+
+**Schema migrations are the exception** and still print. They run before the UI
+starts, a first run can spend a while in them, and a silent multi-minute
+upgrade is indistinguishable from a hang.
 
 The one thing you do need from startup — the **operator token**, for signing in
 to the web dashboard or exporting to a CLI in another window — is therefore
