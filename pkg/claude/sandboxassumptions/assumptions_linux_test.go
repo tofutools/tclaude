@@ -100,7 +100,12 @@ func assumeNestedUserNamespaces(t *testing.T, bwrap string) {
 	}{
 		{
 			name: "host-open",
-			args: []string{"--die-with-parent", "--ro-bind", "/", "/"},
+			args: []string{
+				"--die-with-parent",
+				"--ro-bind", "/", "/",
+				"--dev", "/dev",
+				"--proc", "/proc",
+			},
 		},
 		{
 			name: "isolated-constructed-root",
@@ -183,7 +188,7 @@ func assumeNewSessionDisconnectsTTY(t *testing.T, bwrap string) {
 	if err := pty.Setsize(ptmx, &pty.Winsize{Rows: 37, Cols: 113}); err != nil {
 		t.Fatalf("resize pty: %v", err)
 	}
-	if _, err := ptmx.Write([]byte{'p'}); err != nil {
+	if _, err := ptmx.Write([]byte("probe\n")); err != nil {
 		t.Fatalf("trigger helper winsize read: %v", err)
 	}
 	probed := readLineWithDeadline(t, reader, ptmx, "PROBED")
@@ -198,7 +203,7 @@ func assumeNewSessionDisconnectsTTY(t *testing.T, bwrap string) {
 	}
 	// Bubblewrap, not its detached child, received the signal above. The helper
 	// must therefore still exit only through its explicit stdin handshake.
-	if _, err := ptmx.Write([]byte{'q'}); err != nil {
+	if _, err := ptmx.Write([]byte("quit\n")); err != nil {
 		t.Fatalf("release helper: %v", err)
 	}
 	waitCommand(t, cmd, 5*time.Second)
@@ -576,8 +581,8 @@ func linuxHelperTTYSession(t *testing.T) {
 		t.Fatalf("inspect controlling tty: %v", ttyErr)
 	}
 	fmt.Printf("READY rows=%d cols=%d tty_fg=%s\n", size.Row, size.Col, ttyState)
-	var trigger [1]byte
-	if _, err := io.ReadFull(os.Stdin, trigger[:]); err != nil {
+	input := bufio.NewReader(os.Stdin)
+	if _, err := input.ReadString('\n'); err != nil {
 		t.Fatalf("read resize trigger: %v", err)
 	}
 	auto := false
@@ -595,7 +600,7 @@ drained:
 		t.Fatalf("read changed winsize: %v", err)
 	}
 	fmt.Printf("PROBED rows=%d cols=%d auto_winch=%t\n", size.Row, size.Col, auto)
-	if _, err := io.ReadFull(os.Stdin, trigger[:]); err != nil {
+	if _, err := input.ReadString('\n'); err != nil {
 		t.Fatalf("read exit trigger: %v", err)
 	}
 }
