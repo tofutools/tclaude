@@ -235,7 +235,8 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
   const sandboxHelp = sandboxModeHelpForImplementation(
     hEntry?.sandbox_mode_help?.[draft.sandbox],
-    draft.sandbox_implementation || sandboxImpl?.default || 'harness-builtin',
+    draft.sandbox_implementation
+      || (hEntry?.can_tclaude_layer ? '' : sandboxImpl?.default || 'harness-builtin'),
     draft.harness,
   );
   const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';

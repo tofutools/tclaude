@@ -144,8 +144,16 @@ export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 // Code's `off` help would call a confined launch unconfined. OpenCode is
 // deliberately excluded: its soft rules remain enabled as defence in depth
 // and its dedicated mode help describes that distinct topology.
+//
+// Blank is not harness-builtin: it leaves the group/global profile chain in
+// charge, and the browser does not have the fully resolved launch. Stay
+// neutral rather than guessing a branch whose copy may say the opposite.
 export function sandboxModeHelpForImplementation(help, implementation, harness) {
   const harnessName = text(harness);
+  if (!text(implementation)) {
+    return 'Sandbox implementation is inherited from the profile chain at launch, '
+      + "so this mode's effect is not known yet.";
+  }
   if (text(implementation) === SANDBOX_IMPL_TCLAUDE_LAYER
     && (harnessName === 'claude' || harnessName === 'codex')) {
     return "The harness's own sandbox is off by design. The tclaude layer enforces "

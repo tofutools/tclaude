@@ -696,7 +696,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const selectedModel = modelSelectValue(draft, context);
   const sandboxHelp = sandboxModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
-    draft.sandboxImpl || view.sandboxImplDefault,
+    draft.sandboxImpl || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
     draft.harness,
   );
   const approvalHelp = view.approval.help[draft.approval] || '';

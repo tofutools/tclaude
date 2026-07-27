@@ -166,6 +166,23 @@ const CASES = [
     title: [/^Sandbox: on —/],
   },
   {
+    name: 'an unavailable tclaude layer does not claim its profile mounts are enforced',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
+      sandbox_implementation: 'tclaude-layer',
+      os_sandbox_source: 'tclaude-layer unavailable',
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [
+      /^Sandbox: off —/,
+      /Its filesystem rules are not in force \(the tclaude layer is not active\)/,
+      /any environment entries it defines still apply/,
+    ],
+    titleNot: [/enforced as OS mounts/],
+  },
+  {
     name: 'a verified on keeps the plain padlock and the confinement claim',
     state: {
       harness: 'claude', sandbox_mode: 'inherit', os_sandbox_state: 'on',
