@@ -839,6 +839,12 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		detailText := strings.TrimSpace(string(detail))
+		if detailText != "" {
+			return "", fmt.Errorf(
+				"create OpenCode session: HTTP %d: %s", response.StatusCode, detailText)
+		}
 		return "", fmt.Errorf("create OpenCode session: HTTP %d", response.StatusCode)
 	}
 	var created struct {

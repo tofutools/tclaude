@@ -97,6 +97,19 @@ func TestOpenCodeSessionCreationFailsIfPolicyIsNotRetained(t *testing.T) {
 	require.ErrorContains(t, err, "did not retain")
 }
 
+func TestOpenCodeSessionCreationReportsBoundedServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "private state is not writable", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := createOpenCodeSession(db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL, Password: "private-password",
+		Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
+	}, "worker")
+	require.ErrorContains(t, err, "HTTP 500: private state is not writable")
+}
+
 func TestEnsureOpenCodeSessionPermissionRejectsLegacyEmptyPolicy(t *testing.T) {
 	err := ensureOpenCodeSessionPermission(db.OpenCodeRuntime{})
 	require.ErrorContains(t, err, "no persisted permission policy")
