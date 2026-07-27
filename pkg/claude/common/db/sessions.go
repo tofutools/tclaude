@@ -568,25 +568,37 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	return scanSessions(rows)
 }
 
-// LatestTclaudeSandboxImplementationForConv returns the newest recorded
-// outer-layer implementation for a conversation. It is a narrow compatibility
-// lookup for relaunch records damaged by the temporary-unlock projection bug;
-// querying only the scalar evidence avoids decoding every historical session
-// on the overwhelmingly common harness-builtin path.
-func LatestTclaudeSandboxImplementationForConv(convID string) (string, error) {
+// PreTemporaryUnlockSandboxImplementationForConv returns the newest recorded
+// outer-layer implementation that predates a process launched by the temporary
+// dashboard unlock. Requiring that later, explicitly-attributed unlock row is
+// the damage fingerprint: an operator who deliberately changed a formerly
+// layered agent to harness-builtin must not have that choice undone merely
+// because an older TClaude session exists.
+func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, error) {
 	d, err := Open()
 	if err != nil {
 		return "", err
 	}
 	var implementation string
-	err = d.QueryRow(`SELECT sandbox_implementation
-		FROM sessions
-		WHERE conv_id = ? AND sandbox_implementation IN (?, ?)
-		ORDER BY updated_at DESC
+	err = d.QueryRow(`SELECT outer_session.sandbox_implementation
+		FROM sessions outer_session
+		WHERE outer_session.conv_id = ?
+			AND outer_session.sandbox_implementation IN (?, ?)
+			AND EXISTS (
+				SELECT 1
+				FROM sessions temporary_session
+				WHERE temporary_session.conv_id = outer_session.conv_id
+					AND temporary_session.rowid > outer_session.rowid
+					AND temporary_session.sandbox_implementation = ?
+					AND temporary_session.sandbox_mode_source = ?
+			)
+		ORDER BY outer_session.rowid DESC
 		LIMIT 1`,
 		strings.TrimSpace(convID),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		string(sandboxpolicy.ImplementationStacked),
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		TemporarySandboxModeSource,
 	).Scan(&implementation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

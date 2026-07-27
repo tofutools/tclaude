@@ -76,7 +76,7 @@ func recoverDurableSandboxImplementation(
 	if recorded != sandboxpolicy.ImplementationHarnessBuiltin {
 		return recorded, nil
 	}
-	historical, err := db.LatestTclaudeSandboxImplementationForConv(convID)
+	historical, err := db.PreTemporaryUnlockSandboxImplementationForConv(convID)
 	if err != nil {
 		return "", err
 	}
