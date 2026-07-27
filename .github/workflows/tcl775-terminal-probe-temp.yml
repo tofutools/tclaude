@@ -1,0 +1,81 @@
+# TEMPORARY TCL-775 diagnosis workflow.
+# Remove this workflow and its probe before opening the implementation PR.
+name: TEMP TCL-775 terminal resize probe
+
+on:
+  push:
+    branches:
+      - gigurra/tcl-775-tclaude-layer-linux-harness-tui-stuck-tinywidth-limited-no
+
+permissions:
+  contents: read
+
+jobs:
+  terminal-resize-matrix:
+    name: Four-way bubblewrap terminal matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install bubblewrap and tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap tmux
+
+      - name: Unlock and verify unprivileged user namespaces
+        shell: bash
+        run: |
+          restriction=kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w "$restriction=0"
+          test "$(sysctl -n "$restriction")" = "0"
+          bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true
+
+      - name: Run direct/new-session/fresh-dev isolation matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$GITHUB_WORKSPACE/.tcl775_probe.py"
+          socket="$RUNNER_TEMP/tcl775-probe.sock"
+          logs="$RUNNER_TEMP/tcl775-logs"
+          mkdir -p "$logs"
+
+          tmux -S "$socket" new-session -d -s direct \
+            "python3 '$probe' > '$logs/direct.log' 2>&1"
+          tmux -S "$socket" new-session -d -s production \
+            "bwrap --die-with-parent --new-session --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- python3 '$probe' > '$logs/production.log' 2>&1"
+          tmux -S "$socket" new-session -d -s no-new-session \
+            "bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- python3 '$probe' > '$logs/no-new-session.log' 2>&1"
+          tmux -S "$socket" new-session -d -s host-dev \
+            "bwrap --die-with-parent --new-session --ro-bind / / --proc /proc --tmpfs /tmp -- python3 '$probe' > '$logs/host-dev.log' 2>&1"
+
+          sleep 0.5
+          echo "=== initial detached pane sizes (no explicit -x/-y) ==="
+          tmux -S "$socket" list-panes -a \
+            -F '#{session_name} rows=#{pane_height} cols=#{pane_width} pid=#{pane_pid}'
+
+          for session in direct production no-new-session host-dev; do
+            tmux -S "$socket" resize-window -t "$session:0" -x 120 -y 40
+          done
+          sleep 0.5
+          echo "=== pane sizes after 120x40 resize ==="
+          tmux -S "$socket" list-panes -a \
+            -F '#{session_name} rows=#{pane_height} cols=#{pane_width} pid=#{pane_pid}'
+
+          for session in direct production no-new-session host-dev; do
+            tmux -S "$socket" resize-window -t "$session:0" -x 63 -y 17
+          done
+          sleep 4
+
+          for variant in direct production no-new-session host-dev; do
+            echo "=== $variant process observations ==="
+            sed -n '1,120p' "$logs/$variant.log"
+            grep -q '^START ' "$logs/$variant.log"
+            grep -q '^END ' "$logs/$variant.log"
+          done
+
+          echo "=== condensed signal matrix ==="
+          for variant in direct production no-new-session host-dev; do
+            printf '%s SIGWINCH_count=' "$variant"
+            grep -c '^SIGWINCH ' "$logs/$variant.log" || true
+          done
