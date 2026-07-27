@@ -5,6 +5,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -55,8 +56,38 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	tclaudeBinary, err = filepath.Abs(tclaudeBinary)
 	require.NoError(t, err)
 
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	// OpenCode can finish asynchronous dependency-cache writes just after its
+	// server process exits. testing.T.TempDir performs one immediate RemoveAll,
+	// which races those final writes on CI. Own this directory's cleanup so all
+	// registered process cleanups run first, then require the tree to become
+	// quiescent and removable within a bounded window.
+	home, err := os.MkdirTemp("", "tclaude-opencode-layer-smoke-*")
 	require.NoError(t, err)
+	home, err = filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		var absentSince time.Time
+		require.Eventuallyf(t, func() bool {
+			if _, err := os.Stat(home); err == nil {
+				absentSince = time.Time{}
+			}
+			if err := os.RemoveAll(home); err != nil {
+				absentSince = time.Time{}
+				return false
+			}
+			_, err := os.Stat(home)
+			if !errors.Is(err, os.ErrNotExist) {
+				absentSince = time.Time{}
+				return false
+			}
+			if absentSince.IsZero() {
+				absentSince = time.Now()
+				return false
+			}
+			return time.Since(absentSince) >= 100*time.Millisecond
+		}, 5*time.Second, 50*time.Millisecond,
+			"OpenCode smoke home remained active after process teardown")
+	})
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))

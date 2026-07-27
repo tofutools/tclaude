@@ -467,18 +467,20 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: agentDir, Access: sandboxpolicy.AccessRead,
 	})
-	wrapped, err := WrapTclaudeLayerServerSpec("/usr/bin/bwrap", spec, "opencode serve")
-	require.NoError(t, err)
-	stateBind := strings.Index(wrapped,
-		"--bind "+clcommon.ShellQuoteArg(spec.Contract.StateRoot)+" "+
-			clcommon.ShellQuoteArg(spec.Contract.StateRoot))
-	binReadOnly := strings.Index(wrapped,
-		"--ro-bind "+clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0])+" "+
-			clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0]))
-	require.GreaterOrEqual(t, stateBind, 0)
-	require.GreaterOrEqual(t, binReadOnly, 0)
-	assert.Less(t, stateBind, binReadOnly,
-		"the executable subtree must be re-hardened after the mutable state bind")
+	if runtime.GOOS == "linux" {
+		wrapped, err := WrapTclaudeLayerServerSpec("/usr/bin/bwrap", spec, "opencode serve")
+		require.NoError(t, err)
+		stateBind := strings.Index(wrapped,
+			"--bind "+clcommon.ShellQuoteArg(spec.Contract.StateRoot)+" "+
+				clcommon.ShellQuoteArg(spec.Contract.StateRoot))
+		binReadOnly := strings.Index(wrapped,
+			"--ro-bind "+clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0])+" "+
+				clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0]))
+		require.GreaterOrEqual(t, stateBind, 0)
+		require.GreaterOrEqual(t, binReadOnly, 0)
+		assert.Less(t, stateBind, binReadOnly,
+			"the executable subtree must be re-hardened after the mutable state bind")
+	}
 }
 
 func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
