@@ -190,6 +190,10 @@ func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T
 	for _, path := range []string{cwd, config, filepath.Join(install, "bin")} {
 		require.NoError(t, os.MkdirAll(path, 0o700))
 	}
+	resolvedConfig, err := filepath.EvalSymlinks(config)
+	require.NoError(t, err)
+	resolvedInstall, err := filepath.EvalSymlinks(install)
+	require.NoError(t, err)
 	agentID := "agt_cccccccccccccccccccccccccccccccc"
 	inserted, err := db.InsertOpenCodeAgentStateAllocation(
 		db.OpenCodeAgentStateAllocation{
@@ -207,9 +211,9 @@ func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T
 		filepath.Join(home, ".local", "share", "tclaude", "opencode-agents"),
 	}, spec.Contract.FinalHideDirs)
 	assert.Contains(t, spec.Contract.ReadOnlyBinds,
-		session.TclaudeLayerReadOnlyBind{Source: config, Target: config})
+		session.TclaudeLayerReadOnlyBind{Source: resolvedConfig, Target: resolvedConfig})
 	assert.Contains(t, spec.Contract.ReadOnlyBinds,
-		session.TclaudeLayerReadOnlyBind{Source: install, Target: install})
+		session.TclaudeLayerReadOnlyBind{Source: resolvedInstall, Target: resolvedInstall})
 	raw, err := os.ReadFile(filepath.Join(install, openCodeInstallBootstrapFile))
 	require.NoError(t, err)
 	assert.Equal(t, openCodeInstallGitignore, string(raw),
