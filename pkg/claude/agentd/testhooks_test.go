@@ -416,6 +416,7 @@ func ResetCodexContextRefreshForTest() {
 	codexContextRefreshMu.Lock()
 	defer codexContextRefreshMu.Unlock()
 	codexContextRefreshMu.last = nil
+	codexContextRefreshMu.stopping = false
 }
 
 // AsHumanPeer attaches a synthetic peer context that classify() resolves

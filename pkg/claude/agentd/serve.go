@@ -595,13 +595,13 @@ func runServe(p *serveParams) error {
 	}
 
 	// Graceful shutdown.
+	stopCodexContextRefreshes()
 	if err := preserveDashboardSessionForRestart(); err != nil {
 		// The live daemon remains secure; the only loss is that browsers will
 		// need to sign in again after this restart.
 		slog.Warn("dashboard session: could not preserve restart grace cookie", "error", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	if err := processRuns.shutdown(ctx); err != nil {
 		slog.Warn("process runtime: shutdown did not drain", "error", err)
 	}
@@ -612,7 +612,14 @@ func runServe(p *serveParams) error {
 	if remoteSrv != nil {
 		_ = remoteSrv.Shutdown(ctx)
 	}
-	if saved, err := flushCodexTelemetryCheckpoints(ctx); err != nil {
+	cancel()
+
+	// Reserve a separate bounded window for durability work. HTTP/process
+	// draining may legitimately consume its full budget, but that should not
+	// make an otherwise graceful exit skip the checkpoint flush entirely.
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer flushCancel()
+	if saved, err := flushCodexTelemetryCheckpoints(flushCtx); err != nil {
 		slog.Warn("codex-telemetry: graceful checkpoint flush incomplete",
 			"saved", saved, "error", err, "module", "agentd")
 	} else if saved > 0 {

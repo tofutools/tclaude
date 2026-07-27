@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"time"
@@ -15,11 +16,17 @@ type CodexTelemetryCheckpointRow struct {
 // checkpoint. Validation belongs to the harness package; the DB layer cannot
 // import it without creating a harness → common/db → harness cycle.
 func SaveCodexTelemetryCheckpoint(sessionID string, data json.RawMessage) error {
+	return SaveCodexTelemetryCheckpointContext(context.Background(), sessionID, data)
+}
+
+// SaveCodexTelemetryCheckpointContext is the cancellation-aware form used by
+// bounded graceful-shutdown work.
+func SaveCodexTelemetryCheckpointContext(ctx context.Context, sessionID string, data json.RawMessage) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO codex_telemetry_checkpoints (session_id, data, failure_count, updated_at)
+	_, err = d.ExecContext(ctx, `INSERT INTO codex_telemetry_checkpoints (session_id, data, failure_count, updated_at)
 		VALUES (?, ?, 0, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			data = excluded.data, failure_count = 0, updated_at = excluded.updated_at`,

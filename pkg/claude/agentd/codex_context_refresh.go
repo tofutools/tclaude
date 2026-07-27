@@ -28,7 +28,8 @@ const (
 
 var codexContextRefreshMu struct {
 	sync.Mutex
-	last map[string]codexReadThroughSnapshot
+	last     map[string]codexReadThroughSnapshot
+	stopping bool
 }
 
 type codexReadThroughSnapshot struct {
@@ -307,7 +308,8 @@ func claimCodexContextRefresh(sessionID string, now time.Time) (codexReadThrough
 		codexContextRefreshMu.last = map[string]codexReadThroughSnapshot{}
 	}
 	prev := codexContextRefreshMu.last[sessionID]
-	if prev.refreshing || (!prev.at.IsZero() && now.Sub(prev.at) < codexContextRefreshMinInterval) {
+	if codexContextRefreshMu.stopping || prev.refreshing ||
+		(!prev.at.IsZero() && now.Sub(prev.at) < codexContextRefreshMinInterval) {
 		return prev, false
 	}
 	if prev.follower == nil {
@@ -415,35 +417,79 @@ func releaseCodexRuntimeRefresh(sessionID string) {
 	codexContextRefreshMu.last[sessionID] = prev
 }
 
+// stopCodexContextRefreshes prevents requests already admitted by an HTTP
+// server from starting new follower work while graceful shutdown drains.
+func stopCodexContextRefreshes() {
+	codexContextRefreshMu.Lock()
+	codexContextRefreshMu.stopping = true
+	codexContextRefreshMu.Unlock()
+}
+
 // flushCodexTelemetryCheckpoints persists follower state deferred by the
-// dashboard-poll write throttle. Callers must first drain the HTTP servers so
-// no read-through refresh can advance a follower while shutdown is snapshotting
-// it. Hard termination still falls back to the most recent periodic checkpoint.
+// dashboard-poll write throttle. It waits for refreshes that were already in
+// flight when shutdown stopped new claims. Hard termination still falls back
+// to the most recent periodic checkpoint.
 func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
 	type candidate struct {
 		sessionID          string
 		follower           *harness.CodexTelemetryFollower
 		checkpointData     string
 		checkpointFailures int
+		sessionConvID      string
+		sessionCreatedAt   time.Time
 	}
 
-	codexContextRefreshMu.Lock()
-	candidates := make([]candidate, 0, len(codexContextRefreshMu.last))
-	for sessionID, state := range codexContextRefreshMu.last {
-		if state.follower == nil {
-			continue
+	var candidates []candidate
+	for {
+		codexContextRefreshMu.Lock()
+		refreshing := false
+		for _, state := range codexContextRefreshMu.last {
+			if state.refreshing {
+				refreshing = true
+				break
+			}
 		}
-		candidates = append(candidates, candidate{
-			sessionID:          sessionID,
-			follower:           state.follower,
-			checkpointData:     state.checkpointData,
-			checkpointFailures: state.checkpointFailures,
-		})
+		if !refreshing {
+			candidates = make([]candidate, 0, len(codexContextRefreshMu.last))
+			for sessionID, state := range codexContextRefreshMu.last {
+				if state.follower == nil || state.sessionConvID == "" {
+					continue
+				}
+				candidates = append(candidates, candidate{
+					sessionID:          sessionID,
+					follower:           state.follower,
+					checkpointData:     state.checkpointData,
+					checkpointFailures: state.checkpointFailures,
+					sessionConvID:      state.sessionConvID,
+					sessionCreatedAt:   state.sessionCreatedAt,
+				})
+			}
+		}
+		codexContextRefreshMu.Unlock()
+		if !refreshing {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
-	codexContextRefreshMu.Unlock()
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].sessionID < candidates[j].sessionID
 	})
+
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	sessionIDs := make([]string, len(candidates))
+	for i := range candidates {
+		sessionIDs[i] = candidates[i].sessionID
+	}
+	sessions, err := db.LoadSessionsByIDs(sessionIDs)
+	if err != nil {
+		return 0, fmt.Errorf("load checkpoint session generations: %w", err)
+	}
 
 	saved := 0
 	var errs []error
@@ -451,6 +497,13 @@ func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
 		if err := ctx.Err(); err != nil {
 			errs = append(errs, err)
 			break
+		}
+		session := sessions[candidate.sessionID]
+		if session == nil || session.ConvID != candidate.sessionConvID ||
+			!session.CreatedAt.Equal(candidate.sessionCreatedAt) {
+			// Session deletion cascades its checkpoint. Do not attach an old
+			// in-memory follower to a later row that reused the same ID.
+			continue
 		}
 		checkpoint, ok, err := candidate.follower.Checkpoint()
 		if err != nil {
@@ -460,13 +513,16 @@ func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
 		if !ok || (string(checkpoint) == candidate.checkpointData && candidate.checkpointFailures == 0) {
 			continue
 		}
-		if err := db.SaveCodexTelemetryCheckpoint(candidate.sessionID, checkpoint); err != nil {
+		if err := db.SaveCodexTelemetryCheckpointContext(ctx, candidate.sessionID, checkpoint); err != nil {
 			errs = append(errs, fmt.Errorf("%s: save checkpoint: %w", candidate.sessionID, err))
 			continue
 		}
 		codexContextRefreshMu.Lock()
 		state := codexContextRefreshMu.last[candidate.sessionID]
-		if state.follower == candidate.follower && state.checkpointData == candidate.checkpointData {
+		if state.follower == candidate.follower &&
+			state.checkpointData == candidate.checkpointData &&
+			state.sessionConvID == candidate.sessionConvID &&
+			state.sessionCreatedAt.Equal(candidate.sessionCreatedAt) {
 			state.checkpointData = string(checkpoint)
 			state.checkpointFailures = 0
 			state.checkpointPersistedAt = time.Now()

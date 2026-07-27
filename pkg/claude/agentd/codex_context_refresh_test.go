@@ -241,6 +241,43 @@ func TestCodexContextRefreshFlushesDeferredCheckpointOnShutdown(t *testing.T) {
 	assert.Zero(t, saved)
 }
 
+func TestCodexContextRefreshShutdownFlushSkipsRecreatedSession(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-recreated-shutdown-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea4135500"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	require.NoError(t, db.DeleteSession(sessionID))
+	recreated := *sess
+	recreated.CreatedAt = sess.CreatedAt.Add(time.Second)
+	require.NoError(t, db.SaveSession(&recreated))
+
+	saved, err := flushCodexTelemetryCheckpoints(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, saved)
+	checkpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.Nil(t, checkpoint,
+		"shutdown must not attach an old follower to a recreated session row")
+}
+
 func TestCodexContextRefreshReplacesMalformedFollowerCheckpoint(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
@@ -471,6 +508,7 @@ func TestCodexContextRefreshDeletesCheckpointWhenRolloutDisappears(t *testing.T)
 func resetCodexContextRefreshStateForTest() {
 	codexContextRefreshMu.Lock()
 	codexContextRefreshMu.last = nil
+	codexContextRefreshMu.stopping = false
 	codexContextRefreshMu.Unlock()
 }
 
