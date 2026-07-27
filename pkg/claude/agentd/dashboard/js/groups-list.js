@@ -68,7 +68,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
       interactions.closeMenu(true);
       actions.openAddMember(group);
     }} />
-    <${MenuButton} data-act="cron-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ multicast" wizard="⏳ bind ritual" />
+    <${MenuButton} data-act="cron-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name, scopeGroup: name })} data-label=${name} title=${wizardMode ? `Bind a recurring ritual to party ${name} — multicast every familiar, or nudge one` : `Schedule a recurring cron job scoped to ${name} — multicast the whole group, or nudge a single member`} regular="⏰ schedule…" wizard="⏳ bind ritual…" />
     <${MenuButton} data-act="message-new" data-prefill=${JSON.stringify({ targetMode: 'group', groupName: name })} data-label=${name} title=${wizardMode ? `Send a missive to party ${name} — every familiar, or a chosen subset` : `Send a one-shot message to ${name} — the whole group, or a ticked subset of its members`} regular="✉ message" wizard="✒ missive" />
     <${MenuButton} ...${shared} data-act="view-group-messages" title=${wizardMode ? "Open this party's missives in the Messages tab" : "Open this group's messages in the Messages tab — every message touching a member (sent or received) plus the group's own multicasts"} regular="🗂 view messages" wizard="🗂 view missives" />
     <${MenuButton} ...${shared} data-act="set-group-context"
