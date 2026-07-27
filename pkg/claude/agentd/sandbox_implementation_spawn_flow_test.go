@@ -299,6 +299,9 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 
 func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationTclaudeLayer,
 		sandboxpolicy.ImplementationStacked,
@@ -363,6 +366,9 @@ func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
 
 func TestSandboxRestart_RestoresAfterTemporaryReincarnation(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
 	for _, implementation := range []sandboxpolicy.Implementation{
 		sandboxpolicy.ImplementationTclaudeLayer,
 		sandboxpolicy.ImplementationStacked,

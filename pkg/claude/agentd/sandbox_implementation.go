@@ -53,6 +53,14 @@ const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable
 var tclaudeLayerHostAvailability = session.TclaudeLayerHostAvailability
 var tclaudeLayerServerHostAvailability = session.TclaudeLayerServerHostAvailability
 
+// stackedSandboxHostAvailability is separately indirected because the inner
+// harness engine may not be installed on a unit-test host even when the
+// simulated outer layer is available.
+var stackedSandboxHostAvailability = func(h *harness.Harness) error {
+	_, err := session.StackedSandboxAvailability(h)
+	return err
+}
+
 // stackedAppArmorNestedBlockLikely is the same kind of seam for the host
 // heuristic behind the stacked AppArmor hint: a flow test must be able to
 // describe both host shapes without owning the machine it runs on.
@@ -160,7 +168,7 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 			return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
 				resolveErr.Error()}
 		}
-		if _, availabilityErr := session.StackedSandboxAvailability(h); availabilityErr != nil {
+		if availabilityErr := stackedSandboxHostAvailability(h); availabilityErr != nil {
 			return &spawnFailure{http.StatusUnprocessableEntity,
 				sandboxImplementationUnavailableKind, availabilityErr.Error()}
 		}
