@@ -74,7 +74,7 @@ func TestLegacyCompatibilityDirectionsNeverInvertAccess(t *testing.T) {
 		{sandboxpolicy.NetworkAccessNone, sandboxpolicy.AccessModeClosed,
 			sandboxpolicy.AccessModeClosed, sandboxpolicy.NetworkIsolatedWithAgentd},
 	} {
-		t.Run(fmt.Sprintf("%s", tc.access), func(t *testing.T) {
+		t.Run(string(tc.access), func(t *testing.T) {
 			axes, err := sandboxpolicy.DeriveAccessAxes(sandboxpolicy.Profile{
 				Name: "legacy", NetworkAccess: tc.access,
 			})

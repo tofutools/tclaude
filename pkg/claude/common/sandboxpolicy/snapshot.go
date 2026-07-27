@@ -108,7 +108,7 @@ func RequireContained(parent, child Snapshot) error {
 		return fmt.Errorf("network rules are not contained by the parent snapshot")
 	}
 	if !unixSocketRulesContained(parentAxes.UnixSockets, childAxes.UnixSockets) {
-		return fmt.Errorf("Unix-socket rules are not contained by the parent snapshot")
+		return fmt.Errorf("unix-socket rules are not contained by the parent snapshot")
 	}
 	return nil
 }

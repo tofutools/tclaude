@@ -126,14 +126,14 @@ func TestSandboxProfileAccessAxesAndNoticesAreVisibleOnCLI(t *testing.T) {
 	const notice = "profile tiers produce an empty network allow list"
 	var calls []capturedReq
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
-		switch {
-		case method == http.MethodGet:
+		switch method {
+		case http.MethodGet:
 			return 200, "", `{
 				"name":"scoped","filesystem":[],"environment":[],
 				"network":{"mode":"list","allow":[{"domain":"example.com","include_subdomains":true,"ports":[443]}]},
 				"unix_sockets":{"mode":"list","allow":[{"path_glob":"/tmp/service-*.sock"}]}
 			}`
-		case method == http.MethodPost:
+		case http.MethodPost:
 			return 201, "", `{"id":9,"name":"scoped","notices":[{
 				"class":"composition","axis":"network","reason":"empty_intersection",
 				"effect":"nothing_allowed","detail":"` + notice + `","tiers":["base","scoped"]

@@ -283,7 +283,7 @@ func normalizeDNSName(in string) (string, error) {
 	if len(in) > MaxHostBytes {
 		return "", fmt.Errorf("is too long (maximum %d bytes)", MaxHostBytes)
 	}
-	if in == "" || !utf8.ValidString(in) || strings.ToLower(in) != strings.ToLower(strings.TrimSpace(in)) {
+	if in == "" || !utf8.ValidString(in) || in != strings.TrimSpace(in) {
 		return "", fmt.Errorf("must be an ASCII LDH name")
 	}
 	if strings.ContainsAny(in, `/:*`) || strings.HasPrefix(in, ".") || strings.HasSuffix(in, ".") {
