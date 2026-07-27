@@ -385,6 +385,10 @@ func assumeSymlinkOrdering(t *testing.T, bwrap string) {
 
 func assumeDevpts(t *testing.T, bwrap string) {
 	t.Helper()
+	var hostDevpts unix.Stat_t
+	if err := unix.Stat("/dev/pts", &hostDevpts); err != nil {
+		t.Fatalf("stat host devpts: %v", err)
+	}
 	args := []string{
 		"--die-with-parent",
 		"--new-session",
@@ -392,7 +396,9 @@ func assumeDevpts(t *testing.T, bwrap string) {
 		"--dev", "/dev",
 		"--proc", "/proc",
 	}
-	runHelperInBwrap(t, bwrap, args, "verify-devpts", nil, nil)
+	runHelperInBwrap(t, bwrap, args, "verify-devpts", map[string]string{
+		"ASSUME_HOST_DEVPTS_DEVICE": strconv.FormatUint(uint64(hostDevpts.Dev), 10),
+	}, nil)
 }
 
 func assumeNetworkAndPIDIsolation(t *testing.T, bwrap string) {
@@ -649,6 +655,18 @@ func linuxHelperVerifyPrivateChild(t *testing.T) {
 
 func linuxHelperVerifyDevpts(t *testing.T) {
 	t.Helper()
+	hostDevice, err := strconv.ParseUint(os.Getenv("ASSUME_HOST_DEVPTS_DEVICE"), 10, 64)
+	if err != nil {
+		t.Fatalf("parse host devpts device: %v", err)
+	}
+	var sandboxDevpts unix.Stat_t
+	if err := unix.Stat("/dev/pts", &sandboxDevpts); err != nil {
+		t.Fatalf("stat sandbox devpts: %v", err)
+	}
+	if uint64(sandboxDevpts.Dev) == hostDevice {
+		t.Fatalf("--dev reused host devpts device %d instead of mounting a fresh instance",
+			hostDevice)
+	}
 	ptmx, tty, err := pty.Open()
 	if err != nil {
 		t.Fatalf("open fresh devpts pty: %v", err)
