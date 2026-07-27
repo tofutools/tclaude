@@ -241,14 +241,21 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 
 func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
+	dirFile, err := openOpenCodeLayerSmokeLogDir(dir)
 	if err != nil {
 		t.Logf("read OpenCode smoke log directory %s: %v", dir, err)
 		return
 	}
+	defer dirFile.Close()
+	entries, err := dirFile.ReadDir(-1)
+	if err != nil {
+		t.Logf("enumerate OpenCode smoke log directory %s: %v", dir, err)
+		return
+	}
 	for _, entry := range entries {
 		path := filepath.Join(dir, entry.Name())
-		raw, readErr := readOpenCodeLayerSmokeLogTail(path)
+		raw, readErr := readOpenCodeLayerSmokeLogTailAt(
+			int(dirFile.Fd()), entry.Name())
 		if readErr != nil {
 			t.Logf("read OpenCode smoke log %s: %v", path, readErr)
 			continue
@@ -257,13 +264,22 @@ func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
 	}
 }
 
-func readOpenCodeLayerSmokeLogTail(path string) ([]byte, error) {
+func openOpenCodeLayerSmokeLogDir(path string) (*os.File, error) {
 	fd, err := unix.Open(
-		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	file := os.NewFile(uintptr(fd), path)
+	return os.NewFile(uintptr(fd), path), nil
+}
+
+func readOpenCodeLayerSmokeLogTailAt(dirFD int, name string) ([]byte, error) {
+	fd, err := unix.Openat(
+		dirFD, name, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), name)
 	defer file.Close()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
@@ -286,19 +302,27 @@ func TestReadOpenCodeLayerSmokeLogTailRefusesSpecialFilesAndBounds(t *testing.T)
 	large := filepath.Join(dir, "large.log")
 	require.NoError(t, os.WriteFile(large, []byte(
 		strings.Repeat("a", 64<<10)+strings.Repeat("b", 64<<10)), 0o600))
-	raw, err := readOpenCodeLayerSmokeLogTail(large)
+	dirFile, err := openOpenCodeLayerSmokeLogDir(dir)
+	require.NoError(t, err)
+	defer dirFile.Close()
+	raw, err := readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "large.log")
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("b", 64<<10), string(raw))
 
 	symlink := filepath.Join(dir, "symlink.log")
 	require.NoError(t, os.Symlink(large, symlink))
-	_, err = readOpenCodeLayerSmokeLogTail(symlink)
+	_, err = readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "symlink.log")
 	require.Error(t, err)
 
 	fifo := filepath.Join(dir, "fifo.log")
 	require.NoError(t, unix.Mkfifo(fifo, 0o600))
-	_, err = readOpenCodeLayerSmokeLogTail(fifo)
+	_, err = readOpenCodeLayerSmokeLogTailAt(int(dirFile.Fd()), "fifo.log")
 	require.ErrorContains(t, err, "not a regular file")
+
+	dirSymlink := filepath.Join(t.TempDir(), "log")
+	require.NoError(t, os.Symlink(dir, dirSymlink))
+	_, err = openOpenCodeLayerSmokeLogDir(dirSymlink)
+	require.Error(t, err)
 }
 
 func startOpenCodeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {
