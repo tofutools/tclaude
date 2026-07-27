@@ -9,12 +9,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrateV164toV165AddsOptionalSandboxProfileAccessAxes(t *testing.T) {
-	d, err := sql.Open("sqlite", "file:migrate-v165?mode=memory&cache=shared")
+func TestMigrateV165toV166AddsOptionalSandboxProfileAccessAxes(t *testing.T) {
+	d, err := sql.Open("sqlite", "file:migrate-v166?mode=memory&cache=shared")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(t, d, `INSERT INTO schema_version VALUES (164)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (165)`)
 	mustExec(t, d, `CREATE TABLE sandbox_profiles (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL UNIQUE,
@@ -30,7 +30,7 @@ func TestMigrateV164toV165AddsOptionalSandboxProfileAccessAxes(t *testing.T) {
 		(name, network_access, created_at, updated_at)
 		VALUES ('internet', 'internet', 'now', 'now'), ('offline', 'none', 'now', 'now')`)
 
-	require.NoError(t, migrateV164toV165(d))
+	require.NoError(t, migrateV165toV166(d))
 	rows, err := d.Query(`SELECT name, network_access, network_json, unix_sockets_json
 		FROM sandbox_profiles ORDER BY name`)
 	require.NoError(t, err)
@@ -46,6 +46,6 @@ func TestMigrateV164toV165AddsOptionalSandboxProfileAccessAxes(t *testing.T) {
 		{"internet", "internet", "", ""},
 		{"offline", "none", "", ""},
 	}, got, "the migration must not materialize or reinterpret either new axis")
-	assert.Equal(t, 165, schemaVersion(d))
-	require.NoError(t, migrateV164toV165(d), "partially applied migration converges")
+	assert.Equal(t, 166, schemaVersion(d))
+	require.NoError(t, migrateV165toV166(d), "partially applied migration converges")
 }
