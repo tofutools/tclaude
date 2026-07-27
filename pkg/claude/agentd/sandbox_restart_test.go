@@ -376,3 +376,45 @@ func TestDurableRelaunchDoesNotUndoExplicitHarnessBuiltinChange(t *testing.T) {
 	assert.Equal(t, builtin, got.SandboxImplementation,
 		"outer-layer history alone is not evidence of the temporary-unlock bug")
 }
+
+func TestDurableRelaunchTemporaryBuiltinDoesNotRecoverOlderLayer(t *testing.T) {
+	setupTestDB(t)
+	const convID = "temporary-intentional-harness-builtin"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	normalMode := harness.ClaudeSandboxOn
+	temporaryMode := harness.ClaudeSandboxOff
+	layered := string(sandboxpolicy.ImplementationTclaudeLayer)
+	builtin := string(sandboxpolicy.ImplementationHarnessBuiltin)
+	approval := "default"
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "old-layered-before-change", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusExited,
+		SandboxMode: normalMode, SandboxImplementation: layered,
+		ApprovalPolicy: approval,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "normal-intentional-builtin", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusExited,
+		SandboxMode: normalMode, SandboxImplementation: builtin,
+		SandboxModeSource: "explicit request", ApprovalPolicy: approval,
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "temporary-builtin-unlock", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.DefaultName, Status: session.StatusIdle,
+		SandboxMode: temporaryMode, SandboxImplementation: builtin,
+		SandboxModeSource: db.TemporarySandboxModeSource,
+		ApprovalPolicy:    approval,
+	}))
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		SandboxImplementation: &builtin, TemporarySandboxMode: &temporaryMode,
+		ApprovalPolicy: &approval,
+	}))
+
+	got, err := durableRelaunchConfigForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, builtin, got.SandboxImplementation,
+		"temporary unlock must retain the immediately preceding normal builtin posture")
+}

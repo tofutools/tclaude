@@ -638,8 +638,21 @@ func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, erro
 		}
 		switch item.implementation {
 		case string(sandboxpolicy.ImplementationHarnessBuiltin):
-			temporaryTail = temporaryTail ||
-				item.source == TemporarySandboxModeSource
+			switch {
+			case item.source == TemporarySandboxModeSource:
+				temporaryTail = true
+			case temporaryTail:
+				// Once the scan reaches the temporary launch, an earlier
+				// non-temporary harness-builtin row proves harness-builtin was
+				// already the normal posture before this unlock. Do not keep
+				// walking into unrelated older outer-layer history.
+				return "", nil
+			default:
+				// One or more plain-OFF relaunches may follow the faulty
+				// restore before the operator upgrades. They remain part of
+				// the damaged tail until its temporary-attributed row appears.
+				continue
+			}
 		case string(sandboxpolicy.ImplementationTclaudeLayer),
 			string(sandboxpolicy.ImplementationStacked):
 			if !temporaryTail {
