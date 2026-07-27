@@ -243,16 +243,21 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 }
 
 func sandboxProfileAxisLabels(profile sandboxProfileJSON) (string, string) {
-	network := string(profile.NetworkAccess)
-	if profile.Network != nil {
-		network = string(profile.Network.Mode)
+	axes, err := sandboxpolicy.DeriveAccessAxes(sandboxpolicy.Profile{
+		NetworkAccess: profile.NetworkAccess,
+		Network:       profile.Network,
+		UnixSockets:   profile.UnixSockets,
+	})
+	if err != nil {
+		return "invalid", "invalid"
 	}
+	network := string(axes.Network.Mode)
 	if network == "" {
 		network = "inherit"
 	}
-	sockets := "inherit"
-	if profile.UnixSockets != nil && profile.UnixSockets.Mode != "" {
-		sockets = string(profile.UnixSockets.Mode)
+	sockets := string(axes.UnixSockets.Mode)
+	if sockets == "" {
+		sockets = "inherit"
 	}
 	return network, sockets
 }

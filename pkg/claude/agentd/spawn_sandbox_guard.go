@@ -191,7 +191,7 @@ func planSandboxProfileAccessForLaunch(
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
-	snapshot.Effective.AccessNotices = sandboxpolicy.MergeAccessNotices(
+	snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 		snapshot.Effective.AccessNotices, notices...,
 	)
 	return notices, nil

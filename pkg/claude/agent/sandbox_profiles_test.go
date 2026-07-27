@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestSandboxProfilesCommandHelpDocumentsNonSecretEnvironment(t *testing.T) {
@@ -160,6 +161,20 @@ func TestSandboxProfileAccessAxesAndNoticesAreVisibleOnCLI(t *testing.T) {
 	assert.Contains(t, stdout.String(), "Warning: "+notice)
 	assert.NotContains(t, stderr.String(), "Warning: "+notice,
 		"human-readable commands use the existing stdout warning channel")
+}
+
+func TestSandboxProfileAxisLabelsDeriveLegacySocketPosture(t *testing.T) {
+	network, sockets := sandboxProfileAxisLabels(sandboxProfileJSON{
+		NetworkAccess: sandboxpolicy.NetworkAccessNone,
+	})
+	assert.Equal(t, "closed", network)
+	assert.Equal(t, "closed", sockets)
+
+	network, sockets = sandboxProfileAxisLabels(sandboxProfileJSON{
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	})
+	assert.Equal(t, "open", network)
+	assert.Equal(t, "inherit", sockets)
 }
 
 func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {

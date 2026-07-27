@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestCodexManagedBaselineFilesystemRulesDoNotDependOnInstalledProfile(t *testing.T) {
@@ -22,7 +22,9 @@ func TestCodexManagedBaselineFilesystemRulesDoNotDependOnInstalledProfile(t *tes
 		byPath[rule.Path] = rule.Access
 	}
 	assert.Equal(t, "none", byPath[filepath.Join(home, ".tclaude", "data")])
-	assert.Equal(t, "read", byPath[agentipc.CanonicalSocketPath()])
+	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
+		assert.Equalf(t, "read", byPath[socket], "missing agentd socket floor entry %s", socket)
+	}
 	assert.Equal(t, "none", byPath[filepath.Join(home, ".claude", "sessions")])
 
 	installed, err := CodexAgentProfilePath()

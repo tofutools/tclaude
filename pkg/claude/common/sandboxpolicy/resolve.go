@@ -282,7 +282,8 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.Network = cloneNetworkRulesPtr(&networkRules)
 		result.NetworkAccess = LegacyNetworkAccessForExport(result.Network, result.NetworkAccess)
 	}
-	if hasNewUnixSockets {
+	if hasNewUnixSockets ||
+		(hasNewNetwork && unixSocketRules.Mode != AccessModeUnset) {
 		result.UnixSockets = cloneUnixSocketRulesPtr(&unixSocketRules)
 	}
 	if networkRules.Mode == AccessModeList && len(networkRules.Allow) == 0 {

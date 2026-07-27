@@ -154,6 +154,9 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 		}
 		switch notice.Axis {
 		case "network":
+			if axes.Network.Mode != AccessModeList {
+				continue
+			}
 			switch notice.Reason {
 			case "no_mechanism", "selector_unsupported", "platform_path_blind":
 				axes.Network = NetworkRules{Mode: AccessModeOpen}
@@ -171,6 +174,9 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 				}
 			}
 		case "unix_sockets":
+			if axes.UnixSockets.Mode != AccessModeList {
+				continue
+			}
 			switch notice.Reason {
 			case "no_mechanism", "platform_path_blind":
 				axes.UnixSockets = UnixSocketRules{Mode: AccessModeOpen}

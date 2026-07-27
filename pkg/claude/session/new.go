@@ -1108,11 +1108,11 @@ func runNew(params *NewParams) error {
 		if planErr != nil {
 			return planErr
 		}
-		launchSandbox.Effective.AccessNotices = sandboxpolicy.MergeAccessNotices(
+		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			launchSandbox.Effective.AccessNotices, notices...,
 		)
 		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.MergeAccessNotices(
+			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 				effectiveSandbox.Effective.AccessNotices, notices...,
 			)
 		}

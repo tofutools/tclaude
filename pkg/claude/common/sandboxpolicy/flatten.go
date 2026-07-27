@@ -92,7 +92,8 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		out.Network = &network
 		out.NetworkAccess = LegacyNetworkAccessForExport(out.Network, out.NetworkAccess)
 	}
-	if parts.hasNewUnixSockets {
+	if parts.hasNewUnixSockets ||
+		(parts.hasNewNetwork && parts.unixSockets.Mode != AccessModeUnset) {
 		sockets := cloneUnixSocketRules(parts.unixSockets)
 		out.UnixSockets = &sockets
 	}

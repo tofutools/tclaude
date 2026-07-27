@@ -81,6 +81,24 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Empty(t, notices,
 		"an unset socket axis must preserve the existing constructed-root behavior")
 
+	closedNetworkSocketList := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{{Path: "/tmp/service.sock"}},
+		},
+	}
+	caps, err = accessEnforcementForTargetForTest(
+		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	_, notices, err = PlanAccessEnforcement(closedNetworkSocketList, caps)
+	require.EqualError(t, err,
+		"unix-socket access lists are not yet enforceable under closed network access on Linux tclaude-layer; "+
+			"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)")
+	assert.Empty(t, notices,
+		"an undeliverable widening must refuse instead of disclosing socket-open while rendering agentd-only")
+
 	hostOpenClosedSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -113,6 +131,8 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.Len(t, notices, 1)
 	assert.Contains(t, notices[0].Detail,
 		"unenforced under host-open network on Linux tclaude-layer")
+	assert.Contains(t, notices[0].Detail, "host-open",
+		"a delivered widening must disclose the same socket-open surface the renderer receives")
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor.
@@ -122,6 +142,113 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, resolved.socketClosed)
+}
+
+func TestUndeliverableSocketWideningRefusesAcrossRestrictiveRenderers(t *testing.T) {
+	claude := Default()
+	closedSocketList := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{{Path: "/tmp/service.sock"}},
+		},
+	}
+	darwinCaps, err := accessEnforcementForTargetForTest(
+		claude, sandboxpolicy.ImplementationTclaudeLayer,
+		closedSocketList, ClaudeSandboxOff, "darwin",
+	)
+	require.NoError(t, err)
+	_, notices, err := PlanAccessEnforcement(closedSocketList, darwinCaps)
+	require.EqualError(t, err,
+		"unix-socket access lists are not yet enforceable under closed network access on macOS tclaude-layer; "+
+			"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)")
+	assert.Empty(t, notices)
+
+	closedSocketOpen := sandboxpolicy.ResolvedAxes{
+		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeOpen},
+	}
+	darwinCaps, err = accessEnforcementForTargetForTest(
+		claude, sandboxpolicy.ImplementationTclaudeLayer,
+		closedSocketOpen, ClaudeSandboxOff, "darwin",
+	)
+	require.NoError(t, err)
+	_, notices, err = PlanAccessEnforcement(closedSocketOpen, darwinCaps)
+	require.EqualError(t, err,
+		"ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; "+
+			"leave unix_sockets unset (agentd only) or use open network access")
+	assert.Empty(t, notices)
+
+	hostOpenSocketList := closedSocketList
+	hostOpenSocketList.Network.Mode = sandboxpolicy.AccessModeOpen
+	darwinCaps, err = accessEnforcementForTargetForTest(
+		claude, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenSocketList, ClaudeSandboxOff, "darwin",
+	)
+	require.NoError(t, err)
+	rendered, notices, err := PlanAccessEnforcement(hostOpenSocketList, darwinCaps)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.UnixSockets.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, notices[0].Effect)
+
+	hostOpenSocketClosed := sandboxpolicy.ResolvedAxes{
+		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
+		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeClosed},
+	}
+	darwinCaps, err = accessEnforcementForTargetForTest(
+		claude, sandboxpolicy.ImplementationTclaudeLayer,
+		hostOpenSocketClosed, ClaudeSandboxOff, "darwin",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, darwinCaps.socketClosed,
+		"removing combination awareness must not claim host-open Seatbelt closes Unix sockets")
+	_, notices, err = PlanAccessEnforcement(hostOpenSocketClosed, darwinCaps)
+	require.EqualError(t, err,
+		`unix_sockets "closed" is not yet enforceable with open network access on macOS tclaude-layer; `+
+			"close network access as well, use an access list (degrades, unenforced), or leave unix_sockets unset")
+	assert.Empty(t, notices)
+
+	codex, err := Resolve(CodexName)
+	require.NoError(t, err)
+	codexCaps, err := accessEnforcementForTargetForTest(
+		codex, sandboxpolicy.ImplementationHarnessBuiltin,
+		hostOpenSocketList, SandboxManagedProfile, "darwin",
+	)
+	require.NoError(t, err)
+	_, notices, err = PlanAccessEnforcement(hostOpenSocketList, codexCaps)
+	require.EqualError(t, err,
+		"unix-socket access-list widening is not yet enforceable in the Codex managed profile; "+
+			"leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets "+
+			"(list degrades, unenforced)")
+	assert.Empty(t, notices,
+		"the managed Codex profile renders only the agentd floor, so it must not disclose all sockets reachable")
+
+	unsetSockets := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+	}
+	for name, target := range map[string]struct {
+		h              *Harness
+		implementation sandboxpolicy.Implementation
+		mode, goos     string
+	}{
+		"darwin tclaude-layer": {claude, sandboxpolicy.ImplementationTclaudeLayer, ClaudeSandboxOff, "darwin"},
+		"codex managed":        {codex, sandboxpolicy.ImplementationHarnessBuiltin, SandboxManagedProfile, "darwin"},
+	} {
+		t.Run(name+" unset preserves baseline", func(t *testing.T) {
+			caps, capsErr := accessEnforcementForTargetForTest(
+				target.h, target.implementation, unsetSockets, target.mode, target.goos,
+			)
+			require.NoError(t, capsErr)
+			rendered, unsetNotices, planErr := PlanAccessEnforcement(unsetSockets, caps)
+			require.NoError(t, planErr)
+			assert.Equal(t, unsetSockets.Network.Mode, rendered.Network.Mode)
+			assert.Empty(t, rendered.Network.Allow)
+			assert.Equal(t, sandboxpolicy.AccessModeUnset, rendered.UnixSockets.Mode)
+			assert.Empty(t, rendered.UnixSockets.Allow)
+			assert.Empty(t, unsetNotices)
+		})
+	}
 }
 
 func accessEnforcementForTargetForTest(

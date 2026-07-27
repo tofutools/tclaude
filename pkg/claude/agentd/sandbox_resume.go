@@ -96,10 +96,29 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 		return nil, err
 	}
 	current = clampResumeProtectedAuthority(current, *previous)
-	current.Effective.AccessNotices = sandboxpolicy.MergeAccessNotices(
-		current.Effective.AccessNotices, previous.Effective.AccessNotices...,
+	current.Effective.AccessNotices = mergeResumeAccessNotices(
+		current.Effective.AccessNotices,
+		previous.Effective.AccessNotices,
 	)
 	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
+}
+
+func mergeResumeAccessNotices(
+	current, previous []sandboxpolicy.AccessNotice,
+) []sandboxpolicy.AccessNotice {
+	hasPreviousDegradation := false
+	for _, notice := range previous {
+		if notice.Class == sandboxpolicy.AccessNoticeClassDegradation {
+			hasPreviousDegradation = true
+			break
+		}
+	}
+	if hasPreviousDegradation {
+		return sandboxpolicy.ReplaceAccessDegradationNotices(
+			previous, current...,
+		)
+	}
+	return sandboxpolicy.MergeAccessNotices(current, previous...)
 }
 
 // clampResumeProtectedAuthority preserves the deny lineage recorded when the

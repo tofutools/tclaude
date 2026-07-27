@@ -40,6 +40,8 @@ func TestNormalizeAccessRules(t *testing.T) {
 		{"multiple selectors", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "a.test", Domain: "b.test"}}}, "must set exactly one"},
 		{"wildcard", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "*.example.com"}}}, "without scheme, path, port, or wildcard"},
 		{"loopback cidr", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{CIDR: "127.1.2.3/16"}}}, `use {"loopback": true} instead`},
+		{"loopback host literal", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "127.0.0.1"}}}, `must use {"loopback": true}`},
+		{"domain IP literal", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Domain: "192.0.2.1"}}}, "IP literals must use cidr"},
 		{"bad port", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "example.com", Ports: []int{0}}}}, "want 1..65535"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +49,32 @@ func TestNormalizeAccessRules(t *testing.T) {
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
+}
+
+func TestReplacingLaunchDegradationsCannotWidenNewIntent(t *testing.T) {
+	stale := AccessNotice{
+		Class: AccessNoticeClassDegradation, Axis: "network",
+		Reason: "no_mechanism", Effect: AccessNoticeEffectNotEnforced,
+		Detail: "old target widened a network list",
+	}
+	composition := compositionNotice("network", []string{"base", "worker"})
+	current := AccessNotice{
+		Class: AccessNoticeClassDegradation, Axis: "unix_sockets",
+		Reason: "no_mechanism", Effect: AccessNoticeEffectNotEnforced,
+		Detail: "current target widens a socket list",
+	}
+	replaced := ReplaceAccessDegradationNotices(
+		[]AccessNotice{stale, composition}, current,
+	)
+	assert.Equal(t, []AccessNotice{composition, current}, replaced)
+
+	planned, err := PlannedEffectiveAccessAxes(EffectiveProfile{
+		Network:       &NetworkRules{Mode: AccessModeClosed},
+		AccessNotices: []AccessNotice{stale},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeClosed, planned.Network.Mode,
+		"a stale list degradation must not override newly closed intent")
 }
 
 func TestNetworkAccessCompatibilityDerivation(t *testing.T) {
@@ -152,6 +180,34 @@ func TestAccessIntersectionAndCompositionNotices(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, effective.AccessNotices, 1)
 	assert.Equal(t, []string{`global "base"`, `group "team"`}, effective.AccessNotices[0].Tiers)
+
+	mixedRegistry := map[string]*Profile{
+		"legacy-offline": {
+			Name: "legacy-offline", NetworkAccess: NetworkAccessNone,
+		},
+	}
+	mixed, _, err := FlattenWithNotices(Profile{
+		Name: "new-network", Includes: []string{"legacy-offline"},
+		Network: &NetworkRules{Mode: AccessModeOpen},
+	}, registryLookup(mixedRegistry))
+	require.NoError(t, err)
+	require.NotNil(t, mixed.Network)
+	require.NotNil(t, mixed.UnixSockets,
+		"materializing a new network axis must not erase legacy socket closure")
+	mixedAxes, err := DeriveAccessAxes(mixed)
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeClosed, mixedAxes.Network.Mode)
+	assert.Equal(t, AccessModeClosed, mixedAxes.UnixSockets.Mode)
+
+	mixedEffective, err := Resolve(Scopes{
+		Global: &Profile{Name: "legacy-offline", NetworkAccess: NetworkAccessNone},
+		Group:  &Profile{Name: "new-network", Network: &NetworkRules{Mode: AccessModeOpen}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mixedEffective.UnixSockets)
+	mixedEffectiveAxes, err := EffectiveAccessAxes(mixedEffective)
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeClosed, mixedEffectiveAxes.UnixSockets.Mode)
 }
 
 func TestAgentdSocketFloorSurvivesEveryAccessModeCombinationAndRawJSON(t *testing.T) {

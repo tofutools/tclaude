@@ -85,3 +85,35 @@ func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T
 	assert.Empty(t, resolved.Snapshot.Applied)
 	assert.Empty(t, resolved.Snapshot.Effective.Environment)
 }
+
+func TestMergeResumeAccessNoticesDropsStaleDegradationAuthority(t *testing.T) {
+	current := []sandboxpolicy.AccessNotice{{
+		Class:  sandboxpolicy.AccessNoticeClassComposition,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonEmptyIntersection,
+		Detail: "current composition warning",
+	}}
+	previous := []sandboxpolicy.AccessNotice{
+		{
+			Class:  sandboxpolicy.AccessNoticeClassComposition,
+			Axis:   "unix_sockets",
+			Reason: sandboxpolicy.AccessNoticeReasonEmptyIntersection,
+			Detail: "previous composition warning",
+		},
+		{
+			Class:  sandboxpolicy.AccessNoticeClassDegradation,
+			Axis:   "network",
+			Reason: "no_mechanism",
+			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+			Detail: "stale launch widened the old list",
+		},
+	}
+	got := mergeResumeAccessNotices(current, previous)
+	require.Len(t, got, 2)
+	assert.Equal(t, sandboxpolicy.AccessNoticeClassComposition, got[0].Class)
+	assert.Equal(t, sandboxpolicy.AccessNoticeClassComposition, got[1].Class)
+	assert.NotContains(t, got, previous[1])
+
+	empty := mergeResumeAccessNotices([]sandboxpolicy.AccessNotice{}, nil)
+	assert.NotNil(t, empty, "ordinary resume keeps the historical empty-slice snapshot shape")
+}

@@ -36,6 +36,7 @@ type AccessEnforcement struct {
 	socketClosed            EnforcementLevel
 	socketList              EnforcementLevel
 	socketOpenRefusal       string
+	socketListRefusal       string
 	socketCombinationDetail string
 	socketClosedRefusal     string
 	scope                   string
@@ -56,6 +57,7 @@ type PredictedAccessEnforcement struct {
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
 	SocketOpenRefusal       string
+	SocketListRefusal       string
 	SocketCombinationDetail string
 	SocketClosedRefusal     string
 	Scope                   string
@@ -90,6 +92,7 @@ type accessEnforcementTableRow struct {
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
 	SocketOpenRefusal       string
+	SocketListRefusal       string
 	SocketCombinationDetail string
 	SocketClosedRefusal     string
 	Scope                   string
@@ -227,14 +230,23 @@ func accessEnforcementTable(
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull
+			caps.SocketOpen = EnforceNone
+			caps.SocketListRefusal =
+				"unix-socket access lists are not yet enforceable under closed network access on macOS tclaude-layer; " +
+					"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
+			caps.SocketOpenRefusal =
+				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
+					`leave unix_sockets unset (agentd only) or use open network access`
 			if goos == "linux" {
 				// The constructed root intentionally removes ambient host
 				// socket visibility. That satisfies an unset socket axis and
 				// closed sockets, but cannot satisfy explicitly-authored open.
-				caps.SocketOpen = EnforceNone
 				caps.SocketOpenRefusal =
 					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
 						`use a socket access list or leave unix_sockets unset`
+				caps.SocketListRefusal =
+					"unix-socket access lists are not yet enforceable under closed network access on Linux tclaude-layer; " +
+						"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
 			}
 		} else {
 			if goos == "linux" {
@@ -244,9 +256,14 @@ func accessEnforcementTable(
 				caps.SocketClosedRefusal =
 					`unix_sockets "closed" cannot be enforced with open network access on Linux tclaude-layer; ` +
 						"close network access as well, use an access list, or run without the socket restriction"
+			} else {
+				caps.SocketClosedRefusal =
+					`unix_sockets "closed" is not yet enforceable with open network access on macOS tclaude-layer; ` +
+						"close network access as well, use an access list (degrades, unenforced), or leave unix_sockets unset"
 			}
-			// Darwin host-open socket rules remain ◑ and therefore EnforceNone
-			// until the pinned Seatbelt mechanism is verified in M3.
+			// Darwin has the required Seatbelt vocabulary, but M1's host-open
+			// renderer wires no socket denies. The capability remains None
+			// until that adapter consumes the authored axis.
 		}
 		return caps, nil
 	}
@@ -278,7 +295,15 @@ func accessEnforcementTable(
 			if goos == "darwin" {
 				caps.NetworkClosed = EnforceFull
 			}
+			caps.SocketOpen = EnforceNone
+			caps.SocketOpenRefusal =
+				`ambient unix-socket access is not yet enforceable in the Codex managed profile; ` +
+					`leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets`
 			caps.SocketClosed = EnforceFull
+			caps.SocketListRefusal =
+				"unix-socket access-list widening is not yet enforceable in the Codex managed profile; " +
+					"leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets " +
+					"(list degrades, unenforced)"
 			// Profile-authored socket lists are connected in M3. The Codex
 			// TOML mechanism exists today, but M1 cannot truthfully claim that
 			// a field no adapter consumes is enforced.
@@ -296,6 +321,7 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 		networkPorts:     row.NetworkPorts, socketOpen: row.SocketOpen,
 		socketClosed: row.SocketClosed, socketList: row.SocketList,
 		socketOpenRefusal:       row.SocketOpenRefusal,
+		socketListRefusal:       row.SocketListRefusal,
 		socketCombinationDetail: row.SocketCombinationDetail,
 		socketClosedRefusal:     row.SocketClosedRefusal,
 		scope:                   row.Scope, mechanism: row.Mechanism, mcpBypass: row.MCPBypass,
@@ -309,6 +335,7 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
 		SocketClosed: row.SocketClosed, SocketList: row.SocketList,
 		SocketOpenRefusal:       row.SocketOpenRefusal,
+		SocketListRefusal:       row.SocketListRefusal,
 		SocketCombinationDetail: row.SocketCombinationDetail,
 		SocketClosedRefusal:     row.SocketClosedRefusal,
 		Scope:                   row.Scope, Mechanism: row.Mechanism, MCPBypass: row.MCPBypass,
@@ -414,6 +441,9 @@ func predictSocketAxis(
 		}
 	case sandboxpolicy.AccessModeList:
 		if caps.SocketList == EnforceNone {
+			if caps.SocketListRefusal != "" {
+				return predictedRefused(tier, caps.SocketListRefusal)
+			}
 			detail := caps.SocketCombinationDetail
 			if detail == "" {
 				detail = fmt.Sprintf("%s cannot enforce the Unix-socket allow list; all filesystem-visible sockets remain reachable",
@@ -584,6 +614,12 @@ func PlanAccessEnforcement(
 
 	if axes.UnixSockets.Mode == sandboxpolicy.AccessModeList {
 		if caps.socketList == EnforceNone {
+			if caps.socketListRefusal != "" {
+				return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+					Kind:    SandboxCapabilitySocketAllowlist,
+					Message: caps.socketListRefusal,
+				}
+			}
 			rendered.UnixSockets = sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeOpen}
 			detail := "the Unix-socket allow list is not enforced; all filesystem-visible sockets remain reachable"
 			if caps.socketCombinationDetail != "" {

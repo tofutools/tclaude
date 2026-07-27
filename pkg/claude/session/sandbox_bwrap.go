@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -166,8 +165,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		// The executor's tool subprocesses are the managed agent. Keep their
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
-		if socket := agentipc.CanonicalSocketPath(); filepath.IsAbs(socket) {
-			launchReadDirs = append(launchReadDirs, socket)
+		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
+			if filepath.IsAbs(socket) {
+				launchReadDirs = append(launchReadDirs, socket)
+			}
 		}
 	}
 	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
@@ -1027,19 +1028,23 @@ func bwrapArgsWithDaemonFinal(
 	}
 	socketPaths := []string(nil)
 	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
-		socket := agentipc.CanonicalSocketPath()
-		if socket == "" || !filepath.IsAbs(socket) {
-			return nil, fmt.Errorf("resolve canonical agentd socket for isolated tclaude-layer")
+		for i, socket := range sandboxpolicy.AgentdSocketFloor() {
+			if socket == "" || !filepath.IsAbs(socket) {
+				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
+			}
+			exists, err := bwrapBindSourceExists(socket)
+			if err != nil {
+				return nil, fmt.Errorf("agentd socket source %q: %w", socket, err)
+			}
+			if !exists {
+				if i == 0 {
+					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket %s", socket)
+				}
+				continue
+			}
+			args = append(args, "--ro-bind", socket, socket)
+			socketPaths = append(socketPaths, socket)
 		}
-		exists, err := bwrapBindSourceExists(socket)
-		if err != nil {
-			return nil, fmt.Errorf("agentd socket source %q: %w", socket, err)
-		}
-		if !exists {
-			return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket %s", socket)
-		}
-		args = append(args, "--ro-bind", socket, socket)
-		socketPaths = append(socketPaths, socket)
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
 	// reorder or deduplicate plan entries; they preserve the higher-precedence

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -197,9 +196,13 @@ func tclaudeLayerCommand(
 			},
 		)
 	}
+	socketFloor := sandboxpolicy.AgentdSocketFloor()
+	for i := range socketFloor {
+		socketFloor[i] = canonicalSeatbeltOwnedPath(socketFloor[i])
+	}
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
-		[]string{canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath())},
+		socketFloor,
 		filteredPlan,
 		protectedRoots,
 		tmuxSocketDir,

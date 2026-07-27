@@ -162,6 +162,24 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	assert.True(t, isolated.Unverified)
 }
 
+func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	command, err := tclaudeLayerCommand(
+		darwinSeatbeltExecutable,
+		nil,
+		nil,
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
+		"true",
+	)
+	require.NoError(t, err)
+	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
+		assert.Containsf(t, command, socket, "missing rendered agentd socket floor entry %s", socket)
+	}
+}
+
 func TestDarwinSeatbeltRuntimeTempDirRefusesNonstandardCarveout(t *testing.T) {
 	t.Setenv("TMPDIR", "/Users/dev/operator-controlled")
 	_, err := darwinSeatbeltRuntimeTempDir()

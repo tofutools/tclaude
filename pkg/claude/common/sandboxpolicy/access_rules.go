@@ -294,6 +294,12 @@ func normalizeDNSName(in string) (string, error) {
 			return "", fmt.Errorf("must be ASCII (IDNs must be punycoded)")
 		}
 	}
+	if addr, err := netip.ParseAddr(in); err == nil {
+		if addr.IsLoopback() {
+			return "", fmt.Errorf(`IP loopback literals must use {"loopback": true}`)
+		}
+		return "", fmt.Errorf("IP literals must use cidr")
+	}
 	for _, label := range strings.Split(in, ".") {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return "", fmt.Errorf("must contain valid LDH labels")
@@ -807,6 +813,27 @@ func MergeAccessNotices(existing []AccessNotice, additions ...AccessNotice) []Ac
 			copy.Tiers = append([]string(nil), addition.Tiers...)
 			out = append(out, copy)
 		}
+	}
+	return out
+}
+
+// ReplaceAccessDegradationNotices keeps authoring/composition history while
+// replacing the target-dependent degradation plan. A previous launch's
+// widening must never become authority for newly resolved intent or a newly
+// capable target on resume.
+func ReplaceAccessDegradationNotices(
+	existing []AccessNotice,
+	current ...AccessNotice,
+) []AccessNotice {
+	kept := make([]AccessNotice, 0, len(existing)+len(current))
+	for _, notice := range existing {
+		if notice.Class != AccessNoticeClassDegradation {
+			kept = append(kept, notice)
+		}
+	}
+	out := MergeAccessNotices(kept, current...)
+	if out == nil && (existing != nil || current != nil) {
+		return []AccessNotice{}
 	}
 	return out
 }
