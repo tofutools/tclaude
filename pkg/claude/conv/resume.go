@@ -262,11 +262,12 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		return 1
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, rc.ProjectPath)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+	switch resumeImplementation {
+	case sandboxpolicy.ImplementationTclaudeLayer:
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
 			resumeTclaudeLayerNetworkPosture(rc.ConvID),
 		)
-	} else if resumeImplementation == sandboxpolicy.ImplementationStacked {
+	case sandboxpolicy.ImplementationStacked:
 		launchOSSandbox = session.StackedLaunchOSSandbox(
 			h, resumeTclaudeLayerNetworkPosture(rc.ConvID),
 		)

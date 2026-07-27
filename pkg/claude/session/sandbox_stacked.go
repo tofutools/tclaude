@@ -72,6 +72,10 @@ func ProbeStackedSandbox(
 	for _, warning := range stackedNamespaceWarnings(spec, probe.KnownPaths) {
 		fmt.Fprintf(os.Stderr, "stacked sandbox namespace warning: %s\n", warning)
 	}
+	if err := PrepareTclaudeLayerHarnessState(spec); err != nil {
+		return stackedSandboxRefusal("stacked_outer_launch_spec",
+			fmt.Sprintf("prepare exact outer probe boundary: %v", err))
+	}
 	wrapped, err := WrapTclaudeLayerServerSpec(bwrapBinary, spec, probe.Command)
 	if err != nil {
 		return stackedSandboxRefusal("stacked_outer_launch_spec",

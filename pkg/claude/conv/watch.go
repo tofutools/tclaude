@@ -2994,11 +2994,12 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, resumeMode, resumeChosenBy, cwd)
-	if resumeImplementation == sandboxpolicy.ImplementationTclaudeLayer {
+	switch resumeImplementation {
+	case sandboxpolicy.ImplementationTclaudeLayer:
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
 			resumeTclaudeLayerNetworkPosture(conv.SessionID),
 		)
-	} else if resumeImplementation == sandboxpolicy.ImplementationStacked {
+	case sandboxpolicy.ImplementationStacked:
 		launchOSSandbox = session.StackedLaunchOSSandbox(
 			h, resumeTclaudeLayerNetworkPosture(conv.SessionID),
 		)

@@ -3,13 +3,16 @@
 package session
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // TestStackedSandboxHostSmoke is a hard CI gate over the production live-probe
@@ -19,6 +22,7 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_STACKED_SANDBOX_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_STACKED_SANDBOX_SMOKE=1 with pinned srt, codex, and bwrap on PATH")
 	}
+	prepareStackedSmokeControlPlane(t)
 	cwd := t.TempDir()
 	var err error
 	cwd, err = filepath.EvalSymlinks(cwd)
@@ -54,4 +58,26 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The production launch has already opened tclaude's private data directory
+// and an isolated agent launch has a real agentd socket. The direct smoke
+// bypasses those earlier seams, so materialize only that production
+// prerequisite; the nested engines remain the real pinned binaries.
+func prepareStackedSmokeControlPlane(t *testing.T) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(tclcommon.TclaudeDataDir(), 0o700))
+	socketPath := agentipc.CanonicalSocketPath()
+	if _, err := os.Lstat(socketPath); err == nil {
+		return
+	} else {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+	})
 }
