@@ -15,6 +15,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
 // openCodeContextSnapshotFallback resolves the context snapshot a read surface
@@ -361,7 +362,7 @@ func fetchOpenCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) 
 	if err != nil {
 		return nil, nil, err
 	}
-	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
+	response, err := opencodeapi.Do(openCodeConfigHTTPClient, request.WithContext(ctx), runtime)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -5,6 +5,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
 func TestOpenCodeDescriptor(t *testing.T) {
@@ -163,6 +166,33 @@ func TestOpenCodeSpawnerAttachAndResume(t *testing.T) {
 	if !strings.Contains(resumed, "--session ses_resume") ||
 		strings.Contains(resumed, "ses_stale") {
 		t.Fatalf("resume command = %q", resumed)
+	}
+}
+
+func TestOpenCodeSpawnerUsesPreboundUnixAttachShim(t *testing.T) {
+	got := (openCodeSpawner{}).BuildCommand(SpawnSpec{
+		ExecutablePath:              "/usr/bin/opencode",
+		ServerURL:                   "http://127.0.0.1:43210",
+		OpenCodeTransport:           db.OpenCodeTransportUnixRelay,
+		OpenCodeControlSocketPath:   "/tmp/agents/agt_abc/control.sock",
+		OpenCodeControlSocketDevice: 41,
+		OpenCodeControlSocketInode:  42,
+		OpenCodeServerPID:           1234,
+		SessionID:                   "ses_test",
+	})
+	for _, want := range []string{
+		opencodeapi.UnixAttachShimMode,
+		"/tmp/agents/agt_abc/control.sock",
+		"41 42 http://127.0.0.1:43210 -- /usr/bin/opencode attach",
+		opencodeapi.AttachURLPlaceholder,
+		"--session ses_test",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("BuildCommand() = %q, want substring %q", got, want)
+		}
+	}
+	if strings.Contains(got, "OPENCODE_SERVER_PASSWORD") {
+		t.Fatalf("attach credentials must remain inherited environment-only: %q", got)
 	}
 }
 

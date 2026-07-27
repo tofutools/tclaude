@@ -6,3 +6,5 @@ package opencodeapi
 func ProcessOwnsEndpoint(_ int, _ string) bool {
 	return false
 }
+
+func ProcessInSubtree(_, _ int) bool { return false }

@@ -73,3 +73,5 @@ func ProcessOwnsEndpoint(rootPID int, endpoint string) bool {
 	}
 	return false
 }
+
+func ProcessInSubtree(_, _ int) bool { return false }

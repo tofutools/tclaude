@@ -16,6 +16,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
 // TCL-673 layers three OpenCode usage signals on top of the context-window
@@ -1075,7 +1076,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
 	}
-	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
+	response, err := opencodeapi.Do(openCodeConfigHTTPClient, request.WithContext(ctx), runtime)
 	if err != nil {
 		slog.Debug("OpenCode context backfill fetch failed",
 			"session", runtime.SessionID, "error", err, "module", "agentd")

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -119,6 +120,67 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 			agentID)
 	}
 	return validateOpenCodeStateAllocation(*allocation)
+}
+
+func openCodeControlSocketPath(agentID string) (string, error) {
+	allocation, err := requireOpenCodeStateAllocation(agentID)
+	if err != nil {
+		return "", err
+	}
+	parent, err := openCodePrivateStateParent()
+	if err != nil {
+		return "", err
+	}
+	prospectiveParent, err := canonicalizeMissingOpenCodePath(parent)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize OpenCode control parent: %w", err)
+	}
+	if err := refuseOpenCodeProtectedStateRoot(prospectiveParent); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", fmt.Errorf("create OpenCode control parent: %w", err)
+	}
+	parent, err = filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", fmt.Errorf("resolve OpenCode control parent: %w", err)
+	}
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() ||
+		parentInfo.Mode().Perm() != 0o700 {
+		return "", fmt.Errorf("OpenCode control parent is not a real mode-0700 directory")
+	}
+	if stat, ok := parentInfo.Sys().(*syscall.Stat_t); !ok ||
+		stat.Uid != uint32(os.Geteuid()) {
+		return "", fmt.Errorf("OpenCode control parent has the wrong owner")
+	}
+	controlRoot := allocation.StateRoot
+	if allocation.Mode == db.OpenCodeStateLegacyShared {
+		controlRoot = filepath.Join(parent, agentID)
+		if err := os.Mkdir(controlRoot, 0o700); err != nil && !os.IsExist(err) {
+			return "", fmt.Errorf("create legacy OpenCode control root: %w", err)
+		}
+	}
+	info, err := os.Lstat(controlRoot)
+	if err != nil {
+		return "", fmt.Errorf("inspect OpenCode control root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return "", fmt.Errorf("OpenCode control root %q is not a real mode-0700 directory", controlRoot)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok ||
+		stat.Uid != uint32(os.Geteuid()) {
+		return "", fmt.Errorf("OpenCode control root has the wrong owner")
+	}
+	resolved, err := filepath.EvalSymlinks(controlRoot)
+	if err != nil || resolved != controlRoot || filepath.Dir(controlRoot) != parent ||
+		filepath.Base(controlRoot) != agentID {
+		return "", fmt.Errorf("OpenCode control root is not the validated direct agent child")
+	}
+	if err := refuseOpenCodeProtectedStateRoot(controlRoot); err != nil {
+		return "", err
+	}
+	return filepath.Join(controlRoot, "control.sock"), nil
 }
 
 func validateOpenCodeStateAllocation(

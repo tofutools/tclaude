@@ -332,7 +332,7 @@ func writeOpenCodeTitle(runtime db.OpenCodeRuntime, convID, title string) error 
 		return err
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	response, err := client.Do(request)
+	response, err := opencodeapi.Do(client, request, runtime)
 	if err != nil {
 		return fmt.Errorf("rename OpenCode session: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -29,6 +30,16 @@ type TclaudeLayerLaunchContract struct {
 	// absent means no private reopen. An older strict reader encountering the
 	// field refuses the newer contract instead of silently dropping it.
 	PrivateWriteDirs []TclaudeLayerPrivateWriteDir `json:"private_write_dirs,omitempty"`
+	// OpenCodeControl is present only in the v4 Unix-relay contract. The
+	// pathname is host-side replay authority: the server receives only an
+	// already-bound descriptor and never sees this path inside its mount
+	// namespace.
+	OpenCodeControl *TclaudeLayerOpenCodeControl `json:"opencode_control,omitempty"`
+}
+
+type TclaudeLayerOpenCodeControl struct {
+	Transport  string `json:"transport"`
+	SocketPath string `json:"socket_path"`
 }
 
 // TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
@@ -59,6 +70,8 @@ type TclaudeLayerLaunchSpec struct {
 const (
 	TclaudeLayerLaunchSpecVersion       = 3
 	TclaudeLayerLegacyLaunchSpecVersion = 2
+	TclaudeLayerUnixRelaySpecVersion    = 4
+	TclaudeLayerUnixRelayTransport      = "unix-relay"
 )
 
 // TclaudeLayerLaunchInput carries the trusted launch identities used to build
@@ -75,6 +88,7 @@ type TclaudeLayerLaunchInput struct {
 	Environment      []sandboxpolicy.EnvironmentEntry
 	FinalHideDirs    []string
 	ReadOnlyBinds    []TclaudeLayerReadOnlyBind
+	OpenCodeControl  *TclaudeLayerOpenCodeControl
 }
 
 // BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem rows, then
@@ -178,6 +192,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		ReadOnlyBinds:     append([]TclaudeLayerReadOnlyBind(nil), input.ReadOnlyBinds...),
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
+		OpenCodeControl:   input.OpenCodeControl,
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(input.PrivateWriteDirs)
 	if err != nil {
@@ -190,8 +205,12 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	}
 	contract.StateRoot = phase0WriteDirs[0]
 	contract.WriteDirs = append([]string(nil), phase0WriteDirs[1:]...)
+	version := TclaudeLayerLaunchSpecVersion
+	if contract.OpenCodeControl != nil {
+		version = TclaudeLayerUnixRelaySpecVersion
+	}
 	return TclaudeLayerLaunchSpec{
-		Version:   TclaudeLayerLaunchSpecVersion,
+		Version:   version,
 		Effective: effective,
 		Contract:  contract,
 	}, nil
@@ -293,10 +312,6 @@ func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.Eff
 	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
 	if err != nil {
 		return err
-	}
-	if h.Name == harness.OpenCodeName && posture != sandboxpolicy.NetworkHostOpen {
-		return fmt.Errorf(
-			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking for its authenticated loopback control plane and endpoint-ownership proof")
 	}
 	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
 		return nil
@@ -500,6 +515,46 @@ func WrapTclaudeLayerServerSpec(
 	)
 }
 
+// TclaudeLayerUnixRelayServerExecArgs renders the v4 server boundary as argv
+// so agentd can pass an already-bound Unix listener and the tclaude relay
+// executable without either authority being reopened by pathname inside the
+// sandbox. preserveFDs is the exact count inherited above stderr.
+func TclaudeLayerUnixRelayServerExecArgs(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	preserveFDs int,
+	serverArgv []string,
+) ([]string, error) {
+	if spec.Version != TclaudeLayerUnixRelaySpecVersion {
+		return nil, fmt.Errorf("Unix-relay server renderer requires tclaude-layer v4")
+	}
+	if preserveFDs <= 0 || len(serverArgv) == 0 {
+		return nil, fmt.Errorf("Unix-relay server renderer requires inherited descriptors and a command")
+	}
+	phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, err :=
+		tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return nil, err
+	}
+	opaqueStateRoot := ""
+	var opaqueStateDirs []string
+	if spec.Contract.OpenCodeControl != nil &&
+		filepath.Dir(spec.Contract.OpenCodeControl.SocketPath) ==
+			filepath.Clean(spec.Contract.StateRoot) {
+		opaqueStateRoot = spec.Contract.StateRoot
+		opaqueStateDirs = spec.Contract.StateDirs
+	}
+	args, err := bwrapArgsWithDaemonFinal(
+		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
+		opaqueStateRoot, opaqueStateDirs)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, "--preserve-fds", strconv.Itoa(preserveFDs), "--")
+	args = append(args, serverArgv...)
+	return append([]string{binary}, args...), nil
+}
+
 func tclaudeLayerSpecRenderInput(
 	spec TclaudeLayerLaunchSpec,
 ) (
@@ -513,6 +568,9 @@ func tclaudeLayerSpecRenderInput(
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
 		return nil, nil, nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+	}
+	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
+		return nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
 	if err != nil {
@@ -570,6 +628,87 @@ func tclaudeLayerSpecRenderInput(
 		}
 	}
 	return phase0WriteDirs, privateWriteDirs, finalHideDirs, readOnlyBinds, plan, nil
+}
+
+func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
+	control := spec.Contract.OpenCodeControl
+	if spec.Version != TclaudeLayerUnixRelaySpecVersion {
+		if control != nil {
+			return fmt.Errorf(
+				"tclaude-layer launch spec version %d unexpectedly carries OpenCode Unix control authority",
+				spec.Version)
+		}
+		return nil
+	}
+	if spec.Contract.HarnessName != harness.OpenCodeName {
+		return fmt.Errorf("tclaude-layer v4 Unix control authority is OpenCode-only")
+	}
+	if control == nil || control.Transport != TclaudeLayerUnixRelayTransport {
+		return fmt.Errorf("tclaude-layer v4 launch spec has no Unix-relay control authority")
+	}
+	posture, err := sandboxpolicy.NetworkPostureForAccess(spec.Effective.NetworkAccess)
+	if err != nil {
+		return err
+	}
+	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
+		return fmt.Errorf("tclaude-layer v4 Unix relay requires the isolated network posture")
+	}
+	path := filepath.Clean(strings.TrimSpace(control.SocketPath))
+	if !filepath.IsAbs(path) || filepath.Base(path) != "control.sock" {
+		return fmt.Errorf("tclaude-layer v4 OpenCode control path %q is invalid", control.SocketPath)
+	}
+	if len(path) >= 108 {
+		return fmt.Errorf("tclaude-layer v4 OpenCode control path exceeds Linux sockaddr capacity")
+	}
+	parent := filepath.Dir(path)
+	agentID := filepath.Base(parent)
+	if !strings.HasPrefix(agentID, "agt_") || len(agentID) <= len("agt_") {
+		return fmt.Errorf("tclaude-layer v4 OpenCode control path is not under a stable agent child")
+	}
+	for _, r := range strings.TrimPrefix(agentID, "agt_") {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("tclaude-layer v4 OpenCode control path has invalid agent identity")
+		}
+	}
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return fmt.Errorf("inspect tclaude-layer v4 OpenCode control parent: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		return fmt.Errorf("tclaude-layer v4 OpenCode control parent must be a real mode-0700 directory")
+	}
+	if resolved, err := filepath.EvalSymlinks(parent); err != nil || resolved != parent {
+		return fmt.Errorf("tclaude-layer v4 OpenCode control parent is not canonical")
+	}
+	stateRoot := filepath.Clean(spec.Contract.StateRoot)
+	privateAuthority := stateRoot == parent
+	legacyAuthority := false
+	for _, hidden := range spec.Contract.FinalHideDirs {
+		if filepath.Clean(hidden) == filepath.Dir(parent) {
+			legacyAuthority = true
+			break
+		}
+	}
+	if !privateAuthority && !legacyAuthority {
+		return fmt.Errorf(
+			"tclaude-layer v4 OpenCode control path is outside its private or legacy authority")
+	}
+	if privateAuthority && len(spec.Contract.StateDirs) == 0 {
+		return fmt.Errorf(
+			"tclaude-layer v4 OpenCode private control authority has no state-only reopens")
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return fmt.Errorf("resolve protected paths for OpenCode control authority: %w", err)
+	}
+	for _, protected := range protectedRoots {
+		if sandboxpolicy.PathContainsOrEqual(protected, path) {
+			return fmt.Errorf(
+				"tclaude-layer v4 OpenCode control path %q is at or below protected root %q",
+				path, protected)
+		}
+	}
+	return nil
 }
 
 // ValidateTclaudeLayerLaunchSpec applies the renderer's complete structural
@@ -693,7 +832,8 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 
 func supportedTclaudeLayerLaunchSpecVersion(version int) bool {
 	return version == TclaudeLayerLaunchSpecVersion ||
-		version == TclaudeLayerLegacyLaunchSpecVersion
+		version == TclaudeLayerLegacyLaunchSpecVersion ||
+		version == TclaudeLayerUnixRelaySpecVersion
 }
 
 func cleanTclaudeLayerAbsoluteDirs(label string, paths []string) ([]string, error) {
@@ -772,7 +912,7 @@ func bwrapArgs(
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) ([]string, error) {
 	return bwrapArgsWithDaemonFinal(
-		phase0WriteDirs, plan, privateWriteDirs, nil, nil)
+		phase0WriteDirs, plan, privateWriteDirs, nil, nil, "", nil)
 }
 
 func bwrapArgsWithDaemonFinal(
@@ -781,6 +921,8 @@ func bwrapArgsWithDaemonFinal(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	opaqueStateRoot string,
+	opaqueStateDirs []string,
 ) ([]string, error) {
 	var hideRemounts tclaudeLayerHideRemounts
 	args := []string{
@@ -989,6 +1131,13 @@ func bwrapArgsWithDaemonFinal(
 	for _, path := range finalHideDirs {
 		args = hideRemounts.appendHide(args, path)
 	}
+	if opaqueStateRoot != "" {
+		args, err = appendTclaudeLayerOpaqueState(
+			args, opaqueStateRoot, opaqueStateDirs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, bind := range readOnlyBinds {
 		exists, err := bwrapBindSourceExists(bind.Source)
 		if err != nil {
@@ -1027,6 +1176,46 @@ func bwrapArgsWithDaemonFinal(
 		"--tmpfs", tmuxSocketDir,
 		"--remount-ro", tmuxSocketDir,
 	)
+	return args, nil
+}
+
+func appendTclaudeLayerOpaqueState(
+	args []string,
+	root string,
+	stateDirs []string,
+) ([]string, error) {
+	root = filepath.Clean(root)
+	if !filepath.IsAbs(root) || len(stateDirs) == 0 {
+		return nil, fmt.Errorf("invalid OpenCode v4 opaque state contract")
+	}
+	const stagingRoot = "/tmp/.tclaude-opencode-v4-state"
+	args = append(args, "--dir", stagingRoot)
+	cleanDirs := make([]string, len(stateDirs))
+	for i, stateDir := range stateDirs {
+		stateDir = filepath.Clean(stateDir)
+		if !filepath.IsAbs(stateDir) || stateDir == root ||
+			!sandboxpolicy.PathContainsOrEqual(root, stateDir) {
+			return nil, fmt.Errorf("OpenCode v4 state-only reopen %q is outside %q",
+				stateDir, root)
+		}
+		stage := filepath.Join(stagingRoot, strconv.Itoa(i))
+		args = append(args, "--dir", stage, "--bind", stateDir, stage)
+		cleanDirs[i] = stateDir
+	}
+	// Cover the host agent child, including control.sock, then reopen only the
+	// mutable XDG state directories from staging mounts. The staging names are
+	// hidden before exec, so the inherited listener fd is the sole control
+	// authority inside the server namespace.
+	args = append(args, "--tmpfs", root)
+	for i, stateDir := range cleanDirs {
+		stage := filepath.Join(stagingRoot, strconv.Itoa(i))
+		args = append(args,
+			"--dir", filepath.Dir(stateDir),
+			"--dir", stateDir,
+			"--bind", stage, stateDir,
+		)
+	}
+	args = append(args, "--tmpfs", stagingRoot)
 	return args, nil
 }
 
@@ -1484,7 +1673,8 @@ func bwrapCommand(
 	harnessCommand string,
 ) (string, error) {
 	args, err := bwrapArgsWithDaemonFinal(
-		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds)
+		phase0WriteDirs, plan, privateWriteDirs, finalHideDirs, readOnlyBinds,
+		"", nil)
 	if err != nil {
 		return "", err
 	}

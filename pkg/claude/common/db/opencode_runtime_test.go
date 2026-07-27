@@ -32,6 +32,32 @@ func TestOpenCodeRuntimeLookupByConversation(t *testing.T) {
 	assert.Nil(t, missing)
 }
 
+func TestOpenCodeRuntimePersistsUnixReplayAuthority(t *testing.T) {
+	setupTestDB(t)
+	input := OpenCodeRuntime{
+		SessionID: "spwn-unix", ServerURL: "http://127.0.0.1:43210",
+		Password: "secret", Cwd: "/tmp/project", PID: 42,
+		SandboxImplementation: "tclaude-layer",
+		SandboxLaunchSpecJSON: `{"version":4}`,
+		Transport:             OpenCodeTransportUnixRelay,
+		ControlSocketPath:     "/tmp/agents/agt_abc/control.sock",
+		ControlSocketDevice:   41, ControlSocketInode: 42,
+	}
+	require.NoError(t, UpsertOpenCodeRuntime(input))
+	got, err := GetOpenCodeRuntime(input.SessionID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, input.Transport, got.Transport)
+	assert.Equal(t, input.ControlSocketPath, got.ControlSocketPath)
+	assert.Equal(t, input.ControlSocketDevice, got.ControlSocketDevice)
+	assert.Equal(t, input.ControlSocketInode, got.ControlSocketInode)
+
+	broken := input
+	broken.SessionID = "spwn-broken"
+	broken.ControlSocketInode = 0
+	require.ErrorContains(t, UpsertOpenCodeRuntime(broken), "incomplete socket authority")
+}
+
 func TestOpenCodeRuntimeLookupByPID(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, UpsertOpenCodeRuntime(OpenCodeRuntime{

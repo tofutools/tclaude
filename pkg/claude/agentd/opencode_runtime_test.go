@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,12 +17,47 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
+
+func TestOpenCodeHealthyUnixTransportNeverDialsLogicalHostTCP(t *testing.T) {
+	var tcpCalls atomic.Int32
+	trap := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		tcpCalls.Add(1)
+	}))
+	defer trap.Close()
+	root := filepath.Join(agentipctest.ShortSocketDir(t), "agt_abc")
+	require.NoError(t, os.Mkdir(root, 0o700))
+	socketPath := filepath.Join(root, "control.sock")
+	listener, device, inode, err := opencodeapi.CreateUnixListener(socketPath)
+	require.NoError(t, err)
+	unixServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, openCodeServerUsername, username)
+		assert.Equal(t, "secret", password)
+		_, _ = w.Write([]byte(`{"healthy":true}`))
+	})}
+	go func() { _ = unixServer.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = unixServer.Close()
+		_ = os.Remove(socketPath)
+	})
+	runtime := db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: trap.URL, Password: "secret",
+		Transport:         db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: socketPath, ControlSocketDevice: device,
+		ControlSocketInode: inode,
+	}
+	require.True(t, openCodeHealthy(runtime))
+	assert.Zero(t, tcpCalls.Load())
+}
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
 

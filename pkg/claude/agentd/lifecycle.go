@@ -4532,6 +4532,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
 		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
+		spawnArgs.OpenCodeTransport = openCodeLaunch.Transport
+		spawnArgs.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
+		spawnArgs.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
+		spawnArgs.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
+		spawnArgs.OpenCodeServerPID = openCodeLaunch.PID
 		if sandboxSpec != nil {
 			spawnArgs.OpenCodeEnvironment = append(
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
@@ -6761,6 +6766,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	if a.OpenCodeServerPassword != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
 	}
+	appendOpenCodeTransportEnvironment(cmd, a)
 	for _, entry := range a.OpenCodeEnvironment {
 		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
 	}
@@ -6797,6 +6803,24 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		}
 	}()
 	return nil
+}
+
+func appendOpenCodeTransportEnvironment(cmd *exec.Cmd, a clcommon.SpawnArgs) {
+	if a.OpenCodeTransport == "" {
+		return
+	}
+	cmd.Env = append(cmd.Env, clcommon.OpenCodeTransportEnv+"="+a.OpenCodeTransport)
+	if a.OpenCodeTransport != db.OpenCodeTransportUnixRelay {
+		return
+	}
+	cmd.Env = append(cmd.Env,
+		clcommon.OpenCodeControlSocketPathEnv+"="+a.OpenCodeControlSocketPath,
+		clcommon.OpenCodeControlSocketDeviceEnv+"="+strconv.FormatInt(
+			a.OpenCodeControlSocketDevice, 10),
+		clcommon.OpenCodeControlSocketInodeEnv+"="+strconv.FormatInt(
+			a.OpenCodeControlSocketInode, 10),
+		clcommon.OpenCodeServerPIDEnv+"="+strconv.Itoa(a.OpenCodeServerPID),
+	)
 }
 
 func openCodeAttachProcessEnvironment(environment []string) []string {
@@ -6893,6 +6917,11 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		a.OpenCodeServerURL = openCodeLaunch.ServerURL
 		a.OpenCodeServerPassword = openCodeLaunch.Password
+		a.OpenCodeTransport = openCodeLaunch.Transport
+		a.OpenCodeControlSocketPath = openCodeLaunch.ControlSocketPath
+		a.OpenCodeControlSocketDevice = openCodeLaunch.ControlSocketDevice
+		a.OpenCodeControlSocketInode = openCodeLaunch.ControlSocketInode
+		a.OpenCodeServerPID = openCodeLaunch.PID
 		if sandboxSpec != nil {
 			a.OpenCodeEnvironment = append(
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
@@ -6930,6 +6959,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	if a.OpenCodeServerPassword != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
 	}
+	appendOpenCodeTransportEnvironment(cmd, a)
 	for _, entry := range a.OpenCodeEnvironment {
 		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
 	}

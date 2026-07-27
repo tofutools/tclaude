@@ -8,17 +8,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
 const (
 	internalPrefix = "__tclaude_stacked_probe_"
 
-	StubMode   = internalPrefix + "stub"
-	AFUnixMode = internalPrefix + "af_unix"
+	StubMode              = internalPrefix + "stub"
+	AFUnixMode            = internalPrefix + "af_unix"
+	OpenCodeUnixRelayMode = opencodeapi.InheritedUnixRelayMode
 
 	BoundPath               = "/tmp/.tclaude-stacked-harness/bin/probe-helper"
 	EndpointFileName        = "endpoint"
@@ -70,6 +75,45 @@ func Dispatch(args []string) (bool, int) {
 		); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "tclaude stacked probe stub: %v\n", err)
 			return true, stubFailureExit
+		}
+		return true, 0
+	case OpenCodeUnixRelayMode:
+		if len(args) < 6 || args[4] != "--" {
+			return true, invalidInvocationExit
+		}
+		fd, err := opencodeapi.ParseInheritedRelayFD(args[2])
+		if err != nil {
+			return true, invalidInvocationExit
+		}
+		_ = unix.Close(4)
+		if err := opencodeapi.ServeInheritedUnixRelay(
+			context.Background(), fd, args[3], args[5:]); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "tclaude OpenCode Unix relay: %v\n", err)
+			return true, stubFailureExit
+		}
+		return true, 0
+	case opencodeapi.UnixAttachShimMode:
+		if len(args) < 9 || args[7] != "--" {
+			return true, invalidInvocationExit
+		}
+		pid, pidErr := strconv.Atoi(args[2])
+		device, deviceErr := strconv.ParseInt(args[4], 10, 64)
+		inode, inodeErr := strconv.ParseInt(args[5], 10, 64)
+		if pidErr != nil || deviceErr != nil || inodeErr != nil ||
+			pid <= 1 || device <= 0 || inode <= 0 {
+			return true, invalidInvocationExit
+		}
+		runtime := db.OpenCodeRuntime{
+			PID: pid, ServerURL: args[6],
+			Transport:           db.OpenCodeTransportUnixRelay,
+			ControlSocketPath:   args[3],
+			ControlSocketDevice: device,
+			ControlSocketInode:  inode,
+		}
+		if err := opencodeapi.RunUnixAttachShim(
+			context.Background(), runtime, args[8:]); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "tclaude OpenCode attach shim: %v\n", err)
+			return true, opencodeapi.ProcessExitCode(err, stubFailureExit)
 		}
 		return true, 0
 	default:

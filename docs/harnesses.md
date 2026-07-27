@@ -91,12 +91,19 @@ OpenCode rules.
 On Linux, selecting sandbox implementation `tclaude-layer` adds an OS boundary
 around the agentd-owned, tool-executing OpenCode server and records the
 OpenCode sandbox mode as `tclaude-layer`. The attach pane remains outside that
-boundary. The authenticated loopback control plane, host network, and ambient
-host Unix sockets remain reachable, so the dashboard reports this as a partial
-boundary rather than a full-fidelity lock. The ordered OpenCode permission
-rules remain active as defense in depth. OpenCode `tclaude-layer` currently
-requires the host-open network posture; isolated and filtered profiles are
-refused, and macOS is not supported for this server-wrap topology.
+boundary. Under the supported host-open posture, the authenticated loopback
+control plane, host network, and ambient host Unix sockets remain reachable,
+so the dashboard reports this as a partial boundary rather than a full-fidelity
+lock. The ordered OpenCode permission rules remain active as defense in depth.
+
+The Linux executor also has a versioned, tclaude-owned Unix relay for carrying
+its authenticated control plane across an isolated network namespace. The
+server receives only an inherited listener fd; agentd dials the recorded Unix
+socket directly, and `opencode attach` runs behind a pre-bound local shim. This
+is control-plane foundation, not a new supported posture: OpenCode still
+refuses isolated profiles because its hosted model traffic cannot cross that
+boundary, filtered remains reserved, and macOS is not supported for this
+server-wrap topology.
 OpenCode deliberately has no `stacked` contract: profile apply and launch
 refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval

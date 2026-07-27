@@ -27,6 +27,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/sys/unix"
 )
@@ -48,7 +49,7 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	if os.Getenv(openCodeLayerSmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_OPENCODE_LAYER_SMOKE=1 on an unsandboxed Linux host with bubblewrap and OpenCode")
 	}
-	_, _, err := session.ResolveTclaudeLayerServer(sandboxpolicy.NetworkHostOpen)
+	_, _, err := session.ResolveTclaudeLayerServer(sandboxpolicy.NetworkIsolatedWithAgentd)
 	require.NoError(t, err)
 	openCodeExecutable, err := harness.OpenCodeExecutable()
 	require.NoError(t, err)
@@ -56,13 +57,16 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NotEmpty(t, tclaudeBinary)
 	tclaudeBinary, err = filepath.Abs(tclaudeBinary)
 	require.NoError(t, err)
+	previousRelayExecutable := openCodeRelayExecutable
+	openCodeRelayExecutable = func() (string, error) { return tclaudeBinary, nil }
+	t.Cleanup(func() { openCodeRelayExecutable = previousRelayExecutable })
 
 	// OpenCode can finish asynchronous dependency-cache writes just after its
 	// server process exits. testing.T.TempDir performs one immediate RemoveAll,
 	// which races those final writes on CI. Own this directory's cleanup so all
 	// registered process cleanups run first, then require the tree to become
 	// quiescent and removable within a bounded window.
-	home, err := os.MkdirTemp("", "tclaude-opencode-layer-smoke-*")
+	home, err := os.MkdirTemp("", "toc-*")
 	require.NoError(t, err)
 	home, err = filepath.EvalSymlinks(home)
 	require.NoError(t, err)
@@ -127,6 +131,7 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	t.Cleanup(stopAgentd)
 
 	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
 	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
 		{Path: outside, Access: sandboxpolicy.AccessDeny},
 	}
@@ -139,9 +144,16 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	siblingAgentID := db.NewAgentID()
 	siblingAllocation, err := allocatePrivateOpenCodeState(siblingAgentID)
 	require.NoError(t, err)
+	siblingControlPath := filepath.Join(siblingAllocation.StateRoot, "control.sock")
+	siblingControl, _, _, err := opencodeapi.CreateUnixListener(siblingControlPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = siblingControl.Close()
+		_ = os.Remove(siblingControlPath)
+	})
 	siblingMarker := filepath.Join(siblingAllocation.StateRoot, "sibling-marker")
 	require.NoError(t, os.WriteFile(siblingMarker, []byte("sibling"), 0o600))
-	spec, err := openCodeTclaudeLayerLaunchSpec(
+	spec, err := openCodeUnixRelayLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot,
 		smokeAgentID)
 	require.NoError(t, err)
@@ -183,13 +195,21 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	runtime, err := db.GetOpenCodeRuntime(openCodeLayerSmokeSessionID)
 	require.NoError(t, err)
 	require.NotNil(t, runtime)
+	assert.Equal(t, db.OpenCodeTransportUnixRelay, runtime.Transport)
 	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer),
 		runtime.SandboxImplementation)
 	require.NoError(t, ensureOpenCodeSessionPermission(*runtime),
 		"the actual server must retain the compiled permission suffix")
+	hostTCP, tcpErr := net.DialTimeout("tcp", strings.TrimPrefix(
+		runtime.ServerURL, "http://"), 250*time.Millisecond)
+	if hostTCP != nil {
+		_ = hostTCP.Close()
+	}
+	require.Error(t, tcpErr,
+		"the internal OpenCode listener must not be reachable through host TCP")
 
 	stopAttach := startOpenCodeLayerSmokeAttach(
-		t, openCodeExecutable, *runtime, launch.ConvID, cwd,
+		t, tclaudeBinary, openCodeExecutable, *runtime, launch.ConvID, cwd,
 		spec.Contract.Environment)
 	t.Cleanup(stopAttach)
 
@@ -203,6 +223,7 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 			"test -r %s; test -r %s; "+
 			"if printf planted > %s; then exit 99; fi; "+
 			"if printf planted > %s; then exit 100; fi; "+
+			"test ! -S %s; test ! -e %s; "+
 			"%s agent whoami",
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "data")),
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "cache")),
@@ -218,6 +239,8 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 		clcommon.ShellQuoteArg(filepath.Join(install, "shared-install-marker")),
 		clcommon.ShellQuoteArg(filepath.Join(ambientConfig, "config-write-blocked")),
 		clcommon.ShellQuoteArg(filepath.Join(install, "install-write-blocked")),
+		clcommon.ShellQuoteArg(runtime.ControlSocketPath),
+		clcommon.ShellQuoteArg(siblingControlPath),
 		clcommon.ShellQuoteArg(tclaudeBinary),
 	)
 	output := runOpenCodeLayerSmokeShell(t, *runtime, command)
@@ -352,14 +375,23 @@ func startOpenCodeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) f
 
 func startOpenCodeLayerSmokeAttach(
 	t *testing.T,
+	tclaudeBinary string,
 	executable string,
 	runtime db.OpenCodeRuntime,
 	convID, cwd string,
 	environment []sandboxpolicy.EnvironmentEntry,
 ) func() {
 	t.Helper()
-	cmd := exec.Command(executable,
-		"attach", runtime.ServerURL, "--dir", cwd, "--session", convID)
+	cmd := exec.Command(tclaudeBinary,
+		opencodeapi.UnixAttachShimMode,
+		strconv.Itoa(runtime.PID),
+		runtime.ControlSocketPath,
+		strconv.FormatInt(runtime.ControlSocketDevice, 10),
+		strconv.FormatInt(runtime.ControlSocketInode, 10),
+		runtime.ServerURL,
+		"--",
+		executable, "attach", opencodeapi.AttachURLPlaceholder,
+		"--dir", cwd, "--session", convID)
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"OPENCODE_SERVER_USERNAME="+openCodeServerUsername,
@@ -391,9 +423,15 @@ func startOpenCodeLayerSmokeAttach(
 	}
 	t.Cleanup(stop)
 	require.Eventuallyf(t, func() bool {
-		return processHasOpenCodeServerConnection(cmd.Process.Pid, runtime.ServerURL)
+		for _, pid := range openCodeLayerSmokeProcessTree(cmd.Process.Pid) {
+			raw, readErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "comm"))
+			if readErr == nil && strings.Contains(strings.ToLower(string(raw)), "opencode") {
+				return true
+			}
+		}
+		return false
 	}, openCodeLayerSmokeAttachProbe, 25*time.Millisecond,
-		"OpenCode attach did not connect to the managed server")
+		"OpenCode attach did not start behind the Unix shim")
 	rawEnvironment, err := os.ReadFile(
 		filepath.Join("/proc", strconv.Itoa(cmd.Process.Pid), "environ"))
 	require.NoError(t, err)
@@ -417,7 +455,7 @@ func runOpenCodeLayerSmokeShell(
 		"command": command,
 	})
 	require.NoError(t, err)
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	require.NoError(t, err)
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
