@@ -110,10 +110,12 @@ func TestSandboxProfileDraftPermissionCanOnlySubmitValidatedDraft(t *testing.T) 
 			"profile": map[string]any{
 				"name": "proposed", "filesystem": []any{},
 				"environment": []map[string]any{{"name": "CACHE_DIR", "value": "/tmp/cache"}},
+				"network":     map[string]any{"mode": "list", "allow": []any{}},
 			},
 		}), peer))
 	require.Equalf(t, http.StatusAccepted, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "has not been saved")
+	assert.Contains(t, rec.Body.String(), `"class":"composition"`)
 
 	// Draft permission is not policy-management permission: registry reads and
 	// all CRUD/assignment surfaces remain forbidden, and no profile was saved.
@@ -234,11 +236,12 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
-	// v5 removed read_baseline/read_baseline_exclusions (TCL-623) and v6
-	// removes break_glass_filesystem (TCL-791). Exporting only the newest
+	// v5 removed read_baseline/read_baseline_exclusions (TCL-623), v6
+	// removed break_glass_filesystem (TCL-791), and v7 adds independent
+	// network and Unix-socket axes. Exporting only the newest
 	// version keeps an older importer from silently dropping a
-	// security-significant field as an unknown key; v1–v5 stay importable.
-	assert.Equal(t, float64(6), bundle["format_version"])
+	// security-significant field as an unknown key; v1–v6 stay importable.
+	assert.Equal(t, float64(7), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)

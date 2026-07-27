@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
@@ -702,6 +703,14 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 // into each other).
 func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
 	return SetTclaudeLayerHostAvailabilitiesForTest(fn, fn)
+}
+
+func SetTclaudeLayerAccessVerdictForTest(
+	fn func(string, sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error),
+) func() {
+	previous := resolveTclaudeLayerAccessVerdict
+	resolveTclaudeLayerAccessVerdict = fn
+	return func() { resolveTclaudeLayerAccessVerdict = previous }
 }
 
 // SetStackedSandboxHostAvailabilityForTest swaps the inner-engine probe used

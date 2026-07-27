@@ -33,19 +33,29 @@ type LookupProfile func(name string) (*Profile, error)
 // merge itself memoizes each distinct profile, so diamond-shaped graphs cost
 // linear work.
 func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
+	profile, _, err := FlattenWithNotices(in, lookup)
+	return profile, err
+}
+
+// FlattenWithNotices is Flatten plus authoring-time access-composition
+// diagnostics. Notices are deliberately returned beside Profile, like
+// NormalizeForPersistence's missing-path list, so transient diagnostics never
+// leak into persisted or exported profile values.
+func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNotice, error) {
 	// Persistence normalization, matching Resolve: missing read/write paths
 	// flow through included profiles into the frozen snapshot (launch filters
 	// them until they exist), while protected-root and deny rules keep their
 	// strict checks.
 	root, _, err := NormalizeForPersistence(in)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, nil, err
 	}
 	if len(root.Includes) == 0 {
-		return root, nil
+		parts := composeProfileAccessAxes(root)
+		return root, accessCompositionNotices(parts), nil
 	}
 	if lookup == nil {
-		return Profile{}, fmt.Errorf("sandbox profile %q has includes but no registry lookup was provided", root.Name)
+		return Profile{}, nil, fmt.Errorf("sandbox profile %q has includes but no registry lookup was provided", root.Name)
 	}
 	f := &flattener{
 		lookup:   lookup,
@@ -62,12 +72,12 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	for _, name := range root.Includes {
 		d, err := f.chainDepth(name)
 		if err != nil {
-			return Profile{}, err
+			return Profile{}, nil, err
 		}
 		rootDepth = max(rootDepth, d+1)
 	}
 	if rootDepth > MaxIncludeDepth {
-		return Profile{}, fmt.Errorf("sandbox profile %q nests includes deeper than %d levels", root.Name, MaxIncludeDepth)
+		return Profile{}, nil, fmt.Errorf("sandbox profile %q nests includes deeper than %d levels", root.Name, MaxIncludeDepth)
 	}
 	parts := f.compose(root)
 	out := Profile{
@@ -76,6 +86,15 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 		Environment:      make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
 		NetworkAccess:    parts.networkAccess,
+	}
+	if parts.hasNewNetwork {
+		network := cloneNetworkRules(parts.network)
+		out.Network = &network
+		out.NetworkAccess = LegacyNetworkAccessForExport(out.Network, out.NetworkAccess)
+	}
+	if parts.hasNewUnixSockets {
+		sockets := cloneUnixSocketRules(parts.unixSockets)
+		out.UnixSockets = &sockets
 	}
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
@@ -89,14 +108,20 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
-	return out, nil
+	return out, accessCompositionNotices(parts), nil
 }
 
 type flattenedParts struct {
-	filesystem       map[string]FilesystemGrant
-	environment      map[string]EnvironmentEntry
-	agentDirectories map[string]struct{}
-	networkAccess    NetworkAccess
+	filesystem              map[string]FilesystemGrant
+	environment             map[string]EnvironmentEntry
+	agentDirectories        map[string]struct{}
+	networkAccess           NetworkAccess
+	network                 NetworkRules
+	unixSockets             UnixSocketRules
+	hasNewNetwork           bool
+	hasNewUnixSockets       bool
+	networkListContributors []string
+	socketListContributors  []string
 }
 
 type flattener struct {
@@ -184,6 +209,14 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		if parts.networkAccess != NetworkAccessInherit {
 			out.networkAccess = parts.networkAccess
 		}
+		out.network = intersectNetworkRules(out.network, parts.network)
+		out.unixSockets = intersectUnixSocketRules(out.unixSockets, parts.unixSockets)
+		out.hasNewNetwork = out.hasNewNetwork || parts.hasNewNetwork
+		out.hasNewUnixSockets = out.hasNewUnixSockets || parts.hasNewUnixSockets
+		out.networkListContributors = appendUniqueStrings(
+			out.networkListContributors, parts.networkListContributors...)
+		out.socketListContributors = appendUniqueStrings(
+			out.socketListContributors, parts.socketListContributors...)
 	}
 	for _, grant := range p.Filesystem {
 		out.filesystem[grant.Path] = grant
@@ -199,5 +232,62 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	if p.NetworkAccess != NetworkAccessInherit {
 		out.networkAccess = p.NetworkAccess
 	}
+	own := composeProfileAccessAxes(p)
+	out.network = intersectNetworkRules(out.network, own.network)
+	out.unixSockets = intersectUnixSocketRules(out.unixSockets, own.unixSockets)
+	out.hasNewNetwork = out.hasNewNetwork || own.hasNewNetwork
+	out.hasNewUnixSockets = out.hasNewUnixSockets || own.hasNewUnixSockets
+	out.networkListContributors = appendUniqueStrings(
+		out.networkListContributors, own.networkListContributors...)
+	out.socketListContributors = appendUniqueStrings(
+		out.socketListContributors, own.socketListContributors...)
 	return out
+}
+
+func composeProfileAccessAxes(p Profile) *flattenedParts {
+	axes, err := DeriveAccessAxes(p)
+	if err != nil {
+		// compose only receives normalized profiles; keep this helper pure and
+		// fail closed if a future caller violates that invariant.
+		panic("compose unnormalized sandbox profile access axes: " + err.Error())
+	}
+	out := &flattenedParts{
+		network:           axes.Network,
+		unixSockets:       axes.UnixSockets,
+		hasNewNetwork:     p.Network != nil,
+		hasNewUnixSockets: p.UnixSockets != nil,
+	}
+	if axes.Network.Mode == AccessModeList {
+		out.networkListContributors = []string{p.Name}
+	}
+	if axes.UnixSockets.Mode == AccessModeList {
+		out.socketListContributors = []string{p.Name}
+	}
+	return out
+}
+
+func accessCompositionNotices(parts *flattenedParts) []AccessNotice {
+	out := []AccessNotice{}
+	if parts.network.Mode == AccessModeList && len(parts.network.Allow) == 0 {
+		out = append(out, compositionNotice("network", parts.networkListContributors))
+	}
+	if parts.unixSockets.Mode == AccessModeList && len(parts.unixSockets.Allow) == 0 {
+		out = append(out, compositionNotice("unix_sockets", parts.socketListContributors))
+	}
+	return out
+}
+
+func appendUniqueStrings(dst []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(dst)+len(values))
+	for _, value := range dst {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		dst = append(dst, value)
+	}
+	return dst
 }

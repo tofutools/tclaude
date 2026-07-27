@@ -48,6 +48,7 @@ type ResolutionProvenance struct {
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
 	Network          *ProfileSource             `json:"network,omitempty"`
+	UnixSockets      *ProfileSource             `json:"unix_sockets,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -63,6 +64,9 @@ type EffectiveProfile struct {
 	Environment      []EnvironmentEntry   `json:"environment"`
 	AgentDirectories []string             `json:"agent_directories"`
 	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
+	Network          *NetworkRules        `json:"network,omitempty"`
+	UnixSockets      *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	AccessNotices    []AccessNotice       `json:"access_notices,omitempty"`
 	Provenance       ResolutionProvenance `json:"provenance"`
 }
 
@@ -97,6 +101,12 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	filesystem := map[string]resolvedFilesystemGrant{}
 	environment := map[string]string{}
 	agentDirectories := map[string][]ProfileSource{}
+	networkRules := NetworkRules{}
+	unixSocketRules := UnixSocketRules{}
+	hasNewNetwork := false
+	hasNewUnixSockets := false
+	networkListContributors := []string{}
+	socketListContributors := []string{}
 	observableFilesystemSpellings := []string{}
 	for _, tier := range []struct {
 		scope   Scope
@@ -152,6 +162,28 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			result.NetworkAccess = normalized.NetworkAccess
 			networkSource := source
 			result.Provenance.Network = &networkSource
+		}
+		axes, err := DeriveAccessAxes(normalized)
+		if err != nil {
+			return EffectiveProfile{}, fmt.Errorf(
+				"derive %s sandbox profile %q access axes: %w",
+				tier.scope, normalized.Name, err,
+			)
+		}
+		networkRules = intersectNetworkRules(networkRules, axes.Network)
+		unixSocketRules = intersectUnixSocketRules(unixSocketRules, axes.UnixSockets)
+		hasNewNetwork = hasNewNetwork || normalized.Network != nil
+		hasNewUnixSockets = hasNewUnixSockets || normalized.UnixSockets != nil
+		tierLabel := fmt.Sprintf("%s %q", tier.scope, normalized.Name)
+		if axes.Network.Mode == AccessModeList {
+			networkListContributors = appendUniqueStrings(networkListContributors, tierLabel)
+			networkSource := source
+			result.Provenance.Network = &networkSource
+		}
+		if axes.UnixSockets.Mode == AccessModeList {
+			socketListContributors = appendUniqueStrings(socketListContributors, tierLabel)
+			socketSource := source
+			result.Provenance.UnixSockets = &socketSource
 		}
 	}
 
@@ -246,6 +278,21 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.Provenance.AgentDirectories[name] = canonicalSources(sources)
 	}
 	sort.Strings(result.AgentDirectories)
+	if hasNewNetwork {
+		result.Network = cloneNetworkRulesPtr(&networkRules)
+		result.NetworkAccess = LegacyNetworkAccessForExport(result.Network, result.NetworkAccess)
+	}
+	if hasNewUnixSockets {
+		result.UnixSockets = cloneUnixSocketRulesPtr(&unixSocketRules)
+	}
+	if networkRules.Mode == AccessModeList && len(networkRules.Allow) == 0 {
+		result.AccessNotices = append(result.AccessNotices,
+			compositionNotice("network", networkListContributors))
+	}
+	if unixSocketRules.Mode == AccessModeList && len(unixSocketRules.Allow) == 0 {
+		result.AccessNotices = append(result.AccessNotices,
+			compositionNotice("unix_sockets", socketListContributors))
+	}
 	return result, nil
 }
 

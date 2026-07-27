@@ -27,7 +27,11 @@ func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {
 	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
 		assert.Equal(t, http.MethodPost, method)
 		assert.Equal(t, "/v1/sandbox-profile-drafts/abcdefghijklmnop", path)
-		return http.StatusAccepted, "", `{"accepted":true,"message":"draft validated"}`
+		return http.StatusAccepted, "", `{
+			"accepted":true,"message":"draft validated",
+			"notices":[{"class":"composition","axis":"network","reason":"empty_intersection",
+				"effect":"nothing_allowed","detail":"draft network list is empty"}]
+		}`
 	})
 	input := `{"name":"dev","filesystem":[{"path":"/work","access":"read"}],"environment":[]}`
 	var stdout, stderr bytes.Buffer
@@ -42,6 +46,8 @@ func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, input, string(body.Profile))
 	assert.Contains(t, stdout.String(), "has not been saved")
+	assert.Contains(t, stderr.String(), "Warning: draft network list is empty",
+		"draft stdout is a handoff channel, so access notices are duplicated to stderr")
 }
 
 func TestRunSandboxProfilesListAndShowStableOutputs(t *testing.T) {
@@ -114,6 +120,82 @@ func TestRunSandboxProfilesCRUDRoundTripsShowJSONShape(t *testing.T) {
 	require.Equal(t, rcOK, runSandboxProfilesRm(&sandboxProfilesRmParams{Name: "renamed"}, &stdout, &stderr))
 	assert.Equal(t, http.MethodDelete, calls[2].method)
 	assert.Equal(t, "/v1/sandbox-profiles/renamed", calls[2].path)
+}
+
+func TestSandboxProfileAccessAxesAndNoticesAreVisibleOnCLI(t *testing.T) {
+	const notice = "profile tiers produce an empty network allow list"
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		switch {
+		case method == http.MethodGet:
+			return 200, "", `{
+				"name":"scoped","filesystem":[],"environment":[],
+				"network":{"mode":"list","allow":[{"domain":"example.com","include_subdomains":true,"ports":[443]}]},
+				"unix_sockets":{"mode":"list","allow":[{"path_glob":"/tmp/service-*.sock"}]}
+			}`
+		case method == http.MethodPost:
+			return 201, "", `{"id":9,"name":"scoped","notices":[{
+				"class":"composition","axis":"network","reason":"empty_intersection",
+				"effect":"nothing_allowed","detail":"` + notice + `","tiers":["base","scoped"]
+			}]}`
+		default:
+			return 404, "not_found", ""
+		}
+	})
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runSandboxProfilesShow(
+		&sandboxProfilesShowParams{Name: "scoped"}, &stdout, &stderr))
+	assert.Contains(t, stdout.String(), "network: list")
+	assert.Contains(t, stdout.String(), "*.example.com:443")
+	assert.Contains(t, stdout.String(), "Unix sockets: list")
+	assert.Contains(t, stdout.String(), "/tmp/service-*.sock")
+
+	stdout.Reset()
+	stderr.Reset()
+	require.Equal(t, rcOK, runSandboxProfilesCreate(
+		&sandboxProfilesFileParams{File: "-"},
+		strings.NewReader(`{"name":"scoped","network":{"mode":"list","allow":[]}}`),
+		&stdout, &stderr))
+	assert.Contains(t, stdout.String(), "Warning: "+notice)
+	assert.NotContains(t, stderr.String(), "Warning: "+notice,
+		"human-readable commands use the existing stdout warning channel")
+}
+
+func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {
+	var calls []capturedReq
+	const prediction = `{"profile":"scoped","targets":[{
+		"implementation":"tclaude-layer","harness":"claude","platform":"linux",
+		"predicted":true,
+		"axes":{
+			"network":{"tier":"list","outcome":"not_enforced","detail":"bubblewrap has no filtered-egress applier"},
+			"unix_sockets":{"tier":"closed","outcome":"refused","detail":"closed sockets cannot be enforced"}
+		},
+		"caveat":"(prediction for a non-host platform; host capability probes did not run)"
+	}]}`
+	stubDaemon(t, &calls, func(_ string, path string) (int, string, string) {
+		if strings.Contains(path, "/enforcement?") {
+			return 200, "", prediction
+		}
+		return 200, "", `{"name":"scoped","filesystem":[],"environment":[]}`
+	})
+
+	var stdout, stderr bytes.Buffer
+	params := &sandboxProfilesShowParams{
+		Name: "scoped", For: []string{"tclaude-layer/claude/linux"},
+	}
+	require.Equal(t, rcOK, runSandboxProfilesShow(params, &stdout, &stderr))
+	assert.Contains(t, calls[0].path, "for=tclaude-layer%2Fclaude%2Flinux")
+	assert.Contains(t, stdout.String(), "NOT ENFORCED")
+	assert.Contains(t, stdout.String(), "REFUSED at launch")
+	assert.Contains(t, stdout.String(), "prediction for a non-host platform")
+
+	calls = nil
+	stdout.Reset()
+	params.JSON = true
+	require.Equal(t, rcOK, runSandboxProfilesShow(params, &stdout, &stderr))
+	assert.JSONEq(t, prediction, stdout.String())
+	assert.Len(t, calls, 1, "--json returns the stable prediction shape directly")
 }
 
 func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {

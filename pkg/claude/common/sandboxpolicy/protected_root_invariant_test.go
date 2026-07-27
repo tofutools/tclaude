@@ -194,7 +194,7 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 		"adding a legitimate field, this failure is the moment to think, not a formality to silence: " +
 		"consciously update the expected list below AND confirm the new field cannot carry read/write " +
 		"access to a path at or beneath ProtectedPaths(). Any field that names host paths must route " +
-		"through normalizeFilesystem, which is the single gate enforcing this invariant. A field that " +
+		"through a validator that checks every ProtectedPaths entry. A field that " +
 		"bypasses it reintroduces break-glass under a new name."
 
 	for _, tc := range []struct {
@@ -205,12 +205,12 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 		{
 			name: "Profile",
 			typ:  reflect.TypeOf(Profile{}),
-			want: []string{"Name", "Filesystem", "Environment", "AgentDirectories", "NetworkAccess", "Includes"},
+			want: []string{"Name", "Filesystem", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
 			typ:  reflect.TypeOf(EffectiveProfile{}),
-			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "NetworkAccess", "Provenance"},
+			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

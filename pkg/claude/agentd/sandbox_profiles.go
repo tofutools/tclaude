@@ -72,7 +72,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 6
+	sandboxProfileExportVersion = 7
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -86,6 +86,8 @@ type sandboxProfileJSON struct {
 	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
 	AgentDirectories []string                         `json:"agent_directories,omitempty"`
 	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Network          *sandboxpolicy.NetworkRules      `json:"network,omitempty"`
+	UnixSockets      *sandboxpolicy.UnixSocketRules   `json:"unix_sockets,omitempty"`
 	Includes         []string                         `json:"includes,omitempty"`
 	CreatedAt        string                           `json:"created_at,omitempty"`
 	UpdatedAt        string                           `json:"updated_at,omitempty"`
@@ -116,8 +118,9 @@ type sandboxProfileAssignmentsJSON struct {
 }
 
 type sandboxProfilePreviewJSON struct {
-	Before *sandboxProfileJSON `json:"before,omitempty"`
-	After  sandboxProfileJSON  `json:"after"`
+	Before        *sandboxProfileJSON          `json:"before,omitempty"`
+	After         sandboxProfileJSON           `json:"after"`
+	AccessNotices []sandboxpolicy.AccessNotice `json:"notices,omitempty"`
 	// Revision couples an edit preview to its eventual PATCH. It is omitted for
 	// creates, whose unique-name constraint already protects the commit.
 	Revision string `json:"revision,omitempty"`
@@ -126,7 +129,9 @@ type sandboxProfilePreviewJSON struct {
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
 		Name: p.Name, Filesystem: p.Filesystem,
-		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		Environment: p.Environment, AgentDirectories: p.AgentDirectories,
+		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
+		Network:       p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 	}
 	if localFields {
 		if !p.CreatedAt.IsZero() {
@@ -142,28 +147,34 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
-		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
+		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
-		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
+		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories,
+		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
+		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
-		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
+		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
-		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
+		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories,
+		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
+		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -204,6 +215,11 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
+		accessNotices, err := db.SandboxProfileCompositionNotices(p)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+			return
+		}
 		if r.URL.Query().Get("dry_run") != "" {
 			existing, err := db.GetSandboxProfile(p.Name)
 			if err != nil {
@@ -215,7 +231,7 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusOK, sandboxProfilePreviewJSON{
-				After: sandboxProfileToJSON(p, false),
+				After: sandboxProfileToJSON(p, false), AccessNotices: accessNotices,
 			})
 			return
 		}
@@ -232,7 +248,9 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": p.Name, "missing": missing})
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"id": id, "name": p.Name, "missing": missing, "notices": accessNotices,
+		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}
@@ -290,6 +308,11 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
+		accessNotices, err := db.SandboxProfileCompositionNotices(p)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+			return
+		}
 		if r.URL.Query().Get("dry_run") != "" {
 			if p.Name != existing.Name {
 				collision, err := db.GetSandboxProfile(p.Name)
@@ -304,9 +327,10 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			}
 			before := sandboxProfileToJSON(existing, false)
 			writeJSON(w, http.StatusOK, sandboxProfilePreviewJSON{
-				Before:   &before,
-				After:    sandboxProfileToJSON(p, false),
-				Revision: existing.UpdatedAt.Format(time.RFC3339Nano),
+				Before:        &before,
+				After:         sandboxProfileToJSON(p, false),
+				AccessNotices: accessNotices,
+				Revision:      existing.UpdatedAt.Format(time.RFC3339Nano),
 			})
 			return
 		}
@@ -329,7 +353,9 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", updateErr.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"id": p.ID, "name": p.Name, "missing": missing})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": p.ID, "name": p.Name, "missing": missing, "notices": accessNotices,
+		})
 	case http.MethodDelete:
 		n, err := db.DeleteSandboxProfile(name)
 		if errors.Is(err, db.ErrSandboxProfileIncludedBy) {
@@ -698,7 +724,13 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": result.Imported, "skipped": result.Skipped, "warnings": result.Warnings})
+	for _, notice := range result.AccessNotices {
+		result.Warnings = append(result.Warnings, notice.Detail)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"imported": result.Imported, "skipped": result.Skipped,
+		"warnings": result.Warnings,
+	})
 }
 
 var sandboxImportBeforeTransactionForTest = func() {}
@@ -800,6 +832,8 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // version 5 REMOVES read_baseline and read_baseline_exclusions (TCL-623) —
 // strictness is expressed as ordinary filesystem deny rows plus narrower
 // reopens; version 6 REMOVES break_glass_filesystem (TCL-791).
+// Version 7 adds network and unix_sockets; absent fields mean exactly what
+// their profile meant before those axes existed.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired

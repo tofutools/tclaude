@@ -96,6 +96,9 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 		return nil, err
 	}
 	current = clampResumeProtectedAuthority(current, *previous)
+	current.Effective.AccessNotices = sandboxpolicy.MergeAccessNotices(
+		current.Effective.AccessNotices, previous.Effective.AccessNotices...,
+	)
 	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 }
 

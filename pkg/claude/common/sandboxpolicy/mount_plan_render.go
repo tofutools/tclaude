@@ -114,7 +114,11 @@ type mountGrantSection struct {
 // mints per agent rather than host authority the profile grants. NetworkAccess
 // maps onto the sibling NetworkPosture field rather than onto Entries.
 func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
-	posture, err := NetworkPostureForAccess(effective.NetworkAccess)
+	axes, err := PlannedEffectiveAccessAxes(effective)
+	if err != nil {
+		return MountPlan{}, err
+	}
+	posture, err := NetworkPostureForRules(axes.Network)
 	if err != nil {
 		return MountPlan{}, err
 	}
@@ -130,6 +134,26 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 	}
 	plan.NetworkPosture = posture
 	return plan, nil
+}
+
+// NetworkPostureForRules maps the new access axis onto the reserved mount-plan
+// seam. Capability planning must widen an unenforceable list before an applier
+// sees it; a surviving NetworkFiltered value is therefore an enforceable-or-
+// refuse contract, never permission to silently approximate.
+func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
+	switch rules.Mode {
+	case AccessModeUnset, AccessModeOpen:
+		return NetworkHostOpen, nil
+	case AccessModeClosed:
+		return NetworkIsolatedWithAgentd, nil
+	case AccessModeList:
+		return NetworkFiltered, nil
+	default:
+		return NetworkHostOpen, fmt.Errorf(
+			"network.mode %q is invalid (want open, closed, list, or omitted)",
+			rules.Mode,
+		)
+	}
 }
 
 // NetworkPostureForAccess maps the operator-authored network intent onto the

@@ -47,13 +47,15 @@ type SandboxProfile struct {
 	// them, which strictly narrows; operator-supplied input is refused loudly
 	// at the daemon boundary instead, so nothing is imported that differs from
 	// what the file says.
-	Filesystem       []SandboxFilesystemGrant    `json:"filesystem"`
-	Environment      []SandboxEnvironmentEntry   `json:"environment"`
-	AgentDirectories []string                    `json:"agent_directories"`
-	NetworkAccess    sandboxpolicy.NetworkAccess `json:"network_access,omitempty"`
-	Includes         []string                    `json:"includes"`
-	CreatedAt        time.Time                   `json:"created_at"`
-	UpdatedAt        time.Time                   `json:"updated_at"`
+	Filesystem       []SandboxFilesystemGrant       `json:"filesystem"`
+	Environment      []SandboxEnvironmentEntry      `json:"environment"`
+	AgentDirectories []string                       `json:"agent_directories"`
+	NetworkAccess    sandboxpolicy.NetworkAccess    `json:"network_access,omitempty"`
+	Network          *sandboxpolicy.NetworkRules    `json:"network,omitempty"`
+	UnixSockets      *sandboxpolicy.UnixSocketRules `json:"unix_sockets,omitempty"`
+	Includes         []string                       `json:"includes"`
+	CreatedAt        time.Time                      `json:"created_at"`
+	UpdatedAt        time.Time                      `json:"updated_at"`
 }
 
 type SandboxProfileAssignments struct {
@@ -62,9 +64,10 @@ type SandboxProfileAssignments struct {
 }
 
 type SandboxProfileImportResult struct {
-	Imported []string
-	Skipped  []string
-	Warnings []string
+	Imported      []string
+	Skipped       []string
+	Warnings      []string
+	AccessNotices []sandboxpolicy.AccessNotice
 }
 
 type sandboxProfileImportPlan struct {
@@ -98,7 +101,7 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(p)
+	payload, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return 0, err
 	}
@@ -113,8 +116,9 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(`INSERT INTO sandbox_profiles
-		(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, now, now)
+		(name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+		p.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrSandboxProfileNameTaken
@@ -153,7 +157,7 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	if err != nil {
 		return err
 	}
-	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(p)
+	payload, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return err
 	}
@@ -174,8 +178,9 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 		return err
 	}
 	now := time.Now().Format(time.RFC3339Nano)
-	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, updated_at = ? WHERE id = ?`
-	args := []any{p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, now, p.ID}
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+		p.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, p.ID}
 	if revision != "" {
 		query += ` AND updated_at = ?`
 		args = append(args, revision)
@@ -389,7 +394,16 @@ func validateIncludeGraphMap(graph map[string][]string) error {
 	return nil
 }
 
-func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, string, error) {
+type sandboxProfilePayloadJSON struct {
+	filesystem       string
+	environment      string
+	agentDirectories string
+	network          string
+	unixSockets      string
+	includes         string
+}
+
+func marshalSandboxProfilePayload(p *SandboxProfile) (sandboxProfilePayloadJSON, error) {
 	filesystem := p.Filesystem
 	if filesystem == nil {
 		filesystem = []SandboxFilesystemGrant{}
@@ -408,21 +422,42 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, st
 	}
 	filesystemJSON, err := json.Marshal(filesystem)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile filesystem: %w", err)
+		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile filesystem: %w", err)
 	}
 	environmentJSON, err := json.Marshal(environment)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile environment: %w", err)
+		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile environment: %w", err)
 	}
 	agentDirectoriesJSON, err := json.Marshal(agentDirectories)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile agent directories: %w", err)
+		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile agent directories: %w", err)
+	}
+	networkJSON := []byte{}
+	if p.Network != nil {
+		networkJSON, err = json.Marshal(p.Network)
+		if err != nil {
+			return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile network rules: %w", err)
+		}
+	}
+	unixSocketsJSON := []byte{}
+	if p.UnixSockets != nil {
+		unixSocketsJSON, err = json.Marshal(p.UnixSockets)
+		if err != nil {
+			return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile Unix-socket rules: %w", err)
+		}
 	}
 	includesJSON, err := json.Marshal(includes)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile includes: %w", err)
+		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile includes: %w", err)
 	}
-	return string(filesystemJSON), string(environmentJSON), string(agentDirectoriesJSON), string(includesJSON), nil
+	return sandboxProfilePayloadJSON{
+		filesystem:       string(filesystemJSON),
+		environment:      string(environmentJSON),
+		agentDirectories: string(agentDirectoriesJSON),
+		network:          string(networkJSON),
+		unixSockets:      string(unixSocketsJSON),
+		includes:         string(includesJSON),
+	}, nil
 }
 
 // normalizeSandboxProfileForStore is the single defensive persistence seam
@@ -438,7 +473,8 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	}
 	normalized, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
 		Name: p.Name, Filesystem: p.Filesystem,
-		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
+		Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 	})
 	if err != nil {
 		return nil, err
@@ -449,6 +485,8 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	out.Environment = normalized.Environment
 	out.AgentDirectories = normalized.AgentDirectories
 	out.NetworkAccess = normalized.NetworkAccess
+	out.Network = normalized.Network
+	out.UnixSockets = normalized.UnixSockets
 	out.Includes = normalized.Includes
 	return &out, nil
 }
@@ -469,12 +507,15 @@ func GetSandboxProfileByID(id int64) (*SandboxProfile, error) {
 	return scanSandboxProfile(d.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
 }
 
-const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at FROM sandbox_profiles`
+const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at FROM sandbox_profiles`
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, createdAt, updatedAt string
-	if err := row.Scan(&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &agentDirectoriesJSON, &p.NetworkAccess, &includesJSON, &createdAt, &updatedAt); errors.Is(err, sql.ErrNoRows) {
+	var filesystemJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, includesJSON, createdAt, updatedAt string
+	if err := row.Scan(
+		&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &agentDirectoriesJSON,
+		&p.NetworkAccess, &networkJSON, &unixSocketsJSON, &includesJSON, &createdAt, &updatedAt,
+	); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -487,6 +528,16 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	}
 	if err := json.Unmarshal([]byte(agentDirectoriesJSON), &p.AgentDirectories); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q agent directories: %w", p.Name, err)
+	}
+	if networkJSON != "" {
+		if err := json.Unmarshal([]byte(networkJSON), &p.Network); err != nil {
+			return nil, fmt.Errorf("decode sandbox profile %q network rules: %w", p.Name, err)
+		}
+	}
+	if unixSocketsJSON != "" {
+		if err := json.Unmarshal([]byte(unixSocketsJSON), &p.UnixSockets); err != nil {
+			return nil, fmt.Errorf("decode sandbox profile %q Unix-socket rules: %w", p.Name, err)
+		}
 	}
 	if err := json.Unmarshal([]byte(includesJSON), &p.Includes); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q includes: %w", p.Name, err)
@@ -547,7 +598,10 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 // optional assignment restoration all use the same plan before the first
 // write, so an error never leaves a partially imported registry.
 func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxProfileImportOptions) (SandboxProfileImportResult, error) {
-	result := SandboxProfileImportResult{Imported: []string{}, Skipped: []string{}, Warnings: []string{}}
+	result := SandboxProfileImportResult{
+		Imported: []string{}, Skipped: []string{}, Warnings: []string{},
+		AccessNotices: []sandboxpolicy.AccessNotice{},
+	}
 	onConflict := opts.OnConflict
 	onConflict = strings.ToLower(strings.TrimSpace(onConflict))
 	if onConflict == "" {
@@ -565,7 +619,8 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		}
 		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 			Name: profile.Name, Filesystem: profile.Filesystem,
-			Environment: profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess, Includes: profile.Includes,
+			Environment: profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess,
+			Network: profile.Network, UnixSockets: profile.UnixSockets, Includes: profile.Includes,
 		})
 		if err != nil {
 			return result, fmt.Errorf("%w: profile #%d: %v", ErrSandboxProfileInvalidImport, i+1, err)
@@ -576,6 +631,8 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		normalizedProfile.Environment = p.Environment
 		normalizedProfile.AgentDirectories = p.AgentDirectories
 		normalizedProfile.NetworkAccess = p.NetworkAccess
+		normalizedProfile.Network = p.Network
+		normalizedProfile.UnixSockets = p.UnixSockets
 		normalizedProfile.Includes = p.Includes
 		if seen[normalizedProfile.Name] {
 			return result, fmt.Errorf("%w: sandbox profile %q appears more than once", ErrSandboxProfileInvalidImport, normalizedProfile.Name)
@@ -633,18 +690,20 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"sandbox profile %q path %q does not exist locally; the rule will target it if created", item.profile.Name, path))
 		}
-		filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(item.profile)
+		payload, err := marshalSandboxProfilePayload(item.profile)
 		if err != nil {
 			return result, err
 		}
 		if item.existingID != 0 {
-			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
-				filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, now, item.existingID); err != nil {
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
+				payload.filesystem, payload.environment, payload.agentDirectories, item.profile.NetworkAccess,
+				payload.network, payload.unixSockets, payload.includes, now, item.existingID); err != nil {
 				return result, err
 			}
 		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
-			(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			item.profile.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, now, now); err != nil {
+			(name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.profile.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+			item.profile.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, now); err != nil {
 			if isUniqueViolation(err) {
 				return result, ErrSandboxProfileNameTaken
 			}
@@ -657,6 +716,20 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 	// Dangling or cyclic includes roll the whole import back.
 	if err := validateSandboxProfileIncludeGraph(tx); err != nil {
 		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
+	}
+	finalRegistry, err := sandboxProfileRegistryInTx(tx)
+	if err != nil {
+		return result, err
+	}
+	for _, item := range plans {
+		if item.skipped {
+			continue
+		}
+		_, notices, err := flattenSandboxProfileInRegistry(finalRegistry[item.profile.Name], finalRegistry)
+		if err != nil {
+			return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
+		}
+		result.AccessNotices = append(result.AccessNotices, notices...)
 	}
 
 	result.Warnings = append(result.Warnings, assignmentPlan.warnings...)
@@ -703,22 +776,26 @@ func sandboxProfileRegistryInTx(tx *sql.Tx) (map[string]*SandboxProfile, error) 
 
 func validateSandboxProfileRegistry(registry map[string]*SandboxProfile) error {
 	for name, profile := range registry {
-		if _, err := flattenSandboxProfileInRegistry(profile, registry); err != nil {
+		if _, _, err := flattenSandboxProfileInRegistry(profile, registry); err != nil {
 			return fmt.Errorf("sandbox profile %q: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func flattenSandboxProfileInRegistry(profile *SandboxProfile, registry map[string]*SandboxProfile) (sandboxpolicy.Profile, error) {
+func flattenSandboxProfileInRegistry(
+	profile *SandboxProfile,
+	registry map[string]*SandboxProfile,
+) (sandboxpolicy.Profile, []sandboxpolicy.AccessNotice, error) {
 	toPolicy := func(p *SandboxProfile) sandboxpolicy.Profile {
 		return sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
 			Environment:      p.Environment,
-			AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+			AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
+			Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 		}
 	}
-	return sandboxpolicy.Flatten(toPolicy(profile), func(name string) (*sandboxpolicy.Profile, error) {
+	return sandboxpolicy.FlattenWithNotices(toPolicy(profile), func(name string) (*sandboxpolicy.Profile, error) {
 		included := registry[name]
 		if included == nil {
 			return nil, nil
@@ -726,6 +803,33 @@ func flattenSandboxProfileInRegistry(profile *SandboxProfile, registry map[strin
 		policy := toPolicy(included)
 		return &policy, nil
 	})
+}
+
+// SandboxProfileCompositionNotices evaluates one proposed create/update
+// against the current include registry without mutating it. HTTP preview and
+// save responses use this sibling diagnostic channel; the profile value and
+// export wire remain free of transient notices.
+func SandboxProfileCompositionNotices(profile *SandboxProfile) ([]sandboxpolicy.AccessNotice, error) {
+	if profile == nil {
+		return nil, errors.New("sandbox profile is nil")
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	registry, err := sandboxProfileRegistryInTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	proposed := *profile
+	registry[proposed.Name] = &proposed
+	_, notices, err := flattenSandboxProfileInRegistry(&proposed, registry)
+	return notices, err
 }
 
 // planSandboxProfileAssignments decides exactly which requested assignments
@@ -1008,7 +1112,8 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		}
 		return &sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
-			Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+			Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
+			Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 		}
 	}
 	// Includes are expanded inside the same transaction that read the
@@ -1022,25 +1127,25 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		}
 		return toPolicy(p), nil
 	}
-	flatten := func(p *SandboxProfile) (*sandboxpolicy.Profile, error) {
+	flatten := func(p *SandboxProfile) (*sandboxpolicy.Profile, []sandboxpolicy.AccessNotice, error) {
 		if p == nil {
-			return nil, nil
+			return nil, nil, nil
 		}
-		flattened, err := sandboxpolicy.Flatten(*toPolicy(p), lookupForFlatten)
+		flattened, notices, err := sandboxpolicy.FlattenWithNotices(*toPolicy(p), lookupForFlatten)
 		if err != nil {
-			return nil, fmt.Errorf("flatten sandbox profile %q: %w", p.Name, err)
+			return nil, nil, fmt.Errorf("flatten sandbox profile %q: %w", p.Name, err)
 		}
-		return &flattened, nil
+		return &flattened, notices, nil
 	}
-	globalPolicy, err := flatten(global)
+	globalPolicy, globalNotices, err := flatten(global)
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
 	}
-	groupPolicy, err := flatten(group)
+	groupPolicy, groupNotices, err := flatten(group)
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
 	}
-	explicitPolicy, err := flatten(explicit)
+	explicitPolicy, explicitNotices, err := flatten(explicit)
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
 	}
@@ -1049,6 +1154,15 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 	})
 	if err != nil {
 		return sandboxpolicy.Snapshot{}, err
+	}
+	resolutionNotices := effective.AccessNotices
+	effective.AccessNotices = nil
+	for _, notices := range [][]sandboxpolicy.AccessNotice{
+		globalNotices, groupNotices, explicitNotices, resolutionNotices,
+	} {
+		if len(notices) > 0 {
+			effective.AccessNotices = append(effective.AccessNotices, notices...)
+		}
 	}
 	applied := make([]sandboxpolicy.AppliedProfile, 0, 3)
 	for _, item := range []struct {
