@@ -98,10 +98,33 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	assert.Zero(t, unchanged.contextWrite,
 		"an unchanged rollout must not rewrite the same context snapshot on every dashboard poll")
 
+	require.NoError(t, db.DeleteSession(sessionID))
+	recreated := *sess
+	recreated.CreatedAt = sess.CreatedAt.Add(time.Second)
+	require.NoError(t, db.SaveSession(&recreated))
+	blank, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, blank.TokensInput, "the recreated row starts without the prior generation's context")
+
+	resetCodexRefreshThrottleForTest(sessionID)
+	var recreatedTiming codexTelemetryTiming
+	refreshCodexContextSnapshotOnReadTimed(&recreated, true, func(timing codexTelemetryTiming) {
+		recreatedTiming = timing
+	})
+	assert.Positive(t, recreatedTiming.contextWrite,
+		"a new session-row generation must be populated even when its rollout is unchanged")
+	recreatedSnapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1000), recreatedSnapshot.TokensInput)
+	recreatedCheckpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.NotNil(t, recreatedCheckpoint,
+		"session recreation also repopulates the checkpoint removed by the delete cascade")
+
 	appendCodexRefreshTokenCount(t, path, 9000, 900)
 	resetCodexRefreshThrottleForTest(sessionID)
 	var changed codexTelemetryTiming
-	refreshCodexContextSnapshotOnReadTimed(sess, true, func(timing codexTelemetryTiming) {
+	refreshCodexContextSnapshotOnReadTimed(&recreated, true, func(timing codexTelemetryTiming) {
 		changed = timing
 	})
 	assert.Positive(t, changed.contextWrite, "new token telemetry is persisted")

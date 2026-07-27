@@ -29,7 +29,10 @@ type codexReadThroughSnapshot struct {
 	checkpointLoaded     bool
 	checkpointData       string
 	checkpointFailures   int
+	sessionConvID        string
+	sessionCreatedAt     time.Time
 	persistedConvID      string
+	persistedCreatedAt   time.Time
 	persistedContext     harness.ContextTelemetry
 	persistedHasContext  bool
 	persistedReset       bool
@@ -155,6 +158,15 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	}
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
+	if cached.sessionConvID != "" &&
+		(cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt)) {
+		// Session pruning cascades to its durable follower checkpoint. A later
+		// resume can recreate the same session ID and conversation ID while the
+		// daemon's in-memory follower survives, so make its current checkpoint
+		// look dirty and repopulate the new row.
+		checkpointData = ""
+		checkpointFailures = 0
+	}
 	checkpointEncodeStarted := time.Now()
 	if checkpoint, ok, checkpointErr := cached.follower.Checkpoint(); checkpointErr != nil {
 		timing.checkpointEncode = time.Since(checkpointEncodeStarted)
@@ -200,17 +212,20 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	}
 
 	persistedConvID := cached.persistedConvID
+	persistedCreatedAt := cached.persistedCreatedAt
 	persistedContext := cached.persistedContext
 	persistedHasContext := cached.persistedHasContext
 	persistedReset := cached.persistedReset
+	sameSessionGeneration := persistedConvID == sess.ConvID && persistedCreatedAt.Equal(sess.CreatedAt)
 	if snap.ContextReset {
-		if persistedConvID != sess.ConvID || !persistedReset {
+		if !sameSessionGeneration || !persistedReset {
 			contextWriteStarted := time.Now()
 			if err := db.ResetCompact(sess.ID); err != nil {
 				slog.Warn("codex-telemetry: failed to persist compaction reset",
 					"session_id", sess.ID, "error", err, "module", "agentd")
 			} else {
 				persistedConvID = sess.ConvID
+				persistedCreatedAt = sess.CreatedAt
 				persistedContext = harness.ContextTelemetry{}
 				persistedHasContext = false
 				persistedReset = true
@@ -218,7 +233,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 			timing.contextWrite += time.Since(contextWriteStarted)
 		}
 	} else if snap.HasContext &&
-		(persistedConvID != sess.ConvID || persistedReset || !persistedHasContext || persistedContext != snap.Context) {
+		(!sameSessionGeneration || persistedReset || !persistedHasContext || persistedContext != snap.Context) {
 		ctx := snap.Context
 		contextWriteStarted := time.Now()
 		if err := db.UpdateContextSnapshot(sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize); err != nil {
@@ -226,6 +241,7 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 				"session_id", sess.ID, "error", err, "module", "agentd")
 		} else {
 			persistedConvID = sess.ConvID
+			persistedCreatedAt = sess.CreatedAt
 			persistedContext = ctx
 			persistedHasContext = true
 			persistedReset = false
@@ -239,7 +255,10 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		snap.InterruptedSubagents,
 		checkpointData,
 		checkpointFailures,
+		sess.ConvID,
+		sess.CreatedAt,
 		persistedConvID,
+		persistedCreatedAt,
 		persistedContext,
 		persistedHasContext,
 		persistedReset,
@@ -317,7 +336,10 @@ func cacheCodexRuntimeRefresh(
 	interrupted map[string]struct{},
 	checkpointData string,
 	checkpointFailures int,
+	sessionConvID string,
+	sessionCreatedAt time.Time,
 	persistedConvID string,
+	persistedCreatedAt time.Time,
 	persistedContext harness.ContextTelemetry,
 	persistedHasContext bool,
 	persistedReset bool,
@@ -333,7 +355,10 @@ func cacheCodexRuntimeRefresh(
 	prev.checkpointLoaded = true
 	prev.checkpointData = checkpointData
 	prev.checkpointFailures = checkpointFailures
+	prev.sessionConvID = sessionConvID
+	prev.sessionCreatedAt = sessionCreatedAt
 	prev.persistedConvID = persistedConvID
+	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext
 	prev.persistedHasContext = persistedHasContext
 	prev.persistedReset = persistedReset
