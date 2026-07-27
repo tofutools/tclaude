@@ -3,6 +3,8 @@ package harness
 import (
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestOpenCodeSandboxWarnings(t *testing.T) {
@@ -13,6 +15,9 @@ func TestOpenCodeSandboxWarnings(t *testing.T) {
 	}{{
 		name: "access-control looks like a sandbox but is not, so it warns",
 		mode: OpenCodeSandboxAccessControl, wantWarning: true,
+	}, {
+		name: "tclaude-layer reports its split executor boundary",
+		mode: OpenCodeSandboxTclaudeLayer, wantWarning: true,
 	}, {
 		// A blank spawn resolves to access-control (the DefaultMode), which is
 		// exactly the posture the warning must reach — the mode a user gets
@@ -36,9 +41,15 @@ func TestOpenCodeSandboxWarnings(t *testing.T) {
 			if !tc.wantWarning {
 				return
 			}
-			// The warning must name what is not confined and be honest that no
-			// real fix is available yet — the whole point of the line.
 			line := got[0]
+			if tc.mode == OpenCodeSandboxTclaudeLayer {
+				for _, want := range []string{"tool-executing server", "attach pane", "loopback control plane"} {
+					if !strings.Contains(line, want) {
+						t.Fatalf("boundary notice %q missing %q", line, want)
+					}
+				}
+				return
+			}
 			for _, want := range []string{"⚠", "no built-in OS sandbox", "access-control", "unsandboxed"} {
 				if !strings.Contains(line, want) {
 					t.Fatalf("warning %q missing %q", line, want)
@@ -78,6 +89,10 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 	if got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxOff, ""); got != nil {
 		t.Fatalf("opencode off: got %v, want nil", got)
 	}
+	got = SpawnSandboxWarnings(opencode, "", OpenCodeSandboxTclaudeLayer, "")
+	if len(got) == 0 || !strings.Contains(got[0], "tool-executing server") {
+		t.Fatalf("opencode tclaude-layer: got %v, want the executor-boundary notice", got)
+	}
 
 	// Claude still reaches its own TCL-586 check (the auto + inherit default with
 	// no settings file that enables the sandbox is the canonical warning case).
@@ -94,5 +109,23 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 	// Codex resolves autonomy and sandbox together, so no gap and no warning.
 	if got := SpawnSandboxWarnings(codex, ApprovalNever, SandboxManagedProfile, ""); got != nil {
 		t.Fatalf("codex: got %v, want nil", got)
+	}
+}
+
+func TestResolveOpenCodeSandboxImplementationMode(t *testing.T) {
+	for _, mode := range []string{"", OpenCodeSandboxAccessControl, OpenCodeSandboxTclaudeLayer} {
+		got, err := ResolveOpenCodeSandboxImplementationMode(
+			OpenCodeName, mode, sandboxpolicy.ImplementationTclaudeLayer)
+		if err != nil || got != OpenCodeSandboxTclaudeLayer {
+			t.Fatalf("outer layer + %q = %q, %v; want %q", mode, got, err, OpenCodeSandboxTclaudeLayer)
+		}
+	}
+	if _, err := ResolveOpenCodeSandboxImplementationMode(
+		OpenCodeName, OpenCodeSandboxOff, sandboxpolicy.ImplementationTclaudeLayer); err == nil {
+		t.Fatal("outer layer + off must fail")
+	}
+	if _, err := ResolveOpenCodeSandboxImplementationMode(
+		OpenCodeName, OpenCodeSandboxTclaudeLayer, sandboxpolicy.ImplementationHarnessBuiltin); err == nil {
+		t.Fatal("tclaude-layer mode without the outer implementation must fail")
 	}
 }

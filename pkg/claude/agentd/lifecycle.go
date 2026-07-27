@@ -2844,7 +2844,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
 	// falls through; refuses naming the missing capability. Probed live, so an
 	// operator who just installed bwrap is not refused by a stale answer.
-	if fail := sandboxImplementationHostFailure(body.SandboxImplementation); fail != nil {
+	if fail := sandboxImplementationHostFailure(h.Name, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -2940,6 +2940,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	sandboxMode, sbErr := harness.ResolveSandboxMode(h, body.SandboxMode)
 	if sbErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
+		return
+	}
+	sandboxMode, fieldFail = resolveOpenCodeSandboxImplementationMode(
+		h, sandboxMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
 	if sandboxMode != harness.SandboxManagedProfile {
@@ -3070,7 +3076,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
-	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -3915,9 +3922,23 @@ func resolveStringLaunchField(
 			return "", "", "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
 				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
 		}
-		notes = append(notes, fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, harnessName))
+		notes = append(notes, stringLaunchFieldSkipNote(
+			tier.source, field, harnessName, err))
 	}
 	return "", agent.ProvHarnessDefault, strings.Join(notes, "; "), nil
+}
+
+func stringLaunchFieldSkipNote(source, field, harnessName string, validationErr error) string {
+	reason := fmt.Sprintf("not valid for %s", harnessName)
+	// OpenCode tclaude-layer is a supported harness/value pairing on Linux.
+	// Its Darwin validator rejects the platform topology, so the generic
+	// harness-invalid disclosure would lie about why this ambient tier fell
+	// through.
+	if field == sandboxImplementationField &&
+		strings.Contains(validationErr.Error(), "does not support OpenCode on macOS") {
+		reason = "not supported for OpenCode on macOS"
+	}
+	return fmt.Sprintf("%s %s ignored (%s)", source, field, reason)
 }
 
 func resolveBoolLaunchField(
@@ -4108,7 +4129,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// default profile carrying tclaude-layer would otherwise reach a spawner on
 	// a host that cannot run it without ever meeting a refusal. Same predicate,
 	// second call site: an unbypassable gate, not a second opinion.
-	if fail := sandboxImplementationHostFailure(p.SandboxImplementation); fail != nil {
+	if fail := sandboxImplementationHostFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,
@@ -4139,6 +4160,10 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	if p.SandboxMode, fail = resolveOpenCodeSandboxImplementationMode(
+		h, p.SandboxMode, p.SandboxImplementation); fail != nil {
+		return fail
 	}
 	if p.SandboxMode != harness.SandboxManagedProfile {
 		p.SSHWorkaround = false
@@ -4269,7 +4294,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		p.EffectiveSandbox = &validated
 	}
-	if fail := sandboxProfileCapabilityFailure(p.Harness, p.SandboxMode, p.EffectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
@@ -4394,7 +4420,13 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 				"could not build OpenCode access-control policy: " + err.Error()}
 		}
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(label, p.Cwd, p.Name, "", permissionJSON)
+		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
+			p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
+		}
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+			label, p.Cwd, p.Name, "", permissionJSON, sandboxSpec)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + err.Error()}
@@ -4903,6 +4935,11 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox); err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
+	}
+	if _, err := openCodeTclaudeLayerLaunchSpec(
+		p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox); err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_network", err.Error()}
 	}
 
 	label := generateSpawnLabel()
@@ -6624,8 +6661,14 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if policyErr != nil {
 			return policyErr
 		}
+		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
+			a.SandboxImplementation, a.Cwd, a.GitWorktreeWriteDirs, a.EffectiveSandbox)
+		if sandboxErr != nil {
+			return sandboxErr
+		}
 		var err error
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(a.ConvID, a.Cwd, "", a.ConvID, permissionJSON)
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
+			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON, sandboxSpec)
 		if err != nil {
 			return err
 		}

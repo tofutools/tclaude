@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -15,9 +16,143 @@ import (
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
-	HarnessName       string
-	WriteDirs         []string
-	ProfileFilesystem []sandboxpolicy.FilesystemGrant
+	HarnessName       string                          `json:"harness_name"`
+	StateRoot         string                          `json:"state_root"`
+	StateDirs         []string                        `json:"state_dirs,omitempty"`
+	ReadOnlyStateDirs []string                        `json:"read_only_state_dirs,omitempty"`
+	WriteDirs         []string                        `json:"write_dirs"`
+	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
+}
+
+// TclaudeLayerLaunchSpec is the complete, versioned input to the outer-layer
+// renderer. It is deliberately independent of NewParams and daemon launch
+// types so pane-authoritative harnesses and agentd-owned executors can render
+// the same boundary.
+type TclaudeLayerLaunchSpec struct {
+	Version   int                            `json:"version"`
+	Effective sandboxpolicy.EffectiveProfile `json:"effective"`
+	Contract  TclaudeLayerLaunchContract     `json:"contract"`
+}
+
+const TclaudeLayerLaunchSpecVersion = 2
+
+// TclaudeLayerLaunchInput carries the trusted launch identities used to build
+// a TclaudeLayerLaunchSpec. GitWriteDirs must already be daemon-pinned for a
+// managed launch; direct human launches derive them before this seam.
+type TclaudeLayerLaunchInput struct {
+	HarnessName  string
+	Cwd          string
+	GitWriteDirs []string
+	Snapshot     *sandboxpolicy.Snapshot
+}
+
+// BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem and
+// break-glass rows, then constructs the exact launch contract the outer
+// renderer consumes. Callers may persist the result and re-render it later
+// without consulting launch-time UI or profile-registry state.
+func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLaunchSpec, error) {
+	cwd := canonicalSandboxPath(input.Cwd)
+	if cwd == "" {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude-layer launch cwd %q is not an absolute canonical path", input.Cwd)
+	}
+	effective := sandboxpolicy.EffectiveProfile{}
+	if input.Snapshot != nil {
+		effective = input.Snapshot.Effective
+		filesystem, err := sandboxpolicy.FilesystemForLaunch(effective)
+		if err != nil {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer filesystem: %w", err)
+		}
+		breakGlass, err := sandboxpolicy.BreakGlassForLaunch(effective)
+		if err != nil {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer break-glass: %w", err)
+		}
+		effective.Filesystem = filesystem
+		effective.BreakGlassFilesystem = breakGlass
+	}
+	profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
+	gitWriteDirs := append([]string(nil), input.GitWriteDirs...)
+	launchContractReadDirs := sandboxLaunchContractReadDirsForEffective(
+		effective, append([]string{cwd}, gitWriteDirs...)...)
+	launchWriteDirs := append(gitWriteDirs,
+		sandboxDirsForEffective(effective, sandboxpolicy.AccessWrite)...)
+	launchWriteDirs = appendUniqueDir(launchWriteDirs, cwd)
+	launchReadDirs := append(
+		sandboxDirsForEffective(effective, sandboxpolicy.AccessRead),
+		launchContractReadDirs...,
+	)
+	launchDenyDirs := sandboxDirsForEffective(effective, sandboxpolicy.AccessDeny)
+	stateRoot, err := tclaudeLayerHarnessStateRoot(input.HarnessName)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	stateRoot, err = canonicalTclaudeLayerStatePath(stateRoot)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+			"resolve tclaude-layer harness state root: %w", err)
+	}
+	contractWriteDirs := append(append([]string(nil), gitWriteDirs...), cwd)
+	var stateDirs []string
+	var readOnlyStateDirs []string
+	if input.HarnessName == harness.OpenCodeName {
+		stateDirs, err = tclaudeLayerOpenCodeStateDirs()
+		if err != nil {
+			return TclaudeLayerLaunchSpec{}, err
+		}
+		contractWriteDirs = append(contractWriteDirs, stateDirs...)
+		// ~/.opencode is mutable harness state, but its bin subtree is also
+		// OpenCodeExecutable's supported fallback install location. Reopen it
+		// read-only after the parent state bind so a confined tool cannot plant
+		// a binary that a later human invocation executes outside the wall.
+		binState, stateErr := canonicalTclaudeLayerStatePath(
+			filepath.Join(stateRoot, "bin"))
+		if stateErr != nil {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+				"resolve OpenCode executable state: %w", stateErr)
+		}
+		if !sandboxpolicy.PathContainsOrEqual(stateRoot, binState) {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+				"OpenCode executable state %q resolves outside state root %q",
+				binState, stateRoot)
+		}
+		readOnlyStateDirs = []string{binState}
+		launchReadDirs = append(launchReadDirs, readOnlyStateDirs...)
+		// The executor's tool subprocesses are the managed agent. Keep their
+		// authenticated coordination path reachable even when /tmp or an
+		// authored Home deny hides the socket's ancestors.
+		if socket := agentipc.CanonicalSocketPath(); filepath.IsAbs(socket) {
+			launchReadDirs = append(launchReadDirs, socket)
+		}
+	}
+	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
+		launchReadDirs, launchWriteDirs, launchDenyDirs)
+	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
+	for _, name := range effective.AgentDirectories {
+		agentDirectoryNames[name] = true
+	}
+	for _, entry := range effective.Environment {
+		if agentDirectoryNames[entry.Name] {
+			contractWriteDirs = append(contractWriteDirs, entry.Value)
+		}
+	}
+	contract := TclaudeLayerLaunchContract{
+		HarnessName:       input.HarnessName,
+		StateRoot:         stateRoot,
+		StateDirs:         stateDirs,
+		ReadOnlyStateDirs: readOnlyStateDirs,
+		WriteDirs:         contractWriteDirs,
+		ProfileFilesystem: profileFilesystem,
+	}
+	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(contract, effective)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	contract.StateRoot = phase0WriteDirs[0]
+	contract.WriteDirs = append([]string(nil), phase0WriteDirs[1:]...)
+	return TclaudeLayerLaunchSpec{
+		Version:   TclaudeLayerLaunchSpecVersion,
+		Effective: effective,
+		Contract:  contract,
+	}, nil
 }
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
@@ -33,10 +168,27 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
 }
 
+// ResolveTclaudeLayerServer verifies the host capability needed by a
+// non-interactive server boundary. Unlike ResolveTclaudeLayer, it does not
+// require terminal-resize relay support that the server renderer never uses.
+func ResolveTclaudeLayerServer(
+	posture sandboxpolicy.NetworkPosture,
+) (string, harness.LaunchOSSandbox, error) {
+	binary, err := resolveBwrapServerBinary(posture)
+	if err != nil {
+		return "", harness.LaunchOSSandbox{
+			State:  "off",
+			Source: "tclaude-layer unavailable",
+		}, err
+	}
+	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
+}
+
 // TclaudeLayerHostAvailability reports whether THIS HOST can create the
-// baseline tclaude-layer boundary: bubblewrap on Linux or Seatbelt on macOS.
-// nil means available. The returned error names the concrete missing
-// capability.
+// interactive tclaude-layer boundary: bubblewrap plus its terminal relay on
+// Linux, or Seatbelt on macOS. nil means available. The returned error names
+// the concrete missing capability. Relay-free server callers use
+// TclaudeLayerServerHostAvailability instead.
 //
 // It shares one predicate with the launch boundary — both call
 // resolveBwrapBinary — so a pre-flight answer can never disagree with the
@@ -56,11 +208,38 @@ func TclaudeLayerHostAvailability() error {
 	return err
 }
 
+// TclaudeLayerServerHostAvailability reports whether this host can create the
+// non-interactive server boundary, without imposing interactive relay
+// capabilities on a topology that has no terminal.
+func TclaudeLayerServerHostAvailability() error {
+	_, err := resolveBwrapServerBinary(sandboxpolicy.NetworkHostOpen)
+	return err
+}
+
 // TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
 // Partial host-open implementations stay visibly unverified; a constructed
 // isolated root can report the stronger boundary it actually enforces.
 func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
 	return tclaudeLayerLaunchOSSandbox(posture)
+}
+
+// TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
+// OpenCode's attach TUI is deliberately outside the wall; its agentd-owned
+// server is the process that executes tools and is the component we confine.
+func TclaudeLayerLaunchOSSandboxForHarness(
+	harnessName string,
+	posture sandboxpolicy.NetworkPosture,
+) harness.LaunchOSSandbox {
+	if harnessName == harness.OpenCodeName {
+		return harness.LaunchOSSandbox{
+			State: "on",
+			Source: "tclaude-layer (bubblewrap; OpenCode tool-executing server confined; " +
+				"attach pane outside the boundary; loopback control plane reachable; " +
+				"host network and ambient host Unix sockets reachable)",
+			Unverified: true,
+		}
+	}
+	return TclaudeLayerLaunchOSSandbox(posture)
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
@@ -71,6 +250,10 @@ func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.Eff
 	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
 	if err != nil {
 		return err
+	}
+	if h.Name == harness.OpenCodeName && posture != sandboxpolicy.NetworkHostOpen {
+		return fmt.Errorf(
+			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking for its authenticated loopback control plane and endpoint-ownership proof")
 	}
 	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
 		return nil
@@ -100,25 +283,179 @@ func WrapTclaudeLayer(
 	contract TclaudeLayerLaunchContract,
 	harnessCommand string,
 ) (string, error) {
-	plan, err := sandboxpolicy.RenderMountPlan(effective)
-	if err != nil {
-		return "", fmt.Errorf("render mount plan: %w", err)
-	}
-	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(contract, effective)
+	return WrapTclaudeLayerSpec(binary, TclaudeLayerLaunchSpec{
+		Version:   TclaudeLayerLaunchSpecVersion,
+		Effective: effective,
+		Contract:  contract,
+	}, harnessCommand)
+}
+
+// WrapTclaudeLayerSpec renders and applies one materialized launch spec.
+func WrapTclaudeLayerSpec(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	harnessCommand string,
+) (string, error) {
+	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
-	}
-	if err := validateTclaudeLayerHarnessStateRules(
-		phase0WriteDirs[0],
-		contract.ProfileFilesystem,
-	); err != nil {
-		return "", err
-	}
-	breakGlassPaths := make([]string, 0, len(effective.BreakGlassFilesystem))
-	for _, grant := range effective.BreakGlassFilesystem {
-		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
 	return tclaudeLayerCommand(binary, phase0WriteDirs, breakGlassPaths, plan, harnessCommand)
+}
+
+// WrapTclaudeLayerServerSpec renders a materialized launch spec for a
+// non-interactive, agentd-owned server. Unlike the pane renderer it does not
+// add the terminal WINCH relay: the server has no terminal to resize, and
+// keeping that extra tclaude process out of its ancestry makes the persisted
+// wrapper PID the actual containment boundary.
+func WrapTclaudeLayerServerSpec(
+	binary string,
+	spec TclaudeLayerLaunchSpec,
+	serverCommand string,
+) (string, error) {
+	phase0WriteDirs, breakGlassPaths, plan, err := tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return "", err
+	}
+	return tclaudeLayerServerCommand(
+		binary, phase0WriteDirs, breakGlassPaths, plan, serverCommand)
+}
+
+func tclaudeLayerSpecRenderInput(
+	spec TclaudeLayerLaunchSpec,
+) ([]string, []string, sandboxpolicy.MountPlan, error) {
+	if spec.Version != TclaudeLayerLaunchSpecVersion {
+		return nil, nil, sandboxpolicy.MountPlan{},
+			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+	}
+	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
+	if err != nil {
+		return nil, nil, sandboxpolicy.MountPlan{},
+			fmt.Errorf("render mount plan: %w", err)
+	}
+	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
+	if err != nil {
+		return nil, nil, sandboxpolicy.MountPlan{}, err
+	}
+	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
+	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
+	for _, stateRoot := range stateRoots {
+		if err := validateTclaudeLayerHarnessStateRules(
+			stateRoot,
+			spec.Contract.ProfileFilesystem,
+		); err != nil {
+			return nil, nil, sandboxpolicy.MountPlan{}, err
+		}
+	}
+	breakGlassPaths := make([]string, 0, len(spec.Effective.BreakGlassFilesystem))
+	for _, grant := range spec.Effective.BreakGlassFilesystem {
+		breakGlassPaths = append(breakGlassPaths, grant.Path)
+	}
+	return phase0WriteDirs, breakGlassPaths, plan, nil
+}
+
+// PrepareTclaudeLayerHarnessState materializes only the harness-owned state
+// roots named explicitly by a frozen launch spec. Operator-authored profile
+// paths remain non-creating: a future allow path must not appear on the host
+// merely because a launch mentioned it.
+func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
+	if spec.Version != TclaudeLayerLaunchSpecVersion {
+		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+	}
+	stateDirs := append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
+	if spec.Contract.HarnessName == harness.OpenCodeName && len(spec.Contract.StateDirs) == 0 {
+		return fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+	}
+	if spec.Contract.HarnessName == harness.OpenCodeName &&
+		len(spec.Contract.ReadOnlyStateDirs) == 0 {
+		return fmt.Errorf("OpenCode tclaude-layer launch spec does not protect its executable state")
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return fmt.Errorf("resolve protected paths before preparing harness state: %w", err)
+	}
+	for index, path := range stateDirs {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return fmt.Errorf("tclaude-layer harness state path %q is not absolute", path)
+		}
+		if err := validateTclaudeLayerHarnessStateRules(
+			path, spec.Contract.ProfileFilesystem); err != nil {
+			return err
+		}
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+				return fmt.Errorf(
+					"tclaude-layer harness state path %q is at or below protected root %q",
+					path, protected)
+			}
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare tclaude-layer harness state %q: %w", path, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("inspect tclaude-layer harness state %q: %w", path, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("tclaude-layer harness state path %q is not a directory", path)
+		}
+		if index > 0 {
+			resolved := path
+			if evaluated, err := filepath.EvalSymlinks(path); err == nil {
+				resolved = filepath.Clean(evaluated)
+			}
+			inWriteContract := false
+			for _, writeDir := range spec.Contract.WriteDirs {
+				writeDir = filepath.Clean(writeDir)
+				if evaluated, err := filepath.EvalSymlinks(writeDir); err == nil {
+					writeDir = filepath.Clean(evaluated)
+				}
+				if writeDir == resolved {
+					inWriteContract = true
+					break
+				}
+			}
+			if !inWriteContract {
+				return fmt.Errorf(
+					"tclaude-layer harness state path %q is not in the writable launch contract",
+					path)
+			}
+		}
+	}
+	stateRoot := filepath.Clean(spec.Contract.StateRoot)
+	for _, path := range spec.Contract.ReadOnlyStateDirs {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return fmt.Errorf("tclaude-layer read-only harness state path %q is not absolute", path)
+		}
+		if path == stateRoot || !sandboxpolicy.PathContainsOrEqual(stateRoot, path) {
+			return fmt.Errorf(
+				"tclaude-layer read-only harness state path %q is not below state root %q",
+				path, stateRoot)
+		}
+		if err := validateTclaudeLayerHarnessStateRules(
+			path, spec.Contract.ProfileFilesystem); err != nil {
+			return err
+		}
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.PathContainsOrEqual(protected, path) {
+				return fmt.Errorf(
+					"tclaude-layer read-only harness state path %q is at or below protected root %q",
+					path, protected)
+			}
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return fmt.Errorf("prepare tclaude-layer read-only harness state %q: %w", path, err)
+		}
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
+		if !covered || access != sandboxpolicy.AccessRead {
+			return fmt.Errorf(
+				"tclaude-layer read-only harness state path %q is not read-only in the rendered launch contract",
+				path)
+		}
+	}
+	return nil
 }
 
 // bwrapArgs applies the launch contract, ordered MountPlan, and fixed
@@ -579,9 +916,13 @@ func tclaudeLayerPhase0WriteDirs(
 	contract TclaudeLayerLaunchContract,
 	effective sandboxpolicy.EffectiveProfile,
 ) ([]string, error) {
-	stateRoot, err := tclaudeLayerHarnessStateRoot(contract.HarnessName)
-	if err != nil {
-		return nil, err
+	stateRoot := strings.TrimSpace(contract.StateRoot)
+	if stateRoot == "" {
+		var err error
+		stateRoot, err = tclaudeLayerHarnessStateRoot(contract.HarnessName)
+		if err != nil {
+			return nil, err
+		}
 	}
 	candidates := append([]string{stateRoot}, contract.WriteDirs...)
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
@@ -624,18 +965,152 @@ func tclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 			return root, nil
 		}
 		return filepath.Join(home, ".codex"), nil
+	case harness.OpenCodeName:
+		return filepath.Join(home, ".opencode"), nil
 	default:
 		return "", fmt.Errorf("tclaude-layer has no launch-contract state root for harness %q", harnessName)
 	}
 }
 
+func tclaudeLayerOpenCodeStateDirs() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for OpenCode state: %w", err)
+	}
+	xdgRoot := func(envName string, fallback ...string) string {
+		if root := strings.TrimSpace(os.Getenv(envName)); root != "" {
+			return root
+		}
+		return filepath.Join(append([]string{home}, fallback...)...)
+	}
+	dirs := []string{
+		filepath.Join(xdgRoot("XDG_DATA_HOME", ".local", "share"), "opencode"),
+		filepath.Join(xdgRoot("XDG_CACHE_HOME", ".cache"), "opencode"),
+		filepath.Join(xdgRoot("XDG_CONFIG_HOME", ".config"), "opencode"),
+		filepath.Join(xdgRoot("XDG_STATE_HOME", ".local", "state"), "opencode"),
+	}
+	for index, path := range dirs {
+		path, err = canonicalTclaudeLayerStatePath(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve OpenCode state directory %q: %w", dirs[index], err)
+		}
+		dirs[index] = path
+	}
+	return dirs, nil
+}
+
+func canonicalTclaudeLayerStatePath(path string) (string, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("path %q is not absolute", path)
+	}
+	ancestor := path
+	var suffix []string
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(ancestor)
+			if err != nil {
+				return "", err
+			}
+			info, err := os.Stat(resolved)
+			if err != nil {
+				return "", err
+			}
+			if !info.IsDir() {
+				return "", fmt.Errorf("existing ancestor %q is not a directory", ancestor)
+			}
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
+	}
+}
+
+func sandboxDirsForEffective(
+	effective sandboxpolicy.EffectiveProfile,
+	access sandboxpolicy.Access,
+) []string {
+	out := make([]string, 0, len(effective.Filesystem))
+	for _, grant := range effective.Filesystem {
+		if grant.Access == access {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
+}
+
+func sandboxDenyCoversEffectivePath(
+	effective sandboxpolicy.EffectiveProfile,
+	path string,
+) bool {
+	path = canonicalSandboxPath(path)
+	if path == "" {
+		return false
+	}
+	for _, grant := range effective.Filesystem {
+		if grant.Access != sandboxpolicy.AccessDeny || grant.Path == path {
+			continue
+		}
+		if sandboxpolicy.PathContainsOrEqual(grant.Path, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func sandboxLaunchContractReadDirsForEffective(
+	effective sandboxpolicy.EffectiveProfile,
+	candidates ...string,
+) []string {
+	all := append([]string(nil), candidates...)
+	all = append(all, sandboxDirsForEffective(effective, sandboxpolicy.AccessWrite)...)
+	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
+	for _, name := range effective.AgentDirectories {
+		agentDirectoryNames[name] = true
+	}
+	for _, entry := range effective.Environment {
+		if agentDirectoryNames[entry.Name] {
+			all = append(all, entry.Value)
+		}
+	}
+	var out []string
+	for _, candidate := range all {
+		candidate = canonicalSandboxPath(candidate)
+		if candidate == "" || !sandboxDenyCoversEffectivePath(effective, candidate) {
+			continue
+		}
+		out = appendUniqueDir(out, candidate)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ValidateTclaudeLayerHarness refuses topologies where the wrapped pane does
 // not contain the process that executes tools.
 func ValidateTclaudeLayerHarness(harnessName string) error {
-	if harnessName == harness.OpenCodeName {
-		return fmt.Errorf("tclaude-layer does not yet support OpenCode: its tool-executing server runs outside the wrapped pane")
-	}
-	return nil
+	return validateTclaudeLayerHarness(harnessName)
+}
+
+func tclaudeLayerWrapsPane(harnessName string) bool {
+	return harnessName != harness.OpenCodeName
+}
+
+// TclaudeLayerUsesServerBoundary reports whether the harness's authoritative
+// tool executor is a separately managed, non-interactive server rather than
+// the pane process.
+func TclaudeLayerUsesServerBoundary(harnessName string) bool {
+	return !tclaudeLayerWrapsPane(harnessName)
 }
 
 func bwrapBindSourceExists(path string) (bool, error) {

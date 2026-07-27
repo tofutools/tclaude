@@ -113,6 +113,11 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return darwinSeatbeltExecutable, nil
 }
 
+func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,
@@ -177,6 +182,17 @@ func tclaudeLayerCommand(
 	}
 	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil
+}
+
+func tclaudeLayerServerCommand(
+	string,
+	[]string,
+	[]string,
+	sandboxpolicy.MountPlan,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
 }
 
 func existingSeatbeltPositivePaths(label string, paths []string) ([]string, error) {
@@ -302,4 +318,12 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 			Source: "tclaude-layer unavailable",
 		}
 	}
+}
+
+func validateTclaudeLayerHarness(harnessName string) error {
+	if harnessName == harness.OpenCodeName {
+		return fmt.Errorf(
+			"tclaude-layer does not support OpenCode on macOS: agentd-owned server wrapping requires the Linux bubblewrap executor boundary")
+	}
+	return nil
 }

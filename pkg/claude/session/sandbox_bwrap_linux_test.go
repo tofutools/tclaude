@@ -117,6 +117,25 @@ func TestResolveTclaudeLayerRefusesUnavailablePidfdRelay(t *testing.T) {
 	assert.Equal(t, "off", verdict.State)
 }
 
+func TestResolveTclaudeLayerServerDoesNotRequirePidfdRelay(t *testing.T) {
+	oldLookPath := lookPathBwrap
+	oldProbe := probeBwrap
+	oldPidfdProbe := probeTclaudeLayerPidfd
+	t.Cleanup(func() {
+		lookPathBwrap = oldLookPath
+		probeBwrap = oldProbe
+		probeTclaudeLayerPidfd = oldPidfdProbe
+	})
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }
+
+	binary, verdict, err := ResolveTclaudeLayerServer(sandboxpolicy.NetworkHostOpen)
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/bin/bwrap", binary)
+	assert.Equal(t, "on", verdict.State)
+}
+
 func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
@@ -133,6 +152,19 @@ func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 	assert.Less(t, relay, bwrap)
 	assert.Contains(t, got, "--new-session",
 		"the resize fix must preserve bubblewrap's input-injection defense")
+}
+
+func TestTclaudeLayerServerCommandOmitsTerminalRelay(t *testing.T) {
+	got, err := tclaudeLayerServerCommand(
+		"/usr/bin/bwrap", nil, nil,
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		"exec opencode serve",
+	)
+	require.NoError(t, err)
+	assert.NotContains(t, got, tclaudeLayerWinchRelayCommand)
+	assert.Contains(t, got, "/usr/bin/bwrap")
+	assert.Contains(t, got, "--new-session")
+	assert.Contains(t, got, "exec opencode serve")
 }
 
 func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing.T) {

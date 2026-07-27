@@ -23,8 +23,9 @@ type dashboardSandboxImpl struct {
 	Options []dashboardSandboxImplOption `json:"options"`
 	// Default is the implementation a launch resolves to when nothing pins one.
 	Default string `json:"default"`
-	// HostAvailable reports whether this host can create the BASELINE
-	// tclaude-layer namespace. It is disclosure, never permission: the dialog
+	// HostAvailable reports whether this host can create the interactive
+	// tclaude-layer namespace and terminal relay. It is disclosure, never
+	// permission: the dialog
 	// keeps an unavailable implementation selectable and warns, because the
 	// launch-time refusal is the authority and a dialog that quietly removed
 	// the option would have replaced it. It is also deliberately not a promise
@@ -35,6 +36,12 @@ type dashboardSandboxImpl struct {
 	// PATH, no unprivileged user namespaces, not Linux) so the operator can fix
 	// it rather than guess. "" when HostAvailable is true.
 	HostUnavailableReason string `json:"host_unavailable_reason,omitempty"`
+	// ServerHostAvailable and ServerHostUnavailableReason are the same
+	// disclosure for a relay-free, non-interactive server boundary. Keeping the
+	// topology answers separate prevents a missing terminal-relay capability
+	// from being presented as an OpenCode executor refusal.
+	ServerHostAvailable         bool   `json:"server_host_available"`
+	ServerHostUnavailableReason string `json:"server_host_unavailable_reason,omitempty"`
 }
 
 type dashboardSandboxImplOption struct {
@@ -53,12 +60,15 @@ type dashboardSandboxImplOption struct {
 // refuses on its own answer. Nothing that REFUSES may read this cache.
 const sandboxImplHostProbeTTL = 60 * time.Second
 
-var sandboxImplHostProbe struct {
+type sandboxImplHostProbeCache struct {
 	sync.Mutex
 	checkedAt time.Time
 	err       error
 	valid     bool
 }
+
+var sandboxImplHostProbe sandboxImplHostProbeCache
+var sandboxImplServerHostProbe sandboxImplHostProbeCache
 
 // sandboxImplHostProbeNow is the clock, indirected so a test can age the cache
 // without sleeping.
@@ -67,14 +77,27 @@ var sandboxImplHostProbeNow = time.Now
 // cachedTclaudeLayerHostAvailability answers the DISCLOSURE question, at most
 // once per TTL. Never call it from a path that refuses a launch.
 func cachedTclaudeLayerHostAvailability() error {
+	return cachedSandboxImplHostAvailability(
+		&sandboxImplHostProbe, tclaudeLayerHostAvailability)
+}
+
+func cachedTclaudeLayerServerHostAvailability() error {
+	return cachedSandboxImplHostAvailability(
+		&sandboxImplServerHostProbe, tclaudeLayerServerHostAvailability)
+}
+
+func cachedSandboxImplHostAvailability(
+	cache *sandboxImplHostProbeCache,
+	probe func() error,
+) error {
 	now := sandboxImplHostProbeNow()
-	sandboxImplHostProbe.Lock()
-	if sandboxImplHostProbe.valid && now.Sub(sandboxImplHostProbe.checkedAt) < sandboxImplHostProbeTTL {
-		err := sandboxImplHostProbe.err
-		sandboxImplHostProbe.Unlock()
+	cache.Lock()
+	if cache.valid && now.Sub(cache.checkedAt) < sandboxImplHostProbeTTL {
+		err := cache.err
+		cache.Unlock()
 		return err
 	}
-	sandboxImplHostProbe.Unlock()
+	cache.Unlock()
 
 	// Probe OUTSIDE the lock. The probe forks bwrap, and this runs on the
 	// continuously-polled dashboard snapshot: holding the mutex across the exec
@@ -82,13 +105,13 @@ func cachedTclaudeLayerHostAvailability() error {
 	// a wedged namespace setup would freeze the whole page rather than one
 	// field. Two callers racing a stale cache may both probe; that is bounded
 	// (the probe carries its own deadline) and far cheaper than the alternative.
-	err := tclaudeLayerHostAvailability()
+	err := probe()
 
-	sandboxImplHostProbe.Lock()
-	defer sandboxImplHostProbe.Unlock()
-	sandboxImplHostProbe.err = err
-	sandboxImplHostProbe.checkedAt = now
-	sandboxImplHostProbe.valid = true
+	cache.Lock()
+	defer cache.Unlock()
+	cache.err = err
+	cache.checkedAt = now
+	cache.valid = true
 	return err
 }
 
@@ -109,9 +132,9 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 				Value:        string(sandboxpolicy.ImplementationTclaudeLayer),
 				Label:        "tclaude layer (experimental)",
 				Experimental: true,
-				Descr: "Runs the whole harness process inside a tclaude-owned bubblewrap mount namespace " +
-					"and turns the harness's own sandbox off inside it. Linux only; requires bwrap and " +
-					"unprivileged user namespaces.",
+				Descr: "Runs the authoritative tool executor inside a tclaude-owned bubblewrap mount namespace " +
+					"(the whole pane for interactive harnesses, or OpenCode's managed server). Linux only; " +
+					"requires bwrap and unprivileged user namespaces.",
 			},
 		},
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
@@ -121,6 +144,11 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 	} else {
 		out.HostAvailable = true
 	}
+	if err := cachedTclaudeLayerServerHostAvailability(); err != nil {
+		out.ServerHostUnavailableReason = err.Error()
+	} else {
+		out.ServerHostAvailable = true
+	}
 	return out
 }
 
@@ -128,8 +156,13 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 // that swaps the predicate must be able to observe the new answer rather than
 // one cached before the swap.
 func resetSandboxImplHostProbeCache() {
-	sandboxImplHostProbe.Lock()
-	defer sandboxImplHostProbe.Unlock()
-	sandboxImplHostProbe.valid = false
-	sandboxImplHostProbe.err = nil
+	for _, cache := range []*sandboxImplHostProbeCache{
+		&sandboxImplHostProbe,
+		&sandboxImplServerHostProbe,
+	} {
+		cache.Lock()
+		cache.valid = false
+		cache.err = nil
+		cache.Unlock()
+	}
 }

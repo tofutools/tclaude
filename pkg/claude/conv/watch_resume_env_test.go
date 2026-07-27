@@ -234,7 +234,7 @@ func TestResumeLaunchCmd_NoResumeOverrideForCodex(t *testing.T) {
 		"a Codex resume must not get the Claude-specific resume override")
 }
 
-func TestResumeLaunchCmdRejectsRecordedTclaudeLayerForOpenCode(t *testing.T) {
+func TestResumeLaunchCmdRequiresAgentdForRecordedTclaudeLayerOpenCode(t *testing.T) {
 	setupTestDB(t)
 	const convID = "ses_sandboxv2opencode"
 	require.NoError(t, db.SaveSession(&db.SessionRow{
@@ -245,7 +245,7 @@ func TestResumeLaunchCmdRejectsRecordedTclaudeLayerForOpenCode(t *testing.T) {
 	}))
 
 	_, _, _, err := resumeLaunchCmd(harness.OpenCodeName, "resume-session", convID, nil)
-	require.ErrorContains(t, err, "tool-executing server runs outside the wrapped pane")
+	require.ErrorContains(t, err, "requires the agentd-owned server lifecycle")
 }
 
 // With no claude_resume block configured, a Claude resume stays on Claude

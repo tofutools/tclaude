@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,18 +81,25 @@ func TestSpawnProfile_RejectsUnknownSandboxImplementation(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid sandbox implementation")
 }
 
-// TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness: a profile carries its
-// OWN harness, so the harness gate is checkable at save — and a profile that
-// could never launch is worth refusing before it is saved.
-func TestSpawnProfile_RejectsTclaudeLayerForIncapableHarness(t *testing.T) {
+// OpenCode's authoritative server is now the process inside the outer layer,
+// so profile authoring accepts the same implementation pin as the pane-owned
+// harnesses. Host capability remains a launch-time concern.
+func TestSpawnProfile_AcceptsTclaudeLayerForOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
 
 	rec := createProfile(t, f, map[string]any{
 		"name": "oc-layered", "harness": "opencode", "sandbox_implementation": "tclaude-layer",
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code,
-		"tclaude-layer on an OpenCode profile must be refused at save; body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "OpenCode")
+	if runtime.GOOS == "darwin" {
+		require.Equal(t, http.StatusBadRequest, rec.Code,
+			"macOS must refuse an OpenCode profile whose executor boundary cannot be reproduced")
+		assert.Contains(t, rec.Body.String(), "does not support OpenCode on macOS")
+		return
+	}
+	require.Equal(t, http.StatusCreated, rec.Code,
+		"OpenCode executor-layer intent must be accepted at save; body=%s", rec.Body.String())
+	got := readProfile(t, f, "oc-layered")
+	assert.Equal(t, "tclaude-layer", got["sandbox_implementation"])
 }
 
 // TestSpawnProfile_SandboxImplementationSavesOnHostWithoutCapability: the
@@ -161,6 +169,8 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, false, catalog["host_available"])
 		assert.Equal(t, errNoBwrap.Error(), catalog["host_unavailable_reason"],
 			"the disclosure must name the concrete missing capability")
+		assert.Equal(t, false, catalog["server_host_available"])
+		assert.Equal(t, errNoBwrap.Error(), catalog["server_host_unavailable_reason"])
 	})
 
 	t.Run("available", func(t *testing.T) {
@@ -169,8 +179,27 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 
 		catalog := snapshotSandboxImpl(t, f)
 		assert.Equal(t, true, catalog["host_available"])
+		assert.Equal(t, true, catalog["server_host_available"])
 		_, present := catalog["host_unavailable_reason"]
 		assert.False(t, present, "an available host must carry no reason")
+		_, present = catalog["server_host_unavailable_reason"]
+		assert.False(t, present, "an available server boundary must carry no reason")
+	})
+
+	t.Run("server boundary is disclosed independently", func(t *testing.T) {
+		f := newFlow(t)
+		errPidfd := errors.New("pidfd unavailable")
+		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilitiesForTest(
+			func() error { return errPidfd },
+			func() error { return nil },
+		))
+
+		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, false, catalog["host_available"])
+		assert.Equal(t, errPidfd.Error(), catalog["host_unavailable_reason"])
+		assert.Equal(t, true, catalog["server_host_available"])
+		_, present := catalog["server_host_unavailable_reason"]
+		assert.False(t, present)
 	})
 
 	t.Run("options label the experimental layer", func(t *testing.T) {

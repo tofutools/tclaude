@@ -153,12 +153,17 @@ export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 function sandboxImplView(harness, context) {
   const catalog = context?.sandboxImpl || {};
   const options = Array.isArray(catalog.options) ? catalog.options : [];
+  const serverBoundary = !!harness?.tclaude_layer_server_boundary;
   return {
     showSandboxImpl: harness ? !!harness.can_tclaude_layer : false,
     sandboxImplOptions: options,
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
-    sandboxImplHostAvailable: catalog.host_available !== false,
-    sandboxImplHostReason: text(catalog.host_unavailable_reason),
+    sandboxImplHostAvailable: serverBoundary
+      ? catalog.server_host_available !== false
+      : catalog.host_available !== false,
+    sandboxImplHostReason: text(serverBoundary
+      ? catalog.server_host_unavailable_reason
+      : catalog.host_unavailable_reason),
   };
 }
 
@@ -210,8 +215,8 @@ export function sandboxImplHintFor(draft, view) {
   if (view.sandboxImplHostAvailable) {
     return {
       warn: false,
-      text: 'Experimental. Wraps the whole harness process in a tclaude-owned bubblewrap '
-        + "namespace and turns the harness's own sandbox off inside it.",
+      text: 'Experimental. Wraps the authoritative tool executor in a tclaude-owned '
+        + 'bubblewrap namespace.',
     };
   }
   const reason = view.sandboxImplHostReason || 'this host cannot create the namespace';

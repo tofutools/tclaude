@@ -122,9 +122,12 @@ are configured — not in the sandbox profile.
 
 ## Experimental `tclaude-layer` on Linux and macOS
 
-`tclaude session new --sandbox-impl tclaude-layer` runs the complete harness
-process inside a tclaude-owned operating-system sandbox: a bubblewrap mount
-namespace on Linux or a Seatbelt profile on macOS. The default remains
+`tclaude session new --sandbox-impl tclaude-layer` runs the tool-executing
+harness process inside a tclaude-owned operating-system sandbox: a bubblewrap
+mount namespace on Linux or a Seatbelt profile on macOS. For Claude Code and
+Codex this is the pane harness itself. For OpenCode on Linux it is the
+agentd-owned `opencode serve` executor; the attach pane stays outside. The
+default remains
 `harness-builtin`, which preserves the current harness-native behavior exactly.
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
@@ -150,23 +153,18 @@ to the next tier; an explicit `harness-builtin` **pins** the legacy
 implementation, which is how one spawn opts out of a group default that would
 otherwise put it on the experimental layer.
 
-Two ways the layer can be unusable are handled differently, and the difference
-is deliberate:
+An unavailable **host** refuses the launch outright, from whichever tier the
+value came from, naming the missing capability. It never falls through to
+`harness-builtin`. The dashboard discloses availability up front, but that
+disclosure never replaces the refusal: the option stays selectable, because
+authoring a profile that pins the layer for another machine — or for after
+`bwrap` is installed — is legitimate.
 
-- A **harness** that cannot host it (OpenCode) is a per-harness fact. An
-  explicit request for it is a loud error, and a value inherited from a
-  lower-tier profile that names a *different* harness is skipped, disclosed in
-  the resolved-launch notes, and falls through to the next tier — the same
-  behavior every launch field has.
-- A **host** that cannot run it is not. It refuses the launch outright, from
-  whichever tier the value came from, naming the missing capability. It never
-  falls through to `harness-builtin`. The dashboard discloses availability up
-  front, but that disclosure never replaces the refusal: the option stays
-  selectable, because authoring a profile that pins the layer for another
-  machine — or for after `bwrap` is installed — is legitimate.
-
-It supports Claude Code and Codex; OpenCode is refused because its
-tool-executing server runs outside the attach pane this slice wraps. Linux uses
+Claude Code and Codex are supported on Linux and macOS. OpenCode is supported
+on Linux in the host-open posture: agentd wraps its server rather than its
+attach pane. OpenCode isolated and filtered postures are refused because its
+authenticated loopback control plane and endpoint-ownership proof must remain
+reachable; OpenCode server wrapping on macOS is also refused. Linux uses
 `bwrap` from `PATH` and requires working unprivileged user namespaces. macOS
 uses `/usr/bin/sandbox-exec` for filesystem confinement and for the
 isolated-with-agentd network boundary. The reserved `filtered` posture is
@@ -176,9 +174,10 @@ falling back.
 
 On Linux the layer does not unshare the IPC namespace. The host-open posture
 also retains the host PID namespace; the isolated posture unshares PIDs as part
-of closing ambient socket access. The harness's own sandbox is disabled inside
-the wrapper on both platforms for now; a later workstream will define when
-nested sandboxes may be stacked.
+of closing ambient socket access. The harness's own OS sandbox is disabled
+inside the wrapper on both platforms for now; a later workstream will define
+when nested OS sandboxes may be stacked. OpenCode's ordered tool permission
+rules remain enabled as defense in depth.
 
 The Linux host-open posture starts with a read-only view of the host root; the
 isolated posture uses the constructed root described below. Both give `/dev`,
@@ -200,13 +199,17 @@ load-bearing precedence classes:
 Later plan entries shadow earlier ones, allowing a more-specific allow to
 reopen beneath a deny and a more-specific deny to hide beneath an allow.
 Missing read/write bind sources are skipped without creating anything on the
-host; hide entries are still applied. On Linux the wrapper also starts a new
-terminal session to prevent terminal-input injection. A tclaude process outside
-bubblewrap stays in the pane's foreground process group and relays only
-`SIGWINCH` to bubblewrap's disconnected process group, so TUIs still learn when
-the inherited terminal's size changes. The relay does not proxy terminal I/O or
-give the sandbox a controlling terminal. Seatbelt does not detach the process
-from its terminal session and needs no relay.
+host; hide entries are still applied. Harness-owned state is the deliberate
+exception: before a wrapped OpenCode server starts, tclaude materializes the
+frozen `~/.opencode` and XDG data/cache/config/state directories that the launch
+contract explicitly names. It never creates operator-authored profile paths.
+On Linux the wrapper also starts a new terminal session to prevent
+terminal-input injection. A tclaude process outside bubblewrap stays in the
+pane's foreground process group and relays only `SIGWINCH` to bubblewrap's
+disconnected process group, so TUIs still learn when the inherited terminal's
+size changes. The relay does not proxy terminal I/O or give the sandbox a
+controlling terminal. Seatbelt does not detach the process from its terminal
+session and needs no relay.
 
 ### macOS Seatbelt filesystem posture
 
@@ -369,8 +372,10 @@ sustains itself — the live row is advanced mainly by the very callbacks
 being refused.
 
 The repair covers the brokered hook and status-line paths and the
-`tclaude-layer` ancestry walks. The general pid → conv-id lookup that backs
-CLI identity is unchanged and can still misidentify on a reused pid.
+`tclaude-layer` ancestry walks. For OpenCode, CLI identity may cross at most 16
+wrapper ancestors only when the matching runtime row explicitly records
+`tclaude-layer`; the candidate still has to pass the server endpoint-ownership
+proof. Harness-builtin OpenCode rows retain the exact/one-parent lookup.
 
 A run of refusals is surfaced on the dashboard rather than only logged: the
 agent's row carries a `🚫` badge saying the rest of the row has stopped
@@ -426,6 +431,20 @@ go build -o "$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" .
 TCLAUDE_SANDBOX_V2_SMOKE=1 \
   TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
   go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+```
+
+The same Linux CI job installs a pinned OpenCode binary and hard-gates the
+server-authoritative smoke. That test starts a real wrapped `opencode serve`,
+connects a real unwrapped `opencode attach`, verifies the permission patch,
+executes the real bash tool across an allowed and denied path, and requires
+`tclaude agent whoami` from that tool subprocess to resolve the exact managed
+agent identity. It has no user-namespace capability skip. To repeat it after
+installing OpenCode:
+
+```bash
+TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
+  TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
+  go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerExecutorSmoke$' -count=1 -v -timeout=120s
 ```
 
 The Darwin job likewise verifies that Seatbelt enforces its deny-write probe

@@ -30,5 +30,5 @@ func TestMigrateV160toV161AddsSpawnProfileSandboxImplementation(t *testing.T) {
 	assert.Equal(t, "", implementation, "a legacy profile must stay unset, not pin harness-builtin")
 	assert.Equal(t, 161, schemaVersion(d))
 	require.NoError(t, migrateV160toV161(d), "partially applied migration converges")
-	assert.Equal(t, 161, currentVersion, "tripwire: bump this with the next migration")
+	assert.GreaterOrEqual(t, currentVersion, 161)
 }

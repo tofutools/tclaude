@@ -155,26 +155,28 @@ type dashPR struct {
 
 // dashHarness mirrors the relevant fields of agentd.dashboardHarness.
 type dashHarness struct {
-	Name             string            `json:"name"`
-	DisplayName      string            `json:"display_name"`
-	Models           []string          `json:"models"`
-	EffortLevels     []string          `json:"effort_levels"`
-	SandboxModes     []string          `json:"sandbox_modes"`
-	DefaultSandbox   string            `json:"default_sandbox"`
-	SandboxModeHelp  map[string]string `json:"sandbox_mode_help"`
-	ApprovalModes    []string          `json:"approval_modes"`
-	DefaultApproval  string            `json:"default_approval"`
-	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
-	ToolsModes       []string          `json:"tools_modes"`
-	DefaultTools     string            `json:"default_tools"`
-	ToolsModeHelp    map[string]string `json:"tools_mode_help"`
-	CanRename        bool              `json:"can_rename"`
-	CanCompact       bool              `json:"can_compact"`
-	CanSandbox       bool              `json:"can_sandbox"`
-	CanApproval      bool              `json:"can_approval"`
-	CanTools         bool              `json:"can_tools"`
-	CanAutoReview    bool              `json:"can_auto_review"`
-	CanRemoteControl bool              `json:"can_remote_control"`
+	Name                       string            `json:"name"`
+	DisplayName                string            `json:"display_name"`
+	Models                     []string          `json:"models"`
+	EffortLevels               []string          `json:"effort_levels"`
+	SandboxModes               []string          `json:"sandbox_modes"`
+	DefaultSandbox             string            `json:"default_sandbox"`
+	SandboxModeHelp            map[string]string `json:"sandbox_mode_help"`
+	ApprovalModes              []string          `json:"approval_modes"`
+	DefaultApproval            string            `json:"default_approval"`
+	ApprovalModeHelp           map[string]string `json:"approval_mode_help"`
+	ToolsModes                 []string          `json:"tools_modes"`
+	DefaultTools               string            `json:"default_tools"`
+	ToolsModeHelp              map[string]string `json:"tools_mode_help"`
+	CanRename                  bool              `json:"can_rename"`
+	CanCompact                 bool              `json:"can_compact"`
+	CanSandbox                 bool              `json:"can_sandbox"`
+	CanApproval                bool              `json:"can_approval"`
+	CanTools                   bool              `json:"can_tools"`
+	CanAutoReview              bool              `json:"can_auto_review"`
+	CanRemoteControl           bool              `json:"can_remote_control"`
+	CanTclaudeLayer            bool              `json:"can_tclaude_layer"`
+	TclaudeLayerServerBoundary bool              `json:"tclaude_layer_server_boundary"`
 }
 
 // dashState mirrors the relevant fields of agentd.agentState.

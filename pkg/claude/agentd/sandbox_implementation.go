@@ -46,13 +46,12 @@ const sandboxImplementationField = "sandbox_implementation"
 // marks a value that is malformed or inapplicable to the resolved harness.
 const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable"
 
-// tclaudeLayerHostAvailability is the host-capability predicate, indirected
-// through a var so flow tests can drive both branches deterministically on a
-// runner with bwrap and on one without. Production wiring shares one predicate
-// with the launch boundary: session.TclaudeLayerHostAvailability and the
-// session-boundary refusal both resolve through resolveBwrapBinary, so a
-// pre-flight answer cannot disagree with the refusal that actually decides.
+// The host-capability predicates are indirected so flow tests can drive both
+// branches deterministically. Interactive harnesses require the terminal relay
+// predicate; OpenCode confines its non-interactive server and therefore uses
+// the server-specific predicate that omits relay-only pidfd support.
 var tclaudeLayerHostAvailability = session.TclaudeLayerHostAvailability
+var tclaudeLayerServerHostAvailability = session.TclaudeLayerServerHostAvailability
 
 // validateSandboxImplementationForHarness normalizes a sandbox-implementation
 // value and gates it on the harness through the capability path
@@ -84,6 +83,21 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	return string(implementation), nil
 }
 
+func resolveOpenCodeSandboxImplementationMode(
+	h *harness.Harness,
+	mode, rawImplementation string,
+) (string, *spawnFailure) {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox_implementation", err.Error()}
+	}
+	mode, err = harness.ResolveOpenCodeSandboxImplementationMode(h.Name, mode, implementation)
+	if err != nil {
+		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	return mode, nil
+}
+
 // sandboxImplementationHostFailure is the post-resolution host gate. It runs on
 // the value the precedence chain settled on, whichever tier supplied it, and
 // refuses the launch outright rather than degrading to harness-builtin.
@@ -93,11 +107,15 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 // predicate is for disclosure surfaces only (see the dashboard capability
 // metadata), where a stale answer costs nothing because the launch still
 // refuses.
-func sandboxImplementationHostFailure(implementation string) *spawnFailure {
+func sandboxImplementationHostFailure(harnessName, implementation string) *spawnFailure {
 	if strings.TrimSpace(implementation) != string(sandboxpolicy.ImplementationTclaudeLayer) {
 		return nil
 	}
-	if err := tclaudeLayerHostAvailability(); err != nil {
+	availability := tclaudeLayerHostAvailability
+	if session.TclaudeLayerUsesServerBoundary(harnessName) {
+		availability = tclaudeLayerServerHostAvailability
+	}
+	if err := availability(); err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+
 				"refusing the launch rather than falling back to %s",

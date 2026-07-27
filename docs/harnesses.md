@@ -85,8 +85,18 @@ Because `access-control` reads like a sandbox without confining like one, the
 spawn dialog, profile/role editors, and `session new` surface an operator
 warning whenever it is selected (the same channel as Claude Code's
 unsandboxed-autonomy warning) — attaching a filesystem/network sandbox profile
-does not change this, since those profiles compile into the same soft OpenCode
-rules rather than an OS sandbox, pending a future OS sandbox layer for OpenCode.
+does not change this by itself, since those profiles compile into the same soft
+OpenCode rules.
+
+On Linux, selecting sandbox implementation `tclaude-layer` adds an OS boundary
+around the agentd-owned, tool-executing OpenCode server and records the
+OpenCode sandbox mode as `tclaude-layer`. The attach pane remains outside that
+boundary. The authenticated loopback control plane, host network, and ambient
+host Unix sockets remain reachable, so the dashboard reports this as a partial
+boundary rather than a full-fidelity lock. The ordered OpenCode permission
+rules remain active as defense in depth. OpenCode `tclaude-layer` currently
+requires the host-open network posture; isolated and filtered profiles are
+refused, and macOS is not supported for this server-wrap topology.
 The explicit `off` mode removes path scoping but keeps the selected approval
 policy; bash is never auto-approved there. A bare direct `session new --harness
 opencode` is refused because it has no authenticated managed-server handoff;
@@ -138,7 +148,7 @@ instead of slash-command injection).
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ no native OS sandbox; `access-control` (default) applies lexical path rules but cannot prevent symlink traversal, `off` removes scoping |
+| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with the documented host-open/control-plane caveats; `access-control` (default) remains lexical soft policy; `off` removes scoping |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
@@ -349,6 +359,21 @@ server and attach client through their environments. The pane command is always
 `opencode attach http://127.0.0.1:<port> --dir <cwd> --session <ses_…>`; it
 never starts a second server and the password never appears in the command or
 process arguments.
+
+With sandbox implementation `tclaude-layer` on Linux, agentd starts that
+`opencode serve` process as the child of the bubblewrap boundary and persists
+the exact versioned launch spec beside the runtime row. The attach command is
+not wrapped. The launch contract makes OpenCode's `~/.opencode` and XDG
+data/cache/config/state directories writable without widening the rest of
+Home, then re-hardens `~/.opencode/bin` read-only so a confined tool cannot
+replace the executable used by a later host invocation. The frozen profile
+environment, including generated agent-directory variables, is applied to the
+server because its children execute the tools; the attach client remains only
+a UI. A restart revalidates and replays that persisted spec; a wrapped row with
+a missing, corrupt, or no-longer-valid spec is refused rather than restarted
+unwrapped. The mode is normalized to `tclaude-layer` in the launch record;
+pairing that mode with `harness-builtin`, or pairing `off` with the outer
+implementation, is a launch error.
 
 agentd waits for authenticated health, asks the server to mint the conversation
 ID, delivers the startup prompt through `prompt_async`, consumes the

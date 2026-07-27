@@ -777,6 +777,9 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 				if id := openCodeRuntimeConvByPID(parent); id != "" {
 					return id, true
 				}
+				if id := openCodeRuntimeConvByAncestor(parent); id != "" {
+					return id, true
+				}
 			}
 		}
 		cur = parent
@@ -1015,6 +1018,27 @@ func openCodeRuntimeConvByPID(hostPID int) string {
 	if runtime, err := db.FindOpenCodeRuntimeByPID(hostPID); err == nil && runtime != nil &&
 		openCodeRuntimeVerified(*runtime) {
 		return runtime.ConvID
+	}
+	return ""
+}
+
+// openCodeRuntimeConvByAncestor tolerates only the bounded wrapper ancestry of
+// a runtime explicitly recorded as tclaude-layer. Legacy harness-builtin
+// runtimes retain their exact pid/one-parent rule above. Every candidate still
+// passes the endpoint-ownership proof before becoming caller identity.
+func openCodeRuntimeConvByAncestor(pid int) string {
+	const maxWrapperHops = 16
+	for range maxWrapperHops {
+		if pid <= 1 || pid == os.Getpid() {
+			return ""
+		}
+		runtime, err := db.FindOpenCodeRuntimeByPID(pid)
+		if err == nil && runtime != nil &&
+			runtime.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) &&
+			openCodeRuntimeVerified(*runtime) {
+			return runtime.ConvID
+		}
+		pid = procParent(pid)
 	}
 	return ""
 }

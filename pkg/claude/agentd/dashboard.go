@@ -1221,14 +1221,14 @@ type dashboardHarness struct {
 	// spawn dialog and profile editor gate their token-window input on it.
 	CanAutoCompactWindow bool `json:"can_auto_compact_window"`
 	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
-	// implementation can wrap this harness — false for a harness whose
-	// tool-executing process lives outside the pane the layer wraps (OpenCode).
+	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
-	// never a harness-name switch in the dialog, so a later workstream that
-	// teaches the layer a new topology flips this with no dashboard edit. The
-	// spawn dialog and profile editor gate their sandbox-implementation row on
-	// it: with only one implementation left there is no choice to render.
+	// never a harness-name switch in the dialog.
 	CanTclaudeLayer bool `json:"can_tclaude_layer"`
+	// TclaudeLayerServerBoundary tells disclosure surfaces to use the
+	// relay-free server capability probe rather than the interactive pane
+	// probe. It does not grant the capability; CanTclaudeLayer remains the gate.
+	TclaudeLayerServerBoundary bool `json:"tclaude_layer_server_boundary,omitempty"`
 	// AutoCompactWindowMin / Max are the accepted bounds, so the dialog can set
 	// the input's own min/max and reject a slipped digit before the round trip.
 	// Both 0 for a harness that cannot pin a window.
@@ -1286,9 +1286,10 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAutoMemory:    h.CanAutoMemory(),
 			CanSSHWorkaround: h.CanSSHWorkaround(),
 
-			CanContextFeatures:   h.CanContextFeatures(),
-			CanAutoCompactWindow: h.CanAutoCompactWindow(),
-			CanTclaudeLayer:      session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			CanContextFeatures:         h.CanContextFeatures(),
+			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
+			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
 		}
 		if dh.CanAutoCompactWindow {
 			dh.AutoCompactWindowMin = harness.MinAutoCompactWindow

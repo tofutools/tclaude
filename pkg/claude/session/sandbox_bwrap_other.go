@@ -13,6 +13,11 @@ func resolveBwrapBinary(sandboxpolicy.NetworkPosture) (string, error) {
 	return "", fmt.Errorf("tclaude-layer requires Linux and bubblewrap; this platform is not supported")
 }
 
+func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerCommand(
 	string,
 	[]string,
@@ -23,9 +28,28 @@ func tclaudeLayerCommand(
 	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
 }
 
+func tclaudeLayerServerCommand(
+	string,
+	[]string,
+	[]string,
+	sandboxpolicy.MountPlan,
+	string,
+) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
 	return harness.LaunchOSSandbox{
 		State:  "off",
 		Source: "tclaude-layer unavailable",
 	}
+}
+
+func validateTclaudeLayerHarness(harnessName string) error {
+	if harnessName == harness.OpenCodeName {
+		return fmt.Errorf(
+			"tclaude-layer does not support OpenCode on this platform: agentd-owned server wrapping requires Linux and bubblewrap")
+	}
+	return nil
 }

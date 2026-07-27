@@ -251,8 +251,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     {
       showSandboxImpl: !!hEntry?.can_tclaude_layer,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
-      sandboxImplHostAvailable: sandboxImpl?.host_available !== false,
-      sandboxImplHostReason: sandboxImpl?.host_unavailable_reason || '',
+      sandboxImplHostAvailable: hEntry?.tclaude_layer_server_boundary
+        ? sandboxImpl?.server_host_available !== false
+        : sandboxImpl?.host_available !== false,
+      sandboxImplHostReason: hEntry?.tclaude_layer_server_boundary
+        ? sandboxImpl?.server_host_unavailable_reason || ''
+        : sandboxImpl?.host_unavailable_reason || '',
     },
   );
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);

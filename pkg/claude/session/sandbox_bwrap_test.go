@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -397,10 +398,158 @@ func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
 	require.ErrorContains(t, err, "cannot persist harness state")
 }
 
-func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
-	require.ErrorContains(t, ValidateTclaudeLayerHarness(harness.OpenCodeName), "runs outside the wrapped pane")
+func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+	cwd := filepath.Join(home, "work")
+	agentDir := filepath.Join(home, "agent-cache")
+	for _, path := range []string{cwd, agentDir, filepath.Join(home, ".opencode")} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
+		{Path: home, Access: sandboxpolicy.AccessDeny},
+		{Path: cwd, Access: sandboxpolicy.AccessWrite},
+	}
+	snapshot.Effective.AgentDirectories = []string{"AGENT_CACHE"}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "AGENT_CACHE", Value: agentDir,
+	}}
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:  harness.OpenCodeName,
+		Cwd:          cwd,
+		GitWriteDirs: []string{cwd},
+		Snapshot:     &snapshot,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
+	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
+	assert.Equal(t, []string{filepath.Join(home, ".opencode", "bin")},
+		spec.Contract.ReadOnlyStateDirs)
+	assert.ElementsMatch(t, []string{
+		cwd,
+		agentDir,
+		filepath.Join(home, ".local", "share", "opencode"),
+		filepath.Join(home, ".cache", "opencode"),
+		filepath.Join(home, ".config", "opencode"),
+		filepath.Join(home, ".local", "state", "opencode"),
+	}, spec.Contract.WriteDirs)
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+	for _, path := range spec.Contract.StateDirs {
+		info, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+	}
+	for _, path := range spec.Contract.ReadOnlyStateDirs {
+		info, statErr := os.Stat(path)
+		require.NoError(t, statErr)
+		assert.True(t, info.IsDir())
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
+		assert.True(t, covered)
+		assert.Equal(t, sandboxpolicy.AccessRead, access)
+	}
+	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
+		"the authored launch-active rows stay separate from generated contract reopens")
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: cwd, Access: sandboxpolicy.AccessWrite,
+	})
+	cwdAccess, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, cwd)
+	assert.True(t, covered)
+	assert.Equal(t, sandboxpolicy.AccessWrite, cwdAccess,
+		"the generated read reopen folds into the stronger exact write grant")
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: agentDir, Access: sandboxpolicy.AccessRead,
+	})
+	if runtime.GOOS == "linux" {
+		wrapped, err := WrapTclaudeLayerServerSpec("/usr/bin/bwrap", spec, "opencode serve")
+		require.NoError(t, err)
+		stateBind := strings.Index(wrapped,
+			"--bind "+clcommon.ShellQuoteArg(spec.Contract.StateRoot)+" "+
+				clcommon.ShellQuoteArg(spec.Contract.StateRoot))
+		binReadOnly := strings.Index(wrapped,
+			"--ro-bind "+clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0])+" "+
+				clcommon.ShellQuoteArg(spec.Contract.ReadOnlyStateDirs[0]))
+		require.GreaterOrEqual(t, stateBind, 0)
+		require.GreaterOrEqual(t, binReadOnly, 0)
+		assert.Less(t, stateBind, binReadOnly,
+			"the executable subtree must be re-hardened after the mutable state bind")
+	}
+}
+
+func TestTclaudeLayerOpenCodeStateDirsRespectXDGRoots(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	for _, name := range []string{"DATA", "CACHE", "CONFIG", "STATE"} {
+		t.Setenv("XDG_"+name+"_HOME", filepath.Join(home, strings.ToLower(name)))
+	}
+	dirs, err := tclaudeLayerOpenCodeStateDirs()
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		filepath.Join(home, "data", "opencode"),
+		filepath.Join(home, "cache", "opencode"),
+		filepath.Join(home, "config", "opencode"),
+		filepath.Join(home, "state", "opencode"),
+	}, dirs)
+}
+
+func TestTclaudeLayerOpenCodeStateDirsResolveMissingLeafBelowSymlink(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	realCache := filepath.Join(home, "real-cache")
+	require.NoError(t, os.MkdirAll(realCache, 0o700))
+	cacheAlias := filepath.Join(home, "cache-alias")
+	require.NoError(t, os.Symlink(realCache, cacheAlias))
+	t.Setenv("XDG_CACHE_HOME", cacheAlias)
+
+	dirs, err := tclaudeLayerOpenCodeStateDirs()
+	require.NoError(t, err)
+	assert.Contains(t, dirs, filepath.Join(realCache, "opencode"))
+}
+
+func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+	stateRoot := filepath.Join(home, ".opencode")
+	outside := filepath.Join(home, "outside-bin")
+	cwd := filepath.Join(home, "work")
+	for _, path := range []string{stateRoot, outside, cwd} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	require.NoError(t, os.Symlink(outside, filepath.Join(stateRoot, "bin")))
+
+	_, err = BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         cwd,
+	})
+	require.ErrorContains(t, err, "resolves outside state root")
+}
+
+func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		require.NoError(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
+	} else {
+		require.Error(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
+	}
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.DefaultName))
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.CodexName))
+	assert.False(t, tclaudeLayerWrapsPane(harness.OpenCodeName),
+		"OpenCode attaches outside the boundary; agentd wraps its tool executor")
+	assert.True(t, tclaudeLayerWrapsPane(harness.CodexName))
 }
 
 func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
@@ -419,14 +568,25 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	assert.Contains(t, isolated.Source, "isolated PIDs")
 	assert.Contains(t, isolated.Source, "agentd socket allowlisted")
 	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
+
+	openCode := TclaudeLayerLaunchOSSandboxForHarness(
+		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen)
+	assert.Equal(t, "on", openCode.State)
+	assert.Equal(t,
+		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)",
+		openCode.Source)
+	assert.True(t, openCode.Unverified)
 }
 
 func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssertion(t *testing.T) {
 	claude := harness.Default()
 	codex, err := harness.Resolve(harness.CodexName)
 	require.NoError(t, err)
+	openCode, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(openCode, closed), "loopback control plane")
 	require.ErrorContains(t, ValidateTclaudeLayerNetwork(claude, closed), "requires hosted model traffic")
 	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
 
@@ -436,6 +596,9 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	require.NoError(t, ValidateTclaudeLayerNetwork(codex, closed))
 
 	require.NoError(t, ValidateTclaudeLayerNetwork(claude, sandboxpolicy.EffectiveProfile{
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	}))
+	require.NoError(t, ValidateTclaudeLayerNetwork(openCode, sandboxpolicy.EffectiveProfile{
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	}))
 }

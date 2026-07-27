@@ -48,6 +48,12 @@ func TestSandboxProfileCapabilityFailureDefersTclaudeLayerPolicyToOuterApplier(t
 		snapshot,
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 	))
+	require.Nil(t, sandboxProfileCapabilityFailure(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	))
 }
 
 func TestSandboxProfileCapabilityFailureGatesReopenUnderDeny(t *testing.T) {
@@ -97,7 +103,29 @@ func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
 	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))
 	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl))
+	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxTclaudeLayer))
 	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, ""))
+}
+
+func TestOpenCodeSandboxModeAndImplementationMustAgree(t *testing.T) {
+	require.Nil(t, sandboxProfileCapabilityFailure(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		nil,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	))
+	for _, tc := range []struct {
+		mode           string
+		implementation string
+	}{
+		{harness.OpenCodeSandboxTclaudeLayer, string(sandboxpolicy.ImplementationHarnessBuiltin)},
+		{harness.OpenCodeSandboxOff, string(sandboxpolicy.ImplementationTclaudeLayer)},
+	} {
+		failure := sandboxProfileCapabilityFailure(
+			harness.OpenCodeName, tc.mode, nil, tc.implementation)
+		require.NotNil(t, failure)
+		require.Equal(t, "invalid_sandbox", failure.Kind)
+	}
 }
 
 func TestOpenCodePolicyRepresentabilityUsesAccessControlAndFailsClosedOtherwise(t *testing.T) {
@@ -116,7 +144,7 @@ func TestOpenCodePolicyRepresentabilityUsesAccessControlAndFailsClosedOtherwise(
 	}
 }
 
-func TestOpenCodeSandboxLineageClassifiesAccessControlOffAndUnknown(t *testing.T) {
+func TestOpenCodeSandboxLineageClassifiesLayerAccessControlOffAndUnknown(t *testing.T) {
 	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff}
 	require.True(t, spawnSandboxLineageAllowed(openCodeOff, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
@@ -125,7 +153,11 @@ func TestOpenCodeSandboxLineageClassifiesAccessControlOffAndUnknown(t *testing.T
 	))
 
 	access := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl}
+	layer := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxTclaudeLayer}
 	require.True(t, spawnSandboxLineageAllowed(access, access))
+	require.True(t, spawnSandboxLineageAllowed(access, layer))
+	require.True(t, spawnSandboxLineageAllowed(layer, layer))
+	require.False(t, spawnSandboxLineageAllowed(layer, access))
 	require.True(t, spawnSandboxLineageAllowed(access,
 		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn}))
 	require.True(t, spawnSandboxLineageAllowed(access,
