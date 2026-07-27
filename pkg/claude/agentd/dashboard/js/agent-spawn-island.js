@@ -921,7 +921,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
         <span class="cron-create-label"></span>
         <div class="cron-create-target">
-          <div class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}</div>
+          <div class=${`spawn-field-hint${sandboxImplHint.warn ? ' warn' : ''}`}>${sandboxImplHint.text}${
+  sandboxImplHint.doc && html` <a id="agent-spawn-sandbox-impl-hint-doc"
+    href=${sandboxImplHint.doc.href} target="_blank" rel="noopener"
+    >${sandboxImplHint.doc.label}</a>`}</div>
         </div>
       </div>`}
     ${sandboxImplCleared && html`

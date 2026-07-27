@@ -142,6 +142,7 @@ func ProbeStackedSandbox(
 				h.NestedSandbox.MechanismName(), stackedSandboxProbeTimeout,
 				strings.TrimSpace(output.String()))
 		}
+		detail += stackedAppArmorLikelyCause(output.String())
 		proof.Cleanup()
 		capability := h.NestedSandbox.CapabilityName()
 		if probe.ClassifyFailure != nil {
@@ -191,6 +192,53 @@ func StackedLaunchOSSandbox(
 		Source:     "Stacked: " + outer + " + " + mechanism,
 		Unverified: unverified,
 	}
+}
+
+// stackedNestedNamespaceSignatures are the ways bwrap reports that it could not
+// build the namespace a stacked launch's inner wall needs. They are matched
+// against the probe's own output, never against a guess about the host.
+var stackedNestedNamespaceSignatures = []string{
+	"no permissions to create a new namespace",
+	"creating new namespace failed",
+	"setting up uid map",
+	"unable to create new namespace",
+}
+
+// stackedAppArmorDocURL is the operator guide for the Ubuntu case, kept as one
+// derived pair so a rename touches the path const alone.
+const stackedAppArmorDocPath = "docs/sandboxing.md#stacked-refuses-on-apparmor-restricted-hosts"
+
+var stackedAppArmorDocURL = "https://github.com/tofutools/tclaude/blob/main/" +
+	stackedAppArmorDocPath
+
+// likelyAppArmorNestedBwrap is the host half of the hint, indirected so a test
+// can describe either host without owning the machine it runs on.
+var likelyAppArmorNestedBwrap = LikelyAppArmorNestedBwrapBlock
+
+// stackedAppArmorLikelyCause returns the one-line likely-cause pointer appended
+// to a stacked refusal's detail, or "" when it would be an overclaim.
+//
+// Both halves must agree: the probe's OWN output must say the inner namespace
+// could not be created, and the host must still carry Ubuntu's enforcing
+// bwrap policy. The refusal, its capability names, and its literal shape are
+// unchanged — this only tells the operator where the explanation lives, and
+// says "likely" because nothing reachable from here can be certain.
+func stackedAppArmorLikelyCause(output string) string {
+	lowered := strings.ToLower(output)
+	matched := false
+	for _, signature := range stackedNestedNamespaceSignatures {
+		if strings.Contains(lowered, signature) {
+			matched = true
+			break
+		}
+	}
+	if !matched || !likelyAppArmorNestedBwrap() {
+		return ""
+	}
+	return "; likely cause: Ubuntu's enforcing bwrap-userns-restrict AppArmor " +
+		"policy denies capability sys_admin to bwrap's children, so the nested " +
+		"bwrap cannot be built; workaround and its host-wide trade-off: " +
+		stackedAppArmorDocURL
 }
 
 func stackedSandboxRefusal(capability, detail string) error {

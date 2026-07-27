@@ -257,6 +257,102 @@ size changes. The relay does not proxy terminal I/O or give the sandbox a
 controlling terminal. Seatbelt does not detach the process from its terminal
 session and needs no relay.
 
+### Stacked refuses on AppArmor-restricted hosts
+
+On a stock Ubuntu 24.04 or newer host, `--sandbox-impl stacked` refuses at
+launch even though everything it needs looks installed. This is the host, not a
+broken install, and the refusal is the correct outcome.
+
+**Symptom.** The launch ends with the named capability refusal —
+`stacked_claude_inner_policy` for Claude Code, `stacked_codex_bwrap_backend`
+for Codex — and the detail carries an inner `bwrap` complaint along the lines
+of *No permissions to create a new namespace*. Ordinary single-layer
+`tclaude-layer` on the same host works fine: the outer wall is not the problem.
+
+**Cause.** Ubuntu ships and enforces an AppArmor policy,
+`/etc/apparmor.d/bwrap-userns-restrict`, whose whole purpose is to let `bwrap`
+create a user namespace while denying capabilities to what runs inside it. The
+outer bwrap is permitted; its children are pivoted into the policy's
+`unpriv_bwrap` child profile, which denies `capability sys_admin`. The inner
+bwrap needs `CAP_SYS_ADMIN` *within the user namespace it just created* —
+normally free, because it owns that namespace — but AppArmor's `capable` check
+applies to the profile regardless of namespace ownership. So the second wall
+can never be built while that policy is enforcing. The kernel audit line is the
+proof:
+
+```text
+apparmor="DENIED" operation="capable" class="cap" profile="unpriv_bwrap" comm="bwrap" capname="sys_admin"
+```
+
+**What is not the cause.** The userns sysctls are a red herring here.
+`kernel.apparmor_restrict_unprivileged_userns=0` alone does *not* fix it, and
+the denial reproduces with `kernel.unprivileged_userns_clone=1`: the deny is
+profile-local. CI is blind to this failure because its runners do not ship the
+policy, so a green nested-namespace assumption pin says nothing about your
+laptop.
+
+**Diagnose it without root.** If the policy file exists and nothing disables
+it, this is almost certainly what you are hitting:
+
+```bash
+ls -l /etc/apparmor.d/bwrap-userns-restrict   # present on stock Ubuntu 24.04+
+ls -l /etc/apparmor.d/disable/                # an entry here means it is unloaded
+ls -l /etc/apparmor.d/force-complain/         # an entry here means it only logs
+```
+
+Confirm it, with root, from the audit log and the loaded-profile list:
+
+```bash
+sudo dmesg | grep -F 'profile="unpriv_bwrap"'
+sudo aa-status | grep -F bwrap
+```
+
+**Workaround, and what it costs.** Both halves are required; either one alone
+leaves stacked refusing. Persist the sysctl and unload the policy:
+
+```bash
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' \
+  | sudo tee /etc/sysctl.d/99-tclaude-userns.conf
+sudo sysctl --system
+sudo ln -s /etc/apparmor.d/bwrap-userns-restrict /etc/apparmor.d/disable/
+sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+```
+
+This is a **host-wide security trade-off, not a tclaude setting**: it removes
+Ubuntu's defence-in-depth around unprivileged user namespaces for every process
+on the machine, including ones that have nothing to do with tclaude. Stacked is
+experimental; single-layer `tclaude-layer` needs none of this. Decide
+accordingly, and prefer the temporary form when you only want to observe
+stacked once:
+
+```bash
+sudo aa-complain /etc/apparmor.d/bwrap-userns-restrict
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+# … run the stacked launch …
+sudo aa-enforce /etc/apparmor.d/bwrap-userns-restrict
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+```
+
+**Reversal** of the persistent form is symmetric — reload the policy and drop
+the sysctl file:
+
+```bash
+sudo rm /etc/apparmor.d/disable/bwrap-userns-restrict
+sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+sudo rm /etc/sysctl.d/99-tclaude-userns.conf
+sudo sysctl --system
+```
+
+Expect the dashboard's stacked *availability* to look green on such a host
+anyway: that disclosure resolves the harness engine only, and the live nested
+round-trip at launch is the authority. What the dashboard does add is a warning
+that stacked is *likely* blocked when it sees this shape — the policy file
+present, with no `disable/` or `force-complain/` entry — with a link here, and
+the launch refusal names the same likely cause when its own output matches. Both
+are guesses made from what an unprivileged daemon can read, not determinations:
+agentd cannot read `dmesg` or `aa-status`. The supported posture for these hosts
+is still open; what stands today is that stacked fails closed and says so.
+
 ### macOS Seatbelt filesystem posture
 
 The Darwin applier compiles the final four-class result into a
@@ -776,6 +872,7 @@ read.
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
 | `git add -A` fails: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths ([above](#git-sees-claude-codes-built-in-denies-as-device-nodes-linux)) |
 | `warning: unable to access '….git/config.worktree'` | Same device-node masking; harmless, git still works |
+| `stacked` refused, inner bwrap cannot create a namespace (Ubuntu 24.04+) | Ubuntu's `bwrap-userns-restrict` AppArmor policy denies nested bwrap — [above](#stacked-refuses-on-apparmor-restricted-hosts) |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
 | An agent read a denied path with the `Read` tool, but not from Bash | Expected under a `deny ~` profile — that shape reaches layer 1 only ([above](#which-denies-reach-both-layers)) |

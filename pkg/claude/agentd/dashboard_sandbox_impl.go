@@ -48,6 +48,17 @@ type dashboardSandboxImpl struct {
 	// engine entry point. It is disclosure only; launch always re-resolves and
 	// completes the nested round-trip inside the exact outer spec.
 	Stacked map[string]dashboardStackedAvailability `json:"stacked"`
+	// StackedAppArmorLikely says the host most likely denies the nested bwrap
+	// stacked needs, because Ubuntu's bwrap-userns-restrict AppArmor policy is
+	// present and neither unloaded nor in complain mode.
+	//
+	// It is host-wide rather than per-harness: the denying layer is the host's
+	// policy, not any engine. It is also the only field here that can warn at
+	// all in this case — the per-harness availability above resolves the engine
+	// and reports AVAILABLE on exactly these hosts, because nothing short of
+	// the launch-time round-trip tries the nested wall. Hence "likely": the
+	// dashboard may point at the guide, never decide.
+	StackedAppArmorLikely bool `json:"stacked_apparmor_userns_likely,omitempty"`
 }
 
 type dashboardStackedAvailability struct {
@@ -181,6 +192,10 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 		}
 		out.Stacked[name] = cachedStackedSandboxAvailability(h)
 	}
+	// Uncached on purpose: this is four stats of world-readable paths, not a
+	// fork, and an operator who just unloaded the policy should see the hint
+	// go away on the next poll rather than a TTL later.
+	out.StackedAppArmorLikely = stackedAppArmorNestedBlockLikely()
 	return out
 }
 
