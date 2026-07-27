@@ -123,15 +123,17 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// The tooltip is intentionally limited to four concise lines: resolved
 	// status, implementation owner, applied profile names, and an action hint
 	// only when the glyph is clickable.
-	must("function sandboxImplementationLabel(member)", "the compact tooltip derives an implementation label")
-	must("return 'TClaude'", "tclaude-layer and stacked implementations share the TClaude label")
+	must("function sandboxImplementationLabel(member, badge)", "the compact tooltip derives an implementation label")
+	must("if (badge.status === 'OFF') return 'None'", "an inactive sandbox has no active implementation")
+	must("return 'TClaude'", "the tclaude-layer implementation uses the TClaude label")
+	must("short}+TClaude", "stacked implementations name both active layers")
 	must("return 'Unknown'", "unknown implementations are not mislabeled as harness-native")
 	must("function sandboxProfileLabel(member)", "the compact tooltip derives applied profile names")
 	must("names.join(' + ')", "multiple profile names retain resolution order")
 	must("'Not recorded'", "legacy rows do not invent an absent profile")
 	must("function sandboxTooltip(member, badge, actionable, unlocked)", "the compact tooltip has a dedicated formatter")
-	must("`Status: ${badge.status}`", "the first tooltip line is the concise sandbox status")
-	must("`Implementation: ${sandboxImplementationLabel(member)}`", "the second tooltip line names the implementation")
+	must("unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status", "a resolved temporary disable is visually distinct from normal off")
+	must("`Implementation: ${sandboxImplementationLabel(member, badge)}`", "the second tooltip line names the implementation")
 	must("`Profile: ${sandboxProfileLabel(member)}`", "the third tooltip line names the applied profiles")
 	must("'Click to restore normal sandbox'", "temporary overrides offer restoration")
 	must("'Click to temporarily disable'", "normally confined agents offer a temporary disable")

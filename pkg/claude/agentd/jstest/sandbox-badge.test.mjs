@@ -28,7 +28,7 @@ const CASES = [
       os_sandbox_state: 'off', os_sandbox_source: 'this launch',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
   },
   {
     name: 'a launch that requested on but resolved off',
@@ -37,7 +37,7 @@ const CASES = [
       os_sandbox_source: '/etc/claude-code/managed-settings.json',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
   },
   {
     name: 'a launch that requested off but managed policy kept on',
@@ -68,14 +68,23 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: TClaude\nProfile: tclaude-agent\nClick to temporarily disable',
   },
   {
-    name: 'a stacked implementation uses the two-wall lock and tclaude label',
+    name: 'a stacked implementation names both active layers',
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
       os_sandbox_unverified: true, sandbox_implementation: 'stacked',
       sandbox_profiles: [{ scope: 'global', name: 'stacked-agents' }],
     },
     glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: stacked-agents\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: CC+TClaude\nProfile: stacked-agents\nClick to temporarily disable',
+  },
+  {
+    name: 'a stacked Codex implementation names both active layers',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write', os_sandbox_state: 'on',
+      sandbox_implementation: 'stacked',
+    },
+    glyph: '🔒²', danger: false,
+    tooltip: 'Status: ON\nImplementation: Codex+TClaude\nProfile: None\nClick to temporarily disable',
   },
   {
     name: 'an unknown implementation earns no lock',
@@ -94,7 +103,7 @@ const CASES = [
       sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: TClaude\nProfile: tclaude-agent',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: tclaude-agent',
   },
   {
     name: 'a legacy Claude off row remains a warning',
@@ -104,7 +113,7 @@ const CASES = [
       sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: Not recorded',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: Not recorded',
   },
   {
     name: 'an unconfigured inherit launch renders no badge',
@@ -127,7 +136,7 @@ const CASES = [
       harness: 'codex', sandbox_mode: 'danger-full-access',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: Codex\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: None\nProfile: None',
   },
   {
     name: 'multiple applied profiles retain resolution order without scope detail',
@@ -230,7 +239,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.textContent.trim(), '⚠');
       assert.equal(badge.dataset.action, 'restore');
       assert.equal(badge.title,
-        'Status: OFF\nImplementation: CC\nProfile: None\nClick to restore normal sandbox');
+        'Status: TEMP OFF\nImplementation: None\nProfile: None\nClick to restore normal sandbox');
     } finally {
       await mounted.unmount();
     }
@@ -261,7 +270,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.getAttribute('role'), 'note');
       assert.equal(badge.hasAttribute('data-act'), false);
       assert.equal(badge.hasAttribute('tabindex'), false);
-      assert.equal(badge.title, 'Status: OFF\nImplementation: Codex\nProfile: None');
+      assert.equal(badge.title, 'Status: OFF\nImplementation: None\nProfile: None');
     } finally {
       await mounted.unmount();
     }
