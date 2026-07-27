@@ -130,7 +130,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("names.join(' + ')", "multiple profile names retain resolution order")
 	must("'Not recorded'", "legacy rows do not invent an absent profile")
 	must("function sandboxTooltip(member, badge, actionable, unlocked)", "the compact tooltip has a dedicated formatter")
-	must("`Status: ${badge.status}`", "the first tooltip line is the binary sandbox status")
+	must("`Status: ${badge.status}`", "the first tooltip line is the concise sandbox status")
 	must("`Implementation: ${sandboxImplementationLabel(member)}`", "the second tooltip line names the implementation")
 	must("`Profile: ${sandboxProfileLabel(member)}`", "the third tooltip line names the applied profiles")
 	must("'Click to restore normal sandbox'", "temporary overrides offer restoration")

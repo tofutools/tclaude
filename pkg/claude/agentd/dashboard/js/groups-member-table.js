@@ -167,7 +167,7 @@ function osSandboxBadge(mode, state, unverified, implementation) {
         ? true
         : unverified;
     return {
-      status: danger ? 'OFF' : 'ON',
+      status: danger ? 'UNKNOWN' : 'ON',
       danger,
     };
   }
