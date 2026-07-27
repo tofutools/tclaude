@@ -277,12 +277,12 @@ Per-group quick actions live above the roster as icon-only buttons (hover for
 their labels): **spawn agent**, **create subgroup**, **power on**, and
 **shutdown**. The remaining actions live in the group header menu: **+ add
 member** (a searchable keyboard-navigable overlay), **⏰ schedule…** (a
-group-scoped cron job),
-**✉ message** (a one-shot message to the group or a ticked subset),
-**rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
-cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
-**🪟 windows…** (bulk focus/unfocus the members' terminal windows —
-optionally auto-tiled into a grid, see [Config](#config)), and **delete group**.
+group-scoped cron job), **✉ message** (a one-shot message to the group or a
+ticked subset), **rename**, **⤓ export** (the whole group to a portable
+`.zip`), **🧹 cleanup** (bulk-remove confirmed-offline members — see
+[Cleanup](#cleanup)), **🪟 windows…** (bulk focus/unfocus the members'
+terminal windows — optionally auto-tiled into a grid, see
+[Config](#config)), and **delete group**.
 The subgroup shortcut opens the standard create-group form with the current
 group fixed as its parent and prefills the editable description, default
 directory, and startup context from that parent. The
@@ -778,8 +778,9 @@ last run, status pill, and body summary. Per-row buttons: enable/disable,
 **run now**, edit, delete. New jobs wait for their first scheduled due time by
 default. The create/edit form can opt into one immediate run; on edit, only an
 off→on transition fires, so repeat saves and daemon restarts cannot replay it.
-**+ new cron job** opens a create form (also reachable pre-filled from the ⏰
-buttons on the Groups tab). See
+**+ new cron job** opens a create form (also reachable pre-filled from the
+**⏰ schedule…** / **schedule…** items in the Groups tab's group and member
+menus). See
 [Agent Coordination → cron](agent.md#cron) for what cron jobs do.
 
 ### Sudo

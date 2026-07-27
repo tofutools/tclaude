@@ -241,7 +241,7 @@ func TestCronGroupMulticast_AuthGate_DeniesNonMember(t *testing.T) {
 }
 
 // Scenario 5: the dashboard's Group (multicast) cron form — and the
-// per-group ⏰-multicast button that opens it — POSTs /api/cron with
+// per-group ⏰-schedule button that opens it — POSTs /api/cron with
 // target=group:<name>. Pins that wire path end to end: the cookie-auth
 // twin resolves the group and stores a group-kind job.
 func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
