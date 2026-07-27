@@ -22,7 +22,10 @@ type TclaudeLayerLaunchContract struct {
 	ReadOnlyStateDirs []string                        `json:"read_only_state_dirs,omitempty"`
 	WriteDirs         []string                        `json:"write_dirs"`
 	ProfileFilesystem []sandboxpolicy.FilesystemGrant `json:"profile_filesystem"`
-	PrivateWriteDirs  []TclaudeLayerPrivateWriteDir   `json:"private_write_dirs,omitempty"`
+	// omitempty keeps pre-TCL-779 v2 rows byte-compatible for new readers:
+	// absent means no private reopen. An older strict reader encountering the
+	// field refuses the newer contract instead of silently dropping it.
+	PrivateWriteDirs []TclaudeLayerPrivateWriteDir `json:"private_write_dirs,omitempty"`
 }
 
 // TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
@@ -329,6 +332,9 @@ func WrapTclaudeLayerSpec(
 func cleanTclaudeLayerPrivateWriteDirs(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 ) ([]TclaudeLayerPrivateWriteDir, error) {
+	if len(privateWriteDirs) == 0 {
+		return nil, nil
+	}
 	out := make([]TclaudeLayerPrivateWriteDir, 0, len(privateWriteDirs))
 	for i, privateDir := range privateWriteDirs {
 		parent := filepath.Clean(strings.TrimSpace(privateDir.Parent))

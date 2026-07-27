@@ -465,7 +465,14 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 	cwd := filepath.Join(home, "work")
 	agentDir := filepath.Join(home, "agent-cache")
-	for _, path := range []string{cwd, agentDir, filepath.Join(home, ".opencode")} {
+	privateParent := filepath.Join(home, "spawn-attachments")
+	privateCurrent := filepath.Join(privateParent, "opencode-session")
+	for _, path := range []string{
+		cwd,
+		agentDir,
+		filepath.Join(home, ".opencode"),
+		privateCurrent,
+	} {
 		require.NoError(t, os.MkdirAll(path, 0o700))
 	}
 	snapshot := sandboxpolicy.EmptySnapshot()
@@ -483,6 +490,10 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		Cwd:          cwd,
 		GitWriteDirs: []string{cwd},
 		Snapshot:     &snapshot,
+		PrivateWriteDirs: []TclaudeLayerPrivateWriteDir{{
+			Parent:  privateParent,
+			Current: privateCurrent,
+		}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
@@ -513,6 +524,10 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
 		"the authored launch-active rows stay separate from generated contract reopens")
+	assert.Equal(t, []TclaudeLayerPrivateWriteDir{{
+		Parent:  privateParent,
+		Current: privateCurrent,
+	}}, spec.Contract.PrivateWriteDirs)
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: cwd, Access: sandboxpolicy.AccessWrite,
 	})
@@ -536,6 +551,15 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		require.GreaterOrEqual(t, binReadOnly, 0)
 		assert.Less(t, stateBind, binReadOnly,
 			"the executable subtree must be re-hardened after the mutable state bind")
+		privateHide := strings.Index(wrapped,
+			"--tmpfs "+clcommon.ShellQuoteArg(privateParent))
+		privateReopen := strings.Index(wrapped,
+			"--bind "+clcommon.ShellQuoteArg(privateCurrent)+" "+
+				clcommon.ShellQuoteArg(privateCurrent))
+		require.GreaterOrEqual(t, privateHide, 0)
+		require.GreaterOrEqual(t, privateReopen, 0)
+		assert.Less(t, privateHide, privateReopen,
+			"the server executor sees only its own private attachment child")
 	}
 }
 

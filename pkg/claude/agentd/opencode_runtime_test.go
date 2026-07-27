@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
@@ -626,6 +627,8 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, decoded)
 	assert.Equal(t, spec, *decoded)
+	assert.Empty(t, decoded.Contract.PrivateWriteDirs,
+		"a new binary must accept pre-field v2 specs with no private roots")
 
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,
@@ -643,10 +646,23 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "no mutable state directories")
 
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache-home"))
+	privateRoot, _, err := tclcommon.PrepareSpawnAttachmentsPrivateDir("spwn-opencode")
+	require.NoError(t, err)
 	freshSpec, err := openCodeTclaudeLayerLaunchSpec(
-		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, nil)
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd,
+		nil,
+		nil,
+		"spwn-opencode",
+	)
 	require.NoError(t, err)
 	require.NotNil(t, freshSpec)
+	require.Equal(t, []session.TclaudeLayerPrivateWriteDir{{
+		Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
+		Current: privateRoot,
+	}}, freshSpec.Contract.PrivateWriteDirs,
+		"the persisted server spec must carry the tool executor's attachment root")
 	freshSpec.Contract.ReadOnlyStateDirs = nil
 	_, missingReadOnlyState, err := openCodeSandboxRecord(freshSpec)
 	require.NoError(t, err)
