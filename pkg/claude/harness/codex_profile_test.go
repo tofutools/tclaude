@@ -29,6 +29,10 @@ func TestCodexManagedProfileRendersResolvedUnixSocketList(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
+	canonicalSocket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	content, err := codexAgentProfileContentForRules(
 		"test",
@@ -47,8 +51,8 @@ func TestCodexManagedProfileRendersResolvedUnixSocketList(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		fmt.Sprintf("%q = \"read\"", socket),
-		fmt.Sprintf("%q = \"allow\"", socket),
+		fmt.Sprintf("%q = \"read\"", canonicalSocket),
+		fmt.Sprintf("%q = \"allow\"", canonicalSocket),
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("managed profile missing socket rule %q:\n%s", want, content)
