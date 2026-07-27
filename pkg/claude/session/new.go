@@ -1176,17 +1176,16 @@ func runNew(params *NewParams) error {
 		InitialPrompt:              params.InitialPrompt,
 	})
 	if tclaudeLayer {
-		effective := sandboxpolicy.EffectiveProfile{}
-		if launchSandbox != nil {
-			effective = launchSandbox.Effective
+		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+			HarnessName:  h.Name,
+			Cwd:          cwd,
+			GitWriteDirs: launchGitWriteDirs,
+			Snapshot:     launchSandbox,
+		})
+		if specErr != nil {
+			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
-		profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
-		effective.Filesystem = sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)
-		harnessCmd, err = WrapTclaudeLayer(bwrapBinary, effective, TclaudeLayerLaunchContract{
-			HarnessName:       h.Name,
-			WriteDirs:         append(append([]string{}, launchGitWriteDirs...), cwd),
-			ProfileFilesystem: profileFilesystem,
-		}, harnessCmd)
+		harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, spec, harnessCmd)
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}

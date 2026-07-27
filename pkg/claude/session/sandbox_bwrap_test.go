@@ -397,6 +397,49 @@ func TestWrapTclaudeLayerRefusesProfileRuleWithinHarnessState(t *testing.T) {
 	require.ErrorContains(t, err, "cannot persist harness state")
 }
 
+func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	cwd := filepath.Join(home, "work")
+	agentDir := filepath.Join(home, "agent-cache")
+	for _, path := range []string{cwd, agentDir, filepath.Join(home, ".opencode")} {
+		require.NoError(t, os.MkdirAll(path, 0o700))
+	}
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
+		{Path: home, Access: sandboxpolicy.AccessDeny},
+		{Path: cwd, Access: sandboxpolicy.AccessWrite},
+	}
+	snapshot.Effective.AgentDirectories = []string{"AGENT_CACHE"}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "AGENT_CACHE", Value: agentDir,
+	}}
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName:  harness.OpenCodeName,
+		Cwd:          cwd,
+		GitWriteDirs: []string{cwd},
+		Snapshot:     &snapshot,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
+	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
+	assert.ElementsMatch(t, []string{cwd, agentDir}, spec.Contract.WriteDirs)
+	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
+		"the authored launch-active rows stay separate from generated contract reopens")
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: cwd, Access: sandboxpolicy.AccessWrite,
+	})
+	cwdAccess, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, cwd)
+	assert.True(t, covered)
+	assert.Equal(t, sandboxpolicy.AccessWrite, cwdAccess,
+		"the generated read reopen folds into the stronger exact write grant")
+	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: agentDir, Access: sandboxpolicy.AccessRead,
+	})
+}
+
 func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
 	require.ErrorContains(t, ValidateTclaudeLayerHarness(harness.OpenCodeName), "runs outside the wrapped pane")
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.DefaultName))
