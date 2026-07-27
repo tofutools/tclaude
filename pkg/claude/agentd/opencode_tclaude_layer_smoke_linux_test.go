@@ -155,6 +155,10 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeLayerSmokeSessionID, cwd, "OpenCode layer smoke", "", permissionJSON, spec)
+	if err != nil {
+		logOpenCodeLayerSmokeServerLogs(t,
+			filepath.Join(allocation.StateRoot, "data", "opencode", "log"))
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeLayerSmokeSessionID) })
 	require.NotEmpty(t, launch.ConvID)
@@ -232,6 +236,30 @@ func TestOpenCodeTclaudeLayerExecutorSmoke(t *testing.T) {
 	require.NotEmptyf(t, identityLine, "tool output did not contain managed identity: %q", output)
 	assert.Equal(t, expectedAgentID, strings.Fields(identityLine)[0],
 		"agentd must resolve the exact managed identity through the wrapped server ancestry")
+}
+
+func logOpenCodeLayerSmokeServerLogs(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Logf("read OpenCode smoke log directory %s: %v", dir, err)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Logf("read OpenCode smoke log %s: %v", path, readErr)
+			continue
+		}
+		if len(raw) > 64<<10 {
+			raw = raw[len(raw)-(64<<10):]
+		}
+		t.Logf("OpenCode smoke log %s:\n%s", path, raw)
+	}
 }
 
 func startOpenCodeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) func() {
