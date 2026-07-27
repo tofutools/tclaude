@@ -188,10 +188,13 @@ test('the AppArmor link rides along with an already-unavailable stacked reason',
 
   const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
   assert.equal(hint.warn, true);
-  // The concrete refusal keeps the lead; the policy is named as ONE likely
-  // cause rather than displacing the reason the probe actually gave.
+  // The concrete refusal keeps the lead. The policy is named as a SECOND wall
+  // to clear rather than as an explanation of this refusal — it is not one, and
+  // claiming otherwise would send the operator to change host security policy
+  // over a missing binary.
   assert.match(hint.text, /claude is not on PATH/);
-  assert.match(hint.text, /likely cause/);
+  assert.match(hint.text, /will likely block the nested sandbox too/);
+  assert.doesNotMatch(hint.text, /likely cause/);
   assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
 });
 

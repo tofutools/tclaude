@@ -296,8 +296,14 @@ export function sandboxImplHintFor(draft, view) {
     return {
       warn: true,
       ...(appArmor || {}),
+      // The concrete reason keeps the lead — it is what the probe actually
+      // said. The policy is named as a SECOND wall to clear, not as an
+      // explanation of this one, because it is neither.
       text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`
-        + (appArmor ? ' An enforcing bwrap-userns-restrict AppArmor policy is a likely cause.' : ''),
+        + (appArmor
+          ? ' An enforcing bwrap-userns-restrict AppArmor policy on this host will likely block'
+            + ' the nested sandbox too, once that reason is fixed.'
+          : ''),
     };
   }
   if (value !== SANDBOX_IMPL_TCLAUDE_LAYER) return null;
