@@ -56,7 +56,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
         # Same shard split as PR CI and release.yml, via the shared
         # test-suite action — one partition definition everywhere.
-        shard: [agentd, jstest, process, rest]
+        shard: [agentd, jstest, process, sandbox, rest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

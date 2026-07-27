@@ -57,7 +57,7 @@ jobs:
         # partition definition for both flows. Unlike PR CI there is no
         # macOS-jstest exclusion: this post-merge run is where that cell's
         # cross-OS coverage lives.
-        shard: [agentd, jstest, process, rest]
+        shard: [agentd, jstest, process, sandbox, rest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

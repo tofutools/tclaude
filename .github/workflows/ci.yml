@@ -238,7 +238,7 @@ jobs:
         # shared .github/actions/test-suite action, which the release
         # workflows consume with the same split — keep the shard list here in
         # sync with the case statement there.
-        shard: [agentd, jstest, process, rest]
+        shard: [agentd, jstest, process, sandbox, rest]
         exclude:
           # PR CI skips macOS jstest: the shard exercises browser-targeted
           # dashboard JS under Node + the vendored LinkeDOM runtime, so
