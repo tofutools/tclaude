@@ -117,7 +117,20 @@ jobs:
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-layer-host-smoke.log"
+          go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerHostSmoke ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 host smoke did not complete"
+              echo
+              echo "The test command exited successfully without reporting that the named real smoke passed."
+              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerHostSmoke did not report an explicit pass"
+            exit 1
+          fi
 
   sandbox-v2-seatbelt-smoke:
     name: Sandbox v2 Seatbelt smoke
@@ -160,7 +173,7 @@ jobs:
           printf 'Seatbelt probe exit code: %s\n' "$probe_status"
           printf 'Probe path created: %s\n' "$probe_created"
 
-          if [ "$probe_status" -ne 0 ]; then
+          if [ "$probe_status" -ne 0 ] || [ "$probe_created" != "no" ]; then
             if [ -z "$probe_output" ]; then
               probe_output="<no output>"
             fi
@@ -195,7 +208,20 @@ jobs:
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
-        run: go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-layer-darwin-smoke.log"
+          go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 Seatbelt smoke did not complete"
+              echo
+              echo "The test command exited successfully without reporting that the named real smoke passed."
+              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerDarwinSmoke did not report an explicit pass"
+            exit 1
+          fi
 
   test:
     name: Test
