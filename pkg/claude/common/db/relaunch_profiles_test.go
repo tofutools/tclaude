@@ -55,6 +55,66 @@ func TestDurableRelaunchProfilesSurviveSessionDeletion(t *testing.T) {
 	assert.True(t, mustAutoMemoryForConv(t, convID))
 }
 
+func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
+	setupTestDB(t)
+	const (
+		convID    = "context-window-projection-conv"
+		sessionID = "context-window-projection-session"
+	)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, ConvID: convID, Cwd: "/tmp/context-window-projection",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, UpdateContextSnapshot(sessionID, 25, 10, 20, 1_000_000))
+	profile, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.FallbackRelaunch)
+	require.NotNil(t, profile.FallbackRelaunch.ContextWindowSize)
+	assert.Equal(t, int64(1_000_000), *profile.FallbackRelaunch.ContextWindowSize)
+
+	d, err := Open()
+	require.NoError(t, err)
+	const sentinel = "same-window-must-not-project"
+	_, err = d.Exec(`UPDATE conversation_resume_profiles SET updated_at = ? WHERE conv_id = ?`, sentinel, convID)
+	require.NoError(t, err)
+
+	updated, err := UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, time.Time{}, 50, 100, 200, 1_000_000,
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+	snapshot, err := GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, float64(50), snapshot.ContextPct)
+	assert.Equal(t, int64(100), snapshot.TokensInput)
+	assert.Equal(t, int64(200), snapshot.TokensOutput)
+	var profileUpdatedAt string
+	require.NoError(t, d.QueryRow(
+		`SELECT updated_at FROM conversation_resume_profiles WHERE conv_id = ?`, convID,
+	).Scan(&profileUpdatedAt))
+	assert.Equal(t, sentinel, profileUpdatedAt,
+		"token-only context changes must not rewrite durable relaunch profiles")
+
+	updated, err = UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, time.Time{}, 60, 120, 240, 200_000,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated, "a changed window must fall back to full projection")
+	require.NoError(t, UpdateContextSnapshot(sessionID, 60, 120, 240, 200_000))
+	require.NoError(t, d.QueryRow(
+		`SELECT updated_at FROM conversation_resume_profiles WHERE conv_id = ?`, convID,
+	).Scan(&profileUpdatedAt))
+	assert.NotEqual(t, sentinel, profileUpdatedAt,
+		"a context-window change still projects durable relaunch state")
+	profile, err = ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.FallbackRelaunch)
+	require.NotNil(t, profile.FallbackRelaunch.ContextWindowSize)
+	assert.Equal(t, int64(200_000), *profile.FallbackRelaunch.ContextWindowSize)
+}
+
 func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.T) {
 	setupTestDB(t)
 	const (

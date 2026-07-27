@@ -63,6 +63,49 @@ func TestCodexContextRefreshPersistsAndRestoresFollowerCheckpoint(t *testing.T) 
 	assert.NotEqual(t, string(firstCheckpoint.Data), string(secondCheckpoint.Data))
 }
 
+func TestCodexContextWritePerfPhasesOnlyIncludeExecutedPaths(t *testing.T) {
+	timing := codexTelemetryTiming{
+		contextWrite: 32 * time.Millisecond,
+		contextReset: contextWriteTiming{
+			total: 2 * time.Millisecond, open: 100 * time.Microsecond,
+			execCommit: 1800 * time.Microsecond,
+		},
+		contextFast: contextWriteTiming{
+			total: 10 * time.Millisecond, open: 100 * time.Microsecond,
+			execCommit: 9800 * time.Microsecond, result: 50 * time.Microsecond,
+		},
+		contextProject: contextWriteTiming{
+			total: 18 * time.Millisecond, open: 100 * time.Microsecond,
+			begin: 2 * time.Millisecond, update: 500 * time.Microsecond,
+			projection: 5 * time.Millisecond, commit: 10 * time.Millisecond,
+		},
+	}
+	var contextWrite perfPhase
+	for _, phase := range timing.perfPhases() {
+		if phase.Name == "context_write" {
+			contextWrite = phase
+			break
+		}
+	}
+	var names []string
+	for _, child := range contextWrite.Children {
+		names = append(names, child.Name)
+	}
+	assert.Equal(t, []string{"reset", "fast_update", "full_projection", "other"}, names)
+	require.Len(t, contextWrite.Children[1].Children, 4)
+	assert.Equal(t, "exec_commit", contextWrite.Children[1].Children[1].Name)
+	require.Len(t, contextWrite.Children[2].Children, 6)
+	assert.Equal(t, "profile_projection", contextWrite.Children[2].Children[3].Name)
+	assert.Equal(t, "commit", contextWrite.Children[2].Children[4].Name)
+
+	for _, phase := range (codexTelemetryTiming{}).perfPhases() {
+		if phase.Name == "context_write" {
+			assert.Empty(t, phase.Children,
+				"idle polls must not dilute sparse path quantiles with zero samples")
+		}
+	}
+}
+
 func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
@@ -90,6 +133,9 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 		first = timing
 	})
 	assert.Positive(t, first.contextWrite, "the first observed snapshot is persisted")
+	assert.Positive(t, first.contextProject.total,
+		"the first observation records the full self-healing projection")
+	assert.Zero(t, first.contextFast.total)
 
 	resetCodexRefreshThrottleForTest(sessionID)
 	var unchanged codexTelemetryTiming
@@ -129,9 +175,66 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 		changed = timing
 	})
 	assert.Positive(t, changed.contextWrite, "new token telemetry is persisted")
+	assert.Positive(t, changed.contextFast.total,
+		"same-generation token changes record the conditional fast update")
+	assert.Positive(t, changed.contextFast.execCommit,
+		"fast update exposes its SQLite execution and implicit commit")
+	assert.Zero(t, changed.contextProject.total)
 	contextSnapshot, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(9000), contextSnapshot.TokensInput)
+}
+
+func TestCodexContextRefreshFirstObservationRepairsRelaunchProjection(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-context-projection-repair-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea4135501"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`DELETE FROM conversation_resume_profiles WHERE conv_id = ?`, convID)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion,
+	}))
+
+	// A daemon restart clears proof that this generation/window was projected.
+	// The first unchanged observation must therefore use the full self-healing
+	// path before later token-only updates become eligible for the fast path.
+	resetCodexContextRefreshStateForTest()
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	conversation, err := db.ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, conversation)
+	require.NotNil(t, conversation.FallbackRelaunch)
+	require.NotNil(t, conversation.FallbackRelaunch.ContextWindowSize)
+	assert.Equal(t, int64(200000), *conversation.FallbackRelaunch.ContextWindowSize)
+	agent, err := db.AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.NotNil(t, agent.ContextWindowSize)
+	assert.Equal(t, int64(200000), *agent.ContextWindowSize)
 }
 
 func TestCodexContextRefreshRateLimitsDurableCheckpointWrites(t *testing.T) {

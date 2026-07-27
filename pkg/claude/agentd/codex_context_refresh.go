@@ -61,6 +61,97 @@ type codexTelemetryTiming struct {
 	checkpointEncode time.Duration
 	checkpointWrite  time.Duration
 	contextWrite     time.Duration
+	contextReset     contextWriteTiming
+	contextFast      contextWriteTiming
+	contextProject   contextWriteTiming
+}
+
+type contextWriteTiming struct {
+	total      time.Duration
+	open       time.Duration
+	begin      time.Duration
+	update     time.Duration
+	projection time.Duration
+	commit     time.Duration
+	execCommit time.Duration
+	result     time.Duration
+}
+
+func contextWriteTimingFromDB(t db.ContextSnapshotWriteTiming) contextWriteTiming {
+	return contextWriteTiming{
+		total:      t.Total,
+		open:       t.Open,
+		begin:      t.Begin,
+		update:     t.Update,
+		projection: t.Projection,
+		commit:     t.Commit,
+		execCommit: t.ExecCommit,
+		result:     t.Result,
+	}
+}
+
+func (t contextWriteTiming) add(other contextWriteTiming) contextWriteTiming {
+	t.total += other.total
+	t.open += other.open
+	t.begin += other.begin
+	t.update += other.update
+	t.projection += other.projection
+	t.commit += other.commit
+	t.execCommit += other.execCommit
+	t.result += other.result
+	return t
+}
+
+func contextWriteOther(total time.Duration, accounted ...time.Duration) time.Duration {
+	for _, d := range accounted {
+		total -= d
+	}
+	if total < 0 {
+		return 0
+	}
+	return total
+}
+
+func (t contextWriteTiming) fastPerfPhase() perfPhase {
+	return perfPhase{
+		Name: "fast_update",
+		Ms:   durMs(t.total),
+		Children: []perfPhase{
+			{Name: "open", Ms: durMs(t.open)},
+			{Name: "exec_commit", Ms: durMs(t.execCommit)},
+			{Name: "result", Ms: durMs(t.result)},
+			{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.execCommit, t.result))},
+		},
+	}
+}
+
+func (t contextWriteTiming) projectPerfPhase() perfPhase {
+	return perfPhase{
+		Name: "full_projection",
+		Ms:   durMs(t.total),
+		Children: []perfPhase{
+			{Name: "open", Ms: durMs(t.open)},
+			{Name: "begin", Ms: durMs(t.begin)},
+			{Name: "session_update", Ms: durMs(t.update)},
+			{Name: "profile_projection", Ms: durMs(t.projection)},
+			{Name: "commit", Ms: durMs(t.commit)},
+			{Name: "other", Ms: durMs(contextWriteOther(
+				t.total, t.open, t.begin, t.update, t.projection, t.commit,
+			))},
+		},
+	}
+}
+
+func (t contextWriteTiming) resetPerfPhase() perfPhase {
+	return perfPhase{
+		Name: "reset",
+		Ms:   durMs(t.total),
+		Children: []perfPhase{
+			{Name: "open", Ms: durMs(t.open)},
+			{Name: "exec_commit", Ms: durMs(t.execCommit)},
+			{Name: "other", Ms: durMs(contextWriteOther(t.total, t.open, t.execCommit))},
+		},
+	}
 }
 
 func (t codexTelemetryTiming) add(other codexTelemetryTiming) codexTelemetryTiming {
@@ -71,6 +162,9 @@ func (t codexTelemetryTiming) add(other codexTelemetryTiming) codexTelemetryTimi
 	t.checkpointEncode += other.checkpointEncode
 	t.checkpointWrite += other.checkpointWrite
 	t.contextWrite += other.contextWrite
+	t.contextReset = t.contextReset.add(other.contextReset)
+	t.contextFast = t.contextFast.add(other.contextFast)
+	t.contextProject = t.contextProject.add(other.contextProject)
 	return t
 }
 
@@ -81,13 +175,30 @@ func (t codexTelemetryTiming) perfPhases() []perfPhase {
 	if other < 0 {
 		other = 0
 	}
+	contextChildren := make([]perfPhase, 0, 4)
+	if t.contextReset.total > 0 {
+		contextChildren = append(contextChildren, t.contextReset.resetPerfPhase())
+	}
+	if t.contextFast.total > 0 {
+		contextChildren = append(contextChildren, t.contextFast.fastPerfPhase())
+	}
+	if t.contextProject.total > 0 {
+		contextChildren = append(contextChildren, t.contextProject.projectPerfPhase())
+	}
+	contextAccounted := t.contextReset.total + t.contextFast.total + t.contextProject.total
+	if contextOther := contextWriteOther(t.contextWrite, contextAccounted); contextOther > 0 {
+		contextChildren = append(contextChildren, perfPhase{
+			Name: "other",
+			Ms:   durMs(contextOther),
+		})
+	}
 	return []perfPhase{
 		{Name: "claim", Ms: durMs(t.claim)},
 		{Name: "checkpoint_load", Ms: durMs(t.checkpointLoad)},
 		{Name: "rollout_read", Ms: durMs(t.rolloutRead)},
 		{Name: "checkpoint_encode", Ms: durMs(t.checkpointEncode)},
 		{Name: "checkpoint_write", Ms: durMs(t.checkpointWrite)},
-		{Name: "context_write", Ms: durMs(t.contextWrite)},
+		{Name: "context_write", Ms: durMs(t.contextWrite), Children: contextChildren},
 		{Name: "other", Ms: durMs(other)},
 	}
 }
@@ -253,7 +364,9 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 	if snap.ContextReset {
 		if !sameSessionGeneration || !persistedReset {
 			contextWriteStarted := time.Now()
-			if err := db.ResetCompact(sess.ID); err != nil {
+			if err := db.ResetCompactTimed(sess.ID, func(detail db.ContextSnapshotWriteTiming) {
+				timing.contextReset = contextWriteTimingFromDB(detail)
+			}); err != nil {
 				slog.Warn("codex-telemetry: failed to persist compaction reset",
 					"session_id", sess.ID, "error", err, "module", "agentd")
 			} else {
@@ -269,15 +382,48 @@ func refreshCodexContextSnapshotOnReadTimed(sess *db.SessionRow, alive bool, rec
 		(!sameSessionGeneration || persistedReset || !persistedHasContext || persistedContext != snap.Context) {
 		ctx := snap.Context
 		contextWriteStarted := time.Now()
-		if err := db.UpdateContextSnapshot(sess.ID, ctx.Pct, ctx.TokensInput, ctx.TokensOutput, ctx.WindowSize); err != nil {
+		contextPersisted := false
+		var err error
+		if sameSessionGeneration && !persistedReset && persistedHasContext &&
+			persistedContext.WindowSize == ctx.WindowSize {
+			contextPersisted, err = db.UpdateContextSnapshotIfWindowUnchangedTimed(
+				sess.ID,
+				sess.ConvID,
+				sess.CreatedAt,
+				ctx.Pct,
+				ctx.TokensInput,
+				ctx.TokensOutput,
+				ctx.WindowSize,
+				func(detail db.ContextSnapshotWriteTiming) {
+					timing.contextFast = contextWriteTimingFromDB(detail)
+				},
+			)
+		} else {
+			err = db.UpdateContextSnapshotTimed(
+				sess.ID,
+				ctx.Pct,
+				ctx.TokensInput,
+				ctx.TokensOutput,
+				ctx.WindowSize,
+				func(detail db.ContextSnapshotWriteTiming) {
+					timing.contextProject = contextWriteTimingFromDB(detail)
+				},
+			)
+			contextPersisted = err == nil
+		}
+		if err != nil {
 			slog.Warn("codex-telemetry: failed to persist read-through snapshot",
 				"session_id", sess.ID, "error", err, "module", "agentd")
-		} else {
+		} else if contextPersisted {
 			persistedConvID = sess.ConvID
 			persistedCreatedAt = sess.CreatedAt
 			persistedContext = ctx
 			persistedHasContext = true
 			persistedReset = false
+		} else {
+			// The row generation or window changed after the dashboard preload.
+			// Force the next poll through the full projecting path.
+			persistedHasContext = false
 		}
 		timing.contextWrite += time.Since(contextWriteStarted)
 	}
