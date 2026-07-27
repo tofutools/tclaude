@@ -396,6 +396,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// A successor inherits the predecessor's recorded sandbox posture, not the
 	// harness default — reincarnation must not weaken the sandbox.
 	reincarnateSandbox := relaunch.Sandbox
+	reincarnateSandboxImplementation := relaunch.activeSandboxImplementation()
 	if relaunch.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(relaunch.Harness, stableEffectiveSandbox)
 	}
@@ -403,7 +404,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		relaunch.Harness,
 		reincarnateSandbox,
 		effectiveSandbox,
-		relaunch.SandboxImplementation,
+		reincarnateSandboxImplementation,
 	); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -453,7 +454,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		Model:                  model,
 		Harness:                relaunch.Harness,
 		Sandbox:                reincarnateSandbox,
-		SandboxImplementation:  relaunch.SandboxImplementation,
+		SandboxImplementation:  reincarnateSandboxImplementation,
 		SandboxChosenBy:        relaunch.SandboxModeSource,
 		Approval:               approval,
 		ToolGovernance:         relaunch.ToolGovernance,
