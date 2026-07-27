@@ -160,6 +160,90 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 	if got != want {
 		t.Fatalf("Seatbelt profile golden mismatch\nparams: %#v\nprofile:\n%s", params, got)
 	}
+	assert.NotContains(t, got, "Isolated networking",
+		"the host-open profile must remain byte-identical and gain no network denies")
+}
+
+func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testing.T) {
+	const (
+		agentd = "/Users/dev/.tclaude/api/agentd.sock"
+		alias  = "/Users/dev/.tclaude-link/api/agentd.sock"
+	)
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		[]string{agentd},
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: agentd,
+				Mode: sandboxpolicy.MountRO,
+			}},
+			Aliases: []sandboxpolicy.MountAlias{{
+				Link:   "/Users/dev/.tclaude-link",
+				Target: "/Users/dev/.tclaude",
+			}},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, strings.Count(profile, "(deny network-bind)"))
+	assert.NotContains(t, profile, "(deny network-inbound")
+	assert.GreaterOrEqual(t, strings.Count(profile, "(deny network-outbound"), 1)
+	assert.NotContains(t, profile, "(deny network*)")
+	assert.NotContains(t, profile, "system-socket")
+
+	exceptions := map[string]string{}
+	for _, param := range params {
+		if strings.HasPrefix(param.name, "AGENTD_SOCKET_") {
+			exceptions[param.name] = param.path
+		}
+	}
+	assert.ElementsMatch(t, []string{agentd, alias}, []string{
+		exceptions["AGENTD_SOCKET_0"],
+		exceptions["AGENTD_SOCKET_1"],
+	})
+	for name := range exceptions {
+		assert.Equal(t, 1, strings.Count(profile,
+			`(remote unix-socket
+        (literal (param "`+name+`")))`,
+		),
+			"agentd path must be the sole outbound-connect exception",
+		)
+	}
+}
+
+func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testing.T) {
+	const agentd = "/Users/dev/.tclaude/api/agentd.sock"
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		[]string{agentd},
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: agentd,
+				Mode: sandboxpolicy.MountHide,
+			}},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+	)
+	require.NoError(t, err)
+
+	assert.Contains(t, profile, "(deny network-outbound)\n",
+		"an explicitly hidden agentd socket must leave no posture exception")
+	assert.GreaterOrEqual(t, strings.Count(profile, "(deny network-outbound"), 2,
+		"the hide-region Unix-connect deny must stack above isolated posture denial")
+	for _, param := range params {
+		assert.NotContains(t, param.name, "AGENTD_SOCKET_")
+	}
 }
 
 func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
@@ -419,9 +503,8 @@ func TestSeatbeltAliasesRequireAbsoluteParameterizedPaths(t *testing.T) {
 	require.ErrorContains(t, err, "mount alias 0 link has non-absolute path")
 }
 
-func TestRenderSeatbeltProfileRefusesNonHostOpenPostures(t *testing.T) {
+func TestRenderSeatbeltProfileRefusesFilteredAndInvalidPostures(t *testing.T) {
 	for _, posture := range []sandboxpolicy.NetworkPosture{
-		sandboxpolicy.NetworkIsolatedWithAgentd,
 		sandboxpolicy.NetworkFiltered,
 		sandboxpolicy.NetworkPosture(99),
 	} {
@@ -435,6 +518,6 @@ func TestRenderSeatbeltProfileRefusesNonHostOpenPostures(t *testing.T) {
 			"/private/var/folders/ab/runtime/T",
 			nil,
 		)
-		require.ErrorContains(t, err, "supports only host-open networking")
+		require.Error(t, err)
 	}
 }

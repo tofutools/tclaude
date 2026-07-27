@@ -168,11 +168,11 @@ is deliberate:
 It supports Claude Code and Codex; OpenCode is refused because its
 tool-executing server runs outside the attach pane this slice wraps. Linux uses
 `bwrap` from `PATH` and requires working unprivileged user namespaces. macOS
-uses `/usr/bin/sandbox-exec` and currently supports filesystem confinement only:
-`network_access: none` and every non-host-open posture are refused because this
-slice cannot supply network/PID isolation, a constructed root, or per-socket
-allowlisting there. If any required capability is missing, tclaude refuses the
-launch instead of silently falling back.
+uses `/usr/bin/sandbox-exec` for filesystem confinement and for the
+isolated-with-agentd network boundary. The reserved `filtered` posture is
+refused on both platforms because no proxy-backed applier exists. If any
+required capability is missing, tclaude refuses the launch instead of silently
+falling back.
 
 On Linux the layer does not unshare the IPC namespace. The host-open posture
 also retains the host PID namespace; the isolated posture unshares PIDs as part
@@ -212,15 +212,23 @@ deny-only read/write regions whose predicates carve out the final narrower
 reopens. This is how a writable child beneath a hidden ancestor keeps the same
 later-shadows-earlier meaning as the Linux mount plan.
 
-The profile otherwise uses `allow default`: host networking, Mach services,
-and ambient Unix sockets retain their host behavior. The filesystem baseline is
-read-only, with narrow launch-contract write roots plus the Darwin process
-runtime paths (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical
-`$TMPDIR` beneath `/private/var/folders`). Those runtime exceptions apply only
-to the baseline; an operator-authored read-only or hidden region over one of
-them still wins. Protected tclaude/harness state and the tmux socket are denied
-for reads and writes, while the canonical agentd socket remains readable and
-connectable so hook/status-line brokering continues to work.
+The profile otherwise uses `allow default`. In the host-open posture, host
+networking and ambient Unix sockets retain their host behavior. In the isolated
+posture, deny rules block outbound connections and listener binds, with only
+the canonical agentd Unix socket and its surviving alias spellings excepted
+from outbound denial. A `network-inbound` deny is intentionally absent:
+hardware testing showed that it blocks agentd replies and its remote-Unix path
+exception does not reopen them. Inbound listener prevention therefore rests on
+the bind deny. A listening descriptor passed through the trusted agentd daemon
+with `SCM_RIGHTS` is outside this boundary's threat model. Mach services remain
+outside this slice. The filesystem baseline is read-only, with narrow
+launch-contract write roots plus the Darwin process runtime paths
+(`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical `$TMPDIR` beneath
+`/private/var/folders`). Those runtime exceptions apply only to the baseline;
+an operator-authored read-only or hidden region over one of them still wins.
+Protected tclaude/harness state and the tmux socket are denied for reads and
+writes, while the canonical agentd socket remains readable and connectable so
+hook/status-line brokering continues to work.
 
 A hidden path remains present in the host directory tree. Seatbelt denies
 opens, writes, and Unix-socket connects at that path with `EPERM`; it does not
@@ -240,11 +248,12 @@ profiles may already have discarded their operator spelling; that separate
 limitation remains tracked by TCL-762.
 
 The launch badge deliberately reports the Darwin-specific partial boundary as
-unverified: Seatbelt filesystem policy is active, paths remain enumerable, and
-there is no mount namespace or socket/network isolation. `sandbox-exec` is
-deprecated but still functional and is the mechanism for this experimental
-slice. A future replacement would call libsandbox/`sandbox_init` directly; the
-fallback is not part of this slice.
+unverified. Seatbelt filesystem policy is active and paths remain enumerable.
+Host-open retains the host network and ambient Unix sockets; isolated blocks
+network operations except the agentd socket but still has no PID isolation or
+constructed root. `sandbox-exec` is deprecated but still functional and is the
+mechanism for this experimental slice. A future replacement would call
+libsandbox/`sandbox_init` directly; the fallback is not part of this slice.
 
 ### Isolated-with-agentd network posture
 
@@ -267,6 +276,20 @@ wraps the whole harness process, not only its tool executions:
   Home paths exist only where the launch contract or ordered profile plan binds
   them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
   launch-contract path.
+
+The isolated posture has an explicit platform delta:
+
+| Property | Linux (`bubblewrap`) | macOS (`Seatbelt`) |
+| --- | --- | --- |
+| Public and host-loopback connectivity | Unavailable outside the private network namespace | Refused by Seatbelt network operations |
+| Harness-internal localhost server | Works on the private namespace's own loopback | Refused: Darwin loopback is host loopback, so reopening it would also reopen the IDE-bridge/host-service surface |
+| Agentd | Canonical socket bind-mounted into the constructed root | Canonical socket and surviving aliases are the only outbound Unix-socket exceptions |
+| Processes and filesystem root | Isolated PIDs and a constructed root | No PID isolation and no constructed root; hidden paths remain enumerable |
+
+The stricter Darwin localhost behavior is deliberate. If a real harness later
+requires an internal localhost server, the remedy is a harness-descriptor
+capability plus launch-time refusal for Darwin isolated mode. It must not gain a
+loopback exception that silently reopens host services.
 
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep
@@ -295,12 +318,13 @@ therefore gives up that integration as well as host-local model servers.
 Claude Code and other hosted-only harnesses are refused because they would be
 dead on arrival. Codex proceeds only when the resolved sandbox profile contains
 `TCLAUDE_OFFLINE_MODEL=1`. That value is a precise operator assertion that the
-model transport **functions inside this isolated namespace**—for example a
-namespace-local Unix socket, an inherited file descriptor, or a workflow that
-needs no model traffic. It does not mean merely “a local model exists”:
-host-TCP Ollama/LM Studio-style servers are on the other side of the new
-network namespace and remain unreachable. tclaude deliberately does not infer
-the assertion from Codex `--oss` or a model name.
+model transport **functions across the selected platform's isolated
+boundary**—for example the allowlisted agentd-style Unix-socket transport, an
+inherited file descriptor, or a workflow that needs no model traffic. It does
+not mean merely “a local model exists”: host-TCP Ollama/LM Studio-style servers
+remain unreachable, across Linux's new network namespace or behind Darwin's
+Seatbelt network denies. tclaude deliberately does not infer the assertion from
+Codex `--oss` or a model name.
 
 The remaining limitation in the host-open posture is explicit:
 

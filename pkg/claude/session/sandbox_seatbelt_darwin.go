@@ -80,17 +80,11 @@ func probeDarwinSeatbeltCapability(binary string) error {
 
 func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	switch posture {
-	case sandboxpolicy.NetworkHostOpen:
-	case sandboxpolicy.NetworkIsolatedWithAgentd:
-		return "", fmt.Errorf(
-			"darwin tclaude-layer does not yet support network_access none: " +
-				"the filesystem slice cannot provide network/PID isolation, a constructed root, " +
-				"or per-socket agentd allowlisting",
-		)
+	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
 		return "", fmt.Errorf(
 			"darwin tclaude-layer does not support reserved filtered networking: " +
-				"the filesystem slice has no proxy-backed network applier",
+				"Seatbelt has no proxy-backed network applier",
 		)
 	default:
 		return "", fmt.Errorf("darwin tclaude-layer has invalid network posture %d", posture)
@@ -125,9 +119,17 @@ func tclaudeLayerCommand(
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	if plan.NetworkPosture != sandboxpolicy.NetworkHostOpen {
+	switch plan.NetworkPosture {
+	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
+	case sandboxpolicy.NetworkFiltered:
 		return "", fmt.Errorf(
-			"darwin tclaude-layer supports only host-open networking; posture %s is unavailable",
+			"darwin tclaude-layer does not support reserved filtered networking: "+
+				"posture %s requires a proxy-backed network applier",
+			plan.NetworkPosture,
+		)
+	default:
+		return "", fmt.Errorf(
+			"darwin tclaude-layer has invalid network posture %d",
 			plan.NetworkPosture,
 		)
 	}
@@ -277,17 +279,27 @@ func darwinSeatbeltLstatIdentity(path string) (seatbeltFileIdentity, bool) {
 }
 
 func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
-	if posture != sandboxpolicy.NetworkHostOpen {
+	switch posture {
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
+		return harness.LaunchOSSandbox{
+			State: "on",
+			Source: "tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; " +
+				"isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; " +
+				"no PID isolation; no constructed root; hidden paths remain enumerable)",
+			Unverified: true,
+		}
+	case sandboxpolicy.NetworkHostOpen:
+		return harness.LaunchOSSandbox{
+			State: "on",
+			Source: "tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; " +
+				"host network and ambient Unix sockets reachable; no mount namespace; " +
+				"hidden paths remain enumerable)",
+			Unverified: true,
+		}
+	default:
 		return harness.LaunchOSSandbox{
 			State:  "off",
 			Source: "tclaude-layer unavailable",
 		}
-	}
-	return harness.LaunchOSSandbox{
-		State: "on",
-		Source: "tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; " +
-			"host network and ambient Unix sockets reachable; no mount namespace; " +
-			"hidden paths remain enumerable)",
-		Unverified: true,
 	}
 }

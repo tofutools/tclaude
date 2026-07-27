@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -38,8 +39,13 @@ const (
 	darwinSmokeTclaudeBinaryEnv     = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	darwinSmokeRestrictBaselineEnv  = "TCLAUDE_SANDBOX_V2_RESTRICT_BASELINE"
 	darwinSmokeExerciseBrokerEnv    = "TCLAUDE_SANDBOX_V2_EXERCISE_BROKER"
+	darwinSmokeNetworkIsolatedEnv   = "TCLAUDE_SANDBOX_V2_NETWORK_ISOLATED"
+	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
+	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
+	darwinSmokeHelperPIDFileEnv     = "TCLAUDE_SANDBOX_V2_HELPER_PID_FILE"
+	darwinSmokeHelperGateFDEnv      = "TCLAUDE_SANDBOX_V2_HELPER_GATE_FD"
 	darwinSmokeHelperTestExpression = "^TestTclaudeLayerDarwinSmokeHelper$"
 )
 
@@ -97,6 +103,9 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	policyListener, err := net.Listen("unix", policySocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = policyListener.Close() })
+	hostListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = hostListener.Close() })
 
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
@@ -121,6 +130,8 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}))
+	expectedAgentID, _, err := db.EnsureAgentForConv(darwinSmokeConvID, "seatbelt-smoke")
+	require.NoError(t, err)
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)
@@ -165,6 +176,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		plan,
 		false,
 		true,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -175,6 +187,8 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
+		hostListener.Addr().String(),
+		expectedAgentID,
 	)
 
 	state, err := LoadSessionState(darwinSmokeSessionID)
@@ -188,6 +202,39 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	assert.Equal(t, "Opus 5", snapshot.Model,
 		"the brokered status line must update the host context snapshot")
 	assert.Equal(t, "claude-opus-5", snapshot.ModelID)
+
+	isolatedPlan := plan
+	isolatedPlan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
+	runDarwinSeatbeltSmokeHelper(
+		t,
+		binary,
+		helperBinary,
+		phase0,
+		isolatedPlan,
+		false,
+		true,
+		true,
+		allowed,
+		outside,
+		readonly,
+		hidden,
+		filepath.Join(aliasTools, "probe"),
+		protectedFile,
+		policySocket,
+		tmuxSocket,
+		runtimeTempDir,
+		tclaudeBinary,
+		hostListener.Addr().String(),
+		expectedAgentID,
+	)
+	isolatedState, err := LoadSessionState(darwinSmokeSessionID)
+	require.NoError(t, err)
+	assert.True(t, isolatedState.LastHook.After(state.LastHook),
+		"the isolated brokered hook must advance the host session row")
+	isolatedSnapshot, err := db.GetContextSnapshot(darwinSmokeSessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Opus 5 isolated", isolatedSnapshot.Model,
+		"the isolated brokered status write must be readable from the host database")
 
 	// The compatibility paths pierce only the baseline deny. Adding explicit
 	// RO plan entries for /dev and TMPDIR must make the same writes fail.
@@ -210,6 +257,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		restrictedPlan,
 		true,
 		false,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -220,6 +268,8 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
+		hostListener.Addr().String(),
+		expectedAgentID,
 	)
 }
 
@@ -228,9 +278,9 @@ func runDarwinSeatbeltSmokeHelper(
 	binary, helperBinary string,
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
-	restrictBaseline, exerciseBroker bool,
+	restrictBaseline, exerciseBroker, networkIsolated bool,
 	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, tmuxSocket,
-	runtimeTempDir, tclaudeBinary string,
+	runtimeTempDir, tclaudeBinary, hostListener, expectedAgentID string,
 ) {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
@@ -253,7 +303,14 @@ func runDarwinSeatbeltSmokeHelper(
 	)
 	require.NoError(t, err)
 	defer func() { _ = inherited.Close() }()
-	cmd.ExtraFiles = []*os.File{inherited}
+	gateReader, gateWriter, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = gateReader.Close() }()
+	defer func() { _ = gateWriter.Close() }()
+	helperPIDFile := filepath.Join(allowed, ".tclaude-seatbelt-helper.pid")
+	_ = os.Remove(helperPIDFile)
+	defer func() { _ = os.Remove(helperPIDFile) }()
+	cmd.ExtraFiles = []*os.File{inherited, gateReader}
 	cmd.Env = append(os.Environ(),
 		darwinSmokeHelperEnv+"=1",
 		darwinSmokeAllowedEnv+"="+allowed,
@@ -267,16 +324,66 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeTclaudeBinaryEnv+"="+tclaudeBinary,
 		darwinSmokeRestrictBaselineEnv+"="+boolString(restrictBaseline),
 		darwinSmokeExerciseBrokerEnv+"="+boolString(exerciseBroker),
+		darwinSmokeNetworkIsolatedEnv+"="+boolString(networkIsolated),
+		darwinSmokeHostListenerEnv+"="+hostListener,
+		darwinSmokeExpectedAgentIDEnv+"="+expectedAgentID,
 		darwinSmokeRuntimeTempDirEnv+"="+runtimeTempDir,
 		darwinSmokeInheritedFDEnv+"=3",
+		darwinSmokeHelperPIDFileEnv+"="+helperPIDFile,
+		darwinSmokeHelperGateFDEnv+"=4",
 		HookBrokerEnvVar+"="+HookBrokerAgentd,
 		"TCLAUDE_SESSION_ID="+darwinSmokeSessionID,
 	)
-	output, err := cmd.CombinedOutput()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	require.NoError(t, cmd.Start())
+	waited := false
+	defer func() {
+		if waited {
+			return
+		}
+		// Unblock the helper before killing/waiting for the outer shell. This
+		// runs on FailNow too, so a setup assertion cannot strand a child or
+		// leave os/exec's output-copy goroutines unjoined.
+		_ = gateWriter.Close()
+		cancel()
+		_ = cmd.Wait()
+	}()
+	require.NoError(t, gateReader.Close())
+
+	// This copied test binary stands in for the real harness process. Register
+	// its exact live PID before letting it call agentd: production session
+	// launches record the harness/pane PID, while keying this synthetic row to
+	// the outer go-test PID makes Darwin's ps-based ancestry walk depend on
+	// incidental sandbox-exec shell hops. The gate keeps the identity proof
+	// deterministic and, crucially, makes the isolated whoami assertion test
+	// the Seatbelt socket path instead of a malformed fixture identity.
+	var helperPID int
+	require.Eventually(t, func() bool {
+		raw, readErr := os.ReadFile(helperPIDFile)
+		if readErr != nil {
+			return false
+		}
+		helperPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
+		return readErr == nil && helperPID > 1
+	}, 5*time.Second, 10*time.Millisecond,
+		"darwin smoke helper did not publish its PID")
+	row, err := db.LoadSession(darwinSmokeSessionID)
+	require.NoError(t, err)
+	row.PID = helperPID
+	row.UpdatedAt = time.Now()
+	require.NoError(t, db.SaveSession(row))
+	_, err = gateWriter.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, gateWriter.Close())
+
+	err = cmd.Wait()
+	waited = true
 	if ctx.Err() != nil {
 		t.Fatal("darwin tclaude-layer smoke timed out")
 	}
-	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output)
+	require.NoErrorf(t, err, "darwin tclaude-layer smoke output: %s", output.String())
 }
 
 func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
@@ -294,8 +401,26 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	tclaudeBinary := os.Getenv(darwinSmokeTclaudeBinaryEnv)
 	restrictBaseline := os.Getenv(darwinSmokeRestrictBaselineEnv) == "1"
 	exerciseBroker := os.Getenv(darwinSmokeExerciseBrokerEnv) == "1"
+	networkIsolated := os.Getenv(darwinSmokeNetworkIsolatedEnv) == "1"
+	hostListener := os.Getenv(darwinSmokeHostListenerEnv)
+	expectedAgentID := os.Getenv(darwinSmokeExpectedAgentIDEnv)
 	runtimeTempDir := os.Getenv(darwinSmokeRuntimeTempDirEnv)
 	inheritedFD := os.Getenv(darwinSmokeInheritedFDEnv)
+	helperPIDFile := os.Getenv(darwinSmokeHelperPIDFileEnv)
+	helperGateFD := os.Getenv(darwinSmokeHelperGateFDEnv)
+
+	require.NoError(t, os.WriteFile(
+		helperPIDFile,
+		[]byte(strconv.Itoa(os.Getpid())),
+		0o600,
+	))
+	gateFD, err := strconv.Atoi(helperGateFD)
+	require.NoError(t, err)
+	gate := os.NewFile(uintptr(gateFD), "darwin-smoke-helper-gate")
+	require.NotNil(t, gate)
+	_, err = io.ReadFull(gate, make([]byte, 1))
+	require.NoError(t, err)
+	require.NoError(t, gate.Close())
 
 	require.NoError(t, os.WriteFile(filepath.Join(allowed, "written"), []byte("ok"), 0o600),
 		"launch-contract write root must survive an ordinary ancestor hide")
@@ -305,7 +430,7 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 
 	assertSeatbeltEPERM(t, os.WriteFile(filepath.Join(readonly, "blocked"), []byte("no"), 0o600),
 		"RO region write")
-	_, err := os.ReadFile(filepath.Join(hidden, "private"))
+	_, err = os.ReadFile(filepath.Join(hidden, "private"))
 	assertSeatbeltEPERM(t, err, "hidden region read")
 	assertSeatbeltEPERM(t, os.WriteFile(filepath.Join(hidden, "phantom"), []byte("no"), 0o600),
 		"hidden region phantom write")
@@ -328,6 +453,33 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	if conn, dialErr := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); dialErr == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite class-4 deny")
+	}
+
+	require.NotEmpty(t, hostListener)
+	hostConn, hostDialErr := net.DialTimeout("tcp4", hostListener, 500*time.Millisecond)
+	if networkIsolated {
+		if hostDialErr == nil {
+			_ = hostConn.Close()
+			t.Fatal("darwin isolated posture reached a host-loopback listener")
+		}
+		assertSeatbeltEPERM(t, hostDialErr, "host-loopback TCP connect")
+
+		publicConn, publicDialErr := net.DialTimeout("tcp4", "1.1.1.1:53", 500*time.Millisecond)
+		if publicDialErr == nil {
+			_ = publicConn.Close()
+			t.Fatal("darwin isolated posture reached a public DNS endpoint")
+		}
+		assertSeatbeltEPERM(t, publicDialErr, "public-DNS TCP connect")
+
+		localListener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		if listenErr == nil {
+			_ = localListener.Close()
+			t.Fatal("darwin isolated posture created a host-loopback listener")
+		}
+		assertSeatbeltEPERM(t, listenErr, "host-loopback TCP bind")
+	} else {
+		require.NoError(t, hostDialErr, "host-open posture must retain host-loopback connectivity")
+		require.NoError(t, hostConn.Close())
 	}
 
 	devNull, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
@@ -376,8 +528,10 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		"the agentd socket reopened beneath an ancestor hide must remain connectable")
 	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami through Seatbelt: %s", whoami)
-	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
-		"agentd must resolve a stable managed identity through sandbox-exec ancestry; got %q", whoami)
+	require.NotEmpty(t, expectedAgentID)
+	whoamiID := strings.SplitN(strings.TrimSpace(string(whoami)), "\t", 2)[0]
+	assert.Equal(t, expectedAgentID, whoamiID,
+		"agentd must return the true stable identity, never a fallback identity")
 
 	hookPayload := `{"session_id":"` + darwinSmokeConvID +
 		`","cwd":"` + allowed +
@@ -387,8 +541,12 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	hookOutput, err := hook.CombinedOutput()
 	require.NoErrorf(t, err, "brokered hook callback through Seatbelt: %s", hookOutput)
 
+	statusModel := "Opus 5"
+	if networkIsolated {
+		statusModel += " isolated"
+	}
 	statusPayload := `{"session_id":"` + darwinSmokeConvID +
-		`","model":{"id":"claude-opus-5","display_name":"Opus 5"},` +
+		`","model":{"id":"claude-opus-5","display_name":"` + statusModel + `"},` +
 		`"workspace":{"current_dir":"` + allowed + `"},` +
 		`"context_window":{"used_percentage":42,"context_window_size":200000},` +
 		`"cost":{"total_cost_usd":1.25},"effort":{"level":"high"}}`
