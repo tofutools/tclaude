@@ -46,13 +46,12 @@ const sandboxImplementationField = "sandbox_implementation"
 // marks a value that is malformed or inapplicable to the resolved harness.
 const sandboxImplementationUnavailableKind = "sandbox_implementation_unavailable"
 
-// tclaudeLayerHostAvailability is the host-capability predicate, indirected
-// through a var so flow tests can drive both branches deterministically on a
-// runner with bwrap and on one without. Production wiring shares one predicate
-// with the launch boundary: session.TclaudeLayerHostAvailability and the
-// session-boundary refusal both resolve through resolveBwrapBinary, so a
-// pre-flight answer cannot disagree with the refusal that actually decides.
+// The host-capability predicates are indirected so flow tests can drive both
+// branches deterministically. Interactive harnesses require the terminal relay
+// predicate; OpenCode confines its non-interactive server and therefore uses
+// the server-specific predicate that omits relay-only pidfd support.
 var tclaudeLayerHostAvailability = session.TclaudeLayerHostAvailability
+var tclaudeLayerServerHostAvailability = session.TclaudeLayerServerHostAvailability
 
 // validateSandboxImplementationForHarness normalizes a sandbox-implementation
 // value and gates it on the harness through the capability path
@@ -108,11 +107,15 @@ func resolveOpenCodeSandboxImplementationMode(
 // predicate is for disclosure surfaces only (see the dashboard capability
 // metadata), where a stale answer costs nothing because the launch still
 // refuses.
-func sandboxImplementationHostFailure(implementation string) *spawnFailure {
+func sandboxImplementationHostFailure(harnessName, implementation string) *spawnFailure {
 	if strings.TrimSpace(implementation) != string(sandboxpolicy.ImplementationTclaudeLayer) {
 		return nil
 	}
-	if err := tclaudeLayerHostAvailability(); err != nil {
+	availability := tclaudeLayerHostAvailability
+	if harnessName == harness.OpenCodeName {
+		availability = tclaudeLayerServerHostAvailability
+	}
+	if err := availability(); err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, sandboxImplementationUnavailableKind,
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+
 				"refusing the launch rather than falling back to %s",

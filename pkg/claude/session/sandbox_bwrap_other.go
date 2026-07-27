@@ -13,6 +13,11 @@ func resolveBwrapBinary(sandboxpolicy.NetworkPosture) (string, error) {
 	return "", fmt.Errorf("tclaude-layer requires Linux and bubblewrap; this platform is not supported")
 }
 
+func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerCommand(
 	string,
 	[]string,

@@ -2844,7 +2844,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
 	// falls through; refuses naming the missing capability. Probed live, so an
 	// operator who just installed bwrap is not refused by a stale answer.
-	if fail := sandboxImplementationHostFailure(body.SandboxImplementation); fail != nil {
+	if fail := sandboxImplementationHostFailure(h.Name, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -4115,7 +4115,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	// default profile carrying tclaude-layer would otherwise reach a spawner on
 	// a host that cannot run it without ever meeting a refusal. Same predicate,
 	// second call site: an unbypassable gate, not a second opinion.
-	if fail := sandboxImplementationHostFailure(p.SandboxImplementation); fail != nil {
+	if fail := sandboxImplementationHostFailure(h.Name, p.SandboxImplementation); fail != nil {
 		return fail
 	}
 	p.AutoReview, p.AutoReviewSet, _, fail = resolveBoolLaunchField("auto_review", p.AutoReview,

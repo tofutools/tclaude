@@ -700,10 +700,13 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 // into each other).
 func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
 	prev := tclaudeLayerHostAvailability
+	prevServer := tclaudeLayerServerHostAvailability
 	tclaudeLayerHostAvailability = fn
+	tclaudeLayerServerHostAvailability = fn
 	resetSandboxImplHostProbeCache()
 	return func() {
 		tclaudeLayerHostAvailability = prev
+		tclaudeLayerServerHostAvailability = prevServer
 		resetSandboxImplHostProbeCache()
 	}
 }

@@ -1007,7 +1007,11 @@ func runNew(params *NewParams) error {
 	bwrapBinary := ""
 	var bwrapCapabilityErr error
 	if tclaudeLayer {
-		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+		if tclaudeLayerWrapsPane(h.Name) {
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+		} else {
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(tclaudeLayerPosture)
+		}
 		if bwrapCapabilityErr == nil {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
 		}

@@ -117,6 +117,25 @@ func TestResolveTclaudeLayerRefusesUnavailablePidfdRelay(t *testing.T) {
 	assert.Equal(t, "off", verdict.State)
 }
 
+func TestResolveTclaudeLayerServerDoesNotRequirePidfdRelay(t *testing.T) {
+	oldLookPath := lookPathBwrap
+	oldProbe := probeBwrap
+	oldPidfdProbe := probeTclaudeLayerPidfd
+	t.Cleanup(func() {
+		lookPathBwrap = oldLookPath
+		probeBwrap = oldProbe
+		probeTclaudeLayerPidfd = oldPidfdProbe
+	})
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }
+
+	binary, verdict, err := ResolveTclaudeLayerServer(sandboxpolicy.NetworkHostOpen)
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/bin/bwrap", binary)
+	assert.Equal(t, "on", verdict.State)
+}
+
 func TestTclaudeLayerCommandKeepsNewSessionBehindWinchRelay(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TMUX_TMPDIR", t.TempDir())

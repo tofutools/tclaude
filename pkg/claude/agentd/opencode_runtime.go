@@ -130,7 +130,7 @@ var openCodeSSEHTTPClient = &http.Client{
 var (
 	startOpenCodeRuntimeForSpawn = startOpenCodeRuntime
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
-	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayer
+	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayerServer
 	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
 )
 

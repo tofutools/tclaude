@@ -113,6 +113,11 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return darwinSeatbeltExecutable, nil
 }
 
+func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+	return "", fmt.Errorf(
+		"tclaude-layer server wrapping requires Linux and bubblewrap")
+}
+
 func tclaudeLayerCommand(
 	binary string,
 	phase0WriteDirs, breakGlassPaths []string,

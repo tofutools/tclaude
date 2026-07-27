@@ -87,6 +87,17 @@ func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, erro
 }
 
 func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
+	binary, err := resolveBwrapServerBinary(posture)
+	if err != nil {
+		return "", err
+	}
+	if err := probeTclaudeLayerPidfd(); err != nil {
+		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+	}
+	return binary, nil
+}
+
+func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
 		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
@@ -98,9 +109,6 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 		}
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
-	}
-	if err := probeTclaudeLayerPidfd(); err != nil {
-		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
 	}
 	return binary, nil
 }

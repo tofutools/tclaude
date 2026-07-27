@@ -168,10 +168,27 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
 }
 
+// ResolveTclaudeLayerServer verifies the host capability needed by a
+// non-interactive server boundary. Unlike ResolveTclaudeLayer, it does not
+// require terminal-resize relay support that the server renderer never uses.
+func ResolveTclaudeLayerServer(
+	posture sandboxpolicy.NetworkPosture,
+) (string, harness.LaunchOSSandbox, error) {
+	binary, err := resolveBwrapServerBinary(posture)
+	if err != nil {
+		return "", harness.LaunchOSSandbox{
+			State:  "off",
+			Source: "tclaude-layer unavailable",
+		}, err
+	}
+	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
+}
+
 // TclaudeLayerHostAvailability reports whether THIS HOST can create the
-// baseline tclaude-layer boundary: bubblewrap on Linux or Seatbelt on macOS.
-// nil means available. The returned error names the concrete missing
-// capability.
+// interactive tclaude-layer boundary: bubblewrap plus its terminal relay on
+// Linux, or Seatbelt on macOS. nil means available. The returned error names
+// the concrete missing capability. Relay-free server callers use
+// TclaudeLayerServerHostAvailability instead.
 //
 // It shares one predicate with the launch boundary — both call
 // resolveBwrapBinary — so a pre-flight answer can never disagree with the
@@ -188,6 +205,14 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 // negative. Caching is for disclosure only. See TCL-769.
 func TclaudeLayerHostAvailability() error {
 	_, err := resolveBwrapBinary(sandboxpolicy.NetworkHostOpen)
+	return err
+}
+
+// TclaudeLayerServerHostAvailability reports whether this host can create the
+// non-interactive server boundary, without imposing interactive relay
+// capabilities on a topology that has no terminal.
+func TclaudeLayerServerHostAvailability() error {
+	_, err := resolveBwrapServerBinary(sandboxpolicy.NetworkHostOpen)
 	return err
 }
 
