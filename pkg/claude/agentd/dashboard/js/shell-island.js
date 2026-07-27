@@ -113,6 +113,7 @@ function FooterMeta({ state }) {
   const auth = view.authSession;
   const toggle = () => {
     const next = !expanded;
+    setNow(Date.now());
     setExpanded(next);
     dashPrefs.setItem(FOOTER_SESSION_EXPANDED_PREF, next ? '1' : '0');
   };
@@ -121,9 +122,9 @@ function FooterMeta({ state }) {
       <span class="meta-version">tclaude version ${view.version}</span>
       <span class="meta-sep"> · </span><span class="meta-base">${view.base}</span>
       <span class="meta-sep"> · </span>refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>
-      <button class="footer-session-toggle" type="button" aria-expanded=${expanded ? 'true' : 'false'} onClick=${toggle}>auth ${expanded ? '▾' : '▴'}</button>
+      <button class="footer-session-toggle" type="button" aria-expanded=${expanded ? 'true' : 'false'} aria-controls="footer-session-panel" onClick=${toggle}>auth ${expanded ? '▾' : '▴'}</button>
       ${expanded && auth ? html`
-        <span class="footer-session-panel">
+        <span class="footer-session-panel" id="footer-session-panel">
           <span>auth cookie expires ${auth.expires_at ? `in ${formatDuration(new Date(auth.expires_at).getTime() - now)}` : 'when this browser session closes'}</span>
           <span>minted ${new Date(auth.minted_at).toLocaleString()}</span>
           ${!auth.expires_at ? html`<span class="footer-session-note">pre-upgrade cookies are accepted for a 30m restart handoff, then rotated</span>` : null}
