@@ -141,6 +141,14 @@ func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, stored.TokensInput, "row assembly should only enqueue the context write")
 
+	// Remove the normal one-second refresh throttle: the pending batch itself
+	// must retain the claim so a slow/overlapping snapshot cannot queue and
+	// later commit an older rollout value after this one.
+	codexContextRefreshMu.Lock()
+	pendingState := codexContextRefreshMu.last[sessionID]
+	pendingState.at = time.Time{}
+	codexContextRefreshMu.last[sessionID] = pendingState
+	codexContextRefreshMu.Unlock()
 	overlappingBatch := &codexContextWriteBatch{}
 	overlappingState := stateForConvInSessionsBatched(
 		[]*db.SessionRow{sess},
@@ -159,6 +167,9 @@ func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
 	stored, err = db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(12_000), stored.TokensInput)
+	codexContextRefreshMu.Lock()
+	assert.False(t, codexContextRefreshMu.last[sessionID].refreshing)
+	codexContextRefreshMu.Unlock()
 }
 
 func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {

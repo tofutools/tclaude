@@ -580,6 +580,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 		snap.Context,
 		snap.HasContext,
 		snap.ContextReset,
+		contextPersistenceDeferred,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
 		cachePersistedContext,
@@ -642,13 +643,22 @@ func (b *codexContextWriteBatch) updateContextSnapshot(
 	), nil
 }
 
-// flush commits all context updates discovered by one dashboard snapshot. The
-// returned timing contains only shared transaction stages; per-row SQL and
-// projection work was recorded when each operation executed.
+// flush commits all context updates discovered by one dashboard snapshot and
+// reports both the per-operation work and the one shared transaction.
 func (b *codexContextWriteBatch) flush() (codexTelemetryTiming, error) {
 	if b == nil || b.dbBatch == nil {
 		return codexTelemetryTiming{}, nil
 	}
+	defer func() {
+		released := make(map[string]struct{}, len(b.pending))
+		for _, pending := range b.pending {
+			if _, ok := released[pending.sessionID]; ok {
+				continue
+			}
+			released[pending.sessionID] = struct{}{}
+			releaseCodexRuntimeRefresh(pending.sessionID)
+		}
+	}()
 	result, err := b.dbBatch.Commit()
 	if err != nil {
 		return codexTelemetryTiming{}, err
@@ -781,6 +791,7 @@ func cacheCodexRuntimeRefresh(
 	runtimeContext harness.ContextTelemetry,
 	runtimeHasContext bool,
 	runtimeReset bool,
+	keepRefreshing bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
 	persistedContext harness.ContextTelemetry,
@@ -809,7 +820,7 @@ func cacheCodexRuntimeRefresh(
 	prev.persistedContext = persistedContext
 	prev.persistedHasContext = persistedHasContext
 	prev.persistedReset = persistedReset
-	prev.refreshing = false
+	prev.refreshing = keepRefreshing
 	codexContextRefreshMu.last[sessionID] = prev
 }
 
