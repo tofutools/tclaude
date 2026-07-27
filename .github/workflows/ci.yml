@@ -54,32 +54,70 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
 
-      - name: Probe bubblewrap user namespace support
-        id: bwrap-probe
+      - name: Unlock and probe bubblewrap user namespace support
+        shell: bash
         run: |
-          if bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true; then
-            echo "supported=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::sandbox v2 host smoke skipped: this runner cannot create the bubblewrap user/mount namespace"
+          restriction=kernel.apparmor_restrict_unprivileged_userns
+          kernel=$(uname -a)
+
+          set +e
+          before=$(sysctl -n "$restriction" 2>&1)
+          unlock_output=$(sudo sysctl -w "$restriction=0" 2>&1)
+          unlock_status=$?
+          after=$(sysctl -n "$restriction" 2>&1)
+          readback_status=$?
+          bwrap_output=$(bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true 2>&1)
+          bwrap_status=$?
+          set -e
+
+          printf 'before: %s=%s\n' "$restriction" "$before"
+          printf '%s\n' "$unlock_output"
+          printf 'after: %s=%s\n' "$restriction" "$after"
+          printf '%s\n' "$bwrap_output"
+          printf 'bubblewrap exit code: %s\n' "$bwrap_status"
+
+          if [ "$unlock_status" -ne 0 ] ||
+             [ "$readback_status" -ne 0 ] ||
+             [ "$after" != "0" ] ||
+             [ "$bwrap_status" -ne 0 ]; then
+            if [ -z "$bwrap_output" ]; then
+              bwrap_output="<no output>"
+            fi
+            {
+              echo "### Sandbox v2 host smoke prerequisite failed"
+              echo
+              echo "The real host smoke was not executed. The GitHub runner image or AppArmor policy likely changed."
+              echo
+              printf '**Image:** %s %s\n\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+              echo "**Kernel:**"
+              echo '```text'
+              printf '%s\n' "$kernel"
+              echo '```'
+              printf '**Sysctl before:** %s\n\n' "$before"
+              printf '**Sysctl write exit code:** %s\n\n' "$unlock_status"
+              echo "**Sysctl write output:**"
+              echo '```text'
+              printf '%s\n' "$unlock_output"
+              echo '```'
+              printf '**Sysctl after:** %s (read exit code %s)\n\n' "$after" "$readback_status"
+              printf '**Bubblewrap exit code:** %s\n\n' "$bwrap_status"
+              echo "**Bubblewrap output:**"
+              echo '```text'
+              printf '%s\n' "$bwrap_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::sandbox v2 host smoke prerequisite failed; see the step summary for runner diagnostics"
+            exit 1
           fi
 
       - name: Build tclaude for authenticated smoke
-        if: steps.bwrap-probe.outputs.supported == 'true'
         run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
 
       - name: Run sandbox v2 host smoke
-        if: steps.bwrap-probe.outputs.supported == 'true'
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
-
-      - name: Report unavailable host smoke
-        if: steps.bwrap-probe.outputs.supported != 'true'
-        run: |
-          echo "### Sandbox v2 host smoke skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "The runner could not create bubblewrap's user/mount namespace; run the documented smoke on a compatible Linux host." >> "$GITHUB_STEP_SUMMARY"
 
   sandbox-v2-seatbelt-smoke:
     name: Sandbox v2 Seatbelt smoke
@@ -94,38 +132,70 @@ jobs:
           go-version-file: go.mod
 
       - name: Probe Seatbelt deny-write support
-        id: seatbelt-probe
+        shell: bash
         run: |
           probe="$RUNNER_TEMP/tclaude-seatbelt-probe"
           rm -f "$probe"
           profile='(version 1)
           (allow default)
           (deny file-write* (literal (param "TCLAUDE_PROBE")))'
-          if TCLAUDE_PROBE="$probe" /usr/bin/sandbox-exec \
+          kernel=$(uname -a)
+          macos=$(sw_vers)
+
+          set +e
+          probe_output=$(TCLAUDE_PROBE="$probe" /usr/bin/sandbox-exec \
             -p "$profile" "-DTCLAUDE_PROBE=$probe" -- /bin/sh -c \
-            'test ! -e "$TCLAUDE_PROBE" && ! touch "$TCLAUDE_PROBE"'; then
-            echo "supported=true" >> "$GITHUB_OUTPUT"
+            'test ! -e "$TCLAUDE_PROBE" && ! touch "$TCLAUDE_PROBE"' 2>&1)
+          probe_status=$?
+          set -e
+
+          if [ -e "$probe" ]; then
+            probe_created=yes
           else
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::sandbox v2 Seatbelt smoke skipped: sandbox-exec could not enforce the deny-write probe"
+            probe_created=no
+          fi
+          rm -f "$probe"
+
+          printf '%s\n' "$probe_output"
+          printf 'Seatbelt probe exit code: %s\n' "$probe_status"
+          printf 'Probe path created: %s\n' "$probe_created"
+
+          if [ "$probe_status" -ne 0 ]; then
+            if [ -z "$probe_output" ]; then
+              probe_output="<no output>"
+            fi
+            {
+              echo "### Sandbox v2 Seatbelt smoke prerequisite failed"
+              echo
+              echo "The real Darwin smoke was not executed. The GitHub runner image or Seatbelt policy likely changed."
+              echo
+              echo "**macOS:**"
+              echo '```text'
+              printf '%s\n' "$macos"
+              echo '```'
+              echo "**Kernel:**"
+              echo '```text'
+              printf '%s\n' "$kernel"
+              echo '```'
+              printf '**Seatbelt probe exit code:** %s\n\n' "$probe_status"
+              printf '**Probe path created:** %s\n\n' "$probe_created"
+              echo "**Seatbelt probe output:**"
+              echo '```text'
+              printf '%s\n' "$probe_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::sandbox v2 Seatbelt smoke prerequisite failed; see the step summary for runner diagnostics"
+            exit 1
           fi
 
       - name: Build tclaude for authenticated smoke
-        if: steps.seatbelt-probe.outputs.supported == 'true'
         run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
 
       - name: Run sandbox v2 Seatbelt smoke
-        if: steps.seatbelt-probe.outputs.supported == 'true'
         env:
           TCLAUDE_SANDBOX_V2_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s
-
-      - name: Report unavailable Seatbelt smoke
-        if: steps.seatbelt-probe.outputs.supported != 'true'
-        run: |
-          echo "### Sandbox v2 Seatbelt smoke skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "The runner's sandbox-exec could not enforce the required deny-write probe; the Darwin filesystem slice was not verified." >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: Test

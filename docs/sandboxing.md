@@ -408,8 +408,11 @@ silently populated a throwaway database instead of failing. Hidden
 protected roots are now remounted read-only, so such a write fails
 outright and no throwaway database can appear.
 
-The CI smoke reports a visible skip when its runner cannot create an
-unprivileged user/mount namespace. Run the fallback on a compatible Linux host
+Both platform smokes are hard CI gates. The Linux job disables Ubuntu's
+AppArmor restriction on unprivileged user namespaces for its ephemeral runner,
+verifies bubblewrap can create the namespace, and runs the real host smoke. If
+the unlock or capability probe stops working, the job fails with runner
+diagnostics instead of skipping. To repeat the smoke on a compatible Linux host
 with `bwrap` installed:
 
 ```bash
@@ -420,8 +423,9 @@ TCLAUDE_SANDBOX_V2_SMOKE=1 \
   go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s
 ```
 
-The Darwin smoke runs for real on the `macos-latest` CI job. To repeat it on a
-macOS host:
+The Darwin job likewise verifies that Seatbelt enforces its deny-write probe
+before running the real smoke, and fails if that prerequisite changes. To repeat
+it on a macOS host:
 
 ```bash
 go build -o "$TMPDIR/tclaude-sandbox-v2-smoke" .
