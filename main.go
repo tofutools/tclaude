@@ -7,11 +7,15 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/tofutools/tclaude/pkg/claude"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
 )
 
 func main() {
+	if handled, code := probehelper.Dispatch(os.Args); handled {
+		os.Exit(code)
+	}
 	common.SetupLogging(slog.LevelInfo)
 	exitCode := run()
 	db.Close()

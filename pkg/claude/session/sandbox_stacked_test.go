@@ -38,6 +38,17 @@ func TestWaitForStackedBindingReadinessRetriesPartialToken(t *testing.T) {
 	require.NoError(t, WaitForStackedBindingReadiness(path))
 }
 
+func TestStackedProbeOuterEnvironmentScrubsExportedFunctionCanary(t *testing.T) {
+	t.Setenv("BASH_FUNC_grep%%", "() { return 0; }")
+	t.Setenv("TCLAUDE_STACKED_CREDENTIAL_CANARY", "must-not-cross")
+
+	assert.Equal(
+		t,
+		[]string{"PATH=" + stackedProbeOuterSystemPath},
+		stackedProbeOuterEnvironment(),
+	)
+}
+
 func TestStackedLaunchOSSandboxNamesBothMechanisms(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

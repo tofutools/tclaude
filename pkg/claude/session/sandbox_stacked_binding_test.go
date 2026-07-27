@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
 func TestStackedClaudeManagedPolicyRefusesInsecureOverrides(t *testing.T) {
@@ -164,6 +166,9 @@ func TestStackedProofStagesOfficialCodexStandaloneSymlinkLayout(t *testing.T) {
 }
 
 func TestStackedProofRefusesManifestDroppingClaudePolicyFreeze(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the sealed probe helper is a Linux stacked-sandbox authority")
+	}
 	managed := t.TempDir()
 	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
 	t.Cleanup(restore)
@@ -185,6 +190,71 @@ func TestStackedProofRefusesManifestDroppingClaudePolicyFreeze(t *testing.T) {
 
 	err = proof.Revalidate()
 	require.ErrorContains(t, err, "manifest changed after capability probe")
+}
+
+func TestStackedProofStagesRunningProbeHelperForClaudeOnly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the sealed probe helper is a Linux stacked-sandbox authority")
+	}
+	managed := t.TempDir()
+	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
+	t.Cleanup(restore)
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.DefaultName),
+		harness.NestedSandboxExecutable{
+			Path:    os.Args[0],
+			Version: "test",
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	manifest := readStackedBindingManifest(t, proof.ManifestPath)
+	require.NotNil(t, manifest.ProbeHelper)
+	assert.Equal(t, probehelper.BoundPath, manifest.ProbeHelper.Destination)
+	assert.Equal(t, uint32(0o500), manifest.ProbeHelper.Mode)
+	assert.NotEqual(t, os.Args[0], manifest.ProbeHelper.StagePath)
+	require.NoError(t, proof.Revalidate())
+	helperStagePath := manifest.ProbeHelper.StagePath
+	require.NoError(t, proof.completeProbe())
+	finalManifest := readStackedBindingManifest(t, proof.ManifestPath)
+	assert.Nil(t, finalManifest.ProbeHelper)
+	_, err = os.Stat(helperStagePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, proof.Revalidate())
+
+	codexProof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.CodexName),
+		codexBindingTestExecutable(t),
+	)
+	require.NoError(t, err)
+	t.Cleanup(codexProof.Cleanup)
+	codexManifest := readStackedBindingManifest(t, codexProof.ManifestPath)
+	assert.Nil(t, codexManifest.ProbeHelper)
+}
+
+func TestStackedProofNamesProbeHelperStagingFailure(t *testing.T) {
+	previous := stackedProbeHelperSourcePath
+	stackedProbeHelperSourcePath = filepath.Join(t.TempDir(), "missing")
+	t.Cleanup(func() { stackedProbeHelperSourcePath = previous })
+	managed := t.TempDir()
+	restore := harness.SetClaudeManagedSettingsRootForTest(managed)
+	t.Cleanup(restore)
+
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.DefaultName),
+		harness.NestedSandboxExecutable{
+			Path:    os.Args[0],
+			Version: "test",
+		},
+	)
+	if proof != nil {
+		proof.Cleanup()
+	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing capability stacked_claude_probe_helper")
+	assert.Contains(t, err.Error(), "running Go probe helper")
+	assert.Contains(t, err.Error(), "refusing rather than falling back")
 }
 
 func readStackedBindingManifest(

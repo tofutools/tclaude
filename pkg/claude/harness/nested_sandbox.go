@@ -16,9 +16,14 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
-const nestedSandboxIdentityTimeout = 3 * time.Second
+const (
+	nestedSandboxIdentityTimeout = 3 * time.Second
+	nestedProbeEnvPath           = "/usr/bin/env"
+	nestedProbeSystemPath        = "/usr/bin:/bin"
+)
 
 // NestedSandboxContract is the descriptor-owned authority for a real harness
 // sandbox that may run beneath tclaude's outer OS wall. It prepares both the
@@ -71,9 +76,10 @@ func (executable NestedSandboxExecutable) Revalidate() error {
 // NestedSandboxProbe is a model-free real-engine command and its temporary
 // launch-owned state. Command is safe to pass to sh -c.
 type NestedSandboxProbe struct {
-	Command    string
-	KnownPaths []string
-	Cleanup    func()
+	Command         string
+	KnownPaths      []string
+	ClassifyFailure func(string) string
+	Cleanup         func()
 }
 
 // NestedSandboxCapabilityError names the exact missing capability used by the
@@ -161,7 +167,7 @@ func (claudeNestedSandbox) PrepareProbe(
 			},
 			"filesystem": map[string]any{
 				"denyRead":  []string{},
-				"allowRead": []string{},
+				"allowRead": []string{probehelper.BoundPath},
 				"allowWrite": []string{
 					workspace,
 				},
@@ -181,18 +187,14 @@ func (claudeNestedSandbox) PrepareProbe(
 		cleanup()
 		return NestedSandboxProbe{}, fmt.Errorf("write Claude SRT probe settings: %w", err)
 	}
-	serverPath := filepath.Join(root, "stub.py")
-	if err := os.WriteFile(serverPath, []byte(stackedClaudeProbeServer), 0o600); err != nil {
-		cleanup()
-		return NestedSandboxProbe{}, fmt.Errorf("write Claude SRT probe stub: %w", err)
-	}
 	secretBytes := make([]byte, 24)
 	if _, err := rand.Read(secretBytes); err != nil {
 		cleanup()
 		return NestedSandboxProbe{}, fmt.Errorf("create Claude SRT probe endpoint secret: %w", err)
 	}
 	secret := hex.EncodeToString(secretBytes)
-	readyPath := filepath.Join(root, "endpoint")
+	readyPath := filepath.Join(root, probehelper.EndpointFileName)
+	innerPolicyPath := filepath.Join(root, probehelper.InnerPolicyFileName)
 	resultPath := filepath.Join(root, "result.json")
 	configDir := filepath.Join(root, "config")
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -202,27 +204,34 @@ func (claudeNestedSandbox) PrepareProbe(
 	allowed := filepath.Join(workspace, "allowed")
 	denied := filepath.Join(sibling, "denied")
 	marker := "TCLAUDE_STACKED_INNER_OK_" + secret
-	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
+	frozenPath := "PATH=" + clcommon.ShellQuoteArg(nestedProbeSystemPath) +
+		"; export PATH"
+	script := frozenPath + "; set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 91; fi" +
-		"; " + claudeAFUnixSeccompProbeScript() +
+		"; " + claudeAFUnixSeccompProbeScript(probehelper.BoundPath) +
 		"; echo " + clcommon.ShellQuoteArg(marker)
-	pathValue := strings.TrimSpace(os.Getenv("PATH"))
-	if pathValue == "" {
-		pathValue = "/usr/local/bin:/usr/bin:/bin"
-	}
-	startStub := "python3 " + clcommon.ShellQuoteArg(serverPath) +
-		" " + clcommon.ShellQuoteArg(readyPath) +
+	startStub := frozenPath + "; " + nestedProbeEnvPath +
+		" -i " + clcommon.ShellQuoteArg(probehelper.BoundPath) +
+		" " + clcommon.ShellQuoteArg(probehelper.StubMode) +
+		" " + clcommon.ShellQuoteArg(root) +
 		" " + clcommon.ShellQuoteArg(secret) +
 		" " + clcommon.ShellQuoteArg(script) +
 		" " + clcommon.ShellQuoteArg(marker) +
 		" & stub_pid=$!; trap 'kill \"$stub_pid\" 2>/dev/null || true' EXIT"
 	waitStub := "; i=0; while [ ! -s " + clcommon.ShellQuoteArg(readyPath) +
-		" ]; do i=$((i+1)); [ \"$i\" -le 100 ] || exit 94; sleep 0.05; done" +
+		" ]; do if ! kill -0 \"$stub_pid\" 2>/dev/null; then" +
+		" wait \"$stub_pid\"; stub_status=$?" +
+		"; if [ \"$stub_status\" -eq 126 ] || [ \"$stub_status\" -eq 127 ]; then" +
+		" echo " + clcommon.ShellQuoteArg(probehelper.BindingFailureMarker) + " >&2; exit 97" +
+		"; fi; echo 'launch-owned Messages stub failed before readiness' >&2; exit 94; fi" +
+		"; i=$((i+1)); [ \"$i\" -le 100 ] || " +
+		"{ echo 'launch-owned Messages stub readiness timed out' >&2; exit 94; }" +
+		"; sleep 0.05; done" +
 		"; endpoint=$(cat " + clcommon.ShellQuoteArg(readyPath) + ")" +
 		"; case \"$endpoint\" in http://127.0.0.1:*) ;; *) exit 95 ;; esac"
-	runClaude := "; env -i" +
-		" PATH=" + clcommon.ShellQuoteArg(pathValue) +
+	runClaude := "; " + nestedProbeEnvPath + " -i" +
+		" PATH=" + clcommon.ShellQuoteArg(nestedProbeSystemPath) +
 		" HOME=" + clcommon.ShellQuoteArg(configDir) +
 		" CLAUDE_CONFIG_DIR=" + clcommon.ShellQuoteArg(configDir) +
 		" ANTHROPIC_BASE_URL=\"$endpoint/" + secret + "\"" +
@@ -240,112 +249,29 @@ func (claudeNestedSandbox) PrepareProbe(
 	return NestedSandboxProbe{
 		Command: startStub + waitStub + runClaude,
 		KnownPaths: []string{
-			executable.Path, settingsPath, serverPath, configDir, workspace, sibling,
+			executable.Path, settingsPath, configDir, workspace, sibling,
+		},
+		ClassifyFailure: func(output string) string {
+			if strings.Contains(output, probehelper.BindingFailureMarker) {
+				return "stacked_claude_probe_helper"
+			}
+			evidence, err := os.ReadFile(innerPolicyPath)
+			if err == nil && string(evidence) == probehelper.InnerPolicyFailureValue {
+				return "stacked_claude_inner_policy"
+			}
+			return ""
 		},
 		Cleanup: cleanup,
 	}, nil
 }
 
-func claudeAFUnixSeccompProbeScript() string {
-	socketProbe := strings.Join([]string{
-		"import errno, socket, sys",
-		"try:",
-		" socket.socket(socket.AF_UNIX)",
-		"except OSError as exc:",
-		" sys.exit(77 if exc.errno in (errno.EPERM, errno.EACCES) else 78)",
-		"sys.exit(0)",
-	}, "\n")
-	return "command -v python3 >/dev/null 2>&1 || " +
-		"{ echo 'inner python3 unavailable; cannot prove SRT seccomp' >&2; exit 96; }" +
-		"; if python3 -c " + clcommon.ShellQuoteArg(socketProbe) +
+func claudeAFUnixSeccompProbeScript(helperPath string) string {
+	return "if " + nestedProbeEnvPath + " -i " + clcommon.ShellQuoteArg(helperPath) +
+		" " + clcommon.ShellQuoteArg(probehelper.AFUnixMode) +
 		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92" +
 		"; else socket_status=$?; [ \"$socket_status\" -eq 77 ] || " +
 		"{ echo 'SRT seccomp AF_UNIX probe was untestable' >&2; exit 96; }; fi"
 }
-
-// stackedClaudeProbeServer is a launch-owned, credential-free Messages stub.
-// Its per-launch path secret prevents an ambient local process from driving the
-// probe, and it exists only until PrepareProbe's cleanup runs. The stub never
-// consults a model: it deterministically asks the exact Claude CLI to execute
-// one Bash tool and returns success only when the sandboxed tool result carries
-// the launch nonce emitted after every posture assertion.
-const stackedClaudeProbeServer = `import http.server
-import json
-import sys
-
-ready_path, secret, command, marker = sys.argv[1:5]
-success = "TCLAUDE_STACKED_STUB_OK_" + secret
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def authorized(self):
-        return self.path.startswith("/" + secret + "/")
-
-    def do_HEAD(self):
-        if not self.authorized():
-            self.send_error(404)
-            return
-        self.send_response(200)
-        self.send_header("content-length", "0")
-        self.end_headers()
-
-    def do_POST(self):
-        if not self.authorized():
-            self.send_error(404)
-            return
-        length = int(self.headers.get("content-length", "0"))
-        request = json.loads(self.rfile.read(length))
-        results = [
-            block
-            for message in request.get("messages", [])
-            for block in (
-                message.get("content", [])
-                if isinstance(message.get("content"), list)
-                else []
-            )
-            if isinstance(block, dict) and block.get("type") == "tool_result"
-        ]
-        if not results:
-            content = [{
-                "type": "tool_use",
-                "id": "toolu_tclaude_stacked",
-                "name": "Bash",
-                "input": {"command": command},
-            }]
-            stop_reason = "tool_use"
-        else:
-            valid = any(
-                not result.get("is_error", False)
-                and marker in str(result.get("content", ""))
-                for result in results
-            )
-            content = [{"type": "text", "text": success if valid else "probe refused"}]
-            stop_reason = "end_turn"
-        response = json.dumps({
-            "id": "msg_tclaude_stacked",
-            "type": "message",
-            "role": "assistant",
-            "model": "claude-sonnet-4-5-20250929",
-            "content": content,
-            "stop_reason": stop_reason,
-            "stop_sequence": None,
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-        }).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.send_header("content-length", str(len(response)))
-        self.end_headers()
-        self.wfile.write(response)
-
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-with open(ready_path, "w") as ready:
-    ready.write("http://127.0.0.1:" + str(server.server_port))
-server.serve_forever()
-`
 
 type codexNestedSandbox struct{}
 

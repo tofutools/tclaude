@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"golang.org/x/sys/unix"
 )
 
@@ -261,7 +262,11 @@ func prepareStackedRelayBinding(
 		}
 	}
 
-	files := make([]*os.File, 0, 1+len(manifest.ManagedPolicy))
+	files := make(
+		[]*os.File,
+		0,
+		2+len(manifest.RuntimeFiles)+len(manifest.ManagedPolicy),
+	)
 	closeFiles := func() {
 		for _, file := range files {
 			_ = file.Close()
@@ -358,9 +363,22 @@ func prepareStackedRelayBinding(
 		len(manifest.RuntimeFiles) != 0 {
 		return nil, nil, fmt.Errorf("non-Codex stacked binding carries runtime files")
 	}
+	if manifest.Engine.Destination == stackedBoundExecutablePath &&
+		manifest.ProbeHelper != nil &&
+		(manifest.ProbeHelper.Destination != probehelper.BoundPath ||
+			manifest.ProbeHelper.Mode != 0o500) {
+		return nil, nil, fmt.Errorf(
+			"%s: Claude stacked binding has an invalid sealed Go probe helper",
+			probehelper.BindingFailureMarker,
+		)
+	}
 	if manifest.Engine.Destination != stackedBoundExecutablePath &&
 		len(manifest.RuntimeFiles) == 0 {
 		return nil, nil, fmt.Errorf("codex stacked binding omits its runtime closure")
+	}
+	if manifest.Engine.Destination != stackedBoundExecutablePath &&
+		manifest.ProbeHelper != nil {
+		return nil, nil, fmt.Errorf("codex stacked binding carries a probe helper")
 	}
 	_, err = openBinding(manifest.Engine)
 	if err != nil {
@@ -426,6 +444,23 @@ func prepareStackedRelayBinding(
 		args = append(args,
 			"--perms", fmt.Sprintf("%04o", binding.Mode),
 			"--file", childFDFor(), destination,
+		)
+	}
+	if manifest.ProbeHelper != nil {
+		binding := *manifest.ProbeHelper
+		_, openErr := openBinding(binding)
+		if openErr != nil {
+			closeFiles()
+			return nil, nil, fmt.Errorf(
+				"%s: stacked probe helper binding: %w",
+				probehelper.BindingFailureMarker,
+				openErr,
+			)
+		}
+		addDestinationDirs(binding.Destination)
+		args = append(args,
+			"--perms", fmt.Sprintf("%04o", binding.Mode),
+			"--file", childFDFor(), binding.Destination,
 		)
 	}
 	args = append(args, "--remount-ro", imageRoot)

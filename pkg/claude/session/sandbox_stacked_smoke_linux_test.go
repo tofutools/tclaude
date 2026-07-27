@@ -27,12 +27,18 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 	}
 	tclaudeBinary := os.Getenv("TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY")
 	require.NotEmpty(t, tclaudeBinary)
+	previousProbeHelperSource := stackedProbeHelperSourcePath
+	stackedProbeHelperSourcePath = tclaudeBinary
+	t.Cleanup(func() {
+		stackedProbeHelperSourcePath = previousProbeHelperSource
+	})
 	previousRelay := tclaudeLayerRelayPrefix
 	tclaudeLayerRelayPrefix = func() string {
 		return clcommon.ShellQuoteArg(tclaudeBinary) +
 			" session " + tclaudeLayerWinchRelayCommand
 	}
 	t.Cleanup(func() { tclaudeLayerRelayPrefix = previousRelay })
+	installStackedSmokePythonCanary(t)
 	prepareStackedSmokeControlPlane(t)
 	cwd := t.TempDir()
 	var err error
@@ -85,6 +91,31 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 			}
 		})
 	}
+}
+
+func installStackedSmokePythonCanary(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	called := filepath.Join(root, "interpreter-called")
+	script := "#!/bin/sh\nprintf called > " +
+		clcommon.ShellQuoteArg(called) + "\nexit 99\n"
+	for _, name := range []string{"python", "python3"} {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(root, name),
+			[]byte(script),
+			0o700,
+		))
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		_, err := os.Stat(called)
+		require.ErrorIs(
+			t,
+			err,
+			os.ErrNotExist,
+			"the real stacked proof invoked the forbidden interpreter canary",
+		)
+	})
 }
 
 // The production launch has already opened tclaude's private data directory

@@ -12,14 +12,17 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
 const (
-	stackedSandboxBindingVersion = 1
+	stackedSandboxBindingVersion = 2
 	stackedBoundExecutableRoot   = "/tmp/.tclaude-stacked-harness"
 	stackedBoundExecutablePath   = "/tmp/.tclaude-stacked-harness/bin/engine"
 	stackedBoundCodexRuntimeRoot = "/tmp/.tclaude-stacked-codex"
 )
+
+var stackedProbeHelperSourcePath = "/proc/self/exe"
 
 type stackedSandboxBindingFile struct {
 	StagePath   string `json:"stage_path"`
@@ -34,6 +37,7 @@ type stackedSandboxBindingManifest struct {
 	StageRoot                 string                      `json:"stage_root"`
 	Engine                    stackedSandboxBindingFile   `json:"engine"`
 	RuntimeFiles              []stackedSandboxBindingFile `json:"runtime_files,omitempty"`
+	ProbeHelper               *stackedSandboxBindingFile  `json:"probe_helper,omitempty"`
 	FreezeClaudeManagedPolicy bool                        `json:"freeze_claude_managed_policy,omitempty"`
 	ManagedPolicy             []stackedSandboxBindingFile `json:"managed_policy,omitempty"`
 }
@@ -53,6 +57,46 @@ type StackedSandboxProof struct {
 	ManifestSHA256 string
 	ReadyPath      string
 	stageRoot      string
+}
+
+// completeProbe removes the Go-only proof helper from the authority carried
+// into the final harness launch. The exact outer behavioral probe has already
+// consumed its sealed descriptor; the interactive agent gets only the proven
+// engine/runtime and frozen managed policy.
+func (proof *StackedSandboxProof) completeProbe() error {
+	if proof == nil || proof.ManifestPath == "" || proof.ManifestSHA256 == "" {
+		return fmt.Errorf("stacked binding proof is missing")
+	}
+	data, err := os.ReadFile(proof.ManifestPath)
+	if err != nil {
+		return fmt.Errorf("read stacked probe binding manifest: %w", err)
+	}
+	if stackedBindingDigest(data) != proof.ManifestSHA256 {
+		return fmt.Errorf("stacked probe binding manifest changed")
+	}
+	var manifest stackedSandboxBindingManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse stacked probe binding manifest: %w", err)
+	}
+	if manifest.ProbeHelper == nil ||
+		manifest.ProbeHelper.Destination != probehelper.BoundPath {
+		return fmt.Errorf("stacked probe helper authority is missing")
+	}
+	if err := os.Remove(manifest.ProbeHelper.StagePath); err != nil {
+		return fmt.Errorf("remove consumed stacked probe helper: %w", err)
+	}
+	manifest.ProbeHelper = nil
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("encode final stacked binding manifest: %w", err)
+	}
+	finalPath := filepath.Join(proof.stageRoot, "launch-manifest.json")
+	if err := os.WriteFile(finalPath, encoded, 0o600); err != nil {
+		return fmt.Errorf("write final stacked binding manifest: %w", err)
+	}
+	proof.ManifestPath = finalPath
+	proof.ManifestSHA256 = stackedBindingDigest(encoded)
+	return nil
 }
 
 // Revalidate closes the ordinary construction interval before the final relay
@@ -79,6 +123,9 @@ func (proof *StackedSandboxProof) Revalidate() error {
 		return fmt.Errorf("stacked binding manifest authority changed")
 	}
 	files := append([]stackedSandboxBindingFile{manifest.Engine}, manifest.RuntimeFiles...)
+	if manifest.ProbeHelper != nil {
+		files = append(files, *manifest.ProbeHelper)
+	}
 	files = append(files, manifest.ManagedPolicy...)
 	for _, binding := range files {
 		file, err := os.Open(binding.StagePath)
@@ -191,6 +238,22 @@ func prepareStackedSandboxProof(
 			}
 			manifest.ManagedPolicy = append(manifest.ManagedPolicy, staged)
 		}
+		helper, stageErr := stageStackedSandboxFile(
+			stackedProbeHelperSourcePath,
+			filepath.Join(root, "probe-helper"),
+			probehelper.BoundPath,
+			0o500,
+		)
+		if stageErr != nil {
+			return nil, stackedSandboxRefusal(
+				"stacked_claude_probe_helper",
+				fmt.Sprintf(
+					"stage the running Go probe helper from /proc/self/exe: %v",
+					stageErr,
+				),
+			)
+		}
+		manifest.ProbeHelper = &helper
 	}
 
 	manifestPath := filepath.Join(root, "manifest.json")

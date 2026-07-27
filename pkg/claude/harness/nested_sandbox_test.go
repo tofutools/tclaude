@@ -3,16 +3,18 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
 func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
@@ -52,23 +54,27 @@ func TestNestedSandboxCapabilityHandlesNilError(t *testing.T) {
 func TestClaudeAFUnixSeccompProbeFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
-		pythonExit *int
+		helperExit *int
 		wantExit   int
 	}{
-		{name: "missing_python", wantExit: 96},
-		{name: "expected_seccomp_refusal", pythonExit: intPointer(77), wantExit: 0},
-		{name: "socket_allowed", pythonExit: intPointer(0), wantExit: 92},
-		{name: "untestable", pythonExit: intPointer(78), wantExit: 96},
+		{name: "missing_helper", wantExit: 96},
+		{name: "expected_seccomp_refusal", helperExit: intPointer(77), wantExit: 0},
+		{name: "socket_allowed", helperExit: intPointer(0), wantExit: 92},
+		{name: "untestable", helperExit: intPointer(78), wantExit: 96},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pathDir := t.TempDir()
-			if tc.pythonExit != nil {
-				pythonPath := filepath.Join(pathDir, "python3")
-				script := []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", *tc.pythonExit))
-				require.NoError(t, os.WriteFile(pythonPath, script, 0o700))
+			helperPath := filepath.Join(t.TempDir(), "probe-helper")
+			if tc.helperExit != nil {
+				script := []byte(
+					"#!/bin/sh\nexit " + strconv.Itoa(*tc.helperExit) + "\n",
+				)
+				require.NoError(t, os.WriteFile(helperPath, script, 0o700))
 			}
-			cmd := exec.Command("/bin/sh", "-c", claudeAFUnixSeccompProbeScript())
-			cmd.Env = []string{"PATH=" + pathDir}
+			cmd := exec.Command(
+				"/bin/sh",
+				"-c",
+				claudeAFUnixSeccompProbeScript(helperPath),
+			)
 			err := cmd.Run()
 			if tc.wantExit == 0 {
 				require.NoError(t, err)
@@ -184,8 +190,10 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 			contains: []string{
 				"--settings",
 				"enableWeakerNestedSandbox",
-				"socket.AF_UNIX",
 				"env -i",
+				probehelper.StubMode,
+				probehelper.AFUnixMode,
+				probehelper.BoundPath,
 				"ANTHROPIC_BASE_URL=",
 				"--bare --safe-mode",
 				"TCLAUDE_STACKED_STUB_OK_",
@@ -217,13 +225,64 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 			assert.Contains(t, joined, string(os.PathSeparator)+"workspace"+string(os.PathSeparator)+"allowed")
 			assert.Contains(t, joined, string(os.PathSeparator)+"private"+string(os.PathSeparator)+"denied")
 			if tc.name == "claude" {
-				assert.Contains(t, joined, "command -v python3")
 				assert.Contains(t, joined, "socket_status")
-				assert.Contains(t, joined, "cannot prove SRT seccomp")
-				assert.Contains(t, stackedClaudeProbeServer, `stop_reason = "tool_use"`)
+				assert.Contains(t, joined, "AF_UNIX probe was untestable")
+				assert.NotContains(t, joined, "python3 ")
+				assert.NotContains(t, joined, ".py")
+				assert.GreaterOrEqual(t, strings.Count(joined, "env -i"), 3)
+				require.NotNil(t, probe.ClassifyFailure)
+				assert.Empty(t, probe.ClassifyFailure("ordinary CLI failure"))
+				assert.Equal(
+					t,
+					"stacked_claude_probe_helper",
+					probe.ClassifyFailure(probehelper.BindingFailureMarker),
+				)
+				settingsPath := probe.KnownPaths[1]
+				require.NoError(t, os.WriteFile(
+					filepath.Join(
+						filepath.Dir(settingsPath),
+						probehelper.InnerPolicyFileName,
+					),
+					[]byte(probehelper.InnerPolicyFailureValue),
+					0o600,
+				))
+				assert.Equal(
+					t,
+					"stacked_claude_inner_policy",
+					probe.ClassifyFailure(""),
+				)
 			}
 		})
 	}
+}
+
+func TestClaudeNestedSandboxProbeIgnoresUntrustedPathEnv(t *testing.T) {
+	fakeBin := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(fakeBin, "env"),
+		[]byte("#!/bin/sh\nexit 77\n"),
+		0o700,
+	))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	probe, err := (claudeNestedSandbox{}).PrepareProbe(
+		t.TempDir(),
+		NestedSandboxExecutable{Path: "/usr/bin/engine"},
+	)
+	require.NoError(t, err)
+	t.Cleanup(probe.Cleanup)
+
+	assert.NotContains(t, probe.Command, fakeBin)
+	assert.GreaterOrEqual(
+		t,
+		strings.Count(probe.Command, nestedProbeEnvPath+" -i"),
+		3,
+	)
+	assert.Contains(
+		t,
+		probe.Command,
+		"PATH="+clcommon.ShellQuoteArg(nestedProbeSystemPath)+"; export PATH",
+	)
 }
 
 func TestCodexNestedProbeKeepsStateHomeOutsideTemporaryWorkspace(t *testing.T) {

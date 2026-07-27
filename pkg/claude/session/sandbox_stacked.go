@@ -14,7 +14,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
-const stackedSandboxProbeTimeout = 20 * time.Second
+const (
+	stackedSandboxProbeTimeout  = 20 * time.Second
+	stackedProbeOuterSystemPath = "/usr/bin:/bin"
+)
 
 // ValidateStackedSandboxHarness is the descriptor capability gate. It runs
 // before any host probing so a non-stackable harness (notably OpenCode) gets a
@@ -124,10 +127,10 @@ func ProbeStackedSandbox(
 		wrapped,
 	)
 	cmd.Dir = cwd
-	cmd.Env = append([]string(nil), os.Environ()...)
-	for _, entry := range spec.Effective.Environment {
-		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
-	}
+	// The proof shell is a launch authority, not the interactive harness.
+	// Never inherit credentials, shell startup controls, or exported Bash
+	// functions that could spoof one of its fail-closed utility checks.
+	cmd.Env = stackedProbeOuterEnvironment()
 	output := &boundedProbeBuffer{limit: 16 * 1024}
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -141,12 +144,29 @@ func ProbeStackedSandbox(
 		}
 		proof.Cleanup()
 		capability := h.NestedSandbox.CapabilityName()
-		if h.Name == harness.DefaultName {
-			capability = "stacked_claude_inner_policy"
+		if probe.ClassifyFailure != nil {
+			if classified := strings.TrimSpace(
+				probe.ClassifyFailure(output.String()),
+			); classified != "" {
+				capability = classified
+			}
 		}
 		return nil, stackedSandboxRefusal(capability, detail)
 	}
+	if h.Name == harness.DefaultName {
+		if err := proof.completeProbe(); err != nil {
+			proof.Cleanup()
+			return nil, stackedSandboxRefusal(
+				"stacked_claude_probe_helper",
+				fmt.Sprintf("retire the sealed Go helper after the exact probe: %v", err),
+			)
+		}
+	}
 	return proof, nil
+}
+
+func stackedProbeOuterEnvironment() []string {
+	return []string{"PATH=" + stackedProbeOuterSystemPath}
 }
 
 // StackedLaunchOSSandbox is recorded only after the real nested round-trip
