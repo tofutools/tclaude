@@ -421,6 +421,7 @@ func effectiveDraftSandboxProfileContexts(
 
 func sandboxAssignmentCompositionNotices(
 	global, group *db.SandboxProfile,
+	includeGlobalNotices bool,
 ) ([]sandboxpolicy.AccessNotice, error) {
 	rows, err := db.ListSandboxProfiles()
 	if err != nil {
@@ -455,9 +456,11 @@ func sandboxAssignmentCompositionNotices(
 		return nil, err
 	}
 	out := []sandboxpolicy.AccessNotice{}
-	for _, set := range [][]sandboxpolicy.AccessNotice{
-		globalNotices, groupNotices, effective.AccessNotices,
-	} {
+	sets := [][]sandboxpolicy.AccessNotice{groupNotices, effective.AccessNotices}
+	if includeGlobalNotices {
+		sets = append([][]sandboxpolicy.AccessNotice{globalNotices}, sets...)
+	}
+	for _, set := range sets {
 		for _, notice := range set {
 			if notice.Class == sandboxpolicy.AccessNoticeClassComposition {
 				out = append(out, notice)
@@ -475,11 +478,20 @@ func globalSandboxAssignmentCompositionNotices(name string) ([]sandboxpolicy.Acc
 	if global == nil {
 		return nil, db.ErrSandboxProfileNotFound
 	}
+	out, err := db.SandboxProfileCompositionNotices(global)
+	if err != nil {
+		return nil, err
+	}
+	intrinsicallyEmptyAxes := map[string]struct{}{}
+	for _, notice := range out {
+		if notice.Class == sandboxpolicy.AccessNoticeClassComposition {
+			intrinsicallyEmptyAxes[notice.Axis] = struct{}{}
+		}
+	}
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, err
 	}
-	out := []sandboxpolicy.AccessNotice{}
 	for _, group := range groups {
 		if group.SandboxProfileID == 0 {
 			continue
@@ -488,11 +500,14 @@ func globalSandboxAssignmentCompositionNotices(name string) ([]sandboxpolicy.Acc
 		if err != nil {
 			return nil, err
 		}
-		notices, err := sandboxAssignmentCompositionNotices(global, groupProfile)
+		notices, err := sandboxAssignmentCompositionNotices(global, groupProfile, false)
 		if err != nil {
 			return nil, err
 		}
 		for _, notice := range notices {
+			if _, alreadyEmpty := intrinsicallyEmptyAxes[notice.Axis]; alreadyEmpty {
+				continue
+			}
 			notice.Detail = fmt.Sprintf("group %q: %s", group.Name, notice.Detail)
 			out = append(out, notice)
 		}
@@ -512,7 +527,7 @@ func groupSandboxAssignmentCompositionNotices(groupName, name string) ([]sandbox
 	if err != nil {
 		return nil, err
 	}
-	notices, err := sandboxAssignmentCompositionNotices(global, group)
+	notices, err := sandboxAssignmentCompositionNotices(global, group, true)
 	if err != nil {
 		return nil, err
 	}

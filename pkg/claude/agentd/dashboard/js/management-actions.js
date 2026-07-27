@@ -856,6 +856,7 @@ export function createManagementActions({
       const ok = await state.confirmSandboxDiff(
         preview.before || null,
         preview.after,
+        preview.notices || [],
       );
       if (!ok) {
         notify('Sandbox profile save cancelled');

@@ -733,7 +733,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   const state = createManagementState(); const calls = []; let refreshed = 0; let genericConfirms = 0;
   const sandboxAPI = {
     loadSandboxProfiles: async () => [{ name: 'safe' }],
-    previewSandboxProfile: async (name, body) => { calls.push(['preview', name, body]); return { before: null, after: body, revision: 'r1' }; },
+    previewSandboxProfile: async (name, body) => { calls.push(['preview', name, body]); return {
+      before: null, after: body, revision: 'r1',
+      notices: [{ class: 'composition', detail: 'authoritative preview composition warning' }],
+    }; },
     saveSandboxProfile: async (...args) => { calls.push(['save', ...args]); }, deleteSandboxProfile: async (name) => calls.push(['delete', name]),
     inspectSandboxImport: async (value) => ({ profiles: value.profiles }), importSandboxProfiles: async (...args) => { calls.push(['import', ...args]); return {}; },
   };
@@ -744,7 +747,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   // entirely (TCL-791).
   const body = { ...draft };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
-  assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
+  assert.deepEqual(state.sandboxDiff.value, {
+    before: null, after: body,
+    notices: [{ class: 'composition', detail: 'authoritative preview composition warning' }],
+  }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
   assert.deepEqual(calls[0], ['preview', '', body]); assert.deepEqual(calls[1], ['save', '', body, 'r1']); assert.equal(refreshed, 1);
   const replacement = { ...draft, name: 'renamed' }; const replacementBody = { ...body, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
@@ -820,10 +826,14 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   const after = { name: 'dev', filesystem: [{ path: '/cache', access: 'write' }], environment: [] };
   const submit = host.querySelector('#sandbox-profile-editor-submit'); submit.focus(); state.busy.value = 'sandbox-save'; await harness.act(() => Promise.resolve());
   const harnessFocus = submit.focus; Object.defineProperty(submit, 'focus', { configurable: true, value() { if (!this.disabled && !this.closest('[inert]')) harnessFocus.call(this); } });
-  const decision = state.confirmSandboxDiff(before, after); await harness.act(() => Promise.resolve());
+  const decision = state.confirmSandboxDiff(before, after, [
+    { class: 'composition', detail: 'server-authoritative empty intersection warning' },
+  ]); await harness.act(() => Promise.resolve());
   const modal = host.querySelector('#sandbox-profile-diff-modal');
   assert.ok(modal); assert.equal(modal.querySelectorAll('.dl.add').length, 1); assert.equal(modal.querySelectorAll('.dl.del').length, 1); assert.ok(modal.querySelectorAll('.dl.ctx').length > 0);
   assert.match(modal.querySelector('#sandbox-profile-diff-sub').textContent, /1 line\(s\) added, 1 removed/);
+  assert.match(modal.querySelector('.sbx-composition-warning').textContent,
+    /server-authoritative empty intersection warning/);
   assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
   const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
   modal.querySelector('#sandbox-profile-diff-cancel').click(); state.busy.value = ''; await harness.act(() => Promise.resolve());
@@ -988,8 +998,22 @@ test('raw access JSON can repair a structured access validation error', async (t
     unix_sockets: { mode: 'closed' },
   }, options: {} });
   let saved = null;
+  const predictions = [];
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async saveSandbox(value) { saved = value; },
+    async predictSandbox(draft) {
+      predictions.push(draft);
+      return {
+        targets: [],
+        contexts: draft.network.mode === 'list' && draft.network.allow.length === 0
+          ? [{
+            context: {}, network: { mode: 'list', allow: [] },
+            unix_sockets: { mode: 'closed' }, agentd_socket: 'always reachable',
+            notices: [{ class: 'composition', detail: 'raw policy leaves an empty intersection' }],
+          }]
+          : [],
+      };
+    },
   });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true);
@@ -1000,12 +1024,44 @@ test('raw access JSON can repair a structured access validation error', async (t
     'the stale structured error cannot make raw repair unreachable');
   assert.equal(host.querySelector('.sbx-access-validation'), null);
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
-  rawNetwork.value = '{"mode":"closed"}';
+  rawNetwork.value = '{"mode":"list","allow":[]}';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.deepEqual(predictions.at(-1).network, { mode: 'list', allow: [] },
+    'prediction consumes the authoritative raw access value');
+  assert.match(host.querySelector('.sbx-composition-warning').textContent,
+    /raw policy leaves an empty intersection/);
   host.querySelector('#sandbox-profile-editor-submit').click();
   await harness.act(() => Promise.resolve());
-  assert.deepEqual(saved.draft.network, { mode: 'closed' });
+  assert.deepEqual(saved.draft.network, { mode: 'list', allow: [] });
+  unmount();
+});
+
+test('closed socket template clears incompatible authored list rows', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'socket-list', filesystem: [], environment: [], includes: [], agent_directories: [],
+    unix_sockets: { mode: 'list', allow: [{ path: '/tmp/old.sock' }] },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 100)));
+  const template = [...host.querySelectorAll('.sbx-access-template-add')]
+    .find((button) => button.textContent.includes('agentd only'));
+  assert.ok(template);
+  template.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelectorAll('.sbx-socket-row').length, 0);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
+  assert.match(host.querySelector('.sbx-access-axis .sbx-common-rule-notice').textContent,
+    /1 incompatible existing row removed/);
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(JSON.parse(host.querySelector('#sandbox-profile-editor-unix-sockets').value),
+    { mode: 'closed', allow: [] });
   unmount();
 });
 

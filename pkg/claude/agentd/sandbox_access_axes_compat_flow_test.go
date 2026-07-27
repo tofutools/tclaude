@@ -257,6 +257,60 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	assert.True(t, defaulted.Targets[0].Predicted)
 }
 
+func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {
+	f := newFlow(t)
+	for _, body := range []map[string]any{
+		{
+			"name": "left", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "list", "allow": []any{
+				map[string]any{"domain": "left.example"},
+			}},
+		},
+		{
+			"name": "right", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "list", "allow": []any{
+				map[string]any{"domain": "right.example"},
+			}},
+		},
+		{
+			"name": "self-empty", "filesystem": []any{}, "environment": []any{},
+			"includes": []any{"left", "right"},
+		},
+		{
+			"name": "group-open", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{"mode": "open"},
+		},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+
+	assign := func() []sandboxpolicy.AccessNotice {
+		rec := profileReq(t, f, http.MethodPut, "/v1/sandbox-profile-default",
+			map[string]any{"name": "self-empty"})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var got struct {
+			Notices []sandboxpolicy.AccessNotice `json:"notices"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		return got.Notices
+	}
+
+	notices := assign()
+	require.Len(t, notices, 1, "the profile's intrinsic empty intersection is reported without a group")
+	assert.Equal(t, "network", notices[0].Axis)
+	assert.NotContains(t, notices[0].Detail, "group ")
+
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("crew", "group-open")
+	require.NoError(t, err)
+	notices = assign()
+	require.Len(t, notices, 1,
+		"an already-empty global axis is not repeated as a misleading group-context warning")
+	assert.NotContains(t, notices[0].Detail, "group ")
+}
+
 func TestSandboxProfileImportCannotExpressAwayAgentdSocketFloor(t *testing.T) {
 	f := newFlow(t)
 	modes := []sandboxpolicy.AccessMode{

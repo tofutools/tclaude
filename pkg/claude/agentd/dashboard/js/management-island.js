@@ -120,11 +120,13 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   const insert = (entry) => {
+    const mode = entry.mode || 'list';
     const incoming = clone(entry.entries || []);
     const existing = new Set(rules.allow.map((row) => JSON.stringify(row)));
     const added = incoming.filter((row) => !existing.has(JSON.stringify(row)));
-    update({ mode: entry.mode || 'list', allow: [...rules.allow, ...added] });
-    setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, warning: entry.warning || '' });
+    const removed = mode === 'list' ? 0 : rules.allow.length;
+    update({ mode, allow: mode === 'list' ? [...rules.allow, ...added] : [] });
+    setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '' });
   };
   return html`<fieldset class="sbx-section sbx-access-axis"><legend>Unix sockets</legend>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
@@ -137,7 +139,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { path: '' }] })}>＋ add socket</button>`}
     <details class="sbx-common-rules"><summary>＋ insert socket template</summary><div class="sbx-common-rule-list">${(catalog.socket_templates || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} variant="access" entry=${{ ...entry, description: entry.note, paths: (entry.entries || []).map((row) => row.path || row.path_glob) }} onAdd=${() => insert(entry)}/>` )}</div></details>
     ${(catalog.global_unix_sockets || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global socket config (${catalog.global_unix_sockets.length})</summary>${catalog.global_unix_sockets.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
-    ${notice && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
+    ${notice && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
   </fieldset>`;
 }
 
@@ -548,10 +550,16 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     wasSaving.current = saving;
   }, [saving]);
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
-  const predictionSignature = JSON.stringify([draft, evaluateFor, options.group || '']);
+  let predictionDraft = draft;
+  let predictionDraftError = '';
+  if (advanced) {
+    try { predictionDraft = { ...draft, ...parseRaw() }; }
+    catch (error) { predictionDraftError = message(error); }
+  }
+  const predictionSignature = JSON.stringify([predictionDraftError ? null : predictionDraft, evaluateFor, options.group || '']);
   useEffect(() => {
     if (typeof actions.predictSandbox !== 'function') return undefined;
-    if (!draft.name.trim()) {
+    if (predictionDraftError || !predictionDraft.name.trim()) {
       setPrediction(null); setPredictionError(''); setPredictionBusy(false);
       return undefined;
     }
@@ -559,7 +567,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     setPredictionBusy(true);
     const targets = evaluateFor ? [(() => { const [implementation, harness, platform] = evaluateFor.split('/'); return { implementation, harness, platform }; })()] : [];
     const timer = setTimeout(() => {
-      actions.predictSandbox(draft, targets, { group: options.group || '' }).then((value) => {
+      actions.predictSandbox(predictionDraft, targets, { group: options.group || '' }).then((value) => {
         if (!active) return;
         setPrediction(value); setPredictionError(''); setPredictionBusy(false); setEffectiveContext((index) => Math.min(index, Math.max(0, (value.contexts || []).length - 1)));
       }).catch((error) => {
@@ -637,7 +645,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
-    <fieldset class="sbx-section sbx-effective-preview" hidden=${advanced}><legend>Effective policy preview</legend>
+    <fieldset class="sbx-section sbx-effective-preview"><legend>Effective policy preview</legend>
       <label>Evaluate for <select id="sandbox-profile-editor-evaluate-for" value=${evaluateFor} onChange=${(event) => setEvaluateFor(event.currentTarget.value)}>
         <option value="">Resolved default target</option>
         <option value="harness-builtin/claude/linux">Claude builtin · Linux</option>
@@ -765,6 +773,7 @@ function SandboxDiffModal({ model, close }) {
     <div class="config-diff-modal">
       <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
       <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
+      ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
       <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
       <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>
     </div>

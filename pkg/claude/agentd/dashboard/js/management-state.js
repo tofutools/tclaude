@@ -21,11 +21,11 @@ export function createManagementState() {
   let settleSandboxDiff = null;
   const templateManagerCloseCallbacks = new Set();
 
-  function confirmSandboxDiff(before, after) {
+  function confirmSandboxDiff(before, after, notices = []) {
     cancelSandboxDiff(false);
     return new Promise((resolve) => {
       settleSandboxDiff = resolve;
-      sandboxDiff.value = { before, after };
+      sandboxDiff.value = { before, after, notices };
     });
   }
 
