@@ -1,11 +1,14 @@
 package agentd
 
 // Terminal UI for `tclaude agentd serve --tui` — a deliberately small
-// in-terminal stand-in for the web dashboard's two most-used moves: see which
-// agents exist, and start a new one. It is the operator surface for a daemon
-// started with no dashboard listener at all (see runServe), so it is plain
-// text with no color scheme, no theming and no per-terminal palette: the
-// only visual state is an inverse-video cursor row.
+// in-terminal stand-in for the web dashboard's most-used moves: see which
+// agents exist, start a new one, and go to one's tmux session. On its own it
+// is the whole operator surface (runServe starts no dashboard listener); it
+// also runs happily beside the web dashboard when the operator asks for both.
+// Either way it is plain text with no color scheme, no theming and no
+// per-terminal palette — the dashboard's cosmetic re-skins (--slop, --wizard)
+// are the browser's business and never reach here. The only visual state is
+// an inverse-video cursor row.
 //
 // Everything it shows or does goes through the daemon's own /v1 HTTP API
 // (tuiAPI), not through the DB or the spawn internals, so the TUI cannot
@@ -62,7 +65,12 @@ func startServeTUI(quit *quitter) func() error {
 		cancel()
 	}()
 
-	prog := tea.NewProgram(newTUIModel(newTUIAPI()), tea.WithContext(ctx))
+	m := newTUIModel(newTUIAPI())
+	// Set by runServe before it starts the console; empty when --tui asked
+	// for no dashboard listener.
+	m.dashboardURL = popupBaseURL
+
+	prog := tea.NewProgram(m, tea.WithContext(ctx))
 	done := make(chan struct{})
 	var runErr error
 	go func() {
@@ -399,6 +407,10 @@ type tuiModel struct {
 	// operator is true when the daemon classifies this console as the human.
 	// Attaching to a pane is gated on it — see attachSelected.
 	operator bool
+	// dashboardURL is the web dashboard running beside this console, empty
+	// when --tui is the only surface. It changes what the console can honestly
+	// say about approvals and deep links.
+	dashboardURL string
 	// refreshing / spawning keep the periodic tick from stacking requests
 	// and the operator from firing two spawns at once.
 	refreshing  bool
@@ -942,7 +954,13 @@ func (m tuiModel) columns() []table.Column {
 
 func (m tuiModel) renderList() string {
 	var b strings.Builder
-	b.WriteString("\n  tclaude agentd — terminal UI (no web dashboard in this mode)\n\n")
+	b.WriteString("\n  tclaude agentd — terminal UI")
+	if m.dashboardURL != "" {
+		b.WriteString(" • web dashboard: " + m.dashboardURL)
+	} else {
+		b.WriteString(" (no web dashboard in this mode)")
+	}
+	b.WriteString("\n\n")
 	if m.identityWarning != "" {
 		b.WriteString("  " + m.identityWarning + "\n\n")
 	}
@@ -1101,9 +1119,16 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    ←/→        Change the group or harness\n")
 	b.WriteString("    enter      Spawn\n")
 	b.WriteString("    esc        Cancel\n\n")
-	b.WriteString("  This mode runs without the web dashboard: browser deep links and\n")
-	b.WriteString("  in-dashboard human-approval requests are unavailable, so grant an\n")
-	b.WriteString("  agent access with `tclaude agent permissions grant` instead.\n\n")
+	if m.dashboardURL != "" {
+		b.WriteString("  The web dashboard is running alongside this console:\n")
+		b.WriteString("    " + m.dashboardURL + "\n")
+		b.WriteString("  Both drive the same daemon, so human-approval requests still\n")
+		b.WriteString("  appear in its Messages tab.\n\n")
+	} else {
+		b.WriteString("  This mode runs without the web dashboard: browser deep links and\n")
+		b.WriteString("  in-dashboard human-approval requests are unavailable, so grant an\n")
+		b.WriteString("  agent access with `tclaude agent permissions grant` instead.\n\n")
+	}
 	b.WriteString("  Press any key to close.\n")
 	return b.String()
 }

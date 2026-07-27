@@ -42,7 +42,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents and starts new ones. It REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable for this daemon lifetime (grant access with 'tclaude agent permissions grant' instead). An enabled remote-access listener is unaffected. Quitting the TUI shuts the daemon down. Cannot be combined with --auto-launch-dashboard, --slop, --wizard, --dashboard-port, --dashboard-bind or --no-print-human-token."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Quitting the TUI shuts the daemon down."`
 }
 
 func serveCmd() *cobra.Command {
@@ -186,52 +186,32 @@ func configureServeSocketEnv(requested string) error {
 	return nil
 }
 
-// validateTUIFlags rejects the serve flags that only make sense with the web
-// dashboard when --tui is in play. In TUI mode the dashboard HTTP listener is
-// never started (see runServe), so a bind host, a fixed port, a browser
-// auto-launch and its two cosmetic re-skins have nothing left to configure —
-// accepting them silently would leave the operator believing a listener came
-// up. --no-print-human-token joins them for the opposite reason: the TUI takes
-// over the screen and offers no other place to read the operator token, so the
-// startup banner is the only chance to see it and suppressing it would leave
-// the human with no token for `tclaude agent …` in another window.
+// dashboardRequested reports whether this daemon should serve the web
+// dashboard on its loopback listener.
+//
+// Without --tui it always does — that is the only operator surface there is.
+// With --tui the terminal console is the surface, so the web dashboard comes
+// up only when the operator asks for it in the same breath: naming a port or
+// a bind host, or asking for the browser to be opened. Those flags say "I want
+// the web dashboard" plainly enough that honouring them beats making the
+// operator choose one surface. --tui with none of them is the deliberate
+// terminal-only daemon.
 //
 // A --dashboard-port of 0 is "not set" everywhere else in this file (see
-// resolveDashboardPort), so it is not treated as a conflict here either.
-func validateTUIFlags(p *serveParams) error {
+// resolveDashboardPort), so it does not count as a request here either. Nor do
+// the config-file equivalents: an ambient agent.dashboard_port from months ago
+// should not silently re-open a listener a --tui operator did not ask for.
+// Once the dashboard IS requested, those config values resolve normally.
+func dashboardRequested(p *serveParams) bool {
 	if !p.TUI {
-		return nil
+		return true
 	}
-	var conflicts []string
-	if p.AutoLaunchDashboard {
-		conflicts = append(conflicts, "--auto-launch-dashboard")
-	}
-	if p.Slop {
-		conflicts = append(conflicts, "--slop")
-	}
-	if p.Wizard {
-		conflicts = append(conflicts, "--wizard")
-	}
-	if p.DashboardPort > 0 {
-		conflicts = append(conflicts, "--dashboard-port")
-	}
-	if strings.TrimSpace(p.DashboardBind) != "" {
-		conflicts = append(conflicts, "--dashboard-bind")
-	}
-	if p.NoPrintHumanToken {
-		conflicts = append(conflicts, "--no-print-human-token")
-	}
-	if len(conflicts) == 0 {
-		return nil
-	}
-	return fmt.Errorf("--tui cannot be combined with %s: the TUI replaces the web dashboard, "+
-		"which is not started in TUI mode", strings.Join(conflicts, ", "))
+	return p.AutoLaunchDashboard ||
+		p.DashboardPort > 0 ||
+		strings.TrimSpace(p.DashboardBind) != ""
 }
 
 func runServe(p *serveParams) error {
-	if err := validateTUIFlags(p); err != nil {
-		return err
-	}
 	if err := configureServeSocketEnv(p.Socket); err != nil {
 		return err
 	}
@@ -339,21 +319,21 @@ func runServe(p *serveParams) error {
 	// bookmark / reverse-proxy / firewall rule the fixed port was set up
 	// for). An out-of-range port likewise fails the bind and aborts here.
 	//
-	// --tui replaces this LOOPBACK surface with an in-terminal console, so the
-	// listener is not started at all and popupBaseURL stays empty. Every
-	// reader of popupBaseURL already handles the empty case (the tray's
-	// dashboard entry, `tclaude agent dashboard`, /v1/info) — with one
-	// consequence worth stating plainly: an agent's ask-human approval
-	// request keys on popupBaseURL, so it has no surface to appear on and
-	// fails closed. Grants must come from `tclaude agent permissions grant`
-	// while the daemon runs in TUI mode — and that holds even when the
-	// separate remote-access listener below is enabled, which --tui does NOT
-	// disable (it is its own explicit opt-in, not this flag's business).
-	// Any configured agent.dashboard_port / dashboard_bind is inert here; the
-	// conflicting FLAGS are refused up front by validateTUIFlags.
+	// A bare --tui replaces this LOOPBACK surface with an in-terminal console:
+	// the listener is not started and popupBaseURL stays empty. Every reader
+	// of popupBaseURL already handles that (the tray's dashboard entry,
+	// `tclaude agent dashboard`, /v1/info) — with one consequence worth
+	// stating plainly: an agent's ask-human approval request keys on
+	// popupBaseURL, so it has nowhere to appear and fails closed. Grants must
+	// then come from `tclaude agent permissions grant`, and that holds even
+	// when the separate remote-access listener below is enabled, which --tui
+	// does not disable (it is its own explicit opt-in). Asking for the web
+	// dashboard alongside --tui (see dashboardRequested) brings all of that
+	// back — the two surfaces run side by side over the same daemon.
 	var popupSrv *http.Server
-	if p.TUI {
-		slog.Info("dashboard listener disabled by --tui; the terminal UI is the operator surface")
+	if !dashboardRequested(p) {
+		slog.Info("dashboard listener not started: --tui with no dashboard flag; " +
+			"the terminal UI is the only operator surface")
 	} else {
 		dashPort, dashPortSrc := resolveDashboardPort(p.DashboardPort, cfg)
 		dashBind, dashBindSrc := resolveDashboardBind(p.DashboardBind, cfg)
@@ -393,10 +373,12 @@ func runServe(p *serveParams) error {
 	// agent.auto_launch_dashboard config field. Saves a separate
 	// `tclaude agent dashboard` after every daemon start. Best-effort:
 	// a failed launch is logged, never fatal.
-	// Skipped entirely in TUI mode: there is no dashboard listener to open,
-	// and the config field can request the launch on its own (the --tui/--auto-
-	// launch-dashboard flag conflict alone would not cover that).
-	if !p.TUI && shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
+	// Gated on a listener actually being up rather than on the flag alone:
+	// with a bare --tui there is nothing to open, and a config-file
+	// auto_launch_dashboard must not send a browser at a port nobody bound.
+	// The theme re-skins below are the browser's business only — the terminal
+	// console has no theming at all.
+	if popupBaseURL != "" && shouldAutoLaunchDashboard(p.AutoLaunchDashboard, cfg) {
 		// slop and wizard are mutually exclusive re-skins; slop wins if both
 		// flags are set, matching the client's applySlopThemeIfRequested.
 		theme := ""

@@ -28,65 +28,43 @@ func withOperatorToken(t *testing.T, tok string) {
 	t.Cleanup(SetOperatorTokenForTest(tok))
 }
 
-func TestValidateTUIFlags(t *testing.T) {
-	t.Run("no --tui accepts every dashboard flag", func(t *testing.T) {
-		p := &serveParams{
-			AutoLaunchDashboard: true,
-			Slop:                true,
-			Wizard:              true,
-			DashboardPort:       8080,
-			DashboardBind:       "0.0.0.0",
-			NoPrintHumanToken:   true,
-		}
-		require.NoError(t, validateTUIFlags(p))
+func TestDashboardRequested(t *testing.T) {
+	t.Run("without --tui the dashboard always runs", func(t *testing.T) {
+		assert.True(t, dashboardRequested(&serveParams{}))
+		assert.True(t, dashboardRequested(&serveParams{NoTray: true}))
 	})
 
-	t.Run("--tui alone is fine", func(t *testing.T) {
-		require.NoError(t, validateTUIFlags(&serveParams{TUI: true}))
+	t.Run("--tui alone is the terminal-only daemon", func(t *testing.T) {
+		assert.False(t, dashboardRequested(&serveParams{TUI: true}))
 	})
 
-	t.Run("--tui reports every conflicting flag at once", func(t *testing.T) {
-		err := validateTUIFlags(&serveParams{
-			TUI:                 true,
-			AutoLaunchDashboard: true,
-			Slop:                true,
-			Wizard:              true,
-			DashboardPort:       8080,
-			DashboardBind:       "0.0.0.0",
-			NoPrintHumanToken:   true,
-		})
-		require.Error(t, err)
-		for _, flag := range []string{
-			"--auto-launch-dashboard", "--slop", "--wizard",
-			"--dashboard-port", "--dashboard-bind", "--no-print-human-token",
-		} {
-			assert.Contains(t, err.Error(), flag)
-		}
-	})
-
-	t.Run("--dashboard-port 0 and a blank bind are 'unset', not conflicts", func(t *testing.T) {
-		require.NoError(t, validateTUIFlags(&serveParams{
-			TUI:           true,
-			DashboardPort: 0,
-			DashboardBind: "   ",
-		}))
-	})
-
-	t.Run("each conflicting flag trips on its own", func(t *testing.T) {
+	t.Run("a dashboard flag alongside --tui runs both surfaces", func(t *testing.T) {
 		cases := map[string]serveParams{
 			"--auto-launch-dashboard": {AutoLaunchDashboard: true},
-			"--slop":                  {Slop: true},
-			"--wizard":                {Wizard: true},
 			"--dashboard-port":        {DashboardPort: 9000},
-			"--dashboard-bind":        {DashboardBind: "127.0.0.1"},
-			"--no-print-human-token":  {NoPrintHumanToken: true},
+			"--dashboard-bind":        {DashboardBind: "0.0.0.0"},
 		}
 		for flag, p := range cases {
 			p.TUI = true
-			err := validateTUIFlags(&p)
-			require.Error(t, err, flag)
-			assert.Contains(t, err.Error(), flag)
+			assert.True(t, dashboardRequested(&p), flag)
 		}
+	})
+
+	t.Run("the theme flags are cosmetic and do not ask for a listener", func(t *testing.T) {
+		// They re-skin an auto-launched dashboard; on their own they say
+		// nothing about whether one should exist, and they never reach the
+		// terminal console.
+		assert.False(t, dashboardRequested(&serveParams{TUI: true, Slop: true}))
+		assert.False(t, dashboardRequested(&serveParams{TUI: true, Wizard: true}))
+	})
+
+	t.Run("an unset port or bind is not a request", func(t *testing.T) {
+		assert.False(t, dashboardRequested(&serveParams{TUI: true, DashboardPort: 0}))
+		assert.False(t, dashboardRequested(&serveParams{TUI: true, DashboardBind: "   "}))
+	})
+
+	t.Run("suppressing the token banner is unrelated", func(t *testing.T) {
+		assert.False(t, dashboardRequested(&serveParams{TUI: true, NoPrintHumanToken: true}))
 	})
 }
 
@@ -524,4 +502,23 @@ func TestTUIKeyHintAdvertisesEnterOnlyWhenItWorks(t *testing.T) {
 	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
 	m.operator = false
 	assert.NotContains(t, m.keyHintLine(), "enter")
+}
+
+// The console says which surfaces are live: on its own it is the only one,
+// and beside a dashboard it points at it rather than claiming there is none.
+func TestTUIViewNamesACoRunningDashboard(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+
+	assert.Contains(t, m.renderList(), "no web dashboard in this mode")
+	assert.Contains(t, m.renderHelp(), "runs without the web dashboard")
+	assert.Contains(t, m.renderHelp(), "permissions grant")
+
+	m.dashboardURL = "http://127.0.0.1:44585"
+	assert.Contains(t, m.renderList(), "web dashboard: http://127.0.0.1:44585")
+	assert.NotContains(t, m.renderList(), "no web dashboard")
+	help := m.renderHelp()
+	assert.Contains(t, help, "http://127.0.0.1:44585")
+	assert.Contains(t, help, "Messages tab")
+	assert.NotContains(t, help, "runs without the web dashboard")
 }
