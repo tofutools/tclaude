@@ -88,6 +88,11 @@ type Mocks struct {
 	// SpawnResume. Drop-in for agentd.Spawn. Production poll loops
 	// see SessionRow + alive flag the moment SpawnNew returns.
 	Spawner SpawnerLike
+
+	// SandboxLayer deterministically answers and records the interactive-pane
+	// and relay-free-server host-capability probes. flow_setup_test.go installs
+	// its methods through agentd's existing paired test seam.
+	SandboxLayer *SandboxLayerSim
 }
 
 // DefaultMocks builds the canonical mock set against this World.
@@ -95,8 +100,9 @@ type Mocks struct {
 func (w *World) DefaultMocks(t *testing.T) Mocks {
 	t.Helper()
 	return Mocks{
-		Tmux:    w.Tmux,
-		Spawner: &simSpawner{t: t, w: w},
+		Tmux:         w.Tmux,
+		Spawner:      &simSpawner{t: t, w: w},
+		SandboxLayer: w.SandboxLayer,
 	}
 }
 

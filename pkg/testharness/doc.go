@@ -11,6 +11,11 @@
 //     in TmuxSim, and write the SessionRow the daemon's poll loop
 //     reads.
 //
+// Flow setup additionally installs SandboxLayerSim through agentd's existing
+// host-capability test seam. It answers whether interactive/server tclaude-layer
+// launches are available and records the selected boundary; it does not emulate
+// mounts, namespaces, filesystems, or networking.
+//
 // Everything else — agentd, conv, agent, session, watch, web,
 // statusbar — runs production code, reads real .jsonl files under
 // $HOME (a t.TempDir per test), and refreshes its caches per its
@@ -23,6 +28,8 @@
 //     custom-title on /rename, user turn on plain text, etc.).
 //   - TmuxSim — replacement for clcommon.TmuxCommand; routes
 //     send-keys to the attached CCSim's Receive.
+//   - SandboxLayerSim — deterministic tclaude-layer capability approval or
+//     refusal, with interactive/server boundary call recording.
 //   - Flow — Given/When/Then DSL on top of World for readable
 //     scenarios.
 //   - http.go — request helpers that drive the daemon's mux.

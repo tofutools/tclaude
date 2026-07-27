@@ -13,12 +13,11 @@ import (
 // newFlow stands up a Flow with the default mocks installed. Every
 // flow scenario in this package starts with `f := newFlow(t)`.
 //
-// Mock installation is direct package-var assignment with t.Cleanup
-// restoring the previous value — pure Go, no toolchain dependency,
-// runs under bare `go test`. clcommon.Default and agentd.Spawn are
-// the two boundary handles every production caller routes through;
-// swap them and the daemon's code paths run unchanged but observe
-// the simulator's state machine instead of real subprocesses.
+// Mock installation is direct package-var assignment or an existing test
+// cleanup seam — pure Go, no toolchain dependency, runs under bare `go test`.
+// clcommon.Default and agentd.Spawn stop at the subprocess boundaries;
+// SandboxLayerSim stops at the paired host-capability probe seam. The daemon's
+// code paths run unchanged but observe deterministic simulator state.
 //
 // Callers that want to override a mock further (e.g. count resume
 // invocations) can shadow by another assignment right after this
@@ -102,6 +101,15 @@ func newFlow(t *testing.T) *testharness.Flow {
 	prevSpawn := agentd.Spawn
 	agentd.Spawn = m.Spawner
 	t.Cleanup(func() { agentd.Spawn = prevSpawn })
+
+	// Host capability is independent for interactive panes (which need the
+	// terminal relay) and relay-free servers. The default sim makes both
+	// available without probing this test runner's bwrap/Seatbelt; scenarios
+	// can name one unavailable boundary and assert production's exact refusal.
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilitiesForTest(
+		m.SandboxLayer.InteractiveAvailability,
+		m.SandboxLayer.ServerAvailability,
+	))
 
 	// Drain any post-init goroutines (spawn rename+welcome, clone
 	// rename) before the package-var restores and TempDir teardown

@@ -33,20 +33,6 @@ import (
 // merging them would turn "this machine has no bwrap" into "quietly resolved
 // to harness-builtin" for a lower-tier profile.
 
-// availableHost / unavailableHost drive the host-capability predicate. Neither
-// branch is reachable on demand otherwise: CI runners have no unprivileged user
-// namespaces and would only ever produce the refusal, while a dev box with
-// bwrap would only ever produce the success.
-func availableHost(t *testing.T) {
-	t.Helper()
-	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
-}
-
-func unavailableHost(t *testing.T, reason error) {
-	t.Helper()
-	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return reason }))
-}
-
 // TestSpawn_SandboxImplementationDefaultsUnset is the load-bearing regression:
 // a plain spawn must reach the launch with NOTHING pinned, so the argv builder
 // emits no --sandbox-impl at all and every existing user is unaffected.
@@ -60,13 +46,13 @@ func TestSpawn_SandboxImplementationDefaultsUnset(t *testing.T) {
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
 	assert.Empty(t, got,
 		"a plain spawn must pin no sandbox implementation, leaving the harness-owned default in charge")
+	assertSandboxLayerCalls(t, f)
 }
 
 // TestSpawn_ExplicitTclaudeLayerReachesLaunch: the opt-in works and arrives
 // intact at the launch boundary, which is where it becomes --sandbox-impl.
 func TestSpawn_ExplicitTclaudeLayerReachesLaunch(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
@@ -78,6 +64,7 @@ func TestSpawn_ExplicitTclaudeLayerReachesLaunch(t *testing.T) {
 	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
 	assert.Equal(t, "tclaude-layer", got)
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
 
 // TestSpawn_SandboxImplementationFromProfileTiers: the field rides the standard
@@ -115,7 +102,6 @@ func TestSpawn_SandboxImplementationFromProfileTiers(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFlow(t)
-			availableHost(t)
 			f.HaveGroup("crew")
 			tc.wire(t, f)
 
@@ -126,6 +112,7 @@ func TestSpawn_SandboxImplementationFromProfileTiers(t *testing.T) {
 			require.True(t, ok, "the spawn should have been observed by the sim spawner")
 			assert.Equal(t, "tclaude-layer", got,
 				"a profile's sandbox implementation must reach the launch")
+			assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 		})
 	}
 }
@@ -137,7 +124,6 @@ func TestSpawn_SandboxImplementationFromProfileTiers(t *testing.T) {
 // would have no way to opt one spawn back out.
 func TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	rec := createProfile(t, f, map[string]any{
@@ -156,6 +142,7 @@ func TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile(t *testing.T) {
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
 	assert.Equal(t, "harness-builtin", got,
 		"an explicit harness-builtin must beat a group default profile's tclaude-layer")
+	assertSandboxLayerCalls(t, f)
 }
 
 // TestSpawn_ExplicitSandboxImplementationRejectsUnknownValue: an explicit value
@@ -176,7 +163,6 @@ func TestSpawn_ExplicitSandboxImplementationRejectsUnknownValue(t *testing.T) {
 
 func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
@@ -190,6 +176,7 @@ func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 		failure := decodeFailure(t, resp.Raw)
 		assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
 		assert.Contains(t, failure.Error, "does not support OpenCode on macOS")
+		assertSandboxLayerCalls(t, f)
 		return
 	}
 	require.Equal(t, http.StatusOK, resp.Code,
@@ -201,11 +188,11 @@ func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, mode,
 		"the launch record must name the executor boundary, not soft access control")
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerServer)
 }
 
 func TestSpawn_OpenCodeModeAndImplementationContradictionsRefuse(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	for _, body := range []map[string]any{
@@ -228,7 +215,6 @@ func TestSpawn_OpenCodeModeAndImplementationContradictionsRefuse(t *testing.T) {
 
 func TestSpawn_OpenCodeAcceptsLayerFromLowerTier(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	rec := createProfile(t, f, map[string]any{
@@ -256,12 +242,14 @@ func TestSpawn_OpenCodeAcceptsLayerFromLowerTier(t *testing.T) {
 		assert.Contains(t, string(resp.Raw),
 			"sandbox_implementation ignored (not supported for OpenCode on macOS)",
 			"the platform-driven tier skip must be disclosed")
+		assertSandboxLayerCalls(t, f)
 		return
 	}
 	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), got)
 	mode, ok := f.World.SpawnSandbox(resp.ConvID)
 	require.True(t, ok)
 	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, mode)
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerServer)
 }
 
 // decodeFailure reads the daemon's error envelope. Asserting on the DECODED
@@ -282,13 +270,38 @@ func decodeFailure(t *testing.T, raw []byte) struct {
 	return failure
 }
 
+func assertSandboxLayerCalls(
+	t *testing.T,
+	f *testharness.Flow,
+	want ...testharness.SandboxLayerBoundary,
+) {
+	t.Helper()
+	got := f.World.SandboxLayer.Calls()
+	if len(want) == 0 {
+		assert.Empty(t, got, "production unexpectedly probed sandbox-layer host capability")
+		return
+	}
+	require.Len(t, want, 1, "helper accepts one expected boundary or none")
+	require.NotEmpty(t, got, "production never probed the expected sandbox-layer boundary")
+	for _, boundary := range got {
+		assert.Equal(t, want[0], boundary,
+			"production selected a different sandbox-layer capability boundary")
+	}
+}
+
+func sandboxLayerUnavailableMessage(reason error) string {
+	return "sandbox implementation tclaude-layer is not available on this host: " +
+		reason.Error() +
+		"; refusing the launch rather than falling back to harness-builtin"
+}
+
 // TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability: refuse-don't-degrade.
 // The refusal names the missing capability so the operator can fix it, and says
 // out loud that it is not falling back — the distinction that separates this
 // from malformed or contradictory launch fields.
 func TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 	f := newFlow(t)
-	unavailableHost(t, errNoBwrap)
+	f.World.SandboxLayer.SetAvailability(testharness.SandboxLayerInteractive, errNoBwrap)
 	f.HaveGroup("crew")
 
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
@@ -299,10 +312,30 @@ func TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 	failure := decodeFailure(t, resp.Raw)
 	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code,
 		"the refusal kind must distinguish host-unavailable from an inapplicable value")
-	assert.Contains(t, failure.Error, errNoBwrap.Error(),
-		"the refusal must name the concrete missing capability")
-	assert.Contains(t, failure.Error, "rather than falling back",
-		"the refusal must say it is not degrading to harness-builtin")
+	assert.Equal(t, sandboxLayerUnavailableMessage(errNoBwrap), failure.Error,
+		"the named simulator refusal must pass through the exact production literal")
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
+}
+
+func TestSpawn_OpenCodeRefusedWhenServerBoundaryLacksCapability(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("OpenCode tclaude-layer is inapplicable before the host gate on macOS")
+	}
+	f := newFlow(t)
+	f.World.SandboxLayer.SetAvailability(testharness.SandboxLayerServer, errNoBwrap)
+	f.HaveGroup("crew")
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "doomed-server",
+		"harness":                "opencode",
+		"sandbox_implementation": "tclaude-layer",
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.Code,
+		"a host without the server boundary must refuse OpenCode; body=%s", resp.Raw)
+	failure := decodeFailure(t, resp.Raw)
+	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code)
+	assert.Equal(t, sandboxLayerUnavailableMessage(errNoBwrap), failure.Error)
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerServer)
 }
 
 // TestSpawn_TclaudeLayerFromProfileStillRefusedWhenHostLacksCapability: the
@@ -312,7 +345,7 @@ func TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 // the spawn that would have silently resolved to harness-builtin.
 func TestSpawn_TclaudeLayerFromProfileStillRefusedWhenHostLacksCapability(t *testing.T) {
 	f := newFlow(t)
-	unavailableHost(t, errNoBwrap)
+	f.World.SandboxLayer.SetAvailability(testharness.SandboxLayerInteractive, errNoBwrap)
 	f.HaveGroup("crew")
 
 	rec := createProfile(t, f, map[string]any{
@@ -327,8 +360,8 @@ func TestSpawn_TclaudeLayerFromProfileStillRefusedWhenHostLacksCapability(t *tes
 		"a profile-supplied tclaude-layer must refuse just as loudly; body=%s", resp.Raw)
 	failure := decodeFailure(t, resp.Raw)
 	assert.Equal(t, "sandbox_implementation_unavailable", failure.Code)
-	assert.Contains(t, failure.Error, errNoBwrap.Error(),
-		"the refusal must name the concrete missing capability")
+	assert.Equal(t, sandboxLayerUnavailableMessage(errNoBwrap), failure.Error)
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
 
 // TestSpawn_ResolvedLaunchEchoesSandboxImplementationSource: an agent whose wall
@@ -336,7 +369,6 @@ func TestSpawn_TclaudeLayerFromProfileStillRefusedWhenHostLacksCapability(t *tes
 // names the tier, not just the value.
 func TestSpawn_ResolvedLaunchEchoesSandboxImplementationSource(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 	f.HaveGroup("crew")
 
 	rec := createProfile(t, f, map[string]any{
@@ -361,6 +393,7 @@ func TestSpawn_ResolvedLaunchEchoesSandboxImplementationSource(t *testing.T) {
 	assert.Equal(t, "tclaude-layer", parsed.Resolved.SandboxImpl.Value)
 	assert.Contains(t, parsed.Resolved.SandboxImpl.Source, "team-default",
 		"the echo must name the profile that chose the containment layer")
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
 
 // TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability covers the
@@ -375,7 +408,7 @@ func TestSpawn_ResolvedLaunchEchoesSandboxImplementationSource(t *testing.T) {
 // detached pane nobody is watching.
 func TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 	f := newFlow(t)
-	unavailableHost(t, errNoBwrap)
+	f.World.SandboxLayer.SetAvailability(testharness.SandboxLayerInteractive, errNoBwrap)
 
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
@@ -403,6 +436,7 @@ func TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T
 		"the per-member failure must name the concrete missing capability")
 	assert.Contains(t, res.Agents[0].Error, "rather than falling back",
 		"the per-member failure must say it is not degrading to harness-builtin")
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
 
 // TestTaskForceDeploy_TclaudeLayerDeploysWhenHostSupportsIt is the positive
@@ -411,7 +445,6 @@ func TestTaskForceDeploy_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T
 // blocking template deploys outright.
 func TestTaskForceDeploy_TclaudeLayerDeploysWhenHostSupportsIt(t *testing.T) {
 	f := newFlow(t)
-	availableHost(t)
 
 	require.Equalf(t, http.StatusCreated, createProfile(t, f, map[string]any{
 		"name": "layered", "harness": "claude", "sandbox_implementation": "tclaude-layer",
@@ -438,4 +471,5 @@ func TestTaskForceDeploy_TclaudeLayerDeploysWhenHostSupportsIt(t *testing.T) {
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
 	assert.Equal(t, "tclaude-layer", got,
 		"a template member's pinned implementation must reach the launch")
+	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
