@@ -1933,6 +1933,15 @@ func stateForConvInSessions(rows []*db.SessionRow, aliveSet map[string]struct{})
 }
 
 func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]struct{}, recordCodexTelemetry func(codexTelemetryTiming)) agentState {
+	return stateForConvInSessionsBatched(rows, aliveSet, nil, recordCodexTelemetry)
+}
+
+func stateForConvInSessionsBatched(
+	rows []*db.SessionRow,
+	aliveSet map[string]struct{},
+	contextBatch *codexContextWriteBatch,
+	recordCodexTelemetry func(codexTelemetryTiming),
+) agentState {
 	if len(rows) == 0 {
 		return agentState{}
 	}
@@ -1980,7 +1989,10 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 	// authoritative interrupted IDs and removes them from the shared hook ledger
 	// below. Other lifecycle still comes from hooks: Codex rollouts do not carry a
 	// terminal normal-completion activity event.
-	codexInterruptedSubagents := refreshCodexContextSnapshotOnReadTimed(pick, alive, recordCodexTelemetry)
+	codexRefresh := refreshCodexContextSnapshotOnReadBatched(
+		pick, alive, contextBatch, recordCodexTelemetry,
+	)
+	codexInterruptedSubagents := codexRefresh.interruptedSubagents
 	// Sub-agents run INSIDE the harness process, so a dead session has
 	// none by definition — a stale count on an exited row must not render
 	// a "🤖+N" badge. For a live row, prefer the TTL-filtered ledger over
@@ -2052,6 +2064,20 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 	// exited agent is genuinely informative ("it died at 80%"), unlike
 	// a frozen "idle" status that would mislabel a dead agent.
 	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
+		// Batched Codex persistence commits after every row has been assembled.
+		// Overlay the rollout-derived values now so the response remains
+		// read-through fresh while several agents share one durable commit.
+		switch {
+		case codexRefresh.contextReset:
+			snap.ContextPct = 0
+			snap.TokensInput = 0
+			snap.TokensOutput = 0
+		case codexRefresh.context != nil:
+			snap.ContextPct = codexRefresh.context.Pct
+			snap.TokensInput = codexRefresh.context.TokensInput
+			snap.TokensOutput = codexRefresh.context.TokensOutput
+			snap.ContextWindowSize = codexRefresh.context.WindowSize
+		}
 		// OpenCode keys context onto a per-generation session-row id, so a
 		// resumed or offline conv can pick a fresh all-zero row; fall back to
 		// the conv's last-known populated snapshot (no-op for other harnesses
@@ -2758,6 +2784,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// All calls to rc.viewFor (group rows plus the grants/active-agent roster)
 	// have completed, so this nested metric is the request's total Codex
 	// telemetry cost rather than only the grouped subset.
+	if err := rc.flushCodexContextWrites(); err != nil {
+		slog.Warn("dashboard: failed to commit batched Codex context snapshots",
+			"error", err, "module", "agentd")
+	}
 	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)
 	span.addChildren("codex_telemetry", rc.codexTelemetryTiming.perfPhases()...)
 	span.markExcluding("roster", rc.codexTelemetryTiming.total-codexTelemetryInGroups)

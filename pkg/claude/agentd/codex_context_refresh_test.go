@@ -106,6 +106,50 @@ func TestCodexContextWritePerfPhasesOnlyIncludeExecutedPaths(t *testing.T) {
 	}
 }
 
+func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-dashboard-batch-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354b0"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 12_000, 800)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	batch := &codexContextWriteBatch{}
+	state := stateForConvInSessionsBatched(
+		[]*db.SessionRow{sess},
+		map[string]struct{}{sess.TmuxSession: {}},
+		batch,
+		nil,
+	)
+	assert.Equal(t, int64(12_000), state.TokensInput,
+		"the dashboard response must use rollout telemetry before the batch commits")
+
+	stored, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, stored.TokensInput, "row assembly should only enqueue the context write")
+
+	timing, err := batch.flush()
+	require.NoError(t, err)
+	assert.Positive(t, timing.contextProject.total)
+	assert.Positive(t, timing.contextBatch.commit)
+	stored, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(12_000), stored.TokensInput)
+}
+
 func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()

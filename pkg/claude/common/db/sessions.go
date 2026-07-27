@@ -986,6 +986,179 @@ type ContextSnapshotWriteTiming struct {
 	Result     time.Duration
 }
 
+// ContextSnapshotWriteBatch groups context updates discovered while one
+// dashboard snapshot is assembled into a single SQLite transaction. Operations
+// are queued in memory; Commit opens the transaction only after rollout and
+// checkpoint work for every row is complete, avoiding self-contention with
+// checkpoint writes on the same database.
+type ContextSnapshotWriteBatch struct {
+	operations []contextSnapshotWriteOperation
+	closed     bool
+}
+
+type contextSnapshotWriteOperation struct {
+	kind                              string
+	sessionID, convID                 string
+	createdAt                         time.Time
+	pct                               float64
+	tokensInput, tokensOutput, window int64
+}
+
+// ContextSnapshotWriteBatchResult reports the one shared transaction plus
+// aggregate SQL/projection timings by operation kind. Applied aligns with the
+// queue indexes returned by the enqueue methods; a guarded fast update can be
+// false even when the transaction committed successfully.
+type ContextSnapshotWriteBatchResult struct {
+	Transaction ContextSnapshotWriteTiming
+	Reset       ContextSnapshotWriteTiming
+	Fast        ContextSnapshotWriteTiming
+	Project     ContextSnapshotWriteTiming
+	Applied     []bool
+}
+
+func addContextSnapshotWriteTiming(
+	dst *ContextSnapshotWriteTiming,
+	src ContextSnapshotWriteTiming,
+) {
+	dst.Total += src.Total
+	dst.Open += src.Open
+	dst.Begin += src.Begin
+	dst.Update += src.Update
+	dst.Projection += src.Projection
+	dst.Commit += src.Commit
+	dst.ExecCommit += src.ExecCommit
+	dst.Result += src.Result
+}
+
+// NewContextSnapshotWriteBatch creates an in-memory queue. It deliberately
+// does not open a transaction.
+func NewContextSnapshotWriteBatch() *ContextSnapshotWriteBatch {
+	return &ContextSnapshotWriteBatch{}
+}
+
+// UpdateContextSnapshot queues a full context update and relaunch projection.
+func (b *ContextSnapshotWriteBatch) UpdateContextSnapshot(
+	sessionID string,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) int {
+	index := len(b.operations)
+	b.operations = append(b.operations, contextSnapshotWriteOperation{
+		kind: "project", sessionID: sessionID, pct: pct,
+		tokensInput: tokensInput, tokensOutput: tokensOutput, window: windowSize,
+	})
+	return index
+}
+
+// UpdateContextSnapshotIfWindowUnchanged queues the guarded token-only path.
+func (b *ContextSnapshotWriteBatch) UpdateContextSnapshotIfWindowUnchanged(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+) int {
+	index := len(b.operations)
+	b.operations = append(b.operations, contextSnapshotWriteOperation{
+		kind: "fast", sessionID: sessionID, convID: convID, createdAt: createdAt, pct: pct,
+		tokensInput: tokensInput, tokensOutput: tokensOutput, window: windowSize,
+	})
+	return index
+}
+
+// ResetCompact queues a compaction reset.
+func (b *ContextSnapshotWriteBatch) ResetCompact(sessionID string) int {
+	index := len(b.operations)
+	b.operations = append(b.operations, contextSnapshotWriteOperation{
+		kind: "reset", sessionID: sessionID,
+	})
+	return index
+}
+
+// Commit executes every queued operation and makes them durable together.
+func (b *ContextSnapshotWriteBatch) Commit() (result ContextSnapshotWriteBatchResult, err error) {
+	if b == nil || b.closed {
+		return result, errors.New("context snapshot write batch is already closed")
+	}
+	b.closed = true
+	result.Applied = make([]bool, len(b.operations))
+	if len(b.operations) == 0 {
+		return result, nil
+	}
+	started := time.Now()
+	stageStarted := time.Now()
+	d, err := Open()
+	result.Transaction.Open = time.Since(stageStarted)
+	if err != nil {
+		return result, err
+	}
+	stageStarted = time.Now()
+	tx, err := d.Begin()
+	result.Transaction.Begin = time.Since(stageStarted)
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for index, operation := range b.operations {
+		operationStarted := time.Now()
+		timing := ContextSnapshotWriteTiming{}
+		stageStarted = time.Now()
+		switch operation.kind {
+		case "reset":
+			_, err = tx.Exec(`UPDATE sessions
+				SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
+				WHERE id = ?`, operation.sessionID)
+			timing.Update = time.Since(stageStarted)
+			result.Applied[index] = err == nil
+			timing.Total = time.Since(operationStarted)
+			addContextSnapshotWriteTiming(&result.Reset, timing)
+		case "fast":
+			var execResult sql.Result
+			execResult, err = tx.Exec(`UPDATE sessions
+				SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+				WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
+				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
+				operation.sessionID, operation.convID,
+				operation.createdAt.Format(time.RFC3339Nano), operation.window)
+			timing.Update = time.Since(stageStarted)
+			if err == nil {
+				stageStarted = time.Now()
+				var affected int64
+				affected, err = execResult.RowsAffected()
+				timing.Result = time.Since(stageStarted)
+				result.Applied[index] = affected > 0
+			}
+			timing.Total = time.Since(operationStarted)
+			addContextSnapshotWriteTiming(&result.Fast, timing)
+		case "project":
+			_, err = tx.Exec(`UPDATE sessions
+				SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
+				WHERE id = ?`,
+				operation.pct, operation.tokensInput, operation.tokensOutput, operation.window,
+				operation.sessionID)
+			timing.Update = time.Since(stageStarted)
+			if err == nil {
+				stageStarted = time.Now()
+				err = projectSessionRelaunchProfilesTx(tx, operation.sessionID, relaunchProjectionOptions{})
+				timing.Projection = time.Since(stageStarted)
+			}
+			result.Applied[index] = err == nil
+			timing.Total = time.Since(operationStarted)
+			addContextSnapshotWriteTiming(&result.Project, timing)
+		default:
+			err = fmt.Errorf("unknown context snapshot batch operation %q", operation.kind)
+		}
+		if err != nil {
+			result.Transaction.Total = time.Since(started)
+			return result, err
+		}
+	}
+	stageStarted = time.Now()
+	err = tx.Commit()
+	result.Transaction.Commit = time.Since(stageStarted)
+	result.Transaction.Total = time.Since(started)
+	return result, err
+}
+
 // UpdateContextSnapshot stores the full last-API-response context-window
 // snapshot from Claude Code's statusline. Tokens come from the most
 // recent API response (input includes cache reads/writes), windowSize

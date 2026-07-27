@@ -115,6 +115,59 @@ func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	assert.Equal(t, int64(200_000), *profile.FallbackRelaunch.ContextWindowSize)
 }
 
+func TestContextSnapshotWriteBatchCommitsFullAndFastUpdatesTogether(t *testing.T) {
+	setupTestDB(t)
+	const (
+		fullConv    = "context-batch-full-conv"
+		fullSession = "context-batch-full-session"
+		fastConv    = "context-batch-fast-conv"
+		fastSession = "context-batch-fast-session"
+	)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: fullSession, ConvID: fullConv, Cwd: "/tmp/context-batch-full",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: fastSession, ConvID: fastConv, Cwd: "/tmp/context-batch-fast",
+		Harness: DefaultHarness, Status: "idle",
+	}))
+	require.NoError(t, UpdateContextSnapshot(fastSession, 20, 20, 2, 200_000))
+
+	batch := NewContextSnapshotWriteBatch()
+	fullIndex := batch.UpdateContextSnapshot(fullSession, 40, 400, 40, 1_000_000)
+	fastIndex := batch.UpdateContextSnapshotIfWindowUnchanged(
+		fastSession, fastConv, time.Time{}, 30, 300, 30, 200_000,
+	)
+
+	before, err := GetContextSnapshot(fullSession)
+	require.NoError(t, err)
+	assert.Zero(t, before.ContextWindowSize, "enqueue must not open or execute the transaction")
+
+	result, err := batch.Commit()
+	require.NoError(t, err)
+	require.Len(t, result.Applied, 2)
+	assert.True(t, result.Applied[fullIndex])
+	assert.True(t, result.Applied[fastIndex])
+	assert.Positive(t, result.Project.Total)
+	assert.Positive(t, result.Fast.Total)
+
+	fullSnapshot, err := GetContextSnapshot(fullSession)
+	require.NoError(t, err)
+	assert.Equal(t, float64(40), fullSnapshot.ContextPct)
+	assert.Equal(t, int64(1_000_000), fullSnapshot.ContextWindowSize)
+	fastSnapshot, err := GetContextSnapshot(fastSession)
+	require.NoError(t, err)
+	assert.Equal(t, float64(30), fastSnapshot.ContextPct)
+	assert.Equal(t, int64(300), fastSnapshot.TokensInput)
+
+	profile, err := ConversationResumeProfileForConv(fullConv)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.FallbackRelaunch)
+	require.NotNil(t, profile.FallbackRelaunch.ContextWindowSize)
+	assert.Equal(t, int64(1_000_000), *profile.FallbackRelaunch.ContextWindowSize)
+}
+
 func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.T) {
 	setupTestDB(t)
 	const (
