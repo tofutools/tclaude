@@ -33,6 +33,7 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	assertSeatbeltAllowDenyOrder(t, got)
 
 	const want = `(version 1)
 (allow default)
@@ -190,6 +191,7 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testi
 		nil,
 	)
 	require.NoError(t, err)
+	assertSeatbeltAllowDenyOrder(t, profile)
 
 	assert.Equal(t, 1, strings.Count(profile, "(deny network-bind)"))
 	assert.NotContains(t, profile, "(deny network-inbound")
@@ -264,6 +266,7 @@ func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	assertSeatbeltAllowDenyOrder(t, profile)
 	assert.Equal(t, 1, strings.Count(profile, `(require-not (literal "/dev/null"))`),
 		"the runtime carveout belongs only to the root baseline deny")
 	assert.Equal(t, 1, strings.Count(profile, `(require-not (literal "/dev/tty"))`))
@@ -272,6 +275,15 @@ func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(profile, `(require-not (regex #"^/dev/(tty|pty)[A-Za-z0-9]+$"))`))
 	assert.Contains(t, profile, `(param "WRITE_DENY_1")`,
 		"the narrower /dev policy must retain a separate write deny with no runtime carveouts")
+	baseline := strings.Index(profile, `(param "WRITE_DENY_0")`)
+	strict := strings.Index(profile, `(param "WRITE_DENY_1")`)
+	require.Greater(t, baseline, -1)
+	require.Greater(t, strict, baseline,
+		"the strict /dev re-deny must follow the baseline deny with runtime carveouts")
+	t.Logf("actual rendered baseline deny:\n%s",
+		seatbeltRuleContaining(profile, `(param "WRITE_DENY_0")`))
+	t.Logf("actual rendered strict /dev re-deny:\n%s",
+		seatbeltRuleContaining(profile, `(param "WRITE_DENY_1")`))
 }
 
 func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T) {
@@ -582,4 +594,42 @@ func TestRenderSeatbeltProfileRefusesFilteredAndInvalidPostures(t *testing.T) {
 		)
 		require.Error(t, err)
 	}
+}
+
+func assertSeatbeltAllowDenyOrder(t *testing.T, profile string) {
+	t.Helper()
+	firstDeny := strings.Index(profile, "\n(deny ")
+	require.Greater(t, firstDeny, -1, "rendered Seatbelt profile must contain a deny rule")
+	require.Equal(t, 1, strings.Count(profile, "\n(allow "),
+		"rendered Seatbelt profile must contain only its initial allow-default rule")
+	assert.NotContains(t, profile[firstDeny:], "\n(allow ",
+		"rendered Seatbelt profile must never place an allow after a deny")
+	t.Logf("actual rendered Seatbelt rule ordering:\n%s", seatbeltRuleHeaders(profile))
+}
+
+func seatbeltRuleHeaders(profile string) string {
+	headers := make([]string, 0)
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.HasPrefix(line, "(allow ") || strings.HasPrefix(line, "(deny ") {
+			headers = append(headers, line)
+		}
+	}
+	return strings.Join(headers, "\n")
+}
+
+func seatbeltRuleContaining(profile, marker string) string {
+	markerIndex := strings.Index(profile, marker)
+	if markerIndex < 0 {
+		return ""
+	}
+	start := strings.LastIndex(profile[:markerIndex], "\n(deny ")
+	if start < 0 {
+		return ""
+	}
+	start++
+	next := strings.Index(profile[markerIndex:], "\n(deny ")
+	if next < 0 {
+		return strings.TrimSpace(profile[start:])
+	}
+	return strings.TrimSpace(profile[start : markerIndex+next])
 }
