@@ -178,6 +178,11 @@ func TestPrivateOpenCodeStateRefusesInvalidAndMissingAllocations(t *testing.T) {
 
 func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T) {
 	setupTestDB(t)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
 	home := os.Getenv("HOME")
 	cwd := filepath.Join(home, "work")
 	config := filepath.Join(home, ".config", "opencode")
