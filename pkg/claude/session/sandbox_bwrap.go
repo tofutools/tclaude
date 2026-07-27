@@ -1106,6 +1106,13 @@ func tclaudeLayerWrapsPane(harnessName string) bool {
 	return harnessName != harness.OpenCodeName
 }
 
+// TclaudeLayerUsesServerBoundary reports whether the harness's authoritative
+// tool executor is a separately managed, non-interactive server rather than
+// the pane process.
+func TclaudeLayerUsesServerBoundary(harnessName string) bool {
+	return !tclaudeLayerWrapsPane(harnessName)
+}
+
 func bwrapBindSourceExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	switch {

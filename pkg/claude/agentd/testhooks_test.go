@@ -699,10 +699,18 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 // for t.Cleanup (which resets the cache again, so tests cannot leak an answer
 // into each other).
 func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
+	return SetTclaudeLayerHostAvailabilitiesForTest(fn, fn)
+}
+
+// SetTclaudeLayerHostAvailabilitiesForTest independently controls the
+// interactive-pane and relay-free-server capability disclosures.
+func SetTclaudeLayerHostAvailabilitiesForTest(
+	interactive, server func() error,
+) func() {
 	prev := tclaudeLayerHostAvailability
 	prevServer := tclaudeLayerServerHostAvailability
-	tclaudeLayerHostAvailability = fn
-	tclaudeLayerServerHostAvailability = fn
+	tclaudeLayerHostAvailability = interactive
+	tclaudeLayerServerHostAvailability = server
 	resetSandboxImplHostProbeCache()
 	return func() {
 		tclaudeLayerHostAvailability = prev

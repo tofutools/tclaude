@@ -111,6 +111,9 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, opencode.CanRename, "OpenCode renames through its managed ConvStore API")
 	assert.True(t, opencode.CanCompact, "OpenCode attached TUI supports /compact")
 	assert.True(t, opencode.CanSandbox, "OpenCode surfaces soft, outer-layer, and explicit off postures")
+	assert.True(t, opencode.CanTclaudeLayer)
+	assert.True(t, opencode.TclaudeLayerServerBoundary,
+		"OpenCode availability must use the relay-free executor-server probe")
 	assert.Equal(t, []string{"access-control", "tclaude-layer", "off"}, opencode.SandboxModes)
 	assert.Equal(t, "access-control", opencode.DefaultSandbox)
 	assert.Contains(t, opencode.SandboxModeHelp["access-control"], "not an OS sandbox")

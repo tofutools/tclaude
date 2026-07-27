@@ -162,6 +162,8 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, false, catalog["host_available"])
 		assert.Equal(t, errNoBwrap.Error(), catalog["host_unavailable_reason"],
 			"the disclosure must name the concrete missing capability")
+		assert.Equal(t, false, catalog["server_host_available"])
+		assert.Equal(t, errNoBwrap.Error(), catalog["server_host_unavailable_reason"])
 	})
 
 	t.Run("available", func(t *testing.T) {
@@ -170,8 +172,27 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 
 		catalog := snapshotSandboxImpl(t, f)
 		assert.Equal(t, true, catalog["host_available"])
+		assert.Equal(t, true, catalog["server_host_available"])
 		_, present := catalog["host_unavailable_reason"]
 		assert.False(t, present, "an available host must carry no reason")
+		_, present = catalog["server_host_unavailable_reason"]
+		assert.False(t, present, "an available server boundary must carry no reason")
+	})
+
+	t.Run("server boundary is disclosed independently", func(t *testing.T) {
+		f := newFlow(t)
+		errPidfd := errors.New("pidfd unavailable")
+		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilitiesForTest(
+			func() error { return errPidfd },
+			func() error { return nil },
+		))
+
+		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, false, catalog["host_available"])
+		assert.Equal(t, errPidfd.Error(), catalog["host_unavailable_reason"])
+		assert.Equal(t, true, catalog["server_host_available"])
+		_, present := catalog["server_host_unavailable_reason"]
+		assert.False(t, present)
 	})
 
 	t.Run("options label the experimental layer", func(t *testing.T) {

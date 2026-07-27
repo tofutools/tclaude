@@ -112,7 +112,7 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		return nil
 	}
 	availability := tclaudeLayerHostAvailability
-	if harnessName == harness.OpenCodeName {
+	if session.TclaudeLayerUsesServerBoundary(harnessName) {
 		availability = tclaudeLayerServerHostAvailability
 	}
 	if err := availability(); err != nil {
