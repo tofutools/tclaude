@@ -79,3 +79,49 @@ jobs:
             printf '%s SIGWINCH_count=' "$variant"
             grep -c '^SIGWINCH ' "$logs/$variant.log" || true
           done
+
+  darwin-seatbelt-control:
+    name: Darwin Seatbelt terminal control
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install tmux
+        run: brew install tmux
+
+      - name: Compare direct and Seatbelt-wrapped terminal resize
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$GITHUB_WORKSPACE/.tcl775_probe.py"
+          socket="$RUNNER_TEMP/tcl775-darwin-probe.sock"
+          logs="$RUNNER_TEMP/tcl775-darwin-logs"
+          mkdir -p "$logs"
+
+          tmux -S "$socket" new-session -d -s direct \
+            "python3 '$probe' > '$logs/direct.log' 2>&1"
+          tmux -S "$socket" new-session -d -s seatbelt \
+            "sandbox-exec -p '(version 1) (allow default)' python3 '$probe' > '$logs/seatbelt.log' 2>&1"
+
+          sleep 0.5
+          echo "=== initial detached pane sizes ==="
+          tmux -S "$socket" list-panes -a \
+            -F '#{session_name} rows=#{pane_height} cols=#{pane_width} pid=#{pane_pid}'
+
+          for session in direct seatbelt; do
+            tmux -S "$socket" resize-window -t "$session:0" -x 120 -y 40
+          done
+          sleep 0.5
+          for session in direct seatbelt; do
+            tmux -S "$socket" resize-window -t "$session:0" -x 63 -y 17
+          done
+          sleep 4
+
+          for variant in direct seatbelt; do
+            echo "=== $variant process observations ==="
+            sed -n '1,120p' "$logs/$variant.log"
+            grep -q '^START ' "$logs/$variant.log"
+            grep -q '^END ' "$logs/$variant.log"
+            test "$(grep -c '^SIGWINCH ' "$logs/$variant.log")" = "2"
+          done
