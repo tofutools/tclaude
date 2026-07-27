@@ -471,7 +471,6 @@ func TestWorktreeSweep_ActiveActorKeepsPredecessorStartupRoot(t *testing.T) {
 	f.HaveConvWithTitle(newConv, "worker-after-rotation")
 	f.HaveAliveSession(oldConv, "spwn-old", "tmux-old", startup)
 	f.HaveEnrolledAgent(oldConv)
-	f.MarkOffline("tmux-old")
 	agentID, err := db.AgentIDForConv(oldConv)
 	require.NoError(t, err)
 	require.NoError(t, db.LinkConvToAgent(newConv, agentID, db.ConvRoleGeneration, "test-rotation"))
@@ -479,6 +478,7 @@ func TestWorktreeSweep_ActiveActorKeepsPredecessorStartupRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, moved)
 	f.HaveAliveSession(newConv, "spwn-new", "tmux-new", replacement)
+	f.MarkOffline("tmux-new")
 	f.HaveGroup("squad")
 	f.HaveMember("squad", newConv)
 	_, err = db.SetAgentGroupDefaultCwd("squad", repo)
@@ -508,7 +508,8 @@ func TestWorktreeSweep_ActiveActorKeepsPredecessorStartupRoot(t *testing.T) {
 	assert.Equal(t, agentID, row.Agents[0].AgentID)
 	assert.Equal(t, newConv, row.Agents[0].ConvID,
 		"the stable actor claim leads with its current conversation generation")
-	assert.True(t, row.Agents[0].Online)
+	assert.True(t, row.Agents[0].Online,
+		"a predecessor that outlives an offline successor keeps the actor online")
 	assert.False(t, row.Agents[0].Retired)
 
 	body := `{"paths":["` + startup + `"],"delete_branches":true}`
@@ -522,6 +523,69 @@ func TestWorktreeSweep_ActiveActorKeepsPredecessorStartupRoot(t *testing.T) {
 	assert.Equal(t, 1, cleanup.Skipped)
 	assert.Zero(t, cleanup.Removed)
 	assert.False(t, fs.wasRemoved(startup))
+}
+
+// A conv-id can have more than one live session row (for example, an
+// auto-register duplicate) and each pane can have a different launch CWD.
+// Cleanup must claim every recorded startup rather than only the newest row
+// ResolveLocation happens to select.
+func TestWorktreeSweep_ProtectsEveryLiveSessionStartupForOneConv(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const (
+		repo   = "/repo"
+		first  = "/repo-wt-first"
+		second = "/repo-wt-second"
+		conv   = "wdup-1111-2222-3333-4444"
+	)
+	f.HaveConvWithTitle(conv, "duplicate-session-worker")
+	f.HaveAliveSession(conv, "spwn-first", "tmux-first", first)
+	f.HaveAliveSession(conv, "spwn-second", "tmux-second", second)
+	f.HaveEnrolledAgent(conv)
+	f.HaveGroup("squad")
+	f.HaveMember("squad", conv)
+	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
+	require.NoError(t, err)
+
+	fs := &fakeSweep{
+		worktrees: []worktree.WorktreeInfo{
+			{Path: repo, Branch: "main", IsMain: true},
+			{Path: first, Branch: "first"},
+			{Path: second, Branch: "second"},
+		},
+		roots: map[string]string{repo: repo},
+		statuses: map[string]worktree.WorktreeStatus{
+			repo:   {Root: repo, Branch: "main", Kind: "main"},
+			first:  {Root: first, Branch: "first", Kind: "linked"},
+			second: {Root: second, Branch: "second", Kind: "linked"},
+		},
+		mainRepo: repo,
+	}
+	installFakeSweep(t, fs)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	rows := byPath(discoverAllWorktrees(t, mux).Worktrees)
+	for _, path := range []string{first, second} {
+		row := rows[path]
+		assert.Equal(t, "live", row.Category, path)
+		assert.False(t, row.Checked, path)
+		require.Len(t, row.Agents, 1, path)
+		assert.True(t, row.Agents[0].Online, path)
+	}
+
+	body := `{"paths":["` + first + `","` + second + `"],"delete_branches":true}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var cleanup sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cleanup))
+	assert.Equal(t, 2, cleanup.Skipped)
+	assert.Zero(t, cleanup.Removed)
+	assert.False(t, fs.wasRemoved(first))
+	assert.False(t, fs.wasRemoved(second))
 }
 
 // Scenario: the explicit-path cleanup removes the picked orphans (with

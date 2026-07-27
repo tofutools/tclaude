@@ -223,17 +223,22 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 		// Resolve the bound agents (title + liveness + retired state) for
 		// this worktree.
 		var anyOnline bool
-		seenAgents := map[string]bool{}
+		agentIndex := map[string]int{}
 		for _, cid := range rootConvs[path] {
 			bound := resolveSweepAgent(cid)
 			key := bound.AgentID
 			if key == "" {
 				key = "conv:" + bound.ConvID
 			}
-			if seenAgents[key] {
+			if i, seen := agentIndex[key]; seen {
+				// Several conversation generations of one stable actor can
+				// claim the same root. Preserve liveness from ANY generation,
+				// even though the wire renders the actor only once.
+				row.Agents[i].Online = row.Agents[i].Online || bound.Online
+				anyOnline = anyOnline || bound.Online
 				continue
 			}
-			seenAgents[key] = true
+			agentIndex[key] = len(row.Agents)
 			anyOnline = anyOnline || bound.Online
 			row.Agents = append(row.Agents, bound)
 		}
@@ -314,31 +319,44 @@ func worktreeRootConvs() map[string][]string {
 	seenConv := map[string]bool{}
 	seenRootConv := map[string]map[string]bool{}
 	dirRoot := map[string]string{}
+	addClaim := func(convID, dir string) {
+		if dir == "" {
+			return
+		}
+		root, cached := dirRoot[dir]
+		if !cached {
+			root = inspectWorktreeFn(dir).Root
+			dirRoot[dir] = root
+		}
+		if root == "" {
+			return
+		}
+		if seenRootConv[root] == nil {
+			seenRootConv[root] = map[string]bool{}
+		}
+		if !seenRootConv[root][convID] {
+			rootConvs[root] = append(rootConvs[root], convID)
+			seenRootConv[root][convID] = true
+		}
+	}
 	for _, s := range sessions {
-		if s.ConvID == "" || seenConv[s.ConvID] {
+		if s.ConvID == "" {
+			continue
+		}
+		// Every launch row is a claim. Multiple live sessions can share one
+		// conv-id while having different startup CWDs, so conv-level
+		// deduplication must happen only after their immutable dirs are read.
+		addClaim(s.ConvID, s.Cwd)
+		if physical, err := recordedStartupDir(s); err == nil {
+			addClaim(s.ConvID, physical)
+		}
+		if seenConv[s.ConvID] {
 			continue
 		}
 		seenConv[s.ConvID] = true
 		loc := agent.ResolveLocation(s.ConvID)
 		for _, dir := range []string{loc.StartupDir, loc.CurrentDir} {
-			if dir == "" {
-				continue
-			}
-			root, cached := dirRoot[dir]
-			if !cached {
-				root = inspectWorktreeFn(dir).Root
-				dirRoot[dir] = root
-			}
-			if root == "" {
-				continue
-			}
-			if seenRootConv[root] == nil {
-				seenRootConv[root] = map[string]bool{}
-			}
-			if !seenRootConv[root][s.ConvID] {
-				rootConvs[root] = append(rootConvs[root], s.ConvID)
-				seenRootConv[root][s.ConvID] = true
-			}
+			addClaim(s.ConvID, dir)
 		}
 	}
 	return rootConvs
@@ -356,37 +374,62 @@ func liveAgentWorktreeRoots() map[string]bool {
 	if err != nil {
 		return roots
 	}
-	seenConv := map[string]bool{}
+	seenLocation := map[string]bool{}
 	dirRoot := map[string]string{}
+	online := map[string]bool{}
+	isOnline := func(convID string) bool {
+		if convID == "" {
+			return false
+		}
+		if v, ok := online[convID]; ok {
+			return v
+		}
+		v := isConvOnline(convID)
+		online[convID] = v
+		return v
+	}
+	addRoot := func(dir string) {
+		if dir == "" {
+			return
+		}
+		root, cached := dirRoot[dir]
+		if !cached {
+			root = inspectWorktreeFn(dir).Root
+			dirRoot[dir] = root
+		}
+		if root != "" {
+			roots[root] = true
+		}
+	}
 	for _, s := range sessions {
-		if s.ConvID == "" || seenConv[s.ConvID] {
+		if s.ConvID == "" {
 			continue
 		}
-		seenConv[s.ConvID] = true
 		// A startup worktree belongs to the stable actor, not only to the
 		// conversation generation that happened to launch there. If that
-		// actor has rotated, liveness follows its current generation while
-		// every generation's recorded startup root remains protected.
+		// actor has rotated, liveness is the UNION of the recorded generation
+		// and its current head: a predecessor pane can outlive a best-effort
+		// stop, while a live successor keeps the actor's historical launch
+		// roots claimed.
 		liveConv := s.ConvID
 		if a, err := db.GetAgentByConv(s.ConvID); err == nil && a != nil && a.CurrentConvID != "" {
 			liveConv = a.CurrentConvID
 		}
-		if !isConvOnline(liveConv) {
+		if !isOnline(s.ConvID) && !isOnline(liveConv) {
 			continue
 		}
-		loc := agent.ResolveLocation(s.ConvID)
-		for _, dir := range []string{loc.StartupDir, loc.CurrentDir} {
-			if dir == "" {
-				continue
-			}
-			root, cached := dirRoot[dir]
-			if !cached {
-				root = inspectWorktreeFn(dir).Root
-				dirRoot[dir] = root
-			}
-			if root != "" {
-				roots[root] = true
-			}
+		// Read every session row's launch cwd before deduplicating the shared
+		// conversation-level Location. Resume provenance supplies the physical
+		// startup root when the lexical launch path was a symlink.
+		addRoot(s.Cwd)
+		if physical, err := recordedStartupDir(s); err == nil {
+			addRoot(physical)
+		}
+		if !seenLocation[s.ConvID] {
+			seenLocation[s.ConvID] = true
+			loc := agent.ResolveLocation(s.ConvID)
+			addRoot(loc.StartupDir)
+			addRoot(loc.CurrentDir)
 		}
 	}
 	return roots
@@ -397,7 +440,8 @@ func liveAgentWorktreeRoots() map[string]bool {
 // actor itself is retired; rotating current_conv_id does not make the previous
 // generation's launch directory a cleanup candidate. The wire row leads with
 // agent_id and the actor's current generation so duplicate historical session
-// rows collapse into one claimant and liveness follows the live head.
+// rows collapse into one claimant. Liveness is the union of the bound
+// generation and the live head: a predecessor pane can survive a rotation.
 //
 // A plain, non-agent conversation remains conv-keyed and protected as before.
 // Read failures fail safe: the claim is treated as a non-retired conversation.
@@ -412,7 +456,7 @@ func resolveSweepAgent(convID string) sweepAgent {
 			AgentID: a.AgentID,
 			ConvID:  current,
 			Title:   agent.FreshTitle(current),
-			Online:  isConvOnline(current),
+			Online:  isConvOnline(convID) || (current != convID && isConvOnline(current)),
 			Retired: !a.Active(),
 		}
 	}
