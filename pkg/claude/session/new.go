@@ -113,7 +113,7 @@ type NewParams struct {
 	// SandboxImplementation selects who owns OS-level containment. The default
 	// is the legacy harness-owned path; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS).
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default; current behavior) | tclaude-layer (Linux bubblewrap or macOS Seatbelt outer layer)"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (default) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback)"`
 
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (never|60s|5m|10m), delivered via `--settings`
@@ -459,14 +459,26 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.SandboxImpl = string(sandboxImplementation)
-	tclaudeLayer := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	outerLayer := sandboxImplementation.UsesTclaudeLayer()
+	stacked := sandboxImplementation.UsesNestedHarnessSandbox()
+	tclaudeLayerOnly := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	if stacked {
+		if err := ValidateStackedSandboxHarness(h); err != nil {
+			return err
+		}
+		sandboxMode, params.PermissionProfile, err = stackedSandboxLaunchMode(h)
+		if err != nil {
+			return err
+		}
+		params.Sandbox = sandboxMode
+	}
 	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
 		h.Name, sandboxMode, sandboxImplementation)
 	if err != nil {
 		return err
 	}
 	params.Sandbox = sandboxMode
-	if tclaudeLayer {
+	if outerLayer {
 		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return err
 		}
@@ -490,15 +502,15 @@ func runNew(params *NewParams) error {
 		sandboxMode = ""
 		params.Sandbox = ""
 	}
-	if !tclaudeLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
-	if !tclaudeLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
+	if !outerLayer && len(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)) > 0 &&
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	if !tclaudeLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.OpenCodeName && sandboxMode != harness.OpenCodeSandboxAccessControl {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
 	}
@@ -517,13 +529,13 @@ func runNew(params *NewParams) error {
 		effectiveSandboxMode = harness.SandboxManagedProfile
 	}
 	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
-	if !tclaudeLayer {
+	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode, launchFilesystem); err != nil {
 			return err
 		}
 	}
 	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
-		if !tclaudeLayer {
+		if !outerLayer {
 			if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, effectiveSandboxMode, breakGlass, launchFilesystem); err != nil {
 				return err
 			}
@@ -536,7 +548,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && !tclaudeLayer {
+	if networkAccess != sandboxpolicy.NetworkAccessInherit && !outerLayer {
 		switch h.Name {
 		case harness.CodexName:
 			if params.PermissionProfile != harness.CodexAgentProfile {
@@ -553,7 +565,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
 		}
 	}
-	if tclaudeLayer {
+	if outerLayer {
 		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: networkAccess}
 		if launchSandbox != nil {
 			effective = launchSandbox.Effective
@@ -585,11 +597,10 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// Interim TCL-750 decision: while tclaude owns the outer OS wall, disable
-	// the harness-native sandbox instead of stacking nested sandboxes. The
-	// per-harness disable-vs-stack policy belongs to the nested-sandbox
-	// workstream and will replace this switch.
-	if tclaudeLayer {
+	// The single-wall tclaude-layer implementation deliberately disables the
+	// harness-native sandbox. Stacked has already forced the reviewed nested
+	// contract on above and must not pass through this disable switch.
+	if tclaudeLayerOnly {
 		params.PermissionProfile = ""
 		switch h.Name {
 		case harness.DefaultName:
@@ -883,7 +894,7 @@ func runNew(params *NewParams) error {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
-	if tclaudeLayer {
+	if outerLayer {
 		// Hook callbacks write private SQLite state, which this launch's own
 		// namespace hides. Route them through agentd instead, which applies
 		// them host-side on the caller's behalf (TCL-754). Apply after the
@@ -911,7 +922,7 @@ func runNew(params *NewParams) error {
 		h.Name,
 		params.Sandbox,
 		params.PermissionProfile,
-		tclaudeLayer && tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd,
+		outerLayer && tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd,
 		additionalEnv,
 	); err != nil {
 		return err
@@ -977,7 +988,7 @@ func runNew(params *NewParams) error {
 	// found nothing that confines it; applyRecordedLaunchPosture separately
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
-	if !tclaudeLayer || h.Name == harness.OpenCodeName {
+	if !outerLayer || h.Name == harness.OpenCodeName {
 		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
@@ -1006,14 +1017,20 @@ func runNew(params *NewParams) error {
 	launchOSSandbox := harness.ResolveLaunchOSSandbox(h, sandboxMode, sandboxChosenBy, cwd)
 	bwrapBinary := ""
 	var bwrapCapabilityErr error
-	if tclaudeLayer {
+	if outerLayer {
 		if tclaudeLayerWrapsPane(h.Name) {
 			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
 		} else {
 			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(tclaudeLayerPosture)
 		}
-		if bwrapCapabilityErr == nil {
+		if bwrapCapabilityErr == nil && !stacked {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
+		}
+		if stacked {
+			launchOSSandbox = harness.LaunchOSSandbox{
+				State:  "off",
+				Source: "stacked requested; live nested engine round-trip pending",
+			}
 		}
 	}
 
@@ -1136,9 +1153,10 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
-	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
-		// The inner sandbox is off, so derive the repository grants for the
-		// outer wall independently of the harness-native mode.
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		// Derive repository grants for the outer wall independently of the
+		// harness-native mode. Under stacked, the inner wall receives the same
+		// canonical launch grants through SpawnSpec below.
 		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)
 	}
 	if sandboxDenyCoversPath(launchSandbox, cwd) {
@@ -1146,7 +1164,7 @@ func runNew(params *NewParams) error {
 	}
 	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
 	launchWriteDirs := append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
-	if tclaudeLayer {
+	if outerLayer {
 		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
 	}
 	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
@@ -1156,13 +1174,13 @@ func runNew(params *NewParams) error {
 	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
 	// an authored `deny ~` with no reopen of its own still renders as a split
 	// policy and must be gated as one.
-	if !tclaudeLayer {
+	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode,
 			sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 			return err
 		}
 	}
-	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:             executablePath,
 		Cwd:                        cwd,
 		ServerURL:                  openCodeServerURL,
@@ -1187,9 +1205,12 @@ func runNew(params *NewParams) error {
 		AutoReview:                 autoReview,
 		RemoteControl:              remoteControl,
 		InitialPrompt:              params.InitialPrompt,
-	})
+	}
+	if stacked {
+		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)
+	}
 	var privateAttachmentWriteDirs []TclaudeLayerPrivateWriteDir
-	if tclaudeLayer {
+	if outerLayer {
 		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
 			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
 		if prepareErr != nil {
@@ -1210,7 +1231,14 @@ func runNew(params *NewParams) error {
 			Current: privateAttachmentDir,
 		}}
 	}
-	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
+	var stackedProof *StackedSandboxProof
+	defer func() {
+		if stackedProof != nil {
+			stackedProof.Cleanup()
+		}
+	}()
+	var layerSpec TclaudeLayerLaunchSpec
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			Cwd:              cwd,
@@ -1221,7 +1249,30 @@ func runNew(params *NewParams) error {
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
-		harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, spec, harnessCmd)
+		layerSpec = spec
+		if stacked {
+			stackedProof, err = ProbeStackedSandbox(bwrapBinary, spec, h, cwd)
+			if err != nil {
+				return err
+			}
+			spawnSpec.ExecutablePath = stackedProof.Executable.Path
+		}
+	}
+	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		if stacked {
+			harnessCmd, err = WrapTclaudeLayerStackedSpec(
+				bwrapBinary,
+				layerSpec,
+				stackedProof.ManifestPath,
+				stackedProof.ManifestSHA256,
+				stackedProof.ReadyPath,
+				true,
+				harnessCmd,
+			)
+		} else {
+			harnessCmd, err = WrapTclaudeLayerSpec(bwrapBinary, layerSpec, harnessCmd)
+		}
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
@@ -1272,6 +1323,11 @@ func runNew(params *NewParams) error {
 	// managed Codex launch-profile path (when any) rides as an inert argv
 	// marker so the approval monitor's startup recovery can match the live
 	// pane to its profile (see CodexProfileMarkerArgs).
+	if stackedProof != nil {
+		if err := stackedProof.Revalidate(); err != nil {
+			return StackedEngineBindingRefusal(h, err)
+		}
+	}
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
@@ -1282,6 +1338,26 @@ func runNew(params *NewParams) error {
 	killLaunchPane := func() {
 		launchProfileOwnedByPane = false
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+	}
+	if stackedProof != nil {
+		if err := WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
+			killLaunchPane()
+			return StackedEngineBindingRefusal(h, err)
+		}
+		stackedProof.Cleanup()
+		stackedProof = nil
+		launchOSSandbox = StackedLaunchOSSandbox(h, tclaudeLayerPosture)
+		state.OSSandboxState = launchOSSandbox.State
+		state.OSSandboxSource = launchOSSandbox.Source
+		state.OSSandboxUnverified = launchOSSandbox.Unverified
+		if err := SaveSessionStateForLaunch(
+			state,
+			exitGeneration,
+			db.SessionExitGateUngated,
+		); err != nil {
+			killLaunchPane()
+			return fmt.Errorf("record successful stacked sandbox binding: %w", err)
+		}
 	}
 	exitGuard.armPaneHook()
 	exitGuard.bind()
@@ -2188,6 +2264,33 @@ func waitForSpawnCwdReadiness(path string) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for spawn cwd bootstrap")
+}
+
+// WaitForStackedBindingReadiness waits until the outer relay reports that
+// bubblewrap has materialized the exec-bound engine and started its sandbox
+// child. Resume paths use the same gate before persisting a successful lock.
+func WaitForStackedBindingReadiness(path string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		switch {
+		case err == nil && strings.TrimSpace(string(raw)) == "ready":
+			return nil
+		case err == nil:
+			status := strings.TrimSpace(string(raw))
+			if status == "" || strings.HasPrefix("ready", status) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("stacked relay returned invalid binding readiness")
+		case os.IsNotExist(err):
+			time.Sleep(10 * time.Millisecond)
+			continue
+		default:
+			return fmt.Errorf("read stacked binding readiness: %w", err)
+		}
+	}
+	return fmt.Errorf("timed out waiting for the exec-bound nested engine")
 }
 
 // applyTmuxWindowTitle sets this session's tmux window title to

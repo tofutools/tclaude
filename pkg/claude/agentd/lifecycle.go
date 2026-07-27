@@ -6554,8 +6554,9 @@ func appendSandboxFlag(args []string, mode string) []string {
 // invariant: the legacy harness-owned implementation changes no argv, while a
 // durable tclaude-layer opt-in is explicit on every relaunch.
 func appendSandboxImplementationFlag(args []string, implementation string) []string {
-	if strings.TrimSpace(implementation) == string(sandboxpolicy.ImplementationTclaudeLayer) {
-		args = append(args, "--sandbox-impl", string(sandboxpolicy.ImplementationTclaudeLayer))
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err == nil && normalized.UsesTclaudeLayer() {
+		args = append(args, "--sandbox-impl", string(normalized))
 	}
 	return args
 }

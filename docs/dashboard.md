@@ -125,6 +125,12 @@ profile that supplied the agent's rules, and says whether those rules are in
 force given the sandbox state. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 
+A successfully live-probed Linux `stacked` launch uses the distinct `🔒²`
+glyph. Its tooltip starts with **Stacked sandbox: on**, names the tclaude outer
+posture and the actual Claude SRT or Codex bwrap mechanism, and keeps
+host-open/namespace caveats visible. Unknown implementation strings remain
+warning badges and never inherit either lock.
+
 The same line can carry a **refused-telemetry badge** — `🚫`, shown when agentd
 has been refusing this agent's brokered hook/status-line callbacks. It matters
 because the failure is otherwise silent: the agent keeps working, but nothing it

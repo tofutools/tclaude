@@ -36,7 +36,8 @@ func init() {
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the
 		// default, inherit, adds nothing — see claude_sandbox.go).
-		Sandbox: claudeSandbox{},
+		Sandbox:       claudeSandbox{},
+		NestedSandbox: claudeNestedSandbox{},
 		// Claude Code's approval posture IS its permission mode; claudeApproval
 		// carries the `--permission-mode` enum (+ an inherit default that adds
 		// nothing) through the harness-agnostic Approval field, translated by
@@ -84,7 +85,11 @@ func (claudeSpawner) Binary() string { return "claude" }
 // anyway; the passthrough args are shell-quoted individually. Kept pure
 // so the "unset omits the flag" guarantee is unit-testable without tmux.
 func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
-	cmd := spec.EnvExports + "claude"
+	binary := "claude"
+	if spec.ExecutablePath != "" {
+		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
+	}
+	cmd := spec.EnvExports + binary
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}

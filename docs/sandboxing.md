@@ -160,6 +160,51 @@ disclosure never replaces the refusal: the option stays selectable, because
 authoring a profile that pins the layer for another machine — or for after
 `bwrap` is installed — is legitimate.
 
+### Experimental `stacked` on Linux
+
+`--sandbox-impl stacked` is the explicit two-wall option for Claude Code and
+current-backend Codex on Linux. It uses the same frozen
+`TclaudeLayerLaunchSpec` as `tclaude-layer`, but keeps the harness's real OS
+sandbox active underneath it:
+
+- Claude Code is forced to sandbox `on` with
+  `enableWeakerNestedSandbox: false`. A launch-owned, credential-free loopback
+  stub drives the exact pinned Claude CLI through one deterministic Bash tool,
+  proving its embedded SRT's bwrap/seccomp behavior without calling a model.
+- Codex is forced onto a launch-unique managed profile with
+  `features.use_legacy_landlock=false`; launch requires a real
+  `codex sandbox -P …` bwrap round-trip. Legacy Landlock is not a substitute.
+
+Each fresh launch and resume probes live *inside the exact outer mount/network
+spec* before the pane is committed. The probe must write an allowed marker and
+fail a denied write; the Claude probe also verifies SRT's AF_UNIX seccomp deny.
+The harness executable is copied into launch-owned staging, probed there, then
+reopened and re-hashed immediately before bubblewrap. The outer relay binds the
+open descriptor at a private read-only executable path, so the final process
+executes the proved bytes rather than resolving `PATH` again. For Claude, every
+managed-policy JSON file is likewise snapshotted and descriptor-bound into a
+fresh read-only `/etc/claude-code`; unreadable policy and any override that
+disables or weakens the required inner posture fail closed. The successful
+lock is recorded only after the relay reports that this final binding has been
+materialized. A missing engine, changed executable, unprovable effective
+policy, failed round-trip, OpenCode selection, or macOS nested Seatbelt attempt
+produces:
+
+```text
+stacked requested — refused: missing capability <name>: <detail>; refusing rather than falling back to tclaude-layer or harness-builtin
+```
+
+The dashboard always shows the option, warns inline when the selected
+host/harness is incapable, and never clears an explicit stacked selection
+during a harness switch. Its short-lived availability result is disclosure
+only; the live launch probe is authoritative.
+
+A successful stack shows `🔒²`. Its tooltip begins `Stacked sandbox: on` and
+names both mechanisms plus the outer posture. Linux host-open retains the
+ambient-host-Unix-socket caveat; isolated names its constructed root and
+network/PID isolation. Known namespace gaps are warned about, never repaired by
+silently widening the outer policy.
+
 Claude Code and Codex are supported on Linux and macOS. OpenCode is supported
 on Linux in the host-open posture: agentd wraps its server rather than its
 attach pane. OpenCode isolated and filtered postures are refused because its
@@ -174,10 +219,11 @@ falling back.
 
 On Linux the layer does not unshare the IPC namespace. The host-open posture
 also retains the host PID namespace; the isolated posture unshares PIDs as part
-of closing ambient socket access. The harness's own OS sandbox is disabled
-inside the wrapper on both platforms for now; a later workstream will define
-when nested OS sandboxes may be stacked. OpenCode's ordered tool permission
-rules remain enabled as defense in depth.
+of closing ambient socket access. Under `tclaude-layer`, the harness's own OS
+sandbox is disabled inside the wrapper. The explicit Linux-only `stacked`
+implementation above is the reviewed exception for Claude Code and Codex.
+OpenCode's ordered tool permission rules remain enabled as defense in depth,
+but OpenCode has no stacked contract.
 
 The Linux host-open posture starts with a read-only view of the host root; the
 isolated posture uses the constructed root described below. Both give `/dev`,

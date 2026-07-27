@@ -1225,6 +1225,10 @@ type dashboardHarness struct {
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
 	// never a harness-name switch in the dialog.
 	CanTclaudeLayer bool `json:"can_tclaude_layer"`
+	// CanStacked reports only descriptor applicability. The option remains
+	// visible even when false so the UI can explain that apply/launch will
+	// refuse instead of silently erasing an operator selection.
+	CanStacked bool `json:"can_stacked"`
 	// TclaudeLayerServerBoundary tells disclosure surfaces to use the
 	// relay-free server capability probe rather than the interactive pane
 	// probe. It does not grant the capability; CanTclaudeLayer remains the gate.
@@ -1289,6 +1293,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),
 			CanTclaudeLayer:            session.ValidateTclaudeLayerHarness(h.Name) == nil,
+			CanStacked:                 h.SupportsNestedSandbox(),
 			TclaudeLayerServerBoundary: session.TclaudeLayerUsesServerBoundary(h.Name),
 		}
 		if dh.CanAutoCompactWindow {

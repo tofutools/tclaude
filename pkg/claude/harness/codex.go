@@ -34,6 +34,7 @@ func init() {
 		Hooks:         codexHookInstaller{},
 		Life:          codexLifecycle{},
 		Sandbox:       codexSandbox{},
+		NestedSandbox: codexNestedSandbox{},
 		Approval:      codexApproval{},
 		// Codex has a guardian/reviewer subagent the experimental --auto-review
 		// opt-in can route approval prompts to (approvals_reviewer=auto_review).

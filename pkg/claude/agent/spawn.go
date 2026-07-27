@@ -658,7 +658,7 @@ type SpawnParams struct {
 	// independent of --sandbox, which picks a mode WITHIN whatever sandbox is in
 	// force. Blank defers to the profile chain and then to harness-builtin, so an
 	// unpassed flag launches exactly as it did before this flag existed.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL who owns OS-level containment for the new agent: harness-builtin (default; current behavior) | tclaude-layer (runs the whole harness process in a tclaude-owned bubblewrap namespace and disables the harness's own sandbox inside it). Linux only; needs bwrap and unprivileged user namespaces, and refuses the spawn naming the missing capability if the host lacks them. Unset = filled by the profile chain, then harness-builtin"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: harness-builtin (default) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then harness-builtin"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -945,7 +945,12 @@ func validateSpawnSandboxImplementation(h *harness.Harness, raw string) (string,
 	if err != nil {
 		return "", err
 	}
-	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+	if implementation.UsesNestedHarnessSandbox() {
+		if err := session.ValidateStackedSandboxHarness(h); err != nil {
+			return "", err
+		}
+	}
+	if implementation.UsesTclaudeLayer() {
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", err
 		}

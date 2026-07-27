@@ -59,8 +59,7 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
-	tclaudeLayer := implementation == sandboxpolicy.ImplementationTclaudeLayer
-	if tclaudeLayer {
+	if implementation.UsesTclaudeLayer() {
 		// The outer applier, not the harness-native sandbox catalog, represents
 		// filesystem and network policy. Keep launch-time break-glass existence
 		// validation here; the session boundary validates the layer's network

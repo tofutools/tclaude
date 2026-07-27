@@ -137,6 +137,7 @@ export function launchSetting(harness, key) {
 // dialog ever sends when the row is hidden.
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
+export const SANDBOX_IMPL_STACKED = 'stacked';
 
 // The per-harness mode help describes the harness-owned sandbox. Under the
 // tclaude layer that sandbox is deliberately off while the outer OS wall
@@ -160,6 +161,12 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
     return "The harness's own sandbox is off by design. The tclaude layer enforces "
       + 'sandbox-profile filesystem rules as OS mounts; any environment entries also apply.';
   }
+  if (text(implementation) === SANDBOX_IMPL_STACKED
+    && (harnessName === 'claude' || harnessName === 'codex')) {
+    return "The tclaude outer mounts and the harness's real nested OS sandbox both enforce "
+      + 'the launch policy. A fresh engine round-trip must succeed before launch; '
+      + 'environment entries also apply.';
+  }
   return text(help);
 }
 
@@ -180,9 +187,12 @@ function sandboxImplView(harness, context) {
   const options = Array.isArray(catalog.options) ? catalog.options : [];
   const serverBoundary = !!harness?.tclaude_layer_server_boundary;
   return {
-    showSandboxImpl: harness ? !!harness.can_tclaude_layer : false,
+    showSandboxImpl: !!harness,
     sandboxImplOptions: options,
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
+    sandboxImplHarness: text(harness?.name),
+    sandboxImplCanStacked: !!harness?.can_stacked,
+    sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
     sandboxImplHostAvailable: serverBoundary
       ? catalog.server_host_available !== false
       : catalog.host_available !== false,
@@ -236,6 +246,30 @@ export function setSpawnSandboxImpl(draft, value) {
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
   const value = text(draft.sandboxImpl) || view.sandboxImplDefault;
+  if (value === SANDBOX_IMPL_STACKED) {
+    if (!view.sandboxImplCanStacked) {
+      return {
+        warn: true,
+        text: `Stacked is not available for ${view.sandboxImplHarness || 'this harness'}: `
+          + 'there is no reviewed nested OS-sandbox contract. Apply or launch will refuse; the selection is preserved.',
+      };
+    }
+    const availability = view.sandboxImplStackedAvailability || {};
+    if (view.sandboxImplHostAvailable && availability.available !== false) {
+      return {
+        warn: false,
+        text: 'Experimental. Launch performs a fresh model-free allowed/denied round-trip through '
+          + "the harness's real nested engine inside the exact tclaude outer boundary.",
+      };
+    }
+    const reason = text(availability.unavailable_reason)
+      || view.sandboxImplHostReason
+      || 'this host cannot create both sandbox walls';
+    return {
+      warn: true,
+      text: `Not available on this host: ${reason}. Selecting it will refuse the launch, not fall back.`,
+    };
+  }
   if (value !== SANDBOX_IMPL_TCLAUDE_LAYER) return null;
   if (view.sandboxImplHostAvailable) {
     return {
@@ -494,15 +528,11 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     // Likewise a harness with no auto-compaction knob: keeping a typed window
     // would send a value the daemon rejects with a 400.
     autoCompactWindow: harness?.can_auto_compact_window ? draft.autoCompactWindow : '',
-    // A harness that cannot host the layer must not carry a tclaude-layer
-    // selection across the switch: it would be a 400 the operator never typed.
-    // But dropping it silently is the dialog deciding by erasure, so record what
-    // was discarded and by which harness — the row is about to vanish, and this
-    // notice is the only surface left that can say so.
-    sandboxImpl: harness?.can_tclaude_layer ? draft.sandboxImpl : '',
-    sandboxImplCleared: !harness?.can_tclaude_layer && text(draft.sandboxImpl)
-      ? { implementation: text(draft.sandboxImpl), harness: harness?.display_name || text(harnessName) }
-      : null,
+    // Every harness keeps the operator's selection visible. An incapable
+    // switch becomes an inline refusal warning; the browser never decides by
+    // erasing the value before the launch/apply authority can reject it.
+    sandboxImpl: draft.sandboxImpl,
+    sandboxImplCleared: null,
   };
 }
 

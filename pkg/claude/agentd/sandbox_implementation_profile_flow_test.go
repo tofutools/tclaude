@@ -81,6 +81,25 @@ func TestSpawnProfile_RejectsUnknownSandboxImplementation(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid sandbox implementation")
 }
 
+func TestSpawnProfile_StackedRoundTripsAndOpenCodeRefuses(t *testing.T) {
+	f := newFlow(t)
+	for _, harnessName := range []string{"claude", "codex"} {
+		name := harnessName + "-stacked"
+		rec := createProfile(t, f, map[string]any{
+			"name": name, "harness": harnessName, "sandbox_implementation": "stacked",
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code,
+			"%s stacked profile body=%s", harnessName, rec.Body.String())
+		assert.Equal(t, "stacked", readProfile(t, f, name)["sandbox_implementation"])
+	}
+	rec := createProfile(t, f, map[string]any{
+		"name": "opencode-stacked", "harness": "opencode", "sandbox_implementation": "stacked",
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "missing capability stacked_inner_harness_sandbox")
+	assert.Contains(t, rec.Body.String(), "refusing rather than falling back")
+}
+
 // OpenCode's authoritative server is now the process inside the outer layer,
 // so profile authoring accepts the same implementation pin as the pane-owned
 // harnesses. Host capability remains a launch-time concern.
@@ -210,10 +229,16 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
-		require.Len(t, options, 2)
-		var sawExperimental bool
+		require.Len(t, options, 3)
+		var sawExperimental, sawStacked bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
+			if option["value"] == "stacked" {
+				sawStacked = true
+				assert.Equal(t, "Stacked: tclaude + harness (experimental)", option["label"])
+				assert.Equal(t, true, option["experimental"])
+				continue
+			}
 			if option["value"] != "tclaude-layer" {
 				continue
 			}
@@ -225,6 +250,7 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 				"the platform caveat must be stated, not implied")
 		}
 		assert.True(t, sawExperimental, "the catalog must offer the tclaude layer")
+		assert.True(t, sawStacked, "the catalog must always offer stacked")
 	})
 }
 

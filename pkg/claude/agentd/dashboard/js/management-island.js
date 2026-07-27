@@ -216,14 +216,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       ...current, harness, model: '', effort: '', ...defaults,
       trust_dir: '', remote_control: '', auto_memory: '',
       ssh_workaround: !!h?.can_ssh_workaround,
-      // A harness that cannot host the layer must not keep a tclaude-layer pin
-      // across the switch — saving it would be a 400 the operator never typed.
-      // Dropping it silently would be the editor deciding by erasure, and the
-      // row vanishes with the value, so record what was discarded for the notice.
-      sandbox_implementation: h?.can_tclaude_layer ? current.sandbox_implementation : '',
-      sandbox_implementation_cleared: !h?.can_tclaude_layer && String(current.sandbox_implementation || '').trim()
-        ? { implementation: String(current.sandbox_implementation).trim(), harness: h?.display_name || harness }
-        : null,
+      // Keep every explicit implementation visible across harness switches.
+      // An incapable selection gets an inline refusal warning and the server
+      // remains the apply authority.
+      sandbox_implementation: current.sandbox_implementation,
+      sandbox_implementation_cleared: null,
     }));
   };
   const [helpOpen, setHelpOpen] = useState('');
@@ -235,8 +232,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
   const sandboxHelp = sandboxModeHelpForImplementation(
     hEntry?.sandbox_mode_help?.[draft.sandbox],
-    draft.sandbox_implementation
-      || (hEntry?.can_tclaude_layer ? '' : sandboxImpl?.default || 'harness-builtin'),
+    draft.sandbox_implementation || '',
     draft.harness,
   );
   const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';
@@ -255,8 +251,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const sandboxImplHint = sandboxImplHintFor(
     { sandboxImpl: draft.sandbox_implementation },
     {
-      showSandboxImpl: !!hEntry?.can_tclaude_layer,
+      showSandboxImpl: !!hEntry,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
+      sandboxImplHarness: hEntry?.name || '',
+      sandboxImplCanStacked: !!hEntry?.can_stacked,
+      sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},
       sandboxImplHostAvailable: hEntry?.tclaude_layer_server_boundary
         ? sandboxImpl?.server_host_available !== false
         : sandboxImpl?.host_available !== false,
@@ -277,7 +276,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
       help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_sandbox} />
-    ${profile && hEntry?.can_tclaude_layer && html`<${Row} label="Sandbox impl"
+    ${profile && hEntry && html`<${Row} label="Sandbox impl"
       title=${SANDBOX_IMPL_TITLE}>
       <div class="cron-create-target">
         <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}

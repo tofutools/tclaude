@@ -71,6 +71,79 @@ func TestResolveClaudeSandboxEnabledManagedPolicyOutranksLaunchFlag(t *testing.T
 	}
 }
 
+func TestSnapshotClaudeManagedPolicyFreezesMainAndDropIns(t *testing.T) {
+	_, managed := isolateClaudeSettings(t)
+	writeSettings(t,
+		filepath.Join(managed, "managed-settings.json"),
+		`{"sandbox":{"enabled":true}}`,
+	)
+	writeSettings(t,
+		filepath.Join(managed, "managed-settings.d", "20-strong.json"),
+		`{"sandbox":{"enableWeakerNestedSandbox":false}}`,
+	)
+	writeSettings(t,
+		filepath.Join(managed, "managed-settings.d", "10-fail.json"),
+		`{"sandbox":{"failIfUnavailable":true}}`,
+	)
+
+	files, err := SnapshotClaudeManagedPolicy()
+	if err != nil {
+		t.Fatalf("snapshot managed policy: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("got %d files, want 3", len(files))
+	}
+	got := []string{
+		files[0].Destination,
+		files[1].Destination,
+		files[2].Destination,
+	}
+	want := []string{
+		"managed-settings.d/10-fail.json",
+		"managed-settings.d/20-strong.json",
+		"managed-settings.json",
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("destinations %v, want %v", got, want)
+		}
+	}
+	// The snapshot owns bytes, not paths: a later source change cannot alter
+	// the policy the probe and launch will receive.
+	writeSettings(t,
+		filepath.Join(managed, "managed-settings.json"),
+		`{"sandbox":{"enabled":false}}`,
+	)
+	if strings.Contains(string(files[2].Data), "false") {
+		t.Fatalf("captured managed policy changed with its source")
+	}
+}
+
+func TestSnapshotClaudeManagedPolicyRefusesSymlinkedEntry(t *testing.T) {
+	_, managed := isolateClaudeSettings(t)
+	target := filepath.Join(t.TempDir(), "policy.json")
+	writeSettings(t, target, `{"sandbox":{"enabled":true}}`)
+	if err := os.Symlink(target, filepath.Join(managed, "managed-settings.json")); err != nil {
+		t.Fatalf("symlink managed policy: %v", err)
+	}
+	if _, err := SnapshotClaudeManagedPolicy(); err == nil ||
+		!strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("got %v, want symlink refusal", err)
+	}
+}
+
+func TestManagedPolicyDescriptorOpenRefusesSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "policy.json")
+	writeSettings(t, target, `{"sandbox":{"enabled":true}}`)
+	link := filepath.Join(t.TempDir(), "managed-settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink managed policy: %v", err)
+	}
+	if _, err := readClaudeManagedPolicyFile(link); err == nil {
+		t.Fatal("descriptor open followed a managed-policy symlink")
+	}
+}
+
 func TestResolveClaudeSandboxEnabledInheritReadsPrecedenceChain(t *testing.T) {
 	home, managed := isolateClaudeSettings(t)
 	project := filepath.Join(home, "work", "repo")
@@ -207,47 +280,47 @@ func TestUnsandboxedAutonomyWarnings(t *testing.T) {
 		wantWarning   bool
 		wantSubstring string
 	}{{
-		name: "auto with no sandbox configured is the TCL-586 case",
+		name:    "auto with no sandbox configured is the TCL-586 case",
 		harness: claude, approval: claudePermAuto, sandbox: ClaudeSandboxInherit,
 		wantWarning: true, wantSubstring: "no Claude Code settings file tclaude can see enables",
 	}, {
-		name: "auto with the operator's sandbox enabled is fine",
+		name:    "auto with the operator's sandbox enabled is fine",
 		harness: claude, approval: claudePermAuto, sandbox: ClaudeSandboxInherit,
 		userSandbox: `{"sandbox":{"enabled":true}}`, wantWarning: false,
 	}, {
-		name: "auto with sandbox forced on is fine",
+		name:    "auto with sandbox forced on is fine",
 		harness: claude, approval: claudePermAuto, sandbox: ClaudeSandboxOn, wantWarning: false,
 	}, {
-		name: "auto with sandbox forced off names the launch, not the settings",
+		name:    "auto with sandbox forced off names the launch, not the settings",
 		harness: claude, approval: claudePermAuto, sandbox: ClaudeSandboxOff,
 		userSandbox: `{"sandbox":{"enabled":true}}`,
 		wantWarning: true, wantSubstring: "this launch forces the OS sandbox off",
 	}, {
-		name: "settings that disable the sandbox are named as the cause",
+		name:    "settings that disable the sandbox are named as the cause",
 		harness: claude, approval: claudePermAuto, sandbox: ClaudeSandboxInherit,
 		userSandbox: `{"sandbox":{"enabled":false}}`,
 		wantWarning: true, wantSubstring: "turned off by ~/.claude/settings.json",
 	}, {
-		name: "bypassPermissions does not claim a classifier it does not have",
+		name:    "bypassPermissions does not claim a classifier it does not have",
 		harness: claude, approval: claudePermBypass, sandbox: ClaudeSandboxInherit,
 		wantWarning: true, wantSubstring: "nothing at all stands between it",
 	}, {
 		// acceptEdits holds approvalAutoEdits only: its unattended writes stay
 		// in the working directory, so it is not the pairing this warns about.
-		name: "acceptEdits does not warn",
+		name:    "acceptEdits does not warn",
 		harness: claude, approval: claudePermAccept, sandbox: ClaudeSandboxInherit, wantWarning: false,
 	}, {
-		name: "plan does not warn",
+		name:    "plan does not warn",
 		harness: claude, approval: claudePermPlan, sandbox: ClaudeSandboxInherit, wantWarning: false,
 	}, {
 		// inherit is unknowable; warning on it would fire for every launch that
 		// asked for exactly the operator's own settings.
-		name: "inherit does not warn",
+		name:    "inherit does not warn",
 		harness: claude, approval: claudePermInherit, sandbox: ClaudeSandboxInherit, wantWarning: false,
 	}, {
 		// Codex resolves autonomy and sandbox together at spawn, so it can never
 		// reach this state and must not be second-guessed by a Claude-shaped check.
-		name: "codex never warns",
+		name:    "codex never warns",
 		harness: codex, approval: ApprovalNever, sandbox: SandboxManagedProfile, wantWarning: false,
 	}} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -243,6 +243,95 @@ func claudeManagedSettingsPaths() []string {
 	return append(paths, dropIns...)
 }
 
+// ClaudeManagedPolicyFile is one regular managed-policy JSON file captured for
+// a stacked launch. Destination is relative to Claude's Linux managed settings
+// root; Data is the exact byte snapshot consumed by both the live embedded-SRT
+// probe and the final harness process.
+type ClaudeManagedPolicyFile struct {
+	Destination string
+	Data        []byte
+}
+
+// SnapshotClaudeManagedPolicy captures every managed settings file Claude can
+// consume on Linux. Stacked launches overlay a fresh /etc/claude-code with
+// these bytes, freezing both presence and absence across the probe-to-exec
+// boundary. Any unreadable, malformed, symlinked, or irregular policy entry is
+// a proof failure: trusting the lower-precedence launch settings in that case
+// could award a two-wall lock while managed policy disables or weakens SRT.
+func SnapshotClaudeManagedPolicy() ([]ClaudeManagedPolicyFile, error) {
+	root := claudeManagedSettingsRoot()
+	rootInfo, err := os.Lstat(root)
+	switch {
+	case os.IsNotExist(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("inspect managed policy root %q: %w", root, err)
+	case rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir():
+		return nil, fmt.Errorf("managed policy root %q is not a regular directory", root)
+	}
+
+	var files []ClaudeManagedPolicyFile
+	appendFile := func(path, destination string) error {
+		info, statErr := os.Lstat(path)
+		switch {
+		case os.IsNotExist(statErr):
+			return nil
+		case statErr != nil:
+			return fmt.Errorf("inspect managed policy %q: %w", path, statErr)
+		case info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular():
+			return fmt.Errorf("managed policy %q is not a regular file", path)
+		}
+		data, readErr := readClaudeManagedPolicyFile(path)
+		if readErr != nil {
+			return fmt.Errorf("read managed policy %q: %w", path, readErr)
+		}
+		if !json.Valid(data) {
+			return fmt.Errorf("managed policy %q is not valid JSON", path)
+		}
+		files = append(files, ClaudeManagedPolicyFile{
+			Destination: destination,
+			Data:        data,
+		})
+		return nil
+	}
+	if err := appendFile(
+		filepath.Join(root, "managed-settings.json"),
+		"managed-settings.json",
+	); err != nil {
+		return nil, err
+	}
+
+	dropInRoot := filepath.Join(root, "managed-settings.d")
+	dropInfo, err := os.Lstat(dropInRoot)
+	switch {
+	case os.IsNotExist(err):
+		return files, nil
+	case err != nil:
+		return nil, fmt.Errorf("inspect managed policy drop-in root %q: %w", dropInRoot, err)
+	case dropInfo.Mode()&os.ModeSymlink != 0 || !dropInfo.IsDir():
+		return nil, fmt.Errorf("managed policy drop-in root %q is not a regular directory", dropInRoot)
+	}
+	entries, err := os.ReadDir(dropInRoot)
+	if err != nil {
+		return nil, fmt.Errorf("read managed policy drop-in root %q: %w", dropInRoot, err)
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if err := appendFile(
+			filepath.Join(dropInRoot, entry.Name()),
+			filepath.Join("managed-settings.d", entry.Name()),
+		); err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Destination < files[j].Destination
+	})
+	return files, nil
+}
+
 // ancestorDirs returns dir and each of its parents, nearest first, stopping
 // before stop (when dir is under it) or at the filesystem root. A relative or
 // empty cwd yields nothing rather than a walk rooted at ".": the caller's

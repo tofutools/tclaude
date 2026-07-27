@@ -686,6 +686,12 @@ func TestClaudeSpawner_EnvAndBinary(t *testing.T) {
 	if bin := (claudeSpawner{}).Binary(); bin != "claude" {
 		t.Fatalf("claude binary = %q, want claude", bin)
 	}
+	pinned := (claudeSpawner{}).BuildCommand(SpawnSpec{
+		ExecutablePath: "/run/proved claude",
+	})
+	if !strings.HasPrefix(pinned, "'/run/proved claude'") {
+		t.Fatalf("verified Claude executable was not pinned, got %q", pinned)
+	}
 }
 
 // TestClaudeModels_Delegation checks the catalog forwards to the curated

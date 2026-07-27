@@ -52,6 +52,18 @@ const (
 const darwinSmokeConvID = "77000000-0000-4000-8000-000000000770"
 const darwinSmokeSessionID = "sandbox-v2-darwin-smoke"
 
+func TestStackedSandboxDarwinRefusal(t *testing.T) {
+	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
+		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS")
+	}
+	for _, name := range []string{harness.DefaultName, harness.CodexName} {
+		_, err := StackedSandboxAvailability(harness.MustGet(name))
+		require.ErrorContains(t, err, "stacked requested — refused")
+		require.ErrorContains(t, err, "missing capability stacked_nested_seatbelt")
+		require.ErrorContains(t, err, "refusing rather than falling back")
+	}
+}
+
 func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS to exercise sandbox-exec")

@@ -146,6 +146,10 @@ type SpawnSpec struct {
 	// no permission-profile concept (Claude Code) ignore it. See JOH-207 +
 	// harness.CodexAgentProfile.
 	PermissionProfile string
+	// StrongNestedSandbox is set only by the descriptor-owned stacked-sandbox
+	// contract. Claude emits enableWeakerNestedSandbox=false; Codex pins its
+	// current bwrap backend rather than permitting legacy Landlock.
+	StrongNestedSandbox bool
 	// ApprovalPolicy names the launch-time approval policy for harnesses that
 	// take one (Codex's `--ask-for-approval {untrusted|on-failure|on-request|
 	// never}`). "" omits the flag entirely; the Spawner emits
