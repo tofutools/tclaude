@@ -1254,8 +1254,10 @@ turn. Launch args cannot merge. The handoff is also saved to the successor's
 inbox, inlined into the launch prompt when it fits
 `agent.spawn_inline_max_chars` and referenced by message id when it doesn't —
 the same rule spawn briefings follow. A **Codex** successor keeps the older
-post-connect flow (Codex cannot preset a conv-id and renames out-of-band), as
-does Claude Code under the `agent.spawn_legacy_injection` revert.
+post-connect flow because Codex cannot preset a conv-id and renames
+out-of-band. The `agent.spawn_legacy_injection` escape hatch is deliberately
+ignored for reincarnation: it cannot put a Claude Code successor back onto the
+unsafe two-stream `/rename` + handoff injection path.
 
 **How a clone is named + handed off.** A Claude Code clone given a `follow_up`
 takes the same launch-enrollment path, on both branches: `--no-copy-conv`

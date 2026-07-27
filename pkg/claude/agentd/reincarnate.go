@@ -493,9 +493,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	successorTitle := reincarnateBase(prevTitle)
 	retiredTitle, retiredRename := retiredGenerationTitle(prevTitle)
 
-	// 2c. Launch-enrollment path (TCL-731) — Claude Code, unless the operator
-	// reverted it with the same agent.spawn_legacy_injection escape hatch spawn
-	// honours. The successor's conv-id can be PRESET, so its title and its first
+	// 2c. Launch-enrollment path (TCL-731) — always used by Claude Code. The
+	// agent.spawn_legacy_injection escape hatch applies only to ordinary spawn;
+	// reincarnation cannot safely fall back because it has two ordered inputs
+	// (the title and required handoff) that can collide in an unready pane.
+	// The successor's conv-id can be PRESET, so its title and its first
 	// turn ride in as LAUNCH ARGS (`claude --session-id/--name/[prompt]`) rather
 	// than as two tmux send-keys streams into a pane whose input readiness the
 	// daemon cannot observe. That is the whole bug: a pre-TUI tty buffers the
@@ -508,7 +510,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// and renames out-of-band through ConvStore) keep the inject-after-connect
 	// flow in runReincarnatePostSpawn below, unchanged.
 	successorHarness, _ := harness.Resolve(relaunch.Harness)
-	launchEnroll := successorHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
+	launchEnroll := successorHarness.SupportsLaunchEnrollment()
 	var preConvID string
 	var handoffMsgID int64
 	// handoffInlined records whether the launch prompt baked the whole handoff
@@ -733,8 +735,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// to_agent ” and would drop out of the actor-keyed inbox at the NEXT
 	// rotation without this.
 	//
-	// Legacy path (Codex, or the config revert): queue the follow-up as an
-	// agent_messages row BEFORE the post-spawn goroutine runs — the row is
+	// Post-connect path (Codex): queue the follow-up as an agent_messages row
+	// BEFORE the post-spawn goroutine runs — the row is
 	// written so the rename can land first and the flush delivery picks the
 	// message up next. A solo (groupless) successor still gets a row: group_id 0
 	// is a direct message, the universal-inbox transport. (decodeReincarnateBody
@@ -911,7 +913,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	resp["follow_up"] = followUp
 	// Describe how the successor actually got its name + first turn: baked into
 	// the launch command (launch enrollment) or typed into the pane afterwards
-	// (the legacy inject-after-connect path Codex and the config revert keep).
+	// (the post-connect path Codex requires).
 	named, receives := "will be /renamed to", "then receive"
 	if launchEnroll {
 		named, receives = "launched named", "with"
@@ -1029,13 +1031,13 @@ func buildReincarnationLaunchPrompt(title, handoffAuthor string, msgID int64, fo
 // the plain `<base>` name) immediately, before any work output starts
 // streaming.
 //
-// This is the LEGACY inject-after-connect path, kept for harnesses that cannot
-// preset a conv-id (Codex) and for the agent.spawn_legacy_injection revert. A
-// launch-enrolled successor never reaches it: both the title and the handoff
-// are launch args there, precisely because this path cannot observe whether the
-// pane is reading input yet — a pre-TUI tty buffers the literal text and drops
-// the Enter keypresses, merging the two streams into one line (TCL-731). The
-// settle gap below narrows that window; it does not close it.
+// This is the post-connect path for harnesses that cannot preset a conv-id
+// (currently Codex). A launch-enrolled successor never reaches it: both the
+// title and the handoff are launch args there, precisely because this path
+// cannot observe whether the pane is reading input yet — a pre-TUI tty buffers
+// the literal text and drops the Enter keypresses, merging the two streams into
+// one line (TCL-731). The settle gap below narrows that window; it does not
+// close it.
 //
 // The handoff follow-up was already written as an agent_messages row
 // before this goroutine fired (group_id 0 for a solo successor); flush
