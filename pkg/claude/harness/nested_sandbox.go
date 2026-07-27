@@ -19,7 +19,11 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
-const nestedSandboxIdentityTimeout = 3 * time.Second
+const (
+	nestedSandboxIdentityTimeout = 3 * time.Second
+	nestedProbeEnvPath           = "/usr/bin/env"
+	nestedProbeSystemPath        = "/usr/bin:/bin"
+)
 
 // NestedSandboxContract is the descriptor-owned authority for a real harness
 // sandbox that may run beneath tclaude's outer OS wall. It prepares both the
@@ -200,16 +204,15 @@ func (claudeNestedSandbox) PrepareProbe(
 	allowed := filepath.Join(workspace, "allowed")
 	denied := filepath.Join(sibling, "denied")
 	marker := "TCLAUDE_STACKED_INNER_OK_" + secret
-	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
+	frozenPath := "PATH=" + clcommon.ShellQuoteArg(nestedProbeSystemPath) +
+		"; export PATH"
+	script := frozenPath + "; set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 91; fi" +
 		"; " + claudeAFUnixSeccompProbeScript(probehelper.BoundPath) +
 		"; echo " + clcommon.ShellQuoteArg(marker)
-	pathValue := strings.TrimSpace(os.Getenv("PATH"))
-	if pathValue == "" {
-		pathValue = "/usr/local/bin:/usr/bin:/bin"
-	}
-	startStub := "env -i " + clcommon.ShellQuoteArg(probehelper.BoundPath) +
+	startStub := frozenPath + "; " + nestedProbeEnvPath +
+		" -i " + clcommon.ShellQuoteArg(probehelper.BoundPath) +
 		" " + clcommon.ShellQuoteArg(probehelper.StubMode) +
 		" " + clcommon.ShellQuoteArg(root) +
 		" " + clcommon.ShellQuoteArg(secret) +
@@ -227,8 +230,8 @@ func (claudeNestedSandbox) PrepareProbe(
 		"; sleep 0.05; done" +
 		"; endpoint=$(cat " + clcommon.ShellQuoteArg(readyPath) + ")" +
 		"; case \"$endpoint\" in http://127.0.0.1:*) ;; *) exit 95 ;; esac"
-	runClaude := "; env -i" +
-		" PATH=" + clcommon.ShellQuoteArg(pathValue) +
+	runClaude := "; " + nestedProbeEnvPath + " -i" +
+		" PATH=" + clcommon.ShellQuoteArg(nestedProbeSystemPath) +
 		" HOME=" + clcommon.ShellQuoteArg(configDir) +
 		" CLAUDE_CONFIG_DIR=" + clcommon.ShellQuoteArg(configDir) +
 		" ANTHROPIC_BASE_URL=\"$endpoint/" + secret + "\"" +
@@ -263,7 +266,7 @@ func (claudeNestedSandbox) PrepareProbe(
 }
 
 func claudeAFUnixSeccompProbeScript(helperPath string) string {
-	return "if env -i " + clcommon.ShellQuoteArg(helperPath) +
+	return "if " + nestedProbeEnvPath + " -i " + clcommon.ShellQuoteArg(helperPath) +
 		" " + clcommon.ShellQuoteArg(probehelper.AFUnixMode) +
 		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92" +
 		"; else socket_status=$?; [ \"$socket_status\" -eq 77 ] || " +

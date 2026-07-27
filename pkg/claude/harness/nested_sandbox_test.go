@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 )
 
@@ -253,6 +254,35 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClaudeNestedSandboxProbeIgnoresUntrustedPathEnv(t *testing.T) {
+	fakeBin := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(fakeBin, "env"),
+		[]byte("#!/bin/sh\nexit 77\n"),
+		0o700,
+	))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	probe, err := (claudeNestedSandbox{}).PrepareProbe(
+		t.TempDir(),
+		NestedSandboxExecutable{Path: "/usr/bin/engine"},
+	)
+	require.NoError(t, err)
+	t.Cleanup(probe.Cleanup)
+
+	assert.NotContains(t, probe.Command, fakeBin)
+	assert.GreaterOrEqual(
+		t,
+		strings.Count(probe.Command, nestedProbeEnvPath+" -i"),
+		3,
+	)
+	assert.Contains(
+		t,
+		probe.Command,
+		"PATH="+clcommon.ShellQuoteArg(nestedProbeSystemPath)+"; export PATH",
+	)
 }
 
 func TestCodexNestedProbeKeepsStateHomeOutsideTemporaryWorkspace(t *testing.T) {
