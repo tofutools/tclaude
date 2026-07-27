@@ -1,9 +1,12 @@
 package agentd
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,7 +20,8 @@ const (
 	// remains authoritative while agentd is alive. Avoid turning every changed
 	// rollout observed by the two-second dashboard poll into its own SQLite
 	// commit. Thirty seconds keeps restart replay small while moving routine
-	// checkpoint fsyncs out of the poll's median path.
+	// checkpoint fsyncs out of the poll's median path; graceful shutdown also
+	// flushes any newer in-memory cursor.
 	codexCheckpointPersistMinInterval    = 30 * time.Second
 	codexCheckpointFailureEvictThreshold = 3
 )
@@ -409,6 +413,69 @@ func releaseCodexRuntimeRefresh(sessionID string) {
 	prev := codexContextRefreshMu.last[sessionID]
 	prev.refreshing = false
 	codexContextRefreshMu.last[sessionID] = prev
+}
+
+// flushCodexTelemetryCheckpoints persists follower state deferred by the
+// dashboard-poll write throttle. Callers must first drain the HTTP servers so
+// no read-through refresh can advance a follower while shutdown is snapshotting
+// it. Hard termination still falls back to the most recent periodic checkpoint.
+func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
+	type candidate struct {
+		sessionID          string
+		follower           *harness.CodexTelemetryFollower
+		checkpointData     string
+		checkpointFailures int
+	}
+
+	codexContextRefreshMu.Lock()
+	candidates := make([]candidate, 0, len(codexContextRefreshMu.last))
+	for sessionID, state := range codexContextRefreshMu.last {
+		if state.follower == nil {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			sessionID:          sessionID,
+			follower:           state.follower,
+			checkpointData:     state.checkpointData,
+			checkpointFailures: state.checkpointFailures,
+		})
+	}
+	codexContextRefreshMu.Unlock()
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].sessionID < candidates[j].sessionID
+	})
+
+	saved := 0
+	var errs []error
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		checkpoint, ok, err := candidate.follower.Checkpoint()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: encode checkpoint: %w", candidate.sessionID, err))
+			continue
+		}
+		if !ok || (string(checkpoint) == candidate.checkpointData && candidate.checkpointFailures == 0) {
+			continue
+		}
+		if err := db.SaveCodexTelemetryCheckpoint(candidate.sessionID, checkpoint); err != nil {
+			errs = append(errs, fmt.Errorf("%s: save checkpoint: %w", candidate.sessionID, err))
+			continue
+		}
+		codexContextRefreshMu.Lock()
+		state := codexContextRefreshMu.last[candidate.sessionID]
+		if state.follower == candidate.follower && state.checkpointData == candidate.checkpointData {
+			state.checkpointData = string(checkpoint)
+			state.checkpointFailures = 0
+			state.checkpointPersistedAt = time.Now()
+			codexContextRefreshMu.last[candidate.sessionID] = state
+		}
+		codexContextRefreshMu.Unlock()
+		saved++
+	}
+	return saved, errors.Join(errs...)
 }
 
 func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {

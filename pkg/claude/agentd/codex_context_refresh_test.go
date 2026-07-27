@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -189,6 +190,55 @@ func TestCodexContextRefreshRateLimitsDurableCheckpointWrites(t *testing.T) {
 	require.NotNil(t, updated)
 	assert.NotEqual(t, string(firstCheckpoint.Data), string(updated.Data),
 		"the latest in-memory cursor is persisted once its interval is due")
+}
+
+func TestCodexContextRefreshFlushesDeferredCheckpointOnShutdown(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-shutdown-checkpoint-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354ff"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+	firstCheckpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, firstCheckpoint)
+
+	appendCodexRefreshTokenCount(t, path, 9000, 900)
+	resetCodexRefreshPollThrottleForTest(sessionID)
+	refreshCodexContextSnapshotOnRead(sess, true)
+	deferred, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, deferred)
+	assert.Equal(t, string(firstCheckpoint.Data), string(deferred.Data))
+
+	saved, err := flushCodexTelemetryCheckpoints(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, saved)
+	flushed, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, flushed)
+	assert.NotEqual(t, string(firstCheckpoint.Data), string(flushed.Data),
+		"graceful shutdown flushes the latest cursor even while its interval is deferred")
+
+	// A clean follower does not add another shutdown write.
+	saved, err = flushCodexTelemetryCheckpoints(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, saved)
 }
 
 func TestCodexContextRefreshReplacesMalformedFollowerCheckpoint(t *testing.T) {

@@ -612,6 +612,13 @@ func runServe(p *serveParams) error {
 	if remoteSrv != nil {
 		_ = remoteSrv.Shutdown(ctx)
 	}
+	if saved, err := flushCodexTelemetryCheckpoints(ctx); err != nil {
+		slog.Warn("codex-telemetry: graceful checkpoint flush incomplete",
+			"saved", saved, "error", err, "module", "agentd")
+	} else if saved > 0 {
+		slog.Info("codex-telemetry: flushed checkpoints on graceful shutdown",
+			"saved", saved, "module", "agentd")
+	}
 	return unexpectedTrayErr
 }
 
