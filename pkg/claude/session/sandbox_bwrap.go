@@ -24,6 +24,10 @@ type TclaudeLayerLaunchContract struct {
 	ReadOnlyBinds     []TclaudeLayerReadOnlyBind       `json:"read_only_binds,omitempty"`
 	WriteDirs         []string                         `json:"write_dirs"`
 	ProfileFilesystem []sandboxpolicy.FilesystemGrant  `json:"profile_filesystem"`
+	// MaterializedUnixSocketPaths freezes the exact launch-time socket
+	// observation shared with disclosure. A non-nil empty list means the
+	// authored selectors materialized to no live sockets.
+	MaterializedUnixSocketPaths *[]string `json:"materialized_unix_socket_paths,omitempty"`
 	// omitempty keeps pre-TCL-779 v2 rows byte-compatible for new readers:
 	// absent means no private reopen. An older strict reader encountering the
 	// field refuses the newer contract instead of silently dropping it.
@@ -193,6 +197,10 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 		OpenCodeControl:   input.OpenCodeControl,
+	}
+	if input.Snapshot != nil && input.Snapshot.UnixSocketMaterialization != nil {
+		paths := append([]string(nil), input.Snapshot.UnixSocketMaterialization.Paths...)
+		contract.MaterializedUnixSocketPaths = &paths
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(input.PrivateWriteDirs)
 	if err != nil {
@@ -637,11 +645,22 @@ func tclaudeLayerSpecRenderInput(
 	socketPaths := sandboxpolicy.AgentdSocketFloor()
 	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd &&
 		spec.Effective.UnixSockets != nil {
-		authoredSockets, socketErr := sandboxpolicy.MaterializeUnixSocketPaths(
-			*spec.Effective.UnixSockets)
-		if socketErr != nil {
-			return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
-				fmt.Errorf("materialize tclaude-layer unix socket allowlist: %w", socketErr)
+		var authoredSockets []string
+		if spec.Contract.MaterializedUnixSocketPaths != nil {
+			authoredSockets = *spec.Contract.MaterializedUnixSocketPaths
+			if socketErr := sandboxpolicy.ValidateMaterializedUnixSocketPaths(
+				*spec.Effective.UnixSockets, authoredSockets); socketErr != nil {
+				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+					fmt.Errorf("validate tclaude-layer unix socket allowlist: %w", socketErr)
+			}
+		} else {
+			var socketErr error
+			authoredSockets, socketErr = sandboxpolicy.MaterializeUnixSocketPaths(
+				*spec.Effective.UnixSockets)
+			if socketErr != nil {
+				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
+					fmt.Errorf("materialize tclaude-layer unix socket allowlist: %w", socketErr)
+			}
 		}
 		for _, socket := range authoredSockets {
 			socketPaths = appendUniqueDir(socketPaths, socket)
@@ -1058,6 +1077,11 @@ func bwrapArgsWithDaemonFinal(
 			if !exists {
 				if i == 0 {
 					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket %s", socket)
+				}
+				if i >= len(sandboxpolicy.AgentdSocketFloor()) {
+					return nil, fmt.Errorf(
+						"materialized unix socket %q disappeared before the tclaude-layer adapter rendered it",
+						socket)
 				}
 				continue
 			}

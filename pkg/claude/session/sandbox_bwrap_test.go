@@ -547,6 +547,10 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "AGENT_CACHE", Value: agentDir,
 	}}
+	materializedSocket := filepath.Join(cwd, "build.sock")
+	snapshot.UnixSocketMaterialization = &sandboxpolicy.UnixSocketMaterialization{
+		Paths: []string{materializedSocket},
+	}
 
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 		HarnessName:  harness.OpenCodeName,
@@ -559,6 +563,9 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
+	require.NotNil(t, spec.Contract.MaterializedUnixSocketPaths)
+	assert.Equal(t, []string{materializedSocket},
+		*spec.Contract.MaterializedUnixSocketPaths)
 	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
 	assert.Equal(t, filepath.Join(home, ".opencode"), spec.Contract.StateRoot)
 	assert.Equal(t, []string{filepath.Join(home, ".opencode", "bin")},
@@ -820,6 +827,12 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	}
 	require.Len(t, indicesOfBwrapTriplet(got, "--ro-bind", policySocket), 2,
 		"an authored socket must be bound and repaired beneath the ancestor deny")
+	require.NoError(t, policyListener.Close())
+	_ = os.Remove(policySocket)
+	_, err = bwrapArgsWithDaemonFinal(
+		[]string{stateRoot, workspace}, plan, nil, nil, nil, socketPaths, "", nil)
+	require.ErrorContains(t, err, "disappeared before the tclaude-layer adapter rendered it",
+		"a changed post-materialization surface must refuse instead of diverging from disclosure")
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
 	require.NoError(t, err)

@@ -311,6 +311,10 @@ type Snapshot struct {
 	ResolutionGroupID int64            `json:"resolution_group_id,omitempty"`
 	Effective         EffectiveProfile `json:"effective"`
 	Applied           []AppliedProfile `json:"applied"`
+	// UnixSocketMaterialization is launch-derived, not authored authority. It
+	// freezes the one filesystem observation shared by disclosure and the
+	// target adapter; every fresh launch replaces it.
+	UnixSocketMaterialization *UnixSocketMaterialization `json:"unix_socket_materialization,omitempty"`
 }
 
 // NewSnapshot freezes a resolver result and its stable registry provenance.
@@ -321,6 +325,25 @@ func NewSnapshot(effective EffectiveProfile, applied []AppliedProfile) Snapshot 
 		Effective: cloneEffectiveProfile(effective),
 		Applied:   append([]AppliedProfile(nil), applied...),
 	}
+}
+
+// SetUnixSocketLaunchMaterialization replaces the filesystem-dependent launch
+// surface and its disclosure as one record. Passing nil clears both.
+func SetUnixSocketLaunchMaterialization(
+	snapshot *Snapshot,
+	result *UnixSocketMaterialization,
+) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.UnixSocketMaterialization = cloneUnixSocketMaterialization(result)
+	current := []AccessNotice{}
+	if notice := UnixSocketLaunchNotice(result); notice != nil {
+		current = append(current, *notice)
+	}
+	snapshot.Effective.AccessNotices = ReplaceAccessLaunchNotices(
+		snapshot.Effective.AccessNotices, current...,
+	)
 }
 
 // EmptySnapshot is an explicit resolved policy with no sandbox profiles. It
@@ -381,7 +404,8 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		in.Effective.NetworkAccess != NetworkAccessInherit ||
 		in.Effective.Network != nil ||
 		in.Effective.UnixSockets != nil ||
-		len(in.Effective.AccessNotices) > 0) {
+		len(in.Effective.AccessNotices) > 0 ||
+		in.UnixSocketMaterialization != nil) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
@@ -436,6 +460,17 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !reflect.DeepEqual(normalized.UnixSockets, in.Effective.UnixSockets) {
 		return Snapshot{}, fmt.Errorf("effective sandbox Unix-socket rules changed since resolution")
 	}
+	if in.UnixSocketMaterialization != nil {
+		planned, err := PlannedEffectiveAccessAxes(in.Effective)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf(
+				"revalidate materialized Unix-socket launch surface: %w", err)
+		}
+		if planned.UnixSockets.Mode != AccessModeList {
+			return Snapshot{}, fmt.Errorf(
+				"materialized Unix-socket launch surface requires a rendered socket list")
+		}
+	}
 	agentDirectories, err := normalizeAgentDirectories(in.Effective.AgentDirectories, nil)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox agent directories: %w", err)
@@ -446,6 +481,8 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
+	out.UnixSocketMaterialization = cloneUnixSocketMaterialization(
+		in.UnixSocketMaterialization)
 	return out, nil
 }
 
@@ -561,6 +598,19 @@ func cloneAccessNotices(in []AccessNotice) []AccessNotice {
 		out[i].Tiers = append([]string(nil), notice.Tiers...)
 	}
 	return out
+}
+
+func cloneUnixSocketMaterialization(
+	in *UnixSocketMaterialization,
+) *UnixSocketMaterialization {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Paths = append([]string(nil), in.Paths...)
+	out.Unmaterialized = append([]string(nil), in.Unmaterialized...)
+	out.Entries = append([]int(nil), in.Entries...)
+	return &out
 }
 
 // cloneProfileSource is a value copy: ProfileSource has held only comparable

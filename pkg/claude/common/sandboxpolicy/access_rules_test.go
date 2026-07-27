@@ -63,8 +63,9 @@ func TestUnixSocketLaunchNoticeNamesEveryUnmaterializedEntry(t *testing.T) {
 	assert.Equal(t, []string{missing, regular, unmatched}, materialized.Unmaterialized)
 	assert.Equal(t, []int{0, 1, 2}, materialized.Entries)
 
-	notice, err := UnixSocketLaunchNotice(rules)
+	prepared, err := PrepareUnixSocketLaunch(rules)
 	require.NoError(t, err)
+	notice := UnixSocketLaunchNotice(prepared)
 	require.NotNil(t, notice)
 	assert.Equal(t, AccessNoticeClassLaunch, notice.Class)
 	assert.Equal(t, AccessNoticeReasonUnmaterializedEntries, notice.Reason)
@@ -86,6 +87,55 @@ func TestReplacingLaunchNoticesClearsStaleMaterializationDisclosure(t *testing.T
 
 	assert.Equal(t, []AccessNotice{composition},
 		ReplaceAccessLaunchNotices([]AccessNotice{composition, stale}))
+}
+
+func TestSetUnixSocketLaunchMaterializationKeepsSurfaceAndNoticeTogether(t *testing.T) {
+	snapshot := NewSnapshot(EffectiveProfile{AccessNotices: []AccessNotice{{
+		Class: AccessNoticeClassLaunch, Axis: "unix_sockets",
+		Reason: AccessNoticeReasonUnmaterializedEntries,
+		Effect: AccessNoticeEffectNotMaterialized,
+		Detail: "stale",
+	}}}, nil)
+	result := &UnixSocketMaterialization{
+		Paths:          []string{"/tmp/live.sock"},
+		Unmaterialized: []string{"/tmp/missing.sock"},
+		Entries:        []int{1},
+	}
+
+	SetUnixSocketLaunchMaterialization(&snapshot, result)
+	require.Equal(t, result, snapshot.UnixSocketMaterialization)
+	require.Len(t, snapshot.Effective.AccessNotices, 1)
+	assert.Contains(t, snapshot.Effective.AccessNotices[0].Detail, "/tmp/missing.sock")
+
+	SetUnixSocketLaunchMaterialization(&snapshot, nil)
+	assert.Nil(t, snapshot.UnixSocketMaterialization)
+	assert.Empty(t, snapshot.Effective.AccessNotices)
+}
+
+func TestValidateMaterializedUnixSocketPathsRejectsUnselectedAuthority(t *testing.T) {
+	root := agentipctest.ShortSocketDir(t)
+	allowed := filepath.Join(root, "allowed.sock")
+	unselected := filepath.Join(root, "unselected.sock")
+	for _, path := range []string{allowed, unselected} {
+		listener, err := net.Listen("unix", path)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	rules := UnixSocketRules{
+		Mode: AccessModeList,
+		Allow: []SocketAllowEntry{{
+			Path: allowed,
+		}},
+	}
+	canonicalAllowed, err := filepath.EvalSymlinks(allowed)
+	require.NoError(t, err)
+	canonicalUnselected, err := filepath.EvalSymlinks(unselected)
+	require.NoError(t, err)
+
+	require.NoError(t, ValidateMaterializedUnixSocketPaths(
+		rules, []string{canonicalAllowed}))
+	require.ErrorContains(t, ValidateMaterializedUnixSocketPaths(
+		rules, []string{canonicalUnselected}), "selected by the authored allowlist")
 }
 
 func TestNormalizeAccessRules(t *testing.T) {

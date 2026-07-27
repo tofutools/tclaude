@@ -191,20 +191,19 @@ func planSandboxProfileAccessForLaunch(
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
-	launchNotice, err := sandboxpolicy.UnixSocketLaunchNotice(rendered.UnixSockets)
+	materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(rendered.UnixSockets)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_profile", err.Error()}
 	}
 	launchNotices := []sandboxpolicy.AccessNotice{}
-	if launchNotice != nil {
+	if launchNotice := sandboxpolicy.UnixSocketLaunchNotice(materialization); launchNotice != nil {
 		launchNotices = append(launchNotices, *launchNotice)
 	}
-	snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
-		sandboxpolicy.ReplaceAccessDegradationNotices(
-			snapshot.Effective.AccessNotices, notices...,
-		), launchNotices...,
+	snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+		snapshot.Effective.AccessNotices, notices...,
 	)
+	sandboxpolicy.SetUnixSocketLaunchMaterialization(snapshot, materialization)
 	return append(notices, launchNotices...), nil
 }
 

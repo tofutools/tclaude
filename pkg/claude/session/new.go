@@ -1108,25 +1108,25 @@ func runNew(params *NewParams) error {
 		if planErr != nil {
 			return planErr
 		}
-		launchNotices := []sandboxpolicy.AccessNotice{}
-		launchNotice, launchNoticeErr := sandboxpolicy.UnixSocketLaunchNotice(rendered.UnixSockets)
-		if launchNoticeErr != nil {
-			return launchNoticeErr
+		materialization := launchSandbox.UnixSocketMaterialization
+		if materialization == nil || rendered.UnixSockets.Mode != sandboxpolicy.AccessModeList {
+			var materializationErr error
+			materialization, materializationErr = sandboxpolicy.PrepareUnixSocketLaunch(
+				rendered.UnixSockets)
+			if materializationErr != nil {
+				return materializationErr
+			}
 		}
-		if launchNotice != nil {
-			launchNotices = append(launchNotices, *launchNotice)
-		}
-		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
-			sandboxpolicy.ReplaceAccessDegradationNotices(
-				launchSandbox.Effective.AccessNotices, notices...,
-			), launchNotices...,
+		launchSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			launchSandbox.Effective.AccessNotices, notices...,
 		)
+		sandboxpolicy.SetUnixSocketLaunchMaterialization(launchSandbox, materialization)
 		if effectiveSandbox != nil {
-			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessLaunchNotices(
-				sandboxpolicy.ReplaceAccessDegradationNotices(
-					effectiveSandbox.Effective.AccessNotices, notices...,
-				), launchNotices...,
+			effectiveSandbox.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+				effectiveSandbox.Effective.AccessNotices, notices...,
 			)
+			sandboxpolicy.SetUnixSocketLaunchMaterialization(
+				effectiveSandbox, materialization)
 		}
 		if outerLayer {
 			if err := ValidateTclaudeLayerNetwork(h, launchSandbox.Effective); err != nil {
@@ -1792,10 +1792,12 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
 	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-		ReadDirs:           readDirs,
-		WriteDirs:          writeDirs,
-		DenyDirs:           denyDirs,
-		UnixSockets:        sandboxSnapshotUnixSockets(effectiveSandbox),
+		ReadDirs:    readDirs,
+		WriteDirs:   writeDirs,
+		DenyDirs:    denyDirs,
+		UnixSockets: sandboxSnapshotUnixSockets(effectiveSandbox),
+		MaterializedUnixSocketPaths: sandboxSnapshotMaterializedUnixSocketPaths(
+			effectiveSandbox),
 		RequireSplitPolicy: requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
@@ -1867,6 +1869,16 @@ func sandboxSnapshotUnixSockets(
 	rules := *snapshot.Effective.UnixSockets
 	rules.Allow = append([]sandboxpolicy.SocketAllowEntry(nil), rules.Allow...)
 	return &rules
+}
+
+func sandboxSnapshotMaterializedUnixSocketPaths(
+	snapshot *sandboxpolicy.Snapshot,
+) *[]string {
+	if snapshot == nil || snapshot.UnixSocketMaterialization == nil {
+		return nil
+	}
+	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
+	return &paths
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {

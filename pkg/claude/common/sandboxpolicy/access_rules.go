@@ -610,9 +610,9 @@ type UnixSocketAccess struct {
 // selectors that did not resolve to any live Unix socket, so launch surfaces
 // can disclose the narrower rendered surface.
 type UnixSocketMaterialization struct {
-	Paths          []string
-	Unmaterialized []string
-	Entries        []int
+	Paths          []string `json:"paths,omitempty"`
+	Unmaterialized []string `json:"unmaterialized,omitempty"`
+	Entries        []int    `json:"entries,omitempty"`
 }
 
 // ResolveUnixSocketAccess injects the non-removable agentd floor after
@@ -732,17 +732,58 @@ func MaterializeUnixSocketPaths(rules UnixSocketRules) ([]string, error) {
 	return result.Paths, err
 }
 
-// UnixSocketLaunchNotice reports selectors omitted from the launch-time
-// rendered surface. This is launch information, not a degradation-ladder
-// outcome: the supported allowlist remains enforced over the sockets that
-// actually exist.
-func UnixSocketLaunchNotice(rules UnixSocketRules) (*AccessNotice, error) {
+// PrepareUnixSocketLaunch resolves a rendered socket-list axis exactly once
+// for handoff to both disclosure and the target adapter. A non-list axis has no
+// materialized launch surface.
+func PrepareUnixSocketLaunch(rules UnixSocketRules) (*UnixSocketMaterialization, error) {
+	if rules.Mode != AccessModeList {
+		return nil, nil
+	}
 	result, err := MaterializeUnixSocketList(rules)
 	if err != nil {
 		return nil, err
 	}
-	if len(result.Unmaterialized) == 0 {
-		return nil, nil
+	return &result, nil
+}
+
+// ValidateMaterializedUnixSocketPaths ensures a frozen launch surface cannot
+// introduce a path outside the authored list. Newly appeared matching sockets
+// are deliberately ignored: the frozen paths, and their notice, remain the
+// one surface handed to the adapter.
+func ValidateMaterializedUnixSocketPaths(
+	rules UnixSocketRules,
+	paths []string,
+) error {
+	if rules.Mode != AccessModeList {
+		return fmt.Errorf(
+			"materialized Unix-socket paths require unix_sockets mode %q",
+			AccessModeList)
+	}
+	current, err := MaterializeUnixSocketList(rules)
+	if err != nil {
+		return err
+	}
+	allowed := make(map[string]struct{}, len(current.Paths))
+	for _, path := range current.Paths {
+		allowed[path] = struct{}{}
+	}
+	for _, path := range paths {
+		if _, ok := allowed[path]; !ok {
+			return fmt.Errorf(
+				"materialized Unix-socket path %q is no longer a live socket selected by the authored allowlist",
+				path)
+		}
+	}
+	return nil
+}
+
+// UnixSocketLaunchNotice reports selectors omitted from the launch-time
+// rendered surface. This is launch information, not a degradation-ladder
+// outcome: the supported allowlist remains enforced over the sockets that
+// actually exist.
+func UnixSocketLaunchNotice(result *UnixSocketMaterialization) *AccessNotice {
+	if result == nil || len(result.Unmaterialized) == 0 {
+		return nil
 	}
 	quoted := make([]string, 0, len(result.Unmaterialized))
 	for _, selector := range result.Unmaterialized {
@@ -758,7 +799,7 @@ func UnixSocketLaunchNotice(rules UnixSocketRules) (*AccessNotice, error) {
 				"missing, unmatched, or non-socket paths are not reachable",
 			strings.Join(quoted, ", ")),
 		Entries: append([]int(nil), result.Entries...),
-	}, nil
+	}
 }
 
 // intersectNetworkRules composes two already-normalized rules without ever

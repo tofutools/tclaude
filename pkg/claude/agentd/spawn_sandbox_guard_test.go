@@ -46,6 +46,10 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 		}
 	}
 	require.NotNil(t, notice)
+	require.NotNil(t, snapshot.UnixSocketMaterialization)
+	require.Empty(t, snapshot.UnixSocketMaterialization.Paths)
+	require.Equal(t, []string{missing, regular, unmatched},
+		snapshot.UnixSocketMaterialization.Unmaterialized)
 	require.Contains(t, snapshot.Effective.AccessNotices, *notice)
 	require.Equal(t, sandboxpolicy.AccessNoticeClassLaunch, notice.Class)
 	require.Equal(t, sandboxpolicy.AccessNoticeReasonUnmaterializedEntries, notice.Reason)

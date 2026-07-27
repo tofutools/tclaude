@@ -199,6 +199,14 @@ func tclaudeLayerCommand(
 		)
 	}
 	for i := range socketPaths {
+		if i >= len(sandboxpolicy.AgentdSocketFloor()) {
+			info, statErr := os.Lstat(socketPaths[i])
+			if statErr != nil || info.Mode()&os.ModeSocket == 0 {
+				return "", fmt.Errorf(
+					"materialized unix socket %q changed before the tclaude-layer adapter rendered it",
+					socketPaths[i])
+			}
+		}
 		socketPaths[i] = canonicalSeatbeltOwnedPath(socketPaths[i])
 	}
 	profile, params, err := renderSeatbeltProfile(
