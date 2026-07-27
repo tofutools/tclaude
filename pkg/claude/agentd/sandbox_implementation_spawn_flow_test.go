@@ -281,7 +281,8 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 
 	override := harness.ClaudeSandboxOff
 	require.NoError(t, db.SetTemporarySandboxModeForConv(
-		source.ConvID, harness.ClaudeSandboxOn, "", &override,
+		source.ConvID, harness.ClaudeSandboxOn,
+		string(sandboxpolicy.ImplementationTclaudeLayer), "", &override,
 	))
 
 	successor := f.AsHuman().Reincarnate(source.ConvID, "continue").NewConv
@@ -294,6 +295,129 @@ func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 	require.True(t, ok, "reincarnation must record the successor's sandbox mode")
 	assert.Equal(t, harness.ClaudeSandboxOff, mode,
 		"temporary off must also disable the harness-native sandbox")
+}
+
+func TestSandboxRestart_RestoresExactDurableImplementation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
+	for _, implementation := range []sandboxpolicy.Implementation{
+		sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationStacked,
+	} {
+		t.Run(string(implementation), func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+
+			source := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   "restore-layered-source",
+				"harness":                harness.DefaultName,
+				"sandbox":                harness.ClaudeSandboxOn,
+				"sandbox_implementation": string(implementation),
+			})
+			require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+			beforeUnlock, err := db.AgentRelaunchProfileForConv(source.ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, beforeUnlock)
+			require.NotNil(t, beforeUnlock.SandboxImplementation)
+			require.Equal(t, string(implementation), *beforeUnlock.SandboxImplementation,
+				"spawn must freeze the resolved implementation before any restart")
+			f.SetSessionStatus(source.ConvID, "idle")
+			mux := agentd.BuildDashboardHandlerForTest()
+
+			unlock := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+				"/api/agents/"+source.ConvID+"/sandbox-restart",
+				map[string]any{"action": "unlock"}))
+			require.Equalf(t, http.StatusOK, unlock.Code, "unlock body=%s", unlock.Body.String())
+			temporary, ok := f.World.SpawnSandboxImplementation(source.ConvID)
+			require.True(t, ok, "temporary restart must reach the simulated spawner")
+			assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), temporary,
+				"temporary launch must remove every TClaude outer layer")
+			duringTemporary, err := db.AgentRelaunchProfileForConv(source.ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, duringTemporary)
+			require.NotNil(t, duringTemporary.SandboxImplementation)
+			assert.Equal(t, string(implementation), *duringTemporary.SandboxImplementation,
+				"temporary process telemetry must not replace the durable implementation")
+			f.SetSessionStatus(source.ConvID, "idle")
+
+			restore := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+				"/api/agents/"+source.ConvID+"/sandbox-restart",
+				map[string]any{"action": "restore"}))
+			require.Equalf(t, http.StatusOK, restore.Code, "restore body=%s", restore.Body.String())
+			afterRestore, err := db.AgentRelaunchProfileForConv(source.ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, afterRestore)
+			require.NotNil(t, afterRestore.SandboxImplementation)
+			assert.Equal(t, string(implementation), *afterRestore.SandboxImplementation,
+				"restore must leave the durable implementation intact")
+			restored, ok := f.World.SpawnSandboxImplementation(source.ConvID)
+			require.True(t, ok, "restore restart must reach the simulated spawner")
+			assert.Equal(t, string(implementation), restored,
+				"restore must replay the exact durable implementation combination")
+			mode, ok := f.World.SpawnSandbox(source.ConvID)
+			require.True(t, ok, "restore restart must record the sandbox mode")
+			assert.Equal(t, harness.ClaudeSandboxOn, mode,
+				"restore must replay the normal harness sandbox mode")
+		})
+	}
+}
+
+func TestSandboxRestart_RestoresAfterTemporaryReincarnation(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.SetStackedSandboxHostAvailabilityForTest(
+		func(*harness.Harness) error { return nil },
+	))
+	for _, implementation := range []sandboxpolicy.Implementation{
+		sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationStacked,
+	} {
+		t.Run(string(implementation), func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			source := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   "reincarnated-restore-source",
+				"harness":                harness.DefaultName,
+				"sandbox":                harness.ClaudeSandboxOn,
+				"sandbox_implementation": string(implementation),
+			})
+			require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+			f.SetSessionStatus(source.ConvID, "idle")
+			mux := agentd.BuildDashboardHandlerForTest()
+			unlock := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+				"/api/agents/"+source.ConvID+"/sandbox-restart",
+				map[string]any{"action": "unlock"}))
+			require.Equalf(t, http.StatusOK, unlock.Code, "unlock body=%s", unlock.Body.String())
+
+			// Reproduce the deployed projection damage before rotating to the
+			// successor: the normal implementation collapsed to harness-builtin
+			// while the temporary override itself remained agent-keyed.
+			profile, err := db.AgentRelaunchProfileForConv(source.ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, profile)
+			builtin := string(sandboxpolicy.ImplementationHarnessBuiltin)
+			profile.SandboxImplementation = &builtin
+			agentID, err := db.AgentIDForConv(source.ConvID)
+			require.NoError(t, err)
+			require.NotEmpty(t, agentID)
+			require.NoError(t, db.SetAgentRelaunchProfile(agentID, *profile))
+
+			f.SetSessionStatus(source.ConvID, "idle")
+			successor := f.AsHuman().Reincarnate(source.ConvID, "continue").NewConv
+			require.NotEmpty(t, successor)
+			f.SetSessionStatus(successor, "idle")
+
+			restore := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+				"/api/agents/"+successor+"/sandbox-restart",
+				map[string]any{"action": "restore"}))
+			require.Equalf(t, http.StatusOK, restore.Code, "restore body=%s", restore.Body.String())
+			restored, ok := f.World.SpawnSandboxImplementation(successor)
+			require.True(t, ok, "successor restore must reach the simulated spawner")
+			assert.Equal(t, string(implementation), restored,
+				"restore must recover the exact implementation across agent generations")
+		})
+	}
 }
 
 func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {

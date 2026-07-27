@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
@@ -205,6 +206,37 @@ func TestRelaunchProfileForSpawn_FreezesToolGovernance(t *testing.T) {
 	})
 	require.NotNil(t, profile.ToolGovernance)
 	assert.Equal(t, "ask", *profile.ToolGovernance)
+}
+
+func TestRelaunchProfileForSpawn_FreezesSandboxImplementation(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		implementation string
+		want           string
+	}{
+		{
+			name: "default",
+			want: string(sandboxpolicy.ImplementationHarnessBuiltin),
+		},
+		{
+			name:           "tclaude layer",
+			implementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+			want:           string(sandboxpolicy.ImplementationTclaudeLayer),
+		},
+		{
+			name:           "stacked",
+			implementation: string(sandboxpolicy.ImplementationStacked),
+			want:           string(sandboxpolicy.ImplementationStacked),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := relaunchProfileForSpawn(spawnParams{
+				SandboxImplementation: tc.implementation,
+			})
+			require.NotNil(t, profile.SandboxImplementation)
+			assert.Equal(t, tc.want, *profile.SandboxImplementation)
+		})
+	}
 }
 
 // TestBuildSpawnWelcome_IncludesIdentityFields confirms the welcome

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // populatedRelaunchProfile fills every pointer field with a value derived from
@@ -110,6 +111,78 @@ func TestRecordedLaunchPostureForConv_NoRecordAtAll(t *testing.T) {
 	posture, err := RecordedLaunchPostureForConv("never-seen-conv")
 	require.NoError(t, err)
 	assert.Nil(t, posture)
+}
+
+func TestRecordedLaunchPostureForConv_TemporaryOffUsesProcessImplementation(t *testing.T) {
+	setupTestDB(t)
+	const convID = "posture-temporary-off"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	normalMode := "on"
+	temporaryMode := "off"
+	implementation := string(sandboxpolicy.ImplementationTclaudeLayer)
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, SandboxMode: &normalMode,
+		SandboxImplementation: &implementation,
+		TemporarySandboxMode:  &temporaryMode,
+	}))
+
+	posture, err := RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, posture)
+	require.NotNil(t, posture.SandboxImplementation)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		*posture.SandboxImplementation,
+		"session new -r must disable the outer layer while temporary off is active")
+	stable, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, stable)
+	assert.Equal(t, implementation, *stable.SandboxImplementation,
+		"the process posture must not mutate the exact restorable combination")
+}
+
+func TestRecordedLaunchPostureForConv_RecoversFailedTemporaryRestore(t *testing.T) {
+	setupTestDB(t)
+	const convID = "posture-failed-restore"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	layered := string(sandboxpolicy.ImplementationTclaudeLayer)
+	builtin := string(sandboxpolicy.ImplementationHarnessBuiltin)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "posture-before-unlock", ConvID: convID, Cwd: "/tmp/posture",
+		Harness: DefaultHarness, SandboxMode: "off",
+		SandboxImplementation: layered,
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "posture-temporary-unlock", ConvID: convID, Cwd: "/tmp/posture",
+		Harness: DefaultHarness, SandboxMode: "off",
+		SandboxImplementation: builtin,
+		SandboxModeSource:     TemporarySandboxModeSource,
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "posture-failed-restore-row", ConvID: convID, Cwd: "/tmp/posture",
+		Harness: DefaultHarness, SandboxMode: "off",
+		SandboxImplementation: builtin,
+	}))
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version:                RelaunchProfileVersion,
+		SandboxMode:            stringPtr("off"),
+		SandboxImplementation:  &builtin,
+		ApprovalPolicy:         stringPtr("default"),
+		ApprovalAutoReview:     boolPtr(false),
+		AskUserQuestionTimeout: stringPtr(""),
+		RemoteControl:          boolPtr(false),
+		AutoMemory:             boolPtr(false),
+		ContextFeatures:        &map[string]string{},
+		AutoCompactWindow:      stringPtr(""),
+	}))
+
+	posture, err := RecordedLaunchPostureForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, posture)
+	require.NotNil(t, posture.SandboxImplementation)
+	assert.Equal(t, layered, *posture.SandboxImplementation,
+		"direct session resume must recover the pre-unlock outer layer")
 }
 
 // TestRecordedLaunchPostureForConv_AgentIntentWinsFieldByField pins the tier

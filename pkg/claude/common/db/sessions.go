@@ -515,7 +515,15 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 			p.SandboxMode = *durable.SandboxMode
 		}
 		if durable.SandboxImplementation != nil {
-			p.SandboxImplementation = *durable.SandboxImplementation
+			implementation, implementationErr :=
+				NormalSandboxImplementationForConv(convID, durable)
+			if implementationErr != nil {
+				return SessionLaunchProfile{}, implementationErr
+			}
+			if durable.TemporarySandboxMode != nil {
+				implementation = sandboxpolicy.ImplementationHarnessBuiltin
+			}
+			p.SandboxImplementation = string(implementation)
 		}
 		if durable.SandboxModeSource != nil {
 			p.SandboxModeSource = *durable.SandboxModeSource
@@ -566,6 +574,97 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	}
 	defer func() { _ = rows.Close() }()
 	return scanSessions(rows)
+}
+
+// PreTemporaryUnlockSandboxImplementationForConv returns the newest recorded
+// outer-layer implementation that predates the tail temporary-unlock
+// transition. Stable-agent lookup spans every conversation generation because
+// the override survives reincarnation while the only remaining outer-layer
+// proof may belong to its predecessor. Requiring the attributed unlock at the
+// history tail is the damage fingerprint: an operator who deliberately changed
+// a formerly layered agent to harness-builtin must not have that later choice
+// undone merely because an older TClaude session exists.
+func PreTemporaryUnlockSandboxImplementationForConv(convID string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	scope := "conv_id = ?"
+	scopeValue := strings.TrimSpace(convID)
+	agentID, err := AgentIDForConv(convID)
+	if err != nil {
+		return "", err
+	}
+	if agentID != "" {
+		scope = `conv_id IN (
+			SELECT conv_id FROM agent_conversations WHERE agent_id = ?
+		)`
+		scopeValue = agentID
+	}
+	rows, err := d.Query(`SELECT sandbox_implementation, sandbox_mode_source
+		FROM sessions
+		WHERE `+scope+`
+		ORDER BY rowid DESC`, scopeValue)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	type evidence struct {
+		implementation string
+		source         string
+	}
+	next := func() (evidence, bool, error) {
+		if !rows.Next() {
+			return evidence{}, false, rows.Err()
+		}
+		var item evidence
+		if err := rows.Scan(&item.implementation, &item.source); err != nil {
+			return evidence{}, false, err
+		}
+		return item, true, nil
+	}
+	latest, ok, err := next()
+	if err != nil || !ok {
+		return "", err
+	}
+	if latest.implementation != string(sandboxpolicy.ImplementationHarnessBuiltin) {
+		return "", nil
+	}
+	temporaryTail := latest.source == TemporarySandboxModeSource
+	for {
+		item, itemOK, itemErr := next()
+		if itemErr != nil || !itemOK {
+			return "", itemErr
+		}
+		switch item.implementation {
+		case string(sandboxpolicy.ImplementationHarnessBuiltin):
+			switch {
+			case item.source == TemporarySandboxModeSource:
+				temporaryTail = true
+			case temporaryTail:
+				// Once the scan reaches the temporary launch, an earlier
+				// non-temporary harness-builtin row proves harness-builtin was
+				// already the normal posture before this unlock. Do not keep
+				// walking into unrelated older outer-layer history.
+				return "", nil
+			default:
+				// One or more plain-OFF relaunches may follow the faulty
+				// restore before the operator upgrades. They remain part of
+				// the damaged tail until its temporary-attributed row appears.
+				continue
+			}
+		case string(sandboxpolicy.ImplementationTclaudeLayer),
+			string(sandboxpolicy.ImplementationStacked):
+			if !temporaryTail {
+				return "", nil
+			}
+			return item.implementation, nil
+		default:
+			// An unknown implementation breaks the launch-history tail. Do not
+			// infer across evidence this version cannot interpret.
+			return "", nil
+		}
+	}
 }
 
 // LatestInsertedSessionIDForConv returns the newest distinct session row for a

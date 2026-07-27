@@ -205,16 +205,18 @@ func SetAgentRelaunchProfile(agentID string, profile AgentRelaunchProfile) error
 }
 
 // SetTemporarySandboxMode atomically sets or clears a stable agent's temporary
-// sandbox override. When enabling it, normalMode/normalSource freeze the
-// already-resolved normal launch posture if the agent's durable fields are
-// still unknown (legacy agents); this prevents the first overridden session
-// projection from becoming the only remaining sandbox evidence.
+// sandbox override. When enabling it, normalMode/normalImplementation/
+// normalSource freeze the already-resolved normal launch posture if the
+// agent's durable fields are still unknown (legacy agents); this prevents the
+// first overridden session projection from becoming the only remaining
+// sandbox evidence.
 //
 // A nil override clears the temporary state. A non-nil override is stored
 // verbatim after lifecycle-layer validation.
 func SetTemporarySandboxMode(
 	agentID string,
 	normalMode string,
+	normalImplementation string,
 	normalSource string,
 	override *string,
 ) error {
@@ -256,11 +258,24 @@ func SetTemporarySandboxMode(
 		if profile.SandboxMode == nil {
 			profile.SandboxMode = stringPtr(strings.TrimSpace(normalMode))
 		}
+		if profile.SandboxImplementation == nil {
+			profile.SandboxImplementation = stringPtr(strings.TrimSpace(normalImplementation))
+		}
 		if profile.SandboxModeSource == nil {
 			profile.SandboxModeSource = stringPtr(strings.TrimSpace(normalSource))
 		}
 		profile.TemporarySandboxMode = &mode
 	} else {
+		// The restore caller passes the already-resolved normal implementation.
+		// Besides keeping a normal clear idempotent, this repairs temporary
+		// overrides created by versions that projected harness-builtin over the
+		// durable tclaude-layer/stacked value; lifecycle recovered that value
+		// from the pre-override session history before reaching this write.
+		if profile.TemporarySandboxMode != nil &&
+			strings.TrimSpace(normalImplementation) != "" {
+			profile.SandboxImplementation =
+				stringPtr(strings.TrimSpace(normalImplementation))
+		}
 		profile.TemporarySandboxMode = nil
 	}
 	encoded, err := encodeRelaunchProfile(*profile)
@@ -279,6 +294,7 @@ func SetTemporarySandboxMode(
 func SetTemporarySandboxModeForConv(
 	convID string,
 	normalMode string,
+	normalImplementation string,
 	normalSource string,
 	override *string,
 ) error {
@@ -289,7 +305,9 @@ func SetTemporarySandboxModeForConv(
 	if agentID == "" {
 		return fmt.Errorf("SetTemporarySandboxModeForConv: conversation %s is not an agent", convID)
 	}
-	return SetTemporarySandboxMode(agentID, normalMode, normalSource, override)
+	return SetTemporarySandboxMode(
+		agentID, normalMode, normalImplementation, normalSource, override,
+	)
 }
 
 // TemporarySandboxModeForConv reports the active reversible sandbox override
@@ -651,8 +669,6 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 			// survive a projection that replaced the mode would credit the new
 			// mode to whatever chose the old one.
 			merged.SandboxModeSource = agent.SandboxModeSource
-		}
-		if agent.SandboxImplementation != nil {
 			merged.SandboxImplementation = agent.SandboxImplementation
 		}
 		merged.ApprovalPolicy = agent.ApprovalPolicy

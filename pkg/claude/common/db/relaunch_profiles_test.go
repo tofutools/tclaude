@@ -353,6 +353,7 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	agentID, _, err := EnsureAgentForConv(oldConv, "test")
 	require.NoError(t, err)
 	normalMode, normalSource := "on", "group default profile \"confined\""
+	normalImplementation := "tclaude-layer"
 	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
 		Version: RelaunchProfileVersion, SandboxMode: &normalMode,
 		SandboxModeSource: &normalSource,
@@ -360,7 +361,7 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 
 	override := "off"
 	require.NoError(t, SetTemporarySandboxModeForConv(
-		oldConv, normalMode, normalSource, &override,
+		oldConv, normalMode, normalImplementation, normalSource, &override,
 	))
 	mode, active, err := TemporarySandboxModeForAgent(agentID)
 	require.NoError(t, err)
@@ -372,15 +373,21 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "sandbox-override-session", ConvID: oldConv, Cwd: "/tmp/unlocked",
 		Harness: DefaultHarness, Status: "idle", SandboxMode: override,
+		SandboxImplementation: "harness-builtin",
 	}))
 	profile, err := AgentRelaunchProfileForConv(oldConv)
 	require.NoError(t, err)
 	require.NotNil(t, profile)
 	require.NotNil(t, profile.SandboxMode)
 	assert.Equal(t, normalMode, *profile.SandboxMode)
+	require.NotNil(t, profile.SandboxImplementation)
+	assert.Equal(t, normalImplementation, *profile.SandboxImplementation,
+		"process-only implementation must not replace the exact normal implementation")
 	launch, err := SessionLaunchProfileForConv(oldConv)
 	require.NoError(t, err)
 	assert.Equal(t, override, launch.SandboxMode)
+	assert.Equal(t, "harness-builtin", launch.SandboxImplementation,
+		"non-daemon relaunches must not re-enable the durable outer layer while temporarily off")
 	assert.Equal(t, TemporarySandboxModeSource, launch.SandboxModeSource)
 
 	_, err = RotateAgentConv(oldConv, newConv, "clear")
@@ -390,7 +397,7 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	assert.True(t, active, "the override follows the stable agent, not a conversation generation")
 	assert.Equal(t, override, mode)
 
-	require.NoError(t, SetTemporarySandboxModeForConv(newConv, "", "", nil))
+	require.NoError(t, SetTemporarySandboxModeForConv(newConv, "", "", "", nil))
 	_, active, err = TemporarySandboxModeForAgent(agentID)
 	require.NoError(t, err)
 	assert.False(t, active)
@@ -399,10 +406,12 @@ func TestTemporarySandboxModeIsAgentKeyedAcrossRotationAndProjection(t *testing.
 	require.NotNil(t, profile)
 	assert.Equal(t, normalMode, *profile.SandboxMode)
 	assert.Equal(t, normalSource, *profile.SandboxModeSource)
+	assert.Equal(t, normalImplementation, *profile.SandboxImplementation)
 	launch, err = SessionLaunchProfileForConv(newConv)
 	require.NoError(t, err)
 	assert.Equal(t, normalMode, launch.SandboxMode)
 	assert.Equal(t, normalSource, launch.SandboxModeSource)
+	assert.Equal(t, normalImplementation, launch.SandboxImplementation)
 }
 
 func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {

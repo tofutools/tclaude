@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -701,6 +702,15 @@ func SetHumanMessageAttachmentUploadTimerForTest(start func(time.Duration, func(
 // into each other).
 func SetTclaudeLayerHostAvailabilityForTest(fn func() error) func() {
 	return SetTclaudeLayerHostAvailabilitiesForTest(fn, fn)
+}
+
+// SetStackedSandboxHostAvailabilityForTest swaps the inner-engine probe used
+// by the launch gate so flow tests do not depend on a real harness executable
+// being installed on the test host.
+func SetStackedSandboxHostAvailabilityForTest(fn func(*harness.Harness) error) func() {
+	prev := stackedSandboxHostAvailability
+	stackedSandboxHostAvailability = fn
+	return func() { stackedSandboxHostAvailability = prev }
 }
 
 // SetStackedAppArmorLikelyForTest swaps the host heuristic behind the stacked
