@@ -461,13 +461,14 @@ func runHookCallback() error {
 // stdout receives any hook decision document; it is the hook's real stdout
 // on the direct path and a response buffer on the brokered one.
 func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
-	// PreCompact is a gate, not a status transition: it may write a
-	// {"decision":"block"} back to Claude Code to refuse an early
-	// auto-compaction. Handle it on its own path (it does not flow
-	// through ApplyHook's status machinery). Codex still reports its
-	// active model on this event, so persist it first when the hook
-	// belongs to the tracked main conversation; a blocked compaction has
-	// no PostCompact backstop.
+	// PreCompact is both a gate and, when allowed, a status transition. It
+	// may write a {"decision":"block"} back to Claude Code to refuse an
+	// early auto-compaction, in which case the visible status must remain
+	// unchanged because no compaction follows. Handle it on its own path
+	// (it does not flow through ApplyHook's ordinary status machinery).
+	// Codex still reports its active model on this event, so persist it
+	// first when the hook belongs to the tracked main conversation; a
+	// blocked compaction has no PostCompact backstop.
 	if input.HookEventName == "PreCompact" {
 		sessionKey := envSessionID
 		if sessionKey == "" {
@@ -480,10 +481,19 @@ func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 			}
 			defer unlock()
 		}
-		if state, err := LoadSessionState(envSessionID); err == nil {
+		state, stateErr := findTrackedPreCompactSession(envSessionID, input.ConvID)
+		if stateErr == nil {
 			persistCodexHookModel(state, input)
 		}
-		return decidePreCompact(input, envSessionID, amb, stdout)
+		blocked, err := decidePreCompact(input, envSessionID, amb, stdout)
+		if err != nil || blocked || stateErr != nil ||
+			!hookBelongsToTrackedMainConversation(state, input) {
+			return err
+		}
+		state.Status = StatusWorking
+		state.StatusDetail = "compacting"
+		state.LastHook = time.Now()
+		return SaveSessionState(state)
 	}
 
 	return applyHook(ctx, input, envSessionID, amb)
@@ -638,6 +648,18 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	}
 	if state.Cwd == "" && input.Cwd != "" {
 		state.Cwd = input.Cwd
+	}
+
+	// A permitted PreCompact paints "working: compacting". Any later
+	// accepted hook proves that phase is over (PostCompact is the usual
+	// boundary, but a failed/aborted compaction may only produce another
+	// turn hook). Clear the phase eagerly so even an event whose arm below
+	// only stamps last_hook cannot leave the dashboard wedged on it.
+	if state.Status == StatusWorking && state.StatusDetail == "compacting" {
+		state.StatusDetail = ""
+		if err := SaveSessionState(state); err != nil {
+			slog.Warn("failed to clear compacting status", "error", err, "module", "hooks")
+		}
 	}
 
 	// Capture previous status for notification
@@ -1362,6 +1384,41 @@ func agentMessagePrompt(prompt string) (messageID int64, inline bool, ok bool) {
 	return messageID, strings.Contains(match[0], "; delivery: inline"), true
 }
 
+// findTrackedPreCompactSession resolves only an existing row. Unlike the
+// ordinary hook path it must not auto-register an unknown conversation merely
+// because it is about to compact, but an already auto-registered conversation
+// (which has no TCLAUDE_SESSION_ID) should still expose its compacting phase.
+func findTrackedPreCompactSession(envSessionID, convID string) (*SessionState, error) {
+	if envSessionID != "" {
+		return LoadSessionState(envSessionID)
+	}
+	if convID == "" {
+		return nil, nil
+	}
+	return FindSessionByConvID(convID)
+}
+
+// hookBelongsToTrackedMainConversation is the attribution gate for exceptional
+// hook paths that bypass applyHook's ordinary foreign-process and sub-agent
+// guards. A pending conversation is a previously announced /clear or /resume
+// rotation and is therefore allowed; an unannounced mismatch is a child process
+// that inherited the host's TCLAUDE_SESSION_ID.
+func hookBelongsToTrackedMainConversation(state *SessionState, input HookCallbackInput) bool {
+	if state == nil || state.ID == "" || state.Harness == ShellHarnessName || input.AgentID != "" {
+		return false
+	}
+	if state.ConvID == "" || input.ConvID == "" || input.ConvID == state.ConvID {
+		return true
+	}
+	pending, err := db.GetSessionPendingConv(state.ID)
+	if err != nil {
+		slog.Warn("hooks: failed to verify pending conversation",
+			"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+		return false
+	}
+	return pending == input.ConvID
+}
+
 // persistCodexHookModel records Codex's active model slug when a hook belongs
 // to the tracked main conversation. The conversation check is intentionally
 // local to this helper: PreCompact bypasses ApplyHook, while PostCompact is
@@ -1782,16 +1839,16 @@ type preCompactDecision struct {
 //
 // envSessionID is TCLAUDE_SESSION_ID, the key the statusline hook
 // stores the context snapshot under (statusbar.UpdateContextSnapshot).
-func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbient, w io.Writer) error {
+func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbient, w io.Writer) (bool, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Warn("pre-compact guard: config load failed, allowing compaction", "error", err, "module", "hooks")
-		return nil
+		return false, nil
 	}
 	g := cfg.PreCompactGuard
 	thresholds := g.ResolvedThresholds() // nil when the guard is nil/disabled
 	if thresholds == nil {
-		return nil // guard off → allow
+		return false, nil // guard off → allow
 	}
 
 	// Only Claude Code's automatic compaction is guarded by default; a
@@ -1800,17 +1857,17 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 	// we never block a compaction we cannot classify.
 	guarded := input.Trigger == "auto" || (input.Trigger == "manual" && g.BlockManual)
 	if !guarded {
-		return nil
+		return false, nil
 	}
 
 	if envSessionID == "" {
-		return nil // not a tclaude-launched session → no snapshot → allow
+		return false, nil // not a tclaude-launched session → no snapshot → allow
 	}
 	snap, err := db.GetContextSnapshot(envSessionID)
 	if err != nil {
 		slog.Warn("pre-compact guard: failed to read context snapshot, allowing compaction",
 			"error", err, "session_id", envSessionID, "module", "hooks")
-		return nil
+		return false, nil
 	}
 	// Measure against the window compaction ACTUALLY fires at. The stored
 	// ContextPct is already re-based onto it by the status line, so pairing it
@@ -1828,7 +1885,7 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 	}
 	window := harness.EffectiveContextWindow(snap.ContextWindowSize, pinnedWindow)
 	if window <= 0 || snap.ContextPct <= 0 {
-		return nil // no usable usage data yet → allow
+		return false, nil // no usable usage data yet → allow
 	}
 	// The floor is looked up by the MODEL's window and then scaled onto the
 	// effective one. Both halves matter: the ladder is keyed by model class
@@ -1841,12 +1898,12 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 	// asked for, and is an exact no-op when nothing is pinned.
 	minTokens, ok := preCompactFloor(thresholds, snap.ContextWindowSize, window)
 	if !ok {
-		return nil // no threshold matches this window → allow
+		return false, nil // no threshold matches this window → allow
 	}
 
 	usedTokens := int64(snap.ContextPct / 100.0 * float64(window))
 	if usedTokens >= minTokens {
-		return nil // enough context has accrued → allow
+		return false, nil // enough context has accrued → allow
 	}
 
 	reason := fmt.Sprintf(
@@ -1864,9 +1921,9 @@ func decidePreCompact(input HookCallbackInput, envSessionID string, amb HookAmbi
 		"module", "hooks",
 	)
 	if err := json.NewEncoder(w).Encode(preCompactDecision{Decision: "block", Reason: reason}); err != nil {
-		return fmt.Errorf("pre-compact guard: failed to write block decision: %w", err)
+		return false, fmt.Errorf("pre-compact guard: failed to write block decision: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // preCompactFloor returns the MinTokens floor to apply, choosing the configured

@@ -146,7 +146,9 @@ func TestDecidePreCompact(t *testing.T) {
 				ConvID:        "conv-" + c.envSession,
 				Trigger:       c.trigger,
 			}
-			require.NoError(t, decidePreCompact(input, c.envSession, LocalHookAmbient(), &buf))
+			blocked, err := decidePreCompact(input, c.envSession, LocalHookAmbient(), &buf)
+			require.NoError(t, err)
+			assert.Equal(t, c.wantBlock, blocked)
 
 			if c.wantBlock {
 				var dec preCompactDecision
@@ -227,6 +229,151 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 		"a blocked PreCompact still captures Codex's active model")
 	assert.Equal(t, "gpt-5.5", snap.ModelID,
 		"the resume-safe model id converges before the guard returns")
+	state, err := LoadSessionState("pc-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, state.Status,
+		"a refused compaction must not make the agent look busy")
+	assert.Empty(t, state.StatusDetail)
+}
+
+func TestRunHookCallback_CompactingStatusLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	cfg := config.DefaultConfig()
+	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}
+	require.NoError(t, config.Save(cfg))
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "compact-status-sess",
+		ConvID: "conv-compact-status",
+		Status: StatusIdle,
+	}))
+
+	preCompact := map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PreCompact",
+		"trigger":         "auto",
+		"cwd":             dir,
+	}
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", preCompact))
+
+	state, err := LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status)
+	assert.Equal(t, "compacting", state.StatusDetail,
+		"the dashboard renders this as working: compacting")
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PostCompact",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status)
+	assert.Empty(t, state.StatusDetail, "PostCompact ends the visible compacting phase")
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", preCompact))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "ConfigChange",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status)
+	assert.Empty(t, state.StatusDetail,
+		"any later accepted hook clears an abandoned compacting phase")
+}
+
+func TestRunHookCallback_PreCompactStatusAttribution(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	cfg := config.DefaultConfig()
+	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}
+	require.NoError(t, config.Save(cfg))
+
+	tests := []struct {
+		name  string
+		state SessionState
+		input map[string]any
+	}{
+		{
+			name: "sub-agent",
+			state: SessionState{
+				ID: "subagent-precompact", ConvID: "conv-subagent-precompact", Status: StatusIdle,
+			},
+			input: map[string]any{
+				"session_id": "conv-subagent-precompact", "agent_id": "agent-child",
+			},
+		},
+		{
+			name: "foreign conversation",
+			state: SessionState{
+				ID: "foreign-precompact", ConvID: "conv-host", Status: StatusIdle,
+			},
+			input: map[string]any{
+				"session_id": "conv-foreign",
+			},
+		},
+		{
+			name: "plain shell",
+			state: SessionState{
+				ID: "shell-precompact", ConvID: "", Status: StatusRunning, Harness: ShellHarnessName,
+			},
+			input: map[string]any{
+				"session_id": "conv-child-in-shell",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, SaveSessionState(&tt.state))
+			tt.input["hook_event_name"] = "PreCompact"
+			tt.input["trigger"] = "auto"
+			tt.input["cwd"] = dir
+			assert.Empty(t, captureHookStdout(t, tt.state.ID, tt.input))
+
+			state, err := LoadSessionState(tt.state.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.state.Status, state.Status)
+			assert.Empty(t, state.StatusDetail,
+				"an unowned PreCompact must not paint the tracked host row")
+		})
+	}
+}
+
+func TestRunHookCallback_PreCompactStatusForAutoRegisteredSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	cfg := config.DefaultConfig()
+	cfg.PreCompactGuard = &config.PreCompactGuardConfig{Enabled: false}
+	require.NoError(t, config.Save(cfg))
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:     "auto-precompact",
+		ConvID: "conv-auto-precompact",
+		Status: StatusIdle,
+	}))
+
+	assert.Empty(t, captureHookStdout(t, "", map[string]any{
+		"session_id":      "conv-auto-precompact",
+		"hook_event_name": "PreCompact",
+		"trigger":         "auto",
+		"cwd":             dir,
+	}))
+
+	state, err := LoadSessionState("auto-precompact")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status)
+	assert.Equal(t, "compacting", state.StatusDetail)
 }
 
 // captureHookStdout runs runHookCallback with payload on stdin and
