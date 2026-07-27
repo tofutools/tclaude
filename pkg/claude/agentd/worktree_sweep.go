@@ -57,10 +57,11 @@ var (
 	pruneWorktreesFn  = worktree.PruneWorktreesIn
 )
 
-// sweepAgent is an agent bound to a worktree — its resolved CurrentDir
-// roots there. A worktree with any bound agent is never an "orphan":
-// removing it would break that conversation's cwd-scoped resume (a live
-// agent loses its cwd outright; an offline one can no longer be resumed).
+// sweepAgent is an agent bound to a worktree — either its immutable startup
+// directory or its tracked current directory roots there. A worktree with any
+// bound agent is never an "orphan": removing it would break that
+// conversation's cwd-scoped resume (a live agent loses its launch directory
+// outright; an offline one can no longer be resumed).
 type sweepAgent struct {
 	// AgentID is the bound agent's stable actor key — the canonical ID the
 	// dashboard/CLI leads with; ConvID is the live generation behind it
@@ -222,12 +223,24 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 		// Resolve the bound agents (title + liveness + retired state) for
 		// this worktree.
 		var anyOnline bool
+		agentIndex := map[string]int{}
 		for _, cid := range rootConvs[path] {
-			online := isConvOnline(cid)
-			anyOnline = anyOnline || online
-			row.Agents = append(row.Agents, sweepAgent{
-				AgentID: peerAgentID(cid), ConvID: cid, Title: agent.FreshTitle(cid), Online: online, Retired: convRetired(cid),
-			})
+			bound := resolveSweepAgent(cid)
+			key := bound.AgentID
+			if key == "" {
+				key = "conv:" + bound.ConvID
+			}
+			if i, seen := agentIndex[key]; seen {
+				// Several conversation generations of one stable actor can
+				// claim the same root. Preserve liveness from ANY generation,
+				// even though the wire renders the actor only once.
+				row.Agents[i].Online = row.Agents[i].Online || bound.Online
+				anyOnline = anyOnline || bound.Online
+				continue
+			}
+			agentIndex[key] = len(row.Agents)
+			anyOnline = anyOnline || bound.Online
+			row.Agents = append(row.Agents, bound)
 		}
 		switch {
 		case wt.IsMain:
@@ -289,12 +302,14 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 	return roots, out
 }
 
-// worktreeRootConvs maps each git worktree root to the conv-ids of
-// agents working there, across ALL sessions (every distinct conv once).
-// The dir→root resolution is cached so a host with many agents in one
-// worktree pays one git inspection per distinct dir. Liveness/title are
-// resolved later, only for the worktrees that survive into the candidate
-// set, to keep the per-session cost cheap here.
+// worktreeRootConvs maps each git worktree root to the conv-ids of agents
+// bound there, across ALL sessions. Both the immutable startup directory and
+// the tracked current directory are claims: an edit in another repo must not
+// make cleanup forget the worktree the agent was launched in. The dir→root
+// resolution is cached so a host with many agents in one worktree pays one git
+// inspection per distinct dir. Liveness/title are resolved later, only for the
+// worktrees that survive into the candidate set, to keep the per-session cost
+// cheap here.
 func worktreeRootConvs() map[string][]string {
 	rootConvs := map[string][]string{}
 	sessions, err := db.ListSessions()
@@ -302,52 +317,80 @@ func worktreeRootConvs() map[string][]string {
 		return rootConvs
 	}
 	seenConv := map[string]bool{}
+	seenRootConv := map[string]map[string]bool{}
 	dirRoot := map[string]string{}
-	for _, s := range sessions {
-		if s.ConvID == "" || seenConv[s.ConvID] {
-			continue
-		}
-		seenConv[s.ConvID] = true
-		dir := agent.ResolveLocation(s.ConvID).CurrentDir
+	addClaim := func(convID, dir string) {
 		if dir == "" {
-			continue
+			return
 		}
 		root, cached := dirRoot[dir]
 		if !cached {
 			root = inspectWorktreeFn(dir).Root
 			dirRoot[dir] = root
 		}
-		if root != "" {
-			rootConvs[root] = append(rootConvs[root], s.ConvID)
+		if root == "" {
+			return
+		}
+		if seenRootConv[root] == nil {
+			seenRootConv[root] = map[string]bool{}
+		}
+		if !seenRootConv[root][convID] {
+			rootConvs[root] = append(rootConvs[root], convID)
+			seenRootConv[root][convID] = true
+		}
+	}
+	for _, s := range sessions {
+		if s.ConvID == "" {
+			continue
+		}
+		// Every launch row is a claim. Multiple live sessions can share one
+		// conv-id while having different startup CWDs, so conv-level
+		// deduplication must happen only after their immutable dirs are read.
+		addClaim(s.ConvID, s.Cwd)
+		if physical, err := recordedStartupDir(s); err == nil {
+			addClaim(s.ConvID, physical)
+		}
+		if seenConv[s.ConvID] {
+			continue
+		}
+		seenConv[s.ConvID] = true
+		loc := agent.ResolveLocation(s.ConvID)
+		for _, dir := range []string{loc.StartupDir, loc.CurrentDir} {
+			addClaim(s.ConvID, dir)
 		}
 	}
 	return rootConvs
 }
 
 // liveAgentWorktreeRoots is the execute-time safety set: git worktree
-// roots in use by an ONLINE agent. A worktree in this set is never
-// removed by the sweep — yanking the directory out from under a running
-// process is exactly what the cleanup must not do. Liveness is checked
-// first (cheap) so an offline-heavy roster skips the location resolve.
+// roots claimed by an ONLINE agent. The immutable startup root remains claimed
+// even when PostToolUse has tracked an edit elsewhere. A worktree in this set
+// is never removed by the sweep — yanking the launch directory out from under
+// a running process is exactly what the cleanup must not do. Liveness is
+// checked first (cheap) so an offline-heavy roster skips the location resolve.
 func liveAgentWorktreeRoots() map[string]bool {
 	roots := map[string]bool{}
 	sessions, err := db.ListSessions()
 	if err != nil {
 		return roots
 	}
-	seenConv := map[string]bool{}
+	seenLocation := map[string]bool{}
 	dirRoot := map[string]string{}
-	for _, s := range sessions {
-		if s.ConvID == "" || seenConv[s.ConvID] {
-			continue
+	online := map[string]bool{}
+	isOnline := func(convID string) bool {
+		if convID == "" {
+			return false
 		}
-		seenConv[s.ConvID] = true
-		if !isConvOnline(s.ConvID) {
-			continue
+		if v, ok := online[convID]; ok {
+			return v
 		}
-		dir := agent.ResolveLocation(s.ConvID).CurrentDir
+		v := isConvOnline(convID)
+		online[convID] = v
+		return v
+	}
+	addRoot := func(dir string) {
 		if dir == "" {
-			continue
+			return
 		}
 		root, cached := dirRoot[dir]
 		if !cached {
@@ -358,29 +401,70 @@ func liveAgentWorktreeRoots() map[string]bool {
 			roots[root] = true
 		}
 	}
+	for _, s := range sessions {
+		if s.ConvID == "" {
+			continue
+		}
+		// A startup worktree belongs to the stable actor, not only to the
+		// conversation generation that happened to launch there. If that
+		// actor has rotated, liveness is the UNION of the recorded generation
+		// and its current head: a predecessor pane can outlive a best-effort
+		// stop, while a live successor keeps the actor's historical launch
+		// roots claimed.
+		liveConv := s.ConvID
+		if a, err := db.GetAgentByConv(s.ConvID); err == nil && a != nil && a.CurrentConvID != "" {
+			liveConv = a.CurrentConvID
+		}
+		if !isOnline(s.ConvID) && !isOnline(liveConv) {
+			continue
+		}
+		// Read every session row's launch cwd before deduplicating the shared
+		// conversation-level Location. Resume provenance supplies the physical
+		// startup root when the lexical launch path was a symlink.
+		addRoot(s.Cwd)
+		if physical, err := recordedStartupDir(s); err == nil {
+			addRoot(physical)
+		}
+		if !seenLocation[s.ConvID] {
+			seenLocation[s.ConvID] = true
+			loc := agent.ResolveLocation(s.ConvID)
+			addRoot(loc.StartupDir)
+			addRoot(loc.CurrentDir)
+		}
+	}
 	return roots
 }
 
-// convRetired reports whether convID's worktree is reclaimable — the signal
-// that distinguishes a "retired" worktree (a cleanup target) from an "agent"
-// one (a still-active, merely-offline agent we must protect). A conv is
-// reclaimable when its actor is retired OR when it is a SUPERSEDED PREDECESSOR
-// generation: a reincarnate / Claude Code /clear advanced the actor to a newer
-// conv, so this generation is no longer where the live agent runs (the actor's
-// current_conv moved on). Both cases mean "no live agent here." A read error or
-// a non-agent / current-generation conv is treated as not-reclaimable, so the
-// classifier fails safe to the protective "agent"/"orphan" path.
+// resolveSweepAgent resolves a conversation-generation claim through the
+// stable actor identity. The startup worktree belongs to that actor until the
+// actor itself is retired; rotating current_conv_id does not make the previous
+// generation's launch directory a cleanup candidate. The wire row leads with
+// agent_id and the actor's current generation so duplicate historical session
+// rows collapse into one claimant. Liveness is the union of the bound
+// generation and the live head: a predecessor pane can survive a rotation.
 //
-// NB: db.AgentState alone is insufficient here — it resolves a predecessor to
-// its (active) actor and so reads "active"; the current_conv comparison is what
-// recovers the predecessor-is-stale signal the conv-keyed enrollment encoded as
-// "retired".
-func convRetired(convID string) bool {
+// A plain, non-agent conversation remains conv-keyed and protected as before.
+// Read failures fail safe: the claim is treated as a non-retired conversation.
+func resolveSweepAgent(convID string) sweepAgent {
 	a, err := db.GetAgentByConv(convID)
-	if err != nil || a == nil {
-		return false
+	if err == nil && a != nil {
+		current := a.CurrentConvID
+		if current == "" {
+			current = convID
+		}
+		return sweepAgent{
+			AgentID: a.AgentID,
+			ConvID:  current,
+			Title:   agent.FreshTitle(current),
+			Online:  isConvOnline(convID) || (current != convID && isConvOnline(current)),
+			Retired: !a.Active(),
+		}
 	}
-	return !a.Active() || a.CurrentConvID != convID
+	return sweepAgent{
+		ConvID: convID,
+		Title:  agent.FreshTitle(convID),
+		Online: isConvOnline(convID),
+	}
 }
 
 // allRetiredAgents reports whether every bound agent is retired (and there
