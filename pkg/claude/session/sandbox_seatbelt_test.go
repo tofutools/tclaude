@@ -360,14 +360,21 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 
 func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {
 	const (
-		parent  = "/Users/dev/Library/Caches/tclaude/spawn-attachments"
+		parent  = "/Users/dev/.tclaude/data/spawn-attachments"
 		current = parent + "/current-session"
+		sibling = parent + "/sibling-session"
 	)
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		nil,
-		nil,
-		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		[]string{parent, sibling},
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{
+				{Path: parent, Mode: sandboxpolicy.MountRW},
+				{Path: sibling, Mode: sandboxpolicy.MountRW},
+			},
+		},
 		[]string{"/Users/dev/.tclaude/data"},
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
@@ -401,6 +408,12 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 		profile,
 		`(require-not (subpath (param "`+currentParam+`")))`,
 	))
+	for _, param := range params {
+		if param.name == parentParam+"_REOPEN_0" {
+			assert.Equal(t, current, param.path,
+				"ordinary rules and break-glass must not become exceptions to the daemon-only parent hide")
+		}
+	}
 }
 
 func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {

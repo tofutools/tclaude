@@ -74,7 +74,10 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	protectedDir := filepath.Join(smokeHome, ".tclaude", "data")
 	protectedFile := filepath.Join(protectedDir, "private")
 	tmuxBase := filepath.Join(root, "tmux-base")
-	privateParent := filepath.Join(root, "spawn-attachments")
+	// Production attachment roots live beneath the class-3 daemon-data hide.
+	// The smoke therefore proves the daemon-only child carveout works through
+	// that protected ancestor, not merely under an otherwise visible parent.
+	privateParent := filepath.Join(protectedDir, "spawn-attachments")
 	privateOwn := filepath.Join(privateParent, "own-session")
 	privateSibling := filepath.Join(privateParent, "sibling-session")
 	for _, dir := range []string{

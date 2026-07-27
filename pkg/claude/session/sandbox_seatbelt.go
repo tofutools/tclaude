@@ -30,6 +30,7 @@ type seatbeltRegion struct {
 	mode             sandboxpolicy.MountMode
 	policy           bool
 	networkException bool
+	denyBoundary     bool
 	unshadowable     bool
 }
 
@@ -205,7 +206,14 @@ func renderSeatbeltProfile(
 			return "", nil, cleanErr
 		}
 		ordered = append(ordered,
-			seatbeltRegion{path: parent, mode: sandboxpolicy.MountHide},
+			seatbeltRegion{
+				path: parent, mode: sandboxpolicy.MountHide,
+				// The parent is nested below the protected daemon-data hide,
+				// but it remains its own deny boundary. This later,
+				// daemon-authored exception must beat any policy/break-glass
+				// carveout while still reopening exactly the current child.
+				denyBoundary: true,
+			},
 			seatbeltRegion{path: current, mode: sandboxpolicy.MountRW},
 		)
 	}
@@ -422,6 +430,7 @@ func expandSeatbeltAliasRegions(
 				mode:             region.mode,
 				policy:           region.policy,
 				networkException: region.networkException,
+				denyBoundary:     region.denyBoundary,
 				unshadowable:     region.unshadowable,
 			})
 		}
@@ -728,6 +737,7 @@ func seatbeltDenyStarts(
 		}
 		if node.parent >= 0 &&
 			denied(nodes[node.parent].mode) &&
+			!node.denyBoundary &&
 			!node.unshadowable {
 			continue
 		}

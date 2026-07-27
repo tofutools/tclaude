@@ -187,32 +187,46 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 	assert.Less(t, parentRemount, finalHide)
 }
 
-func TestBwrapArgsPrivateWriteDirOverridesPolicyButPrecedesHostControl(t *testing.T) {
+func TestBwrapArgsPrivateWriteDirOverridesPolicyAndBreakGlassButPrecedesHostControl(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
-	parent := filepath.Join(t.TempDir(), "spawn-attachments")
+	protected := filepath.Join(home, ".tclaude", "data")
+	parent := filepath.Join(protected, "spawn-attachments")
 	current := filepath.Join(parent, "current-session")
-	require.NoError(t, os.MkdirAll(current, 0o700))
+	sibling := filepath.Join(parent, "sibling-session")
+	for _, dir := range []string{current, sibling} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
 
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
-		Entries: []sandboxpolicy.MountEntry{{
-			Path: parent,
-			Mode: sandboxpolicy.MountRW,
-		}},
+	got, err := bwrapArgs(nil, []string{parent, sibling}, sandboxpolicy.MountPlan{
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: parent, Mode: sandboxpolicy.MountRW},
+			{Path: sibling, Mode: sandboxpolicy.MountRW},
+		},
 	}, TclaudeLayerPrivateWriteDir{Parent: parent, Current: current})
 	require.NoError(t, err)
 
+	protectedHide := indexOfBwrapTriplet(got, "--tmpfs", protected)
 	policyGrant := indexOfBwrapTriplet(got, "--bind", parent)
+	siblingBreakGlass := indexOfBwrapTriplet(got, "--bind", sibling)
 	privateHide := indexOfBwrapTriplet(got, "--tmpfs", parent)
 	currentReopen := indexOfBwrapTriplet(got, "--bind", current)
 	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", parent)
 	tmuxHide := indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t))
+	require.NotEqual(t, -1, protectedHide)
 	require.NotEqual(t, -1, policyGrant)
+	require.NotEqual(t, -1, siblingBreakGlass)
 	require.NotEqual(t, -1, privateHide)
 	require.NotEqual(t, -1, currentReopen)
 	require.NotEqual(t, -1, parentRemount)
 	require.NotEqual(t, -1, tmuxHide)
+	assert.Less(t, protectedHide, policyGrant,
+		"acknowledged break-glass may replay through class 3 before the daemon exception")
 	assert.Less(t, policyGrant, privateHide,
 		"private sibling concealment must beat ordinary policy and break-glass replay")
+	assert.Less(t, siblingBreakGlass, privateHide,
+		"even an acknowledged sibling reopen is covered by the final daemon-only parent hide")
 	assert.Less(t, privateHide, currentReopen)
 	assert.Less(t, currentReopen, parentRemount)
 	assert.Less(t, parentRemount, tmuxHide,
