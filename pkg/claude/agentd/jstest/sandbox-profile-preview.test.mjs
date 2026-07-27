@@ -21,74 +21,42 @@ test('ordinary grants compose through the deny > write > read lattice', () => {
     policy.text,
     'global:dev · write /data (global) · env: GOFLAGS (global) · network: internet (global)',
   );
-  assert.deepEqual(policy.breakGlass, []);
   assert.equal(
     composeSandboxProfilePreview([{ scope: 'global', profile: dev }], { base, dev }),
     policy.text,
   );
 });
 
-test('break-glass merges as a union with write dominating and origins never hidden by includes', () => {
-  const debugBase = {
-    name: 'debug-base',
-    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
-  };
-  const wrapper = {
-    name: 'wrapper',
-    includes: ['debug-base'],
-    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }],
-  };
-  const policy = composeSandboxProfilePolicy(
-    [{ scope: 'explicit', profile: wrapper }], { 'debug-base': debugBase, wrapper },
-  );
-  assert.deepEqual(policy.breakGlass, [{
-    path: '/home/op/.tclaude/data',
-    access: 'write',
-    origins: ['explicit:debug-base', 'explicit:wrapper'],
-  }]);
-  assert.match(policy.text, /⚠ BREAK-GLASS protected access: write \/home\/op\/\.tclaude\/data \(explicit:debug-base, explicit:wrapper\)/);
-  assert.match(policy.text, /exposes protected tclaude\/harness state/);
-});
-
-test('break-glass origins accumulate across assignment scopes', () => {
-  const globalDebug = {
-    name: 'global-debug',
-    break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }],
-  };
-  const groupDebug = {
-    name: 'group-debug',
-    break_glass_filesystem: [
-      { path: '/home/op/.codex', access: 'read' },
-      { path: '/home/op/.claude/sessions', access: 'write' },
-    ],
-  };
-  const policy = composeSandboxProfilePolicy(
-    [
-      { scope: 'global', profile: globalDebug },
-      { scope: 'group', profile: groupDebug },
-    ],
-    { 'global-debug': globalDebug, 'group-debug': groupDebug },
-  );
-  assert.deepEqual(policy.breakGlass, [
-    { path: '/home/op/.codex', access: 'read', origins: ['global:global-debug', 'group:group-debug'] },
-    { path: '/home/op/.claude/sessions', access: 'write', origins: ['group:group-debug'] },
-  ]);
-});
-
-test('unresolved includes still surface while break-glass from resolvable ones survives', () => {
+test('unresolved includes surface while rules from resolvable ones survive', () => {
   const wrapper = {
     name: 'wrapper',
     includes: ['missing', 'debug'],
   };
   const debug = {
     name: 'debug',
-    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
+    filesystem: [{ path: '/home/op/work', access: 'read' }],
   };
   const policy = composeSandboxProfilePolicy(
     [{ scope: 'group', profile: wrapper }], { wrapper, debug },
   );
-  assert.equal(policy.breakGlass.length, 1);
+  assert.match(policy.text, /read \/home\/op\/work \(group\)/);
   assert.match(policy.text, /⚠ unresolved includes: missing/);
+});
+
+// TCL-791 removed break-glass. A profile that still carries the retired field
+// must compose as if it were absent — the daemon refuses such a payload
+// outright, so the preview's job is simply never to render protected access.
+test('a retired break_glass_filesystem field composes to nothing', () => {
+  const legacy = {
+    name: 'legacy',
+    filesystem: [{ path: '/home/op/work', access: 'write' }],
+    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }],
+  };
+  const policy = composeSandboxProfilePolicy([{ scope: 'global', profile: legacy }], { legacy });
+  assert.equal(policy.breakGlass, undefined);
+  assert.doesNotMatch(policy.text, /BREAK-GLASS/i);
+  assert.doesNotMatch(policy.text, /\.tclaude\/data/);
+  assert.match(policy.text, /write \/home\/op\/work \(global\)/);
 });
 
 test('a deny row and its narrower reopens both survive composition as authored', () => {

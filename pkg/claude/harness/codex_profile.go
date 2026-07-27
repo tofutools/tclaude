@@ -183,20 +183,13 @@ func validateCodexAgentNetworkAccessForOS(networkAccess sandboxpolicy.NetworkAcc
 
 // CodexSandboxRules is the complete filesystem/posture input the managed Codex
 // permission profile renders. It exists because the parameter list grew past
-// the point where positional arguments were safe: read, write, deny, and the
-// two break-glass classes are all []string, and transposing two of them would
-// silently produce a wrong-but-valid sandbox.
+// the point where positional arguments were safe: read, write and deny are all
+// []string, and transposing two of them would silently produce a
+// wrong-but-valid sandbox.
 type CodexSandboxRules struct {
 	ReadDirs  []string
 	WriteDirs []string
 	DenyDirs  []string
-	// BreakGlassReadDirs/BreakGlassWriteDirs are acknowledged protected-path
-	// exceptions. They must suppress the baseline private-state deny they
-	// cover: on Codex a deny dominates any narrower grant regardless of
-	// declaration order, so leaving the deny in place would silently discard
-	// the operator's acknowledged access.
-	BreakGlassReadDirs  []string
-	BreakGlassWriteDirs []string
 	// RequireSplitPolicy pins the Linux backend away from legacy Landlock. A
 	// reopen-under-deny profile sets it only after the isolated behavioral probe
 	// proved denied-parent/narrower-reopen semantics for this Codex executable.
@@ -233,8 +226,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	if err := validateCodexProfilePath("tclaude tmux socket directory", tmuxSocketDir); err != nil {
 		return "", err
 	}
-	breakGlass := append(append([]string{}, rules.BreakGlassReadDirs...), rules.BreakGlassWriteDirs...)
-	allDirs := append(append(append(append([]string{}, readDirs...), writeDirs...), denyDirs...), breakGlass...)
+	allDirs := append(append(append([]string{}, readDirs...), writeDirs...), denyDirs...)
 	for _, dir := range allDirs {
 		if err := validateCodexProfilePath("sandbox profile directory", dir); err != nil {
 			return "", err
@@ -250,43 +242,45 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	for _, dir := range denyDirs {
 		grants[dir] = "none"
 	}
-	// Break-glass is applied AFTER the ordinary rules and write after read, so
-	// an acknowledged protected grant is never downgraded by an ordinary deny
-	// that happens to name the same path. Read still does not imply write.
-	for _, dir := range rules.BreakGlassReadDirs {
-		grants[dir] = "read"
-	}
-	for _, dir := range rules.BreakGlassWriteDirs {
-		grants[dir] = "write"
-	}
-	// Claude Code session state remains protected unless an acknowledged
-	// break-glass rule covers it. ~/.codex is deliberately not denied here:
-	// standalone Codex installations place the executable beneath that root,
-	// and the Linux sandbox re-executes it for every tool command.
+	// Claude Code session state is protected UNCONDITIONALLY. This used to be
+	// skippable by an acknowledged break-glass rule covering the root; TCL-791
+	// removed break-glass, so no profile input suppresses these denies any
+	// more. ~/.codex is deliberately not denied here: standalone Codex
+	// installations place the executable beneath that root, and the Linux
+	// sandbox re-executes it for every tool command.
 	protectedRoots, err := codexProtectedRootDenies(privateStateDir)
 	if err != nil {
 		return "", err
 	}
 	for _, root := range protectedRoots {
-		if breakGlassCoversPath(breakGlass, root) {
-			continue
-		}
 		grants[root] = "none"
+	}
+	// Setting the root itself to "none" is not enough. A grant naming a CHILD
+	// of a protected root is a different map key, so it would render as
+	// read/write right next to the root's own "none" and reopen exactly what
+	// the deny is there to close. normalizeFilesystem already refuses any
+	// read/write rule intersecting a protected root, and TCL-791 removed
+	// break-glass, the one input that could previously carry such a path — so
+	// nothing upstream should reach here with one. This prunes it anyway: it is
+	// the point where the invariant stops depending on every caller having
+	// normalized first. Only read/write entries are dropped; a "none" beneath a
+	// protected root is a deny and strictly narrowing.
+	for _, root := range append(append([]string{}, protectedRoots...), privateStateDir) {
+		for dir, access := range grants {
+			if access != "none" && dir != root && sandboxpolicy.PathContainsOrEqual(root, dir) {
+				delete(grants, dir)
+			}
+		}
 	}
 	if tmuxSocketDir != "" {
 		// The tmux socket directory is host-control authority — a strictly more
-		// severe class than protected state — and is NOT reachable through
-		// break-glass. It stays denied unconditionally, after every other rule.
+		// severe class than protected state. It stays denied unconditionally,
+		// after every other rule.
 		grants[tmuxSocketDir] = "none"
 	}
-	// The private-state baseline deny is emitted separately below. Avoid a
-	// duplicate TOML key when an operator profile repeats it explicitly, UNLESS
-	// an acknowledged break-glass rule targets that exact path — in which case
-	// the grant must survive and the baseline deny must be suppressed.
-	suppressPrivateStateDeny := breakGlassCoversPath(breakGlass, privateStateDir)
-	if !suppressPrivateStateDeny {
-		delete(grants, privateStateDir)
-	}
+	// The private-state baseline deny is emitted separately below, so drop any
+	// duplicate TOML key an operator profile repeated explicitly.
+	delete(grants, privateStateDir)
 	grantPaths := make([]string, 0, len(grants))
 	for dir := range grants {
 		grantPaths = append(grantPaths, dir)
@@ -323,9 +317,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
 	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
-	if !suppressPrivateStateDeny {
-		fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
-	}
+	fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
 	fmt.Fprintf(&b, "%q = \"read\"\n", socketPath)
 	if len(grantPaths) > 0 {
 		for _, dir := range grantPaths {
@@ -471,8 +463,8 @@ func EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyD
 }
 
 // EnsureCodexAgentLaunchProfileForRules is the full-fidelity entry point: it
-// carries the read baseline and the acknowledged break-glass exceptions in
-// addition to the ordinary filesystem rules.
+// carries the network posture and split-policy pinning in addition to the
+// ordinary filesystem rules.
 func EnsureCodexAgentLaunchProfileForRules(rules CodexSandboxRules, networkAccess sandboxpolicy.NetworkAccess, launchID string) (profileName, path string, err error) {
 	launchID = strings.TrimSpace(launchID)
 	if launchID == "" {

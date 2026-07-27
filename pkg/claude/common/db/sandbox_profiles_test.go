@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -231,44 +230,18 @@ func TestSandboxProfileImportRejectsInvalidNetworkAccess(t *testing.T) {
 	assert.Nil(t, stored)
 }
 
-func TestSandboxProfileImportReturnsStructuredBreakGlassAcknowledgementError(t *testing.T) {
-	setupTestDB(t)
-	protected := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
-	require.NoError(t, os.MkdirAll(protected, 0o755))
-	canonical, err := filepath.EvalSymlinks(protected)
-	require.NoError(t, err)
-	profiles := []*SandboxProfile{{
-		Name: "danger",
-		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
-			Path: canonical, Access: sandboxpolicy.AccessWrite,
-		}},
-	}}
-
-	_, err = ImportSandboxProfilesWithOptions(profiles, SandboxProfileImportOptions{OnConflict: "error"})
-	var ackErr *SandboxProfileAcknowledgementRequiredError
-	require.True(t, errors.As(err, &ackErr), "error=%v", err)
-	require.Equal(t, []SandboxProfileBreakGlassExposure{{
-		Profile: "danger", Path: canonical, Access: sandboxpolicy.AccessWrite,
-	}}, ackErr.Exposures)
-	stored, getErr := GetSandboxProfile("danger")
-	require.NoError(t, getErr)
-	assert.Nil(t, stored, "the acknowledgement error must precede every mutation")
-
-	_, err = ImportSandboxProfilesWithOptions(profiles, SandboxProfileImportOptions{
-		OnConflict: "error", BreakGlassAcknowledged: true,
-	})
-	require.NoError(t, err)
-}
-
+// TestSandboxProfileImportAssignmentPlanMatchesAppliedMutations pins that the
+// transaction's assignment plan is exactly what it applies: a group that does
+// not exist is warned about and skipped, and a group that does exist really
+// receives the assignment.
 func TestSandboxProfileImportAssignmentPlanMatchesAppliedMutations(t *testing.T) {
 	setupTestDB(t)
-	protected := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
-	require.NoError(t, os.MkdirAll(protected, 0o755))
-	canonical, err := filepath.EvalSymlinks(protected)
+	workspace := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 	_, err = CreateSandboxProfile(&SandboxProfile{
-		Name: "dangerous",
-		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+		Name: "shared",
+		Filesystem: []SandboxFilesystemGrant{{
 			Path: canonical, Access: sandboxpolicy.AccessWrite,
 		}},
 	})
@@ -277,32 +250,24 @@ func TestSandboxProfileImportAssignmentPlanMatchesAppliedMutations(t *testing.T)
 	result, err := ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
 		OnConflict: "error",
 		Assignments: &SandboxProfileAssignments{Groups: map[string]string{
-			"does-not-exist": "dangerous",
+			"does-not-exist": "shared",
 		}},
 	})
-	require.NoError(t, err, "a skipped assignment is not an acknowledgement carrier")
+	require.NoError(t, err)
 	assert.Equal(t, []string{`group assignment skipped: no group "does-not-exist"`}, result.Warnings)
 
 	_, err = CreateAgentGroup("crew", "")
 	require.NoError(t, err)
-	assignments := &SandboxProfileAssignments{Groups: map[string]string{"crew": "dangerous"}}
 	_, err = ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
-		OnConflict: "error", Assignments: assignments,
-	})
-	var ackErr *SandboxProfileAcknowledgementRequiredError
-	require.True(t, errors.As(err, &ackErr), "an applied dangerous assignment is gated: %v", err)
-	require.Equal(t, []SandboxProfileBreakGlassExposure{{
-		Profile: "dangerous", Path: canonical, Access: sandboxpolicy.AccessWrite, Assignment: true,
-	}}, ackErr.Exposures)
-
-	_, err = ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
-		OnConflict: "error", Assignments: assignments, BreakGlassAcknowledged: true,
+		OnConflict:  "error",
+		Assignments: &SandboxProfileAssignments{Groups: map[string]string{"crew": "shared"}},
 	})
 	require.NoError(t, err)
+
 	assigned, err := GetAgentGroupSandboxProfile("crew")
 	require.NoError(t, err)
 	require.NotNil(t, assigned)
-	assert.Equal(t, "dangerous", assigned.Name)
+	assert.Equal(t, "shared", assigned.Name)
 }
 
 func TestImportSandboxProfilesLegacyCallShapeStillWorks(t *testing.T) {

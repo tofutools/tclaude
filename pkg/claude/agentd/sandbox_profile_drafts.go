@@ -55,6 +55,14 @@ func handleSandboxProfileDraftSubmit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
+	// Gated even though a draft never reaches the registry. The handoff exists
+	// so the human previews exactly what the agent proposed; storing a draft
+	// with the field quietly stripped would show them a profile the scribe did
+	// not write, and the agent a 202 for a document that was altered.
+	if fail := rejectBreakGlassPayload("draft", body.Profile); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	p, _, err := buildSandboxProfile(body.Profile)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())

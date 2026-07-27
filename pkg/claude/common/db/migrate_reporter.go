@@ -180,6 +180,7 @@ var migrationSteps = []migrationStep{
 	{160, migrateV159toV160},
 	{161, migrateV160toV161},
 	{162, migrateV161toV162},
+	{163, migrateV162toV163},
 }
 
 // MigrationReporter carries optional callbacks that migrate() invokes as it
@@ -221,6 +222,18 @@ type MigrationReporter struct {
 	// Done fires once after the whole chain succeeds, with the head version
 	// reached.
 	Done func(to int)
+	// Notice fires when a migration has something the operator must be TOLD,
+	// not merely something that happened — today, data a migration deliberately
+	// dropped. It may fire more than once per migration, and always between
+	// that migration's Applying and Applied. It is a disclosure channel, not a
+	// progress one: a migration that silently changes nothing an operator cares
+	// about must not use it.
+	//
+	// This is the terminal half of a two-channel disclosure. The durable half
+	// is whatever the migration itself persists (v163 writes a human_messages
+	// row), because a startup line scrolls away and an operator who upgrades
+	// unattended would otherwise never learn what was dropped.
+	Notice func(version int, message string)
 }
 
 // migrationReporter is the process-wide reporter migrate() consults. nil (the
@@ -270,6 +283,12 @@ func (r *MigrationReporter) reportApplied(version int) {
 func (r *MigrationReporter) reportFailed(version int, err error) {
 	if r != nil && r.Failed != nil {
 		r.Failed(version, err)
+	}
+}
+
+func (r *MigrationReporter) reportNotice(version int, message string) {
+	if r != nil && r.Notice != nil {
+		r.Notice(version, message)
 	}
 }
 

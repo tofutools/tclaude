@@ -37,7 +37,6 @@ const (
 	smokeOutsideEnv            = "TCLAUDE_SANDBOX_V2_OUTSIDE"
 	smokeAliasFileEnv          = "TCLAUDE_SANDBOX_V2_ALIAS_FILE"
 	smokeProtectedFileEnv      = "TCLAUDE_SANDBOX_V2_PROTECTED_FILE"
-	smokeProtectedReadableEnv  = "TCLAUDE_SANDBOX_V2_PROTECTED_READABLE"
 	smokeTmuxSocketEnv         = "TCLAUDE_SANDBOX_V2_TMUX_SOCKET"
 	smokeRuntimeSocketEnv      = "TCLAUDE_SANDBOX_V2_RUNTIME_SOCKET"
 	smokeHostPIDEnv            = "TCLAUDE_SANDBOX_V2_HOST_PID"
@@ -189,19 +188,12 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			)
 		})
 	}
+	// There is only one arm now. This smoke used to run a second time with an
+	// acknowledged break-glass grant and assert the protected file became
+	// readable; TCL-791 removed the feature, so protected state is unreadable
+	// on real bubblewrap unconditionally, and the helper asserts exactly that.
 	privateWriteDir := TclaudeLayerPrivateWriteDir{Parent: privateParent, Current: privateOwn}
-	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, privateWriteDir, false, allowed, outside,
-		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
-		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
-		privateOwnFile, privateSibling)
-
-	breakGlassEffective := effective
-	breakGlassEffective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
-		Path: protectedDir, Access: sandboxpolicy.AccessRead,
-	}}
-	breakGlassPlan, err := sandboxpolicy.RenderMountPlan(breakGlassEffective)
-	require.NoError(t, err)
-	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, breakGlassPlan, privateWriteDir, true, allowed, outside,
+	runTclaudeLayerSmokeHelper(t, binary, helperBinary, phase0, plan, privateWriteDir, allowed, outside,
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
 		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
 		privateOwnFile, privateSibling)
@@ -213,16 +205,11 @@ func runTclaudeLayerSmokeHelper(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	privateWriteDir TclaudeLayerPrivateWriteDir,
-	protectedReadable bool,
 	allowed, outside, aliasFile, protectedFile, tmuxSocket, runtimeSocket,
 	hostPID, hostLoopbackAddr, tclaudeBinary, privateOwnFile, privateSiblingDir string,
 ) {
 	t.Helper()
-	var breakGlassPaths []string
-	if protectedReadable {
-		breakGlassPaths = []string{filepath.Dir(protectedFile)}
-	}
-	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan, privateWriteDir)
+	args, err := bwrapArgs(phase0WriteDirs, plan, privateWriteDir)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -234,7 +221,6 @@ func runTclaudeLayerSmokeHelper(
 		smokeOutsideEnv+"="+outside,
 		smokeAliasFileEnv+"="+aliasFile,
 		smokeProtectedFileEnv+"="+protectedFile,
-		smokeProtectedReadableEnv+"="+boolEnv(protectedReadable),
 		smokeTmuxSocketEnv+"="+tmuxSocket,
 		smokeRuntimeSocketEnv+"="+runtimeSocket,
 		smokeHostPIDEnv+"="+hostPID,
@@ -263,7 +249,7 @@ func assertTclaudeLayerResizeRoundTrip(
 	plan sandboxpolicy.MountPlan,
 ) {
 	t.Helper()
-	args, err := bwrapArgs(phase0WriteDirs, nil, plan)
+	args, err := bwrapArgs(phase0WriteDirs, plan)
 	require.NoError(t, err)
 
 	// Keep the reporter beneath a live sh wrapper instead of letting sh exec
@@ -375,7 +361,6 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	outside := os.Getenv(smokeOutsideEnv)
 	aliasFile := os.Getenv(smokeAliasFileEnv)
 	protectedFile := os.Getenv(smokeProtectedFileEnv)
-	protectedReadable := os.Getenv(smokeProtectedReadableEnv) == "1"
 	tmuxSocket := os.Getenv(smokeTmuxSocketEnv)
 	runtimeSocket := os.Getenv(smokeRuntimeSocketEnv)
 	hostPID := os.Getenv(smokeHostPIDEnv)
@@ -412,28 +397,21 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	got, err := os.ReadFile(aliasFile)
 	require.NoError(t, err, "symlink alias must remain usable through the read-only base root")
 	assert.Equal(t, "alias-ok", string(got))
-	protected, err := os.ReadFile(protectedFile)
-	if protectedReadable {
-		require.NoError(t, err, "acknowledged break-glass path must reopen after the protected baseline")
-		assert.Equal(t, "must-stay-hidden", string(protected))
-	} else if err == nil {
-		t.Fatal("protected tclaude state unexpectedly remained readable under an ordinary profile")
+	// Real-kernel proof of the absolute protected-root invariant (TCL-791):
+	// nothing the profile can say makes this file readable inside the wall.
+	if _, err := os.ReadFile(protectedFile); err == nil {
+		t.Fatal("protected tclaude state unexpectedly remained readable inside the sandbox")
 	}
 	hiddenWrite := filepath.Join(filepath.Dir(protectedFile), "phantom")
 	err = os.WriteFile(hiddenWrite, []byte("must-fail"), 0o600)
 	require.Error(t, err, "a hidden path must reject writes instead of accepting phantom state")
 	assert.True(t, errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.EROFS),
 		"hidden-path write must fail with ENOENT or EROFS, got %v", err)
-	if !protectedReadable {
-		forbiddenProtectedSibling := filepath.Join(
-			filepath.Dir(protectedFile),
-			"forbidden-sibling",
-		)
-		err = os.MkdirAll(forbiddenProtectedSibling, 0o700)
-		require.Error(t, err, "a new ancestor-denied protected sibling must not be creatable")
-		assert.True(t, errors.Is(err, syscall.EROFS),
-			"ancestor-denied protected path creation must fail with EROFS, got %v", err)
-	}
+	forbiddenProtectedSibling := filepath.Join(filepath.Dir(protectedFile), "forbidden-sibling")
+	err = os.MkdirAll(forbiddenProtectedSibling, 0o700)
+	require.Error(t, err, "a new ancestor-denied protected sibling must not be creatable")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"ancestor-denied protected path creation must fail with EROFS, got %v", err)
 	if conn, err := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); err == nil {
 		_ = conn.Close()
 		t.Fatal("host tmux socket remained reachable despite the final applier hide")
@@ -515,13 +493,6 @@ func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) fu
 		_ = cmd.Wait()
 		db.ResetForTest()
 	}
-}
-
-func boolEnv(value bool) string {
-	if value {
-		return "1"
-	}
-	return "0"
 }
 
 func copyTestBinary(t *testing.T, source, destination string) {

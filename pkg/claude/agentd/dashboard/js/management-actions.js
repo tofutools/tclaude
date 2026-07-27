@@ -8,7 +8,6 @@ import {
   importProfiles,
 } from './profiles.js';
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
-import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import {
   loadSandboxProfiles,
@@ -321,13 +320,7 @@ export function createManagementActions({
           : kind === 'roles'
             ? await roles.loadRoles(true)
             : await sandbox.loadSandboxProfiles();
-      const committed = lifecycle.commitRequest(token, data);
-      // Any successful authoritative sandbox-registry load makes the cached
-      // registry trustworthy again for break-glass composition.
-      if (committed && kind === 'sandbox' && state.sandboxRegistryRecoveryRequired) {
-        state.sandboxRegistryRecoveryRequired.value = false;
-      }
-      return committed;
+      return lifecycle.commitRequest(token, data);
     } catch (error) {
       lifecycle.failRequest(token, error);
       return false;
@@ -371,9 +364,8 @@ export function createManagementActions({
       source.name,
       (state.sandboxProfiles.value || []).map((profile) => profile.name),
     );
-    // Keep clone creation in the normal sandbox editor. Besides making the
-    // copy reviewable, this preserves its normalized diff and the mandatory
-    // fresh acknowledgement when break-glass authority is carried over.
+    // Keep clone creation in the normal sandbox editor, so the copy is
+    // reviewable through the same normalized diff as any other edit.
     state.openDialog({
       kind: 'sandbox-editor',
       seed: { ...source, name },
@@ -830,7 +822,7 @@ export function createManagementActions({
     }
   }
 
-  async function saveSandbox({ draft, original, options = {}, breakGlassAcknowledged = false }) {
+  async function saveSandbox({ draft, original, options = {} }) {
     state.busy.value = 'sandbox-save';
     state.error.value = '';
     try {
@@ -841,7 +833,6 @@ export function createManagementActions({
         includes: draft.includes,
         agent_directories: draft.agent_directories,
         network_access: draft.network_access || '',
-        break_glass_filesystem: draft.break_glass_filesystem || [],
       };
       if (!body.name) throw new Error('name is required');
       const targetName = options.editExisting === false
@@ -863,13 +854,7 @@ export function createManagementActions({
         notify('Sandbox profile save cancelled');
         return false;
       }
-      await sandbox.saveSandboxProfile(
-        targetName,
-        breakGlassAcknowledged
-          ? { ...preview.after, break_glass_acknowledged: true }
-          : preview.after,
-        preview.revision || '',
-      );
+      await sandbox.saveSandboxProfile(targetName, preview.after, preview.revision || '');
       state.closeDialog();
       notify(`sandbox profile saved: ${preview.after.name}`);
       await load('sandbox');
@@ -877,22 +862,6 @@ export function createManagementActions({
       await options.onCreate?.(preview.after.name);
       return true;
     } catch (error) {
-      if (error?.code === BREAK_GLASS_ACK_CODE) {
-        // The daemon's authoritative state changed after the preview (e.g.
-        // an included profile gained break-glass). Reload the registry so
-        // the editor re-resolves its includes against current reality and
-        // shows the exact current rules, then demand a fresh explicit
-        // acknowledgement — never resend automatically. load() reports
-        // failure as `false` rather than throwing; a failed reload means
-        // the editor still cannot see the real rules, so it must stay
-        // blocked from saving until an authoritative reload succeeds.
-        let recovered = false;
-        try { recovered = (await load('sandbox')) === true; } catch (_) { recovered = false; }
-        state.error.value = recovered
-          ? `${error.message || String(error)} The sandbox-profile registry changed since this preview — review the current break-glass rules above and re-acknowledge before saving again.`
-          : `${error.message || String(error)} Reloading the sandbox-profile registry failed, so the current rules are unknown — saving stays blocked until an authoritative reload succeeds.`;
-        return { breakGlassAckRequired: true, recovered };
-      }
       state.error.value = error.message || String(error);
       return false;
     } finally {
@@ -953,8 +922,8 @@ export function createManagementActions({
   async function inspectSandboxBundle(envelope) {
     return sandbox.inspectSandboxImport(envelope);
   }
-  async function importSandboxBundle(envelope, conflict, breakGlassAcknowledged = false) {
-    const result = await sandbox.importSandboxProfiles(envelope, conflict, breakGlassAcknowledged);
+  async function importSandboxBundle(envelope, conflict) {
+    const result = await sandbox.importSandboxProfiles(envelope, conflict);
     await load('sandbox');
     await refreshSandboxSpawn();
     const imported = result?.imported || [];

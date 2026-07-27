@@ -87,17 +87,10 @@ type ResolvedLaunch struct {
 }
 
 type ResolvedSandboxPolicy struct {
-	Version    int                             `json:"version"`
-	Applied    []sandboxpolicy.AppliedProfile  `json:"applied"`
-	Filesystem []sandboxpolicy.FilesystemGrant `json:"filesystem"`
-	// BreakGlass keeps the protected-access decision visible in the launch echo
-	// and audit record. BreakGlassSources names EVERY profile that contributed
-	// each protected path, so composition can never hide where dangerous
-	// authority came from. Both are omitempty, so a launch that uses neither
-	// echoes exactly what it echoed before.
-	BreakGlass        []sandboxpolicy.BreakGlassGrant          `json:"break_glass_filesystem,omitempty"`
-	BreakGlassSources map[string][]sandboxpolicy.ProfileSource `json:"break_glass_sources,omitempty"`
-	Environment       []string                                 `json:"environment"`
+	Version     int                             `json:"version"`
+	Applied     []sandboxpolicy.AppliedProfile  `json:"applied"`
+	Filesystem  []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment []string                        `json:"environment"`
 }
 
 func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
@@ -112,13 +105,6 @@ func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPol
 		Applied:     append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
 		Filesystem:  append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
 		Environment: environment,
-	}
-	if len(snapshot.Effective.BreakGlassFilesystem) > 0 {
-		out.BreakGlass = append([]sandboxpolicy.BreakGlassGrant(nil), snapshot.Effective.BreakGlassFilesystem...)
-		out.BreakGlassSources = make(map[string][]sandboxpolicy.ProfileSource, len(snapshot.Effective.Provenance.BreakGlassFilesystem))
-		for path, sources := range snapshot.Effective.Provenance.BreakGlassFilesystem {
-			out.BreakGlassSources[path] = append([]sandboxpolicy.ProfileSource(nil), sources...)
-		}
 	}
 	return out
 }
@@ -180,12 +166,6 @@ type SpawnRequest struct {
 	// blank SandboxProfile, which still inherits the ambient tiers, and is
 	// human-only because dropping inherited denies can widen authority.
 	OmitSandboxProfiles bool `json:"omit_sandbox_profiles,omitempty"`
-	// BreakGlassAcknowledged is the transient operator acknowledgement required
-	// when the RESOLVED sandbox policy for this spawn carries break-glass
-	// protected access. It is gated on the resolved snapshot rather than on
-	// SandboxProfile alone, because a global or group assignment can introduce
-	// the access without the spawner naming a profile at all. Never persisted.
-	BreakGlassAcknowledged bool `json:"break_glass_acknowledged,omitempty"`
 	// Profile names the CLI's explicit --profile. Launch fields remain separate
 	// on the wire so the daemon can distinguish direct flags (loud on
 	// incompatibility) from ambient profile values (skip + disclose when a
@@ -195,6 +175,11 @@ type SpawnRequest struct {
 	// config. nil inherits the selected profile and then defaults on for managed
 	// Codex agents; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
+	// BreakGlassAcknowledged is a tombstone. TCL-791 removed break-glass; the
+	// field survives ONLY so a spawn payload still carrying it is refused
+	// loudly instead of silently ignored as an unknown JSON key. It is never
+	// read for any purpose other than that refusal, and never persisted.
+	BreakGlassAcknowledged *bool `json:"break_glass_acknowledged,omitempty"`
 	// Name, when set, becomes the new agent's conversation title:
 	// runSpawnPostInit injects `/rename <name>` into the fresh pane. An
 	// agent has exactly one name — its title — so there is no separate
@@ -561,7 +546,7 @@ type SpawnParams struct {
 	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
 	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for this spawn"`
 	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"Acknowledge that the resolved sandbox policy grants break-glass access to protected tclaude/harness state"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
 	WorktreeBase string `long:"worktree-base" optional:"true" help:"Base branch for a newly-created --worktree (default: the repo's default branch). Ignored when the --worktree branch already exists"`
@@ -971,6 +956,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg
 	}
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return nil, rcInvalidArg
+	}
 	if p.OmitSandboxProfiles && strings.TrimSpace(p.SandboxProfile) != "" {
 		fmt.Fprintln(stderr, "Error: --omit-sandbox-profiles and --sandbox-profile are mutually exclusive")
 		return nil, rcInvalidArg
@@ -1252,7 +1241,6 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
-		BreakGlassAcknowledged: p.IUnderstandBreakGlassRisk,
 		Name:                   name,
 		Role:                   merged.Role,
 		Descr:                  merged.Descr,

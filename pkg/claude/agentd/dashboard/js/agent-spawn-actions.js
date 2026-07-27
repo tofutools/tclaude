@@ -1,5 +1,4 @@
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
-import { BREAK_GLASS_WARNING, describeBreakGlassEntries } from './sandbox-break-glass.js';
 import { SANDBOX_PROFILE_NONE, WT_NEW } from './agent-spawn-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 
@@ -11,8 +10,8 @@ async function responseText(response) {
 }
 
 // Failures carry the daemon's structured {"error", "code"} body; status and
-// typed code stay on the thrown Error so submit-side recovery can key off
-// break_glass_acknowledgement_required rather than message text.
+// typed code stay on the thrown Error so submit-side recovery can key off the
+// code rather than message text.
 async function responseError(response, prefix = '') {
   const raw = await responseText(response);
   let body = null;
@@ -153,7 +152,6 @@ export function createAgentSpawnActions({
           profiles,
           selected,
           preview: 'No tclaude sandbox-profile values will be applied for this launch. Global, group, and explicit profile tiers are all omitted.',
-          breakGlass: [],
         };
       }
       const [globalDefault, groupDefault] = await Promise.all([
@@ -178,10 +176,6 @@ export function createAgentSpawnActions({
         profiles,
         selected: byName[selected] ? selected : '',
         preview: policy.text,
-        // Break-glass can arrive from ANY layer (global or group assignment,
-        // not just the explicit pick), so the spawn gate keys off the resolved
-        // composition, mirroring the daemon's own acknowledgement rule.
-        breakGlass: policy.breakGlass,
       };
     },
 
@@ -243,14 +237,6 @@ export function createAgentSpawnActions({
         body: 'No name or description was given, so the agent will be auto-named from the first words of your initial message:',
         meta: `“${name}”`,
         okLabel: 'Auto-name & spawn',
-      });
-    },
-
-    confirmBreakGlassSpawn(entries) {
-      return confirm({
-        title: '\u{1f6a8} Spawn with break-glass protected access?',
-        body: `The resolved sandbox policy for this launch carries break-glass protected-path access: ${describeBreakGlassEntries(entries)}. ${BREAK_GLASS_WARNING}`,
-        okLabel: 'I understand the risk — spawn',
       });
     },
 

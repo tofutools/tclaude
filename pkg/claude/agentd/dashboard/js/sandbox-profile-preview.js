@@ -1,19 +1,7 @@
-function mergeBreakGlass(target, path, access, origins) {
-  const existing = target.get(path);
-  const merged = existing
-    ? { access: existing.access === 'write' || access === 'write' ? 'write' : 'read', origins: [...existing.origins] }
-    : { access, origins: [] };
-  for (const origin of origins) {
-    if (!merged.origins.includes(origin)) merged.origins.push(origin);
-  }
-  target.set(path, merged);
-}
-
 function flattenProfile(profile, byName, state) {
   const filesystem = new Map();
   const environment = new Map();
   const owned = new Map();
-  const breakGlass = new Map();
   let network = '';
   state.onPath.add(profile.name);
   for (const name of profile.includes || []) {
@@ -40,10 +28,6 @@ function flattenProfile(profile, byName, state) {
       environment.delete(name);
       owned.set(name, true);
     }
-    // Break-glass never folds into ordinary override semantics: it merges as
-    // a union (write dominates on the same path) and keeps the profile that
-    // introduced it, so includes cannot hide the origin.
-    for (const [path, entry] of flattened.breakGlass) mergeBreakGlass(breakGlass, path, entry.access, entry.origins);
     if (flattened.network) network = flattened.network;
   }
   state.onPath.delete(profile.name);
@@ -56,25 +40,23 @@ function flattenProfile(profile, byName, state) {
     environment.delete(name);
     owned.set(name, true);
   }
-  for (const rule of profile.break_glass_filesystem || []) mergeBreakGlass(breakGlass, rule.path, rule.access, [profile.name]);
   if (profile.network_access) network = profile.network_access;
-  return { filesystem, environment, owned, network, breakGlass };
+  return { filesystem, environment, owned, network };
 }
 
 // composeSandboxProfilePolicy mirrors the daemon's composition semantics for
 // the client-side preview: the deny > write > read lattice for ordinary
-// grants and a provenance-preserving union for break_glass_filesystem where
-// write dominates read on the same canonical path. Strictness is expressed
-// entirely through ordinary deny rows plus narrower read/write reopens, so
-// there is no separate read-baseline mechanism to compose. Profiles that
-// still carry retired read_baseline/read_baseline_exclusions JSON fields are
-// ignored here rather than rendered. The daemon remains authoritative; this
-// only previews.
+// grants. Strictness is expressed entirely through ordinary deny rows plus
+// narrower read/write reopens, so there is no separate read-baseline
+// mechanism to compose. Profiles that still carry retired JSON fields — the
+// read-baseline pair, and the protected-access grant TCL-791 removed — are
+// ignored here rather than rendered: the daemon refuses the latter outright at
+// every input surface, and preview composition is not the place to explain
+// that. The daemon remains authoritative; this only previews.
 export function composeSandboxProfilePolicy(applied, byName = {}) {
   const filesystem = new Map();
   const environment = new Map();
   const owned = new Map();
-  const breakGlass = new Map();
   let network = '';
   const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
@@ -88,9 +70,6 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
     }
     for (const name of flattened.environment.keys()) environment.set(name, scope);
     for (const name of flattened.owned.keys()) owned.set(name, scope);
-    for (const [path, entry] of flattened.breakGlass) {
-      mergeBreakGlass(breakGlass, path, entry.access, entry.origins.map((origin) => `${scope}:${origin}`));
-    }
     if (flattened.network) network = `${flattened.network} (${scope})`;
   }
   const scopes = applied.map((item) => `${item.scope}:${item.profile.name}`).join(' → ')
@@ -99,21 +78,16 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
     .map(([path, value]) => `${value.access} ${path} (${value.scope})`).join(' · ');
   const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const ownedKeys = [...owned].map(([name, scope]) => `${name} (${scope})`).join(', ');
-  const breakGlassEntries = [...breakGlass].map(([path, entry]) => ({ path, access: entry.access, origins: entry.origins }));
-  // The ⚠ prefix is load-bearing: HelpField lifts everything from the first ⚠
-  // onward into an always-visible caveat, so break-glass access stays on
-  // screen in the spawn dialog instead of collapsing into the [?] disclosure.
-  const breakGlassText = breakGlassEntries.length
-    ? ` · ⚠ BREAK-GLASS protected access: ${breakGlassEntries
-      .map((entry) => `${entry.access} ${entry.path} (${entry.origins.join(', ')})`).join(' · ')}`
-      + ' — exposes protected tclaude/harness state (credentials, sessions, daemon state); exceptional debugging only'
-    : '';
+  // The ⚠ prefix below is load-bearing: HelpField lifts everything from the
+  // first ⚠ onward into an always-visible caveat, so an unresolved include
+  // stays on screen in the spawn dialog instead of collapsing into the [?]
+  // disclosure.
   const problems = state.problems.size
     ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}` : '';
   const text = `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}`
     + `${ownedKeys ? ` · agent dirs: ${ownedKeys}` : ''}`
-    + `${network ? ` · network: ${network}` : ''}${breakGlassText}${problems}`;
-  return { text, breakGlass: breakGlassEntries };
+    + `${network ? ` · network: ${network}` : ''}${problems}`;
+  return { text };
 }
 
 export function composeSandboxProfilePreview(applied, byName = {}) {

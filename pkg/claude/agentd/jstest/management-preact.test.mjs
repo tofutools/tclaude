@@ -462,7 +462,6 @@ test('sandbox manager clones a full profile through the guarded create editor', 
     network_access: 'internet',
     read_baseline: 'minimal',
     read_baseline_exclusions: ['secrets.ssh'],
-    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
     created_at: 'old',
     updated_at: 'old',
   };
@@ -493,10 +492,8 @@ test('sandbox manager clones a full profile through the guarded create editor', 
   assert.equal(state.dialog.value.options.cloneSourceName, source.name);
   assert.equal(state.dialog.value.seed.name, 'restricted-copy-3', 'the suggested name skips existing copies');
   assert.deepEqual(state.dialog.value.seed.filesystem, source.filesystem);
-  assert.deepEqual(state.dialog.value.seed.break_glass_filesystem, source.break_glass_filesystem);
   assert.match(host.querySelector('#sandbox-profile-editor-title').textContent, /Clone sandbox profile: restricted/);
   assert.equal(host.querySelector('#sandbox-profile-editor-modal input').value, 'restricted-copy-3');
-  assert.ok(host.querySelector('#sandbox-profile-editor-break-glass-ack'), 'cloned authority still demands a fresh acknowledgement');
   await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-scribe'), 'click'));
   assert.equal(scribeCall[1], '', 'the clone scribe handoff has no edit target');
   assert.deepEqual(scribeCall[3], { editExisting: false, cloneSourceName: 'restricted' }, 'the clone scribe handoff preserves create mode and its label');
@@ -540,11 +537,11 @@ test('sandbox editor and its clone mode save on Ctrl/Cmd+Enter', async (t) => {
   }
 });
 
-// The break-glass guards are the reason the hotkey carries its own block
-// condition rather than leaning on the overlay's `blocked` prop: an
-// unacknowledged rule set, and a daemon refusal whose registry reload failed,
-// must both refuse the keyboard exactly as they refuse the Save button.
-test('sandbox editor Ctrl+Enter respects the break-glass acknowledgement and recovery block', async (t) => {
+// TCL-791 removed break-glass, and with it the two conditions that used to
+// make the sandbox editor's Ctrl+Enter carry its own block: an unacknowledged
+// rule set and a failed acknowledgement-recovery reload. What survives is the
+// plain rule that the hotkey may never reach a save the Save button refuses.
+test('sandbox editor Ctrl+Enter cannot save while a save is already in flight', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -554,44 +551,29 @@ test('sandbox editor Ctrl+Enter respects the break-glass acknowledgement and rec
     loadCommonRuleCatalog: async () => ({ version: 1, categories: [], informational: [] }),
     inspectDirectories: async () => ({ missing: [], creatable: [] }),
   };
-  const mount = (state, actions) => {
-    const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-    mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
-    return { host, dispose: () => { cleanups.reverse().forEach((fn) => fn()); host.remove(); } };
-  };
-
-  const unacknowledged = createManagementState();
-  const refused = [];
-  unacknowledged.openDialog({
-    kind: 'sandbox-editor',
-    seed: { name: 'restricted', filesystem: [], break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
-    options: {},
-  });
-  const first = mount(unacknowledged, { ...baseActions, saveSandbox: async (payload) => { refused.push(payload); } });
-  await harness.act(() => Promise.resolve());
-  await harness.act(() => harness.fireEvent(first.host.querySelector('#sandbox-profile-editor-modal input'), 'keydown', { key: 'Enter', ctrlKey: true }));
-  assert.equal(refused.length, 0, 'Ctrl+Enter cannot skip the break-glass acknowledgement');
-  assert.match(unacknowledged.error.value, /acknowledgement/);
-  first.dispose();
-
-  const blocked = createManagementState();
+  const state = createManagementState();
   const attempts = [];
-  blocked.openDialog({ kind: 'sandbox-editor', seed: { name: 'restricted', filesystem: [] }, options: {} });
-  const second = mount(blocked, {
-    ...baseActions,
-    // The daemon refused the commit and its registry reload failed too, so the
-    // editor cannot show the rules a fresh acknowledgement would cover.
-    saveSandbox: async (payload) => { attempts.push(payload); return { breakGlassAckRequired: true, recovered: false }; },
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'restricted', filesystem: [] }, options: {} });
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host,
+    state,
+    actions: { ...baseActions, saveSandbox: async (payload) => { attempts.push(payload); } },
+    confirmDiscard: async () => true,
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
-  const input = second.host.querySelector('#sandbox-profile-editor-modal input');
+  const input = host.querySelector('#sandbox-profile-editor-modal input');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
   assert.equal(attempts.length, 1);
+  state.busy.value = 'sandbox-save';
   await harness.act(() => Promise.resolve());
-  assert.equal(second.host.querySelector('#sandbox-profile-editor-submit').disabled, true, 'the failed recovery disables Save');
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true, 'an in-flight save disables Save');
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
-  assert.equal(attempts.length, 1, 'Ctrl+Enter cannot save past a blocked break-glass recovery');
-  second.dispose();
+  assert.equal(attempts.length, 1, 'Ctrl+Enter cannot save past the Save button guard');
+  cleanups.reverse().forEach((fn) => fn());
+  host.remove();
 });
 
 test('sandbox clone suggestions stay within the UTF-8 server limit across collisions', async (t) => {
@@ -752,10 +734,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   };
   const actions = createManagementActions({ state, confirm: async () => { genericConfirms += 1; return true; }, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
   const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet' };
-  // The save body always carries the full-replace shape, so break-glass rides
-  // along explicitly even when untouched. The retired read_baseline fields are
-  // gone from the wire entirely.
-  const body = { ...draft, break_glass_filesystem: [] };
+  // The save body always carries the full-replace shape. The retired
+  // read_baseline and break_glass_filesystem fields are gone from the wire
+  // entirely (TCL-791).
+  const body = { ...draft };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
   assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
@@ -1169,9 +1151,9 @@ test('a hung or synchronously throwing common-rule feed can still be retried', a
   unmount();
 });
 
-// state.error carries save, validation and break-glass refusals. A catalog
-// rejection landing after one of those must not replace the reason the save
-// was refused with an explanation of an optional convenience.
+// state.error carries save and validation refusals. A catalog rejection
+// landing after one of those must not replace the reason the save was refused
+// with an explanation of an optional convenience.
 test('a late common-rule feed rejection does not overwrite a refused save', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1180,7 +1162,7 @@ test('a late common-rule feed rejection does not overwrite a refused save', asyn
   const state = createManagementState();
   state.openDialog({
     kind: 'sandbox-editor',
-    seed: { name: 'restricted', filesystem: [], environment: [], includes: [], agent_directories: [], break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+    seed: { name: 'restricted', filesystem: [], environment: [], includes: [], agent_directories: [] },
     options: {},
   });
   let rejectFeed = null;
@@ -1191,16 +1173,21 @@ test('a late common-rule feed rejection does not overwrite a refused save', asyn
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
-  // The save is refused locally: break-glass rules need an acknowledgement.
+  // The save is refused locally: advanced mode is authoritative and its raw
+  // JSON does not parse.
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const rawFilesystem = host.querySelector('#sandbox-profile-editor-filesystem');
+  rawFilesystem.value = 'not json';
+  await harness.act(() => harness.fireEvent(rawFilesystem, 'input'));
   host.querySelector('#sandbox-profile-editor-submit').click();
   await harness.act(() => Promise.resolve());
   assert.equal(saved, null);
-  assert.match(host.querySelector('.cron-create-error').textContent, /acknowledgement/);
+  assert.match(host.querySelector('.cron-create-error').textContent, /JSON/i);
 
   // Only now does the feed give up.
   rejectFeed(new Error('feed offline'));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
-  assert.match(host.querySelector('.cron-create-error').textContent, /acknowledgement/, 'the refusal reason survives the late rejection');
+  assert.match(host.querySelector('.cron-create-error').textContent, /JSON/i, 'the refusal reason survives the late rejection');
   assert.match(host.querySelector('#sandbox-profile-editor-common-rule-feed-error').textContent, /feed offline/);
   unmount();
 });

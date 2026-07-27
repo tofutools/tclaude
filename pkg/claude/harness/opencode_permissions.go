@@ -23,18 +23,16 @@ type OpenCodePermissionRule struct {
 // OpenCodePermissionSpec is the validated launch posture rendered into one
 // session ruleset. Paths must already be canonical absolute directories.
 type OpenCodePermissionSpec struct {
-	Cwd                 string
-	Worktree            string
-	SandboxMode         string
-	ApprovalPolicy      string
-	ToolGovernance      string
-	ReadDirs            []string
-	WriteDirs           []string
-	DenyDirs            []string
-	ReadBaseline        string
-	BreakGlassReadDirs  []string
-	BreakGlassWriteDirs []string
-	NetworkAccess       sandboxpolicy.NetworkAccess
+	Cwd            string
+	Worktree       string
+	SandboxMode    string
+	ApprovalPolicy string
+	ToolGovernance string
+	ReadDirs       []string
+	WriteDirs      []string
+	DenyDirs       []string
+	ReadBaseline   string
+	NetworkAccess  sandboxpolicy.NetworkAccess
 }
 
 const (
@@ -169,18 +167,6 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 		return nil, err
 	}
 	rules, err = appendOpenCodeRootRules(rules, worktree, protectedRoots, approval, false)
-	if err != nil {
-		return nil, err
-	}
-
-	breakGlass := map[string]openCodePathAccess{}
-	if err := mergeOpenCodeRoots(breakGlass, spec.BreakGlassReadDirs, openCodePathRead); err != nil {
-		return nil, err
-	}
-	if err := mergeOpenCodeRoots(breakGlass, spec.BreakGlassWriteDirs, openCodePathWrite); err != nil {
-		return nil, err
-	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, breakGlass, approval, false)
 	if err != nil {
 		return nil, err
 	}

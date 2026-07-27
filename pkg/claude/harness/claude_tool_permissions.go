@@ -45,25 +45,18 @@ import (
 // credentials, VCS tokens, browser profiles) — and skips exactly the shapes it
 // would break. skipped names the deny paths that could not be represented, so
 // callers can surface them rather than let them look enforced.
-func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs []string) (rules []string, skipped []string) {
+func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs []string) (rules []string, skipped []string) {
 	denies := normalizedSandboxWriteDirs(denyDirs)
 	if len(denies) == 0 {
 		return nil, nil
 	}
-	// Break-glass reopens are folded into the read set. The OS layer emits an
-	// allowRead/allowWrite for each acknowledged path beneath a deny (see
-	// claudeSandboxBlockWithBreakGlass), so on THIS surface they are reopens
-	// exactly like ordinary read/write rows — and a deny that is their ancestor
-	// is just as unmirrorable. Passing them here is what makes the shape check
-	// below see them: an ordinary deny can only ever be an ANCESTOR of a
-	// break-glass path (break-glass paths sit inside a protected root, which
-	// ordinary deny rows are forbidden to intersect), so a `deny ~` covering an
-	// acknowledged `~/.tclaude/data` is caught as a reopen-under-deny and
-	// skipped, instead of emitting a Read deny that would defeat the
-	// acknowledgement on the built-in tools.
-	reopenReads := append(append([]string{}, readDirs...), breakGlassDirs...)
+	// Reopens are just the ordinary read/write rows: TCL-791 removed break-glass,
+	// which used to contribute a second, protected-root-based source of paths
+	// beneath a deny. Nothing outside these grant sets can sit under a deny any
+	// more, so the shape check below sees the complete picture from readDirs and
+	// writeDirs alone.
 	grants := sandboxpolicy.GrantsFromDirs(
-		normalizedSandboxWriteDirs(reopenReads),
+		normalizedSandboxWriteDirs(readDirs),
 		normalizedSandboxWriteDirs(writeDirs),
 		denies,
 	)

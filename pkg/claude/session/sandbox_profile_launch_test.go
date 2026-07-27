@@ -99,20 +99,6 @@ func TestSandboxSnapshotForOneShotLaunchFreezesActiveRules(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot be enforced")
 }
 
-func TestSandboxSnapshotForOneShotLaunchFailsClosedForMissingBreakGlass(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	snapshot := sandboxpolicy.EmptySnapshot()
-	snapshot.Effective.BreakGlassFilesystem = []sandboxpolicy.BreakGlassGrant{{
-		Path: filepath.Join(root, "missing-protected"), Access: sandboxpolicy.AccessRead,
-	}}
-
-	_, err = SandboxSnapshotForOneShotLaunch(&snapshot)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "break-glass")
-	assert.Contains(t, err.Error(), "does not exist")
-}
-
 func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -392,11 +378,11 @@ func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	admin := filepath.Join(common, "worktrees", "active")
 	sibling := filepath.Join(container, "sibling")
 	private := filepath.Join(home, ".tclaude", "data")
-	breakGlass := filepath.Join(private, "acknowledged")
+	protectedChild := filepath.Join(private, "sessions-state")
 	explicitRead := filepath.Join(home, "explicit-read")
 	explicitWrite := filepath.Join(home, "explicit-write")
 	agentCache := filepath.Join(home, "agent-cache")
-	for _, dir := range []string{workspace, common, admin, sibling, breakGlass, explicitRead, explicitWrite, agentCache} {
+	for _, dir := range []string{workspace, common, admin, sibling, protectedChild, explicitRead, explicitWrite, agentCache} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
@@ -406,7 +392,6 @@ func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 			{Path: explicitRead, Access: sandboxpolicy.AccessRead},
 			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
 		},
-		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{Path: breakGlass, Access: sandboxpolicy.AccessRead}},
 	}})
 	require.NoError(t, err)
 	effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{Path: agentCache, Access: sandboxpolicy.AccessWrite})
@@ -427,11 +412,20 @@ func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	raw, err := os.ReadFile(profilePath)
 	require.NoError(t, err)
 	content := string(raw)
-	for _, allowed := range []string{workspace, common, admin, explicitRead, explicitWrite, agentCache, breakGlass} {
+	for _, allowed := range []string{workspace, common, admin, explicitRead, explicitWrite, agentCache} {
 		assert.Contains(t, content, `"`+allowed+`"`)
 	}
 	assert.NotContains(t, content, `"`+container+`" = "write"`)
 	assert.NotContains(t, content, sibling)
+	// TCL-791: this used to be an acknowledged break-glass grant that the
+	// rendered Codex profile was expected to contain. Nothing may name a
+	// protected child any more, so its absence is now the assertion.
+	assert.NotContains(t, content, protectedChild)
+	// The child's absence alone would also hold if the protected root had simply
+	// dropped out of the profile entirely, which would be a far worse bug than
+	// the one above. Assert the root is present AND denied.
+	assert.Contains(t, content, `"`+private+`" = "none"`,
+		"the protected root itself must still be denied, not merely unmentioned")
 }
 
 // Regression: effective grants are fully symlink-resolved by normalization, so

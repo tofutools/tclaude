@@ -37,10 +37,10 @@ func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	require.Len(t, calls, 1)
 	body, ok := calls[0].body.(struct {
-		Profile sandboxProfileJSON `json:"profile"`
+		Profile json.RawMessage `json:"profile"`
 	})
 	require.True(t, ok)
-	assert.Equal(t, "dev", body.Profile.Name)
+	assert.JSONEq(t, input, string(body.Profile))
 	assert.Contains(t, stdout.String(), "has not been saved")
 }
 
@@ -98,10 +98,11 @@ func TestRunSandboxProfilesCRUDRoundTripsShowJSONShape(t *testing.T) {
 	input := `{"name":"dev","filesystem":[{"path":"/work","access":"read"}],"environment":[{"name":"CACHE","value":"/cache"}],"created_at":"ignored"}`
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, rcOK, runSandboxProfilesCreate(&sandboxProfilesFileParams{File: "-"}, strings.NewReader(input), &stdout, &stderr))
-	created, ok := calls[0].body.(*sandboxProfileJSON)
+	created, ok := calls[0].body.(json.RawMessage)
 	require.True(t, ok)
-	assert.Equal(t, "dev", created.Name)
-	assert.Equal(t, "ignored", created.CreatedAt, "show --json is accepted without lossy reshaping")
+	assert.JSONEq(t, input, string(created),
+		"show --json is accepted without lossy reshaping: the document reaches the daemon byte-for-byte, "+
+			"created_at and all")
 
 	stdout.Reset()
 	input = strings.Replace(input, `"name":"dev"`, `"name":"renamed"`, 1)
@@ -149,10 +150,15 @@ func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {
 	// acknowledgement key is omitted unless the operator actually gave it.
 	assert.Equal(t, map[string]any{"name": "dev"}, calls[len(calls)-1].body)
 	stdout.Reset()
-	require.Equal(t, rcOK, runSandboxProfilesDefaultSet(
+	// TCL-791: the flag is a tombstone. It must fail with the real reason
+	// rather than be accepted and ignored, and it must not reach the daemon.
+	before := len(calls)
+	assert.Equal(t, rcInvalidArg, runSandboxProfilesDefaultSet(
 		&sandboxProfilesNameParams{Name: "dev", IUnderstandBreakGlassRisk: true}, &stdout, &stderr))
-	assert.Equal(t, map[string]any{"name": "dev", "break_glass_acknowledged": true}, calls[len(calls)-1].body,
-		"--i-understand-break-glass-risk must reach the daemon's assignment gate")
+	assert.Contains(t, stderr.String(), "--i-understand-break-glass-risk no longer exists")
+	assert.Contains(t, stderr.String(), "launch with the sandbox disabled")
+	assert.Len(t, calls, before, "a tombstoned flag must not produce a daemon request")
+	stderr.Reset()
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesGroupSet(&sandboxProfilesGroupSetParams{Group: "crew", Name: "dev"}, &stdout, &stderr))
 	assert.Equal(t, "/v1/groups/crew/sandbox-profile", calls[len(calls)-1].path)

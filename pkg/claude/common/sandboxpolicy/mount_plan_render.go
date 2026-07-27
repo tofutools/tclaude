@@ -60,14 +60,18 @@ import (
 //     at or below the harness state root must be refused rather than silently
 //     launching a harness that cannot persist.
 //  2. Plan entries replay exactly in order. Most-specific-wins remains the
-//     policy rule, and acknowledged break-glass entries ride in this class.
+//     policy rule.
 //  3. ProtectedPaths() hides beat launch-contract repairs and every ordinary
-//     rule. They are established before replay and restored after any repair;
-//     only a later acknowledged break-glass entry may reopen beneath them.
+//     rule. They are established before replay and restored after any repair,
+//     and NOTHING reopens beneath them. That is unconditional since TCL-791
+//     removed break-glass, the one former exception: no profile, include,
+//     launch contract, acknowledgement, or flag can carve a path back out of a
+//     protected root. An operator who must work without the wall disables the
+//     sandbox instead.
 //  4. The strictly-unreachable class — today the tmux socket directory — beats
-//     everything, including break-glass. It must come last precisely BECAUSE
-//     it is not in ProtectedPaths(): an ordinary rw row at that path passes
-//     profile validation, so a before-plan hide could be shadowed by an
+//     everything. It must come last precisely BECAUSE it is not in
+//     ProtectedPaths(): an ordinary rw row at that path passes profile
+//     validation, so a before-plan hide could be shadowed by an
 //     innocent-looking grant.
 //
 // The renderer emits only class 2. The other classes belong to the launch
@@ -99,21 +103,11 @@ type mountGrantSection struct {
 
 // RenderMountPlan renders one resolved effective sandbox policy to a MountPlan.
 //
-// Both filesystem authority sections contribute: the ordinary Filesystem grants
-// and the acknowledged BreakGlassFilesystem grants. Break-glass rules must
-// participate, or the plan would silently drop authority the operator
-// explicitly acknowledged, and the resulting namespace would not match the
-// policy the dashboard and audit surfaces report. Since a break-glass path sits
-// at or beneath a protected root, and the applier's baseline deny over that
-// root is established first (see "What the plan does NOT contain" above),
-// most-specific-wins reopens the narrower path with no special case here.
-//
-// The one collision that needs a rule is a deny and a break-glass grant on the
-// SAME canonical path. That folds the way every other same-path collision in
-// this package folds — deny dominates write dominates read — so composition
-// stays fail-closed and order-independent. An operator who wants the carve-out
-// authors it strictly beneath the deny, which is the shape the whole model is
-// built around.
+// Only the ordinary Filesystem grants contribute. Every one of them has already
+// been proven by normalizeFilesystem not to intersect a protected root, so no
+// entry this renderer emits can land at or beneath one — the class-3 hides
+// above are never reopened. There is deliberately no second authority section:
+// break_glass_filesystem was the one exception and TCL-791 removed it.
 //
 // Sections that do not describe host paths (Environment and AgentDirectories)
 // are deliberately absent: AgentDirectories are private directories agentd
@@ -124,23 +118,8 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 	if err != nil {
 		return MountPlan{}, err
 	}
-	breakGlass := make([]FilesystemGrant, 0, len(effective.BreakGlassFilesystem))
-	for i, grant := range effective.BreakGlassFilesystem {
-		// Break-glass never denies: deny is already the default for protected
-		// roots, so a deny here would mean the value was never normalized.
-		if grant.Access != AccessRead && grant.Access != AccessWrite {
-			return MountPlan{}, fmt.Errorf(
-				"break_glass_filesystem[%d].access %q is invalid (want read or write)", i, grant.Access)
-		}
-		// A direct conversion rather than a field-by-field literal: if the two
-		// grant shapes ever diverge this stops compiling, which is exactly the
-		// moment to decide what the new field means for the mount plan, instead
-		// of silently dropping it here.
-		breakGlass = append(breakGlass, FilesystemGrant(grant))
-	}
 	plan, err := renderMountPlanSections([]mountGrantSection{
 		{label: "filesystem", grants: effective.Filesystem},
-		{label: "break_glass_filesystem", grants: breakGlass},
 	})
 	if err != nil {
 		return MountPlan{}, err

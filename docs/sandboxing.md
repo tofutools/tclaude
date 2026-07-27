@@ -9,7 +9,7 @@ lives elsewhere and is not repeated here:
 
 | For | Read |
 |-----|------|
-| Profile wire shape, deny/reopen rules, break-glass, the CLI | [Agent coordination → sandbox profiles](agent.md#sandbox-profiles) |
+| Profile wire shape, deny/reopen rules, protected roots, the CLI | [Agent coordination → sandbox profiles](agent.md#sandbox-profiles) |
 | Per-session sandbox modes (Claude `inherit`/`on`/`off`, Codex) | [Harnesses](harnesses.md#sandbox-at-spawn-claude-code) |
 | The full harness capability matrix | [Harnesses](harnesses.md#capability-matrix) |
 | Locking agents out of agentd's own state | [Sandbox hardening](sandbox-hardening.md) |
@@ -237,10 +237,12 @@ load-bearing precedence classes:
    at or below the selected harness's state root is refused rather than
    launching a harness that cannot persist.
 3. Keep `sandboxpolicy.ProtectedPaths()` hidden above launch-contract repairs,
-   so `~/.tclaude/data` and `~/.claude/sessions` stay private. Only an
-   acknowledged break-glass plan entry may reopen beneath a protected root.
-4. Hide the tclaude tmux socket directory last, so no ordinary or break-glass
-   rule can grant host tmux control.
+   so `~/.tclaude/data` and `~/.claude/sessions` stay private. Nothing reopens
+   beneath a protected root: `normalizeFilesystem` refuses any read/write rule
+   that intersects one, so no such plan entry can exist. TCL-791 removed
+   break-glass, the one former exception.
+4. Hide the tclaude tmux socket directory last, so no rule can grant host tmux
+   control.
 
 Later plan entries shadow earlier ones, allowing a more-specific allow to
 reopen beneath a deny and a more-specific deny to hide beneath an allow.
@@ -890,7 +892,7 @@ read.
 ## See also
 
 - [Agent coordination → sandbox profiles](agent.md#sandbox-profiles) — the full
-  profile reference, break-glass, and CLI.
+  profile reference, protected roots, and CLI.
 - [Harnesses](harnesses.md) — per-session sandbox modes and the capability matrix.
 - [Sandbox hardening](sandbox-hardening.md) — protecting agentd's own state.
 - Claude Code sandboxing: <https://code.claude.com/docs/en/sandboxing>

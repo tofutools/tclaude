@@ -41,18 +41,6 @@ func openCodePermissionJSONForLaunch(
 				spec.DenyDirs = append(spec.DenyDirs, grant.Path)
 			}
 		}
-		breakGlass, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective)
-		if err != nil {
-			return "", err
-		}
-		for _, grant := range breakGlass {
-			switch grant.Access {
-			case sandboxpolicy.AccessRead:
-				spec.BreakGlassReadDirs = append(spec.BreakGlassReadDirs, grant.Path)
-			case sandboxpolicy.AccessWrite:
-				spec.BreakGlassWriteDirs = append(spec.BreakGlassWriteDirs, grant.Path)
-			}
-		}
 		spec.NetworkAccess = snapshot.Effective.NetworkAccess
 	}
 	rules, err := harness.BuildOpenCodePermissionRules(spec)

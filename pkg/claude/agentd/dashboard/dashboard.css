@@ -4167,9 +4167,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-cap-inc   { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
 /* "own" = agent-owned directory variable (isolated per-agent dir at spawn). */
 .sbx-cap-own   { color: #56d4dd; background: rgba(57, 197, 207, 0.12); border-color: rgba(57, 197, 207, 0.30); }
-/* Break-glass = protected tclaude/harness state deliberately exposed; must
-   read as dangerous everywhere, never like an ordinary grant. */
-.sbx-cap-bg    { color: #ff7b72; background: rgba(248, 81, 73, 0.18); border-color: rgba(248, 81, 73, 0.60); font-weight: 700; min-width: 0; }
 .sbx-cap-val {
   flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; color: #c9d1d9;
@@ -4196,12 +4193,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-missing button:hover { background: #2d2a20; border-color: #9e7c32; }
 .sbx-missing button:disabled { opacity: 0.55; cursor: default; }
-/* Break-glass editor section and the shared danger banner. Deliberately the
-   loudest chrome in the dialog: red border, red legend, persistent warning. */
-.sbx-break-glass { border-color: rgba(248, 81, 73, 0.55); }
-.sbx-break-glass legend { color: #ff7b72; font-weight: 700; }
-.sbx-break-glass .sbx-bg-add { border-color: rgba(248, 81, 73, 0.45); color: #ffa198; }
-.sbx-break-glass .sbx-bg-add:hover { background: rgba(248, 81, 73, 0.10); border-color: rgba(248, 81, 73, 0.70); color: #ffc1bc; }
 /* The common-rule preset menu sits under the filesystem table and ships
    folded: it is a long audited catalog most profiles never open, and every
    entry is only a row inserter — after the click there is nothing left of it
@@ -4235,9 +4226,16 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   color: #8b949e; overflow-wrap: anywhere;
 }
 .sbx-common-rule-informational { color: #8b949e; font-size: 12px; margin-top: 8px; }
+/* Was .sbx-bg-intro until TCL-791. The name meant "break-glass intro", but the
+   style is plain muted body text and the informational common-rule list — which
+   has nothing to do with break-glass — was its only surviving consumer, so
+   deleting it with the rest of the break-glass CSS left that list unstyled. */
+.sbx-common-rule-informational .sbx-rule-note {
+	color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px;
+}
 /* The feed is optional, so its failure stays inside the menu it belongs to
    rather than in the editor's shared error line, where it would displace a
-   save or break-glass refusal. */
+   save or validation refusal. */
 .sbx-common-rule-feed-error { color: #f0883e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
 /* What the last insertion actually did, warning included: rows appearing in a
    long table are easy to miss, and a deny of Home is only safe once its
@@ -4254,19 +4252,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   background: transparent; border: none; color: #8b949e; cursor: pointer; font-size: 14px; padding: 0 2px;
 }
 .sbx-common-rule-dismiss:hover { color: #e6edf3; }
-.sbx-bg-intro { color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
-.sbx-bg-warning {
-  border: 1px solid rgba(248, 81, 73, 0.60); border-left: 4px solid #f85149;
-  border-radius: 6px; background: rgba(248, 81, 73, 0.08);
-  color: #ffa198; font-size: 12px; line-height: 1.5;
-  padding: 8px 10px; margin: 4px 0 8px;
-}
-.sbx-bg-warning strong { color: #ff7b72; }
-.sbx-bg-ack {
-  display: flex; gap: 8px; align-items: flex-start;
-  margin: 2px 0 6px; color: #ffa198; font-size: 12px; line-height: 1.5;
-}
-.sbx-bg-ack input { accent-color: #f85149; margin-top: 2px; }
 /* Advanced raw-JSON disclosure. */
 .sbx-advanced { display: flex; flex-direction: column; gap: 8px; }
 .sbx-advanced-toggle {

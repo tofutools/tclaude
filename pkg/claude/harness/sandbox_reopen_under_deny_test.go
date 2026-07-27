@@ -135,21 +135,6 @@ func TestCodexReopenUnderDenyRefusedWhenProbeFails(t *testing.T) {
 	assert.ErrorContains(t, err, "bubblewrap")
 }
 
-// Break-glass and the reopen shape share one verified boundary: once the split
-// probe proved a narrower reopen survives a denied parent, an acknowledged
-// protected child is representable too.
-func TestBreakGlassAndReopenShareVerifiedChildBoundary(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	installSuccessfulSplitProbe(t, false)
-	grants := []sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(canonicalTestHome(t), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}}
-	require.NoError(t, ValidateSandboxBreakGlassWithReopenUnderDeny(CodexName, SandboxManagedProfile, grants, denyShape(t)))
-
-	// WITHOUT the shape, Codex keeps the conservative guard that refuses a
-	// grant strictly inside the denied protected directory.
-	err := ValidateSandboxBreakGlassWithReopenUnderDeny(CodexName, SandboxManagedProfile, grants, nil)
-	assertCapabilityKind(t, err, SandboxCapabilityBreakGlass)
-}
-
 func TestCodexHomeRulesPinBackendAndKeepNarrowReopens(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -160,17 +145,26 @@ func TestCodexHomeRulesPinBackendAndKeepNarrowReopens(t *testing.T) {
 	for _, dir := range []string{private, filepath.Dir(socket), workspace, debug} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
+	// debug is passed as BOTH a read and a write grant on purpose. An earlier
+	// revision of this test only created the directory and asserted the rules
+	// were absent, which they trivially were — nothing had asked for them. The
+	// renderer must actively suppress a child of a protected root, so the child
+	// has to be an input for the assertions below to mean anything.
 	content, err := codexAgentProfileContentForRules("home-test", socket, private, CodexSandboxRules{
-		WriteDirs: []string{workspace}, DenyDirs: []string{home}, BreakGlassReadDirs: []string{debug}, RequireSplitPolicy: true,
+		ReadDirs:  []string{debug},
+		WriteDirs: []string{workspace, debug}, DenyDirs: []string{home}, RequireSplitPolicy: true,
 	}, sandboxpolicy.NetworkAccessInherit, "linux")
 	require.NoError(t, err)
 	assert.Contains(t, content, "use_legacy_landlock = false")
 	assert.Contains(t, content, `"`+home+`" = "none"`)
 	assert.Contains(t, content, `"`+workspace+`" = "write"`)
 	assert.Contains(t, content, `"`+private+`" = "none"`)
-	assert.Contains(t, content, `"`+debug+`" = "read"`)
 	assert.Contains(t, content, `"`+socket+`" = "read"`)
 	assert.NotContains(t, content, `"`+filepath.Join(home, ".codex")+`" = "read"`)
+	// Nothing reopens beneath the protected root: TCL-791 removed break-glass,
+	// the only input that could ever have emitted a rule here.
+	assert.NotContains(t, content, `"`+debug+`" = "read"`)
+	assert.NotContains(t, content, `"`+debug+`" = "write"`)
 }
 
 func TestCodexSplitCapabilityRejectsExecutableSwapBeforeLaunch(t *testing.T) {
@@ -242,13 +236,16 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 	siblingRepo := filepath.Join(container, "sibling-repo")
 	arbitrarySibling := filepath.Join(container, "arbitrary")
 	private := filepath.Join(home, ".tclaude", "data")
-	breakGlass := filepath.Join(private, "acknowledged")
+	// A child of the protected private-state root. Before TCL-791 a break-glass
+	// rule could reopen it; now nothing can, and the smoke proves that on real
+	// hardware rather than only in the renderer.
+	protectedChild := filepath.Join(private, "acknowledged")
 	privateSibling := filepath.Join(private, "still-private")
 	agentCache := filepath.Join(root, "agent-dirs", "GOCACHE")
 	explicitRead := filepath.Join(root, "explicit-read")
 	explicitWrite := filepath.Join(root, "explicit-write")
 	socket := filepath.Join(home, ".tclaude", "api", "agentd.sock")
-	for _, dir := range []string{config, workspace, common, admin, siblingRepo, arbitrarySibling, breakGlass, privateSibling, agentCache, explicitRead, explicitWrite, filepath.Dir(socket)} {
+	for _, dir := range []string{config, workspace, common, admin, siblingRepo, arbitrarySibling, protectedChild, privateSibling, agentCache, explicitRead, explicitWrite, filepath.Dir(socket)} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
 	writeFile := func(path, value string) { require.NoError(t, os.WriteFile(path, []byte(value), 0o600)) }
@@ -256,7 +253,7 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 	writeFile(filepath.Join(siblingRepo, "secret"), "sibling")
 	writeFile(filepath.Join(arbitrarySibling, "secret"), "arbitrary")
 	writeFile(filepath.Join(private, "secret"), "private")
-	writeFile(filepath.Join(breakGlass, "allowed"), "break-glass")
+	writeFile(filepath.Join(protectedChild, "unreachable"), "protected")
 	writeFile(filepath.Join(privateSibling, "secret"), "private-sibling")
 	writeFile(filepath.Join(explicitRead, "allowed"), "explicit-read")
 
@@ -271,12 +268,10 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 		readDirs = append(readDirs, capability.ExecutablePath)
 	}
 	profileName, profilePath, err := EnsureCodexAgentLaunchProfileForRules(CodexSandboxRules{
-		ReadDirs:            readDirs,
-		WriteDirs:           []string{workspace, common, admin, explicitWrite, agentCache},
-		DenyDirs:            []string{home},
-		BreakGlassReadDirs:  []string{breakGlass},
-		RequireSplitPolicy:  true,
-		BreakGlassWriteDirs: nil,
+		ReadDirs:           readDirs,
+		WriteDirs:          []string{workspace, common, admin, explicitWrite, agentCache},
+		DenyDirs:           []string{home},
+		RequireSplitPolicy: true,
 	}, sandboxpolicy.NetworkAccessInherit, "1234567890abcdef")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.Remove(profilePath) })
@@ -291,8 +286,10 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 		"echo ok > " + q(filepath.Join(agentCache, "cache-write")),
 		"echo ok > " + q(filepath.Join(common, "common-write")),
 		"echo ok > " + q(filepath.Join(admin, "admin-write")),
-		"test \"$(cat " + q(filepath.Join(breakGlass, "allowed")) + ")\" = break-glass",
-		"! sh -c 'echo no > " + filepath.Join(breakGlass, "blocked-write") + "'",
+		// The protected root and everything beneath it stay unreachable. No
+		// profile input can reopen them (TCL-791).
+		"test ! -r " + q(filepath.Join(protectedChild, "unreachable")),
+		"! sh -c 'echo no > " + filepath.Join(protectedChild, "blocked-write") + "'",
 		"test ! -r " + q(filepath.Join(siblingRepo, "secret")),
 		"! sh -c 'echo no > " + filepath.Join(siblingRepo, "blocked-write") + "'",
 		"test ! -r " + q(filepath.Join(arbitrarySibling, "secret")),

@@ -359,3 +359,25 @@ func TestDashboardSandboxProfileImportInspectReportsPerPolicyErrors(t *testing.T
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"skipped":["A"]`)
 }
+
+// TCL-791: the directory endpoints take a whole profile document, so they are
+// an input surface like create and edit and refuse retired fields the same
+// way. They were missed in the first pass, which mattered most on the create
+// action: it would otherwise have answered — and actually made directories —
+// for a profile it had silently narrowed first.
+func TestDashboardSandboxProfileDirectoriesRefuseBreakGlassPayloads(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	carrier := `{"name":"debug","filesystem":[],"environment":[],` +
+		`"break_glass_filesystem":[{"path":"` + filepath.Join(t.TempDir(), "data") + `","access":"write"}]}`
+	for _, action := range []string{"inspect", "create"} {
+		t.Run(action, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			serveDashboardSandboxProfiles(rec, dashboardRequest(
+				http.MethodPost, "/api/sandbox-profile-directories/"+action, carrier))
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body=%s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "break_glass_removed")
+		})
+	}
+}

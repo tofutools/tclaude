@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/common"
 )
 
 func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
@@ -72,7 +73,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := bwrapArgs(nil, nil, tc.plan)
+			got, err := bwrapArgs(nil, tc.plan)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, bwrapFilesystemArgsWithin(got, root),
 				"the builder must preserve MountPlan order verbatim")
@@ -87,7 +88,7 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 
 func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "not-created")
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: missing + "-ro", Mode: sandboxpolicy.MountRO},
 		{Path: missing + "-rw", Mode: sandboxpolicy.MountRW},
 		{Path: missing + "-hide", Mode: sandboxpolicy.MountHide},
@@ -102,38 +103,68 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 	assert.NotContains(t, got, missing+"-rw")
 }
 
-func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
+// TestBwrapArgsHidesProtectedRootsWithNoReopens is the applier-layer half of
+// the absolute protected-root invariant (TCL-791). Its policy-layer half lives
+// in sandboxpolicy.TestRenderedMountPlanNeverTouchesAProtectedRoot.
+//
+// The plan here is built the only way production builds one — through
+// Normalize and RenderMountPlan — because that is the path a reintroduced
+// reopen would have to travel. Two things are asserted together: that the
+// broadest ancestor grant is refused outright, and that the broadest grant
+// which IS legal still leaves every protected root hidden with no reopen.
+func TestBwrapArgsHidesProtectedRootsWithNoReopens(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
-	for _, relative := range []string{filepath.Join(".tclaude", "data"), filepath.Join(".claude", "sessions")} {
+	workspace := filepath.Join(home, "work")
+	for _, relative := range []string{
+		filepath.Join(".tclaude", "data"),
+		filepath.Join(".claude", "sessions"),
+	} {
 		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))
 	}
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
 	protected, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
 	require.Len(t, protected, 2)
 
-	plan := sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
-		{Path: protected[0], Mode: sandboxpolicy.MountRO},
-		{Path: protected[1], Mode: sandboxpolicy.MountRW},
-	}}
-	got, err := bwrapArgs(nil, protected, plan)
+	// A read grant on the protected roots' common ancestor is the cheapest way
+	// to reach them, and it is refused. This is why no bind below can cover a
+	// protected root in the first place.
+	_, err = sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name:       "ancestor-read",
+		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessRead}},
+	})
+	require.ErrorContains(t, err, "intersects protected directory")
+
+	// The widest legal shape: deny the ancestor, reopen an ordinary child.
+	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name: "deny-home-reopen-work",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: workspace, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	require.NoError(t, err)
+	plan, err := sandboxpolicy.RenderMountPlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: normalized.Filesystem,
+	})
 	require.NoError(t, err)
 
-	hide0 := indexOfBwrapTriplet(got, "--tmpfs", protected[0])
-	hide1 := indexOfBwrapTriplet(got, "--tmpfs", protected[1])
-	reopen0 := indexOfBwrapTriplet(got, "--ro-bind", protected[0])
-	reopen1 := indexOfBwrapTriplet(got, "--bind", protected[1])
-	require.NotEqual(t, -1, hide0)
-	require.NotEqual(t, -1, hide1)
-	require.NotEqual(t, -1, reopen0)
-	require.NotEqual(t, -1, reopen1)
-	assert.Less(t, hide0, reopen0, "baseline hide must precede the acknowledged read reopen")
-	assert.Less(t, hide1, reopen1, "baseline hide must precede the acknowledged write reopen")
-	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", protected[0]),
-		"an exact read reopen replaces the hidden mount and carries its own mode")
-	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", protected[1]),
-		"an exact write reopen must not be downgraded by the deferred flush")
+	got, err := bwrapArgs(nil, plan)
+	require.NoError(t, err)
+
+	workspaceBind := indexOfBwrapTriplet(got, "--bind", workspace)
+	require.NotEqual(t, -1, workspaceBind,
+		"the legal reopen must actually land, or the checks below are vacuous")
+	for _, root := range protected {
+		hides := indicesOfBwrapTriplet(got, "--tmpfs", root)
+		require.NotEmpty(t, hides, "protected root %s must be hidden", root)
+		assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", root),
+			"no read reopen may exist for protected root %s", root)
+		assert.Equal(t, -1, indexOfBwrapTriplet(got, "--bind", root),
+			"no write reopen may exist for protected root %s", root)
+	}
 }
 
 func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
@@ -143,7 +174,7 @@ func TestBwrapArgsHidesTmuxSocketAfterPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(tmuxSocketDir, 0o700))
 
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: tmuxBase, Mode: sandboxpolicy.MountRW},
 		{Path: tmuxSocketDir, Mode: sandboxpolicy.MountRW},
 	}})
@@ -169,7 +200,7 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 	require.NoError(t, err)
 	tmuxBase := filepath.Dir(tmuxSocketDir)
 
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
 		Path: tmuxBase, Mode: sandboxpolicy.MountHide,
 	}}})
 	require.NoError(t, err)
@@ -188,48 +219,57 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 	assert.Less(t, parentRemount, finalHide)
 }
 
-func TestBwrapArgsPrivateWriteDirOverridesPolicyAndBreakGlassButPrecedesHostControl(t *testing.T) {
-	home := t.TempDir()
+// TestBwrapArgsPrivateWriteDirOverridesPolicyButPrecedesHostControl covers the
+// daemon-owned spawn-attachment exception, which lives under a protected root
+// but is not policy-reachable: the daemon supplies it directly to the applier,
+// no profile can name it, and it hides its own shared parent so sibling
+// sessions stay absent. It survives TCL-791 unchanged — it grants nothing an
+// operator can ask for, which is precisely what break-glass did.
+func TestBwrapArgsPrivateWriteDirOverridesPolicyButPrecedesHostControl(t *testing.T) {
+	// Canonicalized: ProtectedPaths resolves symlinks, so on macOS (where
+	// TempDir sits under /var → /private/var) an unresolved HOME would build
+	// protected paths that never match the ones the renderer hides, and the
+	// assertions below would stop testing anything.
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	t.Setenv("TMUX_TMPDIR", t.TempDir())
 	protected := filepath.Join(home, ".tclaude", "data")
 	parent := filepath.Join(protected, "spawn-attachments")
 	current := filepath.Join(parent, "current-session")
 	sibling := filepath.Join(parent, "sibling-session")
-	for _, dir := range []string{current, sibling} {
+	workspace := filepath.Join(home, "work")
+	for _, dir := range []string{current, sibling, workspace} {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
 
-	got, err := bwrapArgs(nil, []string{parent, sibling}, sandboxpolicy.MountPlan{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
 		Entries: []sandboxpolicy.MountEntry{
-			{Path: parent, Mode: sandboxpolicy.MountRW},
-			{Path: sibling, Mode: sandboxpolicy.MountRW},
+			{Path: workspace, Mode: sandboxpolicy.MountRW},
 		},
 	}, TclaudeLayerPrivateWriteDir{Parent: parent, Current: current})
 	require.NoError(t, err)
 
 	protectedHide := indexOfBwrapTriplet(got, "--tmpfs", protected)
-	policyGrant := indexOfBwrapTriplet(got, "--bind", parent)
-	siblingBreakGlass := indexOfBwrapTriplet(got, "--bind", sibling)
+	policyGrant := indexOfBwrapTriplet(got, "--bind", workspace)
 	privateHide := indexOfBwrapTriplet(got, "--tmpfs", parent)
 	currentReopen := indexOfBwrapTriplet(got, "--bind", current)
 	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", parent)
 	tmuxHide := indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t))
 	if runtime.GOOS == "linux" {
 		require.NotEqual(t, -1, protectedHide)
-		assert.Less(t, protectedHide, policyGrant,
-			"acknowledged break-glass may replay through class 3 before the daemon exception")
+		assert.Less(t, protectedHide, privateHide,
+			"the daemon exception replays on top of the class-3 baseline, not instead of it")
 	}
 	require.NotEqual(t, -1, policyGrant)
-	require.NotEqual(t, -1, siblingBreakGlass)
 	require.NotEqual(t, -1, privateHide)
 	require.NotEqual(t, -1, currentReopen)
 	require.NotEqual(t, -1, parentRemount)
 	require.NotEqual(t, -1, tmuxHide)
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--bind", sibling),
+		"no surface remains that could reopen a sibling session's attachments")
 	assert.Less(t, policyGrant, privateHide,
-		"private sibling concealment must beat ordinary policy and break-glass replay")
-	assert.Less(t, siblingBreakGlass, privateHide,
-		"even an acknowledged sibling reopen is covered by the final daemon-only parent hide")
+		"private sibling concealment must beat ordinary policy replay")
 	assert.Less(t, privateHide, currentReopen)
 	assert.Less(t, currentReopen, parentRemount)
 	assert.Less(t, parentRemount, tmuxHide,
@@ -285,7 +325,7 @@ func TestBwrapArgsDeferredRemountTracksTopmostExactMount(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: tc.entries})
+			got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: tc.entries})
 			require.NoError(t, err)
 			if tc.wantRemount {
 				assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--remount-ro", path))
@@ -305,7 +345,7 @@ func TestBwrapArgsSkipsProtectedRemountsShadowedByAncestorHide(t *testing.T) {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
 
-	got, err := bwrapArgs([]string{stateRoot}, nil, sandboxpolicy.MountPlan{
+	got, err := bwrapArgs([]string{stateRoot}, sandboxpolicy.MountPlan{
 		Entries: []sandboxpolicy.MountEntry{{Path: home, Mode: sandboxpolicy.MountHide}},
 	})
 	require.NoError(t, err)
@@ -342,7 +382,7 @@ func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	}, effective)
 	require.NoError(t, err)
 
-	got, err := bwrapArgs(phase0, nil, sandboxpolicy.MountPlan{})
+	got, err := bwrapArgs(phase0, sandboxpolicy.MountPlan{})
 	require.NoError(t, err)
 	stateBind := indexOfBwrapTriplet(got, "--bind", claudeRoot)
 	workspaceBind := indexOfBwrapTriplet(got, "--bind", workspace)
@@ -360,19 +400,26 @@ func TestBwrapArgsLaunchContractPrecedesProtectedHides(t *testing.T) {
 	assert.Less(t, protectedHide, protectedRemount)
 }
 
+// TestBwrapArgsRepairsLaunchContractAfterHomeDeny exercises reopen-under-deny
+// (TCL-623), which TCL-791 leaves intact: an ordinary deny on an ancestor with
+// a narrower reopen beneath it. The narrower path is deliberately an ordinary
+// directory now — under the absolute invariant, the reopen can never be a
+// protected child, and the protected root under the same state root must come
+// back hidden regardless.
 func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	stateRoot := filepath.Join(home, ".claude")
 	protectedRoot := filepath.Join(stateRoot, "sessions")
-	breakGlass := filepath.Join(protectedRoot, "approved")
-	require.NoError(t, os.MkdirAll(breakGlass, 0o700))
+	reopened := filepath.Join(home, "work", "reopened")
+	require.NoError(t, os.MkdirAll(protectedRoot, 0o700))
+	require.NoError(t, os.MkdirAll(reopened, 0o700))
 
-	got, err := bwrapArgs([]string{stateRoot}, []string{breakGlass}, sandboxpolicy.MountPlan{
+	got, err := bwrapArgs([]string{stateRoot}, sandboxpolicy.MountPlan{
 		Entries: []sandboxpolicy.MountEntry{
 			{Path: home, Mode: sandboxpolicy.MountHide},
-			{Path: breakGlass, Mode: sandboxpolicy.MountRO},
+			{Path: reopened, Mode: sandboxpolicy.MountRO},
 		},
 	})
 	require.NoError(t, err)
@@ -380,23 +427,23 @@ func TestBwrapArgsRepairsLaunchContractAfterHomeDeny(t *testing.T) {
 	homeHide := indexOfBwrapTriplet(got, "--tmpfs", home)
 	stateBinds := indicesOfBwrapTriplet(got, "--bind", stateRoot)
 	protectedHides := indicesOfBwrapTriplet(got, "--tmpfs", protectedRoot)
-	breakGlassReopen := indexOfBwrapTriplet(got, "--ro-bind", breakGlass)
+	reopen := indexOfBwrapTriplet(got, "--ro-bind", reopened)
 	homeRemount := indexOfBwrapTriplet(got, "--remount-ro", home)
 	protectedRemount := indexOfBwrapTriplet(got, "--remount-ro", protectedRoot)
 	require.NotEqual(t, -1, homeHide)
 	require.Len(t, stateBinds, 2, "the state root must be rebound after an ordinary ancestor deny")
 	require.Len(t, protectedHides, 2, "repairing the state root must restore its protected child hide")
-	require.NotEqual(t, -1, breakGlassReopen)
+	require.NotEqual(t, -1, reopen)
 	require.NotEqual(t, -1, homeRemount)
 	require.NotEqual(t, -1, protectedRemount)
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", protectedRoot),
+		"no plan authority beats a protected hide any more")
 	assert.Less(t, stateBinds[0], homeHide)
 	assert.Less(t, homeHide, stateBinds[1])
 	assert.Less(t, stateBinds[1], protectedHides[1])
-	assert.Less(t, protectedHides[1], breakGlassReopen,
-		"acknowledged break-glass must remain the only plan authority that beats a protected hide")
-	assert.Less(t, breakGlassReopen, protectedRemount,
-		"the child reopen mountpoint must exist before its hidden parent becomes read-only")
-	assert.Less(t, breakGlassReopen, homeRemount,
+	assert.Less(t, protectedHides[1], protectedRemount,
+		"the restored hide must be hardened after it is re-established")
+	assert.Less(t, reopen, homeRemount,
 		"the ancestor hide must remain mutable until all narrower repairs have landed")
 }
 
@@ -413,7 +460,6 @@ func TestBwrapArgsGeneratedHomeWriteRehidesProtectedRoots(t *testing.T) {
 
 	got, err := bwrapArgs(
 		[]string{stateRoot, home},
-		nil,
 		sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{{
 			Path: home, Mode: sandboxpolicy.MountRW,
 		}}},
@@ -446,7 +492,7 @@ func TestBwrapArgsRefusesLaunchContractInsideProtectedRoot(t *testing.T) {
 	workspace := filepath.Join(protectedRoot, "work")
 	require.NoError(t, os.MkdirAll(workspace, 0o700))
 
-	_, err = bwrapArgs([]string{stateRoot, workspace}, nil, sandboxpolicy.MountPlan{})
+	_, err = bwrapArgs([]string{stateRoot, workspace}, sandboxpolicy.MountPlan{})
 	require.ErrorContains(t, err, workspace)
 	require.ErrorContains(t, err, protectedRoot)
 }
@@ -723,7 +769,7 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 			{Path: workspace, Mode: sandboxpolicy.MountRW},
 		},
 	}
-	got, err := bwrapArgs([]string{stateRoot, workspace}, nil, plan)
+	got, err := bwrapArgs([]string{stateRoot, workspace}, plan)
 	require.NoError(t, err)
 
 	assert.Contains(t, got, "--unshare-net")
@@ -788,7 +834,7 @@ func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
 			{Path: target, Mode: sandboxpolicy.MountHide},
 		},
 	}
-	got, err := bwrapArgs(nil, nil, plan)
+	got, err := bwrapArgs(nil, plan)
 	require.NoError(t, err)
 
 	aliases := indicesOfBwrapSymlink(got, target, link)
@@ -819,7 +865,7 @@ func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {
 			"every alias repair must land before TCL-758's read-only flush")
 	}
 
-	hostOpen, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+	hostOpen, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
 		Aliases: plan.Aliases,
 	})
 	require.NoError(t, err)
@@ -842,7 +888,7 @@ func TestBwrapArgsProtectedHideBeatsAliasRepair(t *testing.T) {
 	require.NoError(t, err)
 	link := filepath.Join(protectedRoots[0], "alias")
 	target := filepath.Join(home, "safe-target")
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 		Aliases:        []sandboxpolicy.MountAlias{{Link: link, Target: target}},
 		Entries: []sandboxpolicy.MountEntry{{
@@ -864,7 +910,7 @@ func TestBwrapArgsProtectedHideBeatsAliasRepair(t *testing.T) {
 }
 
 func TestBwrapArgsRefusesReservedFilteredPosture(t *testing.T) {
-	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{
+	_, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkFiltered,
 	})
 	require.ErrorContains(t, err, "reserved")
@@ -934,12 +980,12 @@ func bwrapFilesystemArgsWithin(args []string, root string) []string {
 }
 
 func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
-	_, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	_, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "relative", Mode: sandboxpolicy.MountRW},
 	}})
 	require.ErrorContains(t, err, "non-absolute")
 
-	_, err = bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	_, err = bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: "/work", Mode: sandboxpolicy.MountMode(99)},
 	}})
 	require.ErrorContains(t, err, "invalid mode")
@@ -947,7 +993,7 @@ func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 
 func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "uninitialized-entry")
-	got, err := bwrapArgs(nil, nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: path},
 	}})
 	require.NoError(t, err)
@@ -959,9 +1005,104 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
-	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
+	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")
 	assert.Contains(t, got, "--new-session")
+}
+
+// TestLaunchContractReachesExactlyOneProtectedRootPath is the enumeration the
+// protected-root invariant needs in order to be checkable rather than merely
+// asserted (TCL-791, required by the sandbox-v2 lead before merge).
+//
+// The invariant is absolute for POLICY input: no profile, include,
+// acknowledgement, or flag reaches a protected root. The launch contract is
+// the one channel that does, exactly once — the per-session spawn-attachment
+// drop-box, which is daemon-owned, path-derived from the session identity, and
+// bound on top of the hide that already covers the rest of the root.
+//
+// Prose cannot guard that. This test enumerates EVERY bwrap operation that
+// makes host content visible inside the sandbox at or below a protected root
+// and asserts the resulting set is exactly {drop-box child}. A second such
+// path — from any channel, whether a new launch-contract field, a plan entry,
+// or a repair mount — fails here with the offending path named.
+func TestLaunchContractReachesExactlyOneProtectedRootPath(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	for _, relative := range []string{
+		filepath.Join(".tclaude", "data"),
+		filepath.Join(".claude", "sessions"),
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.NotEmpty(t, protected)
+
+	// The real drop-box paths, so relocating them without revisiting this
+	// invariant fails here rather than silently widening the allowed set.
+	dropBoxParent := common.SpawnAttachmentsPrivateBase()
+	dropBoxChild := common.SpawnAttachmentsPrivateDir("session-under-test")
+	require.NoError(t, os.MkdirAll(dropBoxChild, 0o700))
+	require.Truef(t, underAnyProtectedRoot(protected, dropBoxChild),
+		"precondition: the drop-box %s must itself sit under a protected root, "+
+			"or this test proves nothing", dropBoxChild)
+
+	// The widest legal policy shape: deny the ancestor, reopen an ordinary
+	// child. Built through Normalize and RenderMountPlan because that is the
+	// path a reintroduced reopen would have to travel.
+	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name: "deny-home-reopen-work",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: workspace, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	require.NoError(t, err)
+	plan, err := sandboxpolicy.RenderMountPlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: normalized.Filesystem,
+	})
+	require.NoError(t, err)
+
+	args, err := bwrapArgs([]string{workspace}, plan, TclaudeLayerPrivateWriteDir{
+		Parent: dropBoxParent, Current: dropBoxChild,
+	})
+	require.NoError(t, err)
+
+	// --bind and --ro-bind are the only forms that expose host content. --tmpfs
+	// and --dir hide or create empty state; --remount-ro narrows.
+	reached := map[string]string{}
+	for i := 0; i+2 < len(args); i++ {
+		flag, dst := args[i], args[i+2]
+		if flag != "--bind" && flag != "--ro-bind" {
+			continue
+		}
+		if underAnyProtectedRoot(protected, dst) {
+			reached[dst] = flag
+		}
+	}
+
+	require.Contains(t, reached, dropBoxChild,
+		"the drop-box bind must actually land, or the equality below is vacuous")
+	for dst, flag := range reached {
+		assert.Equalf(t, dropBoxChild, dst,
+			"%s %s reaches protected state through the launch contract. The "+
+				"spawn-attachment drop-box is the ONLY sanctioned path below a "+
+				"protected root (TCL-791). If this is deliberate, it needs a ruling "+
+				"and this test updated — not a silent second exception.", flag, dst)
+	}
+	assert.Len(t, reached, 1)
+}
+
+func underAnyProtectedRoot(protected []string, path string) bool {
+	for _, root := range protected {
+		if sandboxpolicy.PathContainsOrEqual(root, path) {
+			return true
+		}
+	}
+	return false
 }
