@@ -937,8 +937,9 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
   const sandboxGlyph = harnessLine.querySelector('.sandbox-badge');
   assert.equal(sandboxGlyph.textContent, '🔒');
-  assert.match(sandboxGlyph.title, /^Sandbox: workspace-write —/,
-    'the mode moved from the chip into the tooltip');
+  assert.equal(sandboxGlyph.title,
+    'Status: ON\nImplementation: CC\nProfile: Not recorded\nClick to temporarily disable',
+    'the glyph tooltip exposes only the compact sandbox summary');
   assert.equal(richRow.querySelector('.remote-badge').dataset.act, 'web-open-window');
 
   assert.equal(richRow.querySelector('.state-pill').textContent, 'online');
