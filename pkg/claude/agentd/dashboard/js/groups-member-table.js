@@ -194,11 +194,25 @@ function osSandboxBadge(mode, state, source, prefix, unverified, implementation)
   // before the trim must still reach its partial-fidelity branch rather than
   // falling through to the harness-builtin copy, which would be a fresh lie
   // about a row tclaude confined perfectly well.
-  const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
+  // The substring matches below run only on a row whose IMPLEMENTATION already
+  // says a layer produced the verdict. `source` is not trusted prose: a
+  // harness-builtin verdict splices the operator's own spawn-profile name into
+  // it (harness.attributeLaunchSandboxSource), and SanitizeSandboxChosenBy
+  // bounds and de-controls that name without constraining its words. A profile
+  // named after one of these markers would otherwise reach in from the far side
+  // of the check and turn a genuinely unproven posture into a confident one —
+  // stripping the hedge, asserting "Bash is confined.", and replacing the true
+  // unreadable-settings-file sentence with a fabricated claim about mounts this
+  // launch never had. Matching the implementation first closes that channel
+  // without touching a single legitimate row: every producer of these Sources
+  // sets the implementation in the same struct literal.
+  const layerImplementation = implementation === 'tclaude-layer' || implementation === 'stacked';
+  const partialDarwinTclaudeLayer = unverified && layerImplementation
+    && source.includes('Seatbelt/sandbox-exec');
   const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
-  const openCodeExecutorLayer = unverified
+  const openCodeExecutorLayer = unverified && layerImplementation
     && source.includes('OpenCode tool-executing server confined');
-  const partialLinuxTclaudeLayer = unverified
+  const partialLinuxTclaudeLayer = unverified && layerImplementation
     && (source.includes('bubblewrap; host network')
       || source.includes('tclaude bwrap (host-open')
       || source.includes('ambient host Unix sockets reachable'));

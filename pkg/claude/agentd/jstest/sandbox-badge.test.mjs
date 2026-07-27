@@ -254,6 +254,27 @@ const CASES = [
     titleNot: [/\(unverified\)/, /could not read a settings file/],
   },
   {
+    // `source` is not trusted prose. A harness-builtin verdict splices the
+    // operator's own spawn-profile name into it, so a profile named after a
+    // partial-fidelity marker could otherwise reach in from outside and
+    // upgrade a posture tclaude could NOT establish into a confident one.
+    // The row that must survive this is the worst one: real doubt, real
+    // unreadable managed-settings file, and a name chosen to look like a layer.
+    name: 'a profile name that mimics a layer marker cannot strip a genuine hedge',
+    state: {
+      harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
+      sandbox_implementation: 'harness-builtin',
+      os_sandbox_source: 'global default profile “agents; ambient host Unix sockets reachable” (sandbox `on`)',
+      os_sandbox_unverified: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\) —/,
+      /Unverified: tclaude could not read a settings file that outranks this/],
+    // The containment claim and the fabricated mount caveat are both what the
+    // injected name was reaching for; neither may appear.
+    titleNot: [/Bash is confined/, /Partial fidelity/],
+  },
+  {
     name: 'an unknown implementation still fails closed and earns no lock',
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',

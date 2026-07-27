@@ -197,7 +197,7 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 		}
 	default:
 		return harness.LaunchOSSandbox{
-			State:      "on",
+			State: "on",
 			// Source names the mechanism and posture that decided; the badge's
 			// own partial-fidelity sentence is the single home of the ambient
 			// host Unix socket caveat, so repeating it here would print the same

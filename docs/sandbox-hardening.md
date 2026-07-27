@@ -540,7 +540,7 @@ environment entries are plain environment variables that apply either way.
 | Situation | Tooltip adds |
 | --- | --- |
 | profile applied, rules in force | `Customized by tclaude sandbox profile “x” (global default).` — one clause per applied tier, in `global` → `group` → `explicit` order |
-| profile applied, rules withheld | the same clause plus `Its filesystem rules are not in force (…); any environment entries it defines still apply.` The reason is either that the sandbox is off, or that the launch requested `off` so the rules were never emitted — including when managed policy then forced the sandbox back on |
+| profile applied, rules withheld | the same clause continued: `Customized by tclaude sandbox profile “x” (global default) — its filesystem rules are not in force (…); any environment entries it defines still apply.` The reason is either that the sandbox is off, or that the launch requested `off` so the rules were never emitted — including when managed policy then forced the sandbox back on |
 | unverified verdict | the profile is named, with no claim either way: the hedge above already says the posture is unproven |
 | launch resolved to no profile | `No tclaude sandbox profile applied.` |
 | the caller omitted the profiles (spawn dialog "none", `--omit-sandbox-profiles`) | `No tclaude sandbox profile — this launch omitted them.` |
