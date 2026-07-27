@@ -276,7 +276,9 @@ current hardware does not make it a reliable AF_UNIX reply block, and reply
 suppression is not part of the isolated contract. Inbound listener prevention
 therefore rests on the bind deny. A listening descriptor passed through the
 trusted agentd daemon with `SCM_RIGHTS` is outside this boundary's threat model.
-Mach services remain outside this slice. The filesystem baseline is read-only, with narrow
+The earlier reply-loss finding did not reproduce on current CI macOS; see
+TCL-777's hardware evidence before proposing an inbound deny. Mach services
+remain outside this slice. The filesystem baseline is read-only, with narrow
 launch-contract write roots plus the Darwin process runtime paths
 (`/dev/null`, tty/pty paths, `/dev/fd`, and the canonical `$TMPDIR` beneath
 `/private/var/folders`). Those runtime exceptions apply only to the baseline;
