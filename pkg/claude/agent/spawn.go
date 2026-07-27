@@ -87,10 +87,10 @@ type ResolvedLaunch struct {
 }
 
 type ResolvedSandboxPolicy struct {
-	Version    int                             `json:"version"`
-	Applied    []sandboxpolicy.AppliedProfile  `json:"applied"`
-	Filesystem []sandboxpolicy.FilesystemGrant `json:"filesystem"`
-	Environment []string `json:"environment"`
+	Version     int                             `json:"version"`
+	Applied     []sandboxpolicy.AppliedProfile  `json:"applied"`
+	Filesystem  []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment []string                        `json:"environment"`
 }
 
 func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {

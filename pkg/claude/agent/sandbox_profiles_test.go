@@ -37,10 +37,10 @@ func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
 	require.Len(t, calls, 1)
 	body, ok := calls[0].body.(struct {
-		Profile sandboxProfileJSON `json:"profile"`
+		Profile json.RawMessage `json:"profile"`
 	})
 	require.True(t, ok)
-	assert.Equal(t, "dev", body.Profile.Name)
+	assert.JSONEq(t, input, string(body.Profile))
 	assert.Contains(t, stdout.String(), "has not been saved")
 }
 
@@ -98,10 +98,11 @@ func TestRunSandboxProfilesCRUDRoundTripsShowJSONShape(t *testing.T) {
 	input := `{"name":"dev","filesystem":[{"path":"/work","access":"read"}],"environment":[{"name":"CACHE","value":"/cache"}],"created_at":"ignored"}`
 	var stdout, stderr bytes.Buffer
 	require.Equal(t, rcOK, runSandboxProfilesCreate(&sandboxProfilesFileParams{File: "-"}, strings.NewReader(input), &stdout, &stderr))
-	created, ok := calls[0].body.(*sandboxProfileJSON)
+	created, ok := calls[0].body.(json.RawMessage)
 	require.True(t, ok)
-	assert.Equal(t, "dev", created.Name)
-	assert.Equal(t, "ignored", created.CreatedAt, "show --json is accepted without lossy reshaping")
+	assert.JSONEq(t, input, string(created),
+		"show --json is accepted without lossy reshaping: the document reaches the daemon byte-for-byte, "+
+			"created_at and all")
 
 	stdout.Reset()
 	input = strings.Replace(input, `"name":"dev"`, `"name":"renamed"`, 1)

@@ -202,7 +202,7 @@ func runSandboxProfilesDraft(p *sandboxProfilesDraftParams, stdin io.Reader, std
 		fmt.Fprintln(stderr, "Error: --token is required")
 		return rcInvalidArg
 	}
-	profile, rc := loadSandboxProfileFile(p.File, stdin, stderr)
+	profile, rc := loadSandboxProfileBody(p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -210,8 +210,8 @@ func runSandboxProfilesDraft(p *sandboxProfilesDraftParams, stdin io.Reader, std
 		return rc
 	}
 	body := struct {
-		Profile sandboxProfileJSON `json:"profile"`
-	}{Profile: *profile}
+		Profile json.RawMessage `json:"profile"`
+	}{Profile: profile}
 	var resp struct {
 		Message string `json:"message"`
 	}
@@ -232,7 +232,7 @@ func runSandboxProfilesCreate(p *sandboxProfilesFileParams, stdin io.Reader, std
 		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
 		return rcInvalidArg
 	}
-	profile, rc := loadSandboxProfileFile(p.File, stdin, stderr)
+	profile, rc := loadSandboxProfileBody(p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -270,7 +270,7 @@ func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdou
 	if rc != rcOK {
 		return rc
 	}
-	profile, rc := loadSandboxProfileFile(p.File, stdin, stderr)
+	profile, rc := loadSandboxProfileBody(p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
@@ -537,11 +537,11 @@ func runSandboxProfilesExport(p *sandboxProfilesExportParams, stdout, stderr io.
 }
 
 type sandboxProfilesImportParams struct {
-	File             string `long:"file" short:"f" help:"Portable export JSON path ('-' reads stdin)"`
-	OnConflict       string `long:"on-conflict" optional:"true" help:"Conflict policy: error, skip, or overwrite"`
-	ApplyAssignments bool   `long:"apply-assignments" help:"Apply included global/group assignments"`
-	JSON             bool   `long:"json" help:"Emit the stable import-result JSON instead of a summary"`
-	IUnderstandBreakGlassRisk bool `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
+	File                      string `long:"file" short:"f" help:"Portable export JSON path ('-' reads stdin)"`
+	OnConflict                string `long:"on-conflict" optional:"true" help:"Conflict policy: error, skip, or overwrite"`
+	ApplyAssignments          bool   `long:"apply-assignments" help:"Apply included global/group assignments"`
+	JSON                      bool   `long:"json" help:"Emit the stable import-result JSON instead of a summary"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 func sandboxProfilesImportCmd() *cobra.Command {
@@ -610,17 +610,38 @@ func runSandboxProfilesImport(p *sandboxProfilesImportParams, stdin io.Reader, s
 	return rcOK
 }
 
-func loadSandboxProfileFile(path string, stdin io.Reader, stderr io.Writer) (*sandboxProfileJSON, int) {
+// loadSandboxProfileBody reads a profile document and forwards it VERBATIM.
+//
+// It deliberately does not decode into sandboxProfileJSON first. Projecting
+// operator input through a client-side struct drops every field the CLI does
+// not know about, and that includes the break_glass_filesystem tombstone
+// TCL-791 retired: the daemon can only refuse a field that reaches it, so a
+// client-side strip would turn the intended typed 422 into "Created sandbox
+// profile" and exit 0. Silently accepting a document that is not the document
+// the operator sent is the precise failure this removal exists to prevent.
+//
+// The daemon is the single validation boundary; the CLI's job here is to hand
+// it the operator's bytes unchanged. runSandboxProfilesImport already works
+// this way. Keeping that property is also what makes the next tombstone free:
+// no future retired field needs a matching CLI-side edit to stay loud.
+//
+// The JSON is still parsed, but only to reject a malformed file locally with a
+// better message than a daemon 400 — the parse result itself is discarded.
+func loadSandboxProfileBody(path string, stdin io.Reader, stderr io.Writer) (json.RawMessage, int) {
 	raw, rc := loadSandboxProfileRawFile(path, stdin, stderr)
 	if rc != rcOK {
 		return nil, rc
 	}
-	var profile sandboxProfileJSON
-	if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
 		fmt.Fprintf(stderr, "Error: --file is not valid sandbox-profile JSON: %v\n", err)
 		return nil, rcInvalidArg
 	}
-	return &profile, rcOK
+	if probe == nil {
+		fmt.Fprintln(stderr, "Error: --file must contain a sandbox-profile JSON object")
+		return nil, rcInvalidArg
+	}
+	return json.RawMessage(raw), rcOK
 }
 func loadSandboxProfileRawFile(path string, stdin io.Reader, stderr io.Writer) (string, int) {
 	if strings.TrimSpace(path) == "" {

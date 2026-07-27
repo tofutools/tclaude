@@ -144,6 +144,13 @@ func TestBreakGlassPayloadIsRefusedAtEverySurface(t *testing.T) {
 	require.NotNil(t, stored)
 	assert.Empty(t, stored.Filesystem, "the refused edit must not have been applied")
 
+	// The scribe draft handoff. It never writes the registry, but the human is
+	// shown the draft and asked to save it: handing them a silently stripped
+	// profile would put the agent's name on a document it did not write.
+	assertRefused(t, profileReq(t, f, http.MethodPost,
+		"/v1/sandbox-profile-drafts/abcdefghijklmnop",
+		map[string]any{"profile": carrier}), "draft submit")
+
 	// Both assignment surfaces, whose only break-glass-shaped input was the
 	// acknowledgement itself.
 	assertRefused(t, profileReq(t, f, http.MethodPut, "/v1/sandbox-profile-default",

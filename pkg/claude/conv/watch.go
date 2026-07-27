@@ -2531,7 +2531,6 @@ func resumeLaunchCmdWithStackedProof(
 		// relaunch profile and a template re-snapshot all still reported them
 		// trimmed — the misreporting being worse than the lost trim.
 		ContextFeatures: contextFeatures,
-
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
@@ -2549,10 +2548,10 @@ func resumeLaunchCmdWithStackedProof(
 			}
 		}
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-			ReadDirs:            readDirs,
-			WriteDirs:           resumeWriteDirs,
-			DenyDirs:            denyDirs,
-			RequireSplitPolicy:  requireSplitPolicy,
+			ReadDirs:           readDirs,
+			WriteDirs:          resumeWriteDirs,
+			DenyDirs:           denyDirs,
+			RequireSplitPolicy: requireSplitPolicy,
 		}, networkAccess, session.GenerateSessionID())
 		if err != nil {
 			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)

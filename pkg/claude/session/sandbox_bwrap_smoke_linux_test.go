@@ -495,7 +495,6 @@ func startTclaudeLayerSmokeAgentd(t *testing.T, tclaudeBinary, socket string) fu
 	}
 }
 
-
 func copyTestBinary(t *testing.T, source, destination string) {
 	t.Helper()
 	src, err := os.Open(source)

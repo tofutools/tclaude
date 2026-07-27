@@ -82,6 +82,8 @@ function errorMessage(error) {
 // Identifies which group/profile selection (and profile-library revision) a
 // resolved sandbox policy belongs to, so submit can refuse a policy loaded
 // for a different selection.
+const STALE_POLICY_ERROR = 'the sandbox policy changed while spawning — review the refreshed preview and submit again';
+
 function sandboxPolicyKey(group, sandboxProfile, revision) {
   return JSON.stringify([group, sandboxProfile, revision]);
 }
@@ -579,11 +581,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     // policy still loading, or loaded for an earlier selection, blocks submit
     // until the matching load lands.
     //
-    // TCL-791 removed the frozen policy token that used to sit here. Its
-    // whole job was to stop a stale break-glass confirmation from
-    // authorizing a newer policy; with no confirmation left, drift after
-    // this point is harmless — the daemon resolves the policy itself at
-    // spawn time and this preview is informational.
+    // The same check repeats after each await below. TCL-791 dropped the
+    // break-glass fingerprint the old frozen token also carried, but not the
+    // drift check itself: submit resolves a worktree and uploads attachments
+    // before spawning, and an operator editing the selected profile in
+    // another tab meanwhile bumps sandboxRevision. The daemon resolves the
+    // profile by name at spawn time, so without this the agent would launch
+    // under an edited policy whose preview the operator never saw.
     const liveSelectionKey = () =>
       sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
     if (!view.sandboxProfilesDisabled && sandboxPolicyRef.current.key !== liveSelectionKey()) {
@@ -591,6 +595,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       submitLock.current = false;
       return;
     }
+    const policyKey = view.sandboxProfilesDisabled ? null : sandboxPolicyRef.current.key;
+    const policyDrifted = () => policyKey !== null
+      && (sandboxPolicyRef.current.key !== policyKey || liveSelectionKey() !== policyKey);
     next = prepareSpawnDraft(next, context, derived, worktrees.isRepo);
     setDraft(next);
     setError('');
@@ -608,6 +615,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
       if (!state.isCurrent(current.generation)) return;
+      if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       const uploadKey = attachments.map((attachment) => `${attachment.id}:${attachKey(attachment.file)}`).join('|');
       let attachmentPaths = uploaded.current.key === uploadKey ? uploaded.current.paths : null;
       if (!attachmentPaths) {
@@ -616,6 +624,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }
       if (!state.isCurrent(current.generation)) return;
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
+      if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;
       state.close();

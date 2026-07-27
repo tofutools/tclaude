@@ -683,6 +683,14 @@ must work without the protected-root wall launches with the sandbox disabled
 instead — a posture that is visible and unambiguous, rather than an agent that
 looks sandboxed while holding daemon-state access.
 
+One daemon-owned mount does land inside a protected root, and it is not a
+policy reopen: the spawn-attachment drop-box
+(`~/.tclaude/data/spawn-attachments/<session hash>`). Attachments have to reach
+the agent, its path is derived from the session identity rather than named by
+any profile or agent, and it is bound on top of the hide that already covers
+the rest of the root — so what becomes visible is one empty daemon-created
+directory, never the protected state beneath it.
+
 `~/.codex` is **not** a protected root — it is ordinary harness state that an
 agent normally needs to read. An ordinary `deny` row may cover it, and a
 denied Home does; in that case reopen it explicitly (see the deny-home warning
@@ -695,11 +703,17 @@ stays denied unconditionally, after every other mount class.
 **What was removed, and what happens to existing state.** A payload that still
 carries `break_glass_filesystem` or `break_glass_acknowledged` is **refused**,
 not accepted-and-ignored, at every input surface: profile create and edit
-(including their dry-run previews), global and group assignment, spawn, and
-import — the import refusal names every profile in the bundle that carries the
-field. The typed error code is `break_glass_removed`. The CLI's
+(including their dry-run previews), the scribe draft handoff, the
+missing-directory inspect/create endpoints, global and group assignment,
+spawn, and import — the import refusal names every profile in the bundle that
+carries the field. The typed error code is `break_glass_removed`. The CLI's
 `--i-understand-break-glass-risk` flag likewise fails with an explanation
-rather than being silently accepted. Stored state narrows instead: schema
+rather than being silently accepted.
+
+The daemon is the single place that refuses these payloads, so the CLI
+forwards profile documents from `--file` **verbatim** rather than decoding
+them into its own struct first — a client-side decode would drop the retired
+field before the daemon ever saw it and report success. Stored state narrows instead: schema
 migration v163 drops persisted break-glass rows without converting them into
 ordinary rules (which would reopen protected roots as ordinary grants) and
 discloses exactly what it dropped, both on the daemon's terminal at startup and

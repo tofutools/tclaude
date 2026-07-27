@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // migrateV162toV163 drops sandbox_profiles.break_glass_filesystem_json.
@@ -23,11 +24,17 @@ import (
 // launch. Dropping strictly narrows every affected profile.
 //
 // Because dropping is silent by construction, the migration discloses it on two
-// channels before the column goes: a durable human_messages row (the dashboard
-// Messages tab, which survives restart and stays unread until the operator acks
-// it) and a MigrationReporter notice on the agentd startup terminal. Both fire
-// only when rows actually carried break-glass — a clean install must not be
-// told about a feature it never used.
+// channels: a durable human_messages row (the dashboard Messages tab, which
+// survives restart and stays unread until the operator acks it) and a
+// MigrationReporter notice on the agentd startup terminal. Both fire only when
+// rows actually carried break-glass — a clean install must not be told about a
+// feature it never used.
+//
+// The two are written at deliberately different points. The durable row goes
+// inside the transaction, so it lands if and only if the drop does. The
+// terminal notice fires only after the commit succeeds, because a printed line
+// cannot be rolled back and announcing a drop that then failed to commit would
+// be worse than saying nothing.
 //
 // DROP COLUMN needs SQLite 3.35+; the probes keep the migration idempotent and
 // a no-op on installs that never had the column.
@@ -45,11 +52,19 @@ func migrateV162toV163(db *sql.DB) error {
 	disclosure := ""
 	if len(dropped) > 0 {
 		disclosure = breakGlassDropDisclosure(dropped)
-		if _, err := insertHumanMessage(tx, &HumanMessage{
-			FromTitle: breakGlassDropSender,
-			Subject:   breakGlassDropSubject,
-			Body:      disclosure,
-		}); err != nil {
+		// Frozen inline SQL, not the live insertHumanMessage helper. A migration
+		// must keep running against the schema as it existed at ITS version
+		// forever: the helper writes today's column list and derives from_agent
+		// through a subquery on agent_conversations, so the day either of those
+		// changes, this v162→v163 step would start failing on any install still
+		// upgrading through it. Only the columns set here are named; every other
+		// column carried a DEFAULT at v163. from_conv is '' because the sender is
+		// the migration itself, not an agent conversation.
+		if _, err := tx.Exec(`
+			INSERT INTO human_messages (from_conv, from_title, subject, body, created_at)
+			VALUES ('', ?, ?, ?, ?)`,
+			breakGlassDropSender, breakGlassDropSubject, disclosure,
+			time.Now().Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("migrate v162→v163 (disclose dropped break-glass rules): %w", err)
 		}
 	}

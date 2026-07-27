@@ -1168,28 +1168,28 @@ func runNew(params *NewParams) error {
 		}
 	}
 	spawnSpec := harness.SpawnSpec{
-		ExecutablePath:             executablePath,
-		Cwd:                        cwd,
-		ServerURL:                  openCodeServerURL,
-		EnvExports:                 envExports,
-		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
-		ResumeID:                   fullConvID,
-		SessionID:                  params.SessionID,
-		Name:                       params.Name,
-		Effort:                     effort,
-		Model:                      model,
-		ExtraArgs:                  extraArgs,
-		SandboxMode:                sandboxMode,
-		SandboxWriteDirs:           launchWriteDirs,
-		SandboxReadDirs:            launchReadDirs,
-		SandboxDenyDirs:            launchDenyDirs,
-		AskUserQuestionTimeout:     askTimeout,
-		ContextFeatures:            contextFeatures,
-		PermissionProfile:          launchPermissionProfile,
-		ApprovalPolicy:             approvalPolicy,
-		AutoReview:                 autoReview,
-		RemoteControl:              remoteControl,
-		InitialPrompt:              params.InitialPrompt,
+		ExecutablePath:         executablePath,
+		Cwd:                    cwd,
+		ServerURL:              openCodeServerURL,
+		EnvExports:             envExports,
+		ShellEnvironment:       sandboxSnapshotEnvironment(effectiveSandbox),
+		ResumeID:               fullConvID,
+		SessionID:              params.SessionID,
+		Name:                   params.Name,
+		Effort:                 effort,
+		Model:                  model,
+		ExtraArgs:              extraArgs,
+		SandboxMode:            sandboxMode,
+		SandboxWriteDirs:       launchWriteDirs,
+		SandboxReadDirs:        launchReadDirs,
+		SandboxDenyDirs:        launchDenyDirs,
+		AskUserQuestionTimeout: askTimeout,
+		ContextFeatures:        contextFeatures,
+		PermissionProfile:      launchPermissionProfile,
+		ApprovalPolicy:         approvalPolicy,
+		AutoReview:             autoReview,
+		RemoteControl:          remoteControl,
+		InitialPrompt:          params.InitialPrompt,
 	}
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)
@@ -1553,14 +1553,14 @@ func OneShotLaunchPosture(
 		return harness.SpawnSpec{}, err
 	}
 	return harness.SpawnSpec{
-		Cwd:                        cwd,
-		SandboxMode:                sandboxMode,
-		SandboxWriteDirs:           launchWriteDirs,
-		SandboxReadDirs:            launchReadDirs,
-		SandboxDenyDirs:            launchDenyDirs,
-		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
-		ApprovalPolicy:             approvalPolicy,
-		AutoReview:                 autoReview,
+		Cwd:              cwd,
+		SandboxMode:      sandboxMode,
+		SandboxWriteDirs: launchWriteDirs,
+		SandboxReadDirs:  launchReadDirs,
+		SandboxDenyDirs:  launchDenyDirs,
+		ShellEnvironment: sandboxSnapshotEnvironment(effectiveSandbox),
+		ApprovalPolicy:   approvalPolicy,
+		AutoReview:       autoReview,
 	}, nil
 }
 
@@ -1637,10 +1637,10 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
 	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-		ReadDirs:            readDirs,
-		WriteDirs:           writeDirs,
-		DenyDirs:            denyDirs,
-		RequireSplitPolicy:  requireSplitPolicy,
+		ReadDirs:           readDirs,
+		WriteDirs:          writeDirs,
+		DenyDirs:           denyDirs,
+		RequireSplitPolicy: requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)

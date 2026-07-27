@@ -983,9 +983,9 @@ test('Codex SSH workaround defaults on and a spawn or profile can opt out', asyn
 // never be submit-eligible — the preview the operator is reading could
 // describe profile A while the request selects profile B.
 //
-// TCL-791 removed the break-glass confirmation this guard used to protect,
-// along with the frozen policy token that kept a confirmation bound to the
-// policy it was shown for. What remains is the plain rule below.
+// TCL-791 removed the break-glass confirmation this guard used to protect, and
+// with it the break-glass fingerprint the frozen policy token carried. The
+// drift check itself survives — see the post-await test below.
 test('Preact agent-spawn blocks submit until the resolved sandbox policy matches the selection', async (t) => {
   const loads = [];
   const spawnRequests = [];
@@ -1034,6 +1034,67 @@ test('Preact agent-spawn blocks submit until the resolved sandbox policy matches
     assert.equal(spawnRequests[0].body.sandbox_profile, 'strict');
     assert.equal(spawnRequests[0].body.break_glass_acknowledged, undefined,
       'no surface remains that could attach the retired acknowledgement');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// The pre-submit guard above is not enough on its own: submit resolves a
+// worktree and uploads attachments before it spawns, and the profile can be
+// edited elsewhere while those are in flight. The daemon resolves the profile
+// by NAME at spawn time, so a spawn that proceeded here would launch the agent
+// under a policy whose preview the operator never saw.
+//
+// This check predates TCL-791 and is not break-glass machinery — it was only
+// entangled with it because both hung off the same frozen policy token. It is
+// covered here so the next reader does not mistake it for leftovers.
+test('Preact agent-spawn aborts when the sandbox policy drifts mid-submit', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  let releaseWorktree;
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    resolveWorktree: () => {
+      const pending = deferred();
+      releaseWorktree = () => pending.resolve({ path: '', branch: '' });
+      return pending.promise;
+    },
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+
+    // Resolve for the selection the draft already has, so no second load
+    // starts and the pre-submit guard passes.
+    loads[0].pending.resolve({
+      profiles: [{ name: 'strict' }], selected: '', preview: 'no profiles applied',
+    });
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.ok(releaseWorktree, 'submit reached worktree resolution');
+    assert.equal(spawnRequests.length, 0, 'spawn waits on worktree resolution');
+
+    // The operator edits the selected profile in another tab.
+    await harness.act(() => state.refreshSandboxPolicy());
+    releaseWorktree();
+    await flush(harness);
+
+    assert.equal(spawnRequests.length, 0,
+      'a policy edited mid-submit must not be spawned under without a fresh preview');
+    assert.match(host.querySelector('#agent-spawn-error').textContent,
+      /sandbox policy changed while spawning/);
   } finally {
     mounted.cleanup();
   }

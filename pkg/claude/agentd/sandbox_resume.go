@@ -181,7 +181,6 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 	return current
 }
 
-
 // resumeSandboxGroupID recovers the launch group for agents created before a
 // dedicated source-group field existed. The ordinary and overwhelmingly common
 // one-group case is exact. A legacy multi-group snapshot has no trustworthy

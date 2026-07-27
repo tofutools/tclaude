@@ -368,6 +368,15 @@ func handleSandboxProfileDirectories(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	// Gated like the save paths. This endpoint answers "which of these
+	// directories are missing, and may I create them?", so a payload still
+	// carrying break_glass_filesystem would otherwise get an answer computed
+	// from a silently narrowed profile — and, on the create action, actually
+	// mkdir for it. The refusal has to come before any of that.
+	if fail := rejectBreakGlassPayload("inspect directories for", body); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	// Directory inspection/creation is independent of the draft's name and
 	// environment fields. Validate only the filesystem rules so an unrelated
 	// in-progress environment edit cannot hide or block the mkdir affordance.

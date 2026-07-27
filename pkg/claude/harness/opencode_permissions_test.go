@@ -34,14 +34,14 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	protectedChild := filepath.Join(protected[0], "debug")
 
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:                 "/repo/service",
-		Worktree:            "/repo",
-		SandboxMode:         OpenCodeSandboxAccessControl,
-		ApprovalPolicy:      OpenCodeApprovalAllowTools,
-		ReadDirs:            []string{"/outside/read"},
-		WriteDirs:           []string{"/outside/write"},
-		DenyDirs:            []string{"/repo/service/secret"},
-		NetworkAccess:       sandboxpolicy.NetworkAccessInternet,
+		Cwd:            "/repo/service",
+		Worktree:       "/repo",
+		SandboxMode:    OpenCodeSandboxAccessControl,
+		ApprovalPolicy: OpenCodeApprovalAllowTools,
+		ReadDirs:       []string{"/outside/read"},
+		WriteDirs:      []string{"/outside/write"},
+		DenyDirs:       []string{"/repo/service/secret"},
+		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, rules)

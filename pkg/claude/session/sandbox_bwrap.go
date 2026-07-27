@@ -30,7 +30,7 @@ type TclaudeLayerLaunchContract struct {
 
 // TclaudeLayerPrivateWriteDir hides a daemon-owned shared parent and reopens
 // only the current session's child. It is applied after policy replay so
-// profile and break-glass grants cannot expose sibling sessions.
+// profile grants cannot expose sibling sessions.
 type TclaudeLayerPrivateWriteDir struct {
 	Parent  string `json:"parent"`
 	Current string `json:"current"`
@@ -697,10 +697,16 @@ func bwrapArgs(
 	// writable. EffectiveProfile deliberately excludes this baseline because
 	// ordinary rules may never name these paths at all: normalizeFilesystem
 	// refuses any read/write rule intersecting a protected root, and TCL-791
-	// removed break-glass, the one former exception. Establishing the hides
-	// here is therefore final, not merely a default a later entry may
-	// override. A plan entry on an ordinary ancestor still lands, and
-	// appendTclaudeLayerProtectedRehides restores the hides on top of it.
+	// removed break-glass, the one former exception. No policy input can
+	// therefore reopen a protected root: a plan entry on an ordinary ancestor
+	// still lands, and appendTclaudeLayerProtectedRehides restores the hides on
+	// top of it.
+	//
+	// The one thing mounted back inside a protected root afterwards is the
+	// daemon's own spawn-attachment drop-box (class 4 below). It is not policy
+	// input — its path is derived from the session identity, never named by a
+	// profile or an agent — and it exposes a single empty daemon-created
+	// directory sitting on this tmpfs, not the protected state underneath it.
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
@@ -805,15 +811,23 @@ func bwrapArgs(
 		}
 	}
 	// The attachment parent is daemon-owned shared state. Hide it after all
-	// policy and break-glass mounts, then reopen only this session's direct
-	// child. The parent's read-only remount is non-recursive, so the child
-	// remains writable while sibling names stay absent.
+	// policy mounts, then reopen only this session's direct child. The parent's
+	// read-only remount is non-recursive, so the child remains writable while
+	// sibling names stay absent.
+	//
+	// This is the sole bind that lands at or below a protected root, and it is
+	// deliberate: attachments have to reach the agent. It is not a policy
+	// reopen. The path comes from the session identity via
+	// SpawnAttachmentsPrivateDir, so neither a profile nor the agent can steer
+	// it, and the class-3 tmpfs still covers everything else under the root —
+	// what becomes visible is one empty daemon-created directory, not protected
+	// state.
 	for _, privateDir := range privateWriteDirs {
 		args = hideRemounts.appendHide(args, privateDir.Parent)
 		args = append(args, "--bind", privateDir.Current, privateDir.Current)
 		hideRemounts.noteReplacement(privateDir.Current)
 	}
-	// Class 4: host tmux control is never profile- or break-glass-reachable.
+	// Class 4: host tmux control is never profile-reachable.
 	// This hide must be last: unlike ProtectedPaths, an ordinary profile may
 	// grant a parent of the socket directory, and a later bind would otherwise
 	// reopen the host tmux server.
@@ -1034,8 +1048,8 @@ func appendTclaudeLayerContractRepairs(
 	}
 	// A repaired parent bind would cover an earlier protected child hide.
 	// Restore every overlapping protected root after all repairs so protected
-	// state still outranks launch-contract authority. A later break-glass plan
-	// entry remains able to reopen its acknowledged path.
+	// state still outranks launch-contract authority. Since TCL-791 these hides
+	// are final: no later plan entry can reopen a protected path.
 	for _, protected := range protectedRoots {
 		for _, writeDir := range repaired {
 			if sandboxpolicy.PathContainsOrEqual(writeDir, protected) ||

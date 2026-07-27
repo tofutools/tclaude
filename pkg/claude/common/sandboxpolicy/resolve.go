@@ -43,7 +43,7 @@ type Scopes struct {
 // deny-dominates-write-dominates-read, while Environment names the single
 // last-scope winner.
 type ResolutionProvenance struct {
-	Applied    []ProfileSource            `json:"applied"`
+	Applied          []ProfileSource            `json:"applied"`
 	Filesystem       map[string][]ProfileSource `json:"filesystem"`
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`

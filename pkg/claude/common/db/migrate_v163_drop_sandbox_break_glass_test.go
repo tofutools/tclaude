@@ -40,9 +40,10 @@ func seedV162SandboxProfiles(t *testing.T, d *sql.DB) {
 		process_node_id TEXT NOT NULL DEFAULT '',
 		process_command_id TEXT NOT NULL DEFAULT '')`)
 	require.NoError(t, err)
-	_, err = d.Exec(`CREATE TABLE IF NOT EXISTS agent_conversations (
-		agent_id TEXT NOT NULL, conv_id TEXT NOT NULL)`)
-	require.NoError(t, err)
+	// Deliberately NOT creating agent_conversations: the migration writes its
+	// disclosure with frozen inline SQL touching human_messages only. If someone
+	// later routes it through a live helper that joins other tables, these tests
+	// fail with "no such table" — which is the point.
 	_, err = d.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
 	require.NoError(t, err)
 	_, err = d.Exec(`INSERT INTO schema_version (version) VALUES (162)`)

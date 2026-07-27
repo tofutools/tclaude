@@ -39,8 +39,8 @@ type SandboxEnvironmentEntry = sandboxpolicy.EnvironmentEntry
 // paths keep the reference graph dangling-free and acyclic, and resolution
 // flattens it before any value becomes launch authority.
 type SandboxProfile struct {
-	ID         int64                    `json:"id"`
-	Name       string                   `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 	// Legacy rows and exports may still carry read_baseline /
 	// read_baseline_exclusions (TCL-623) or break_glass_filesystem (TCL-791)
 	// fields. Neither has a field to decode into any more. Stored rows drop
@@ -714,7 +714,7 @@ func flattenSandboxProfileInRegistry(profile *SandboxProfile, registry map[strin
 	toPolicy := func(p *SandboxProfile) sandboxpolicy.Profile {
 		return sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
-			Environment: p.Environment,
+			Environment:      p.Environment,
 			AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
 		}
 	}

@@ -262,9 +262,9 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 		readDirs = append(readDirs, capability.ExecutablePath)
 	}
 	profileName, profilePath, err := EnsureCodexAgentLaunchProfileForRules(CodexSandboxRules{
-		ReadDirs:            readDirs,
-		WriteDirs:           []string{workspace, common, admin, explicitWrite, agentCache},
-		DenyDirs:            []string{home},
+		ReadDirs:           readDirs,
+		WriteDirs:          []string{workspace, common, admin, explicitWrite, agentCache},
+		DenyDirs:           []string{home},
 		RequireSplitPolicy: true,
 	}, sandboxpolicy.NetworkAccessInherit, "1234567890abcdef")
 	require.NoError(t, err)

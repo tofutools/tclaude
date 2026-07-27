@@ -49,14 +49,19 @@ func breakGlassFieldsPresent(rules json.RawMessage, acknowledged *bool) bool {
 	if acknowledged != nil {
 		return true
 	}
-	trimmed := bytes.TrimSpace(rules)
-	switch {
-	case len(trimmed) == 0,
-		bytes.Equal(trimmed, []byte("null")),
-		bytes.Equal(trimmed, []byte("[]")):
+	if len(bytes.TrimSpace(rules)) == 0 {
 		return false
 	}
-	return true
+	// Decode rather than compare against the literal "[]": a client that pretty
+	// prints its payload sends "[\n]", which is the same empty list and must get
+	// the same answer. Anything that does not parse as a JSON array counts as
+	// present, so a malformed value is refused rather than waved through.
+	// "null" decodes to a nil slice, i.e. absent, which is what we want.
+	var entries []json.RawMessage
+	if err := json.Unmarshal(rules, &entries); err != nil {
+		return true
+	}
+	return len(entries) > 0
 }
 
 // breakGlassRemovedFailure builds the typed 422. what names the operation
