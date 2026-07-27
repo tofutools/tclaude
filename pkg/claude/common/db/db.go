@@ -291,14 +291,21 @@ func Open() (*sql.DB, error) {
 	// transactions); should a read-only multi-statement tx ever be needed,
 	// BeginTx with TxOptions{ReadOnly: true} bypasses the immediate mode.
 	dsn := dbPath + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	// Test binaries run with synchronous(OFF): WAL's default synchronous(FULL)
-	// fsyncs on every commit, and the suite opens a fresh db + issues many
-	// small writes per test. Tests cannot observe power-loss durability, so
-	// the syncs are pure overhead there. Production keeps the default.
+	// WAL remains consistent with synchronous(NORMAL), but most transactions
+	// no longer wait for a WAL fsync. Recent commits may roll back after an OS
+	// crash or power loss; ordinary application crashes remain durable, and
+	// checkpoints still sync both the WAL and main database. This is the
+	// intended performance/durability tradeoff for tclaude's reconstructable
+	// local state.
+	synchronous := "NORMAL"
+	// Test binaries use synchronous(OFF): the suite opens a fresh DB and
+	// issues many small writes per test. Tests cannot observe power-loss
+	// durability, so even checkpoint syncs are pure overhead there.
 	// TCLAUDE_TEST_KEEP_FSYNC=1 restores production behavior in tests.
 	if testing.Testing() && os.Getenv("TCLAUDE_TEST_KEEP_FSYNC") == "" {
-		dsn += "&_pragma=synchronous(OFF)"
+		synchronous = "OFF"
 	}
+	dsn += "&_pragma=synchronous(" + synchronous + ")"
 	globalDB, initErr = sql.Open("sqlite", dsn)
 	if initErr != nil {
 		return globalDB, initErr
