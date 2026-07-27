@@ -481,12 +481,13 @@ func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 			}
 			defer unlock()
 		}
-		state, stateErr := LoadSessionState(envSessionID)
+		state, stateErr := findTrackedPreCompactSession(envSessionID, input.ConvID)
 		if stateErr == nil {
 			persistCodexHookModel(state, input)
 		}
 		blocked, err := decidePreCompact(input, envSessionID, amb, stdout)
-		if err != nil || blocked || stateErr != nil {
+		if err != nil || blocked || stateErr != nil ||
+			!hookBelongsToTrackedMainConversation(state, input) {
 			return err
 		}
 		state.Status = StatusWorking
@@ -1381,6 +1382,41 @@ func agentMessagePrompt(prompt string) (messageID int64, inline bool, ok bool) {
 		return 0, false, false
 	}
 	return messageID, strings.Contains(match[0], "; delivery: inline"), true
+}
+
+// findTrackedPreCompactSession resolves only an existing row. Unlike the
+// ordinary hook path it must not auto-register an unknown conversation merely
+// because it is about to compact, but an already auto-registered conversation
+// (which has no TCLAUDE_SESSION_ID) should still expose its compacting phase.
+func findTrackedPreCompactSession(envSessionID, convID string) (*SessionState, error) {
+	if envSessionID != "" {
+		return LoadSessionState(envSessionID)
+	}
+	if convID == "" {
+		return nil, nil
+	}
+	return FindSessionByConvID(convID)
+}
+
+// hookBelongsToTrackedMainConversation is the attribution gate for exceptional
+// hook paths that bypass applyHook's ordinary foreign-process and sub-agent
+// guards. A pending conversation is a previously announced /clear or /resume
+// rotation and is therefore allowed; an unannounced mismatch is a child process
+// that inherited the host's TCLAUDE_SESSION_ID.
+func hookBelongsToTrackedMainConversation(state *SessionState, input HookCallbackInput) bool {
+	if state == nil || state.ID == "" || state.Harness == ShellHarnessName || input.AgentID != "" {
+		return false
+	}
+	if state.ConvID == "" || input.ConvID == "" || input.ConvID == state.ConvID {
+		return true
+	}
+	pending, err := db.GetSessionPendingConv(state.ID)
+	if err != nil {
+		slog.Warn("hooks: failed to verify pending conversation",
+			"session_id", state.ID, "conv_id", input.ConvID, "error", err, "module", "hooks")
+		return false
+	}
+	return pending == input.ConvID
 }
 
 // persistCodexHookModel records Codex's active model slug when a hook belongs
