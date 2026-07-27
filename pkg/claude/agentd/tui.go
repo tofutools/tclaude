@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,7 +59,21 @@ const tuiRefreshInterval = 2 * time.Second
 // context, and quitting the console signals quit itself — `agentd serve
 // --tui` is a foreground process whose entire face is this screen, so
 // leaving it means stopping the daemon.
-func startServeTUI(quit *quitter) func() error {
+// tuiStartup is what runServe hands the console at launch: the surfaces that
+// came up beside it, and — when the console is where the operator has to read
+// it — the operator token.
+type tuiStartup struct {
+	// dashboardURL is the web dashboard running alongside, empty when --tui
+	// asked for no listener.
+	dashboardURL string
+	// operatorToken is set only when the console has taken over the startup
+	// banner (see tokenBannerInTUI); empty means stdout printed it, or that
+	// --no-print-human-token suppressed it entirely.
+	operatorToken string
+	tokenSource   tokenSource
+}
+
+func startServeTUI(quit *quitter, startup tuiStartup) func() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		<-quit.ch
@@ -66,9 +81,9 @@ func startServeTUI(quit *quitter) func() error {
 	}()
 
 	m := newTUIModel(newTUIAPI())
-	// Set by runServe before it starts the console; empty when --tui asked
-	// for no dashboard listener.
-	m.dashboardURL = popupBaseURL
+	m.dashboardURL = startup.dashboardURL
+	m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
+	m.showTokenBanner = len(m.tokenLines) > 0
 
 	prog := tea.NewProgram(m, tea.WithContext(ctx))
 	done := make(chan struct{})
@@ -411,6 +426,12 @@ type tuiModel struct {
 	// when --tui is the only surface. It changes what the console can honestly
 	// say about approvals and deep links.
 	dashboardURL string
+	// tokenLines is the operator-token block this console shows in place of
+	// the stdout banner, empty when stdout printed it. showTokenBanner is the
+	// startup presentation of that block; it goes away on the first keystroke,
+	// and the help view keeps it reachable afterwards.
+	tokenLines      []string
+	showTokenBanner bool
 	// refreshing / spawning keep the periodic tick from stacking requests
 	// and the operator from firing two spawns at once.
 	refreshing  bool
@@ -482,6 +503,9 @@ const tuiListChrome = 9
 // lines.
 func (m tuiModel) viewportHeight() int {
 	chrome := tuiListChrome
+	if m.showTokenBanner {
+		chrome += len(m.tokenLines) + 2
+	}
 	if m.identityWarning != "" {
 		chrome += 2
 	}
@@ -813,6 +837,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd()
 
 	case tea.KeyPressMsg:
+		// The startup token block is a banner, not a mode: the first keystroke
+		// retires it whatever else that keystroke does, and the help view
+		// keeps the token reachable afterwards.
+		m.showTokenBanner = false
 		return m.handleKey(msg)
 	}
 	return m, nil
@@ -952,6 +980,36 @@ func (m tuiModel) columns() []table.Column {
 	}
 }
 
+// tuiOperatorTokenLines renders the operator-token block, mirroring the TTY
+// branch of writeOperatorTokenBanner (same phrasing, same provenance note).
+//
+// Emitting the secret here keeps that function's rule intact rather than
+// bending it: the token is shown only on a terminal the operator is sitting
+// at, which is the one thing a bubbletea program is guaranteed to have.
+func tuiOperatorTokenLines(tok string, src tokenSource) []string {
+	if tok == "" {
+		return nil
+	}
+	lines := []string{
+		"Operator token — sign in to the web dashboard with it, or export it for the CLI:",
+		"  export " + humanTokenEnvVar + "=" + strconv.Quote(tok),
+	}
+	switch src.kind {
+	case tokenSourceKeychain:
+		lines = append(lines, "  (persisted in the OS keychain — stable across restarts, export once)")
+	case tokenSourceFile:
+		lines = append(lines, "  (persisted at "+src.path+" — stable across restarts, export once)")
+	}
+	return lines
+}
+
+// writeTokenBlock writes the token lines at the given indent.
+func writeTokenBlock(b *strings.Builder, lines []string, indent string) {
+	for _, line := range lines {
+		b.WriteString(indent + line + "\n")
+	}
+}
+
 func (m tuiModel) renderList() string {
 	var b strings.Builder
 	b.WriteString("\n  tclaude agentd — terminal UI")
@@ -961,6 +1019,10 @@ func (m tuiModel) renderList() string {
 		b.WriteString(" (no web dashboard in this mode)")
 	}
 	b.WriteString("\n\n")
+	if m.showTokenBanner {
+		writeTokenBlock(&b, m.tokenLines, "  ")
+		b.WriteString("  (hidden on your next keystroke — press ? to see it again)\n\n")
+	}
 	if m.identityWarning != "" {
 		b.WriteString("  " + m.identityWarning + "\n\n")
 	}
@@ -1128,6 +1190,10 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("  This mode runs without the web dashboard: browser deep links and\n")
 		b.WriteString("  in-dashboard human-approval requests are unavailable, so grant an\n")
 		b.WriteString("  agent access with `tclaude agent permissions grant` instead.\n\n")
+	}
+	if len(m.tokenLines) > 0 {
+		writeTokenBlock(&b, m.tokenLines, "  ")
+		b.WriteString("\n")
 	}
 	b.WriteString("  Press any key to close.\n")
 	return b.String()

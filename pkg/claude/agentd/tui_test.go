@@ -522,3 +522,104 @@ func TestTUIViewNamesACoRunningDashboard(t *testing.T) {
 	assert.Contains(t, help, "Messages tab")
 	assert.NotContains(t, help, "runs without the web dashboard")
 }
+
+func TestTokenBannerInTUI(t *testing.T) {
+	t.Run("console plus dashboard moves the banner into the console", func(t *testing.T) {
+		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, AutoLaunchDashboard: true}))
+		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, DashboardPort: 8321}))
+		assert.True(t, tokenBannerInTUI(&serveParams{TUI: true, DashboardBind: "0.0.0.0"}))
+	})
+
+	t.Run("a console with no dashboard keeps the stdout banner", func(t *testing.T) {
+		// Nothing to sign in to, and the banner survives on the scrollback the
+		// alt screen restores when the daemon exits.
+		assert.False(t, tokenBannerInTUI(&serveParams{TUI: true}))
+	})
+
+	t.Run("no console keeps the stdout banner", func(t *testing.T) {
+		assert.False(t, tokenBannerInTUI(&serveParams{}))
+		assert.False(t, tokenBannerInTUI(&serveParams{DashboardPort: 8321}))
+	})
+
+	t.Run("--no-print-human-token still means no banner anywhere", func(t *testing.T) {
+		assert.False(t, tokenBannerInTUI(&serveParams{
+			TUI: true, AutoLaunchDashboard: true, NoPrintHumanToken: true,
+		}))
+	})
+}
+
+func TestTUIOperatorTokenLines(t *testing.T) {
+	t.Run("no token, no block", func(t *testing.T) {
+		assert.Nil(t, tuiOperatorTokenLines("", tokenSource{}))
+	})
+
+	t.Run("ephemeral token is exportable and unannotated", func(t *testing.T) {
+		lines := tuiOperatorTokenLines("tclo_secret", tokenSource{kind: tokenSourceEphemeral})
+		require.Len(t, lines, 2)
+		assert.Contains(t, lines[1], `export TCLAUDE_HUMAN_TOKEN="tclo_secret"`)
+	})
+
+	t.Run("a persisted token says where it lives", func(t *testing.T) {
+		lines := tuiOperatorTokenLines("tclo_secret",
+			tokenSource{kind: tokenSourceFile, path: "/home/op/.tclaude/data/operator_token"})
+		require.Len(t, lines, 3)
+		assert.Contains(t, lines[2], "/home/op/.tclaude/data/operator_token")
+
+		lines = tuiOperatorTokenLines("tclo_secret", tokenSource{kind: tokenSourceKeychain})
+		require.Len(t, lines, 3)
+		assert.Contains(t, lines[2], "keychain")
+	})
+}
+
+// The token is shown once at startup, retired by the first keystroke, and
+// reachable from the help view for as long as the console runs.
+func TestTUITokenBannerIsShownThenRecallable(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+	m.height = 40
+	m.tokenLines = tuiOperatorTokenLines("tclo_secret", tokenSource{kind: tokenSourceEphemeral})
+	m.showTokenBanner = true
+
+	assert.Contains(t, m.renderList(), "tclo_secret")
+	assert.Contains(t, m.renderList(), "press ? to see it again")
+
+	// Any keystroke retires it — here one that does nothing else.
+	updated, _ := m.Update(tuiKey("z"))
+	got := updated.(tuiModel)
+	assert.False(t, got.showTokenBanner)
+	assert.NotContains(t, got.renderList(), "tclo_secret")
+
+	// …and the help view still has it.
+	assert.Contains(t, got.renderHelp(), "tclo_secret")
+}
+
+// A console that did not take over the banner never renders the secret.
+func TestTUIWithoutATokenShowsNoTokenBlock(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+	assert.NotContains(t, m.renderList(), "TCLAUDE_HUMAN_TOKEN")
+	assert.NotContains(t, m.renderHelp(), "TCLAUDE_HUMAN_TOKEN")
+}
+
+// The banner is several lines tall, so it has to be paid for out of the
+// viewport like every other optional block.
+func TestTUIListWithTheTokenBannerStillFitsTheTerminal(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+	m.tokenLines = tuiOperatorTokenLines("tclo_secret",
+		tokenSource{kind: tokenSourceFile, path: "/home/op/.tclaude/data/operator_token"})
+	m.showTokenBanner = true
+	m.identityWarning = "Note: something about identity"
+	m.refreshErr = "Refresh failed: database is locked"
+	m.notice = "Spawned agt_1 in group dev"
+	m.mode = tuiModeConfirmQuit
+	for i := range 50 {
+		m.agents = append(m.agents, tuiAgentRow{ConvID: fmt.Sprintf("c%d", i), Title: fmt.Sprintf("a%d", i)})
+	}
+
+	for _, height := range []int{24, 30, 60} {
+		m.height = height
+		lines := strings.Count(m.renderList(), "\n")
+		assert.LessOrEqual(t, lines, height, "height=%d", height)
+	}
+}

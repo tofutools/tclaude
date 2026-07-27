@@ -211,6 +211,21 @@ func dashboardRequested(p *serveParams) bool {
 		strings.TrimSpace(p.DashboardBind) != ""
 }
 
+// tokenBannerInTUI reports whether the operator-token banner belongs inside
+// the terminal console instead of on stdout.
+//
+// It applies when the console and the web dashboard are up together: the token
+// is what signs the operator in to the browser, and stdout is the one place
+// they cannot read it from, since the console's alt screen covers everything
+// printed before it. A console with no dashboard keeps the stdout banner —
+// there is no login to perform, and the banner is on the scrollback the alt
+// screen restores when the daemon exits.
+//
+// --no-print-human-token still means what it says: no banner anywhere.
+func tokenBannerInTUI(p *serveParams) bool {
+	return p.TUI && dashboardRequested(p) && !p.NoPrintHumanToken
+}
+
 func runServe(p *serveParams) error {
 	if err := configureServeSocketEnv(p.Socket); err != nil {
 		return err
@@ -585,7 +600,12 @@ func runServe(p *serveParams) error {
 		fmt.Printf("  agent dashboard:        run `tclaude agent dashboard` (%s %s)\n", dashLoc, popupBaseURL)
 		fmt.Printf("  human approvals + access requests appear in the dashboard's Messages tab\n")
 	}
-	printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
+	// With the console AND the web dashboard both up, the token moves into the
+	// console (see tokenBannerInTUI): the operator needs it to sign in to the
+	// browser, and the alt screen hides anything printed here.
+	if !tokenBannerInTUI(p) {
+		printOperatorTokenBanner(operatorTok, tokenSrc, p.NoPrintHumanToken)
+	}
 	for _, ln := range listeners {
 		ln := ln
 		go func() { serveErrCh <- srv.Serve(ln) }()
@@ -635,7 +655,11 @@ func runServe(p *serveParams) error {
 	// screen restores on exit.
 	stopTUI := func() error { return nil }
 	if p.TUI {
-		stopTUI = startServeTUI(quit)
+		startup := tuiStartup{dashboardURL: popupBaseURL}
+		if tokenBannerInTUI(p) {
+			startup.operatorToken, startup.tokenSource = operatorTok, tokenSrc
+		}
+		stopTUI = startServeTUI(quit, startup)
 	}
 	defer func() { _ = stopTUI() }()
 

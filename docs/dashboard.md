@@ -95,6 +95,14 @@ The theme flags (`--slop`, `--wizard`) work as always — they re-skin the
 browser dashboard and never touch the terminal UI, which has no theming at all.
 On their own they do not start a listener.
 
+When both surfaces run, the **operator token** is printed *inside* the terminal
+UI rather than on stdout: you need it to sign in to the browser, and the UI's
+alt screen covers anything printed before it. It appears at the top on startup,
+disappears on your first keystroke, and `?` brings it back for as long as the
+daemon runs. A terminal-UI-only daemon keeps the ordinary stdout banner (there
+is nothing to sign in to, and the banner is on the scrollback the alt screen
+restores on exit), and `--no-print-human-token` still suppresses it everywhere.
+
 With **no** dashboard listener (a bare `--tui`), two things are worth knowing:
 
 - `tclaude agent dashboard` and the tray's **Open dashboard** have nothing to
