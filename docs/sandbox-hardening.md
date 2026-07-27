@@ -609,9 +609,11 @@ without Python therefore has the same agentd startup and launch behavior.
 
 This is a production-ownership boundary, not a ban on Python elsewhere in the
 repository or on the machine. Tests, documentation examples, and CI tooling
-may use it. A human may also put any command they choose in the dashboard's
-human-managed plugin registry or an interactive terminal; those commands are
-operator input, not an agentd runtime dependency.
+may use it. Interactive agent sandboxes are unaffected: when Python is
+installed and the selected sandbox profile permits it, agents may invoke it as
+an ordinary tool. A human may also put any command they choose in the
+dashboard's human-managed plugin registry or an interactive terminal; those
+commands are operator input, not an agentd runtime dependency.
 
 ## See also
 
