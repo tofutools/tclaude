@@ -29,6 +29,11 @@ func TestRunSystrayLoopRecoversNativePanic(t *testing.T) {
 	require.EqualError(t, err, "system tray panic: native teardown failed")
 }
 
+func TestRunTrayWorkerRecoversDBusPanic(t *testing.T) {
+	err := runTrayWorker(func() { panic("dbus: connection closed by user") })
+	require.EqualError(t, err, "system tray worker panic: dbus: connection closed by user")
+}
+
 // At least one agent working → green, even when others are idle.
 func TestPickTrayMode_GreenWhenAnyWorking(t *testing.T) {
 	mode, tooltip := pickTrayMode(agentTrayCounts{online: 3, busy: 1, idle: 2}, 0, 0, "")

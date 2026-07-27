@@ -238,70 +238,77 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 		// (longest-waiting popup at the top), hides any unused slots.
 		trayDone := make(chan struct{})
 		go func() {
-			tk := time.NewTicker(trayTick)
-			defer tk.Stop()
-			var (
-				agentCounts agentTrayCounts
-				tickN       int
-				blinkOn     bool
-				lastIcon    []byte
-				lastTooltip string
-				lastIDs     []string
-			)
-			for {
-				select {
-				case <-trayDone:
-					return
-				case <-tk.C:
-					if tickN%agentRefreshEvery == 0 {
-						agentCounts = snapshotAgentTrayState()
-					}
-					pending := approvals.pendingCount()
-					sudoActive, hint := snapshotSudoTrayState()
-					summary := approvals.snapshot()
-					ids := pendingIDs(summary)
-
-					mode, tooltip := pickTrayMode(agentCounts, pending, sudoActive, hint)
-					// Advance the blink phase only while blinking; reset to
-					// the green ("off") frame otherwise so a state that
-					// stops blinking doesn't freeze on the red frame.
-					if mode == trayBlink {
-						if tickN%blinkEvery == 0 {
-							blinkOn = !blinkOn
+			if err := runTrayWorker(func() {
+				tk := time.NewTicker(trayTick)
+				defer tk.Stop()
+				var (
+					agentCounts agentTrayCounts
+					tickN       int
+					blinkOn     bool
+					lastIcon    []byte
+					lastTooltip string
+					lastIDs     []string
+				)
+				for {
+					select {
+					case <-trayDone:
+						return
+					case <-tk.C:
+						if tickN%agentRefreshEvery == 0 {
+							agentCounts = snapshotAgentTrayState()
 						}
-					} else {
-						blinkOn = false
-					}
+						pending := approvals.pendingCount()
+						sudoActive, hint := snapshotSudoTrayState()
+						summary := approvals.snapshot()
+						ids := pendingIDs(summary)
 
-					icon := renderTrayIcon(mode, blinkOn, greenIcon, yellowIcon, orangeIcon, redIcon)
-					if !bytes.Equal(icon, lastIcon) {
-						systray.SetIcon(icon)
-						lastIcon = icon
+						mode, tooltip := pickTrayMode(agentCounts, pending, sudoActive, hint)
+						// Advance the blink phase only while blinking; reset to
+						// the green ("off") frame otherwise so a state that
+						// stops blinking doesn't freeze on the red frame.
+						if mode == trayBlink {
+							if tickN%blinkEvery == 0 {
+								blinkOn = !blinkOn
+							}
+						} else {
+							blinkOn = false
+						}
+
+						icon := renderTrayIcon(mode, blinkOn, greenIcon, yellowIcon, orangeIcon, redIcon)
+						if !bytes.Equal(icon, lastIcon) {
+							systray.SetIcon(icon)
+							lastIcon = icon
+						}
+						if tooltip != lastTooltip {
+							systray.SetTooltip(tooltip)
+							lastTooltip = tooltip
+						}
+						// Refresh the approvals submenu when the id-set changes
+						// (instant) OR, while requests stay pending, on the slow
+						// sub-cadence so the relative "Xs ago" labels keep ticking
+						// instead of freezing at whatever they read when the set
+						// last changed.
+						if !sliceEq(ids, lastIDs) || (len(ids) > 0 && tickN%agentRefreshEvery == 0) {
+							refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
+							lastIDs = ids
+						}
+						tickN++
 					}
-					if tooltip != lastTooltip {
-						systray.SetTooltip(tooltip)
-						lastTooltip = tooltip
-					}
-					// Refresh the approvals submenu when the id-set changes
-					// (instant) OR, while requests stay pending, on the slow
-					// sub-cadence so the relative "Xs ago" labels keep ticking
-					// instead of freezing at whatever they read when the set
-					// last changed.
-					if !sliceEq(ids, lastIDs) || (len(ids) > 0 && tickN%agentRefreshEvery == 0) {
-						refreshApprovalsSubmenu(mApprovalsHeader, approvalSlots, summary)
-						lastIDs = ids
-					}
-					tickN++
 				}
+			}); err != nil {
+				slog.Warn("tray: state poller stopped", "error", err)
 			}
 		}()
 
 		go func() {
-			defer close(trayDone)
-			for {
-				select {
-				case <-mDash.ClickedCh:
-					if dashAvailable {
+			if err := runTrayWorker(func() {
+				defer close(trayDone)
+				for {
+					select {
+					case <-mDash.ClickedCh:
+						if !dashAvailable {
+							continue
+						}
 						// Mint a one-shot init token in-process — the tray
 						// runs inside agentd, so it IS the human-side
 						// daemon and needs no socket round-trip. The
@@ -311,32 +318,34 @@ func runTrayBlocking(cfg trayConfig, onQuit func()) error {
 						if err := openBrowser(url); err != nil {
 							slog.Warn("tray: open dashboard failed", "error", err)
 						}
-					}
-				case <-mUnfocusAll.ClickedCh:
-					// Detach every active agent's window in the background —
-					// the parallel tmux detaches shouldn't block the tray
-					// event loop. Same fire-and-log shape as Reinstall.
-					go func() {
-						resp, err := unfocusAllAgentWindows()
-						if err != nil {
-							slog.Warn("tray: unfocus all agents failed", "error", err)
-							return
+					case <-mUnfocusAll.ClickedCh:
+						// Detach every active agent's window in the background —
+						// the parallel tmux detaches shouldn't block the tray
+						// event loop. Same fire-and-log shape as Reinstall.
+						go func() {
+							resp, err := unfocusAllAgentWindows()
+							if err != nil {
+								slog.Warn("tray: unfocus all agents failed", "error", err)
+								return
+							}
+							slog.Info("tray: unfocused all agents",
+								"targeted", resp.Targeted, "detached", resp.Detached,
+								"no_window", resp.NoWindow, "failed", resp.Failed)
+						}()
+					case <-mReinstall.ClickedCh:
+						go runReinstallSkills()
+					case <-mConfig.ClickedCh:
+						if err := openBrowser(config.ConfigPath()); err != nil {
+							slog.Warn("tray: open config failed", "error", err)
 						}
-						slog.Info("tray: unfocused all agents",
-							"targeted", resp.Targeted, "detached", resp.Detached,
-							"no_window", resp.NoWindow, "failed", resp.Failed)
-					}()
-				case <-mReinstall.ClickedCh:
-					go runReinstallSkills()
-				case <-mConfig.ClickedCh:
-					if err := openBrowser(config.ConfigPath()); err != nil {
-						slog.Warn("tray: open config failed", "error", err)
+					case <-mQuit.ClickedCh:
+						onQuit()
+						systray.Quit()
+						return
 					}
-				case <-mQuit.ClickedCh:
-					onQuit()
-					systray.Quit()
-					return
 				}
+			}); err != nil {
+				slog.Warn("tray: menu worker stopped", "error", err)
 			}
 		}()
 	}
@@ -355,6 +364,21 @@ func runSystrayLoop(run func()) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("system tray panic: %v", recovered)
+		}
+	}()
+	run()
+	return nil
+}
+
+// runTrayWorker contains panics from tray-owned background goroutines. Linux
+// tray mutations use godbus Properties.SetMust, which panics when the desktop
+// session closes its DBus connection. A disappearing optional tray must stop
+// that worker, not take the dashboard and every agent coordination API down
+// with it.
+func runTrayWorker(run func()) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("system tray worker panic: %v", recovered)
 		}
 	}()
 	run()
