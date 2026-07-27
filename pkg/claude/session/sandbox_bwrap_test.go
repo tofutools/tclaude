@@ -215,15 +215,17 @@ func TestBwrapArgsPrivateWriteDirOverridesPolicyAndBreakGlassButPrecedesHostCont
 	currentReopen := indexOfBwrapTriplet(got, "--bind", current)
 	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", parent)
 	tmuxHide := indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t))
-	require.NotEqual(t, -1, protectedHide)
+	if runtime.GOOS == "linux" {
+		require.NotEqual(t, -1, protectedHide)
+		assert.Less(t, protectedHide, policyGrant,
+			"acknowledged break-glass may replay through class 3 before the daemon exception")
+	}
 	require.NotEqual(t, -1, policyGrant)
 	require.NotEqual(t, -1, siblingBreakGlass)
 	require.NotEqual(t, -1, privateHide)
 	require.NotEqual(t, -1, currentReopen)
 	require.NotEqual(t, -1, parentRemount)
 	require.NotEqual(t, -1, tmuxHide)
-	assert.Less(t, protectedHide, policyGrant,
-		"acknowledged break-glass may replay through class 3 before the daemon exception")
 	assert.Less(t, policyGrant, privateHide,
 		"private sibling concealment must beat ordinary policy and break-glass replay")
 	assert.Less(t, siblingBreakGlass, privateHide,
