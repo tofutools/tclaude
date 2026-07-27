@@ -29,12 +29,10 @@ func handleDashboardTerminals(w http.ResponseWriter, r *http.Request) {
 	// re-authenticate rather than dead-ending on a plain 403.
 	authed := dashboardPreAuthed(r)
 	if !authed {
-		if c, err := r.Cookie(dashboardCookieName); err == nil {
-			valid, refresh := dashboardSessionCookieMatch(c.Value)
-			authed = valid
-			if refresh {
-				setDashboardSessionCookie(w)
-			}
+		_, valid, refresh := dashboardRequestSessionMatch(r)
+		authed = valid
+		if refresh {
+			setDashboardSessionCookie(w)
 		}
 	}
 	if !authed {
