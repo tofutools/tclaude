@@ -1865,7 +1865,7 @@ func TestDashboardHTML_WizardCogNomenclature(t *testing.T) {
 	must(`regular="permissions" wizard="grimoire"`, "permissions becomes grimoire")
 	must(`regular="clone" wizard="mirror familiar"`, "clone becomes mirror familiar")
 	must(`regular="summary…" wizard="inscribe scroll…"`, "summary becomes inscribe-scroll")
-	must(`regular="schedule…" wizard="bind ritual…"`, "schedule becomes bind-ritual")
+	must(`regular="⏰ schedule…" wizard="⏳ bind ritual…"`, "schedule becomes bind-ritual")
 	must(`regular="view messages" wizard="view missives"`, "messages become missives")
 	must(`regular="remove" wizard="dismiss from party"`, "remove-member names the party")
 	must(`regular="retire" wizard="banish"`, "retire becomes banish")
