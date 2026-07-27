@@ -43,6 +43,9 @@ type codexReadThroughSnapshot struct {
 	checkpointPersistedAt time.Time
 	sessionConvID         string
 	sessionCreatedAt      time.Time
+	runtimeContext        harness.ContextTelemetry
+	runtimeHasContext     bool
+	runtimeReset          bool
 	persistedConvID       string
 	persistedCreatedAt    time.Time
 	persistedContext      harness.ContextTelemetry
@@ -54,6 +57,24 @@ type codexContextRefreshResult struct {
 	interruptedSubagents map[string]struct{}
 	context              *harness.ContextTelemetry
 	contextReset         bool
+}
+
+func codexContextRefreshResultFromCache(
+	sess *db.SessionRow,
+	cached codexReadThroughSnapshot,
+) codexContextRefreshResult {
+	result := codexContextRefreshResult{
+		interruptedSubagents: cached.interruptedSubagents,
+	}
+	if cached.sessionConvID != sess.ConvID || !cached.sessionCreatedAt.Equal(sess.CreatedAt) {
+		return result
+	}
+	result.contextReset = cached.runtimeReset
+	if cached.runtimeHasContext && !cached.runtimeReset {
+		context := cached.runtimeContext
+		result.context = &context
+	}
+	return result
 }
 
 type codexContextPersistenceState struct {
@@ -295,7 +316,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 	cached, refresh := claimCodexContextRefresh(sess.ID, started)
 	timing.claim = time.Since(claimStarted)
 	if !refresh {
-		return codexContextRefreshResult{interruptedSubagents: cached.interruptedSubagents}
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	completed := false
 	defer func() {
@@ -339,7 +360,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 	if err != nil {
 		slog.Warn("codex-telemetry: cannot resolve home for read-through refresh",
 			"session_id", sess.ID, "error", err, "module", "agentd")
-		return codexContextRefreshResult{interruptedSubagents: cached.interruptedSubagents}
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	rolloutStarted := time.Now()
 	snap, err := cached.follower.RuntimeTelemetry(home, sess.ConvID)
@@ -350,7 +371,7 @@ func refreshCodexContextSnapshotOnReadBatched(
 		checkpointWriteStarted := time.Now()
 		recordCodexCheckpointFailure(sess.ID, cached.checkpointData)
 		timing.checkpointWrite = time.Since(checkpointWriteStarted)
-		return codexContextRefreshResult{interruptedSubagents: cached.interruptedSubagents}
+		return codexContextRefreshResultFromCache(sess, cached)
 	}
 	checkpointData := cached.checkpointData
 	checkpointFailures := cached.checkpointFailures
@@ -556,6 +577,9 @@ func refreshCodexContextSnapshotOnReadBatched(
 		checkpointPersistedAt,
 		sess.ConvID,
 		sess.CreatedAt,
+		snap.Context,
+		snap.HasContext,
+		snap.ContextReset,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
 		cachePersistedContext,
@@ -754,6 +778,9 @@ func cacheCodexRuntimeRefresh(
 	checkpointPersistedAt time.Time,
 	sessionConvID string,
 	sessionCreatedAt time.Time,
+	runtimeContext harness.ContextTelemetry,
+	runtimeHasContext bool,
+	runtimeReset bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
 	persistedContext harness.ContextTelemetry,
@@ -774,6 +801,9 @@ func cacheCodexRuntimeRefresh(
 	prev.checkpointPersistedAt = checkpointPersistedAt
 	prev.sessionConvID = sessionConvID
 	prev.sessionCreatedAt = sessionCreatedAt
+	prev.runtimeContext = runtimeContext
+	prev.runtimeHasContext = runtimeHasContext
+	prev.runtimeReset = runtimeReset
 	prev.persistedConvID = persistedConvID
 	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext

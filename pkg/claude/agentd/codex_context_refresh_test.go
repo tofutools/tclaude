@@ -141,6 +141,17 @@ func TestDashboardCodexContextWriteBatchKeepsResponseFresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, stored.TokensInput, "row assembly should only enqueue the context write")
 
+	overlappingBatch := &codexContextWriteBatch{}
+	overlappingState := stateForConvInSessionsBatched(
+		[]*db.SessionRow{sess},
+		map[string]struct{}{sess.TmuxSession: {}},
+		overlappingBatch,
+		nil,
+	)
+	assert.Equal(t, int64(12_000), overlappingState.TokensInput,
+		"an overlapping snapshot should use the cached rollout value before commit")
+	assert.Nil(t, overlappingBatch.dbBatch, "the claimed refresh should remain owned by the first snapshot")
+
 	timing, err := batch.flush()
 	require.NoError(t, err)
 	assert.Positive(t, timing.contextProject.total)
