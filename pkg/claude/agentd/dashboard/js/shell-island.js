@@ -127,7 +127,7 @@ function FooterMeta({ state }) {
         <span class="footer-session-panel" id="footer-session-panel">
           <span>auth cookie expires ${auth.expires_at ? `in ${formatDuration(new Date(auth.expires_at).getTime() - now)}` : 'when this browser session closes'}</span>
           <span>minted ${new Date(auth.minted_at).toLocaleString()}</span>
-          ${!auth.expires_at ? html`<span class="footer-session-note">pre-upgrade cookies are accepted for a 30m restart handoff, then rotated</span>` : null}
+          ${!auth.expires_at ? html`<span class="footer-session-note">after a clean daemon restart, the prior cookie is accepted for up to 30m and rotated on reconnect</span>` : null}
         </span>
       ` : null}
     </span>
