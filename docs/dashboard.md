@@ -496,28 +496,19 @@ Profiles saved before this change may still carry the
 retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard
 ignores them rather than rendering an enforcement that no longer exists — such
 a profile is no longer strict despite its name, so audit it and re-express the
-intent as deny rows (see `docs/agent.md`). **Break-glass protected
-access** (`break_glass_filesystem`) is the
-only representation that may touch the normally protected tclaude/harness
-state (`~/.tclaude/data`, `~/.claude/sessions`); ordinary
-filesystem rules keep rejecting those paths. `~/.codex` is not among them — it
-is ordinary harness state that a deny row may cover and that a denied Home
-must reopen. Each rule is an exact path with
-`read` or `write` access — read never implies write. It exists solely for
-deliberate debugging of tclaude itself and is rendered as dangerous
-everywhere: the editor, the save diff, profile cards, import previews, the
-resolved spawn preview, and both assignment chips show a prominent warning
-naming the concrete risks (credential/session disclosure, daemon-state
-corruption, authorization bypass, host-control sockets, daemon/harness
-breakage), and every commit surface — create, edit, import, global or group
-assignment, and spawning under a resolved policy that carries break-glass —
-requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
-`--i-understand-break-glass-risk` in the CLI). Includes never hide the
-origin: previews attribute every break-glass rule and every filesystem row to
-the profile and scope that introduced them. Agent-initiated spawns can neither
-introduce nor widen break-glass access, and the same lineage rules cover deny
-rows: a child or resumed profile cannot drop an effective deny row, nor reopen
-a path beneath one that its parent did not reopen.
+intent as deny rows (see `docs/agent.md`). The protected tclaude/harness state
+(`~/.tclaude/data`, `~/.claude/sessions`) is unreachable from any profile: the
+daemon rejects a filesystem rule whose path intersects one of those roots, and
+there is no second representation that reaches them. The dashboard therefore
+has no break-glass editor, warning banner, or acknowledgement checkbox — TCL-791
+removed the feature, and a payload still carrying `break_glass_filesystem` or
+`break_glass_acknowledged` is refused by the daemon with the typed
+`break_glass_removed` code rather than saved with the field dropped. `~/.codex`
+is not protected — it is ordinary harness state that a deny row may cover and
+that a denied Home must reopen. Includes never hide origin: previews attribute
+every filesystem row to the profile and scope that introduced it.
+Agent-initiated spawns, resume, and reincarnation cannot drop an effective deny
+row, nor reopen a path beneath one that the parent did not reopen.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

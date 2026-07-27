@@ -679,6 +679,12 @@ func openDatabaseReportingMigrations() error {
 			fmt.Printf("FAILED: %v\n", err)
 			slog.Error("db: schema migration failed", "version", version, "error", err)
 		},
+		Notice: func(version int, message string) {
+			// Fires between Applying and Applied, whose line is still open.
+			// Break it so the disclosure does not run into "  applying…".
+			fmt.Printf("\n\nNOTICE (migration v%d):\n%s\n\n", version, message)
+			slog.Warn("db: schema migration disclosure", "version", version, "message", message)
+		},
 		Done: func(to int) {
 			fmt.Printf("database schema up to date (v%d)\n", to)
 			slog.Info("db: schema migrations complete", "version", to)

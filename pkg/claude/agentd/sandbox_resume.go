@@ -99,55 +99,27 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 }
 
-// clampResumeProtectedAuthority preserves the protected-access decision and the
-// deny lineage that were recorded when the agent launched.
+// clampResumeProtectedAuthority preserves the deny lineage recorded when the
+// agent launched.
 //
 // Resume deliberately re-resolves the ordinary rules from the current registry
 // so an operator can fix a profile and relaunch. That is fine for grants a
-// human re-confirms implicitly by editing them — but break-glass and the
-// profile's deny rows are different: resume must never silently gain protected
-// access from a later ambient profile change, and must never drop a deny the
-// launched agent was running under (or reopen a path beneath one). Neither can
-// be re-acknowledged here, because resume has no human in the loop.
+// human re-confirms implicitly by editing them — but the profile's deny rows
+// are different: resume must never drop a deny the launched agent was running
+// under, or reopen a path beneath one, and there is no human in the loop to
+// re-confirm that.
 //
-// So this clamps rather than refuses: protected access is intersected with what
-// the previous snapshot already held (never added, never widened read→write),
-// and the previous deny lineage is re-imposed. Both directions are fail-safe —
-// a resumed agent can only ever end up with less authority than the ambient
-// registry would grant it. An operator who genuinely wants to widen a running
-// agent spawns a fresh one, which goes through the full gates.
+// So this clamps rather than refuses: the previous deny lineage is re-imposed.
+// The direction is fail-safe — a resumed agent can only ever end up with less
+// authority than the ambient registry would grant it. An operator who genuinely
+// wants to widen a running agent spawns a fresh one, which goes through the
+// full gates.
+//
+// This also clamped break-glass until TCL-791 removed it. Nothing replaces that
+// arm: protected state is now unreachable at every tier, so there is no
+// protected authority left for a resume to gain.
 func clampResumeProtectedAuthority(current, previous sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
-	current = clampResumeDenyLineage(current, previous)
-
-	if len(current.Effective.BreakGlassFilesystem) == 0 {
-		// Nothing to clamp, and dropping access the profile no longer grants is
-		// always safe.
-		return current
-	}
-	kept := make([]sandboxpolicy.BreakGlassGrant, 0, len(current.Effective.BreakGlassFilesystem))
-	for _, grant := range current.Effective.BreakGlassFilesystem {
-		if allowed, ok := previousBreakGlassAccess(previous, grant); ok {
-			grant.Access = allowed
-			kept = append(kept, grant)
-		}
-	}
-	if len(kept) == 0 {
-		kept = nil
-	}
-	current.Effective.BreakGlassFilesystem = kept
-	if current.Effective.Provenance.BreakGlassFilesystem != nil {
-		retained := map[string][]sandboxpolicy.ProfileSource{}
-		for _, grant := range kept {
-			if sources, ok := current.Effective.Provenance.BreakGlassFilesystem[grant.Path]; ok {
-				retained[grant.Path] = sources
-			}
-		}
-		if len(retained) == 0 {
-			retained = nil
-		}
-		current.Effective.Provenance.BreakGlassFilesystem = retained
-	}
-	return current
+	return clampResumeDenyLineage(current, previous)
 }
 
 // clampResumeDenyLineage re-imposes the deny rows the agent launched under.
@@ -209,35 +181,6 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 	return current
 }
 
-// previousBreakGlassAccess reports the strongest access the parent snapshot
-// already held for a path, capped at what is being requested now. Coverage is
-// segment-aware: an ancestor grant covers its descendants, and a recorded read
-// never satisfies a newly-requested write.
-func previousBreakGlassAccess(previous sandboxpolicy.Snapshot, want sandboxpolicy.BreakGlassGrant) (sandboxpolicy.Access, bool) {
-	best := sandboxpolicy.Access("")
-	for _, held := range previous.Effective.BreakGlassFilesystem {
-		if !sandboxpolicy.PathContainsOrEqual(held.Path, want.Path) {
-			continue
-		}
-		if held.Access == sandboxpolicy.AccessWrite {
-			best = sandboxpolicy.AccessWrite
-			break
-		}
-		best = sandboxpolicy.AccessRead
-	}
-	if best == "" {
-		return "", false
-	}
-	if want.Access == sandboxpolicy.AccessRead {
-		// Requesting less than was held is always fine.
-		return sandboxpolicy.AccessRead, true
-	}
-	if best != sandboxpolicy.AccessWrite {
-		// A recorded read must not become a write on resume.
-		return sandboxpolicy.AccessRead, true
-	}
-	return sandboxpolicy.AccessWrite, true
-}
 
 // resumeSandboxGroupID recovers the launch group for agents created before a
 // dedicated source-group field existed. The ordinary and overwhelmingly common

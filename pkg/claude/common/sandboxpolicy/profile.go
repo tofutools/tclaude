@@ -21,10 +21,6 @@ const (
 	MaxEnvironmentBytes    = 64 * 1024
 	MaxAgentDirectoryCount = 128
 	MaxIncludeCount        = 32
-	// MaxBreakGlassCount bounds the exceptional protected-path rules on one
-	// profile. It is deliberately small: break-glass is a narrow debugging
-	// mechanism, not a second filesystem section.
-	MaxBreakGlassCount = 16
 	// MaxIncludeDepth bounds the longest include-EDGE chain reachable from a
 	// profile (a profile with no includes has depth 0). Registry write paths
 	// and launch-time flattening enforce the same unit and bound, so a policy
@@ -48,35 +44,6 @@ const (
 type FilesystemGrant struct {
 	Path   string `json:"path"`
 	Access Access `json:"access"`
-}
-
-// BreakGlassGrant is one exceptional, operator-acknowledged rule that reaches
-// normally protected tclaude/Claude state (~/.tclaude/data or
-// ~/.claude/sessions). It exists so a human can launch a tightly scoped agent
-// to debug tclaude itself.
-//
-// Access is read or write only: deny is already the default for these paths,
-// and read must never imply write. Every rule must actually intersect a
-// protected root — an ordinary path belongs in Filesystem, where it does not
-// carry a danger marker or demand an acknowledgement.
-type BreakGlassGrant struct {
-	Path   string `json:"path"`
-	Access Access `json:"access"`
-}
-
-// derivedBreakGlassProvenance is Flatten's opaque companion to the authored
-// Profile shape. Provenance must not live on BreakGlassGrant itself: that value
-// is public and mutable, so a caller could otherwise flatten an empty profile,
-// mutate the returned grants/chains, and retain a stale "trusted" marker.
-//
-// The exact emitted grant slice is sealed alongside the chains. Resolve trusts
-// the chains only while the public break-glass payload is byte-for-byte the one
-// Flatten produced. Any caller mutation drops back to honest direct
-// attribution rather than reusing stale provenance.
-type derivedBreakGlassProvenance struct {
-	profile string
-	grants  []BreakGlassGrant
-	chains  map[string][][]string
 }
 
 type EnvironmentEntry struct {
@@ -107,40 +74,13 @@ const (
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name       string            `json:"name"`
-	Filesystem []FilesystemGrant `json:"filesystem,omitempty"`
-	// BreakGlassFilesystem is omitempty so a profile that does not use it
-	// serializes byte-identically to a profile from before the capability
-	// existed.
-	BreakGlassFilesystem []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment          []EnvironmentEntry `json:"environment,omitempty"`
-	AgentDirectories     []string           `json:"agent_directories,omitempty"`
-	NetworkAccess        NetworkAccess      `json:"network_access,omitempty"`
-	Includes             []string           `json:"includes,omitempty"`
-
-	// derivedBreakGlass is opaque effective provenance computed by Flatten. It
-	// is deliberately separate from the public authored fields; see
-	// derivedBreakGlassProvenance above.
-	derivedBreakGlass *derivedBreakGlassProvenance
+	Name             string             `json:"name"`
+	Filesystem       []FilesystemGrant  `json:"filesystem,omitempty"`
+	Environment      []EnvironmentEntry `json:"environment,omitempty"`
+	AgentDirectories []string           `json:"agent_directories,omitempty"`
+	NetworkAccess    NetworkAccess      `json:"network_access,omitempty"`
+	Includes         []string           `json:"includes,omitempty"`
 }
-
-func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
-	sealed := &derivedBreakGlassProvenance{
-		profile: p.Name,
-		grants:  append([]BreakGlassGrant(nil), p.BreakGlassFilesystem...),
-		chains:  make(map[string][][]string, len(chains)),
-	}
-	for path, pathChains := range chains {
-		sealed.chains[path] = cloneChains(pathChains)
-	}
-	p.derivedBreakGlass = sealed
-	return p
-}
-
-// HasBreakGlass reports whether a profile carries the dangerous protected-path
-// capability class. Management and assignment surfaces use it to decide
-// whether an explicit operator acknowledgement is required.
-func (p Profile) HasBreakGlass() bool { return len(p.BreakGlassFilesystem) > 0 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -197,11 +137,6 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	breakGlass, breakGlassMissing, err := normalizeBreakGlass(in.BreakGlassFilesystem, allowMissing)
-	if err != nil {
-		return Profile{}, nil, err
-	}
-	missing = mergeMissingPaths(missing, breakGlassMissing)
 	environment, err := normalizeEnvironment(in.Environment)
 	if err != nil {
 		return Profile{}, nil, err
@@ -219,92 +154,9 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 	return Profile{
-		Name: name, Filesystem: filesystem, BreakGlassFilesystem: breakGlass,
+		Name: name, Filesystem: filesystem,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes,
 	}, missing, nil
-}
-
-// normalizeBreakGlass canonicalizes the exceptional protected-path rules. Each
-// rule must name read or write access (deny is the default and read must not
-// imply write) and must genuinely intersect a protected root: an ordinary path
-// belongs in Filesystem, which stays free of the danger marker. Duplicate
-// canonical paths fold with write dominating read, so composition is
-// privilege-monotonic rather than order-dependent.
-func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassGrant, []string, error) {
-	if len(in) == 0 {
-		return nil, nil, nil
-	}
-	if len(in) > MaxBreakGlassCount {
-		return nil, nil, fmt.Errorf("break_glass_filesystem has too many entries (maximum %d)", MaxBreakGlassCount)
-	}
-	protected, err := protectedPaths()
-	if err != nil {
-		return nil, nil, err
-	}
-	byPath := make(map[string]BreakGlassGrant, len(in))
-	missingPaths := map[string]bool{}
-	for i, grant := range in {
-		if grant.Access != AccessRead && grant.Access != AccessWrite {
-			return nil, nil, fmt.Errorf("break_glass_filesystem[%d].access %q is invalid (want read or write; protected paths are already denied by default)", i, grant.Access)
-		}
-		path, missing, err := canonicalDirectory(grant.Path, allowMissing)
-		if err != nil {
-			return nil, nil, fmt.Errorf("break_glass_filesystem[%d].path: %w", i, err)
-		}
-		// Containment, NOT mere intersection: a path that merely intersects a
-		// protected root can be an ancestor of it, so "~" or "/" would qualify
-		// and turn the narrow debugging hatch into a whole-host grant wearing a
-		// break-glass label. Requiring the rule to sit AT or BELOW a protected
-		// root also implements "prefer the narrowest useful debugging grant".
-		contained := false
-		for _, denied := range protected {
-			if pathContainsOrEqual(denied, path) {
-				contained = true
-				break
-			}
-		}
-		if !contained {
-			return nil, nil, fmt.Errorf(
-				"break_glass_filesystem[%d].path %q is not inside a protected directory (%s); grant ordinary paths through filesystem instead",
-				i, path, strings.Join(protected, ", "))
-		}
-		if missing {
-			missingPaths[path] = true
-		}
-		// Provenance is not part of the authored grant shape. Flatten derives it
-		// separately in an opaque effective representation.
-		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous.Access) {
-			byPath[path] = BreakGlassGrant{Path: path, Access: grant.Access}
-		}
-	}
-	out := make([]BreakGlassGrant, 0, len(byPath))
-	for _, grant := range byPath {
-		out = append(out, grant)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	missing := make([]string, 0, len(missingPaths))
-	for path := range missingPaths {
-		missing = append(missing, path)
-	}
-	sort.Strings(missing)
-	return out, missing, nil
-}
-
-func mergeMissingPaths(a, b []string) []string {
-	if len(b) == 0 {
-		return a
-	}
-	seen := make(map[string]bool, len(a)+len(b))
-	out := make([]string, 0, len(a)+len(b))
-	for _, path := range append(append([]string{}, a...), b...) {
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		out = append(out, path)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // NormalizeNetworkAccess validates one network posture without requiring a
@@ -553,9 +405,11 @@ func canonicalMissingDirectory(path string) (string, error) {
 }
 
 // ProtectedPaths returns the canonical tclaude/harness state directories that
-// ordinary filesystem rules may never touch and that only an acknowledged
-// break-glass rule may reach. Adapters and CLI/API surfaces use it to explain
-// exactly which protected root a rule reaches.
+// no filesystem rule may ever reach. The invariant is absolute: there is no
+// profile, include, launch contract, acknowledgement, or flag that reopens
+// them (TCL-791 removed the one former exception). An operator who must work
+// without the wall disables the sandbox instead. Adapters and CLI/API surfaces
+// use this to explain exactly which protected root a rejected rule touched.
 func ProtectedPaths() ([]string, error) { return protectedPaths() }
 
 func protectedPaths() ([]string, error) {

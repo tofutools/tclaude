@@ -32,8 +32,6 @@ type OpenCodePermissionSpec struct {
 	WriteDirs           []string
 	DenyDirs            []string
 	ReadBaseline        string
-	BreakGlassReadDirs  []string
-	BreakGlassWriteDirs []string
 	NetworkAccess       sandboxpolicy.NetworkAccess
 }
 
@@ -173,14 +171,6 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 		return nil, err
 	}
 
-	breakGlass := map[string]openCodePathAccess{}
-	if err := mergeOpenCodeRoots(breakGlass, spec.BreakGlassReadDirs, openCodePathRead); err != nil {
-		return nil, err
-	}
-	if err := mergeOpenCodeRoots(breakGlass, spec.BreakGlassWriteDirs, openCodePathWrite); err != nil {
-		return nil, err
-	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, breakGlass, approval, false)
 	if err != nil {
 		return nil, err
 	}

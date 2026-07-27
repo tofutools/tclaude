@@ -102,14 +102,6 @@ type SpawnSpec struct {
 	// it must reject the launch with a typed capability error rather than
 	// approximate it, because a fake strict posture is worse than none.
 	SandboxReadBaseline string
-	// SandboxBreakGlassReadDirs and SandboxBreakGlassWriteDirs are the
-	// operator-acknowledged exceptions that reach normally protected
-	// tclaude/harness state. They are kept SEPARATE from the ordinary
-	// read/write/deny dirs because an adapter must suppress its own protected
-	// deny for exactly these paths: on both harnesses a deny at or above the
-	// path would otherwise mask the grant. Read never implies write.
-	SandboxBreakGlassReadDirs  []string
-	SandboxBreakGlassWriteDirs []string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
 	// `--settings` payload as SandboxMode (both are settings.json overrides, and

@@ -534,19 +534,6 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
-	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
-		if !outerLayer {
-			if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, effectiveSandboxMode, breakGlass, launchFilesystem); err != nil {
-				return err
-			}
-		}
-		// A missing protected path fails the launch closed: the operator
-		// acknowledged access to something specific, so silently launching
-		// with less than the audit record claims is not acceptable.
-		if _, err := sandboxpolicy.BreakGlassForLaunch(launchSandbox.Effective); err != nil {
-			return err
-		}
-	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && !outerLayer {
 		switch h.Name {
@@ -1196,8 +1183,6 @@ func runNew(params *NewParams) error {
 		SandboxWriteDirs:           launchWriteDirs,
 		SandboxReadDirs:            launchReadDirs,
 		SandboxDenyDirs:            launchDenyDirs,
-		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
-		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
 		AskUserQuestionTimeout:     askTimeout,
 		ContextFeatures:            contextFeatures,
 		PermissionProfile:          launchPermissionProfile,
@@ -1573,8 +1558,6 @@ func OneShotLaunchPosture(
 		SandboxWriteDirs:           launchWriteDirs,
 		SandboxReadDirs:            launchReadDirs,
 		SandboxDenyDirs:            launchDenyDirs,
-		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
-		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
 		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
 		ApprovalPolicy:             approvalPolicy,
 		AutoReview:                 autoReview,
@@ -1657,8 +1640,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		ReadDirs:            readDirs,
 		WriteDirs:           writeDirs,
 		DenyDirs:            denyDirs,
-		BreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
-		BreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
 		RequireSplitPolicy:  requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
@@ -1714,13 +1695,6 @@ func appendUniqueDir(dirs []string, dir string) []string {
 	return append(dirs, dir)
 }
 
-func sandboxSnapshotBreakGlass(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.BreakGlassGrant {
-	if snapshot == nil {
-		return nil
-	}
-	return snapshot.Effective.BreakGlassFilesystem
-}
-
 func sandboxSnapshotNetworkAccess(snapshot *sandboxpolicy.Snapshot) sandboxpolicy.NetworkAccess {
 	if snapshot == nil {
 		return sandboxpolicy.NetworkAccessInherit
@@ -1735,22 +1709,6 @@ func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]str
 	out := make(map[string]string, len(snapshot.Effective.Environment))
 	for _, entry := range snapshot.Effective.Environment {
 		out[entry.Name] = entry.Value
-	}
-	return out
-}
-
-// sandboxSnapshotBreakGlassDirs returns the acknowledged protected paths for
-// one access. Read and write are reported separately because read must never
-// imply write, and the adapters need to know which deny to suppress.
-func sandboxSnapshotBreakGlassDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
-	if snapshot == nil {
-		return nil
-	}
-	out := make([]string, 0, len(snapshot.Effective.BreakGlassFilesystem))
-	for _, grant := range snapshot.Effective.BreakGlassFilesystem {
-		if grant.Access == access {
-			out = append(out, grant.Path)
-		}
 	}
 	return out
 }
@@ -1909,21 +1867,12 @@ func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.
 	return &out, nil
 }
 
-// SandboxSnapshotForOneShotLaunch freezes the exact active filesystem and
-// break-glass rules for a brokered one-shot launch. It is the exported twin of
-// runNew's launch preparation: missing ordinary grants become inactive, while
-// missing denies or acknowledged protected grants fail closed.
+// SandboxSnapshotForOneShotLaunch freezes the exact active filesystem rules for
+// a brokered one-shot launch. It is the exported twin of runNew's launch
+// preparation: missing ordinary grants become inactive, while missing denies
+// fail closed.
 func SandboxSnapshotForOneShotLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
-	out, err := sandboxSnapshotForLaunch(snapshot)
-	if err != nil || out == nil {
-		return out, err
-	}
-	breakGlass, err := sandboxpolicy.BreakGlassForLaunch(out.Effective)
-	if err != nil {
-		return nil, fmt.Errorf("sandbox_profile_changed: %w", err)
-	}
-	out.Effective.BreakGlassFilesystem = breakGlass
-	return out, nil
+	return sandboxSnapshotForLaunch(snapshot)
 }
 
 func commandWithFileCleanup(cmd, path string) string {

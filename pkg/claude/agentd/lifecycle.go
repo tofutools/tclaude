@@ -2504,6 +2504,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
+	if fail := rejectBreakGlassSpawn(body.BreakGlassAcknowledged); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	body.SandboxProfile = strings.TrimSpace(body.SandboxProfile)
 	if body.OmitSandboxProfiles && body.SandboxProfile != "" {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile",
@@ -3062,19 +3066,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
 				return
 			}
-		}
-	}
-	// Selecting a launch whose RESOLVED policy carries protected access is one
-	// of the acknowledgement surfaces. It is checked after containment so an
-	// agent-initiated spawn is refused by lineage first (agents can never
-	// introduce or widen break-glass), and it applies to the human caller who
-	// is actually making the dangerous choice. An agent inheriting exactly the
-	// access its parent already holds needs no new acknowledgement: the human
-	// acknowledged it when the parent was launched.
-	if spawnerConvID == "" && effectiveSandbox.Effective.HasBreakGlass() {
-		if fail := requireBreakGlassAck("launch an agent under", body.BreakGlassAcknowledged, effectiveSandbox.Effective.BreakGlassFilesystem); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
 		}
 	}
 	if fail := sandboxProfileCapabilityFailure(

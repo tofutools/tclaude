@@ -45,7 +45,7 @@ import (
 // credentials, VCS tokens, browser profiles) — and skips exactly the shapes it
 // would break. skipped names the deny paths that could not be represented, so
 // callers can surface them rather than let them look enforced.
-func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs []string) (rules []string, skipped []string) {
+func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs []string) (rules []string, skipped []string) {
 	denies := normalizedSandboxWriteDirs(denyDirs)
 	if len(denies) == 0 {
 		return nil, nil
@@ -61,7 +61,7 @@ func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs
 	// acknowledged `~/.tclaude/data` is caught as a reopen-under-deny and
 	// skipped, instead of emitting a Read deny that would defeat the
 	// acknowledgement on the built-in tools.
-	reopenReads := append(append([]string{}, readDirs...), breakGlassDirs...)
+	reopenReads := append([]string{}, readDirs...)
 	grants := sandboxpolicy.GrantsFromDirs(
 		normalizedSandboxWriteDirs(reopenReads),
 		normalizedSandboxWriteDirs(writeDirs),

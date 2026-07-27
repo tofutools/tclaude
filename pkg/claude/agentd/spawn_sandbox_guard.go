@@ -61,34 +61,20 @@ func sandboxProfileCapabilityFailure(
 	}
 	if implementation.UsesTclaudeLayer() {
 		// The outer applier, not the harness-native sandbox catalog, represents
-		// filesystem and network policy. Keep launch-time break-glass existence
-		// validation here; the session boundary validates the layer's network
-		// transport assertion and renders the mount plan.
-		if len(snapshot.Effective.BreakGlassFilesystem) > 0 {
-			if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {
-				return &spawnFailure{http.StatusUnprocessableEntity, harness.SandboxCapabilityBreakGlass, err.Error()}
-			}
-		}
+		// filesystem and network policy. The session boundary validates the
+		// layer's network transport assertion and renders the mount plan.
 		return nil
 	}
-	// The capability gates run FIRST and unconditionally: a reopen-under-deny
-	// shape or an acknowledged protected grant must be refused by a harness that
-	// cannot enforce it even when the profile carries no other rules.
-	// Approximating either one would hand the operator a false guarantee.
+	// The capability gate runs FIRST and unconditionally: a reopen-under-deny
+	// shape must be refused by a harness that cannot enforce it even when the
+	// profile carries no other rules. Approximating it would hand the operator a
+	// false guarantee.
 	//
 	// The shape is read from the LAUNCH filesystem rather than the raw effective
 	// set, so a deny/reopen pair that is inactive this launch (missing path) is
 	// judged exactly as it will be rendered.
 	if err := harness.ValidateSandboxReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, filesystem); err != nil {
 		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReopenUnderDeny)
-	}
-	if grants := snapshot.Effective.BreakGlassFilesystem; len(grants) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, grants, filesystem); err != nil {
-			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityBreakGlass)
-		}
-		if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {
-			return &spawnFailure{http.StatusUnprocessableEntity, harness.SandboxCapabilityBreakGlass, err.Error()}
-		}
 	}
 	hasNetworkPolicy := snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
 	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && !hasNetworkPolicy {

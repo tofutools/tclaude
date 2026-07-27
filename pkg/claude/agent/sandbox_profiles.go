@@ -22,19 +22,14 @@ import (
 // payload read on sandbox-profiles.manage to avoid disclosing accidental
 // credentials to ordinary agents.
 type sandboxProfileJSON struct {
-	Name                 string                           `json:"name"`
-	Filesystem           []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	BreakGlassFilesystem []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment          []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	AgentDirectories     []string                         `json:"agent_directories,omitempty"`
-	NetworkAccess        sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
-	Includes             []string                         `json:"includes,omitempty"`
-	CreatedAt            string                           `json:"created_at,omitempty"`
-	UpdatedAt            string                           `json:"updated_at,omitempty"`
-	// BreakGlassAcknowledged is set from --i-understand-break-glass-risk and is
-	// request-only: it is never emitted by show/export, so an acknowledgement
-	// cannot be smuggled along inside a saved profile file.
-	BreakGlassAcknowledged bool `json:"break_glass_acknowledged,omitempty"`
+	Name             string                           `json:"name"`
+	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
+	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Includes         []string                         `json:"includes,omitempty"`
+	CreatedAt        string                           `json:"created_at,omitempty"`
+	UpdatedAt        string                           `json:"updated_at,omitempty"`
 }
 
 type sandboxProfileAssignmentJSON struct {
@@ -181,7 +176,7 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 
 type sandboxProfilesFileParams struct {
 	File                      string `long:"file" short:"f" help:"Profile JSON path ('-' reads stdin); use the shape emitted by show --json"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"Acknowledge break_glass_filesystem access to protected tclaude/harness state"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 type sandboxProfilesDraftParams struct {
@@ -233,11 +228,14 @@ func sandboxProfilesCreateCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesCreate(p *sandboxProfilesFileParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return rcInvalidArg
+	}
 	profile, rc := loadSandboxProfileFile(p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
 	}
-	profile.BreakGlassAcknowledged = p.IUnderstandBreakGlassRisk
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -255,7 +253,7 @@ func runSandboxProfilesCreate(p *sandboxProfilesFileParams, stdin io.Reader, std
 type sandboxProfilesEditParams struct {
 	Name                      string `pos:"true" help:"Sandbox profile to replace"`
 	File                      string `long:"file" short:"f" help:"Full replacement profile JSON path ('-' reads stdin)"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"Acknowledge break_glass_filesystem access to protected tclaude/harness state"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 func sandboxProfilesEditCmd() *cobra.Command {
@@ -264,6 +262,10 @@ func sandboxProfilesEditCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return rcInvalidArg
+	}
 	name, rc := requireSandboxProfileName(p.Name, stderr)
 	if rc != rcOK {
 		return rc
@@ -272,7 +274,6 @@ func runSandboxProfilesEdit(p *sandboxProfilesEditParams, stdin io.Reader, stdou
 	if rc != rcOK {
 		return rc
 	}
-	profile.BreakGlassAcknowledged = p.IUnderstandBreakGlassRisk
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
@@ -349,7 +350,7 @@ func runSandboxProfilesDefaultShow(p *sandboxProfilesJSONParams, stdout, stderr 
 
 type sandboxProfilesNameParams struct {
 	Name                      string `pos:"true" help:"Sandbox profile name"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"Acknowledge that this profile grants break-glass access to protected tclaude/harness state for EVERY agent in scope"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 func sandboxProfilesDefaultSetCmd() *cobra.Command {
@@ -358,7 +359,11 @@ func sandboxProfilesDefaultSetCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesDefaultSet(p *sandboxProfilesNameParams, stdout, stderr io.Writer) int {
-	return mutateSandboxProfileAssignment(http.MethodPut, "/v1/sandbox-profile-default", "", p.Name, p.IUnderstandBreakGlassRisk, stdout, stderr)
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return rcInvalidArg
+	}
+	return mutateSandboxProfileAssignment(http.MethodPut, "/v1/sandbox-profile-default", "", p.Name, stdout, stderr)
 }
 func sandboxProfilesDefaultClearCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{Use: "clear", Short: "Clear the global sandbox-profile default", ParamEnrich: common.DefaultParamEnricher(), RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
@@ -366,7 +371,7 @@ func sandboxProfilesDefaultClearCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesDefaultClear(stdout, stderr io.Writer) int {
-	return mutateSandboxProfileAssignment(http.MethodDelete, "/v1/sandbox-profile-default", "", "", false, stdout, stderr)
+	return mutateSandboxProfileAssignment(http.MethodDelete, "/v1/sandbox-profile-default", "", "", stdout, stderr)
 }
 
 func sandboxProfilesGroupCmd() *cobra.Command {
@@ -410,7 +415,7 @@ func runSandboxProfilesGroupShow(p *sandboxProfilesGroupShowParams, stdout, stde
 type sandboxProfilesGroupSetParams struct {
 	Group                     string `pos:"true" help:"Group name"`
 	Name                      string `pos:"true" help:"Sandbox profile name"`
-	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"Acknowledge that this profile grants break-glass access to protected tclaude/harness state for EVERY agent in the group"`
+	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 func sandboxProfilesGroupSetCmd() *cobra.Command {
@@ -419,7 +424,11 @@ func sandboxProfilesGroupSetCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesGroupSet(p *sandboxProfilesGroupSetParams, stdout, stderr io.Writer) int {
-	return mutateSandboxProfileAssignment(http.MethodPut, "/v1/groups/"+url.PathEscape(strings.TrimSpace(p.Group))+"/sandbox-profile", p.Group, p.Name, p.IUnderstandBreakGlassRisk, stdout, stderr)
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return rcInvalidArg
+	}
+	return mutateSandboxProfileAssignment(http.MethodPut, "/v1/groups/"+url.PathEscape(strings.TrimSpace(p.Group))+"/sandbox-profile", p.Group, p.Name, stdout, stderr)
 }
 
 type sandboxProfilesGroupClearParams struct {
@@ -432,10 +441,10 @@ func sandboxProfilesGroupClearCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesGroupClear(p *sandboxProfilesGroupClearParams, stdout, stderr io.Writer) int {
-	return mutateSandboxProfileAssignment(http.MethodDelete, "/v1/groups/"+url.PathEscape(strings.TrimSpace(p.Group))+"/sandbox-profile", p.Group, "", false, stdout, stderr)
+	return mutateSandboxProfileAssignment(http.MethodDelete, "/v1/groups/"+url.PathEscape(strings.TrimSpace(p.Group))+"/sandbox-profile", p.Group, "", stdout, stderr)
 }
 
-func mutateSandboxProfileAssignment(method, path, group, name string, acknowledged bool, stdout, stderr io.Writer) int {
+func mutateSandboxProfileAssignment(method, path, group, name string, stdout, stderr io.Writer) int {
 	group = strings.TrimSpace(group)
 	if strings.Contains(path, "/groups//") || (strings.Contains(path, "/groups/") && group == "") {
 		fmt.Fprintln(stderr, "Error: a group name is required")
@@ -452,13 +461,7 @@ func mutateSandboxProfileAssignment(method, path, group, name string, acknowledg
 	var resp sandboxProfileAssignmentJSON
 	var body any
 	if method == http.MethodPut {
-		// Only send the acknowledgement when it was actually given, so an
-		// ordinary assignment's request body is unchanged.
-		assignment := map[string]any{"name": name}
-		if acknowledged {
-			assignment["break_glass_acknowledged"] = true
-		}
-		body = assignment
+		body = map[string]any{"name": name}
 	}
 	if err := DaemonRequest(method, path, body, &resp, DaemonOpts{}); err != nil {
 		return printSandboxProfileDaemonError(stderr, err)
@@ -538,9 +541,7 @@ type sandboxProfilesImportParams struct {
 	OnConflict       string `long:"on-conflict" optional:"true" help:"Conflict policy: error, skip, or overwrite"`
 	ApplyAssignments bool   `long:"apply-assignments" help:"Apply included global/group assignments"`
 	JSON             bool   `long:"json" help:"Emit the stable import-result JSON instead of a summary"`
-	// A bundle authored elsewhere must be acknowledged again on THIS machine,
-	// after its paths have been canonicalized against local protected roots.
-	IUnderstandBreakGlassRisk bool `long:"i-understand-break-glass-risk" help:"Acknowledge break-glass protected access carried by profiles in this bundle"`
+	IUnderstandBreakGlassRisk bool `long:"i-understand-break-glass-risk" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 }
 
 func sandboxProfilesImportCmd() *cobra.Command {
@@ -552,6 +553,10 @@ func sandboxProfilesImportCmd() *cobra.Command {
 	}}.ToCobra()
 }
 func runSandboxProfilesImport(p *sandboxProfilesImportParams, stdin io.Reader, stdout, stderr io.Writer) int {
+	if p.IUnderstandBreakGlassRisk {
+		fmt.Fprintln(stderr, "Error:", breakGlassFlagRemoved())
+		return rcInvalidArg
+	}
 	raw, rc := loadSandboxProfileRawFile(p.File, stdin, stderr)
 	if rc != rcOK {
 		return rc
@@ -580,7 +585,6 @@ func runSandboxProfilesImport(p *sandboxProfilesImportParams, stdin io.Reader, s
 	// destructive conflict handling remain explicit CLI choices.
 	env["on_conflict"] = conflict
 	env["apply_assignments"] = p.ApplyAssignments
-	env["break_glass_acknowledged"] = p.IUnderstandBreakGlassRisk
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}

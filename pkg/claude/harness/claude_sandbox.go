@@ -3,8 +3,6 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -188,82 +186,21 @@ func ClaudeSandboxOffBlock() map[string]any {
 // (inherit / unset / unrecognized). It is the shared block-builder the spawner's
 // merged `--settings` payload (claudeSettingsJSON) and the single-key
 // claudeSandboxSettingsJSON both draw from, so the two can never drift.
-func claudeSandboxBlock(mode string) map[string]any {
-	return claudeSandboxBlockWithBreakGlass(mode, nil, nil)
-}
-
-// claudeSandboxBlockWithBreakGlass builds the `on`/`off` block, omitting any
-// tclaude protected deny that an acknowledged break-glass rule reaches.
 //
-// The suppression is mandatory, not cosmetic. Claude applies deny directories
-// shallowest-first and re-masks after re-binding allows, so a denyRead sitting
-// at the SAME path as the break-glass grant makes the outcome order-sensitive.
-// Dropping exactly the covered deny leaves an unambiguous policy: the operator
-// acknowledged this path, so tclaude stops denying it — and keeps denying the
-// protected paths they did NOT acknowledge.
-func claudeSandboxBlockWithBreakGlass(mode string, breakGlassRead, breakGlassWrite []string) map[string]any {
+// The tclaude protected denies in the `on` block are UNCONDITIONAL. This used
+// to take break-glass grants and suppress exactly the denies they reached;
+// TCL-791 removed break-glass, so there is no longer any input that can drop
+// one. That is the point: an operator who must work without the wall turns the
+// sandbox off rather than carving a hole in it.
+func claudeSandboxBlock(mode string) map[string]any {
 	switch strings.TrimSpace(mode) {
 	case ClaudeSandboxOn:
-		block := ClaudeSandboxOnBlock()
-		if len(breakGlassRead) == 0 && len(breakGlassWrite) == 0 {
-			return block
-		}
-		filesystem, _ := block["filesystem"].(map[string]any)
-		if filesystem == nil {
-			return block
-		}
-		// Read and write are suppressed INDEPENDENTLY. Dropping denyWrite for a
-		// read-only acknowledgement would be a silent privilege escalation: the
-		// deny is what stops an unrelated allowWrite root (a workspace or Git
-		// grant that happens to contain the protected path) from making it
-		// writable, since Claude's write policy is allowlist-shaped and allows
-		// win over denies. A read acknowledgement must never enable a write.
-		for key, grants := range map[string][]string{
-			"denyRead":  append(append([]string{}, breakGlassRead...), breakGlassWrite...),
-			"denyWrite": breakGlassWrite,
-		} {
-			if len(grants) == 0 {
-				continue
-			}
-			existing, _ := filesystem[key].([]any)
-			kept := make([]any, 0, len(existing))
-			for _, value := range existing {
-				path, ok := value.(string)
-				if ok && breakGlassCoversTilde(grants, path) {
-					continue
-				}
-				kept = append(kept, value)
-			}
-			filesystem[key] = kept
-		}
-		return block
+		return ClaudeSandboxOnBlock()
 	case ClaudeSandboxOff:
 		return ClaudeSandboxOffBlock()
 	default:
 		return nil
 	}
-}
-
-// breakGlassCoversTilde resolves tclaude's own "~/…"-spelled protected deny
-// entries against the real home directory before comparing them with the
-// canonical, fully-resolved break-glass paths.
-func breakGlassCoversTilde(breakGlass []string, denyPath string) bool {
-	if strings.HasPrefix(denyPath, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return false
-		}
-		denyPath = filepath.Join(home, denyPath[len("~/"):])
-	}
-	if !filepath.IsAbs(denyPath) {
-		return false
-	}
-	// A protected root can itself be reached through a symlinked home; compare
-	// on the resolved form so an alias cannot defeat the suppression.
-	if resolved, err := filepath.EvalSymlinks(denyPath); err == nil {
-		denyPath = resolved
-	}
-	return breakGlassCoversPath(breakGlass, denyPath)
 }
 
 // claudeSandboxSettingsJSON returns the compact `--settings` JSON payload for a

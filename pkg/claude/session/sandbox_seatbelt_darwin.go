@@ -121,7 +121,6 @@ func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
 func tclaudeLayerStackedCommand(
 	string,
 	[]string,
-	[]string,
 	[]TclaudeLayerPrivateWriteDir,
 	sandboxpolicy.MountPlan,
 	string,
@@ -136,7 +135,7 @@ func tclaudeLayerStackedCommand(
 
 func tclaudeLayerCommand(
 	binary string,
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
@@ -196,7 +195,6 @@ func tclaudeLayerCommand(
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
 		[]string{canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath())},
-		breakGlassPaths,
 		filteredPlan,
 		protectedRoots,
 		tmuxSocketDir,
@@ -218,7 +216,6 @@ func tclaudeLayerCommand(
 
 func tclaudeLayerServerCommand(
 	string,
-	[]string,
 	[]string,
 	[]TclaudeLayerPrivateWriteDir,
 	sandboxpolicy.MountPlan,

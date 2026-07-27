@@ -54,7 +54,6 @@ func TestUnconfinedLaunchSnapshotRetainsOnlyEnvironmentAndAudit(t *testing.T) {
 	got := UnconfinedLaunchSnapshot(stable)
 	assert.Equal(t, []EnvironmentEntry{{Name: "SAFE_LITERAL", Value: "yes"}}, got.Effective.Environment)
 	assert.Empty(t, got.Effective.Filesystem)
-	assert.Empty(t, got.Effective.BreakGlassFilesystem)
 	assert.Empty(t, got.Effective.AgentDirectories)
 	assert.Equal(t, NetworkAccessInherit, got.Effective.NetworkAccess)
 	assert.Equal(t, stable.Applied, got.Applied)

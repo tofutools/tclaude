@@ -121,29 +121,6 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 	}
 }
 
-// ValidateSandboxBreakGlassWithReopenUnderDeny is the integration seam between
-// the two gates. When Codex has already proven a verified split policy for the
-// profile's reopen-under-deny shape, it can also reopen an acknowledged
-// protected child while leaving that child's siblings masked — the behavior the
-// conservative break-glass guard otherwise has to refuse. Every other shape
-// retains that guard unchanged.
-func ValidateSandboxBreakGlassWithReopenUnderDeny(harnessName, sandboxMode string, grants []sandboxpolicy.BreakGlassGrant, filesystem []sandboxpolicy.FilesystemGrant) error {
-	if err := ValidateSandboxReopenUnderDeny(harnessName, sandboxMode, filesystem); err != nil {
-		return err
-	}
-	if len(grants) == 0 {
-		return nil
-	}
-	if strings.TrimSpace(harnessName) == CodexName && sandboxpolicy.HasReopenUnderDeny(filesystem) {
-		// The validation above proved managed-profile + Linux + the behavioral
-		// split probe for this executable. The ordinary protected denies remain
-		// more-specific than the operator's broad deny; only these acknowledged
-		// child rules reopen beneath them.
-		return nil
-	}
-	return ValidateSandboxBreakGlass(harnessName, sandboxMode, grants)
-}
-
 func sanitizeSplitProbeError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "probe timed out"

@@ -11,7 +11,7 @@ import (
 // bit: the OS sandbox confined Bash while the built-in Read tool could still
 // open the path. Both surfaces must now carry it.
 func TestClaudeToolPermissionDenyMirrorsLeafDeny(t *testing.T) {
-	rules, skipped := claudeToolPermissionDenyRules(nil, nil, []string{"/home/op/.ssh"}, nil)
+	rules, skipped := claudeToolPermissionDenyRules(nil, nil, []string{"/home/op/.ssh"})
 	if len(skipped) != 0 {
 		t.Fatalf("leaf deny should be mirrorable, skipped %v", skipped)
 	}
@@ -44,7 +44,7 @@ func TestClaudeToolPermissionDenySkipsReopenUnderDeny(t *testing.T) {
 	rules, skipped := claudeToolPermissionDenyRules(
 		[]string{"/home/op/go"},
 		[]string{"/home/op/git/project"},
-		[]string{"/home/op"}, nil,
+		[]string{"/home/op"},
 	)
 	if len(rules) != 0 {
 		t.Fatalf("deny with reopens beneath must not be mirrored, got %v", rules)
@@ -60,7 +60,7 @@ func TestClaudeToolPermissionDenyMixedShapes(t *testing.T) {
 	rules, skipped := claudeToolPermissionDenyRules(
 		[]string{"/home/op/go"},
 		nil,
-		[]string{"/home/op", "/etc/secrets"}, nil,
+		[]string{"/home/op", "/etc/secrets"},
 	)
 	if !slices.Contains(rules, "Read(//etc/secrets/**)") {
 		t.Errorf("representable leaf deny dropped; rules = %v", rules)
@@ -70,40 +70,6 @@ func TestClaudeToolPermissionDenyMixedShapes(t *testing.T) {
 	}
 	if !slices.Contains(skipped, "/home/op") || slices.Contains(skipped, "/etc/secrets") {
 		t.Errorf("skipped = %v, want only /home/op", skipped)
-	}
-}
-
-// An acknowledged break-glass path has its OS-sandbox deny suppressed so the
-// grant can take effect. A profile deny that is an ANCESTOR of it (the only
-// shape possible — ordinary denies cannot name a protected path) must not be
-// mirrored, or the mirrored Read deny would re-cover the acknowledged path and
-// defeat the acknowledgement on exactly the tools an operator debugging tclaude
-// needs. Workspace deliberately outside the denied home so no ordinary reopen
-// also marks the deny — the break-glass reopen is what must carry it.
-func TestClaudeToolPermissionDenyBreakGlassAncestorSkipped(t *testing.T) {
-	rules, skipped := claudeToolPermissionDenyRules(
-		nil, nil,
-		[]string{"/home/op"},
-		[]string{"/home/op/.tclaude/data"},
-	)
-	if slices.Contains(rules, "Read(//home/op/**)") {
-		t.Fatalf("ancestor deny of a break-glass path must not be mirrored; rules = %v", rules)
-	}
-	if !slices.Contains(skipped, "/home/op") {
-		t.Fatalf("skipped = %v, want it to name /home/op", skipped)
-	}
-}
-
-// End-to-end through the renderer: the same shape must not surface a tool-deny.
-func TestClaudeSettingsBreakGlassAncestorNotReDenied(t *testing.T) {
-	settings := claudeSettingsJSON(SpawnSpec{
-		SandboxMode:               ClaudeSandboxOn,
-		SandboxDenyDirs:           []string{"/home/op"},
-		SandboxReadDirs:           []string{"/srv/repo"},
-		SandboxBreakGlassReadDirs: []string{"/home/op/.tclaude/data"},
-	})
-	if strings.Contains(settings, "Read(//home/op/**)") {
-		t.Fatalf("break-glass ancestor re-denied on the tool surface: %s", settings)
 	}
 }
 

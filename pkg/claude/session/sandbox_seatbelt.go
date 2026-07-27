@@ -53,7 +53,7 @@ type seatbeltRegionNode struct {
 // narrower profile RO/hide still produces its own deny without those
 // exceptions, so runtime compatibility can never reopen an operator policy.
 func renderSeatbeltProfile(
-	phase0WriteDirs, requiredAgentdSocketPaths, breakGlassPaths []string,
+	phase0WriteDirs, requiredAgentdSocketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
@@ -97,18 +97,10 @@ func renderSeatbeltProfile(
 		return "", nil, err
 	}
 
-	breakGlass := make([]string, 0, len(breakGlassPaths))
-	for i, path := range breakGlassPaths {
-		clean, cleanErr := cleanSeatbeltPath(fmt.Sprintf("break-glass path %d", i), path)
-		if cleanErr != nil {
-			return "", nil, cleanErr
-		}
-		breakGlass = append(breakGlass, clean)
-	}
-
 	// Class 1 starts from the host root read-only, then reopens the launch
-	// contract. Class 3 is established before class-2 replay so acknowledged
-	// break-glass entries can reopen it later.
+	// contract. Class 3 is established before class-2 replay and nothing
+	// reopens beneath it: TCL-791 removed break-glass, the one former
+	// exception, so a protected hide here is final.
 	ordered := []seatbeltRegion{{path: string(filepath.Separator), mode: sandboxpolicy.MountRO}}
 	for _, path := range contract {
 		ordered = append(ordered, seatbeltRegion{path: path, mode: sandboxpolicy.MountRW})
@@ -147,12 +139,9 @@ func renderSeatbeltProfile(
 			policy: true,
 		})
 
-		isBreakGlass := seatbeltPathIn(path, breakGlass, identity)
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
-			if !isBreakGlass {
-				ordered = appendSeatbeltProtectedRehides(ordered, path, protected, identity)
-			}
+			ordered = appendSeatbeltProtectedRehides(ordered, path, protected, identity)
 		case sandboxpolicy.MountHide:
 			for _, writeDir := range contract {
 				if !seatbeltSamePath(path, writeDir, identity) &&
@@ -211,8 +200,8 @@ func renderSeatbeltProfile(
 				path: parent, mode: sandboxpolicy.MountHide,
 				// The parent is nested below the protected daemon-data hide,
 				// but it remains its own deny boundary. This later,
-				// daemon-authored exception must beat any policy/break-glass
-				// carveout while still reopening exactly the current child.
+				// daemon-authored exception must beat any policy carveout
+				// while still reopening exactly the current child.
 				denyBoundary: true,
 			},
 			seatbeltRegion{
@@ -222,7 +211,7 @@ func renderSeatbeltProfile(
 		)
 	}
 
-	// Class 4 is last and receives no carveout, including break-glass.
+	// Class 4 is last and receives no carveout at all.
 	ordered = append(ordered, seatbeltRegion{
 		path:         tmuxSocketDir,
 		mode:         sandboxpolicy.MountHide,
@@ -279,19 +268,6 @@ func appendSeatbeltProtectedRehides(
 		}
 	}
 	return regions
-}
-
-func seatbeltPathIn(
-	path string,
-	candidates []string,
-	identity seatbeltIdentityLookup,
-) bool {
-	for _, candidate := range candidates {
-		if seatbeltSamePath(path, candidate, identity) {
-			return true
-		}
-	}
-	return false
 }
 
 func seatbeltFoldedPath(path string) string {

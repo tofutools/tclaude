@@ -24,11 +24,7 @@ import (
 // json.Marshal sorts map keys, so the output is deterministic (testable).
 func claudeSettingsJSON(spec SpawnSpec) string {
 	settings := map[string]any{}
-	// The block builder is given the acknowledged read and write paths
-	// SEPARATELY so it can drop exactly the protected denies each one reopens —
-	// a read acknowledgement must not clear denyWrite.
-	if block := claudeSandboxBlockWithBreakGlass(spec.SandboxMode,
-		spec.SandboxBreakGlassReadDirs, spec.SandboxBreakGlassWriteDirs); block != nil {
+	if block := claudeSandboxBlock(spec.SandboxMode); block != nil {
 		if spec.StrongNestedSandbox {
 			block["enableWeakerNestedSandbox"] = false
 		}
@@ -81,13 +77,9 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		appendSandboxFilesystemDirs(filesystem, "denyWrite", dirs)
 		// Mirror the same denies onto the tool-permission surface so one
 		// authored row binds the built-in Read/Write/Edit tools too, not just
-		// Bash (TCL-666). Break-glass grants join the reopen set: an
-		// acknowledged protected path must not be re-denied here after
-		// claudeSandboxBlockWithBreakGlass suppressed its OS-sandbox deny.
-		breakGlass := append(append([]string{}, spec.SandboxBreakGlassReadDirs...),
-			spec.SandboxBreakGlassWriteDirs...)
+		// Bash (TCL-666).
 		rules, skipped := claudeToolPermissionDenyRules(
-			spec.SandboxReadDirs, spec.SandboxWriteDirs, spec.SandboxDenyDirs, breakGlass,
+			spec.SandboxReadDirs, spec.SandboxWriteDirs, spec.SandboxDenyDirs,
 		)
 		appendClaudePermissionDeny(settings, rules)
 		if len(skipped) > 0 {
@@ -97,27 +89,6 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 				"paths", skipped,
 				"reason", "a reopen beneath the deny cannot be expressed as a permission rule (deny precedes allow)")
 		}
-	}
-	// Break-glass rides the SAME allowRead/allowWrite keys as ordinary grants,
-	// because that is exactly Claude's documented re-open mechanism ("Paths to
-	// re-allow reading within denyRead regions. Takes precedence over
-	// denyRead"). What makes it work is the paired suppression in
-	// claudeSandboxBlock: the protected deny that would otherwise mask the
-	// grant is not emitted for a path an operator explicitly acknowledged.
-	// Read is applied before write and never implies it.
-	if dirs := normalizedSandboxWriteDirs(spec.SandboxBreakGlassReadDirs); len(dirs) > 0 &&
-		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
-		appendSandboxFilesystemDirs(claudeSandboxFilesystem(settings), "allowRead", dirs)
-	}
-	if dirs := normalizedSandboxWriteDirs(spec.SandboxBreakGlassWriteDirs); len(dirs) > 0 &&
-		strings.TrimSpace(spec.SandboxMode) != ClaudeSandboxOff {
-		filesystem := claudeSandboxFilesystem(settings)
-		// Claude's write policy is allowlist-shaped, so a protected write needs
-		// allowWrite; it also needs allowRead, since a path that cannot be read
-		// cannot usefully be written by a tool that opens it first. That is a
-		// consequence of granting WRITE, never of granting read.
-		appendSandboxFilesystemDirs(filesystem, "allowWrite", dirs)
-		appendSandboxFilesystemDirs(filesystem, "allowRead", dirs)
 	}
 	if v := claudeAskTimeoutValue(spec.AskUserQuestionTimeout); v != "" {
 		settings["askUserQuestionTimeout"] = v
@@ -138,24 +109,6 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		return ""
 	}
 	return string(b)
-}
-
-// claudeSandboxFilesystem lazily creates settings["sandbox"]["filesystem"],
-// matching the inherit-safe behavior above: an inherit/unset launch omits
-// `enabled`, so the filesystem array merges with the operator's settings and
-// matters only when their sandbox is enabled.
-func claudeSandboxFilesystem(settings map[string]any) map[string]any {
-	block, _ := settings["sandbox"].(map[string]any)
-	if block == nil {
-		block = map[string]any{}
-		settings["sandbox"] = block
-	}
-	filesystem, _ := block["filesystem"].(map[string]any)
-	if filesystem == nil {
-		filesystem = map[string]any{}
-		block["filesystem"] = filesystem
-	}
-	return filesystem
 }
 
 func appendSandboxFilesystemDirs(filesystem map[string]any, key string, dirs []string) {

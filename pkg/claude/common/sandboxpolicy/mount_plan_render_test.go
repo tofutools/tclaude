@@ -378,9 +378,6 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 			grant("/home/dev", AccessDeny),
 			grant("/home/dev/work", AccessWrite),
 		},
-		BreakGlassFilesystem: []BreakGlassGrant{
-			{Path: "/home/dev/.tclaude/data/logs", Access: AccessRead},
-		},
 		MountAliases: []MountAlias{
 			{Link: "/home/dev/cache", Target: "/mnt/cache"},
 			{Link: "/home/dev/bin", Target: "/opt/tools"},
@@ -396,7 +393,6 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 	}
 	assertEntries(t, plan, []MountEntry{
 		entry("/home/dev", MountHide),
-		entry("/home/dev/.tclaude/data/logs", MountRO),
 		entry("/home/dev/work", MountRW),
 	})
 	wantAliases := []MountAlias{
@@ -411,15 +407,16 @@ func TestRenderMountPlanFromEffectiveProfile(t *testing.T) {
 	}
 	assertAncestorsFirst(t, plan)
 
-	// The acknowledged protected path really is reachable through the plan, even
-	// though a deny covers its whole ancestry.
-	mode, covered := EffectiveMountModeAt(plan, "/home/dev/.tclaude/data/logs/agentd.log")
-	if !covered || mode != MountRO {
-		t.Fatalf("break-glass path: mode %s covered %v, want ro/true", mode, covered)
-	}
-	// And its protected siblings stay hidden.
-	if mode, _ := EffectiveMountModeAt(plan, "/home/dev/.tclaude/data/db.sqlite"); mode != MountHide {
-		t.Fatalf("protected sibling: mode %s, want hide", mode)
+	// Protected state stays hidden. The renderer emits no entry beneath a
+	// protected root, so the only rule reaching these paths is the operator's
+	// own deny on the ancestor — nothing carves back out of it.
+	for _, path := range []string{
+		"/home/dev/.tclaude/data/logs/agentd.log",
+		"/home/dev/.tclaude/data/db.sqlite",
+	} {
+		if mode, _ := EffectiveMountModeAt(plan, path); mode != MountHide {
+			t.Fatalf("protected path %s: mode %s, want hide; nothing may reopen protected tclaude state", path, mode)
+		}
 	}
 }
 
@@ -431,22 +428,6 @@ func TestRenderMountPlanRejectsConflictingAliases(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "conflicting targets") {
 		t.Fatalf("RenderMountPlan conflicting aliases error = %v, want conflicting targets", err)
 	}
-}
-
-// TestRenderMountPlanBreakGlassCollisionFailsClosed pins the one same-path
-// collision rule: a deny and an acknowledged break-glass grant on the SAME
-// canonical path fold to deny, like every other same-path collision in this
-// package. An operator who wants the carve-out authors it strictly beneath the
-// deny, which is the shape the model is built around.
-func TestRenderMountPlanBreakGlassCollisionFailsClosed(t *testing.T) {
-	plan, err := RenderMountPlan(EffectiveProfile{
-		Filesystem:           []FilesystemGrant{grant("/home/dev/.tclaude/data", AccessDeny)},
-		BreakGlassFilesystem: []BreakGlassGrant{{Path: "/home/dev/.tclaude/data", Access: AccessWrite}},
-	})
-	if err != nil {
-		t.Fatalf("RenderMountPlan: %v", err)
-	}
-	assertEntries(t, plan, []MountEntry{entry("/home/dev/.tclaude/data", MountHide)})
 }
 
 // modeForAccess is the test's OWN access→mode table, written out literally.
@@ -606,15 +587,14 @@ func TestRenderMountPlanOrdersCaseAndNormalizationVariants(t *testing.T) {
 func TestRenderMountPlanErrorsNameTheOperatorsSection(t *testing.T) {
 	_, err := RenderMountPlan(EffectiveProfile{
 		Filesystem: []FilesystemGrant{
-			grant("/a", AccessRead), grant("/b", AccessRead), grant("/c", AccessRead),
+			grant("/a", AccessRead), grant("/b", AccessRead), {Path: "   ", Access: AccessRead},
 		},
-		BreakGlassFilesystem: []BreakGlassGrant{{Path: "   ", Access: AccessRead}},
 	})
 	if err == nil {
 		t.Fatalf("expected an error, got a plan")
 	}
-	if want := "break_glass_filesystem[0].path"; !strings.Contains(err.Error(), want) {
-		t.Fatalf("error %q does not name %q; an operator with a one-row break-glass list has nothing to look at", err, want)
+	if want := "filesystem[2].path"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not name %q; an operator has to be pointed at the row they wrote", err, want)
 	}
 }
 
@@ -692,15 +672,6 @@ func TestRenderMountPlanRejectsMalformedGrants(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestRenderMountPlanRejectsDenyingBreakGlassGrant(t *testing.T) {
-	_, err := RenderMountPlan(EffectiveProfile{
-		BreakGlassFilesystem: []BreakGlassGrant{{Path: "/home/dev/.tclaude/data", Access: AccessDeny}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "break_glass_filesystem[0].access") {
-		t.Fatalf("error = %v, want a break-glass access rejection", err)
 	}
 }
 

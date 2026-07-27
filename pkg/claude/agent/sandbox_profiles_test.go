@@ -149,10 +149,15 @@ func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {
 	// acknowledgement key is omitted unless the operator actually gave it.
 	assert.Equal(t, map[string]any{"name": "dev"}, calls[len(calls)-1].body)
 	stdout.Reset()
-	require.Equal(t, rcOK, runSandboxProfilesDefaultSet(
+	// TCL-791: the flag is a tombstone. It must fail with the real reason
+	// rather than be accepted and ignored, and it must not reach the daemon.
+	before := len(calls)
+	assert.Equal(t, rcInvalidArg, runSandboxProfilesDefaultSet(
 		&sandboxProfilesNameParams{Name: "dev", IUnderstandBreakGlassRisk: true}, &stdout, &stderr))
-	assert.Equal(t, map[string]any{"name": "dev", "break_glass_acknowledged": true}, calls[len(calls)-1].body,
-		"--i-understand-break-glass-risk must reach the daemon's assignment gate")
+	assert.Contains(t, stderr.String(), "--i-understand-break-glass-risk no longer exists")
+	assert.Contains(t, stderr.String(), "launch with the sandbox disabled")
+	assert.Len(t, calls, before, "a tombstoned flag must not produce a daemon request")
+	stderr.Reset()
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesGroupSet(&sandboxProfilesGroupSetParams{Group: "crew", Name: "dev"}, &stdout, &stderr))
 	assert.Equal(t, "/v1/groups/crew/sandbox-profile", calls[len(calls)-1].path)

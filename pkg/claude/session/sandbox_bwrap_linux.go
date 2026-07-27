@@ -119,7 +119,7 @@ func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, err
 
 func tclaudeLayerCommand(
 	binary string,
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
@@ -127,7 +127,6 @@ func tclaudeLayerCommand(
 	command, err := bwrapCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		harnessCommand,
@@ -141,7 +140,7 @@ func tclaudeLayerCommand(
 
 func tclaudeLayerStackedCommand(
 	binary string,
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	manifestPath, manifestSHA256, readyPath string,
@@ -151,7 +150,6 @@ func tclaudeLayerStackedCommand(
 	command, err := bwrapCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		harnessCommand,
@@ -173,7 +171,7 @@ func tclaudeLayerStackedCommand(
 
 func tclaudeLayerServerCommand(
 	binary string,
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
@@ -181,7 +179,6 @@ func tclaudeLayerServerCommand(
 	return bwrapCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		serverCommand,

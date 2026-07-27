@@ -10,13 +10,14 @@ import (
 	"time"
 )
 
-// SnapshotVersion 6 adds ProfilesOmitted, a lifecycle-significant launch
-// contract that prevents ambient sandbox-profile tiers from reappearing on
-// resume/reincarnation. The bump preserves the fail-closed downgrade property:
-// an older binary rejects v6 rather than ignoring the marker and reapplying
-// global/group profile values. Version 5 removed the retired read-baseline
-// mechanism (TCL-623).
-const SnapshotVersion = 6
+// SnapshotVersion 7 removes break_glass_filesystem, the one sanctioned
+// exception to the protected-root wall (TCL-791). Version 6 added
+// ProfilesOmitted, a lifecycle-significant launch contract that prevents
+// ambient sandbox-profile tiers from reappearing on resume/reincarnation; that
+// bump preserved the fail-closed downgrade property, where an older binary
+// rejects a newer snapshot rather than ignoring a marker it does not
+// understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
+const SnapshotVersion = 7
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -93,34 +94,6 @@ func RequireContained(parent, child Snapshot) error {
 	if !networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
 		return fmt.Errorf("network access %q is not contained by parent access %q", child.Effective.NetworkAccess, parent.Effective.NetworkAccess)
 	}
-	if err := breakGlassContained(parent.Effective, child.Effective); err != nil {
-		return err
-	}
-	return nil
-}
-
-// breakGlassContained refuses any protected-path authority the parent does not
-// already hold. Coverage is segment-aware like ordinary filesystem
-// containment, and protected read → protected write is widening: a debugging
-// agent granted read access to the daemon database must not be able to mint a
-// child that can corrupt it.
-func breakGlassContained(parent, child EffectiveProfile) error {
-	for _, childGrant := range child.BreakGlassFilesystem {
-		covered := false
-		for _, parentGrant := range parent.BreakGlassFilesystem {
-			if !pathContainsOrEqual(parentGrant.Path, childGrant.Path) {
-				continue
-			}
-			if childGrant.Access == AccessWrite && parentGrant.Access != AccessWrite {
-				continue
-			}
-			covered = true
-			break
-		}
-		if !covered {
-			return fmt.Errorf("break-glass %s access to protected path %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
-		}
-	}
 	return nil
 }
 
@@ -145,10 +118,8 @@ func HasCapabilities(snapshot Snapshot) bool {
 			return true
 		}
 	}
-	// Break-glass is always inherited host authority.
 	return len(snapshot.Effective.Environment) > 0 ||
-		snapshot.Effective.NetworkAccess == NetworkAccessInternet ||
-		snapshot.Effective.HasBreakGlass()
+		snapshot.Effective.NetworkAccess == NetworkAccessInternet
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
@@ -204,11 +175,9 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective := cloneEffectiveProfile(in.Effective)
 	effective.Filesystem = nil
 	effective.MountAliases = nil
-	effective.BreakGlassFilesystem = nil
 	effective.AgentDirectories = nil
 	effective.NetworkAccess = NetworkAccessInherit
 	effective.Provenance.Filesystem = nil
-	effective.Provenance.BreakGlassFilesystem = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
 	out := NewSnapshot(effective, in.Applied)
@@ -231,18 +200,16 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if in.ProfilesOmitted && (len(in.Applied) > 0 ||
 		len(in.Effective.Filesystem) > 0 ||
 		len(in.Effective.MountAliases) > 0 ||
-		len(in.Effective.BreakGlassFilesystem) > 0 ||
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
 		in.Effective.NetworkAccess != NetworkAccessInherit) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:                 "effective-sandbox-snapshot",
-		Filesystem:           in.Effective.Filesystem,
-		BreakGlassFilesystem: in.Effective.BreakGlassFilesystem,
-		Environment:          in.Effective.Environment,
-		NetworkAccess:        in.Effective.NetworkAccess,
+		Name:          "effective-sandbox-snapshot",
+		Filesystem:    in.Effective.Filesystem,
+		Environment:   in.Effective.Environment,
+		NetworkAccess: in.Effective.NetworkAccess,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -276,12 +243,6 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 			)
 		}
 	}
-	// A protected-path rule that no longer canonicalizes to the same bytes, or
-	// no longer lands on a protected root, must fail the launch closed rather
-	// than silently redirect dangerous authority somewhere else.
-	if !reflect.DeepEqual(normalized.BreakGlassFilesystem, in.Effective.BreakGlassFilesystem) {
-		return Snapshot{}, fmt.Errorf("effective sandbox break-glass rules changed since resolution")
-	}
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
 	}
@@ -314,10 +275,18 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// decode any more and the restriction is dropped rather than reinterpreted.
 	// That is the deliberate operator decision — the feature had no users, and
 	// silently claiming to enforce a mechanism this binary no longer implements
-	// would be worse than dropping it. v5 is the immediately prior shape and
-	// carries no ProfilesOmitted marker, so false preserves its ambient-resolution
-	// behavior when upgraded to v6.
-	case 1, 2, 3, 4, 5, SnapshotVersion:
+	// would be worse than dropping it. v5 carries no ProfilesOmitted marker, so
+	// false preserves its ambient-resolution behavior.
+	//
+	// v3–v6 could additionally carry break_glass_filesystem rows and their
+	// provenance. TCL-791 removed break-glass, so those fields no longer decode
+	// and any authority they carried is DROPPED. The direction matters: dropping
+	// a grant strictly narrows the snapshot, so the upgrade is fail-closed and a
+	// resumed agent simply loses access it can no longer be given. Refusing such
+	// snapshots instead would strand live agents on upgrade for no security
+	// gain, and there is no operator present at decode time to receive an error
+	// — the v163 migration's durable disclosure is what informs them.
+	case 1, 2, 3, 4, 5, 6, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -352,42 +321,10 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 	return out, nil
 }
 
-// BreakGlassForLaunch returns the protected-path rules safe to hand to a
-// harness now. Unlike ordinary grants, a missing break-glass path fails the
-// launch closed instead of being skipped: an operator who acknowledged access
-// to a specific protected directory must be told when that directory is not
-// there, rather than silently launching with less authority than the audit
-// record claims. Re-canonicalizing also catches an ancestor symlink
-// substitution in the window after snapshot revalidation.
-func BreakGlassForLaunch(in EffectiveProfile) ([]BreakGlassGrant, error) {
-	if len(in.BreakGlassFilesystem) == 0 {
-		return nil, nil
-	}
-	out := make([]BreakGlassGrant, 0, len(in.BreakGlassFilesystem))
-	for _, grant := range in.BreakGlassFilesystem {
-		canonical, missing, err := canonicalDirectory(grant.Path, true)
-		if err != nil {
-			return nil, fmt.Errorf("prepare break-glass %s rule %q for launch: %w", grant.Access, grant.Path, err)
-		}
-		if canonical != grant.Path {
-			return nil, fmt.Errorf("break-glass rule %q changed canonical target before launch", grant.Path)
-		}
-		if missing {
-			return nil, fmt.Errorf("break-glass %s rule %q does not exist; refusing to launch with less protected access than was acknowledged", grant.Access, grant.Path)
-		}
-		out = append(out, grant)
-	}
-	return out, nil
-}
-
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem:   append([]FilesystemGrant{}, in.Filesystem...),
-		MountAliases: append([]MountAlias(nil), in.MountAliases...),
-		// Break-glass stays nil when empty (unlike the always-materialized
-		// slices above) so an unused capability serializes as an absent field
-		// and revalidation's exact comparison against a fresh normalization
-		// keeps matching.
+		Filesystem:       append([]FilesystemGrant{}, in.Filesystem...),
+		MountAliases:     append([]MountAlias(nil), in.MountAliases...),
 		Environment:      append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories: append([]string{}, in.AgentDirectories...),
 		NetworkAccess:    in.NetworkAccess,
@@ -398,18 +335,6 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
 		},
-	}
-	if len(in.BreakGlassFilesystem) > 0 {
-		out.BreakGlassFilesystem = append([]BreakGlassGrant{}, in.BreakGlassFilesystem...)
-		sort.Slice(out.BreakGlassFilesystem, func(i, j int) bool {
-			return out.BreakGlassFilesystem[i].Path < out.BreakGlassFilesystem[j].Path
-		})
-	}
-	if len(in.Provenance.BreakGlassFilesystem) > 0 {
-		out.Provenance.BreakGlassFilesystem = make(map[string][]ProfileSource, len(in.Provenance.BreakGlassFilesystem))
-		for path, sources := range in.Provenance.BreakGlassFilesystem {
-			out.Provenance.BreakGlassFilesystem[path] = cloneProfileSources(sources)
-		}
 	}
 	for path, sources := range in.Provenance.Filesystem {
 		out.Provenance.Filesystem[path] = cloneProfileSources(sources)
@@ -430,10 +355,11 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	return out
 }
 
-func cloneProfileSource(in ProfileSource) ProfileSource {
-	in.Chain = append([]string(nil), in.Chain...)
-	return in
-}
+// cloneProfileSource is a value copy: ProfileSource has held only comparable
+// scalar fields since TCL-791 removed the Chain slice, so there is nothing
+// left to deep-copy. It stays as a named seam so a future non-scalar field
+// gets cloned here rather than aliased into a frozen snapshot.
+func cloneProfileSource(in ProfileSource) ProfileSource { return in }
 
 func cloneProfileSources(in []ProfileSource) []ProfileSource {
 	if in == nil {

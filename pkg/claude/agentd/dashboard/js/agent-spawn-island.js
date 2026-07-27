@@ -45,7 +45,6 @@ import {
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
-import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import { HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 
@@ -86,8 +85,6 @@ function errorMessage(error) {
 function sandboxPolicyKey(group, sandboxProfile, revision) {
   return JSON.stringify([group, sandboxProfile, revision]);
 }
-
-const STALE_POLICY_ERROR = 'the sandbox policy changed while spawning — review the refreshed preview and submit again';
 
 function Words({ plain, wizard, prefix = 'theme-copy' }) {
   return html`<span class=${`${prefix}-regular`}>${plain}</span><span class=${`${prefix}-wizard`}>${wizard}</span>`;
@@ -161,7 +158,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     phase: 'loading', repo: initial.wtRepo, isRepo: false, hasCommits: true,
     worktrees: [], branches: [], defaultBranch: '', subRepos: [],
   });
-  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', breakGlass: [], key: '' });
+  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', key: '' });
   // Live mirror for the submit closure: after its awaits, the captured
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
@@ -282,7 +279,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const request = ++sandboxRequest.current;
     const generation = current.generation;
     if (view.sandboxProfilesDisabled) {
-      setSandboxPolicy((value) => ({ ...value, preview: '', error: '', breakGlass: [], key: '' }));
+      setSandboxPolicy((value) => ({ ...value, preview: '', error: '', key: '' }));
       return undefined;
     }
     // The stored key records which selection the resolved policy belongs to.
@@ -306,7 +303,6 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         ...value,
         preview: `Could not preview sandbox policy: ${errorMessage(cause)}`,
         error: errorMessage(cause),
-        breakGlass: [],
         key: '',
       }));
     });
@@ -578,51 +574,22 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       submitLock.current = false;
       return;
     }
-    // Break-glass in the RESOLVED policy (any layer: global, group, or the
-    // explicit pick) needs an explicit operator acknowledgement; the daemon
-    // rejects unacknowledged spawns with a typed 422 either way. The policy
-    // must belong to the selection being submitted — a stale one could
-    // describe profile A while the request selects profile B — and it must
-    // STAY the exact policy the operator was shown across every await in
-    // this closure. Comparing live-to-live is not enough: a refresh whose
-    // replacement load completes while confirmation or later work is
-    // pending would re-align both sides and let the OLD confirmation
-    // authorize the NEW policy. So the submit freezes a token for the
-    // policy it validated — its selection/revision key and a break-glass
-    // fingerprint — and every revalidation requires the live selection AND
-    // the live resolved policy to still match that token. Any refresh bumps
-    // the revision and therefore aborts, even if its reload lands quickly.
+    // The preview must belong to the selection being submitted — a stale one
+    // could describe profile A while the request selects profile B — so a
+    // policy still loading, or loaded for an earlier selection, blocks submit
+    // until the matching load lands.
+    //
+    // TCL-791 removed the frozen policy token that used to sit here. Its
+    // whole job was to stop a stale break-glass confirmation from
+    // authorizing a newer policy; with no confirmation left, drift after
+    // this point is harmless — the daemon resolves the policy itself at
+    // spawn time and this preview is informational.
     const liveSelectionKey = () =>
       sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
     if (!view.sandboxProfilesDisabled && sandboxPolicyRef.current.key !== liveSelectionKey()) {
       setError('wait for the sandbox policy preview to finish loading');
       submitLock.current = false;
       return;
-    }
-    const policyToken = view.sandboxProfilesDisabled ? null : Object.freeze({
-      key: sandboxPolicyRef.current.key,
-      fingerprint: JSON.stringify(sandboxPolicyRef.current.breakGlass || []),
-    });
-    const policyMismatch = () => {
-      if (!policyToken) return false;
-      const live = sandboxPolicyRef.current;
-      return policyToken.key !== liveSelectionKey()
-        || live.key !== policyToken.key
-        || JSON.stringify(live.breakGlass || []) !== policyToken.fingerprint;
-    };
-    const spawnBreakGlass = policyToken ? (sandboxPolicyRef.current.breakGlass || []) : [];
-    if (spawnBreakGlass.length) {
-      const proceed = await actions.confirmBreakGlassSpawn(spawnBreakGlass);
-      if (!state.isCurrent(current.generation)) return;
-      if (!proceed) {
-        submitLock.current = false;
-        return;
-      }
-      if (policyMismatch()) {
-        setError(STALE_POLICY_ERROR);
-        submitLock.current = false;
-        return;
-      }
     }
     next = prepareSpawnDraft(next, context, derived, worktrees.isRepo);
     setDraft(next);
@@ -641,7 +608,6 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
       if (!state.isCurrent(current.generation)) return;
-      if (policyMismatch()) throw new Error(STALE_POLICY_ERROR);
       const uploadKey = attachments.map((attachment) => `${attachment.id}:${attachKey(attachment.file)}`).join('|');
       let attachmentPaths = uploaded.current.key === uploadKey ? uploaded.current.paths : null;
       if (!attachmentPaths) {
@@ -650,43 +616,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }
       if (!state.isCurrent(current.generation)) return;
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
-      if (policyMismatch()) throw new Error(STALE_POLICY_ERROR);
-      if (spawnBreakGlass.length) request.body.break_glass_acknowledged = true;
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;
       state.close();
       actions.complete(payload, next);
     } catch (cause) {
       if (state.isCurrent(current.generation)) {
-        if (cause?.code === BREAK_GLASS_ACK_CODE) {
-          // The daemon resolved break-glass authority this dialog's policy
-          // did not show (its registry/assignments moved after our load).
-          // Invalidate the local policy immediately — the stale one must not
-          // stay submit-eligible — and reload the resolved policy DIRECTLY
-          // rather than via the render effect: this error path must not
-          // depend on render scheduling, and the effect's own reload (for
-          // selection/revision changes) would race it through the shared
-          // request counter. The next submit builds a fresh token and
-          // demands a fresh confirmation; nothing is resent automatically,
-          // and a failed reload leaves the empty policy key blocking submit.
-          setSandboxPolicy((value) => ({ ...value, breakGlass: [], key: '' }));
-          const reloadRequest = ++sandboxRequest.current;
-          const reloadKey = sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
-          // The message must not claim a refresh that has not happened:
-          // while the reload is pending (and if it fails) the empty policy
-          // key keeps submit blocked, and the copy says so.
-          setError(`${errorMessage(cause)} Reloading the resolved sandbox policy — submitting stays blocked until it completes.`);
-          actions.loadSandboxPolicy(next.group, next.sandboxProfile).then((value) => {
-            if (reloadRequest !== sandboxRequest.current || !state.isCurrent(current.generation)) return;
-            setSandboxPolicy({ ...value, error: '', key: reloadKey });
-            setError(`${errorMessage(cause)} The resolved sandbox policy was refreshed — review the current break-glass rules in the preview and submit again.`);
-          }).catch((reloadError) => {
-            if (reloadRequest !== sandboxRequest.current || !state.isCurrent(current.generation)) return;
-            setError(`${errorMessage(cause)} Reloading the resolved sandbox policy failed (${errorMessage(reloadError)}) — submitting stays blocked until the policy reloads.`);
-          });
-        } else {
-          setError(errorMessage(cause));
-        }
+        setError(errorMessage(cause));
         busyRef.current = false;
         setBusy(false);
         submitLock.current = false;

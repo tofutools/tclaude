@@ -425,8 +425,8 @@ harness, and tmux paths named directly are denied after ordinary directory
 grants. OpenCode evaluates lexical paths rather than resolved filesystem
 targets, so these tool rules do not prevent traversal through a symlink that
 already exists inside an allowed root; use a Claude/Codex OS sandbox when that
-is a required security boundary. An explicit break-glass grant is emitted last
-so the acknowledged narrower exception wins.
+is a required security boundary. The protected tclaude denies are
+unconditional: no profile can carve an exception out of them.
 
 OpenCode conversations are enumerated through the supported
 `opencode session list --format json` surface, including when no managed server

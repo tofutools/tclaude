@@ -2317,10 +2317,8 @@ func resumeLaunchCmdWithStackedProof(
 	// Agentd resolves the currently selected sandbox profile before invoking the
 	// watch/session renderer and persists that exact snapshot. This boundary
 	// consumes the current persisted decision; it does not merge stale ordinary
-	// exclusions from an earlier launch. Protected break-glass clamping remains
-	// an agentd lifecycle responsibility.
-	var breakGlassReadDirs, breakGlassWriteDirs []string
-	var breakGlassGrants []sandboxpolicy.BreakGlassGrant
+	// exclusions from an earlier launch. Deny-row clamping remains an agentd
+	// lifecycle responsibility.
 	var launchGrants []sandboxpolicy.FilesystemGrant
 	var agentDirPaths []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
@@ -2354,20 +2352,6 @@ func resumeLaunchCmdWithStackedProof(
 				readDirs = append(readDirs, grant.Path)
 			case sandboxpolicy.AccessDeny:
 				denyDirs = append(denyDirs, grant.Path)
-			}
-		}
-		breakGlassGrants = validated.Effective.BreakGlassFilesystem
-		if len(breakGlassGrants) > 0 {
-			breakGlass, err := sandboxpolicy.BreakGlassForLaunch(validated.Effective)
-			if err != nil {
-				return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
-			}
-			for _, grant := range breakGlass {
-				if grant.Access == sandboxpolicy.AccessWrite {
-					breakGlassWriteDirs = append(breakGlassWriteDirs, grant.Path)
-				} else {
-					breakGlassReadDirs = append(breakGlassReadDirs, grant.Path)
-				}
 			}
 		}
 	}
@@ -2434,11 +2418,6 @@ func resumeLaunchCmdWithStackedProof(
 	if !outerLayer {
 		if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
 			return "", "", nil, err
-		}
-		if len(breakGlassGrants) > 0 {
-			if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, sandboxMode, breakGlassGrants, launchGrants); err != nil {
-				return "", "", nil, err
-			}
 		}
 	}
 	if !outerLayer && h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
@@ -2553,8 +2532,6 @@ func resumeLaunchCmdWithStackedProof(
 		// trimmed — the misreporting being worse than the lost trim.
 		ContextFeatures: contextFeatures,
 
-		SandboxBreakGlassReadDirs:  breakGlassReadDirs,
-		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
@@ -2575,8 +2552,6 @@ func resumeLaunchCmdWithStackedProof(
 			ReadDirs:            readDirs,
 			WriteDirs:           resumeWriteDirs,
 			DenyDirs:            denyDirs,
-			BreakGlassReadDirs:  breakGlassReadDirs,
-			BreakGlassWriteDirs: breakGlassWriteDirs,
 			RequireSplitPolicy:  requireSplitPolicy,
 		}, networkAccess, session.GenerateSessionID())
 		if err != nil {

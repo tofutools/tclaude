@@ -654,8 +654,7 @@ application-configured credential or cache path.
 **Deny-row lineage is contained.** Resume, reincarnation, and agent-initiated
 child spawns cannot weaken a deny: the effective profile they launch under must
 not drop a deny row the recorded parent had, and must not introduce a reopen
-beneath one that the parent lacked. Both are treated as widening and refused
-under the same lineage rules as break-glass.
+beneath one that the parent lacked. Both are treated as widening and refused.
 
 Profiles stored or exported before this model existed may still carry the old
 `read_baseline` / `read_baseline_exclusions` fields. They are **silently
@@ -666,125 +665,59 @@ ordinary broad read visibility under its old strict-sounding name, and nothing
 in the effective profile records the restriction it used to carry. Audit any
 profile that used those fields and re-express the intent as deny rows.
 
-#### `break_glass_filesystem` — exceptional protected-path access
+#### Protected roots are absolutely unreachable
 
 tclaude denies every sandboxed agent access to two protected roots:
 `~/.tclaude/data` (daemon database, authorization state, private runtime state)
-and `~/.claude/sessions` (harness session transcripts). Ordinary `filesystem`
-rules that intersect those locations are rejected, and that does not change.
+and `~/.claude/sessions` (harness session transcripts). Any `filesystem` rule
+whose path intersects one of them is rejected — including a rule on a path that
+merely *contains* one, such as `~` or `/`, which is why a home-wide grant must
+be expressed as a `deny` plus narrower reopens. Only `deny` is exempt, because
+a deny cannot grant anything.
+
+The invariant is **absolute**: there is no profile field, include, launch
+contract, acknowledgement, or flag that reopens a protected root. tclaude
+previously carried one sanctioned exception, `break_glass_filesystem`, guarded
+by an explicit operator acknowledgement. TCL-791 removed it. An operator who
+must work without the protected-root wall launches with the sandbox disabled
+instead — a posture that is visible and unambiguous, rather than an agent that
+looks sandboxed while holding daemon-state access.
 
 `~/.codex` is **not** a protected root — it is ordinary harness state that an
 agent normally needs to read. An ordinary `deny` row may cover it, and a
 denied Home does; in that case reopen it explicitly (see the deny-home warning
 above) or managed Codex agents will be stranded.
 
-`break_glass_filesystem` is the narrow, operator-controlled exception, for one
-legitimate case: launching a tightly scoped agent to **debug tclaude itself** —
-inspecting daemon state, diagnosing a migration, deliberately testing state
-repair. It is an exception mechanism, **not a recommended profile posture**.
+tclaude's tmux server socket directory is a distinct and more severe class —
+host control over other sessions — and has never been profile-reachable. It
+stays denied unconditionally, after every other mount class.
 
-```json
-{
-  "name": "debug-daemon-state",
-  "break_glass_filesystem": [
-    { "path": "~/.tclaude/data", "access": "read" }
-  ]
-}
-```
-
-Rules are exact-path and access-specific. `access` is `read` or `write` only —
-`deny` is already the default, and **read never implies write**. Read-only
-inspection of the daemon database is materially less dangerous than write
-access; prefer it. Each path must sit at or inside a protected root: a path
-that merely *contains* one (`~`, `/`) is rejected, so the hatch cannot become a
-whole-host grant wearing a danger label.
-
-**What it can actually do to you.** Read access can disclose daemon secrets,
-agent authorization state, and harness session transcripts and credentials.
-Write access can additionally corrupt the SQLite database, harness
-configuration, and runtime state; invalidate the assumptions agent
-authorization relies on; and break the daemon or the harness. tclaude's tmux
-server socket directory is a **distinct and more severe class** — host control
-over other sessions — and is *not* reachable through break-glass at all; it
-stays denied unconditionally.
-
-**Acknowledgement.** Creating, editing, importing, assigning, and selecting a
-launch for a profile carrying protected access all require an explicit operator
-acknowledgement — `break_glass_acknowledged: true` on the API, or
-`--i-understand-break-glass-risk` on the CLI. Without it the surface returns
-`break_glass_acknowledgement_required` listing the exact path/access pairs.
-Dry-run previews and import inspection are deliberately ack-free so an operator
-can look before deciding.
-
-The acknowledgement is **transient**: it is never stored on the profile and
-never exported. The durable danger marker is the `break_glass_filesystem` field
-itself, so an import or an assignment on another machine must acknowledge again
-after paths are canonicalized against that machine's protected roots. Global
-and group assignment carry the strongest warning, because every agent launched
-under that scope inherits the access for as long as the assignment stands.
-
-**Composition never hides it.** Break-glass merges as a privilege-monotonic
-union (write dominating read on one canonical path) rather than last-layer-wins,
-and the resolved launch echo, audit record, and dashboard all name every
-profile and scope that contributed each protected path — including through
-includes.
-
-**Lineage.** Agent-initiated launches can neither introduce nor widen protected
-access: a child may inherit no more than its parent's recorded authority, and
-protected `read → write` is widening. Resume and relaunch replay the recorded
-decision from the frozen snapshot and never pick up protected access added to
-an ambient profile afterwards. A recorded protected path that has since been
-removed or retargeted fails the launch closed rather than launching with
-different authority than was acknowledged.
+**What was removed, and what happens to existing state.** A payload that still
+carries `break_glass_filesystem` or `break_glass_acknowledged` is **refused**,
+not accepted-and-ignored, at every input surface: profile create and edit
+(including their dry-run previews), global and group assignment, spawn, and
+import — the import refusal names every profile in the bundle that carries the
+field. The typed error code is `break_glass_removed`. The CLI's
+`--i-understand-break-glass-risk` flag likewise fails with an explanation
+rather than being silently accepted. Stored state narrows instead: schema
+migration v163 drops persisted break-glass rows without converting them into
+ordinary rules (which would reopen protected roots as ordinary grants) and
+discloses exactly what it dropped, both on the daemon's terminal at startup and
+as a durable dashboard message. Resumed agents whose launch snapshot carried
+break-glass simply lose that access.
 
 **Protected roots are denied on every harness.** Both the Claude settings block
-and the managed Codex permission profile explicitly deny all three roots, so
-"denied by default" is true regardless of which harness an agent runs under —
-that promise is what the acknowledgement is protecting.
+and the managed Codex permission profile deny them unconditionally, so "denied
+by default" holds regardless of which harness an agent runs under, and in every
+sandbox mode.
 
-**Harness support.** Both supported harnesses can represent break-glass, but
-only in their policy-rendering modes (Codex `managed-profile`, Claude
-`sandbox on`), and each requires tclaude to suppress its own protected deny for
-exactly the acknowledged path: on Codex a deny dominates any narrower grant
-regardless of order, and on Claude deny directories are applied
-shallowest-first. Any other harness/mode combination is rejected with the typed
-`unsupported_sandbox_profile_break_glass` error.
-
-**Composition and audit.** Break-glass merges as a privilege-monotonic union
-(write dominating read on one canonical path). Each rule records the exact
-include route it arrived by — author → … → assigned profile — and a diamond
-keeps *both* arms, so the resolved launch echo and audit record show every path
-by which dangerous authority reached an agent. An innocent-looking wrapper can
-never take the blame or the credit for a rule it inherited.
-
-That provenance is **derived, never authored**: it is not part of the profile
-wire shape, is stripped at every authoring and import boundary, and is honored
-only on values this package computed. A caller cannot supply an attribution and
-have tclaude present it as audit truth.
-
-Creating, editing, importing, or assigning a profile that inherits break-glass
-through an include requires the same acknowledgement as one that declares it
-directly. Import evaluates the exact registry state the transaction will
-produce — including bundle-internal nested includes, and honoring the
-`skip`/`overwrite` conflict policy — so the gate always judges the row that
-will actually be assigned.
-
-**Resume and reincarnation never gain authority.** Both re-resolve ordinary
-rules from the current registry, but the protected-access decision and the
-recorded deny rows are clamped to what was captured at launch: break-glass is
-intersected with the frozen snapshot (never added, never widened read → write),
-and every deny row in the snapshot must still be present — with no reopen
-beneath it that the snapshot did not already have. There is no human in the
-loop on a relaunch to acknowledge new protected access, so it is never granted
-implicitly. To widen a running agent's protected access, spawn a fresh one and
-acknowledge it.
-
-A relaunch also **preserves the sandbox mode the agent was launched under**
-rather than re-deriving the harness default. This keeps an enforced `sandbox
-on` posture from being silently dropped on resume, and it is what allows a
-legitimately acknowledged break-glass agent to be resumed or reincarnated at
-all — the capability gate correctly refuses to re-open protected denies under a
-mode that cannot guarantee them.
+**Deny-row lineage still applies.** Agent-initiated launches, resume, and
+reincarnation re-resolve ordinary rules from the current registry, but every
+deny row in the launch snapshot must still be present, with no reopen beneath
+it that the snapshot did not already have. There is no human in the loop on a
+relaunch, so widening is never granted implicitly. A relaunch also preserves
+the sandbox mode the agent was launched under rather than re-deriving the
+harness default, so an enforced `sandbox on` posture is not silently dropped.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private

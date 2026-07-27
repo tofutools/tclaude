@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,7 +27,6 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 	got, params, err := renderSeatbeltProfile(
 		[]string{"/Users/dev/.claude", "/Users/dev/work"},
 		nil,
-		[]string{"/Users/dev/.tclaude/data/audit"},
 		plan,
 		[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
 		"/private/tmp/tmux-501",
@@ -173,7 +174,6 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testi
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		[]string{agentd},
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -224,7 +224,6 @@ func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testi
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		[]string{agentd},
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -250,7 +249,6 @@ func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testi
 
 func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 	profile, _, err := renderSeatbeltProfile(
-		nil,
 		nil,
 		nil,
 		sandboxpolicy.MountPlan{
@@ -299,7 +297,6 @@ func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		nil,
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -332,7 +329,6 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		[]string{socket},
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -379,7 +375,6 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		nil,
-		[]string{parent, sibling},
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{
@@ -432,10 +427,12 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 		"the break-glass sibling must not become a private-parent exception")
 }
 
+// Class 4 (host tmux control) is strictly unreachable at the applier itself:
+// an ordinary profile may legitimately grant a parent of the socket directory,
+// so the renderer has to refuse the descendant reopen on its own.
 func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
 	const tmuxDir = "/private/tmp/tmux-501"
 	profile, params, err := renderSeatbeltProfile(
-		nil,
 		nil,
 		nil,
 		sandboxpolicy.MountPlan{
@@ -465,6 +462,73 @@ func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
 		assert.NotContains(t, profile, denyParam+"_REOPEN",
 			"class-4 read, write, and connect denies cannot inherit descendant reopens")
 	}
+}
+
+// Class 3 (protected roots) reaches the same end state by a different route:
+// unlike class 4, the renderer does not need its own guard, because no plan
+// entry can name a protected descendant in the first place. Break-glass was
+// the only thing that ever produced one, and TCL-791 removed it.
+//
+// So this test drives the whole real path — Normalize, then RenderMountPlan,
+// then the darwin renderer — with the broadest legal profile, and asserts the
+// rendered Seatbelt profile carves out nothing at or beneath a protected root.
+// If a reopen path came back upstream, the carve-out would appear here.
+func TestSeatbeltClass3ProtectedRootsGetNoCarveOutFromAnyLegalProfile(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "work")
+	for _, dir := range []string{
+		filepath.Join(home, ".tclaude", "data"),
+		filepath.Join(home, ".claude", "sessions"),
+		workspace,
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.Len(t, protectedRoots, 2)
+
+	normalized, err := sandboxpolicy.Normalize(sandboxpolicy.Profile{
+		Name: "deny-home-reopen-work",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: workspace, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	require.NoError(t, err)
+	plan, err := sandboxpolicy.RenderMountPlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: normalized.Filesystem,
+	})
+	require.NoError(t, err)
+
+	_, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		plan,
+		protectedRoots,
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+	)
+	require.NoError(t, err)
+
+	sawWorkspaceCarveOut := false
+	for _, param := range params {
+		if !strings.Contains(param.name, "_REOPEN_") {
+			continue
+		}
+		if param.path == workspace {
+			sawWorkspaceCarveOut = true
+		}
+		for _, root := range protectedRoots {
+			assert.False(t, sandboxpolicy.PathContainsOrEqual(root, param.path),
+				"%s carves out %s, which is at or beneath protected root %s",
+				param.name, param.path, root)
+		}
+	}
+	assert.True(t, sawWorkspaceCarveOut,
+		"the legal reopen must produce a carve-out, or the protected check above is vacuous")
 }
 
 func TestSeatbeltCaseAndNFCCandidatesRequireFileIdentity(t *testing.T) {
@@ -525,7 +589,6 @@ func TestSeatbeltAliasesCoverLinkAndResolvedTargetWithoutInterpolation(t *testin
 	profile, params, err := renderSeatbeltProfile(
 		nil,
 		nil,
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{
@@ -561,7 +624,6 @@ func TestSeatbeltAliasesRequireAbsoluteParameterizedPaths(t *testing.T) {
 	_, _, err := renderSeatbeltProfile(
 		nil,
 		nil,
-		nil,
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Aliases: []sandboxpolicy.MountAlias{{
@@ -583,7 +645,6 @@ func TestRenderSeatbeltProfileRefusesFilteredAndInvalidPostures(t *testing.T) {
 		sandboxpolicy.NetworkPosture(99),
 	} {
 		_, _, err := renderSeatbeltProfile(
-			nil,
 			nil,
 			nil,
 			sandboxpolicy.MountPlan{NetworkPosture: posture},

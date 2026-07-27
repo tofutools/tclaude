@@ -59,8 +59,8 @@ type TclaudeLayerLaunchInput struct {
 	PrivateWriteDirs []TclaudeLayerPrivateWriteDir
 }
 
-// BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem and
-// break-glass rows, then constructs the exact launch contract the outer
+// BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem rows, then
+// constructs the exact launch contract the outer
 // renderer consumes. Callers may persist the result and re-render it later
 // without consulting launch-time UI or profile-registry state.
 func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLaunchSpec, error) {
@@ -75,12 +75,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		if err != nil {
 			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer filesystem: %w", err)
 		}
-		breakGlass, err := sandboxpolicy.BreakGlassForLaunch(effective)
-		if err != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer break-glass: %w", err)
-		}
 		effective.Filesystem = filesystem
-		effective.BreakGlassFilesystem = breakGlass
 	}
 	profileFilesystem := append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
 	gitWriteDirs := append([]string(nil), input.GitWriteDirs...)
@@ -314,7 +309,7 @@ func WrapTclaudeLayerSpec(
 	spec TclaudeLayerLaunchSpec,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -322,7 +317,6 @@ func WrapTclaudeLayerSpec(
 	return tclaudeLayerCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		harnessCommand,
@@ -428,7 +422,7 @@ func WrapTclaudeLayerStackedSpec(
 	consume bool,
 	harnessCommand string,
 ) (string, error) {
-	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -436,7 +430,6 @@ func WrapTclaudeLayerStackedSpec(
 	return tclaudeLayerStackedCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		manifestPath,
@@ -457,7 +450,7 @@ func WrapTclaudeLayerServerSpec(
 	spec TclaudeLayerLaunchSpec,
 	serverCommand string,
 ) (string, error) {
-	phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, err :=
+	phase0WriteDirs, privateWriteDirs, plan, err :=
 		tclaudeLayerSpecRenderInput(spec)
 	if err != nil {
 		return "", err
@@ -465,7 +458,6 @@ func WrapTclaudeLayerServerSpec(
 	return tclaudeLayerServerCommand(
 		binary,
 		phase0WriteDirs,
-		breakGlassPaths,
 		privateWriteDirs,
 		plan,
 		serverCommand,
@@ -476,23 +468,22 @@ func tclaudeLayerSpecRenderInput(
 	spec TclaudeLayerLaunchSpec,
 ) (
 	[]string,
-	[]string,
 	[]TclaudeLayerPrivateWriteDir,
 	sandboxpolicy.MountPlan,
 	error,
 ) {
 	if spec.Version != TclaudeLayerLaunchSpecVersion {
-		return nil, nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
 	}
 	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
 	if err != nil {
-		return nil, nil, nil, sandboxpolicy.MountPlan{},
+		return nil, nil, sandboxpolicy.MountPlan{},
 			fmt.Errorf("render mount plan: %w", err)
 	}
 	phase0WriteDirs, err := tclaudeLayerPhase0WriteDirs(spec.Contract, spec.Effective)
 	if err != nil {
-		return nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, sandboxpolicy.MountPlan{}, err
 	}
 	stateRoots := append([]string{phase0WriteDirs[0]}, spec.Contract.StateDirs...)
 	stateRoots = append(stateRoots, spec.Contract.ReadOnlyStateDirs...)
@@ -501,20 +492,16 @@ func tclaudeLayerSpecRenderInput(
 			stateRoot,
 			spec.Contract.ProfileFilesystem,
 		); err != nil {
-			return nil, nil, nil, sandboxpolicy.MountPlan{}, err
+			return nil, nil, sandboxpolicy.MountPlan{}, err
 		}
-	}
-	breakGlassPaths := make([]string, 0, len(spec.Effective.BreakGlassFilesystem))
-	for _, grant := range spec.Effective.BreakGlassFilesystem {
-		breakGlassPaths = append(breakGlassPaths, grant.Path)
 	}
 	privateWriteDirs, err := cleanTclaudeLayerPrivateWriteDirs(
 		spec.Contract.PrivateWriteDirs,
 	)
 	if err != nil {
-		return nil, nil, nil, sandboxpolicy.MountPlan{}, err
+		return nil, nil, sandboxpolicy.MountPlan{}, err
 	}
-	return phase0WriteDirs, breakGlassPaths, privateWriteDirs, plan, nil
+	return phase0WriteDirs, privateWriteDirs, plan, nil
 }
 
 // PrepareTclaudeLayerHarnessState materializes only the harness-owned state
@@ -629,7 +616,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 // the argument stream, but read-only hardening of class-2 and class-3 hides is
 // deferred until plan replay finishes. Bubblewrap creates missing bind
 // destinations as it executes filesystem arguments, so remounting an ancestor
-// hide immediately would prevent narrower launch-contract, break-glass, and
+// hide immediately would prevent narrower launch-contract and
 // most-specific-wins mounts from landing. The deferred tracker records whether
 // a hide is still the topmost mount at its exact path; a later exact bind
 // cancels its pending remount, while child mounts survive because
@@ -638,7 +625,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 // is materialized and hardened only after that flush, so host control remains
 // the final, unshadowable phase.
 func bwrapArgs(
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) ([]string, error) {
@@ -707,12 +694,13 @@ func bwrapArgs(
 		}
 	}
 	// Class 3 baseline: protected state is hidden after the harness root is
-	// writable.
-	// EffectiveProfile deliberately excludes the protected-root baseline:
-	// ordinary rules may never name these paths, while acknowledged
-	// break-glass reopens arrive later in the plan. Establish the hides first
-	// so normal launches cannot read private control/harness state and the
-	// ordered plan can still reopen exactly what was acknowledged.
+	// writable. EffectiveProfile deliberately excludes this baseline because
+	// ordinary rules may never name these paths at all: normalizeFilesystem
+	// refuses any read/write rule intersecting a protected root, and TCL-791
+	// removed break-glass, the one former exception. Establishing the hides
+	// here is therefore final, not merely a default a later entry may
+	// override. A plan entry on an ordinary ancestor still lands, and
+	// appendTclaudeLayerProtectedRehides restores the hides on top of it.
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return nil, fmt.Errorf("resolve protected sandbox roots: %w", err)
@@ -747,10 +735,6 @@ func bwrapArgs(
 		args = append(args, "--ro-bind", socket, socket)
 		socketPaths = append(socketPaths, socket)
 	}
-	breakGlass := make(map[string]bool, len(breakGlassPaths))
-	for _, path := range breakGlassPaths {
-		breakGlass[filepath.Clean(path)] = true
-	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
 	// reorder or deduplicate plan entries; they preserve the higher-precedence
 	// launch contract after an ordinary ancestor hide.
@@ -770,14 +754,12 @@ func bwrapArgs(
 			}
 			hideRemounts.noteReplacement(path)
 			args = append(args, "--ro-bind", path, path)
-			if !breakGlass[path] {
-				args = appendTclaudeLayerProtectedRehides(
-					args,
-					path,
-					protectedRoots,
-					&hideRemounts,
-				)
-			}
+			args = appendTclaudeLayerProtectedRehides(
+				args,
+				path,
+				protectedRoots,
+				&hideRemounts,
+			)
 		case sandboxpolicy.MountRW:
 			exists, err := bwrapBindSourceExists(path)
 			if err != nil {
@@ -788,14 +770,12 @@ func bwrapArgs(
 			}
 			hideRemounts.noteReplacement(path)
 			args = append(args, "--bind", path, path)
-			if !breakGlass[path] {
-				args = appendTclaudeLayerProtectedRehides(
-					args,
-					path,
-					protectedRoots,
-					&hideRemounts,
-				)
-			}
+			args = appendTclaudeLayerProtectedRehides(
+				args,
+				path,
+				protectedRoots,
+				&hideRemounts,
+			)
 		case sandboxpolicy.MountHide:
 			args = hideRemounts.appendHide(args, path)
 			if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
@@ -1302,12 +1282,12 @@ func bwrapBindSourceExists(path string) (bool, error) {
 
 func bwrapCommand(
 	binary string,
-	phase0WriteDirs, breakGlassPaths []string,
+	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
-	args, err := bwrapArgs(phase0WriteDirs, breakGlassPaths, plan, privateWriteDirs...)
+	args, err := bwrapArgs(phase0WriteDirs, plan, privateWriteDirs...)
 	if err != nil {
 		return "", err
 	}

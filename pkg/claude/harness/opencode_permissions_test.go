@@ -31,7 +31,7 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	protected, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(protected), 2)
-	breakGlass := filepath.Join(protected[0], "debug")
+	protectedChild := filepath.Join(protected[0], "debug")
 
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
 		Cwd:                 "/repo/service",
@@ -41,8 +41,6 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 		ReadDirs:            []string{"/outside/read"},
 		WriteDirs:           []string{"/outside/write"},
 		DenyDirs:            []string{"/repo/service/secret"},
-		BreakGlassReadDirs:  []string{breakGlass},
-		BreakGlassWriteDirs: []string{filepath.Join(protected[1], "repair")},
 		NetworkAccess:       sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
@@ -71,12 +69,15 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 		Pattern:    relativeOpenCodeTestPattern(t, "/repo", protected[0]) + "/*",
 		Action:     "deny",
 	}
-	breakGlassAllow := OpenCodePermissionRule{
+	assert.Contains(t, rules, protectedDeny)
+	// Nothing reopens beneath the protected root. TCL-791 removed break-glass,
+	// which was the only input that could emit such an allow, so a rule here
+	// would mean a reopen path came back.
+	assert.NotContains(t, rules, OpenCodePermissionRule{
 		Permission: "read",
-		Pattern:    relativeOpenCodeTestPattern(t, "/repo", breakGlass) + "/*",
+		Pattern:    relativeOpenCodeTestPattern(t, "/repo", protectedChild) + "/*",
 		Action:     "allow",
-	}
-	assertRuleBefore(t, rules, protectedDeny, breakGlassAllow)
+	})
 
 	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
 		assert.Contains(t, rules,
