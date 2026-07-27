@@ -108,50 +108,30 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	must("member.state?.sandbox_mode", "the sandbox indicator reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
 
-	// TCL-729: the mode is only the launch REQUEST. Where the row carries a
-	// resolved verdict (Claude Code, whose `inherit` default defers to
-	// settings.json), the badge describes whether the agent is ACTUALLY
-	// confined. Behaviour is covered by jstest/sandbox-badge.test.mjs; these
-	// pin the production wiring.
-	must("function osSandboxBadge(mode, state, source, prefix, unverified, implementation)", "the recorded-verdict badge decision is defined")
+	// The mode is only the launch request. Where the row carries a resolved
+	// verdict (Claude Code, whose `inherit` default defers to settings.json),
+	// the badge describes whether the agent is actually confined. Behaviour is
+	// covered by jstest/sandbox-badge.test.mjs; these pin the production wiring.
+	must("function osSandboxBadge(mode, state, unverified, implementation)", "the recorded-verdict badge decision is defined")
 	must("member.state?.os_sandbox_state", "SandboxBadge reads the recorded OS-sandbox verdict off the agent's state")
-	must("member.state?.os_sandbox_source", "the badge can name whatever decided the verdict")
 	// A verdict tclaude could not prove must not render as a plain padlock.
 	must("member.state?.os_sandbox_unverified", "the badge reads whether the verdict could be verified")
 	must("member.state?.sandbox_implementation", "the badge reads the implementation that earned the verdict")
-	must("source.includes('Seatbelt/sandbox-exec')",
-		"the Darwin tclaude layer gets its own fidelity explanation")
-	must("source.includes('isolated network')",
-		"the Darwin isolated verdict does not reuse the host-open network caveat")
 	must("mode === 'danger-full-access' || mode === 'off'",
 		"a pre-verdict Claude `off` row is a danger badge too, not a padlock on an unconfined agent")
 
-	// The tooltip names the tclaude sandbox profiles that supplied the RULES,
-	// not just the settings file that decided the STATE — the two are
-	// orthogonal, and naming only the latter read as the whole configuration.
-	// Behaviour is covered by jstest/sandbox-badge.test.mjs.
-	must("function sandboxProfileClause(member, withheldBecause)", "the applied-profile clause is defined")
-	must("member.state?.sandbox_profiles", "the clause reads the applied profiles off the agent's state")
-	must("member.state?.sandbox_profiles_recorded", "a row that recorded no policy is distinguished from one that resolved to none")
-	must("global: 'global default'", "the assignment tier is named in operator vocabulary")
-	must("filesystem rules are not in force", "a profile whose rules were withheld does not read as containment")
-	// ProfilesOmitted covers both "the launch mode discards the tiers" and "the
-	// caller asked for none", so the clause re-derives which one applies instead
-	// of blaming the mode for an operator's own choice.
-	must("function sandboxProfilesUnsupported(member)",
-		"the omitted clause distinguishes a mode that discards profiles from a caller who omitted them")
-
-	// The mode's own provenance: `sandbox: on` can come from an explicit flag or
-	// from a spawn profile the operator never opened, and the badge used to call
-	// both "this launch".
-	must("forced ON by ${source || 'this launch'}", "the badge names whatever forced the sandbox on")
-	// The same applies to `off`: a default profile can opt an agent out of
-	// containment, and "Explicit opt-in" credited a human with having done it.
-	must("forced OFF by ${source || 'this launch'}", "the badge names whatever forced the sandbox off")
-	// A harness whose mode IS its posture (Codex) records no verdict, so its
-	// attribution has to come off the mode's own recorded source.
-	must("member.state?.sandbox_mode_source",
-		"a mode-driven row names the tier that chose its mode")
+	// The tooltip is intentionally limited to four concise lines: resolved
+	// status, implementation owner, applied profile names, and an action hint
+	// only when the glyph is clickable.
+	must("function sandboxImplementationLabel(member)", "the compact tooltip derives an implementation label")
+	must("return 'TClaude'", "tclaude-layer and stacked implementations share the TClaude label")
+	must("function sandboxProfileLabel(member)", "the compact tooltip derives applied profile names")
+	must("names.join(' + ')", "multiple profile names retain resolution order")
+	must("function sandboxTooltip(member, badge, actionable, unlocked)", "the compact tooltip has a dedicated formatter")
+	must("`Status: ${badge.danger ? 'OFF' : 'ON'}`", "the first tooltip line is the binary sandbox status")
+	must("`Implementation: ${sandboxImplementationLabel(member)}`", "the second tooltip line names the implementation")
+	must("`Profile: ${sandboxProfileLabel(member)}`", "the third tooltip line names the applied profiles")
+	must("`Click to temporarily ${unlocked ? 're-enable' : 'disable'}`", "clickable badges explain their temporary action")
 
 	// The sandbox indicator rides INSIDE the harness line, trailing the effort
 	// token next to the 📱 remote indicator, rather than owning a second line

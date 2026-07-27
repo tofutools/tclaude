@@ -156,330 +156,68 @@ export function HarnessLine({ member }) {
   </div>`;
 }
 
-// osSandboxBadge describes an agent whose row carries a recorded launch-time
-// OS-sandbox verdict (os_sandbox_state — today, Claude Code). The launch mode
-// alone cannot describe those agents: `inherit`, the default and recommended
-// mode, means "whatever settings.json says", so a mode-driven badge showed
-// nothing for a confined agent and nothing for an unconfined one either, and
-// the operator could not tell them apart.
-//
-// Returns null when there is nothing to say — an `inherit` launch that no
-// settings file confines is the unremarkable, unchanged case.
-//
-// Every title opens with the RESOLVED posture ("Sandbox: on", "Sandbox: off",
-// "Sandbox: on (unverified)"), because the badge no longer prints that word on
-// screen: the tooltip is now the only place it can be read, and one that opened
-// with the launch's REQUEST would tell an operator the opposite of the truth in
-// exactly the case — a request that lost — where it matters most.
-function osSandboxBadge(mode, state, source, prefix, unverified, implementation) {
-  const via = source ? ` (${source})` : '';
-  // `unverified` arrives carrying two unrelated meanings, and only one of them
-  // is doubt (TCL-790):
-  //
-  //   (a) harness-builtin — ResolveLaunchOSSandbox sets it when a settings file
-  //       OUTRANKING the one that decided could not be read, so a policy tclaude
-  //       never saw may say the opposite. The POSTURE ITSELF is unproven.
-  //   (b) the tclaude-layer / Seatbelt / OpenCode / stacked producers hard-set
-  //       the same flag as a partial-fidelity marker. Nothing is in doubt there:
-  //       the launch probed the exact frozen outer spec before committing the
-  //       pane, and what remains is an enumerated, known limit of a boundary
-  //       that IS established. Their separate outer OS wall earns the lock below.
-  //
-  // The two cannot co-occur on one row — layer/stacked verdicts are constructed
-  // whole by their producers and never carry harness settings diagnostics — so
-  // matching (b) first and treating the remainder as (a) cannot mask real doubt.
-  //
-  // Each match keeps its pre-TCL-790 `source` substring alongside the trimmed
-  // spelling: `os_sandbox_source` is durable in SQLite, and a row recorded
-  // before the trim must still reach its partial-fidelity branch rather than
-  // falling through to the harness-builtin copy, which would be a fresh lie
-  // about a row tclaude confined perfectly well.
-  // The substring matches below run only on a row whose IMPLEMENTATION already
-  // says a layer produced the verdict. `source` is not trusted prose: a
-  // harness-builtin verdict splices the operator's own spawn-profile name into
-  // it (harness.attributeLaunchSandboxSource), and SanitizeSandboxChosenBy
-  // bounds and de-controls that name without constraining its words. A profile
-  // named after one of these markers would otherwise reach in from the far side
-  // of the check and turn a genuinely unproven posture into a confident one —
-  // stripping the hedge, asserting "Bash is confined.", and replacing the true
-  // unreadable-settings-file sentence with a fabricated claim about mounts this
-  // launch never had. Matching the implementation first closes that channel
-  // without touching a single legitimate row: every producer of these Sources
-  // sets the implementation in the same struct literal.
-  const layerImplementation = implementation === 'tclaude-layer' || implementation === 'stacked';
-  const partialDarwinTclaudeLayer = unverified && layerImplementation
-    && source.includes('Seatbelt/sandbox-exec');
-  const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
-  const openCodeExecutorLayer = unverified && layerImplementation
-    && source.includes('OpenCode tool-executing server confined');
-  const partialLinuxTclaudeLayer = unverified && layerImplementation
-    && (source.includes('bubblewrap; host network')
-      || source.includes('tclaude bwrap (host-open')
-      || source.includes('ambient host Unix sockets reachable'));
-  // A stacked row's outer bwrap is what enforces the mounts; its inner harness
-  // sandbox is named separately by sandboxProfileClause.
-  const outerMounts = implementation === 'stacked'
-    ? 'filesystem mounts are enforced by the outer layer'
-    : 'filesystem mounts are enforced';
-  const caveat = openCodeExecutorLayer
-    ? ` ⚠ Partial fidelity: filesystem mounts confine OpenCode's tool-executing server, but the attach pane stays outside the boundary, the authenticated loopback control plane remains reachable, and host networking plus ambient host Unix sockets remain available.`
-    : partialDarwinIsolated
-    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem and network operations, but there is no PID isolation or constructed root, and hidden paths remain enumerable.`
-    : partialDarwinTclaudeLayer
-    ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but there is no mount namespace, hidden paths remain enumerable, and the host network plus ambient Unix sockets remain reachable.`
-    : partialLinuxTclaudeLayer
-      ? ` ⚠ Partial fidelity: ${outerMounts}, but ambient host Unix sockets remain connectable.`
-      : unverified
-        ? ` ⚠ Unverified: tclaude could not read a settings file that outranks this, so the real posture may differ.`
-        : '';
-  // Meaning (a) alone. This is what may hedge the posture and withhold the
-  // containment claim; a partial-fidelity row states both plainly and lets the
-  // ⚠ sentence above name its limits.
-  const unprovenPosture = unverified && !openCodeExecutorLayer && !partialDarwinTclaudeLayer
-    && !partialLinuxTclaudeLayer;
+// osSandboxBadge reduces a recorded launch verdict to the glyph's safety
+// posture. The detailed provenance used to become a very long native tooltip;
+// the Groups tab only needs the resolved ON/OFF summary now.
+function osSandboxBadge(mode, state, unverified, implementation) {
   if (state === 'on') {
-    // `source` for a launch-decided verdict names the tier that CHOSE the mode
-    // in place of the anonymous actor: `global default profile "agents"
-    // (sandbox \`on\`)` rather than `this launch (sandbox \`on\`)`.
-    // "forced ON for this launch" alone read as the operator's own doing, which
-    // is wrong for the common case where a group or global default profile
-    // carries the sandbox and they never picked one.
-    const why = mode === 'on'
-      ? `forced ON by ${source || 'this launch'}`
-      // Managed policy outranks the launch's own `--settings` block, so it can
-      // turn the sandbox ON over an explicit `off`. Calling that "not chosen at
-      // launch" would be true but useless, and calling an enterprise policy file
-      // "your Claude Code settings" is simply wrong.
-      : mode === 'off'
-        ? `forced ON by ${source || 'a higher-precedence settings file'}, overriding this launch's \`off\``
-        : `not chosen at launch — inherited from your Claude Code settings${via}`;
-    // "working dir writable, $HOME read-only" described Claude Code's DEFAULT
-    // sandbox shape, which any profile `allowWrite` under $HOME can falsify —
-    // in every mode, not just some. The shape is whatever the operator's
-    // settings and the applied profile resolved to, and the profile clause
-    // below names that; asserting a fixed one here was the same over-claim as
-    // naming a single settings file and calling it the configuration.
-    // Withheld only where the posture itself is unproven. A tclaude-layer or
-    // stacked row confines Bash — that is what the mounts and the Seatbelt
-    // policy DO — and suppressing the claim there, as the single overloaded
-    // flag used to, understated a boundary the launch had already proved.
-    const confined = unprovenPosture ? '' : ' Bash is confined.';
-    // The hedge rides in the opening posture rather than only in the caveat
-    // below: "on" alone, read first, is the claim this case cannot make. A
-    // partial-fidelity row CAN make it — its limits are known, not doubted —
-    // so "(unverified)" now appears on exactly the one variant it is true of.
-    const posture = unprovenPosture ? 'on (unverified)' : 'on';
     return {
-      // The exact implementation value is load-bearing: tclaude-layer and a
-      // successfully probed stacked launch have earned their respective real
-      // locks even when fidelity caveats remain. Future/unknown
-      // implementations must earn their own badge rather than inheriting this
-      // exception by name shape.
       danger: implementation === 'tclaude-layer' || implementation === 'stacked'
         ? false
         : implementation && implementation !== 'harness-builtin'
           ? true
           : unverified,
-      // A mode of `off` means tclaude emitted `{"sandbox":{"enabled":false}}`
-      // and, with it, NONE of the profile's filesystem rules (claudeSettingsJSON
-      // skips every filesystem key for an `off` launch). Managed policy can
-      // still force the sandbox on over that, but what it enforces is the
-      // operator's own settings — the profile's rules were never handed to the
-      // HARNESS. sandboxProfileClause separately accounts for tclaude-layer,
-      // which renders those same profile rules into its outer OS wall.
-      rulesWithheldBecause: mode === 'off'
-        ? 'this launch requested sandbox `off`, so none of its filesystem rules were emitted'
-        : '',
-      title: `${prefix}: ${posture} — ${why}.${confined}${caveat}`,
     };
   }
-  if (mode === 'on') {
-    // The launch asked for `on` and lost. Only enterprise managed policy
-    // outranks a `--settings` block, and an operator who believes this agent is
-    // confined is precisely who needs telling that it is not — so the title
-    // leads with the posture that won, then names the request it overrode.
-    return {
-      danger: true, rulesWithheldBecause: 'the sandbox is off',
-      title: `${prefix}: off — this launch asked for the OS sandbox to be ON, but ${source || 'a higher-precedence settings file'} turned it off. The agent's Bash runs unconfined.${caveat}`,
-    };
-  }
-  if (mode === 'off') {
-    // `source` is attributed the same way the `on` branch's is, so an `off`
-    // that a group or global default profile chose says so. The old wording
-    // ("forced OFF for this launch … Explicit opt-in") credited a human with
-    // opting this agent out of containment — the mirror image of the
-    // misattribution this tooltip exists to remove, and in the direction that
-    // matters more, since it is the claim an operator is least likely to doubt.
-    return {
-      danger: true,
-      rulesWithheldBecause: 'this launch requested sandbox `off`, so none of its filesystem rules were emitted',
-      title: `${prefix}: off — the OS sandbox is forced OFF by ${source || 'this launch'}. The agent's Bash runs unconfined.${caveat}`,
-    };
-  }
+  if (mode === 'on' || mode === 'off') return { danger: true };
   return null;
 }
 
-const SANDBOX_SCOPE_LABELS = {
-  global: 'global default',
-  group: 'group default',
-  explicit: 'chosen for this agent',
-};
-
-// sandboxProfileClause names the tclaude sandbox profiles applied to a launch
-// and, when their filesystem rules are NOT in force, says why.
-//
-// A profile is orthogonal to the sandbox STATE: it never decides whether the
-// agent is sandboxed, it supplies the rules. For Claude Code those filesystem
-// grants are compiled into the harness's own `sandbox.filesystem.*` through
-// `--settings`, so they bite only while the sandbox is enabled, while a
-// profile's environment entries are plain env vars that apply either way. A
-// tooltip that named only the settings file which enabled the sandbox read as
-// the whole configuration, when a profile is what actually shaped it.
-//
-// "Customized by" is deliberately weaker than "rules from": the snapshot the
-// browser gets carries profile NAMES only, so this cannot know whether a given
-// profile contributes filesystem rules, environment entries, or both. It names
-// the profile and lets the withheld-reason carry the one thing that IS known.
-//
-// Returns "" for a launch that recorded no policy at all — a row older than the
-// snapshot. Saying "no profile" there would invent a fact rather than report
-// one; "none applied" is only claimed where a resolved policy exists to say it.
-function sandboxProfileClause(member, withheldBecause) {
-  const applied = member.state?.sandbox_profiles || [];
-  if (!applied.length) {
-    // Four different facts, and flattening them would be its own small lie: the
-    // launch MODE discarded every profile tier; the operator chose "none"; the
-    // launch resolved to no profile; or nothing was ever recorded (a row older
-    // than the snapshot), in which case an absence tclaude never observed is
-    // not reported as one.
-    if (member.state?.sandbox_profiles_omitted) {
-      return sandboxProfilesUnsupported(member)
-        ? ' tclaude sandbox profiles do not apply under this launch mode.'
-        : ' No tclaude sandbox profile — this launch omitted them.';
-    }
-    return member.state?.sandbox_profiles_recorded ? ' No tclaude sandbox profile applied.' : '';
-  }
-  const names = applied
-    .map((p) => `“${p.name}” (${SANDBOX_SCOPE_LABELS[p.scope] || p.scope})`)
-    .join(' + ');
-  const clause = ` Customized by tclaude sandbox profile ${names}.`;
-  // The same opening without its full stop, for the branches that continue into
-  // what became of the profile's rules. Two sentences said in one is the whole
-  // of the trim (TCL-790): a tooltip is skimmed, and "Customized by X. Its
-  // filesystem rules are …" spent a sentence boundary on a single thought.
-  const opening = ` Customized by tclaude sandbox profile ${names}`;
-  const harness = (member.state?.harness || 'claude').trim();
-  const rulesOwnedByStacked =
-    member.state?.sandbox_implementation === 'stacked'
-    && (harness === 'claude' || harness === 'codex');
-  if (rulesOwnedByStacked && member.state?.os_sandbox_state === 'on') {
-    const their = applied.length > 1 ? 'their' : 'its';
-    const they = applied.length > 1 ? 'they define' : 'it defines';
-    return opening + ` — ${their} filesystem rules are enforced by the tclaude outer mounts`
-      + ` and the harness's nested OS sandbox;`
-      + ` any environment entries ${they} also apply.`;
-  }
-  if (rulesOwnedByStacked) {
-    const their = applied.length > 1 ? 'their' : 'its';
-    return opening + ` — ${their} filesystem rules are not in force`
-      + ` (the stacked round-trip did not succeed).`;
-  }
-  const rulesOwnedByTclaudeLayer =
-    member.state?.sandbox_implementation === 'tclaude-layer'
-    && (harness === 'claude' || harness === 'codex');
-  if (rulesOwnedByTclaudeLayer && member.state?.os_sandbox_state === 'on') {
-    const their = applied.length > 1 ? 'their' : 'its';
-    const they = applied.length > 1 ? 'they define' : 'it defines';
-    // The inner harness sandbox is off by design here, but saying so confused
-    // more operators than it helped — the tooltip's job is what IS enforcing
-    // this agent's rules, not which mechanism deliberately is not (TCL-790,
-    // operator ruling).
-    return opening + ` — ${their} filesystem rules are enforced as the tclaude layer's OS mounts;`
-      + ` any environment entries ${they} also apply.`;
-  }
-  if (rulesOwnedByTclaudeLayer) {
-    const their = applied.length > 1 ? 'their' : 'its';
-    return opening + ` — ${their} filesystem rules are not in force`
-      + ` (the tclaude layer is not active).`;
-  }
-  if (!withheldBecause) return clause;
-  const their = applied.length > 1 ? 'their' : 'its';
-  const they = applied.length > 1 ? 'they define' : 'it defines';
-  return opening + ` — ${their} filesystem rules are not in force (${withheldBecause});`
-    + ` any environment entries ${they} still apply.`;
-}
-
-// sandboxProfilesUnsupported reports whether the launch's own MODE is what
-// discarded the profile tiers, as opposed to the operator omitting them.
-//
-// The daemon sets ProfilesOmitted for both, so the flag alone cannot tell them
-// apart, and asserting the mode did it turns an operator who deliberately
-// picked sandbox profile "none" into someone whose launch mode overrode them.
-// This mirrors sandboxProfilesDisabled (spawn_sandbox_guard.go) — Codex's
-// `danger-full-access` is a raw no-sandbox launch that cannot carry the managed
-// permission profile tclaude policy compiles into. Keep the two in step.
-function sandboxProfilesUnsupported(member) {
-  const harness = (member.state?.harness || 'claude').trim();
-  const mode = (member.state?.sandbox_mode || '').trim();
-  return harness === 'codex' && mode === 'danger-full-access';
-}
-
 // sandboxIndicator resolves an agent's sandbox posture to the glyph that trails
-// its harness line, or null when there is nothing to say. The mode, the
-// deciding settings file and the applied sandbox profiles live in the tooltip
-// rather than on screen: a padlock per row is enough to scan a group for the
-// unconfined agent, and the framed "🔒 workspace-write" chip this replaces cost
-// every row a second line to say less.
+// its harness line, or null when there is nothing to say.
 function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
   const stacked = member.state?.sandbox_implementation === 'stacked';
-  const prefix = stacked
-    ? (offline ? 'Last used stacked sandbox' : 'Stacked sandbox')
-    : (offline ? 'Last used sandbox' : 'Sandbox');
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
   // IS its posture) the mode-driven branch below is unchanged.
   const state = member.state?.os_sandbox_state || '';
   if (state) {
-    const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix,
+    const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
-    // The label the chip used to print ("on", "on overridden", "on?") is not
-    // dropped, only moved: every osSandboxBadge title opens with the resolved
-    // posture, so the tooltip stays a complete account on its own.
-    return {
-      danger: badge.danger, offline, glyph: stacked && !badge.danger ? '🔒²' : '',
-      // On the harness-builtin path, a verdict tclaude could not prove says
-      // nothing about the profile's rules either way, so the clause makes no
-      // fresh enforcement claim. The tclaude-layer branch is different: the
-      // outer renderer owns those rules and sandboxProfileClause says so.
-      title: badge.title + sandboxProfileClause(member, badge.rulesWithheldBecause),
-    };
+    return { danger: badge.danger, offline, glyph: stacked && !badge.danger ? '🔒²' : '' };
   }
   if (!mode || mode === 'inherit') return null;
   // `off` is Claude-only (no other harness offers it) and means the OS sandbox
   // is disabled outright, so it is a danger glyph on a pre-verdict row too —
   // otherwise every legacy `off` agent keeps a padlock it has not earned.
   const danger = mode === 'danger-full-access' || mode === 'off';
-  // A harness whose MODE is its posture (Codex) records no verdict, so it has
-  // no os_sandbox_source to fold the chooser into — sandbox_mode_source is
-  // where its attribution lives. The old wording said "Explicit opt-in" for
-  // every such row, which is wrong whenever a group or global default profile
-  // carried the mode and the operator never picked one.
-  const chosenBy = member.state?.sandbox_mode_source || '';
-  const by = chosenBy ? ` Chosen by ${chosenBy}.` : '';
-  const title = danger
-    ? mode === 'off'
-      // Claude's `off` disables the OS sandbox; it has no "full access" mode,
-      // so borrowing Codex's vocabulary here would name a concept it lacks.
-      ? `${prefix}: off — the OS sandbox is disabled for this launch. The agent's Bash runs unconfined.${by}`
-      : `${prefix}: ${mode} — the OS sandbox is OFF (full access).${by}`
-    : `${prefix}: ${mode} — launch-time OS sandbox confining the agent's writes.${by}`;
-  // A mode-driven row (Codex, or a legacy Claude row) states its own posture,
-  // so the mode alone decides whether the profile's rules are in force.
-  const withheld = danger ? 'the sandbox is off' : '';
-  return { danger, title: title + sandboxProfileClause(member, withheld), offline };
+  return { danger, offline };
+}
+
+function sandboxImplementationLabel(member) {
+  const implementation = member.state?.sandbox_implementation || 'harness-builtin';
+  if (implementation === 'tclaude-layer' || implementation === 'stacked') return 'TClaude';
+  return harnessLabels(member.state?.harness || 'claude').short;
+}
+
+function sandboxProfileLabel(member) {
+  const names = (member.state?.sandbox_profiles || [])
+    .map((profile) => profile.name)
+    .filter(Boolean);
+  return names.length ? names.join(' + ') : 'None';
+}
+
+function sandboxTooltip(member, badge, actionable, unlocked) {
+  const lines = [
+    `Status: ${badge.danger ? 'OFF' : 'ON'}`,
+    `Implementation: ${sandboxImplementationLabel(member)}`,
+    `Profile: ${sandboxProfileLabel(member)}`,
+  ];
+  if (actionable) lines.push(`Click to temporarily ${unlocked ? 're-enable' : 'disable'}`);
+  return lines.join('\n');
 }
 
 export function SandboxBadge({ member }) {
@@ -492,10 +230,7 @@ export function SandboxBadge({ member }) {
   // to "unlock" an agent that is already unconfined.
   const actionable = !!member.online && (unlocked || !badge.danger);
   const action = unlocked ? 'restore' : 'unlock';
-  const actionHint = unlocked
-    ? ' Click to stop and restart this agent with its preserved normal sandbox configuration.'
-    : ' Click to stop and restart this agent with its sandbox temporarily disabled.';
-  const title = badge.title + (actionable ? actionHint : '');
+  const title = sandboxTooltip(member, badge, actionable, unlocked);
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
   // aria-label carries the same full text as the tooltip: a glyph-only
   // indicator whose whole meaning is the hover would otherwise be pointer-only.
