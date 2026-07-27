@@ -779,8 +779,7 @@ last run, status pill, and body summary. Per-row buttons: enable/disable,
 default. The create/edit form can opt into one immediate run; on edit, only an
 off→on transition fires, so repeat saves and daemon restarts cannot replay it.
 **+ new cron job** opens a create form (also reachable pre-filled from the
-**⏰ schedule…** / **schedule…** items in the Groups tab's group and member
-menus). See
+**⏰ schedule…** items in the Groups tab's group and member menus). See
 [Agent Coordination → cron](agent.md#cron) for what cron jobs do.
 
 ### Sudo
