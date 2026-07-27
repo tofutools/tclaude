@@ -42,8 +42,9 @@ func migrateV162toV163(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	disclosure := ""
 	if len(dropped) > 0 {
-		disclosure := breakGlassDropDisclosure(dropped)
+		disclosure = breakGlassDropDisclosure(dropped)
 		if _, err := insertHumanMessage(tx, &HumanMessage{
 			FromTitle: breakGlassDropSender,
 			Subject:   breakGlassDropSubject,
@@ -51,7 +52,6 @@ func migrateV162toV163(db *sql.DB) error {
 		}); err != nil {
 			return fmt.Errorf("migrate v162→v163 (disclose dropped break-glass rules): %w", err)
 		}
-		migrationReporter.reportNotice(163, disclosure)
 	}
 
 	var haveTable int
@@ -75,6 +75,13 @@ func migrateV162toV163(db *sql.DB) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("migrate v162→v163 (drop sandbox break-glass): commit: %w", err)
+	}
+	// Only after the commit: the terminal notice cannot be rolled back, so
+	// firing it inside the transaction would tell the operator about a drop
+	// that a failed commit then undid. The durable human_messages row is
+	// written inside the transaction precisely so the two channels agree.
+	if disclosure != "" {
+		migrationReporter.reportNotice(163, disclosure)
 	}
 	return nil
 }
