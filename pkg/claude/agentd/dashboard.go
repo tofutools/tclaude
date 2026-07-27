@@ -2785,7 +2785,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// have completed, so this nested metric is the request's total Codex
 	// telemetry cost rather than only the grouped subset.
 	if err := rc.flushCodexContextWrites(); err != nil {
-		slog.Warn("dashboard: failed to commit batched Codex context snapshots",
+		slog.Warn("dashboard: batched Codex context snapshots completed with failures",
 			"error", err, "module", "agentd")
 	}
 	span.addDuration("codex_telemetry", rc.codexTelemetryTiming.total)

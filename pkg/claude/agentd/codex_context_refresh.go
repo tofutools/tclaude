@@ -663,20 +663,6 @@ func (b *codexContextWriteBatch) flush() (codexTelemetryTiming, error) {
 		}
 	}()
 	result, err := b.dbBatch.Commit()
-	if err != nil {
-		return codexTelemetryTiming{}, err
-	}
-	for _, pending := range b.pending {
-		if pending.operationIndex >= 0 &&
-			pending.operationIndex < len(result.Applied) &&
-			result.Applied[pending.operationIndex] {
-			cacheCodexContextPersistence(pending)
-		} else if pending.invalidateOnNoop {
-			pending.after = pending.before
-			pending.after.hasContext = false
-			cacheCodexContextPersistence(pending)
-		}
-	}
 	timing := codexTelemetryTiming{
 		contextReset:   contextWriteTimingFromDB(result.Reset),
 		contextFast:    contextWriteTimingFromDB(result.Fast),
@@ -687,7 +673,20 @@ func (b *codexContextWriteBatch) flush() (codexTelemetryTiming, error) {
 	timing.contextWrite = timing.contextReset.total + timing.contextFast.total +
 		timing.contextProject.total + timing.contextBatch.total
 	timing.total = timing.contextWrite
-	return timing, errors.Join(result.OperationErrors...)
+	if err == nil {
+		for _, pending := range b.pending {
+			if pending.operationIndex >= 0 &&
+				pending.operationIndex < len(result.Applied) &&
+				result.Applied[pending.operationIndex] {
+				cacheCodexContextPersistence(pending)
+			} else if pending.invalidateOnNoop {
+				pending.after = pending.before
+				pending.after.hasContext = false
+				cacheCodexContextPersistence(pending)
+			}
+		}
+	}
+	return timing, errors.Join(append([]error{err}, result.OperationErrors...)...)
 }
 
 func cacheCodexContextPersistence(pending pendingCodexContextPersistence) {
