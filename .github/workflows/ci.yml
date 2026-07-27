@@ -57,7 +57,10 @@ jobs:
       - name: Install bubblewrap
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap
+          # SRT's secure Linux engine discovers rg and socat at runtime; keep
+          # them explicit so a runner-image change cannot turn the real nested
+          # smoke into an accidental dependency check.
+          sudo apt-get install --yes bubblewrap ripgrep socat
 
       - name: Install pinned OpenCode smoke binary
         run: |
