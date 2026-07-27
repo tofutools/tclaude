@@ -55,7 +55,7 @@ func TestDurableRelaunchProfilesSurviveSessionDeletion(t *testing.T) {
 	assert.True(t, mustAutoMemoryForConv(t, convID))
 }
 
-func TestContextSnapshotProjectsOnlyWindowChanges(t *testing.T) {
+func TestContextSnapshotTokenOnlyFastPathPreservesProjection(t *testing.T) {
 	setupTestDB(t)
 	const (
 		convID    = "context-window-projection-conv"
@@ -79,7 +79,11 @@ func TestContextSnapshotProjectsOnlyWindowChanges(t *testing.T) {
 	_, err = d.Exec(`UPDATE conversation_resume_profiles SET updated_at = ? WHERE conv_id = ?`, sentinel, convID)
 	require.NoError(t, err)
 
-	require.NoError(t, UpdateContextSnapshot(sessionID, 50, 100, 200, 1_000_000))
+	updated, err := UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, time.Time{}, 50, 100, 200, 1_000_000,
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
 	snapshot, err := GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, float64(50), snapshot.ContextPct)
@@ -92,6 +96,11 @@ func TestContextSnapshotProjectsOnlyWindowChanges(t *testing.T) {
 	assert.Equal(t, sentinel, profileUpdatedAt,
 		"token-only context changes must not rewrite durable relaunch profiles")
 
+	updated, err = UpdateContextSnapshotIfWindowUnchanged(
+		sessionID, convID, time.Time{}, 60, 120, 240, 200_000,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated, "a changed window must fall back to full projection")
 	require.NoError(t, UpdateContextSnapshot(sessionID, 60, 120, 240, 200_000))
 	require.NoError(t, d.QueryRow(
 		`SELECT updated_at FROM conversation_resume_profiles WHERE conv_id = ?`, convID,

@@ -134,6 +134,58 @@ func TestCodexContextRefreshSkipsUnchangedContextWrite(t *testing.T) {
 	assert.Equal(t, int64(9000), contextSnapshot.TokensInput)
 }
 
+func TestCodexContextRefreshFirstObservationRepairsRelaunchProjection(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-context-projection-repair-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea4135501"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`DELETE FROM conversation_resume_profiles WHERE conv_id = ?`, convID)
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion,
+	}))
+
+	// A daemon restart clears proof that this generation/window was projected.
+	// The first unchanged observation must therefore use the full self-healing
+	// path before later token-only updates become eligible for the fast path.
+	resetCodexContextRefreshStateForTest()
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	conversation, err := db.ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, conversation)
+	require.NotNil(t, conversation.FallbackRelaunch)
+	require.NotNil(t, conversation.FallbackRelaunch.ContextWindowSize)
+	assert.Equal(t, int64(200000), *conversation.FallbackRelaunch.ContextWindowSize)
+	agent, err := db.AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.NotNil(t, agent.ContextWindowSize)
+	assert.Equal(t, int64(200000), *agent.ContextWindowSize)
+}
+
 func TestCodexContextRefreshRateLimitsDurableCheckpointWrites(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
