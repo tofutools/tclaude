@@ -629,6 +629,20 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	assert.Equal(t, spec, *decoded)
 	assert.Empty(t, decoded.Contract.PrivateWriteDirs,
 		"a new binary must accept pre-field v2 specs with no private roots")
+	protectedPaths, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	privateParentProtected := false
+	for _, protected := range protectedPaths {
+		if sandboxpolicy.PathContainsOrEqual(
+			protected,
+			tclcommon.SpawnAttachmentsPrivateBase(),
+		) {
+			privateParentProtected = true
+			break
+		}
+	}
+	assert.True(t, privateParentProtected,
+		"pre-field v2 servers must inherit the existing daemon-data hide over the private parent")
 
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,
@@ -646,7 +660,6 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "no mutable state directories")
 
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache-home"))
 	privateRoot, _, err := tclcommon.PrepareSpawnAttachmentsPrivateDir("spwn-opencode")
 	require.NoError(t, err)
 	freshSpec, err := openCodeTclaudeLayerLaunchSpec(

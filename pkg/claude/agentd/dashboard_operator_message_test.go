@@ -42,6 +42,21 @@ func TestConsumeOperatorAttachmentBatchRejectsForgedPathToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid attachment token")
 }
 
+func TestRemoveDaemonStagedAttachmentBatchForgetsIssuedPaths(t *testing.T) {
+	isolateSpawnAttachmentsBase(t)
+	batch := filepath.Join(spawnAttachmentsBaseDir(), "batch-issued")
+	require.NoError(t, os.MkdirAll(batch, 0o700))
+	staged := filepath.Join(batch, "shot.png")
+	require.NoError(t, os.WriteFile(staged, []byte("image"), 0o600))
+	registerDaemonStagedAttachment(staged)
+	_, issued := daemonStagedAttachmentIdentity(staged)
+	require.True(t, issued)
+
+	require.NoError(t, removeDaemonStagedAttachmentBatch(batch))
+	_, issued = daemonStagedAttachmentIdentity(staged)
+	assert.False(t, issued, "deleted operator-message batches must leave no issuance record")
+}
+
 func TestAttachmentReconcilePreservesFreshUnreferencedCopy(t *testing.T) {
 	setupTestDB(t)
 	durable := t.TempDir()

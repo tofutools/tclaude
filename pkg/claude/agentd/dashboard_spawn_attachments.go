@@ -95,6 +95,14 @@ func forgetDaemonStagedBatch(dir string) {
 	daemonStagedAttachments.Unlock()
 }
 
+func removeDaemonStagedAttachmentBatch(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	forgetDaemonStagedBatch(dir)
+	return nil
+}
+
 // spawnAttachmentFile is one stored upload in the JSON response.
 type spawnAttachmentFile struct {
 	Name string `json:"name"`
@@ -445,11 +453,16 @@ func sweepStaleAttachmentBatches(base string) {
 		if ierr != nil || info.ModTime().After(cutoff) {
 			continue
 		}
-		if rerr := os.RemoveAll(filepath.Join(base, e.Name())); rerr != nil {
+		dir := filepath.Join(base, e.Name())
+		var removeErr error
+		if filepath.Clean(base) == filepath.Clean(spawnAttachmentsBaseDir()) {
+			removeErr = removeDaemonStagedAttachmentBatch(dir)
+		} else {
+			removeErr = os.RemoveAll(dir)
+		}
+		if removeErr != nil {
 			slog.Debug("spawn-attachments: failed to sweep stale batch",
-				"dir", e.Name(), "error", rerr)
-		} else if filepath.Clean(base) == filepath.Clean(spawnAttachmentsBaseDir()) {
-			forgetDaemonStagedBatch(filepath.Join(base, e.Name()))
+				"dir", e.Name(), "error", removeErr)
 		}
 	}
 }

@@ -3666,6 +3666,11 @@ type spawnParams struct {
 	// Empty everywhere else. Unexported on purpose: only
 	// executeServerSpawnDeferred sets it.
 	pendingSpawnLabel string
+	// privateAttachmentRootReserved says the deferred pass atomically claimed
+	// pendingSpawnLabel's private root before publishing the Pending row. The
+	// continuation may reuse that exact root; every fresh inline spawn must
+	// instead create a new root so a label collision cannot cross generations.
+	privateAttachmentRootReserved bool
 	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
 	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
 	// records it onto the new actor's agents.initial_spawn_config so there is a
@@ -4354,11 +4359,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// The deferred server-authoritative continuation arrives with its label
 	// already reserved (it keys the pending_spawns row the response returned),
 	// so that label is authoritative and must not be re-minted.
-	label := p.pendingSpawnLabel
-	if label == "" {
-		label = generateSpawnLabel()
-	}
-
 	privateAttachmentCleanup := func() {}
 	privateAttachmentsLaunched := false
 	defer func() {
@@ -4366,7 +4366,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			privateAttachmentCleanup()
 		}
 	}()
-	if p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+	layeredLaunch := p.SandboxImplementation ==
+		string(sandboxpolicy.ImplementationTclaudeLayer)
+	label := p.pendingSpawnLabel
+	if label == "" && layeredLaunch {
+		var reserveErr error
+		label, privateAttachmentCleanup, reserveErr =
+			reserveUniqueSpawnPrivateAttachmentRoot()
+		if reserveErr != nil {
+			return nil, &spawnFailure{
+				http.StatusInternalServerError,
+				"spawn",
+				"could not reserve private attachment root: " + reserveErr.Error(),
+			}
+		}
+	} else if label == "" {
+		label = generateSpawnLabel()
+	} else if layeredLaunch {
 		_, privateRootCreated, prepareErr :=
 			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
 		if prepareErr != nil {
@@ -4376,11 +4392,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				"could not prepare private attachment root: " + prepareErr.Error(),
 			}
 		}
-		if privateRootCreated {
-			privateAttachmentCleanup = func() {
-				_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
+		if !privateRootCreated && !p.privateAttachmentRootReserved {
+			return nil, &spawnFailure{
+				http.StatusConflict,
+				"spawn_label_collision",
+				"private attachment root is already owned by another spawn generation",
 			}
 		}
+		privateAttachmentCleanup = func() {
+			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
+		}
+	}
+	if layeredLaunch {
 		if len(p.Attachments) > 0 {
 			promoted, batchCleanup, promoteErr :=
 				promoteSpawnAttachments(label, p.Attachments)
@@ -4993,14 +5016,27 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	}
 
 	label := generateSpawnLabel()
+	privateRootCleanup := func() {}
+	if p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		var reserveErr error
+		label, privateRootCleanup, reserveErr =
+			reserveUniqueSpawnPrivateAttachmentRoot()
+		if reserveErr != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"could not reserve private attachment root: " + reserveErr.Error()}
+		}
+	}
 	p.AgentID = db.NewAgentID()
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
 			"failed to reserve pending spawn " + label + ": " + err.Error()}
 	}
 
 	continuation := p
 	continuation.pendingSpawnLabel = label
+	continuation.privateAttachmentRootReserved =
+		p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 	*syncProofCleanup = false // the continuation owns the proof markers now
 
 	type deferredResult struct {
@@ -5017,6 +5053,10 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	goBackground(func() {
 		out, fail := executeSpawn(g, continuation)
 		if fail != nil {
+			// executeSpawn normally owns this cleanup after it reaches the
+			// reserved-label phase. Keep the outer ownership as a backstop for
+			// any earlier validation failure in the continuation.
+			privateRootCleanup()
 			// No pane will ever write a session row for this label, so the
 			// reservation must not linger as a forever-Pending ghost. Success
 			// paths clear it via the atomic claim (or the sweeper); a delete
@@ -6155,6 +6195,35 @@ func generateSpawnLabel() string {
 	var b [3]byte
 	_, _ = rand.Read(b[:])
 	return "spwn-" + hex.EncodeToString(b[:])
+}
+
+// reserveUniqueSpawnPrivateAttachmentRoot couples the short human-facing
+// spawn label to a newly-created private root before any upload is promoted.
+// A stale/live label collision is reminted rather than reusing another
+// generation's inode and briefly exposing its batches.
+func reserveUniqueSpawnPrivateAttachmentRoot() (string, func(), error) {
+	return reserveUniqueSpawnPrivateAttachmentRootWith(generateSpawnLabel)
+}
+
+func reserveUniqueSpawnPrivateAttachmentRootWith(
+	nextLabel func() string,
+) (string, func(), error) {
+	const maxAttempts = 16
+	for range maxAttempts {
+		label := nextLabel()
+		root, created, err := tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+		if err != nil {
+			return "", func() {}, err
+		}
+		if !created {
+			continue
+		}
+		return label, func() { _ = os.Remove(root) }, nil
+	}
+	return "", func() {}, fmt.Errorf(
+		"could not mint an unused private attachment root after %d attempts",
+		maxAttempts,
+	)
 }
 
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.

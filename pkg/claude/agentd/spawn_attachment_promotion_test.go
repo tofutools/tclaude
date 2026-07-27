@@ -15,7 +15,7 @@ import (
 
 func TestPromoteSpawnAttachmentsCopiesIntoPrivateRootAndPreservesStaging(t *testing.T) {
 	isolateSpawnAttachmentsBase(t)
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	batch := filepath.Join(spawnAttachmentsBaseDir(), convops.GenerateUUID())
 	require.NoError(t, os.MkdirAll(batch, 0o700))
 	staged := filepath.Join(batch, "pasted-image.png")
@@ -43,9 +43,32 @@ func TestPromoteSpawnAttachmentsCopiesIntoPrivateRootAndPreservesStaging(t *test
 	assert.True(t, os.IsNotExist(err), "failed-launch cleanup removes the now-empty root")
 }
 
+func TestReserveUniqueSpawnPrivateAttachmentRootRemintsCollision(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, created, err := tclcommon.PrepareSpawnAttachmentsPrivateDir("spwn-collision")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	labels := []string{"spwn-collision", "spwn-fresh"}
+	next := 0
+	label, cleanup, err := reserveUniqueSpawnPrivateAttachmentRootWith(func() string {
+		label := labels[next]
+		next++
+		return label
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "spwn-fresh", label)
+	assert.Equal(t, 2, next, "the occupied label must be reminted")
+	_, err = os.Stat(tclcommon.SpawnAttachmentsPrivateDir(label))
+	require.NoError(t, err)
+	cleanup()
+	_, err = os.Stat(tclcommon.SpawnAttachmentsPrivateDir(label))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestPromoteSpawnAttachmentsRejectsHostileAndNonRegularPaths(t *testing.T) {
 	isolateSpawnAttachmentsBase(t)
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	validBatch := filepath.Join(spawnAttachmentsBaseDir(), convops.GenerateUUID())
 	require.NoError(t, os.MkdirAll(validBatch, 0o700))
 	validFile := filepath.Join(validBatch, "valid.png")
@@ -104,7 +127,7 @@ func TestPromoteSpawnAttachmentsRejectsHostileAndNonRegularPaths(t *testing.T) {
 
 func TestPromoteSpawnAttachmentsRejectsIssuedPathReplacedByHostileFile(t *testing.T) {
 	isolateSpawnAttachmentsBase(t)
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	batch := filepath.Join(spawnAttachmentsBaseDir(), convops.GenerateUUID())
 	require.NoError(t, os.MkdirAll(batch, 0o700))
 	staged := filepath.Join(batch, "issued.png")
@@ -121,7 +144,7 @@ func TestPromoteSpawnAttachmentsRejectsIssuedPathReplacedByHostileFile(t *testin
 }
 
 func TestSweepPrivateAttachmentRootsNeverRemovesLiveRoot(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	now := time.Now()
 	old := now.Add(-spawnAttachmentBatchTTL - time.Hour)
 	liveRoot := tclcommon.SpawnAttachmentsPrivateDir("live")

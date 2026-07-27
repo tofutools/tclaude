@@ -10,9 +10,11 @@ import (
 )
 
 // SpawnAttachmentsPrivateBase is the daemon-owned parent hidden from every
-// tclaude-layer launch. Each launch reopens only its own hashed child.
+// tclaude-layer launch. It lives below the existing protected daemon-data root
+// so pre-TCL-779 launch specs that lack a private reopen still cannot see it.
+// Each current launch reopens only its own hashed child.
 func SpawnAttachmentsPrivateBase() string {
-	return filepath.Join(CacheDir(), "spawn-attachments")
+	return filepath.Join(TclaudeDataDir(), "spawn-attachments")
 }
 
 // SpawnAttachmentsPrivateDir returns the stable, path-safe private directory
