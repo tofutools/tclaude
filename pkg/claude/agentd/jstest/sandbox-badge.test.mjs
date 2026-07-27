@@ -156,14 +156,14 @@ const CASES = [
     titleNot: [/Bash is confined/, /could not read a settings file/, /not in force/],
   },
   {
-    name: 'an unverified stacked or unknown implementation does not earn the tclaude-layer lock',
+    name: 'a stacked or unknown implementation does not inherit the tclaude-layer lock',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
       sandbox_implementation: 'stacked',
-      os_sandbox_source: 'stacked sandbox implementation', os_sandbox_unverified: true,
+      os_sandbox_source: 'stacked sandbox implementation',
     },
     glyph: '⚠', danger: true,
-    title: [/^Sandbox: on \(unverified\) —/],
+    title: [/^Sandbox: on —/],
   },
   {
     name: 'a verified on keeps the plain padlock and the confinement claim',

@@ -225,7 +225,11 @@ function osSandboxBadge(mode, state, source, prefix, unverified, implementation)
       // earned the real lock because the OS wall is established even when its
       // fidelity caveats remain. Future/unknown implementations must earn
       // their own badge rather than inheriting this exception by name shape.
-      danger: unverified && implementation !== 'tclaude-layer',
+      danger: implementation === 'tclaude-layer'
+        ? false
+        : implementation && implementation !== 'harness-builtin'
+          ? true
+          : unverified,
       // A mode of `off` means tclaude emitted `{"sandbox":{"enabled":false}}`
       // and, with it, NONE of the profile's filesystem rules (claudeSettingsJSON
       // skips every filesystem key for an `off` launch). Managed policy can
