@@ -126,8 +126,13 @@ type SpawnArgs struct {
 	// wrapper. Production carries them in the child environment, never CLI
 	// argv; the wrapper then inherits the password into `opencode attach`.
 	// Empty for every pane-authoritative harness.
-	OpenCodeServerURL      string
-	OpenCodeServerPassword string
+	OpenCodeServerURL           string
+	OpenCodeServerPassword      string
+	OpenCodeTransport           string
+	OpenCodeControlSocketPath   string
+	OpenCodeControlSocketDevice int64
+	OpenCodeControlSocketInode  int64
+	OpenCodeServerPID           int
 	// OpenCodeEnvironment is the daemon-final XDG allocation carried to the
 	// attach client. It is empty for harness-builtin and grandfathered agents.
 	OpenCodeEnvironment    []sandboxpolicy.EnvironmentEntry

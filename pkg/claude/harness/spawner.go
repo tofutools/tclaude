@@ -20,7 +20,12 @@ type SpawnSpec struct {
 	// server-authoritative harness. It is intentionally endpoint-only: the
 	// credential stays in the process environment and must never enter the
 	// shell command or argv.
-	ServerURL string
+	ServerURL                   string
+	OpenCodeTransport           string
+	OpenCodeControlSocketPath   string
+	OpenCodeControlSocketDevice int64
+	OpenCodeControlSocketInode  int64
+	OpenCodeServerPID           int
 	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
 	// to the command. The caller assembles it (tclaude identity env +
 	// any pass-through), so the Spawner stays agnostic about which vars

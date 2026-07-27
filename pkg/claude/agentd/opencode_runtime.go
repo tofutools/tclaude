@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,11 +47,20 @@ const (
 )
 
 type openCodeLaunch struct {
-	SessionID string
-	ConvID    string
-	ServerURL string
-	Password  string
-	PID       int
+	SessionID           string
+	ConvID              string
+	ServerURL           string
+	Password            string
+	PID                 int
+	Transport           string
+	ControlSocketPath   string
+	ControlSocketDevice int64
+	ControlSocketInode  int64
+}
+
+type openCodeUnixLaunchHandshake struct {
+	authority   *os.File
+	acknowledge *os.File
 }
 
 type openCodeTUICommand string
@@ -133,6 +143,7 @@ var (
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
 	resolveOpenCodeTclaudeLayer  = session.ResolveTclaudeLayerServer
 	wrapOpenCodeTclaudeLayer     = session.WrapTclaudeLayerServerSpec
+	openCodeRelayExecutable      = os.Executable
 )
 
 func startOpenCodeRuntime(
@@ -155,11 +166,19 @@ func startOpenCodeRuntime(
 	if err != nil {
 		return nil, err
 	}
+	transport, controlPath, err := openCodeRuntimeTransportForSpec(sandboxSpec)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("look up OpenCode runtime: %w", err)
 	}
 	if existing != nil {
+		if _, validationErr := openCodeRuntimeSandboxSpec(*existing); validationErr != nil {
+			return nil, fmt.Errorf(
+				"refuse invalid persisted OpenCode runtime transport: %w", validationErr)
+		}
 		// OpenCode's permission paths and API instance are both rooted in cwd.
 		// Never reuse a healthy endpoint for a different directory identity:
 		// patching a policy compiled for cwd B through cwd A would be ambiguous
@@ -169,7 +188,9 @@ func startOpenCodeRuntime(
 			existing.SandboxImplementation)
 		sameSandbox := implementationErr == nil &&
 			string(existingImplementation) == sandboxImplementation &&
-			existing.SandboxLaunchSpecJSON == sandboxSpecJSON
+			existing.SandboxLaunchSpecJSON == sandboxSpecJSON &&
+			existing.Transport == transport &&
+			existing.ControlSocketPath == controlPath
 		if sameCwd && sameSandbox && openCodeHealthyAfterRetries(*existing,
 			openCodeHealthAttempts, openCodeHealthRetryDelay) {
 			if existing.PermissionJSON != permissionJSON {
@@ -182,13 +203,15 @@ func startOpenCodeRuntime(
 				return nil, fmt.Errorf("verify OpenCode session permission: %w", err)
 			}
 			ensureOpenCodeSSE(*existing)
-			return &openCodeLaunch{
-				SessionID: sessionID, ConvID: existing.ConvID,
-				ServerURL: existing.ServerURL, Password: existing.Password,
-				PID: existing.PID,
-			}, nil
+			return openCodeLaunchFromRuntime(*existing), nil
 		}
-		_ = stopOpenCodeRuntime(sessionID)
+		if !openCodeRuntimeSafeToReplace(*existing) {
+			return nil, fmt.Errorf(
+				"refusing to replace live OpenCode Unix runtime without socket ownership proof")
+		}
+		if err := stopOpenCodeRuntime(sessionID); err != nil {
+			return nil, fmt.Errorf("retire prior OpenCode runtime: %w", err)
+		}
 	}
 	// A fresh launch is keyed by its temporary tclaude session label because
 	// the server has not minted the conversation ID yet. A later resume is
@@ -224,8 +247,10 @@ func startOpenCodeRuntime(
 			PermissionJSON:        permissionJSON,
 			SandboxImplementation: sandboxImplementation,
 			SandboxLaunchSpecJSON: sandboxSpecJSON,
+			Transport:             transport,
+			ControlSocketPath:     controlPath,
 		}
-		process, err := startOpenCodeProcess(runtime, sandboxSpec)
+		process, err := startOpenCodeProcess(&runtime, sandboxSpec)
 		if err != nil {
 			lastErr = err
 			continue
@@ -250,13 +275,33 @@ func startOpenCodeRuntime(
 			return nil, fmt.Errorf("reapply OpenCode session permission: %w", err)
 		}
 		ensureOpenCodeSSE(runtime)
-		return &openCodeLaunch{
-			SessionID: sessionID, ConvID: runtime.ConvID,
-			ServerURL: runtime.ServerURL, Password: runtime.Password,
-			PID: runtime.PID,
-		}, nil
+		return openCodeLaunchFromRuntime(runtime), nil
 	}
 	return nil, fmt.Errorf("start OpenCode server after 3 port attempts: %w", lastErr)
+}
+
+func openCodeRuntimeTransportForSpec(
+	spec *session.TclaudeLayerLaunchSpec,
+) (string, string, error) {
+	if spec == nil || spec.Version != session.TclaudeLayerUnixRelaySpecVersion {
+		return db.OpenCodeTransportLoopbackTCP, "", nil
+	}
+	if spec.Contract.OpenCodeControl == nil ||
+		spec.Contract.OpenCodeControl.Transport != session.TclaudeLayerUnixRelayTransport ||
+		strings.TrimSpace(spec.Contract.OpenCodeControl.SocketPath) == "" {
+		return "", "", fmt.Errorf("OpenCode tclaude-layer v4 has incomplete Unix control authority")
+	}
+	return db.OpenCodeTransportUnixRelay, spec.Contract.OpenCodeControl.SocketPath, nil
+}
+
+func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
+	return &openCodeLaunch{
+		SessionID: runtime.SessionID, ConvID: runtime.ConvID,
+		ServerURL: runtime.ServerURL, Password: runtime.Password, PID: runtime.PID,
+		Transport: runtime.Transport, ControlSocketPath: runtime.ControlSocketPath,
+		ControlSocketDevice: runtime.ControlSocketDevice,
+		ControlSocketInode:  runtime.ControlSocketInode,
+	}
 }
 
 func openCodeSandboxRecord(
@@ -282,6 +327,9 @@ func normalizeOpenCodeRuntimeSandboxImplementation(raw string) (sandboxpolicy.Im
 func openCodeRuntimeSandboxSpec(
 	runtime db.OpenCodeRuntime,
 ) (*session.TclaudeLayerLaunchSpec, error) {
+	if err := db.ValidateOpenCodeRuntimeTransport(runtime); err != nil {
+		return nil, fmt.Errorf("OpenCode runtime transport authority: %w", err)
+	}
 	implementation, err := normalizeOpenCodeRuntimeSandboxImplementation(
 		runtime.SandboxImplementation)
 	if err != nil {
@@ -320,7 +368,8 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("decode OpenCode tclaude-layer launch spec trailer: %w", err)
 	}
 	if spec.Version != session.TclaudeLayerLaunchSpecVersion &&
-		spec.Version != session.TclaudeLayerLegacyLaunchSpecVersion {
+		spec.Version != session.TclaudeLayerLegacyLaunchSpecVersion &&
+		spec.Version != session.TclaudeLayerUnixRelaySpecVersion {
 		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer launch spec version %d", spec.Version)
 	}
 	if spec.Contract.HarnessName != harness.OpenCodeName {
@@ -373,7 +422,8 @@ func openCodeRuntimeSandboxSpec(
 				stateDir)
 		}
 	}
-	if spec.Version == session.TclaudeLayerLaunchSpecVersion {
+	if spec.Version == session.TclaudeLayerLaunchSpecVersion ||
+		spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
 		if err := validateOpenCodeV3LaunchContract(spec.Contract); err != nil {
 			return nil, err
 		}
@@ -401,7 +451,22 @@ func openCodeRuntimeSandboxSpec(
 	if err != nil {
 		return nil, err
 	}
-	if posture != sandboxpolicy.NetworkHostOpen {
+	if spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
+		if posture != sandboxpolicy.NetworkIsolatedWithAgentd ||
+			runtime.Transport != db.OpenCodeTransportUnixRelay ||
+			spec.Contract.OpenCodeControl == nil ||
+			runtime.ControlSocketPath != spec.Contract.OpenCodeControl.SocketPath {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer v4 runtime does not match its Unix-relay authority")
+		}
+		agentID := filepath.Base(filepath.Dir(runtime.ControlSocketPath))
+		expectedControlPath, authorityErr := openCodeControlSocketPath(agentID)
+		if authorityErr != nil || expectedControlPath != runtime.ControlSocketPath {
+			return nil, fmt.Errorf(
+				"OpenCode tclaude-layer v4 runtime control path is outside its allocated agent authority")
+		}
+	} else if posture != sandboxpolicy.NetworkHostOpen ||
+		runtime.Transport == db.OpenCodeTransportUnixRelay {
 		return nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer restart requires the host-open loopback control plane and endpoint-ownership proof")
 	}
@@ -420,7 +485,7 @@ func canonicalOpenCodeRuntimePath(path string) string {
 }
 
 func startOpenCodeProcess(
-	runtime db.OpenCodeRuntime,
+	runtime *db.OpenCodeRuntime,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeProcess, error) {
 	if sandboxSpec != nil {
@@ -440,10 +505,12 @@ func startOpenCodeProcess(
 	if err != nil {
 		return nil, fmt.Errorf("parse OpenCode server endpoint: %w", err)
 	}
-	command, args, err := openCodeServeExec(executable, port, sandboxSpec)
+	command, args, extraFiles, unixHandshake, cleanup, err := openCodeServeProcessExec(
+		executable, port, runtime, sandboxSpec)
 	if err != nil {
 		return nil, err
 	}
+	defer cleanup()
 	cmd := exec.Command(command, args...)
 	cmd.Dir = runtime.Cwd
 	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
@@ -453,8 +520,12 @@ func startOpenCodeProcess(
 	cmd.Stdout = io.Discard
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
+	cmd.ExtraFiles = extraFiles
 	if err := cmd.Start(); err != nil {
 		return nil, err
+	}
+	for _, file := range extraFiles {
+		_ = file.Close()
 	}
 	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1), convID: runtime.ConvID}
 	openCodeProcesses.Lock()
@@ -467,6 +538,45 @@ func startOpenCodeProcess(
 		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
 	}()
 	runtime.PID = cmd.Process.Pid
+	if unixHandshake != nil {
+		type authorityResult struct {
+			authority opencodeapi.UnixLaunchAuthority
+			err       error
+		}
+		authorityReady := make(chan authorityResult, 1)
+		go func() {
+			authority, readErr := opencodeapi.ReadUnixLaunchAuthority(
+				unixHandshake.authority)
+			authorityReady <- authorityResult{authority: authority, err: readErr}
+		}()
+		var result authorityResult
+		select {
+		case result = <-authorityReady:
+		case processErr := <-process.done:
+			if processErr == nil {
+				processErr = fmt.Errorf("unix launcher exited before authority handshake")
+			}
+			stopOpenCodeProcess(*runtime, process)
+			return nil, fmt.Errorf("OpenCode Unix launcher failed: %w: %s",
+				processErr, stderr.String())
+		case <-time.After(openCodeStartupTimeout):
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, fmt.Errorf("OpenCode Unix launcher authority handshake timed out")
+		}
+		if result.err != nil {
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, result.err
+		}
+		if err := persistAndAcknowledgeOpenCodeUnixLaunch(
+			runtime, result.authority, unixHandshake.acknowledge); err != nil {
+			_ = unixHandshake.acknowledge.Close()
+			stopOpenCodeProcess(*runtime, process)
+			return nil, err
+		}
+		_ = unixHandshake.acknowledge.Close()
+	}
 	deadline := time.Now().Add(openCodeStartupTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -474,6 +584,7 @@ func startOpenCodeProcess(
 			if err == nil {
 				err = fmt.Errorf("server exited before health check")
 			}
+			stopOpenCodeProcess(*runtime, process)
 			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
 		default:
 		}
@@ -481,7 +592,7 @@ func startOpenCodeProcess(
 		// OpenCode does not accept a pre-bound listener. Never disclose the
 		// password to that endpoint until the launched PID (or a child) is
 		// positively observed owning its listening socket.
-		if openCodeHealthy(runtime) {
+		if openCodeHealthy(*runtime) {
 			return process, nil
 		}
 		select {
@@ -489,13 +600,101 @@ func startOpenCodeProcess(
 			if err == nil {
 				err = fmt.Errorf("server exited before health check")
 			}
+			stopOpenCodeProcess(*runtime, process)
 			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	stopOpenCodeProcess(runtime, process)
+	stopOpenCodeProcess(*runtime, process)
 	return nil, fmt.Errorf("OpenCode server at %s did not become healthy within %s",
 		runtime.ServerURL, openCodeStartupTimeout)
+}
+
+func openCodeServeProcessExec(
+	executable, port string,
+	runtime *db.OpenCodeRuntime,
+	sandboxSpec *session.TclaudeLayerLaunchSpec,
+) (string, []string, []*os.File, *openCodeUnixLaunchHandshake, func(), error) {
+	noCleanup := func() {}
+	if runtime.Transport != db.OpenCodeTransportUnixRelay {
+		command, args, err := openCodeServeExec(executable, port, sandboxSpec)
+		return command, args, nil, nil, noCleanup, err
+	}
+	if sandboxSpec == nil || sandboxSpec.Version != session.TclaudeLayerUnixRelaySpecVersion {
+		return "", nil, nil, nil, noCleanup, fmt.Errorf(
+			"unix-relay OpenCode runtime requires a tclaude-layer v4 spec")
+	}
+	selfPath, err := openCodeRelayExecutable()
+	if err != nil {
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("resolve tclaude relay executable: %w", err)
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
+		sandboxpolicy.NetworkIsolatedWithAgentd)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	serveArgs := []string{
+		"serve", "--hostname", "127.0.0.1",
+		"--port", port, "--log-level", "ERROR",
+	}
+	relayArgv := []string{
+		"/proc/self/fd/4", opencodeapi.InheritedUnixRelayMode,
+		"3", "127.0.0.1:" + port, "--", executable,
+	}
+	relayArgv = append(relayArgv, serveArgs...)
+	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
+		bwrapBinary, *sandboxSpec, 2, relayArgv)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	authorityR, authorityW, err := os.Pipe()
+	if err != nil {
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("create OpenCode Unix authority pipe: %w", err)
+	}
+	gateR, gateW, err := os.Pipe()
+	if err != nil {
+		_ = authorityR.Close()
+		_ = authorityW.Close()
+		return "", nil, nil, nil, noCleanup,
+			fmt.Errorf("create OpenCode Unix launch gate: %w", err)
+	}
+	cleanup := func() {
+		_ = authorityR.Close()
+		_ = authorityW.Close()
+		_ = gateR.Close()
+		_ = gateW.Close()
+	}
+	launcherArgs := []string{
+		opencodeapi.UnixLaunchMode, runtime.ControlSocketPath, "--",
+	}
+	launcherArgs = append(launcherArgs, argv...)
+	return selfPath, launcherArgs, []*os.File{authorityW, gateR},
+		&openCodeUnixLaunchHandshake{
+			authority: authorityR, acknowledge: gateW,
+		}, cleanup, nil
+}
+
+func persistAndAcknowledgeOpenCodeUnixLaunch(
+	runtime *db.OpenCodeRuntime,
+	authority opencodeapi.UnixLaunchAuthority,
+	acknowledge io.Writer,
+) error {
+	runtime.ControlSocketDevice = authority.Device
+	runtime.ControlSocketInode = authority.Inode
+	if err := db.UpsertOpenCodeRuntime(*runtime); err != nil {
+		return fmt.Errorf(
+			"persist provisional OpenCode Unix launch authority: %w", err)
+	}
+	written, err := acknowledge.Write([]byte{1})
+	if err != nil {
+		return fmt.Errorf("acknowledge OpenCode Unix launch authority: %w", err)
+	}
+	if written != 1 {
+		return fmt.Errorf("acknowledge OpenCode Unix launch authority: %w", io.ErrShortWrite)
+	}
+	return nil
 }
 
 func openCodeServerEnvironment(
@@ -660,10 +859,74 @@ func openCodeTclaudeLayerLaunchSpec(
 		return nil, err
 	}
 	if posture != sandboxpolicy.NetworkHostOpen {
-		return nil, fmt.Errorf(
-			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking because agentd and the attach pane use its authenticated loopback control plane and endpoint-ownership proof",
-		)
+		if posture == sandboxpolicy.NetworkFiltered {
+			_, _, filteredErr := resolveOpenCodeTclaudeLayer(posture)
+			if filteredErr != nil {
+				return nil, filteredErr
+			}
+			return nil, fmt.Errorf("network posture %s is reserved", posture)
+		}
+		openCodeHarness, resolveErr := harness.Resolve(harness.OpenCodeName)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: network}
+		if snapshot != nil {
+			effective = snapshot.Effective
+		}
+		if err := session.ValidateTclaudeLayerNetwork(openCodeHarness, effective); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer network posture %s", posture)
 	}
+	return buildOpenCodeTclaudeLayerLaunchSpec(
+		cwd, gitWriteDirs, snapshot, agentID, false, privateSessionIDs...)
+}
+
+// openCodeUnixRelayLaunchSpec builds the exercised v4 control-plane boundary.
+// The public spawn path deliberately does not call it yet: OpenCode's hosted
+// model traffic still fails ValidateTclaudeLayerNetwork under the isolated
+// posture. Keeping this seam separate makes that non-enforcement boundary
+// explicit while allowing CI to run the real engine.
+func openCodeUnixRelayLaunchSpec(
+	implementation, cwd string,
+	gitWriteDirs []string,
+	snapshot *sandboxpolicy.Snapshot,
+	agentID string,
+	privateSessionIDs ...string,
+) (*session.TclaudeLayerLaunchSpec, error) {
+	if runtime.GOOS != "linux" {
+		return nil, fmt.Errorf("OpenCode Unix relay is Linux-only")
+	}
+	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
+	if err != nil {
+		return nil, err
+	}
+	if normalized != sandboxpolicy.ImplementationTclaudeLayer {
+		return nil, fmt.Errorf("OpenCode Unix relay requires tclaude-layer")
+	}
+	if snapshot == nil {
+		return nil, fmt.Errorf("OpenCode Unix relay requires an isolated effective profile")
+	}
+	posture, err := sandboxpolicy.NetworkPostureForAccess(snapshot.Effective.NetworkAccess)
+	if err != nil {
+		return nil, err
+	}
+	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
+		return nil, fmt.Errorf("OpenCode Unix relay requires the isolated network posture")
+	}
+	return buildOpenCodeTclaudeLayerLaunchSpec(
+		cwd, gitWriteDirs, snapshot, agentID, true, privateSessionIDs...)
+}
+
+func buildOpenCodeTclaudeLayerLaunchSpec(
+	cwd string,
+	gitWriteDirs []string,
+	snapshot *sandboxpolicy.Snapshot,
+	agentID string,
+	unixRelay bool,
+	privateSessionIDs ...string,
+) (*session.TclaudeLayerLaunchSpec, error) {
 	allocation, err := requireOpenCodeStateAllocation(agentID)
 	if err != nil {
 		return nil, err
@@ -693,6 +956,15 @@ func openCodeTclaudeLayerLaunchSpec(
 		Environment:      layout.environment,
 		FinalHideDirs:    layout.finalHideDirs,
 		ReadOnlyBinds:    layout.readOnlyBinds,
+	}
+	if unixRelay {
+		controlPath, controlErr := openCodeControlSocketPath(agentID)
+		if controlErr != nil {
+			return nil, controlErr
+		}
+		input.OpenCodeControl = &session.TclaudeLayerOpenCodeControl{
+			Transport: session.TclaudeLayerUnixRelayTransport, SocketPath: controlPath,
+		}
 	}
 	if allocation.Mode == db.OpenCodeStatePrivate {
 		input.StateRoot = allocation.StateRoot
@@ -783,7 +1055,7 @@ var openCodeRuntimeVerified = openCodeRuntimeOwnsRecordedPID
 // agentd's own pid because a managed serve is agentd's direct child).
 func openCodeRuntimeOwnsRecordedPID(runtime db.OpenCodeRuntime) bool {
 	return runtime.PID > 1 &&
-		openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL)
+		opencodeapi.RuntimeOwnsEndpoint(runtime)
 }
 
 func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
@@ -792,7 +1064,7 @@ func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
 	if err != nil {
 		return false
 	}
-	response, err := openCodeHealthHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHealthHTTPClient, request, runtime)
 	if err != nil {
 		return false
 	}
@@ -833,7 +1105,7 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 	if err != nil {
 		return "", err
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	if err != nil {
 		return "", fmt.Errorf("create OpenCode session: %w", err)
 	}
@@ -910,7 +1182,7 @@ func ensureOpenCodeSessionPermission(runtime db.OpenCodeRuntime) error {
 	if err != nil {
 		return err
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	if err != nil {
 		return fmt.Errorf("reapply OpenCode session permission: %w", err)
 	}
@@ -940,7 +1212,7 @@ func getOpenCodeSessionPermission(runtime db.OpenCodeRuntime) ([]harness.OpenCod
 	if err != nil {
 		return nil, err
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	if err != nil {
 		return nil, fmt.Errorf("read OpenCode session permission: %w", err)
 	}
@@ -985,13 +1257,17 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 	}
 	endpoint := launch.ServerURL + "/session/" + url.PathEscape(launch.ConvID) +
 		"/prompt_async?directory=" + url.QueryEscape(cwd)
-	request, err := openCodeRequest(http.MethodPost, endpoint, db.OpenCodeRuntime{
+	runtime := db.OpenCodeRuntime{
 		PID: launch.PID, ServerURL: launch.ServerURL, Password: launch.Password,
-	}, body)
+		Transport: launch.Transport, ControlSocketPath: launch.ControlSocketPath,
+		ControlSocketDevice: launch.ControlSocketDevice,
+		ControlSocketInode:  launch.ControlSocketInode,
+	}
+	request, err := openCodeRequest(http.MethodPost, endpoint, runtime, body)
 	if err != nil {
 		return err
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	if err != nil {
 		return fmt.Errorf("submit OpenCode launch prompt: %w", err)
 	}
@@ -1022,11 +1298,15 @@ func sendOpenCodeNudge(convID, nudge string) error {
 		return err
 	}
 	return sendOpenCodePrompt(&openCodeLaunch{
-		SessionID: runtime.SessionID,
-		ConvID:    runtime.ConvID,
-		ServerURL: runtime.ServerURL,
-		Password:  runtime.Password,
-		PID:       runtime.PID,
+		SessionID:           runtime.SessionID,
+		ConvID:              runtime.ConvID,
+		ServerURL:           runtime.ServerURL,
+		Password:            runtime.Password,
+		PID:                 runtime.PID,
+		Transport:           runtime.Transport,
+		ControlSocketPath:   runtime.ControlSocketPath,
+		ControlSocketDevice: runtime.ControlSocketDevice,
+		ControlSocketInode:  runtime.ControlSocketInode,
 	}, runtime.Cwd, nudge, "", "")
 }
 
@@ -1074,7 +1354,7 @@ func sendOpenCodeTUICommand(
 	if err != nil {
 		return fmt.Errorf("build OpenCode TUI command request: %w", err)
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := opencodeapi.Do(openCodeHTTPClient, request, *runtime)
 	if err != nil {
 		return fmt.Errorf("publish OpenCode TUI command: %w", err)
 	}
@@ -1147,13 +1427,18 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 			"session", sessionID, "error", err)
 		return false
 	}
+	if !openCodeRuntimeSafeToReplace(*runtime) {
+		slog.Error("OpenCode server restart refused: live Unix runtime ownership unproven",
+			"session", sessionID)
+		return false
+	}
 	stopOpenCodeProcess(*runtime, nil)
-	if !waitForOpenCodeEndpointRelease(runtime.ServerURL, openCodeEndpointCloseWait) {
+	if !waitForOpenCodeRuntimeRelease(*runtime, openCodeEndpointCloseWait) {
 		slog.Error("OpenCode server endpoint remained occupied after stop",
 			"session", sessionID, "endpoint", runtime.ServerURL)
 		return false
 	}
-	process, err := startOpenCodeProcess(*runtime, sandboxSpec)
+	process, err := startOpenCodeProcess(runtime, sandboxSpec)
 	if err != nil {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
 		return false
@@ -1175,6 +1460,21 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 	return true
 }
 
+func openCodeRuntimeSafeToReplace(runtime db.OpenCodeRuntime) bool {
+	if runtime.Transport != db.OpenCodeTransportUnixRelay ||
+		!session.IsProcessAlive(runtime.PID) {
+		return true
+	}
+	openCodeProcesses.Lock()
+	known := openCodeProcesses.bySession[runtime.SessionID]
+	openCodeProcesses.Unlock()
+	if known != nil && known.cmd != nil && known.cmd.Process != nil &&
+		known.cmd.Process.Pid == runtime.PID {
+		return true
+	}
+	return opencodeapi.RuntimeOwnsEndpoint(runtime)
+}
+
 func stopOpenCodeRuntime(sessionID string) error {
 	runtime, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil {
@@ -1184,11 +1484,30 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
+	if runtime.Transport == db.OpenCodeTransportUnixRelay {
+		if session.IsProcessAlive(runtime.PID) {
+			return fmt.Errorf(
+				"OpenCode recovered process remains alive; retaining Unix replay authority")
+		}
+		if err := opencodeapi.RemoveUnixSocket(*runtime); err != nil {
+			return fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
+		}
+	}
 	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
 func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
+	removeControlSocket := true
+	defer func() {
+		if !removeControlSocket {
+			return
+		}
+		if err := opencodeapi.RemoveUnixSocket(runtime); err != nil {
+			slog.Warn("OpenCode Unix control socket cleanup refused",
+				"session", runtime.SessionID, "error", err)
+		}
+	}()
 	openCodeProcesses.Lock()
 	process := known
 	if process == nil {
@@ -1261,8 +1580,14 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if runtime.PID > 1 && runtime.PID != os.Getpid() {
 		switch {
 		case openCodeRuntimeVerified(runtime):
+			recordedTree := opencodeapi.RecordedProcessSubtree(runtime.PID)
 			if recovered, err := os.FindProcess(runtime.PID); err == nil {
 				_ = recovered.Kill()
+			}
+			if !waitForOpenCodePIDsExit(recordedTree, openCodeProcessStopWait) {
+				removeControlSocket = false
+				slog.Warn("OpenCode recovered process tree did not exit; control authority retained",
+					"session", runtime.SessionID, "pid", runtime.PID)
 			}
 		case session.IsProcessAlive(runtime.PID):
 			// The pid is still alive but we cannot prove it is our managed server
@@ -1274,6 +1599,47 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 				"session", runtime.SessionID, "pid", runtime.PID,
 				"endpoint", runtime.ServerURL)
 		}
+	}
+}
+
+func waitForOpenCodeRuntimeRelease(runtime db.OpenCodeRuntime, timeout time.Duration) bool {
+	if runtime.Transport != db.OpenCodeTransportUnixRelay {
+		return waitForOpenCodeEndpointRelease(runtime.ServerURL, timeout)
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !session.IsProcessAlive(runtime.PID) &&
+			openCodeControlPathAbsent(runtime.ControlSocketPath) {
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return !session.IsProcessAlive(runtime.PID) &&
+		openCodeControlPathAbsent(runtime.ControlSocketPath)
+}
+
+func openCodeControlPathAbsent(path string) bool {
+	_, err := os.Lstat(path)
+	return os.IsNotExist(err)
+}
+
+func waitForOpenCodePIDsExit(pids []int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		allExited := true
+		for _, pid := range pids {
+			if session.IsProcessAlive(pid) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -1458,7 +1824,7 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 		if err == nil {
 			request = request.WithContext(ctx)
 			var response *http.Response
-			response, err = openCodeSSEHTTPClient.Do(request)
+			response, err = opencodeapi.Do(openCodeSSEHTTPClient, request, runtime)
 			if err == nil && response.StatusCode == http.StatusOK {
 				stopBodyCancellation := closeOpenCodeSSEBodyOnCancel(ctx, response.Body)
 				reconciled := withOpenCodeProjectorApplyLock(ctx, runtime, func() {
@@ -1548,7 +1914,7 @@ func reconcileOpenCodeSSE(
 			return err
 		}
 		request = request.WithContext(ctx)
-		response, err := openCodeHTTPClient.Do(request)
+		response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 		if err != nil {
 			return err
 		}

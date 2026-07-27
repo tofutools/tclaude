@@ -3,6 +3,8 @@
 package agentd
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,11 +14,151 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/sys/unix"
 )
+
+func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T) {
+	setupTestDB(t)
+	shortHome := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", shortHome)
+	t.Setenv("USERPROFILE", shortHome)
+	shortData, err := os.MkdirTemp("/tmp", "tcl780-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
+	t.Setenv("XDG_DATA_HOME", shortData)
+	db.ResetForTest()
+	cwd := filepath.Join(shortHome, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	agentID := "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+
+	_, err = openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &snapshot, agentID)
+	require.ErrorContains(t, err, "requires hosted model traffic",
+		"the Unix engine must not default-enable the isolated posture")
+
+	spec, err := openCodeUnixRelayLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &snapshot, agentID)
+	if runtime.GOOS != "linux" {
+		require.ErrorContains(t, err, "Linux-only",
+			"Darwin must retain its existing unsupported server-wrap boundary")
+		return
+	}
+	require.NoError(t, err)
+	require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, spec.Version)
+	require.NotNil(t, spec.Contract.OpenCodeControl)
+	controlPath := filepath.Join(allocation.StateRoot, "control.sock")
+	assert.Equal(t, controlPath, spec.Contract.OpenCodeControl.SocketPath)
+	assert.Equal(t, session.TclaudeLayerUnixRelayTransport,
+		spec.Contract.OpenCodeControl.Transport)
+	for _, bind := range spec.Contract.ReadOnlyBinds {
+		assert.NotEqual(t, controlPath, bind.Source)
+		assert.NotEqual(t, controlPath, bind.Target)
+	}
+
+	listener, device, inode, err := opencodeapi.CreateUnixListener(controlPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = listener.Close()
+		_ = os.Remove(controlPath)
+	})
+	require.NoError(t, session.ValidateTclaudeLayerLaunchSpec(*spec))
+	encodedV4, err := json.Marshal(spec)
+	require.NoError(t, err)
+	v4Runtime := db.OpenCodeRuntime{
+		Cwd: cwd, SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: string(encodedV4),
+		Transport:             db.OpenCodeTransportUnixRelay,
+		ControlSocketPath:     controlPath, ControlSocketDevice: device,
+		ControlSocketInode: inode,
+	}
+	replayed, err := openCodeRuntimeSandboxSpec(v4Runtime)
+	require.NoError(t, err)
+	require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, replayed.Version)
+	missingRuntimeAuthority := v4Runtime
+	missingRuntimeAuthority.ControlSocketInode = 0
+	_, err = openCodeRuntimeSandboxSpec(missingRuntimeAuthority)
+	require.ErrorContains(t, err, "incomplete socket authority")
+
+	hostSpec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, nil, agentID)
+	require.NoError(t, err)
+	encodedV3, err := json.Marshal(hostSpec)
+	require.NoError(t, err)
+	v3ClaimingUnix := v4Runtime
+	v3ClaimingUnix.SandboxLaunchSpecJSON = string(encodedV3)
+	_, err = openCodeRuntimeSandboxSpec(v3ClaimingUnix)
+	require.ErrorContains(t, err, "host-open loopback control plane")
+	if runtime.GOOS == "linux" {
+		agentdSocket := filepath.Join(shortHome, ".tclaude", "api", "agentd.sock")
+		require.NoError(t, os.MkdirAll(filepath.Dir(agentdSocket), 0o700))
+		agentdListener, listenErr := net.Listen("unix", agentdSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = agentdListener.Close() })
+		require.NoError(t, listener.Close())
+		require.NoError(t, os.Remove(controlPath))
+		previousResolver := resolveOpenCodeTclaudeLayer
+		resolveOpenCodeTclaudeLayer = func(
+			sandboxpolicy.NetworkPosture,
+		) (string, harness.LaunchOSSandbox, error) {
+			return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+		}
+		previousRelayExecutable := openCodeRelayExecutable
+		openCodeRelayExecutable = os.Executable
+		t.Cleanup(func() {
+			resolveOpenCodeTclaudeLayer = previousResolver
+			openCodeRelayExecutable = previousRelayExecutable
+		})
+		command, args, extraFiles, handshake, cleanup, renderErr := openCodeServeProcessExec(
+			"/usr/bin/opencode", "43210", &v4Runtime, spec)
+		require.NoError(t, renderErr)
+		require.NotEmpty(t, command)
+		require.Len(t, extraFiles, 2,
+			"ExtraFiles must map authority status→fd3 and durable-ack gate→fd4")
+		require.NotNil(t, handshake)
+		t.Cleanup(func() {
+			cleanup()
+		})
+		argv := append([]string{command}, args...)
+		joined := strings.Join(argv, " ")
+		serverJoined := strings.Join(args[3:], " ")
+		assert.Contains(t, joined, opencodeapi.UnixLaunchMode+" "+controlPath+" -- /usr/bin/bwrap")
+		assert.Contains(t, serverJoined, "--unshare-net")
+		assert.Contains(t, serverJoined, "--unshare-pid")
+		assert.NotContains(t, serverJoined, "--preserve-fds",
+			"upstream bubblewrap preserves inherited non-CLOEXEC fds without a flag")
+		assert.Contains(t, serverJoined,
+			"/proc/self/fd/4 "+opencodeapi.InheritedUnixRelayMode+" 3 ",
+			"the relay executable and listener must retain their exact fd mapping")
+		assert.NotContains(t, serverJoined, controlPath,
+			"the server namespace must receive only the inherited control fd")
+		assert.NotContains(t, serverJoined, ".tclaude-opencode-v4-state",
+			"the server mount plan must not rely on a namespace-created bind source")
+		assert.NotContains(t, serverJoined, "--ro-bind "+controlPath+" "+controlPath)
+		assert.NotContains(t, serverJoined, "--bind "+controlPath+" "+controlPath)
+	}
+
+	missing := *spec
+	missing.Contract.OpenCodeControl = nil
+	require.ErrorContains(t, session.ValidateTclaudeLayerLaunchSpec(missing),
+		"no Unix-relay control authority")
+	v3Claim := *spec
+	v3Claim.Version = session.TclaudeLayerLaunchSpecVersion
+	require.ErrorContains(t, session.ValidateTclaudeLayerLaunchSpec(v3Claim),
+		"unexpectedly carries OpenCode Unix control authority")
+}
 
 func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 	setupTestDB(t)
@@ -218,6 +360,36 @@ func TestLegacyOpenCodeStateKeepsAmbientXDGAndHidesNewPrivateParent(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, openCodeInstallGitignore, string(raw),
 		"legacy replay must bootstrap before applying the same read-only install bind")
+
+	if runtime.GOOS != "linux" {
+		return
+	}
+	shortData, err := os.MkdirTemp("/tmp", "tcl780-legacy-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
+	t.Setenv("XDG_DATA_HOME", shortData)
+	isolated := sandboxpolicy.EmptySnapshot()
+	isolated.Effective.NetworkAccess = sandboxpolicy.NetworkAccessNone
+	v4, err := openCodeUnixRelayLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &isolated, agentID)
+	require.NoError(t, err)
+	require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, v4.Version)
+	controlPath := filepath.Join(v4.Contract.FinalHideDirs[0], agentID, "control.sock")
+	require.Equal(t, controlPath, v4.Contract.OpenCodeControl.SocketPath)
+	assert.Empty(t, v4.Contract.PrivateWriteDirs,
+		"legacy state stays shared; its private child is control authority only")
+	stillLegacy, err := db.GetOpenCodeAgentStateAllocation(agentID)
+	require.NoError(t, err)
+	require.Equal(t, db.OpenCodeStateLegacyShared, stillLegacy.Mode)
+	assert.Empty(t, stillLegacy.StateRoot)
+	control, _, _, err := opencodeapi.CreateUnixListener(controlPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = control.Close()
+		_ = os.Remove(controlPath)
+	})
+	require.NoError(t, session.ValidateTclaudeLayerLaunchSpec(*v4))
 }
 
 func TestPrivateOpenCodeCredentialSeedNeverOverwritesAndRefusesSymlink(t *testing.T) {

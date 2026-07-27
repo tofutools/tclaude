@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,12 +18,84 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
+
+type openCodeWriterFunc func([]byte) (int, error)
+
+func (write openCodeWriterFunc) Write(data []byte) (int, error) {
+	return write(data)
+}
+
+func TestOpenCodeUnixLaunchPersistsAuthorityBeforeAcknowledgement(t *testing.T) {
+	setupTestDB(t)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "spwn-unix-provisional", PID: 4242,
+		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
+		Transport: db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: filepath.Join(t.TempDir(),
+			"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "control.sock"),
+	}
+	acknowledged := false
+	err := persistAndAcknowledgeOpenCodeUnixLaunch(
+		&runtime, opencodeapi.UnixLaunchAuthority{Device: 41, Inode: 42},
+		openCodeWriterFunc(func(data []byte) (int, error) {
+			persisted, readErr := db.GetOpenCodeRuntime(runtime.SessionID)
+			require.NoError(t, readErr)
+			require.NotNil(t, persisted,
+				"the launcher must remain gated until replay authority is durable")
+			assert.Equal(t, int64(41), persisted.ControlSocketDevice)
+			assert.Equal(t, int64(42), persisted.ControlSocketInode)
+			assert.Equal(t, []byte{1}, data)
+			acknowledged = true
+			return len(data), nil
+		}))
+	require.NoError(t, err)
+	assert.True(t, acknowledged)
+}
+
+func TestOpenCodeHealthyUnixTransportNeverDialsLogicalHostTCP(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("OpenCode Unix transport is Linux-only")
+	}
+	var tcpCalls atomic.Int32
+	trap := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		tcpCalls.Add(1)
+	}))
+	defer trap.Close()
+	root := filepath.Join(agentipctest.ShortSocketDir(t),
+		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	require.NoError(t, os.Mkdir(root, 0o700))
+	socketPath := filepath.Join(root, "control.sock")
+	listener, device, inode, err := opencodeapi.CreateUnixListener(socketPath)
+	require.NoError(t, err)
+	unixServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		username, password, ok := r.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, openCodeServerUsername, username)
+		assert.Equal(t, "secret", password)
+		_, _ = w.Write([]byte(`{"healthy":true}`))
+	})}
+	go func() { _ = unixServer.Serve(listener) }()
+	t.Cleanup(func() {
+		_ = unixServer.Close()
+		_ = os.Remove(socketPath)
+	})
+	runtime := db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: trap.URL, Password: "secret",
+		Transport:         db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: socketPath, ControlSocketDevice: device,
+		ControlSocketInode: inode,
+	}
+	require.True(t, openCodeHealthy(runtime))
+	assert.Zero(t, tcpCalls.Load())
+}
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
 
@@ -605,6 +679,36 @@ func TestStopOpenCodeProcessNeverSelfKillsOnRecoveredPID(t *testing.T) {
 
 	assert.False(t, consulted,
 		"a recorded pid equal to our own must be excluded before the ownership gate")
+}
+
+func TestUnixRuntimeReleaseRequiresRecordedProcessDeath(t *testing.T) {
+	runtime := db.OpenCodeRuntime{
+		PID: os.Getpid(), Transport: db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: filepath.Join(t.TempDir(), "missing-control.sock"),
+	}
+	started := time.Now()
+	assert.False(t, waitForOpenCodeRuntimeRelease(runtime, 50*time.Millisecond),
+		"an unlinked pathname alone must not release a still-live recovered runtime")
+	assert.GreaterOrEqual(t, time.Since(started), 50*time.Millisecond)
+}
+
+func TestStopUnixRuntimeRetainsAuthorityWhileRecordedProcessLives(t *testing.T) {
+	setupTestDB(t)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "spwn-unix-still-live", PID: os.Getpid(),
+		ServerURL: "http://127.0.0.1:43210", Cwd: t.TempDir(),
+		Transport: db.OpenCodeTransportUnixRelay,
+		ControlSocketPath: filepath.Join(t.TempDir(),
+			"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "control.sock"),
+		ControlSocketDevice: 41, ControlSocketInode: 42,
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
+	require.ErrorContains(t, stopOpenCodeRuntime(runtime.SessionID),
+		"retaining Unix replay authority")
+	persisted, err := db.GetOpenCodeRuntime(runtime.SessionID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted,
+		"a live recovered process must never lose its durable cleanup authority")
 }
 
 func TestRandomOpenCodePassword(t *testing.T) {

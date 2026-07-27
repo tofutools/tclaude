@@ -218,15 +218,16 @@ silently widening the outer policy.
 
 Claude Code and Codex are supported on Linux and macOS. OpenCode is supported
 on Linux in the host-open posture: agentd wraps its server rather than its
-attach pane. OpenCode isolated and filtered postures are refused because its
-authenticated loopback control plane and endpoint-ownership proof must remain
-reachable; OpenCode server wrapping on macOS is also refused. Linux uses
-`bwrap` from `PATH` and requires working unprivileged user namespaces. macOS
-uses `/usr/bin/sandbox-exec` for filesystem confinement and for the
-isolated-with-agentd network boundary. The reserved `filtered` posture is
-refused on both platforms because no proxy-backed applier exists. If any
-required capability is missing, tclaude refuses the launch instead of silently
-falling back.
+attach pane. Its Linux control-plane engine can cross an isolated namespace
+through an owned Unix relay, without exposing the socket path inside the server
+wall or routing agentd through host TCP. That engine does not enable a posture:
+OpenCode isolated profiles still refuse because OpenCode requires hosted model
+traffic, filtered remains reserved because no proxy-backed applier exists, and
+OpenCode server wrapping on macOS is still refused. Linux uses `bwrap` from
+`PATH` and requires working unprivileged user namespaces. macOS uses
+`/usr/bin/sandbox-exec` for filesystem confinement and for the
+isolated-with-agentd network boundary. If any required capability is missing,
+tclaude refuses the launch instead of silently falling back.
 
 On Linux the layer does not unshare the IPC namespace. The host-open posture
 also retains the host PID namespace; the isolated posture unshares PIDs as part

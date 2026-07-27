@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -953,6 +954,10 @@ func runNew(params *NewParams) error {
 	ApplyAutoCompactWindowEnv(h, autoCompactWindow, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 	openCodeServerURL := ""
+	openCodeTransport := ""
+	openCodeControlSocketPath := ""
+	var openCodeControlSocketDevice, openCodeControlSocketInode int64
+	var openCodeServerPID int
 	if h.UsesAuthoritativeServer() {
 		openCodeServerURL = strings.TrimSpace(os.Getenv("TCLAUDE_OPENCODE_SERVER_URL"))
 		if openCodeServerURL == "" || os.Getenv("OPENCODE_SERVER_PASSWORD") == "" {
@@ -961,6 +966,39 @@ func runNew(params *NewParams) error {
 		parsed, parseErr := url.Parse(openCodeServerURL)
 		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
 			return fmt.Errorf("invalid internal OpenCode server URL")
+		}
+		openCodeTransport = strings.TrimSpace(os.Getenv(clcommon.OpenCodeTransportEnv))
+		if openCodeTransport == "" {
+			openCodeTransport = db.OpenCodeTransportLoopbackTCP
+		}
+		if openCodeTransport == db.OpenCodeTransportUnixRelay {
+			openCodeControlSocketPath = strings.TrimSpace(
+				os.Getenv(clcommon.OpenCodeControlSocketPathEnv))
+			openCodeControlSocketDevice, parseErr = strconv.ParseInt(
+				os.Getenv(clcommon.OpenCodeControlSocketDeviceEnv), 10, 64)
+			if parseErr != nil {
+				return fmt.Errorf("invalid internal OpenCode control socket device")
+			}
+			openCodeControlSocketInode, parseErr = strconv.ParseInt(
+				os.Getenv(clcommon.OpenCodeControlSocketInodeEnv), 10, 64)
+			if parseErr != nil {
+				return fmt.Errorf("invalid internal OpenCode control socket inode")
+			}
+			openCodeServerPID, parseErr = strconv.Atoi(
+				os.Getenv(clcommon.OpenCodeServerPIDEnv))
+			if parseErr != nil {
+				return fmt.Errorf("invalid internal OpenCode server pid")
+			}
+			if err := db.ValidateOpenCodeRuntimeTransport(db.OpenCodeRuntime{
+				Transport:           openCodeTransport,
+				ControlSocketPath:   openCodeControlSocketPath,
+				ControlSocketDevice: openCodeControlSocketDevice,
+				ControlSocketInode:  openCodeControlSocketInode,
+			}); err != nil || openCodeServerPID <= 1 {
+				return fmt.Errorf("invalid internal OpenCode Unix-relay authority")
+			}
+		} else if openCodeTransport != db.OpenCodeTransportLoopbackTCP {
+			return fmt.Errorf("invalid internal OpenCode transport")
 		}
 		applyOpenCodeAttachEnvironment(
 			additionalEnv,
@@ -1198,28 +1236,33 @@ func runNew(params *NewParams) error {
 		}
 	}
 	spawnSpec := harness.SpawnSpec{
-		ExecutablePath:         executablePath,
-		Cwd:                    cwd,
-		ServerURL:              openCodeServerURL,
-		EnvExports:             envExports,
-		ShellEnvironment:       sandboxSnapshotEnvironment(effectiveSandbox),
-		ResumeID:               fullConvID,
-		SessionID:              params.SessionID,
-		Name:                   params.Name,
-		Effort:                 effort,
-		Model:                  model,
-		ExtraArgs:              extraArgs,
-		SandboxMode:            sandboxMode,
-		SandboxWriteDirs:       launchWriteDirs,
-		SandboxReadDirs:        launchReadDirs,
-		SandboxDenyDirs:        launchDenyDirs,
-		AskUserQuestionTimeout: askTimeout,
-		ContextFeatures:        contextFeatures,
-		PermissionProfile:      launchPermissionProfile,
-		ApprovalPolicy:         approvalPolicy,
-		AutoReview:             autoReview,
-		RemoteControl:          remoteControl,
-		InitialPrompt:          params.InitialPrompt,
+		ExecutablePath:              executablePath,
+		Cwd:                         cwd,
+		ServerURL:                   openCodeServerURL,
+		OpenCodeTransport:           openCodeTransport,
+		OpenCodeControlSocketPath:   openCodeControlSocketPath,
+		OpenCodeControlSocketDevice: openCodeControlSocketDevice,
+		OpenCodeControlSocketInode:  openCodeControlSocketInode,
+		OpenCodeServerPID:           openCodeServerPID,
+		EnvExports:                  envExports,
+		ShellEnvironment:            sandboxSnapshotEnvironment(effectiveSandbox),
+		ResumeID:                    fullConvID,
+		SessionID:                   params.SessionID,
+		Name:                        params.Name,
+		Effort:                      effort,
+		Model:                       model,
+		ExtraArgs:                   extraArgs,
+		SandboxMode:                 sandboxMode,
+		SandboxWriteDirs:            launchWriteDirs,
+		SandboxReadDirs:             launchReadDirs,
+		SandboxDenyDirs:             launchDenyDirs,
+		AskUserQuestionTimeout:      askTimeout,
+		ContextFeatures:             contextFeatures,
+		PermissionProfile:           launchPermissionProfile,
+		ApprovalPolicy:              approvalPolicy,
+		AutoReview:                  autoReview,
+		RemoteControl:               remoteControl,
+		InitialPrompt:               params.InitialPrompt,
 	}
 	if stacked {
 		spawnSpec = h.NestedSandbox.PrepareLaunch(spawnSpec)

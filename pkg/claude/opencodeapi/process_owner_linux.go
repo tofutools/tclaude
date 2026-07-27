@@ -42,6 +42,19 @@ func ProcessOwnsEndpoint(rootPID int, endpoint string) bool {
 	return false
 }
 
+func ProcessInSubtree(rootPID, candidatePID int) bool {
+	for _, pid := range processTreePIDs(rootPID) {
+		if pid == candidatePID {
+			return true
+		}
+	}
+	return false
+}
+
+func RecordedProcessSubtree(rootPID int) []int {
+	return processTreePIDs(rootPID)
+}
+
 func endpointPort(endpoint string) (string, bool) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {

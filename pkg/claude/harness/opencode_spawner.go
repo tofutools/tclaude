@@ -4,9 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 )
 
 type openCodeSpawner struct{}
@@ -21,7 +24,20 @@ func (openCodeSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + binary + " attach " + clcommon.ShellQuoteArg(spec.ServerURL)
+	attachURL := spec.ServerURL
+	cmdPrefix := spec.EnvExports
+	if spec.OpenCodeTransport == db.OpenCodeTransportUnixRelay {
+		cmdPrefix += clcommon.DetectAbsoluteCmd(
+			opencodeapi.UnixAttachShimMode,
+			strconv.Itoa(spec.OpenCodeServerPID),
+			spec.OpenCodeControlSocketPath,
+			strconv.FormatInt(spec.OpenCodeControlSocketDevice, 10),
+			strconv.FormatInt(spec.OpenCodeControlSocketInode, 10),
+			spec.ServerURL,
+		) + " -- "
+		attachURL = opencodeapi.AttachURLPlaceholder
+	}
+	cmd := cmdPrefix + binary + " attach " + clcommon.ShellQuoteArg(attachURL)
 	if spec.Cwd != "" {
 		cmd += " --dir " + clcommon.ShellQuoteArg(spec.Cwd)
 	}
