@@ -428,13 +428,9 @@ func uniqueAttachmentName(name string, used map[string]bool) string {
 	}
 }
 
-// sweepStaleSpawnAttachmentBatches removes per-batch dirs whose mtime is older
-// than spawnAttachmentBatchTTL. Best-effort: every error is logged at debug and
-// swallowed — a leaked temp dir is harmless and the OS reclaims it eventually.
-func sweepStaleSpawnAttachmentBatches() {
-	sweepStaleAttachmentBatches(spawnAttachmentsBaseDir())
-}
-
+// sweepStaleAttachmentBatches removes per-batch dirs whose mtime is older than
+// spawnAttachmentBatchTTL. Best-effort: every error is logged at debug and
+// swallowed.
 func sweepStaleAttachmentBatches(base string) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
