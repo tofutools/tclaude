@@ -70,7 +70,7 @@ runs:
             ;;
           process) pkgs="./pkg/claude/process/..." ;;
           sandbox)
-            pkgs="./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/..."
+            pkgs="./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/... ./pkg/claude/sandboxassumptions/..."
             ;;
           rest)
             # Everything the named shards don't cover, derived by literally
@@ -79,7 +79,7 @@ runs:
             # definitions, and a removed/renamed shard target fails here
             # loudly instead of silently dropping packages.
             all_pkgs="$(go list ./...)"
-            sharded_pkgs="$(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... ./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/...)"
+            sharded_pkgs="$(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... ./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/... ./pkg/claude/sandboxassumptions/...)"
             pkgs="$(comm -23 \
               <(printf '%s\n' "$all_pkgs" | sort) \
               <(printf '%s\n' "$sharded_pkgs" | sort))"

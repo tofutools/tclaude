@@ -464,6 +464,46 @@ silently populated a throwaway database instead of failing. Hidden
 protected roots are now remounted read-only, so such a write fails
 outright and no throwaway database can appear.
 
+## Platform assumption tests
+
+`pkg/claude/sandboxassumptions` is the executable inventory of bubblewrap and
+Seatbelt behavior that production relies on. Each named subtest records the
+specific production functions whose correctness depends on that behavior and
+exercises the operating-system mechanism directly. It never calls tclaude's
+mount-plan, bubblewrap-argument, Seatbelt-profile, or smoke-test renderers to
+make an assumption pass.
+
+An assumption test is appropriate when production depends on behavior supplied
+by bubblewrap, the Linux kernel, or Seatbelt: for example non-recursive
+read-only remounts, `--new-session` terminal semantics, or the way a Seatbelt
+network deny affects an AF_UNIX reply. Pure argument/profile rendering remains
+an ordinary unit test. A tclaude composition or harness-distribution regression
+remains beside the code or in an end-to-end smoke. Do not turn a scheduler race
+or one observed errno into a platform promise: assert the stable operation or
+round-trip production needs.
+
+The behavioral suites are env-gated outside their platform jobs. In CI they run
+under the same prerequisites as the real smokes and are hard gates: an unrun or
+skipped suite is red, as is a missing/renamed top-level test or a command that
+exits successfully without the explicit top-level `--- PASS:` line. Helpers
+are Go test re-execs with bounded handshakes; they add no interpreter
+dependency and do not use sleeps as correctness evidence.
+
+Run the Linux assumptions on compatible hardware with:
+
+```bash
+TCLAUDE_SANDBOX_ASSUMPTIONS=1 \
+  go test ./pkg/claude/sandboxassumptions \
+    -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s
+```
+
+Run the equivalent `TestSeatbeltAssumptions` command on macOS. Darwin CI is the
+authoritative hardware route for Seatbelt changes. When a probe discovers a
+new platform behavior that production will rely on, preserve the mechanism
+claim here instead of leaving it only in a throwaway workflow; keep the
+production-level round-trip in its smoke when both layers answer different
+questions.
+
 Both platform smokes are hard CI gates. The Linux job disables Ubuntu's
 AppArmor restriction on unprivileged user namespaces for its ephemeral runner,
 verifies bubblewrap can create the namespace, and runs the real bubblewrap smoke. If
