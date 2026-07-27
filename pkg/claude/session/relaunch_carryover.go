@@ -144,6 +144,14 @@ var launchCarryoverFields = []launchCarryoverField{
 			if rec.SandboxImplementation == nil {
 				return nil, carryUnrecorded
 			}
+			// This is a pure replay, not a fresh sandbox-implementation
+			// resolution. Historical records collapse an unset implementation
+			// and an explicit harness-builtin pin to the same value, and for
+			// OpenCode neither spelling grants confinement or any other
+			// privilege. Creation paths now reject new invalid pins, so replay
+			// remains grandfathered rather than stranding ordinary agents. If a
+			// future harness/implementation pair carries a real privilege
+			// differential, this decision must be revisited.
 			implementation, err := sandboxpolicy.NormalizeImplementation(*rec.SandboxImplementation)
 			if err != nil {
 				return nil, carryDropped

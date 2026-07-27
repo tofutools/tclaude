@@ -161,6 +161,111 @@ func TestSpawn_ExplicitSandboxImplementationRejectsUnknownValue(t *testing.T) {
 		"the refusal must name what was wrong")
 }
 
+func TestSpawn_OpenCodeExplicitHarnessBuiltinRefuses(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "false-wall",
+		"harness":                harness.OpenCodeName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationHarnessBuiltin),
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.Code,
+		"a semantic harness mismatch must be a typed 422; body=%s", resp.Raw)
+	failure := decodeFailure(t, resp.Raw)
+	assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+	assert.Equal(t,
+		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
+			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
+			`not confinement; use tclaude-layer or spawn with the sandbox off`,
+		failure.Error)
+	assertSandboxLayerCalls(t, f)
+}
+
+func TestSpawn_OpenCodeForeignHarnessBuiltinTierSkipsAndDiscloses(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "claude-builtin", "harness": harness.DefaultName,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationHarnessBuiltin),
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	rec = setGroupProfile(t, f, "crew", "claude-builtin")
+	require.Equalf(t, http.StatusOK, rec.Code, "set default_profile body=%s", rec.Body.String())
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "oc-worker", "harness": harness.OpenCodeName,
+	})
+	require.Equalf(t, http.StatusOK, resp.Code,
+		"a foreign profile tier must skip and fall through; body=%s", resp.Raw)
+	var wire struct {
+		Resolved struct {
+			Notes []string `json:"notes"`
+		} `json:"resolved"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Raw, &wire))
+	assert.Contains(t, wire.Resolved.Notes,
+		`group default profile "claude-builtin" sandbox_implementation ignored (not valid for opencode)`)
+	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
+	require.True(t, ok)
+	assert.Empty(t, got, "the skipped foreign pin must leave OpenCode's implementation unset")
+	assertSandboxLayerCalls(t, f)
+}
+
+func TestResume_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	spawn := f.AsHuman().SpawnHarness("crew", "oc-worker", harness.OpenCodeName)
+	initial, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	require.Empty(t, initial, "precondition: the fresh launch left the implementation unset")
+
+	f.MarkOffline(spawn.TmuxSession)
+	resume := f.AsHuman().Resume(spawn.ConvID)
+	require.Equal(t, "resumed", resume.Action, "resume action: %s", resume.Raw)
+
+	replayed, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok, "the resume must reach the simulated spawner")
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), replayed,
+		"the legacy/default recorded spelling is a pure replay and must not strand the agent")
+}
+
+func TestForks_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
+	tests := []struct {
+		name string
+		fork func(*testharness.Flow, string) string
+	}{
+		{
+			name: "reincarnate",
+			fork: func(f *testharness.Flow, convID string) string {
+				return f.AsHuman().Reincarnate(convID, "continue").NewConv
+			},
+		},
+		{
+			name: "clone",
+			fork: func(f *testharness.Flow, convID string) string {
+				return f.AsHuman().CloneFresh(convID).NewConv
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			source := f.AsHuman().SpawnHarness("crew", "oc-source", harness.OpenCodeName)
+
+			forkedConv := tt.fork(f, source.ConvID)
+			require.NotEmpty(t, forkedConv)
+			replayed, ok := f.World.SpawnSandboxImplementation(forkedConv)
+			require.True(t, ok, "the fork must reach the simulated spawner")
+			assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), replayed,
+				"forking an ordinary unset OpenCode agent must replay the legacy/default spelling")
+		})
+	}
+}
+
 func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")

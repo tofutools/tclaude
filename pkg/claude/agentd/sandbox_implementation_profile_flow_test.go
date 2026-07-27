@@ -81,6 +81,21 @@ func TestSpawnProfile_RejectsUnknownSandboxImplementation(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "invalid sandbox implementation")
 }
 
+func TestSpawnProfile_RejectsOpenCodeHarnessBuiltinAtAuthoring(t *testing.T) {
+	f := newFlow(t)
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "false-wall", "harness": "opencode",
+		"sandbox_implementation": "harness-builtin",
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code,
+		"the inapplicable pair must fail at profile save; body=%s", rec.Body.String())
+	failure := decodeFailure(t, rec.Body.Bytes())
+	assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+	assert.Contains(t, failure.Error,
+		"OpenCode has no built-in OS sandbox; its access-control mode is a command filter, not confinement")
+}
+
 func TestSpawnProfile_StackedRoundTripsAndOpenCodeRefuses(t *testing.T) {
 	f := newFlow(t)
 	for _, harnessName := range []string{"claude", "codex"} {

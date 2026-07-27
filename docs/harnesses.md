@@ -77,10 +77,10 @@ OpenCode's supported launch surface is currently the agentd-owned
 tclaude-generated, per-session OpenCode tool rules: reads and representable
 edits follow relative path patterns, while bash, glob, grep, LSP, task, and
 skill default to `allow`. Set the independent `--tools allow|ask|deny` axis to
-change that whole tool block uniformly. This is deliberately described as lexical soft access
-control, not an OS sandbox: OpenCode does not resolve symlinks before permission
-evaluation, and tool permissions such as bash/glob/grep cannot be scoped to the
-same lexical disk boundary, so they can reach outside the authored paths.
+change that whole tool block uniformly. OpenCode's access-control mode is a
+command filter, not confinement or an OS sandbox. Shell redirection, symlinks,
+and subprocess binaries bypass its fixed command/path checks and reach outside
+the authored paths.
 Because `access-control` reads like a sandbox without confining like one, the
 spawn dialog, profile/role editors, and `session new` surface an operator
 warning whenever it is selected (the same channel as Claude Code's
@@ -150,7 +150,8 @@ instead of slash-command injection).
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off`; experimental Linux `stacked` = tclaude bwrap + real SRT bwrap/seccomp after a live probe | ✅ managed profile (default) or raw `--sandbox`; experimental Linux `stacked` = tclaude bwrap + current Codex bwrap managed profile after a live probe | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with documented caveats; `stacked` refuses; `access-control` remains lexical soft policy |
+| **Built-in OS sandbox** (`SupportsBuiltinOSSandbox`) | ✅ SRT | ✅ native `--sandbox` | ❌ none; `access-control` is a command filter, not confinement |
+| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off`; experimental Linux `stacked` = tclaude bwrap + real SRT bwrap/seccomp after a live probe | ✅ managed profile (default) or raw `--sandbox`; experimental Linux `stacked` = tclaude bwrap + current Codex bwrap managed profile after a live probe | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with documented caveats; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
@@ -376,6 +377,13 @@ a missing, corrupt, or no-longer-valid spec is refused rather than restarted
 unwrapped. The mode is normalized to `tclaude-layer` in the launch record;
 pairing that mode with `harness-builtin`, or pairing `off` with the outer
 implementation, is a launch error.
+
+OpenCode has no `harness-builtin` OS sandbox. Leaving the implementation unset
+keeps the historical behavior — its command filter plus the explicit warning —
+but explicitly pinning `harness-builtin` is rejected. Pure replay of an older
+recorded `harness-builtin` value is grandfathered because old rows did not
+persist whether it was pinned or defaulted, and the two spellings grant the
+same OpenCode posture.
 
 agentd waits for authenticated health, asks the server to mint the conversation
 ID, delivers the startup prompt through `prompt_async`, consumes the

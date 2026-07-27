@@ -186,6 +186,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	}
 	sandboxImplementation := sandboxpolicy.ImplementationHarnessBuiltin
 	if agentProfile.SandboxImplementation != nil {
+		// This is a pure replay, not a fresh resolution through profile tiers.
+		// Historical records cannot distinguish an unset implementation from an
+		// explicit harness-builtin pin, and for OpenCode the two spellings grant
+		// the same command-filter-only posture with no privilege differential.
+		// Every creation path now rejects new invalid pins, so validating here
+		// would only strand ordinary legacy agents. If a future
+		// harness/implementation pair carries a real privilege differential,
+		// this decision must be revisited.
 		sandboxImplementation, err = sandboxpolicy.NormalizeImplementation(*agentProfile.SandboxImplementation)
 		if err != nil {
 			return nil, fmt.Errorf("invalid durable sandbox implementation: %w", err)

@@ -17,6 +17,7 @@ const groups = [{
 const harnesses = [{
   name: 'claude', display_name: 'Claude Code',
   models: ['sonnet', 'opus'], effort_levels: ['low', 'high'],
+  can_builtin_os_sandbox: true,
   can_sandbox: true, sandbox_modes: ['inherit', 'on', 'off'], default_sandbox: 'inherit',
   sandbox_mode_help: { inherit: 'keep settings', on: 'force on', off: 'force off' },
   can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit',
@@ -36,6 +37,7 @@ const harnesses = [{
 }, {
   name: 'codex', display_name: 'Codex CLI',
   models: [], effort_levels: ['medium', 'high', 'max'],
+  can_builtin_os_sandbox: true,
   can_sandbox: true,
   sandbox_modes: ['tclaude-agent', 'danger-full-access'],
   default_sandbox: 'tclaude-agent',
@@ -54,6 +56,7 @@ const harnesses = [{
 }, {
   name: 'opencode', display_name: 'OpenCode',
   models: [], effort_levels: [],
+  can_builtin_os_sandbox: false,
   can_sandbox: true,
   sandbox_modes: ['off'],
   default_sandbox: 'off',

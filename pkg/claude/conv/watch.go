@@ -2761,6 +2761,12 @@ func resumeSandboxImplementation(convID string) (sandboxpolicy.Implementation, e
 	if err != nil {
 		return "", fmt.Errorf("load sandbox implementation for conversation %s: %w", convID, err)
 	}
+	// Pure replay is intentionally normalized but not revalidated against the
+	// harness descriptor. Historical rows collapse unset and an explicit
+	// harness-builtin pin, and OpenCode receives no privilege from either
+	// spelling. Fresh creation/resolution paths reject new invalid pins. If a
+	// future pair carries a real privilege differential, this grandfathering
+	// decision must be revisited.
 	implementation, err := sandboxpolicy.NormalizeImplementation(launch.SandboxImplementation)
 	if err != nil {
 		return "", fmt.Errorf("invalid recorded sandbox implementation for conversation %s: %w", convID, err)

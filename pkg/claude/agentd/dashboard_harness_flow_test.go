@@ -48,6 +48,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	// but tclaude exposes a per-session inherit/on/off override delivered via
 	// `--settings`, so the dialog DOES show a sandbox selector for claude.
 	assert.True(t, claude.CanSandbox, "claude exposes a per-session sandbox override")
+	assert.True(t, claude.CanBuiltinOSSandbox, "Claude owns a real built-in OS sandbox")
 	assert.Equal(t, []string{"inherit", "on", "off"}, claude.SandboxModes)
 	assert.Equal(t, "inherit", claude.DefaultSandbox, "inherit (= no override) is pre-selected")
 	require.NotNil(t, claude.SandboxModeHelp, "claude exposes per-mode sandbox help")
@@ -85,6 +86,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, codex.CanRename, "codex renames out-of-band via ConvStore — must stay renameable")
 	assert.True(t, codex.CanCompact, "codex supports /compact")
 	assert.True(t, codex.CanSandbox, "codex takes a launch sandbox flag")
+	assert.True(t, codex.CanBuiltinOSSandbox, "Codex owns a real built-in OS sandbox")
 	assert.False(t, codex.CanRemoteControl, "codex has no built-in Remote Access — the toggle must be gated off")
 	assert.Equal(t, []string{"tclaude-agent", "workspace-write", "read-only", "danger-full-access"}, codex.SandboxModes)
 	assert.Equal(t, "tclaude-agent", codex.DefaultSandbox, "managed-profile default pre-selected")
@@ -112,6 +114,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, opencode.CanRename, "OpenCode renames through its managed ConvStore API")
 	assert.True(t, opencode.CanCompact, "OpenCode attached TUI supports /compact")
 	assert.True(t, opencode.CanSandbox, "OpenCode surfaces soft, outer-layer, and explicit off postures")
+	assert.False(t, opencode.CanBuiltinOSSandbox,
+		"OpenCode's mode catalog must not be mistaken for a built-in OS sandbox")
 	assert.Equal(t, runtime.GOOS == "linux", opencode.CanTclaudeLayer,
 		"OpenCode tclaude-layer capability is Linux-only")
 	assert.True(t, opencode.TclaudeLayerServerBoundary,

@@ -120,8 +120,8 @@ func openCodeSandboxWarnings(sandboxMode string) []string {
 		return nil
 	}
 	return []string{
-		"⚠ OpenCode has no built-in OS sandbox. The \"access-control\" mode only " +
-			"lexically checks path arguments of a fixed set of built-in tool commands, " +
+		"⚠ OpenCode has no built-in OS sandbox. The \"access-control\" mode is a command " +
+			"filter, not confinement: it only lexically checks path arguments of a fixed set of built-in tool commands, " +
 			"so shell redirection, symlinks, and subprocesses still reach files and the " +
 			"network outside the allowed directories. Treat this agent as effectively " +
 			"unsandboxed — use a container or a restricted OS account for real isolation " +

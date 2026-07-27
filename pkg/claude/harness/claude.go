@@ -36,8 +36,9 @@ func init() {
 		// claudeSandbox models a small inherit/on/off tri-state that the
 		// spawner translates to a per-session `--settings` override (the
 		// default, inherit, adds nothing — see claude_sandbox.go).
-		Sandbox:       claudeSandbox{},
-		NestedSandbox: claudeNestedSandbox{},
+		Sandbox:          claudeSandbox{},
+		BuiltinOSSandbox: true,
+		NestedSandbox:    claudeNestedSandbox{},
 		// Claude Code's approval posture IS its permission mode; claudeApproval
 		// carries the `--permission-mode` enum (+ an inherit default that adds
 		// nothing) through the harness-agnostic Approval field, translated by

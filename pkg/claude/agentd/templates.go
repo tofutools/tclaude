@@ -897,61 +897,62 @@ func validateTemplateAgentLaunch(agentName string, a templateAgentJSON, inline *
 // will actually adopt (see the call site in validateTemplateAgentLaunch). The
 // per-field checks mirror buildProfileFromJSON's; blank fields stay no-ops.
 func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db.SpawnProfile) *spawnFailure {
-	wrap := func(kind, msg string) *spawnFailure {
-		return &spawnFailure{http.StatusBadRequest, kind, fmt.Sprintf(
+	wrap := func(status int, kind, msg string) *spawnFailure {
+		return &spawnFailure{status, kind, fmt.Sprintf(
 			"agent %q: profile_inline: %s — the custom config has no harness of its own, so its fields "+
 				"apply on the %q launch this agent resolves to; align them with that harness or set "+
 				"profile_inline.harness explicitly", agentName, msg, h.Name)}
 	}
 	if _, err := h.Models.ValidateModel(p.Model); err != nil {
-		return wrap("invalid_model", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_model", err.Error())
 	}
 	if _, err := h.Models.ValidateEffort(p.Effort); err != nil {
-		return wrap("invalid_effort", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_effort", err.Error())
 	}
 	if _, err := harness.ValidateSandboxMode(h, p.Sandbox); err != nil {
-		return wrap("invalid_sandbox", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_sandbox", err.Error())
 	}
 	if _, err := validateSandboxImplementationForHarness(h, p.SandboxImplementation); err != nil {
-		return wrap("invalid_"+sandboxImplementationField, err.Error())
+		return wrap(sandboxImplementationValidationStatus(err),
+			"invalid_"+sandboxImplementationField, err.Error())
 	}
 	if _, err := harness.ValidateApprovalPolicy(h, p.Approval); err != nil {
-		return wrap("invalid_approval", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_approval", err.Error())
 	}
 	if _, err := harness.ValidateToolGovernance(h, p.ToolGovernance); err != nil {
-		return wrap("invalid_tools", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_tools", err.Error())
 	}
 	if _, err := harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
-		return wrap("invalid_ask_user_question_timeout", err.Error())
+		return wrap(http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error())
 	}
 	if p.AutoReview != nil {
 		if _, err := harness.ResolveAutoReview(h, *p.AutoReview); err != nil {
-			return wrap("invalid_auto_review", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_auto_review", err.Error())
 		}
 	}
 	if p.TrustDir != nil {
 		if _, err := harness.ResolveTrustDir(h, *p.TrustDir); err != nil {
-			return wrap("invalid_trust_dir", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_trust_dir", err.Error())
 		}
 	}
 	if p.RemoteControl != nil {
 		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
-			return wrap("invalid_remote_control", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_remote_control", err.Error())
 		}
 	}
 	if p.AutoMemory != nil {
 		if _, err := harness.ResolveAutoMemory(h, p.AutoMemory); err != nil {
-			return wrap("invalid_auto_memory", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_auto_memory", err.Error())
 		}
 	}
 	if p.SSHWorkaround != nil {
 		if _, err := harness.ResolveSSHWorkaround(h, p.SSHWorkaround); err != nil {
-			return wrap("invalid_ssh_workaround", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_ssh_workaround", err.Error())
 		}
 	}
 	if len(p.ContextFeatures) > 0 {
 		if _, err := harness.ResolveContextFeatures(h, p.ContextFeatures); err != nil {
-			return wrap("invalid_context_features", err.Error())
+			return wrap(http.StatusBadRequest, "invalid_context_features", err.Error())
 		}
 	}
 	return nil

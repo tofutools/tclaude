@@ -31,11 +31,11 @@ const modeHelp = JSON.parse(readFileSync(new URL('./mode-help-fixture.json', imp
 const harnesses = [
   {
     name: 'claude', display_name: 'Claude Code', models: ['sonnet'],
-    can_tclaude_layer: true, can_stacked: true,
+    can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
   },
   {
     name: 'opencode', display_name: 'OpenCode', models: [], can_tclaude_layer: true,
-    tclaude_layer_server_boundary: true,
+    can_builtin_os_sandbox: false, tclaude_layer_server_boundary: true,
   },
   { name: 'unsupported', display_name: 'Unsupported Harness', models: [], can_tclaude_layer: false },
 ];
@@ -100,6 +100,14 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   const opencode = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
   assert.equal(opencode.showSandboxImpl, true);
   assert.equal(opencode.sandboxImplHostAvailable, true);
+  assert.equal(opencode.sandboxImplCanBuiltin, false);
+  assert.deepEqual(
+    opencode.sandboxImplOptions.map((o) => o.value),
+    ['tclaude-layer', 'stacked'],
+    'OpenCode must never offer a harness-builtin OS sandbox that does not exist',
+  );
+  assert.match(opencode.sandboxImplInheritLabel, /no built-in OS sandbox/);
+  assert.match(opencode.sandboxImplInheritLabel, /command filter, not confinement/);
 });
 
 test('the harness-owned option is named after the actual harness', async (t) => {
@@ -123,10 +131,7 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   );
 
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
-  assert.equal(
-    oc.sandboxImplOptions.find((o) => o.value === 'harness-builtin').label,
-    'OpenCode built-in',
-  );
+  assert.equal(oc.sandboxImplOptions.find((o) => o.value === 'harness-builtin'), undefined);
 
   // Defensive only: the rows are gated on a selected harness, but a missing
   // name must still produce a readable, capitalized label.
@@ -145,6 +150,21 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // on the legacy path would be noise on every spawn.
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, view), null);
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'harness-builtin' }, view), null);
+
+  const openCodeView = model.spawnCapabilityView(
+    { harness: 'opencode' }, { harnesses, sandboxImpl },
+  );
+  const inheritedOpenCode = model.sandboxImplHintFor({ sandboxImpl: '' }, openCodeView);
+  assert.equal(inheritedOpenCode.warn, true);
+  assert.equal(
+    inheritedOpenCode.text,
+    'No built-in OS sandbox; access-control is a command filter, not confinement.',
+  );
+  const pinnedOpenCode = model.sandboxImplHintFor(
+    { sandboxImpl: 'harness-builtin' }, openCodeView,
+  );
+  assert.match(pinnedOpenCode.text, /harness-builtin is invalid for OpenCode/);
+  assert.match(pinnedOpenCode.text, /use tclaude-layer or spawn with the sandbox off/);
 
   // Selecting the layer on a capable host explains what it DOES — never what it
   // guarantees (epic requirement 12).

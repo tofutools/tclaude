@@ -104,6 +104,41 @@ func TestSupportsOfflineModelTransport(t *testing.T) {
 	}
 }
 
+func TestBuiltinOSSandboxCapabilityMatrix(t *testing.T) {
+	claude := Default()
+	codex := MustGet(CodexName)
+	opencode := MustGet(OpenCodeName)
+
+	if !claude.SupportsSandbox() || !claude.SupportsBuiltinOSSandbox() {
+		t.Fatal("Claude Code must advertise both its mode catalog and real SRT sandbox")
+	}
+	if !codex.SupportsSandbox() || !codex.SupportsBuiltinOSSandbox() {
+		t.Fatal("Codex must advertise both its mode catalog and native OS sandbox")
+	}
+	if !opencode.SupportsSandbox() {
+		t.Fatal("OpenCode's access-control/tclaude-layer/off mode catalog must remain available")
+	}
+	if opencode.SupportsBuiltinOSSandbox() {
+		t.Fatal("OpenCode access control is a command filter, not a built-in OS sandbox")
+	}
+
+	err := ValidateHarnessBuiltinOSSandbox(opencode)
+	if err == nil || !IsBuiltinOSSandboxInvalid(err) {
+		t.Fatalf("OpenCode harness-builtin validation error = %v, want typed semantic refusal", err)
+	}
+	const want = `sandbox implementation "harness-builtin" is invalid for OpenCode: ` +
+		`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, ` +
+		`not confinement; use tclaude-layer or spawn with the sandbox off`
+	if err.Error() != want {
+		t.Fatalf("OpenCode harness-builtin validation error = %q, want %q", err, want)
+	}
+
+	var nilH *Harness
+	if nilH.SupportsBuiltinOSSandbox() {
+		t.Fatal("nil harness must not advertise a built-in OS sandbox")
+	}
+}
+
 func TestOneShotReplayCapabilityMatrix(t *testing.T) {
 	claude, err := Resolve(DefaultName)
 	if err != nil {

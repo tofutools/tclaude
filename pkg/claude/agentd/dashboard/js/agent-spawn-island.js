@@ -62,7 +62,8 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
 // sandbox that is. The experimental caveat and the platform requirement are
 // stated rather than implied — a launch that cannot have them refuses.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
-  + 'harness-builtin is the current behavior. tclaude-layer is EXPERIMENTAL: it runs the whole '
+  + 'harness-builtin is offered only when the selected harness owns a real OS sandbox. '
+  + 'tclaude-layer is EXPERIMENTAL: it runs the whole '
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
@@ -858,7 +859,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           touched.current.add('sandboxImpl');
           setDraft((before) => setSpawnSandboxImpl(before, value));
         }}>
-        <option value="">— inherit (profile chain, then ${view.sandboxImplDefault}) —</option>
+        <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
         ${(view.sandboxImplOptions || []).map((option) => html`
           <option key=${option.value} value=${option.value}>${option.label}</option>`)}
       </select>

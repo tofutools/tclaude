@@ -77,6 +77,15 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	if err != nil {
 		return "", err
 	}
+	// Only a SET harness-builtin value is a claim that the harness owns a real
+	// OS sandbox. Blank stays unset and continues through the profile tiers
+	// exactly as before; OpenCode then uses its command filter + warning.
+	if strings.TrimSpace(raw) != "" &&
+		implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		if err := harness.ValidateHarnessBuiltinOSSandbox(h); err != nil {
+			return "", err
+		}
+	}
 	if implementation.UsesNestedHarnessSandbox() {
 		if err := session.ValidateStackedSandboxHarness(h); err != nil {
 			return "", err
@@ -91,6 +100,13 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 		return "", nil
 	}
 	return string(implementation), nil
+}
+
+func sandboxImplementationValidationStatus(err error) int {
+	if harness.IsBuiltinOSSandboxInvalid(err) {
+		return http.StatusUnprocessableEntity
+	}
+	return http.StatusBadRequest
 }
 
 func resolveOpenCodeSandboxImplementationMode(

@@ -164,6 +164,27 @@ func TestTemplateExportImport_ProfileInlineRoundTrip(t *testing.T) {
 	assert.Equal(t, false, clonedInline["remote_control"])
 }
 
+func TestTemplateImport_RejectsOpenCodeHarnessBuiltinProfileInline(t *testing.T) {
+	f := newFlow(t)
+	rec := humanReq(t, f, http.MethodPost, "/v1/templates/import", map[string]any{
+		"format": "tclaude-task-force", "format_version": 3,
+		"template": map[string]any{
+			"name": "false-wall",
+			"agents": []map[string]any{{
+				"name": "worker", "harness": "opencode",
+				"profile_inline": map[string]any{
+					"harness": "opencode", "sandbox_implementation": "harness-builtin",
+				},
+			}},
+		},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"import must revalidate fresh template state; body=%s", rec.Body.String())
+	failure := decodeFailure(t, rec.Body.Bytes())
+	assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+	assert.Contains(t, failure.Error, "is invalid for OpenCode")
+}
+
 // TestTemplateImport_CollisionRequiresUpdate: importing over an existing
 // name is a 409 unless --update is set; with it, the template is
 // overwritten in place.

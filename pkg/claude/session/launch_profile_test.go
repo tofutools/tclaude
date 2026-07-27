@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func setGlobalLaunchProfile(t *testing.T, prof db.SpawnProfile) {
@@ -165,4 +167,33 @@ func TestGlobalDefaultLaunchProfile_DisabledProfileBlocksFreshTerminalLaunch(t *
 	err := applyGlobalDefaultLaunchProfile(&NewParams{}, explicitLaunchFields{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `global default spawn profile "paused" is disabled: maintenance`)
+}
+
+func TestSandboxImplementationDecision_RejectsFreshOpenCodeBuiltinButGrandfathersReplay(t *testing.T) {
+	opencode, ok := harness.Get(harness.OpenCodeName)
+	require.True(t, ok)
+
+	err := validateSandboxImplementationDecision(
+		opencode,
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		sandboxpolicy.ImplementationHarnessBuiltin,
+		true,
+	)
+	require.EqualError(t, err,
+		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
+			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
+			`not confinement; use tclaude-layer or spawn with the sandbox off`)
+
+	assert.NoError(t, validateSandboxImplementationDecision(
+		opencode,
+		"",
+		sandboxpolicy.ImplementationHarnessBuiltin,
+		true,
+	), "unset is not a harness-builtin pin")
+	assert.NoError(t, validateSandboxImplementationDecision(
+		opencode,
+		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		sandboxpolicy.ImplementationHarnessBuiltin,
+		false,
+	), "a historical pure replay remains launchable")
 }

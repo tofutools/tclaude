@@ -1249,6 +1249,11 @@ type dashboardHarness struct {
 	// the same condition as a non-empty SandboxModes, surfaced explicitly
 	// so the dialog has a single boolean to gate the sandbox row on.
 	CanSandbox bool `json:"can_sandbox"`
+	// CanBuiltinOSSandbox is the narrower descriptor capability behind the
+	// harness-builtin implementation. OpenCode's mode catalog keeps
+	// CanSandbox true while this stays false, so the picker can omit a
+	// confinement claim that does not exist.
+	CanBuiltinOSSandbox bool `json:"can_builtin_os_sandbox"`
 	// CanApproval reports whether the harness has a launch approval/permission
 	// catalog. The dialog's approval row additionally gates on a non-empty
 	// ApprovalModes, mirroring how the sandbox row gates on can_sandbox &&
@@ -1348,22 +1353,23 @@ func buildHarnessCatalog() []dashboardHarness {
 			continue // not spawnable — skip
 		}
 		dh := dashboardHarness{
-			Name:             h.Name,
-			DisplayName:      h.DisplayName,
-			Models:           h.Models.Models(),
-			EffortLevels:     h.Models.EffortLevels(),
-			CanRename:        h.CanRename(),
-			CanCompact:       h.CanCompact(),
-			CanSandbox:       h.SupportsSandbox(),
-			CanApproval:      h.SupportsApproval(),
-			CanTools:         h.SupportsToolGovernance(),
-			CanAutoReview:    h.SupportsAutoReview(),
-			CanDirTrust:      h.SupportsDirTrust(),
-			DirTrustStore:    harness.DirTrustStore(h),
-			CanAskTimeout:    h.SupportsAskTimeout(),
-			CanRemoteControl: h.CanRemoteControl(),
-			CanAutoMemory:    h.CanAutoMemory(),
-			CanSSHWorkaround: h.CanSSHWorkaround(),
+			Name:                h.Name,
+			DisplayName:         h.DisplayName,
+			Models:              h.Models.Models(),
+			EffortLevels:        h.Models.EffortLevels(),
+			CanRename:           h.CanRename(),
+			CanCompact:          h.CanCompact(),
+			CanSandbox:          h.SupportsSandbox(),
+			CanBuiltinOSSandbox: h.SupportsBuiltinOSSandbox(),
+			CanApproval:         h.SupportsApproval(),
+			CanTools:            h.SupportsToolGovernance(),
+			CanAutoReview:       h.SupportsAutoReview(),
+			CanDirTrust:         h.SupportsDirTrust(),
+			DirTrustStore:       harness.DirTrustStore(h),
+			CanAskTimeout:       h.SupportsAskTimeout(),
+			CanRemoteControl:    h.CanRemoteControl(),
+			CanAutoMemory:       h.CanAutoMemory(),
+			CanSSHWorkaround:    h.CanSSHWorkaround(),
 
 			CanContextFeatures:         h.CanContextFeatures(),
 			CanAutoCompactWindow:       h.CanAutoCompactWindow(),

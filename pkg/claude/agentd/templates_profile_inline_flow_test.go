@@ -212,6 +212,23 @@ func TestGroupTemplate_ProfileInline_HarnessMismatchWithRefRejectedAtSave(t *tes
 		"blank-harness inline Claude model over a codex ref must fail at save, not deploy: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "profile_inline", "error names the offending tier")
 
+	// A semantically impossible implementation is a typed 422 at template
+	// authoring, before the invalid pair can become durable template state.
+	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "t",
+		"agents": []map[string]any{{
+			"name": "lead", "harness": "opencode",
+			"profile_inline": map[string]any{
+				"harness": "opencode", "sandbox_implementation": "harness-builtin",
+			},
+		}},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"OpenCode harness-builtin profile_inline should 422; body=%s", rec.Body.String())
+	failure := decodeFailure(t, rec.Body.Bytes())
+	assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+	assert.Contains(t, failure.Error, "is invalid for OpenCode")
+
 	// Positive control: same shape, inline profile explicitly codex-tagged
 	// with a model that harness accepts — saves fine.
 	rec = humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
