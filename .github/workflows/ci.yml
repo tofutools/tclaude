@@ -62,7 +62,7 @@ jobs:
 
           set +e
           before=$(sysctl -n "$restriction" 2>&1)
-          unlock_output=$(sudo sysctl -w "$restriction=1" 2>&1)
+          unlock_output=$(sudo sysctl -w "$restriction=0" 2>&1)
           unlock_status=$?
           after=$(sysctl -n "$restriction" 2>&1)
           readback_status=$?
