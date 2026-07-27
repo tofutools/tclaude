@@ -52,13 +52,22 @@ const maxLoginBodyBytes = 64 << 10
 // authenticated (valid client cert + valid session cookie + same-origin).
 type remoteAuthedCtxKey struct{}
 
+type remoteAuthSession struct {
+	MintedAt  time.Time
+	ExpiresAt time.Time
+}
+
 // dashboardPreAuthed reports whether the remote listener already authenticated
 // this request. checkDashboardAuth and handleDashboardRoot consult it so the
 // shared handlers serve remote requests without the loopback cookie/Origin
 // checks (which would never match a remote origin).
 func dashboardPreAuthed(r *http.Request) bool {
-	v, _ := r.Context().Value(remoteAuthedCtxKey{}).(bool)
-	return v
+	switch r.Context().Value(remoteAuthedCtxKey{}).(type) {
+	case remoteAuthSession, bool:
+		return true
+	default:
+		return false
+	}
 }
 
 // startRemoteServer loads the remote-access material and starts the mTLS
@@ -142,7 +151,8 @@ func remoteAuthMiddleware(m *remoteaccess.Material, next http.Handler) http.Hand
 			handleRemoteLogin(w, r, m)
 			return
 		}
-		if !remoteSessionValid(r, m) {
+		session, ok := remoteSessionFromRequest(r, m)
+		if !ok {
 			// An unauthenticated page navigation goes to the login form;
 			// anything else (an /api fetch) gets a clean 401.
 			if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/dashboard") {
@@ -156,7 +166,7 @@ func remoteAuthMiddleware(m *remoteaccess.Material, next http.Handler) http.Hand
 			http.Error(w, "Origin mismatch", http.StatusForbidden)
 			return
 		}
-		ctx := context.WithValue(r.Context(), remoteAuthedCtxKey{}, true)
+		ctx := context.WithValue(r.Context(), remoteAuthedCtxKey{}, session)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -164,12 +174,23 @@ func remoteAuthMiddleware(m *remoteaccess.Material, next http.Handler) http.Hand
 // remoteSessionValid reports whether the request carries a valid (signed,
 // unexpired) remote session cookie.
 func remoteSessionValid(r *http.Request, m *remoteaccess.Material) bool {
+	_, ok := remoteSessionFromRequest(r, m)
+	return ok
+}
+
+func remoteSessionFromRequest(r *http.Request, m *remoteaccess.Material) (remoteAuthSession, bool) {
 	c, err := r.Cookie(remoteCookieName)
 	if err != nil {
-		return false
+		return remoteAuthSession{}, false
 	}
-	_, ok := remoteaccess.VerifyCookie(m.CookieKey(), c.Value)
-	return ok
+	_, expiresAt, ok := remoteaccess.VerifyCookieExpiry(m.CookieKey(), c.Value)
+	if !ok {
+		return remoteAuthSession{}, false
+	}
+	return remoteAuthSession{
+		MintedAt:  expiresAt.Add(-remoteSessionTTL),
+		ExpiresAt: expiresAt,
+	}, true
 }
 
 // remoteSameOrigin is the CSRF defense-in-depth behind the SameSite=Strict

@@ -105,6 +105,9 @@ func TestDashboardFooterVersionWired(t *testing.T) {
 		`class="meta-version">tclaude version ${view.version}</span>`,
 		`class="meta-base">${view.base}</span>`,
 		`refreshed <span class="meta-time">${new Date(view.generatedAt).toLocaleTimeString()}</span>`,
+		`const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';`,
+		`auth cookie expires ${auth.expires_at ?`,
+		`minted ${new Date(auth.minted_at).toLocaleString()}`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard footer missing %q", needle)

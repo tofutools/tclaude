@@ -84,31 +84,39 @@ func SignCookie(key []byte, subject string, ttl time.Duration) string {
 // and not expired. Returns the subject and true on success; "", false
 // otherwise. Any malformed/expired/tampered token fails closed.
 func VerifyCookie(key []byte, value string) (string, bool) {
+	subject, _, ok := VerifyCookieExpiry(key, value)
+	return subject, ok
+}
+
+// VerifyCookieExpiry is VerifyCookie's metadata-bearing twin. Callers that
+// need to explain the current session lifetime (rather than merely gate a
+// request) receive the signed absolute expiry after the same validation.
+func VerifyCookieExpiry(key []byte, value string) (string, time.Time, bool) {
 	dot := strings.IndexByte(value, '.')
 	if dot < 0 {
-		return "", false
+		return "", time.Time{}, false
 	}
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(value[:dot])
 	if err != nil {
-		return "", false
+		return "", time.Time{}, false
 	}
 	gotMAC, err := base64.RawURLEncoding.DecodeString(value[dot+1:])
 	if err != nil {
-		return "", false
+		return "", time.Time{}, false
 	}
 	payload := string(payloadBytes)
 	if !hmac.Equal(gotMAC, cookieMAC(key, payload)) {
-		return "", false
+		return "", time.Time{}, false
 	}
 	bar := strings.LastIndexByte(payload, '|')
 	if bar < 0 {
-		return "", false
+		return "", time.Time{}, false
 	}
 	exp, err := strconv.ParseInt(payload[bar+1:], 10, 64)
 	if err != nil || time.Now().Unix() >= exp {
-		return "", false
+		return "", time.Time{}, false
 	}
-	return payload[:bar], true
+	return payload[:bar], time.Unix(exp, 0), true
 }
 
 func cookieMAC(key []byte, payload string) []byte {
