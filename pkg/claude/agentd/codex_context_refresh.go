@@ -439,99 +439,93 @@ func flushCodexTelemetryCheckpoints(ctx context.Context) (int, error) {
 		sessionCreatedAt   time.Time
 	}
 
-	var candidates []candidate
+	processed := make(map[string]struct{})
+	saved := 0
+	var errs []error
 	for {
 		codexContextRefreshMu.Lock()
 		refreshing := false
-		for _, state := range codexContextRefreshMu.last {
+		candidates := make([]candidate, 0, len(codexContextRefreshMu.last))
+		for sessionID, state := range codexContextRefreshMu.last {
+			if _, ok := processed[sessionID]; ok {
+				continue
+			}
 			if state.refreshing {
 				refreshing = true
-				break
+				continue
 			}
-		}
-		if !refreshing {
-			candidates = make([]candidate, 0, len(codexContextRefreshMu.last))
-			for sessionID, state := range codexContextRefreshMu.last {
-				if state.follower == nil || state.sessionConvID == "" {
-					continue
-				}
-				candidates = append(candidates, candidate{
-					sessionID:          sessionID,
-					follower:           state.follower,
-					checkpointData:     state.checkpointData,
-					checkpointFailures: state.checkpointFailures,
-					sessionConvID:      state.sessionConvID,
-					sessionCreatedAt:   state.sessionCreatedAt,
-				})
+			processed[sessionID] = struct{}{}
+			if state.follower == nil || state.sessionConvID == "" {
+				continue
 			}
+			candidates = append(candidates, candidate{
+				sessionID:          sessionID,
+				follower:           state.follower,
+				checkpointData:     state.checkpointData,
+				checkpointFailures: state.checkpointFailures,
+				sessionConvID:      state.sessionConvID,
+				sessionCreatedAt:   state.sessionCreatedAt,
+			})
 		}
 		codexContextRefreshMu.Unlock()
-		if !refreshing {
-			break
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].sessionID < candidates[j].sessionID
+		})
+
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				errs = append(errs, err)
+				return saved, errors.Join(errs...)
+			}
+			checkpoint, ok, err := candidate.follower.Checkpoint()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: encode checkpoint: %w", candidate.sessionID, err))
+				continue
+			}
+			if !ok || (string(checkpoint) == candidate.checkpointData && candidate.checkpointFailures == 0) {
+				continue
+			}
+			persisted, err := db.SaveCodexTelemetryCheckpointForSessionGenerationContext(
+				ctx,
+				candidate.sessionID,
+				candidate.sessionConvID,
+				candidate.sessionCreatedAt,
+				checkpoint,
+			)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: save checkpoint: %w", candidate.sessionID, err))
+				continue
+			}
+			if !persisted {
+				// Session deletion cascades its checkpoint. Do not attach an old
+				// in-memory follower to a later row that reused the same ID.
+				continue
+			}
+			codexContextRefreshMu.Lock()
+			state := codexContextRefreshMu.last[candidate.sessionID]
+			if state.follower == candidate.follower &&
+				state.checkpointData == candidate.checkpointData &&
+				state.sessionConvID == candidate.sessionConvID &&
+				state.sessionCreatedAt.Equal(candidate.sessionCreatedAt) {
+				state.checkpointData = string(checkpoint)
+				state.checkpointFailures = 0
+				state.checkpointPersistedAt = time.Now()
+				codexContextRefreshMu.last[candidate.sessionID] = state
+			}
+			codexContextRefreshMu.Unlock()
+			saved++
 		}
+		if !refreshing {
+			return saved, errors.Join(errs...)
+		}
+
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			errs = append(errs, ctx.Err())
+			return saved, errors.Join(errs...)
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].sessionID < candidates[j].sessionID
-	})
-
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	sessionIDs := make([]string, len(candidates))
-	for i := range candidates {
-		sessionIDs[i] = candidates[i].sessionID
-	}
-	sessions, err := db.LoadSessionsByIDs(sessionIDs)
-	if err != nil {
-		return 0, fmt.Errorf("load checkpoint session generations: %w", err)
-	}
-
-	saved := 0
-	var errs []error
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			errs = append(errs, err)
-			break
-		}
-		session := sessions[candidate.sessionID]
-		if session == nil || session.ConvID != candidate.sessionConvID ||
-			!session.CreatedAt.Equal(candidate.sessionCreatedAt) {
-			// Session deletion cascades its checkpoint. Do not attach an old
-			// in-memory follower to a later row that reused the same ID.
-			continue
-		}
-		checkpoint, ok, err := candidate.follower.Checkpoint()
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: encode checkpoint: %w", candidate.sessionID, err))
-			continue
-		}
-		if !ok || (string(checkpoint) == candidate.checkpointData && candidate.checkpointFailures == 0) {
-			continue
-		}
-		if err := db.SaveCodexTelemetryCheckpointContext(ctx, candidate.sessionID, checkpoint); err != nil {
-			errs = append(errs, fmt.Errorf("%s: save checkpoint: %w", candidate.sessionID, err))
-			continue
-		}
-		codexContextRefreshMu.Lock()
-		state := codexContextRefreshMu.last[candidate.sessionID]
-		if state.follower == candidate.follower &&
-			state.checkpointData == candidate.checkpointData &&
-			state.sessionConvID == candidate.sessionConvID &&
-			state.sessionCreatedAt.Equal(candidate.sessionCreatedAt) {
-			state.checkpointData = string(checkpoint)
-			state.checkpointFailures = 0
-			state.checkpointPersistedAt = time.Now()
-			codexContextRefreshMu.last[candidate.sessionID] = state
-		}
-		codexContextRefreshMu.Unlock()
-		saved++
-	}
-	return saved, errors.Join(errs...)
 }
 
 func sessionRowAliveIn(sess *db.SessionRow, aliveSet map[string]struct{}) bool {

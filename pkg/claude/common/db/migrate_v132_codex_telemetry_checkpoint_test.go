@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func TestCodexTelemetryCheckpointRoundTrip(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-func TestSaveCodexTelemetryCheckpointContextHonorsCancellation(t *testing.T) {
+func TestSaveCodexTelemetryCheckpointForSessionGenerationContextHonorsCancellation(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "codex-canceled-checkpoint", ConvID: "codex-conv", Status: "idle",
@@ -74,12 +75,15 @@ func TestSaveCodexTelemetryCheckpointContextHonorsCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := SaveCodexTelemetryCheckpointContext(
+	persisted, err := SaveCodexTelemetryCheckpointForSessionGenerationContext(
 		ctx,
 		"codex-canceled-checkpoint",
+		"codex-conv",
+		time.Time{},
 		json.RawMessage(`{"version":1,"offset":84}`),
 	)
 	require.ErrorIs(t, err, context.Canceled)
+	assert.False(t, persisted)
 
 	got, err := LoadCodexTelemetryCheckpoint("codex-canceled-checkpoint")
 	require.NoError(t, err)

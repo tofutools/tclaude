@@ -226,8 +226,15 @@ func TestCodexContextRefreshFlushesDeferredCheckpointOnShutdown(t *testing.T) {
 	require.NotNil(t, deferred)
 	assert.Equal(t, string(firstCheckpoint.Data), string(deferred.Data))
 
-	saved, err := flushCodexTelemetryCheckpoints(context.Background())
-	require.NoError(t, err)
+	// One in-flight follower must not keep an otherwise-ready checkpoint from
+	// using the shutdown window.
+	codexContextRefreshMu.Lock()
+	codexContextRefreshMu.last["codex-stuck-refresh"] = codexReadThroughSnapshot{refreshing: true}
+	codexContextRefreshMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	saved, err := flushCodexTelemetryCheckpoints(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Equal(t, 1, saved)
 	flushed, err := db.LoadCodexTelemetryCheckpoint(sessionID)
 	require.NoError(t, err)
@@ -236,6 +243,9 @@ func TestCodexContextRefreshFlushesDeferredCheckpointOnShutdown(t *testing.T) {
 		"graceful shutdown flushes the latest cursor even while its interval is deferred")
 
 	// A clean follower does not add another shutdown write.
+	codexContextRefreshMu.Lock()
+	delete(codexContextRefreshMu.last, "codex-stuck-refresh")
+	codexContextRefreshMu.Unlock()
 	saved, err = flushCodexTelemetryCheckpoints(context.Background())
 	require.NoError(t, err)
 	assert.Zero(t, saved)

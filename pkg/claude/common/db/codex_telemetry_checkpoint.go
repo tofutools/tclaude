@@ -34,6 +34,38 @@ func SaveCodexTelemetryCheckpointContext(ctx context.Context, sessionID string, 
 	return err
 }
 
+// SaveCodexTelemetryCheckpointForSessionGenerationContext replaces a
+// checkpoint only while the session row is still the generation observed by
+// the caller. The existence check and UPSERT are one statement, so session-ID
+// reuse cannot attach an old in-memory follower to a recreated row.
+func SaveCodexTelemetryCheckpointForSessionGenerationContext(
+	ctx context.Context,
+	sessionID, convID string,
+	createdAt time.Time,
+	data json.RawMessage,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.ExecContext(ctx, `INSERT INTO codex_telemetry_checkpoints
+			(session_id, data, failure_count, updated_at)
+		SELECT ?, ?, 0, ?
+		WHERE EXISTS (
+			SELECT 1 FROM sessions
+			WHERE id = ? AND conv_id = ? AND created_at = ?
+		)
+		ON CONFLICT(session_id) DO UPDATE SET
+			data = excluded.data, failure_count = 0, updated_at = excluded.updated_at`,
+		sessionID, string(data), time.Now().UTC().Format(time.RFC3339Nano),
+		sessionID, convID, createdAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 // LoadCodexTelemetryCheckpoint returns one session's opaque checkpoint and its
 // consecutive processing-failure count, or nil when no checkpoint exists.
 func LoadCodexTelemetryCheckpoint(sessionID string) (*CodexTelemetryCheckpointRow, error) {
