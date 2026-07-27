@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const (
@@ -540,6 +541,7 @@ func openCodeTclaudeLayerLaunchSpec(
 	implementation, cwd string,
 	gitWriteDirs []string,
 	snapshot *sandboxpolicy.Snapshot,
+	privateSessionIDs ...string,
 ) (*session.TclaudeLayerLaunchSpec, error) {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
 	if err != nil {
@@ -561,11 +563,19 @@ func openCodeTclaudeLayerLaunchSpec(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking because agentd and the attach pane use its authenticated loopback control plane and endpoint-ownership proof",
 		)
 	}
+	var privateWriteDirs []session.TclaudeLayerPrivateWriteDir
+	if len(privateSessionIDs) > 0 && strings.TrimSpace(privateSessionIDs[0]) != "" {
+		privateWriteDirs = []session.TclaudeLayerPrivateWriteDir{{
+			Parent:  tclcommon.SpawnAttachmentsPrivateBase(),
+			Current: tclcommon.SpawnAttachmentsPrivateDir(privateSessionIDs[0]),
+		}}
+	}
 	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName:  harness.OpenCodeName,
-		Cwd:          cwd,
-		GitWriteDirs: gitWriteDirs,
-		Snapshot:     snapshot,
+		HarnessName:      harness.OpenCodeName,
+		Cwd:              cwd,
+		GitWriteDirs:     gitWriteDirs,
+		Snapshot:         snapshot,
+		PrivateWriteDirs: privateWriteDirs,
 	})
 	if err != nil {
 		return nil, err

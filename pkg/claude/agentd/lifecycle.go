@@ -30,6 +30,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // memberOpResult is the per-member outcome of a bulk lifecycle op
@@ -3665,6 +3666,16 @@ type spawnParams struct {
 	// Empty everywhere else. Unexported on purpose: only
 	// executeServerSpawnDeferred sets it.
 	pendingSpawnLabel string
+	// privateAttachmentRootReserved says the deferred pass atomically claimed
+	// pendingSpawnLabel's private root before publishing the Pending row. The
+	// continuation may reuse that exact root; every fresh inline spawn must
+	// instead create a new root so a label collision cannot cross generations.
+	privateAttachmentRootReserved bool
+	// privateAttachmentRootCleanup transfers the deferred pass's pre-created
+	// root into executeSpawn. Registering it at function entry covers early
+	// validation failures; the launch-success flag preserves it after the pane
+	// exists, including later enrollment/claim failures.
+	privateAttachmentRootCleanup func()
 	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
 	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
 	// records it onto the new actor's agents.initial_spawn_config so there is a
@@ -4221,6 +4232,16 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure) {
 	groupName := spawnGroupName(g)
+	privateAttachmentCleanup := func() {}
+	if p.privateAttachmentRootCleanup != nil {
+		privateAttachmentCleanup = p.privateAttachmentRootCleanup
+	}
+	privateAttachmentsLaunched := false
+	defer func() {
+		if !privateAttachmentsLaunched {
+			privateAttachmentCleanup()
+		}
+	}()
 	timeout := p.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -4353,9 +4374,61 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// The deferred server-authoritative continuation arrives with its label
 	// already reserved (it keys the pending_spawns row the response returned),
 	// so that label is authoritative and must not be re-minted.
+	layeredLaunch := p.SandboxImplementation ==
+		string(sandboxpolicy.ImplementationTclaudeLayer)
 	label := p.pendingSpawnLabel
-	if label == "" {
+	if label == "" && layeredLaunch {
+		var reserveErr error
+		label, privateAttachmentCleanup, reserveErr =
+			reserveUniqueSpawnPrivateAttachmentRoot()
+		if reserveErr != nil {
+			return nil, &spawnFailure{
+				http.StatusInternalServerError,
+				"spawn",
+				"could not reserve private attachment root: " + reserveErr.Error(),
+			}
+		}
+	} else if label == "" {
 		label = generateSpawnLabel()
+	} else if layeredLaunch {
+		_, privateRootCreated, prepareErr :=
+			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+		if prepareErr != nil {
+			return nil, &spawnFailure{
+				http.StatusInternalServerError,
+				"spawn",
+				"could not prepare private attachment root: " + prepareErr.Error(),
+			}
+		}
+		if !privateRootCreated && !p.privateAttachmentRootReserved {
+			return nil, &spawnFailure{
+				http.StatusConflict,
+				"spawn_label_collision",
+				"private attachment root is already owned by another spawn generation",
+			}
+		}
+		privateAttachmentCleanup = func() {
+			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(label))
+		}
+	}
+	if layeredLaunch {
+		if len(p.Attachments) > 0 {
+			promoted, batchCleanup, promoteErr :=
+				promoteSpawnAttachments(label, p.Attachments)
+			if promoteErr != nil {
+				return nil, &spawnFailure{
+					http.StatusBadRequest,
+					"invalid_attachments",
+					"could not promote daemon-staged attachments: " + promoteErr.Error(),
+				}
+			}
+			rootCleanup := privateAttachmentCleanup
+			privateAttachmentCleanup = func() {
+				batchCleanup()
+				rootCleanup()
+			}
+			p.Attachments = promoted
+		}
 	}
 
 	// Agent-directory declarations are resolved only once a unique launch key
@@ -4421,7 +4494,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 				"could not build OpenCode access-control policy: " + err.Error()}
 		}
 		sandboxSpec, err := openCodeTclaudeLayerLaunchSpec(
-			p.SandboxImplementation, p.Cwd, p.GitWorktreeWriteDirs, p.EffectiveSandbox)
+			p.SandboxImplementation,
+			p.Cwd,
+			p.GitWorktreeWriteDirs,
+			p.EffectiveSandbox,
+			label,
+		)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
 		}
@@ -4598,6 +4676,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
+		privateAttachmentCleanup()
+		privateAttachmentCleanup = func() {}
 		if pendingHeld {
 			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
 				slog.Warn("spawn: failed to remove reservation after launch failure",
@@ -4622,6 +4702,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return launchFailed(err)
 	}
 	agentDirectoriesLaunched = true
+	privateAttachmentsLaunched = true
 	if openCodeLaunch != nil {
 		if err := sendOpenCodePromptForSpawn(openCodeLaunch, p.Cwd,
 			spawnArgs.InitialPrompt, p.Model, p.Effort); err != nil {
@@ -4943,14 +5024,28 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	}
 
 	label := generateSpawnLabel()
+	privateRootCleanup := func() {}
+	if p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
+		var reserveErr error
+		label, privateRootCleanup, reserveErr =
+			reserveUniqueSpawnPrivateAttachmentRoot()
+		if reserveErr != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"could not reserve private attachment root: " + reserveErr.Error()}
+		}
+	}
 	p.AgentID = db.NewAgentID()
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+		privateRootCleanup()
 		return nil, &spawnFailure{http.StatusInternalServerError, "io",
 			"failed to reserve pending spawn " + label + ": " + err.Error()}
 	}
 
 	continuation := p
 	continuation.pendingSpawnLabel = label
+	continuation.privateAttachmentRootReserved =
+		p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
+	continuation.privateAttachmentRootCleanup = privateRootCleanup
 	*syncProofCleanup = false // the continuation owns the proof markers now
 
 	type deferredResult struct {
@@ -4967,10 +5062,11 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	goBackground(func() {
 		out, fail := executeSpawn(g, continuation)
 		if fail != nil {
-			// No pane will ever write a session row for this label, so the
-			// reservation must not linger as a forever-Pending ghost. Success
-			// paths clear it via the atomic claim (or the sweeper); a delete
-			// after a late failure is an idempotent no-op there.
+			// The failed continuation cannot claim this reservation. Do not
+			// leave a forever-Pending ghost; a delete after a concurrent claim
+			// is an idempotent no-op. The private-root cleanup is separately
+			// launch-aware inside executeSpawn, because a late enrollment
+			// failure can coexist with an already-running pane.
 			if err := db.DeletePendingSpawn(label); err != nil {
 				slog.Warn("spawn: failed to remove reservation after deferred launch failure",
 					"label", label, "error", err)
@@ -6107,6 +6203,35 @@ func generateSpawnLabel() string {
 	return "spwn-" + hex.EncodeToString(b[:])
 }
 
+// reserveUniqueSpawnPrivateAttachmentRoot couples the short human-facing
+// spawn label to a newly-created private root before any upload is promoted.
+// A stale/live label collision is reminted rather than reusing another
+// generation's inode and briefly exposing its batches.
+func reserveUniqueSpawnPrivateAttachmentRoot() (string, func(), error) {
+	return reserveUniqueSpawnPrivateAttachmentRootWith(generateSpawnLabel)
+}
+
+func reserveUniqueSpawnPrivateAttachmentRootWith(
+	nextLabel func() string,
+) (string, func(), error) {
+	const maxAttempts = 16
+	for range maxAttempts {
+		label := nextLabel()
+		root, created, err := tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
+		if err != nil {
+			return "", func() {}, err
+		}
+		if !created {
+			continue
+		}
+		return label, func() { _ = os.Remove(root) }, nil
+	}
+	return "", func() {}, fmt.Errorf(
+		"could not mint an unused private attachment root after %d attempts",
+		maxAttempts,
+	)
+}
+
 // SpawnDetachedTclaudeNew is a thin facade over Spawn.SpawnNew.
 // Tests substitute a behavior-accurate fake by assigning Spawn at
 // setup; production keeps the LiveSpawner default. See clcommon.SpawnArgs
@@ -6649,6 +6774,13 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 // or rejects the detached launch, so callers learn whether this resume won the
 // launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
+	privateAttachmentRootCreated := false
+	resumeLaunched := false
+	defer func() {
+		if privateAttachmentRootCreated && !resumeLaunched {
+			_ = os.Remove(tclcommon.SpawnAttachmentsPrivateDir(a.ConvID))
+		}
+	}()
 	var openCodeLaunch *openCodeLaunch
 	if a.Harness == harness.OpenCodeName {
 		resolvedCwd, cwdErr := resolveOpenCodeLaunchCwd(a.Cwd)
@@ -6661,8 +6793,27 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if policyErr != nil {
 			return policyErr
 		}
+		implementation, implementationErr := sandboxpolicy.NormalizeImplementation(
+			a.SandboxImplementation,
+		)
+		if implementationErr != nil {
+			return implementationErr
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+			_, created, prepareErr :=
+				tclcommon.PrepareSpawnAttachmentsPrivateDir(a.ConvID)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			privateAttachmentRootCreated = created
+		}
 		sandboxSpec, sandboxErr := openCodeTclaudeLayerLaunchSpec(
-			a.SandboxImplementation, a.Cwd, a.GitWorktreeWriteDirs, a.EffectiveSandbox)
+			a.SandboxImplementation,
+			a.Cwd,
+			a.GitWorktreeWriteDirs,
+			a.EffectiveSandbox,
+			a.ConvID,
+		)
 		if sandboxErr != nil {
 			return sandboxErr
 		}
@@ -6718,6 +6869,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
 	}
+	resumeLaunched = true
 	return nil
 }
 

@@ -1188,12 +1188,35 @@ func runNew(params *NewParams) error {
 		RemoteControl:              remoteControl,
 		InitialPrompt:              params.InitialPrompt,
 	})
+	var privateAttachmentWriteDirs []TclaudeLayerPrivateWriteDir
+	if tclaudeLayer {
+		privateAttachmentDir, privateAttachmentDirCreated, prepareErr :=
+			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
+		if prepareErr != nil {
+			return fmt.Errorf(
+				"prepare tclaude-layer private attachment directory: %w",
+				prepareErr,
+			)
+		}
+		defer func() {
+			if privateAttachmentDirCreated && !launchRowCommitted {
+				// Never recursively delete a root that gained an upload while
+				// launch was in flight; os.Remove succeeds only while empty.
+				_ = os.Remove(privateAttachmentDir)
+			}
+		}()
+		privateAttachmentWriteDirs = []TclaudeLayerPrivateWriteDir{{
+			Parent:  common.SpawnAttachmentsPrivateBase(),
+			Current: privateAttachmentDir,
+		}}
+	}
 	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-			HarnessName:  h.Name,
-			Cwd:          cwd,
-			GitWriteDirs: launchGitWriteDirs,
-			Snapshot:     launchSandbox,
+			HarnessName:      h.Name,
+			Cwd:              cwd,
+			GitWriteDirs:     launchGitWriteDirs,
+			Snapshot:         launchSandbox,
+			PrivateWriteDirs: privateAttachmentWriteDirs,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)

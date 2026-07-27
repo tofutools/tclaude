@@ -103,7 +103,8 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 }
 
 func TestBwrapArgsHidesProtectedRootsBeforeBreakGlassReopens(t *testing.T) {
-	home := t.TempDir()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	for _, relative := range []string{filepath.Join(".tclaude", "data"), filepath.Join(".claude", "sessions")} {
 		require.NoError(t, os.MkdirAll(filepath.Join(home, relative), 0o700))
@@ -185,6 +186,78 @@ func TestBwrapArgsCreatesHostControlMountpointBeforeAncestorRemount(t *testing.T
 	assert.Less(t, mountpoint, parentRemount,
 		"the final class-4 destination must exist before its hidden ancestor becomes read-only")
 	assert.Less(t, parentRemount, finalHide)
+}
+
+func TestBwrapArgsPrivateWriteDirOverridesPolicyAndBreakGlassButPrecedesHostControl(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	protected := filepath.Join(home, ".tclaude", "data")
+	parent := filepath.Join(protected, "spawn-attachments")
+	current := filepath.Join(parent, "current-session")
+	sibling := filepath.Join(parent, "sibling-session")
+	for _, dir := range []string{current, sibling} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
+
+	got, err := bwrapArgs(nil, []string{parent, sibling}, sandboxpolicy.MountPlan{
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: parent, Mode: sandboxpolicy.MountRW},
+			{Path: sibling, Mode: sandboxpolicy.MountRW},
+		},
+	}, TclaudeLayerPrivateWriteDir{Parent: parent, Current: current})
+	require.NoError(t, err)
+
+	protectedHide := indexOfBwrapTriplet(got, "--tmpfs", protected)
+	policyGrant := indexOfBwrapTriplet(got, "--bind", parent)
+	siblingBreakGlass := indexOfBwrapTriplet(got, "--bind", sibling)
+	privateHide := indexOfBwrapTriplet(got, "--tmpfs", parent)
+	currentReopen := indexOfBwrapTriplet(got, "--bind", current)
+	parentRemount := indexOfBwrapTriplet(got, "--remount-ro", parent)
+	tmuxHide := indexOfBwrapTriplet(got, "--tmpfs", mustTmuxSocketDir(t))
+	if runtime.GOOS == "linux" {
+		require.NotEqual(t, -1, protectedHide)
+		assert.Less(t, protectedHide, policyGrant,
+			"acknowledged break-glass may replay through class 3 before the daemon exception")
+	}
+	require.NotEqual(t, -1, policyGrant)
+	require.NotEqual(t, -1, siblingBreakGlass)
+	require.NotEqual(t, -1, privateHide)
+	require.NotEqual(t, -1, currentReopen)
+	require.NotEqual(t, -1, parentRemount)
+	require.NotEqual(t, -1, tmuxHide)
+	assert.Less(t, policyGrant, privateHide,
+		"private sibling concealment must beat ordinary policy and break-glass replay")
+	assert.Less(t, siblingBreakGlass, privateHide,
+		"even an acknowledged sibling reopen is covered by the final daemon-only parent hide")
+	assert.Less(t, privateHide, currentReopen)
+	assert.Less(t, currentReopen, parentRemount)
+	assert.Less(t, parentRemount, tmuxHide,
+		"host tmux control remains the final unshadowable phase")
+}
+
+func TestCleanTclaudeLayerPrivateWriteDirsRequiresExistingDirectChild(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "private")
+	current := filepath.Join(parent, "current")
+	require.NoError(t, os.MkdirAll(current, 0o700))
+	got, err := cleanTclaudeLayerPrivateWriteDirs([]TclaudeLayerPrivateWriteDir{{
+		Parent: parent, Current: current,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []TclaudeLayerPrivateWriteDir{{Parent: parent, Current: current}}, got)
+
+	symlinkCurrent := filepath.Join(parent, "symlink-current")
+	require.NoError(t, os.Symlink(current, symlinkCurrent))
+	for _, invalid := range []TclaudeLayerPrivateWriteDir{
+		{Parent: parent, Current: filepath.Join(parent, "nested", "current")},
+		{Parent: parent, Current: filepath.Dir(parent)},
+		{Parent: "relative", Current: current},
+		{Parent: parent, Current: filepath.Join(parent, "missing")},
+		{Parent: parent, Current: symlinkCurrent},
+	} {
+		_, err := cleanTclaudeLayerPrivateWriteDirs([]TclaudeLayerPrivateWriteDir{invalid})
+		require.Error(t, err, invalid)
+	}
 }
 
 func TestBwrapArgsDeferredRemountTracksTopmostExactMount(t *testing.T) {
@@ -409,7 +482,14 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 	cwd := filepath.Join(home, "work")
 	agentDir := filepath.Join(home, "agent-cache")
-	for _, path := range []string{cwd, agentDir, filepath.Join(home, ".opencode")} {
+	privateParent := filepath.Join(home, "spawn-attachments")
+	privateCurrent := filepath.Join(privateParent, "opencode-session")
+	for _, path := range []string{
+		cwd,
+		agentDir,
+		filepath.Join(home, ".opencode"),
+		privateCurrent,
+	} {
 		require.NoError(t, os.MkdirAll(path, 0o700))
 	}
 	snapshot := sandboxpolicy.EmptySnapshot()
@@ -427,6 +507,10 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		Cwd:          cwd,
 		GitWriteDirs: []string{cwd},
 		Snapshot:     &snapshot,
+		PrivateWriteDirs: []TclaudeLayerPrivateWriteDir{{
+			Parent:  privateParent,
+			Current: privateCurrent,
+		}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, TclaudeLayerLaunchSpecVersion, spec.Version)
@@ -457,6 +541,10 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	}
 	assert.Equal(t, snapshot.Effective.Filesystem, spec.Contract.ProfileFilesystem,
 		"the authored launch-active rows stay separate from generated contract reopens")
+	assert.Equal(t, []TclaudeLayerPrivateWriteDir{{
+		Parent:  privateParent,
+		Current: privateCurrent,
+	}}, spec.Contract.PrivateWriteDirs)
 	assert.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: cwd, Access: sandboxpolicy.AccessWrite,
 	})
@@ -480,6 +568,15 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 		require.GreaterOrEqual(t, binReadOnly, 0)
 		assert.Less(t, stateBind, binReadOnly,
 			"the executable subtree must be re-hardened after the mutable state bind")
+		privateHide := strings.Index(wrapped,
+			"--tmpfs "+clcommon.ShellQuoteArg(privateParent))
+		privateReopen := strings.Index(wrapped,
+			"--bind "+clcommon.ShellQuoteArg(privateCurrent)+" "+
+				clcommon.ShellQuoteArg(privateCurrent))
+		require.GreaterOrEqual(t, privateHide, 0)
+		require.GreaterOrEqual(t, privateReopen, 0)
+		assert.Less(t, privateHide, privateReopen,
+			"the server executor sees only its own private attachment child")
 	}
 }
 
@@ -860,7 +957,7 @@ func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
 }
 
 func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
-	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
+	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
 	assert.Contains(t, got, " -- sh -c ")
 	assert.Contains(t, got, "export X=")

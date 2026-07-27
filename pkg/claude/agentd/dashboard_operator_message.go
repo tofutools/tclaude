@@ -97,7 +97,9 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AttachmentToken != "" {
-		_ = os.RemoveAll(filepath.Join(spawnAttachmentsBaseDir(), req.AttachmentToken))
+		_ = removeDaemonStagedAttachmentBatch(
+			filepath.Join(spawnAttachmentsBaseDir(), req.AttachmentToken),
+		)
 	}
 	setAuditTargetLabel(r, agent.TitleFor(target.ConvID))
 	writeJSON(w, http.StatusAccepted, map[string]any{
