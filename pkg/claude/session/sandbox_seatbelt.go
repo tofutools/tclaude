@@ -53,7 +53,7 @@ type seatbeltRegionNode struct {
 // narrower profile RO/hide still produces its own deny without those
 // exceptions, so runtime compatibility can never reopen an operator policy.
 func renderSeatbeltProfile(
-	phase0WriteDirs, requiredAgentdSocketPaths []string,
+	phase0WriteDirs, requiredSocketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
@@ -105,14 +105,14 @@ func renderSeatbeltProfile(
 	for _, path := range contract {
 		ordered = append(ordered, seatbeltRegion{path: path, mode: sandboxpolicy.MountRW})
 	}
-	requiredAgentdSockets, err := cleanSeatbeltPaths(
-		"required agentd socket",
-		requiredAgentdSocketPaths,
+	requiredSockets, err := cleanSeatbeltPaths(
+		"required unix socket",
+		requiredSocketPaths,
 	)
 	if err != nil {
 		return "", nil, err
 	}
-	for _, path := range requiredAgentdSockets {
+	for _, path := range requiredSockets {
 		ordered = append(ordered, seatbeltRegion{
 			path:             path,
 			mode:             sandboxpolicy.MountRO,
@@ -158,17 +158,17 @@ func renderSeatbeltProfile(
 					)
 				}
 			}
-			for _, agentdSocket := range requiredAgentdSockets {
-				if !seatbeltSamePath(path, agentdSocket, identity) &&
-					seatbeltPathContains(path, agentdSocket, identity) {
+			for _, requiredSocket := range requiredSockets {
+				if !seatbeltSamePath(path, requiredSocket, identity) &&
+					seatbeltPathContains(path, requiredSocket, identity) {
 					ordered = append(ordered, seatbeltRegion{
-						path:             agentdSocket,
+						path:             requiredSocket,
 						mode:             sandboxpolicy.MountRO,
 						networkException: true,
 					})
 					ordered = appendSeatbeltProtectedRehides(
 						ordered,
-						agentdSocket,
+						requiredSocket,
 						protected,
 						identity,
 					)
@@ -625,9 +625,10 @@ func seatbeltDaemonReopenDescendants(
 }
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)
-// to the parameterized agentd Unix socket spellings, and blocks creation of
-// every listener. The exception belongs inside the outbound deny predicate so
-// connectivity does not depend on Seatbelt allow/deny rule selection.
+// to the parameterized agentd-floor and profile-allowed Unix socket spellings,
+// and blocks creation of every listener. The exception belongs inside the
+// outbound deny predicate so connectivity does not depend on Seatbelt
+// allow/deny rule selection.
 //
 // Do not replace these operations with network* or deny system-socket.
 // Creating an AF_UNIX socket descriptor is a pathless system-socket operation,
@@ -661,7 +662,7 @@ func appendSeatbeltIsolatedNetworkRules(
 	})
 
 	profile.WriteString("\n; Isolated networking denies host/public connectivity and listeners.\n")
-	profile.WriteString("; Only agentd connects at the parameterized socket spellings are excepted.\n")
+	profile.WriteString("; Only allowlisted connects at the parameterized socket spellings are excepted.\n")
 	profile.WriteString("(deny network-bind)\n")
 	if len(exceptions) == 0 {
 		profile.WriteString("(deny network-outbound)\n")

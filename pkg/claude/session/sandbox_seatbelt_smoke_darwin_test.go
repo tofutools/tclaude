@@ -35,6 +35,7 @@ const (
 	darwinSmokeAliasFileEnv         = "TCLAUDE_SANDBOX_V2_ALIAS_FILE"
 	darwinSmokeProtectedFileEnv     = "TCLAUDE_SANDBOX_V2_PROTECTED_FILE"
 	darwinSmokePolicySocketEnv      = "TCLAUDE_SANDBOX_V2_POLICY_SOCKET"
+	darwinSmokeAllowedSocketEnv     = "TCLAUDE_SANDBOX_V2_ALLOWED_SOCKET"
 	darwinSmokeTmuxSocketEnv        = "TCLAUDE_SANDBOX_V2_TMUX_SOCKET"
 	darwinSmokeTclaudeBinaryEnv     = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	darwinSmokeRestrictBaselineEnv  = "TCLAUDE_SANDBOX_V2_RESTRICT_BASELINE"
@@ -115,6 +116,12 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	policyListener, err := net.Listen("unix", policySocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = policyListener.Close() })
+	allowedSocketDir := filepath.Join(root, "allowed-sockets")
+	require.NoError(t, os.MkdirAll(allowedSocketDir, 0o700))
+	allowedPolicySocket := filepath.Join(allowedSocketDir, "build.sock")
+	allowedPolicyListener, err := net.Listen("unix", allowedPolicySocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = allowedPolicyListener.Close() })
 	hostListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = hostListener.Close() })
@@ -196,6 +203,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		filepath.Join(aliasTools, "probe"),
 		protectedFile,
 		policySocket,
+		allowedPolicySocket,
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
@@ -233,6 +241,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		filepath.Join(aliasTools, "probe"),
 		protectedFile,
 		policySocket,
+		allowedPolicySocket,
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
@@ -277,6 +286,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		filepath.Join(aliasTools, "probe"),
 		protectedFile,
 		policySocket,
+		allowedPolicySocket,
 		tmuxSocket,
 		runtimeTempDir,
 		tclaudeBinary,
@@ -291,18 +301,23 @@ func runDarwinSeatbeltSmokeHelper(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
 	restrictBaseline, exerciseBroker, networkIsolated bool,
-	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, tmuxSocket,
+	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, allowedPolicySocket, tmuxSocket,
 	runtimeTempDir, tclaudeBinary, hostListener, expectedAgentID string,
 ) {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
 		" " + clcommon.ShellQuoteArg("-test.run="+darwinSmokeHelperTestExpression)
+	socketPaths := sandboxpolicy.AgentdSocketFloor()
+	if networkIsolated {
+		socketPaths = append(socketPaths, allowedPolicySocket)
+	}
 	command, err := tclaudeLayerCommand(
 		binary,
 		phase0WriteDirs,
 		nil,
 		nil,
 		nil,
+		socketPaths,
 		plan,
 		helperCommand,
 	)
@@ -334,6 +349,7 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeAliasFileEnv+"="+aliasFile,
 		darwinSmokeProtectedFileEnv+"="+protectedFile,
 		darwinSmokePolicySocketEnv+"="+policySocket,
+		darwinSmokeAllowedSocketEnv+"="+allowedPolicySocket,
 		darwinSmokeTmuxSocketEnv+"="+tmuxSocket,
 		darwinSmokeTclaudeBinaryEnv+"="+tclaudeBinary,
 		darwinSmokeRestrictBaselineEnv+"="+boolString(restrictBaseline),
@@ -411,6 +427,7 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	aliasFile := os.Getenv(darwinSmokeAliasFileEnv)
 	protectedFile := os.Getenv(darwinSmokeProtectedFileEnv)
 	policySocket := os.Getenv(darwinSmokePolicySocketEnv)
+	allowedPolicySocket := os.Getenv(darwinSmokeAllowedSocketEnv)
 	tmuxSocket := os.Getenv(darwinSmokeTmuxSocketEnv)
 	tclaudeBinary := os.Getenv(darwinSmokeTclaudeBinaryEnv)
 	restrictBaseline := os.Getenv(darwinSmokeRestrictBaselineEnv) == "1"
@@ -463,6 +480,12 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 		t.Fatal("ordinary policy-hide socket remained connectable")
 	} else {
 		assertSeatbeltEPERM(t, dialErr, "ordinary policy-hide Unix connect")
+	}
+	if networkIsolated {
+		conn, dialErr := net.DialTimeout("unix", allowedPolicySocket, 250*time.Millisecond)
+		require.NoError(t, dialErr,
+			"darwin isolated posture must retain an explicitly allowlisted Unix socket")
+		require.NoError(t, conn.Close())
 	}
 	if conn, dialErr := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); dialErr == nil {
 		_ = conn.Close()

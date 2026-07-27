@@ -2264,6 +2264,7 @@ func resumeLaunchCmd(
 		convID,
 		extraArgs,
 		&proof,
+		nil,
 	)
 	if proof != nil {
 		proof.Cleanup()
@@ -2275,6 +2276,7 @@ func resumeLaunchCmdWithStackedProof(
 	harnessName, sessionID, convID string,
 	extraArgs []string,
 	proofOut **session.StackedSandboxProof,
+	effectiveSandboxOut **sandboxpolicy.Snapshot,
 ) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
 	if err != nil {
@@ -2327,6 +2329,18 @@ func resumeLaunchCmdWithStackedProof(
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
+		renderedAxes, err := sandboxpolicy.PlannedEffectiveAccessAxes(validated.Effective)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+		}
+		materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(
+			renderedAxes.UnixSockets)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+		}
+		sandboxpolicy.SetUnixSocketLaunchMaterialization(
+			&validated, materialization)
+		effectiveSandbox = &validated
 		effectiveProfile = validated.Effective
 		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
 		for _, entry := range validated.Effective.Environment {
@@ -2548,9 +2562,12 @@ func resumeLaunchCmdWithStackedProof(
 			}
 		}
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
-			ReadDirs:           readDirs,
-			WriteDirs:          resumeWriteDirs,
-			DenyDirs:           denyDirs,
+			ReadDirs:    readDirs,
+			WriteDirs:   resumeWriteDirs,
+			DenyDirs:    denyDirs,
+			UnixSockets: effectiveProfile.UnixSockets,
+			MaterializedUnixSocketPaths: resumeMaterializedUnixSocketPaths(
+				effectiveSandbox),
 			RequireSplitPolicy: requireSplitPolicy,
 		}, networkAccess, session.GenerateSessionID())
 		if err != nil {
@@ -2638,6 +2655,9 @@ func resumeLaunchCmdWithStackedProof(
 		*proofOut = stackedProof
 	} else if stackedProof != nil {
 		stackedProof.Cleanup()
+	}
+	if effectiveSandboxOut != nil {
+		*effectiveSandboxOut = effectiveSandbox
 	}
 	return cmd, cleanupPath, h, nil
 }
@@ -2930,6 +2950,16 @@ func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {
 	return snapshot
 }
 
+func resumeMaterializedUnixSocketPaths(
+	snapshot *sandboxpolicy.Snapshot,
+) *[]string {
+	if snapshot == nil || snapshot.UnixSocketMaterialization == nil {
+		return nil
+	}
+	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
+	return &paths
+}
+
 func resumeCommandWithFileCleanup(cmd, path string) string {
 	const statusVar = "tclaude_resume_status"
 	return cmd + "; " + statusVar + "=$?; " + session.CodexProfileCleanupShell(path) +
@@ -2982,15 +3012,22 @@ func createSessionForConv(conv *SessionEntry) error {
 	// resume path already does (JOH-217). Resolution failures (an unspawnable
 	// or unknown harness) surface here rather than spawning a broken command.
 	var stackedProof *session.StackedSandboxProof
+	var launchEffectiveSandbox *sandboxpolicy.Snapshot
 	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
 		conv.Harness,
 		sessionID,
 		conv.SessionID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&stackedProof,
+		&launchEffectiveSandbox,
 	)
 	if err != nil {
 		return err
+	}
+	if launchEffectiveSandbox != nil {
+		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
+			fmt.Printf("Warning: %s\n", notice.Detail)
+		}
 	}
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
@@ -3081,7 +3118,7 @@ func createSessionForConv(conv *SessionEntry) error {
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
 		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       resumeEffectiveSandboxForState(conv.SessionID),
+		EffectiveSandbox:       launchEffectiveSandbox,
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,
 		AskUserQuestionTimeout: askTimeout,

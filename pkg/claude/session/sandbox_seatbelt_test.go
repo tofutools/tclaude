@@ -166,14 +166,15 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 		"the host-open profile must remain byte-identical and gain no network denies")
 }
 
-func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testing.T) {
+func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *testing.T) {
 	const (
 		agentd = "/Users/dev/.tclaude/api/agentd.sock"
 		alias  = "/Users/dev/.tclaude-link/api/agentd.sock"
+		policy = "/Users/dev/runtime/build.sock"
 	)
 	profile, params, err := renderSeatbeltProfile(
 		nil,
-		[]string{agentd},
+		[]string{agentd, policy},
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -205,16 +206,17 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAgentdAliases(t *testi
 			exceptions[param.name] = param.path
 		}
 	}
-	assert.ElementsMatch(t, []string{agentd, alias}, []string{
+	assert.ElementsMatch(t, []string{agentd, alias, policy}, []string{
 		exceptions["AGENTD_SOCKET_0"],
 		exceptions["AGENTD_SOCKET_1"],
+		exceptions["AGENTD_SOCKET_2"],
 	})
 	for name := range exceptions {
 		assert.Equal(t, 1, strings.Count(profile,
 			`(remote unix-socket
         (literal (param "`+name+`")))`,
 		),
-			"agentd path must be the sole outbound-connect exception",
+			"each allowlisted socket path must be an exact outbound-connect exception",
 		)
 	}
 }

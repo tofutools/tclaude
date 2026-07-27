@@ -123,6 +123,7 @@ func tclaudeLayerStackedCommand(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	string,
 	string,
@@ -140,6 +141,7 @@ func tclaudeLayerCommand(
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
 	_ []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
 ) (string, error) {
@@ -196,13 +198,20 @@ func tclaudeLayerCommand(
 			},
 		)
 	}
-	socketFloor := sandboxpolicy.AgentdSocketFloor()
-	for i := range socketFloor {
-		socketFloor[i] = canonicalSeatbeltOwnedPath(socketFloor[i])
+	for i := range socketPaths {
+		if i >= len(sandboxpolicy.AgentdSocketFloor()) {
+			info, statErr := os.Lstat(socketPaths[i])
+			if statErr != nil || info.Mode()&os.ModeSocket == 0 {
+				return "", fmt.Errorf(
+					"materialized unix socket %q changed before the tclaude-layer adapter rendered it",
+					socketPaths[i])
+			}
+		}
+		socketPaths[i] = canonicalSeatbeltOwnedPath(socketPaths[i])
 	}
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
-		socketFloor,
+		socketPaths,
 		filteredPlan,
 		protectedRoots,
 		tmuxSocketDir,
@@ -228,6 +237,7 @@ func tclaudeLayerServerCommand(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {

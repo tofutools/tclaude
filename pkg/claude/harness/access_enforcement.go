@@ -219,9 +219,9 @@ func accessEnforcementTable(
 			NetworkClosed: EnforceFull,
 			// NetworkFiltered remains reserved and refused by every applier.
 			NetworkList: EnforceNone,
-			// Socket capabilities are combination-aware: on Linux and in the
-			// current Seatbelt renderer, the closed-network posture is the one
-			// already verified to retain only the agentd pathname sockets.
+			// Socket capabilities are combination-aware: the closed-network
+			// posture removes ambient sockets outside explicitly reopened
+			// filesystem roots.
 			SocketOpen:   EnforceFull,
 			SocketClosed: EnforceNone,
 			SocketList:   EnforceNone,
@@ -230,23 +230,26 @@ func accessEnforcementTable(
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull
+			// M3 materializes the resolved list at launch. Seatbelt provides
+			// connect-level enforcement for the same paths.
+			caps.SocketList = EnforceFull
 			caps.SocketOpen = EnforceNone
-			caps.SocketListRefusal =
-				"unix-socket access lists are not yet enforceable under closed network access on macOS tclaude-layer; " +
-					"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
 			caps.SocketOpenRefusal =
 				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
 					`leave unix_sockets unset (agentd only) or use open network access`
 			if goos == "linux" {
-				// The constructed root intentionally removes ambient host
-				// socket visibility. That satisfies an unset socket axis and
-				// closed sockets, but cannot satisfy explicitly-authored open.
+				// Bubblewrap has no independent AF_UNIX connect filter.
+				// Its constructed root hides sockets generally and binds listed
+				// paths, but recursive readable/writable roots also expose any
+				// sockets beneath them.
+				caps.SocketClosed = EnforcePartial
+				caps.SocketList = EnforcePartial
+				caps.SocketCombinationDetail =
+					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
+						"but sockets beneath those readable/writable directories remain reachable"
 				caps.SocketOpenRefusal =
 					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
 						`use a socket access list or leave unix_sockets unset`
-				caps.SocketListRefusal =
-					"unix-socket access lists are not yet enforceable under closed network access on Linux tclaude-layer; " +
-						"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)"
 			}
 		} else {
 			if goos == "linux" {
@@ -300,13 +303,10 @@ func accessEnforcementTable(
 				`ambient unix-socket access is not yet enforceable in the Codex managed profile; ` +
 					`leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets`
 			caps.SocketClosed = EnforceFull
-			caps.SocketListRefusal =
-				"unix-socket access-list widening is not yet enforceable in the Codex managed profile; " +
-					"leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets " +
-					"(list degrades, unenforced)"
-			// Profile-authored socket lists are connected in M3. The Codex
-			// TOML mechanism exists today, but M1 cannot truthfully claim that
-			// a field no adapter consumes is enforced.
+			// M3 feeds the launch-materialized profile list through Codex's
+			// existing per-path filesystem read and network.unix_sockets
+			// permission tables.
+			caps.SocketList = EnforceFull
 		}
 		return caps, nil
 	default:
@@ -451,9 +451,16 @@ func predictSocketAxis(
 			}
 			return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionNotEnforced, Detail: detail}
 		}
-		if caps.SocketList == EnforcePartial || caps.Scope == "tools-only" {
+		if caps.SocketList == EnforcePartial {
+			detail := caps.SocketCombinationDetail
+			if detail == "" {
+				detail = "the Unix-socket allow list is enforced with wider socket scope"
+			}
+			return predictedPartial(tier, caps.Mechanism, detail)
+		}
+		if caps.Scope == "tools-only" {
 			return predictedPartial(tier, caps.Mechanism,
-				"the Unix-socket allow list is enforced with wider socket or process scope")
+				"the Unix-socket allow list applies only to tool execution, not the harness process")
 		}
 		return predictedEnforced(tier, caps.Mechanism, "the Unix-socket allow list")
 	default:
@@ -627,6 +634,15 @@ func PlanAccessEnforcement(
 			}
 			notices = append(notices, degradationNotice(
 				"unix_sockets", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,
+				caps, detail, nil,
+			))
+		} else if caps.socketList == EnforcePartial {
+			detail := caps.socketCombinationDetail
+			if detail == "" {
+				detail = "the Unix-socket allow list is partially enforced; some socket classes remain reachable"
+			}
+			notices = append(notices, degradationNotice(
+				"unix_sockets", "partial_mechanism", sandboxpolicy.AccessNoticeEffectEnforcedWider,
 				caps, detail, nil,
 			))
 		} else if caps.scope == "tools-only" {

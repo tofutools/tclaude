@@ -171,6 +171,7 @@ func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		sandboxpolicy.AgentdSocketFloor(),
 		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd},
 		"true",
 	)

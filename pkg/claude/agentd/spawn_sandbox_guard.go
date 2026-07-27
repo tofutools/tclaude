@@ -186,15 +186,25 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_access", err.Error()}
 	}
-	_, notices, err := harness.PlanAccessEnforcement(axes, caps)
+	rendered, notices, err := harness.PlanAccessEnforcement(axes, caps)
 	if err != nil {
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
+	materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(rendered.UnixSockets)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"invalid_sandbox_profile", err.Error()}
+	}
+	launchNotices := []sandboxpolicy.AccessNotice{}
+	if launchNotice := sandboxpolicy.UnixSocketLaunchNotice(materialization); launchNotice != nil {
+		launchNotices = append(launchNotices, *launchNotice)
+	}
 	snapshot.Effective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 		snapshot.Effective.AccessNotices, notices...,
 	)
-	return notices, nil
+	sandboxpolicy.SetUnixSocketLaunchMaterialization(snapshot, materialization)
+	return append(notices, launchNotices...), nil
 }
 
 // sandboxProfilesDisabled reports launch modes whose explicit contract omits

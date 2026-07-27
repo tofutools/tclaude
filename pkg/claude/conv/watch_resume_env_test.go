@@ -1,6 +1,7 @@
 package conv
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -333,6 +335,73 @@ func TestResumeWithoutDenyKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
 	assert.Contains(t, content, `extends = ":workspace"`)
 	assert.NotContains(t, content, `"`+workspace+`" = "write"`,
 		"default resumes keep relying on the unchanged workspace baseline")
+}
+
+func TestWatchResumeRefreshesSocketMaterializationForAdapterAndSavedState(t *testing.T) {
+	setupTestDB(t)
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	workspace := filepath.Join(home, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	socket := filepath.Join(home, "services", "build.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o755))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
+		Explicit: &sandboxpolicy.Profile{
+			Name: "socket-resume",
+			UnixSockets: &sandboxpolicy.UnixSocketRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.SocketAllowEntry{{
+					Path: socket,
+				}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	stale, err := sandboxpolicy.PrepareUnixSocketLaunch(
+		*snapshot.Effective.UnixSockets)
+	require.NoError(t, err)
+	sandboxpolicy.SetUnixSocketLaunchMaterialization(&snapshot, stale)
+	require.Empty(t, snapshot.UnixSocketMaterialization.Paths)
+	require.Len(t, snapshot.Effective.AccessNotices, 1)
+
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	canonicalSocket, err := filepath.EvalSymlinks(socket)
+	require.NoError(t, err)
+
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+	}))
+
+	var launchSnapshot *sandboxpolicy.Snapshot
+	_, profilePath, _, err := resumeLaunchCmdWithStackedProof(
+		harness.CodexName,
+		resumeConvCodex[:8],
+		resumeConvCodex,
+		nil,
+		nil,
+		&launchSnapshot,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, launchSnapshot)
+	require.Equal(t, []string{canonicalSocket},
+		launchSnapshot.UnixSocketMaterialization.Paths)
+	for _, notice := range launchSnapshot.Effective.AccessNotices {
+		require.NotEqual(t, sandboxpolicy.AccessNoticeClassLaunch, notice.Class,
+			"a live socket must clear the previous launch's unmaterialized notice")
+	}
+	raw, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"`+canonicalSocket+`" = "allow"`)
 }
 
 func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {

@@ -187,16 +187,23 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// Resolution failures (an unknown / unspawnable harness) surface here
 	// rather than spawning a broken command (JOH-218).
 	var stackedProof *session.StackedSandboxProof
+	var launchEffectiveSandbox *sandboxpolicy.Snapshot
 	launchCmd, profilePath, h, err := resumeLaunchCmdWithStackedProof(
 		rc.Harness,
 		sessionID,
 		rc.ConvID,
 		clcommon.ExtractClaudeExtraArgs(),
 		&stackedProof,
+		&launchEffectiveSandbox,
 	)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
+	}
+	if launchEffectiveSandbox != nil {
+		for _, notice := range launchEffectiveSandbox.Effective.AccessNotices {
+			fmt.Fprintf(stdout, "Warning: %s\n", notice.Detail)
+		}
 	}
 	if stackedProof != nil {
 		defer stackedProof.Cleanup()
@@ -315,7 +322,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		OSSandboxState:         launchOSSandbox.State,
 		OSSandboxSource:        launchOSSandbox.Source,
 		OSSandboxUnverified:    launchOSSandbox.Unverified,
-		EffectiveSandbox:       resumeEffectiveSandboxForState(rc.ConvID),
+		EffectiveSandbox:       launchEffectiveSandbox,
 		ApprovalPolicy:         approvalPolicy,
 		ApprovalAutoReview:     autoReview,
 		AskUserQuestionTimeout: askTimeout,

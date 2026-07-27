@@ -24,6 +24,7 @@ func tclaudeLayerCommand(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {
@@ -36,6 +37,7 @@ func tclaudeLayerStackedCommand(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	string,
 	string,
@@ -52,6 +54,7 @@ func tclaudeLayerServerCommand(
 	[]TclaudeLayerPrivateWriteDir,
 	[]string,
 	[]TclaudeLayerReadOnlyBind,
+	[]string,
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {

@@ -50,10 +50,15 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closed, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceFull, caps.socketClosed)
+	assert.Equal(t, EnforcePartial, caps.socketClosed)
 	_, notices, err := PlanAccessEnforcement(closed, caps)
 	require.NoError(t, err)
-	assert.Empty(t, notices)
+	require.Len(t, notices, 1,
+		"claiming Full or suppressing the partial disclosure must fail this guard")
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "readable/writable directories")
+	assert.Contains(t, notices[0].Detail, "remain reachable")
+	assert.Contains(t, notices[0].Detail, "outside")
 
 	explicitOpenSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -92,12 +97,18 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, closedNetworkSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	_, notices, err = PlanAccessEnforcement(closedNetworkSocketList, caps)
-	require.EqualError(t, err,
-		"unix-socket access lists are not yet enforceable under closed network access on Linux tclaude-layer; "+
-			"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)")
-	assert.Empty(t, notices,
-		"an undeliverable widening must refuse instead of disclosing socket-open while rendering agentd-only")
+	assert.Equal(t, EnforcePartial, caps.socketList)
+	rendered, notices, err := PlanAccessEnforcement(closedNetworkSocketList, caps)
+	require.NoError(t, err)
+	assert.Equal(t, closedNetworkSocketList.UnixSockets, rendered.UnixSockets)
+	require.Len(t, notices, 1,
+		"claiming Full or suppressing the partial disclosure must fail this guard")
+	assert.Equal(t, "partial_mechanism", notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "listed Unix sockets are bound")
+	assert.Contains(t, notices[0].Detail, "readable/writable directories")
+	assert.Contains(t, notices[0].Detail, "remain reachable")
+	assert.Contains(t, notices[0].Detail, "outside")
 
 	hostOpenClosedSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
@@ -125,7 +136,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	rendered, notices, err := PlanAccessEnforcement(hostOpenSocketList, caps)
+	rendered, notices, err = PlanAccessEnforcement(hostOpenSocketList, caps)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.UnixSockets.Mode)
 	require.Len(t, notices, 1)
@@ -144,7 +155,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Equal(t, EnforceNone, resolved.socketClosed)
 }
 
-func TestUndeliverableSocketWideningRefusesAcrossRestrictiveRenderers(t *testing.T) {
+func TestSocketListAdaptersPreserveRuledCombinationBoundaries(t *testing.T) {
 	claude := Default()
 	closedSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -158,10 +169,10 @@ func TestUndeliverableSocketWideningRefusesAcrossRestrictiveRenderers(t *testing
 		closedSocketList, ClaudeSandboxOff, "darwin",
 	)
 	require.NoError(t, err)
-	_, notices, err := PlanAccessEnforcement(closedSocketList, darwinCaps)
-	require.EqualError(t, err,
-		"unix-socket access lists are not yet enforceable under closed network access on macOS tclaude-layer; "+
-			"leave unix_sockets unset (agentd only) or use open network access (list degrades, unenforced)")
+	assert.Equal(t, EnforceFull, darwinCaps.socketList)
+	rendered, notices, err := PlanAccessEnforcement(closedSocketList, darwinCaps)
+	require.NoError(t, err)
+	assert.Equal(t, closedSocketList.UnixSockets, rendered.UnixSockets)
 	assert.Empty(t, notices)
 
 	closedSocketOpen := sandboxpolicy.ResolvedAxes{
@@ -186,7 +197,7 @@ func TestUndeliverableSocketWideningRefusesAcrossRestrictiveRenderers(t *testing
 		hostOpenSocketList, ClaudeSandboxOff, "darwin",
 	)
 	require.NoError(t, err)
-	rendered, notices, err := PlanAccessEnforcement(hostOpenSocketList, darwinCaps)
+	rendered, notices, err = PlanAccessEnforcement(hostOpenSocketList, darwinCaps)
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.UnixSockets.Mode)
 	require.Len(t, notices, 1)
@@ -216,13 +227,12 @@ func TestUndeliverableSocketWideningRefusesAcrossRestrictiveRenderers(t *testing
 		hostOpenSocketList, SandboxManagedProfile, "darwin",
 	)
 	require.NoError(t, err)
-	_, notices, err = PlanAccessEnforcement(hostOpenSocketList, codexCaps)
-	require.EqualError(t, err,
-		"unix-socket access-list widening is not yet enforceable in the Codex managed profile; "+
-			"leave unix_sockets unset (agentd only) or choose a sandbox mode that preserves ambient sockets "+
-			"(list degrades, unenforced)")
-	assert.Empty(t, notices,
-		"the managed Codex profile renders only the agentd floor, so it must not disclose all sockets reachable")
+	assert.Equal(t, EnforceFull, codexCaps.socketList)
+	rendered, notices, err = PlanAccessEnforcement(hostOpenSocketList, codexCaps)
+	require.NoError(t, err)
+	assert.Equal(t, hostOpenSocketList.UnixSockets, rendered.UnixSockets)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "tools_only_scope", notices[0].Reason)
 
 	unsetSockets := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},

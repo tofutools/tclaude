@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,8 +12,53 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+func TestCodexManagedProfileRendersResolvedUnixSocketList(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	socket := filepath.Join(home, "services", "build.sock")
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	canonicalSocket, err := filepath.EvalSymlinks(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := codexAgentProfileContentForRules(
+		"test",
+		filepath.Join(home, ".tclaude", "api", "agentd.sock"),
+		filepath.Join(home, ".tclaude", "data"),
+		CodexSandboxRules{UnixSockets: &sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.SocketAllowEntry{{
+				PathGlob: filepath.Join(home, "services", "*.sock"),
+			}},
+		}},
+		sandboxpolicy.NetworkAccessInternet,
+		"linux",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("%q = \"read\"", canonicalSocket),
+		fmt.Sprintf("%q = \"allow\"", canonicalSocket),
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("managed profile missing socket rule %q:\n%s", want, content)
+		}
+	}
+}
 
 // TestCodexAgentProfileContent pins the explicit Internet posture: ordinary
 // networking and agentd remain available while the tclaude tmux server socket
