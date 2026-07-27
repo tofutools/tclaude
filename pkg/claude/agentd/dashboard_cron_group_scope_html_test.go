@@ -10,7 +10,7 @@ import (
 // cover the interactive behavior.
 //
 // The contract: when the cron modal is opened from a group header's
-// "⏰ multicast" button, the shared solo/group target picker is scoped
+// "⏰ schedule…" button, the shared solo/group target picker is scoped
 // to that group — its selection cannot leave the group. The group
 // dropdown locks to the one group; Solo mode swaps the all-agents
 // free-text input for a <select> of only that group's members. Both
@@ -34,7 +34,7 @@ func TestDashboardHTML_CronGroupScopedTargetPicker(t *testing.T) {
 	must("value=${value.target}",
 		"the scoped member selection remains controlled")
 
-	// The native Groups header's "⏰ multicast" button arms the scope; Jobs
+	// The native Groups header's "⏰ schedule…" button arms the scope; Jobs
 	// state preserves the launcher's scopeGroup in the immutable prefill.
 	must("scopeGroup: name",
 		"the group header cron button must pass scopeGroup")

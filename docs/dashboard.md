@@ -276,7 +276,8 @@ posture remains durable and the ordinary wake action retries it.
 Per-group quick actions live above the roster as icon-only buttons (hover for
 their labels): **spawn agent**, **create subgroup**, **power on**, and
 **shutdown**. The remaining actions live in the group header menu: **+ add
-member** (a searchable keyboard-navigable overlay), **⏰ multicast** cron,
+member** (a searchable keyboard-navigable overlay), **⏰ schedule…** (a
+group-scoped cron job),
 **✉ message** (a one-shot message to the group or a ticked subset),
 **rename**, **⤓ export** (the whole group to a portable `.zip`), **🧹
 cleanup** (bulk-remove confirmed-offline members — see [Cleanup](#cleanup)),
