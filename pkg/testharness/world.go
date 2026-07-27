@@ -19,9 +19,10 @@ import (
 // back. Instead, http.go provides handler-agnostic Serve / JSONRequest
 // helpers that the test wires to its own mux.
 type World struct {
-	HomeDir string
-	Tmux    *TmuxSim
-	CCs     *CCRegistry
+	HomeDir      string
+	Tmux         *TmuxSim
+	CCs          *CCRegistry
+	SandboxLayer *SandboxLayerSim
 	// SkipSpawnRow, when true, makes the CC simSpawner build the pane (CCSim +
 	// .jsonl + tmux registration) but NOT write the SessionRow — modelling a
 	// forked `tclaude session new` whose row write lags past the daemon's
@@ -122,6 +123,7 @@ func New(t *testing.T) *World {
 		HomeDir:             home,
 		Tmux:                newTmuxSim(),
 		CCs:                 newCCRegistry(),
+		SandboxLayer:        &SandboxLayerSim{},
 		Codexes:             newCodexRegistry(),
 		spawnEfforts:        map[string]string{},
 		spawnModels:         map[string]string{},
