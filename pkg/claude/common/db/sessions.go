@@ -973,6 +973,19 @@ func UpdateContextPct(sessionID string, pct float64) error {
 	return err
 }
 
+// ContextSnapshotWriteTiming breaks one context persistence operation into
+// SQLite-facing stages for daemon performance diagnostics.
+type ContextSnapshotWriteTiming struct {
+	Total      time.Duration
+	Open       time.Duration
+	Begin      time.Duration
+	Update     time.Duration
+	Projection time.Duration
+	Commit     time.Duration
+	ExecCommit time.Duration
+	Result     time.Duration
+}
+
 // UpdateContextSnapshot stores the full last-API-response context-window
 // snapshot from Claude Code's statusline. Tokens come from the most
 // recent API response (input includes cache reads/writes), windowSize
@@ -992,17 +1005,6 @@ func UpdateContextPct(sessionID string, pct float64) error {
 // input is unambiguously "no data", not "0% used". This guard lives
 // at the DB chokepoint so no caller — present or future — can
 // reintroduce the clobber.
-type ContextSnapshotWriteTiming struct {
-	Total      time.Duration
-	Open       time.Duration
-	Begin      time.Duration
-	Update     time.Duration
-	Projection time.Duration
-	Commit     time.Duration
-	ExecCommit time.Duration
-	Result     time.Duration
-}
-
 func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOutput, windowSize int64) error {
 	return UpdateContextSnapshotTimed(sessionID, pct, tokensInput, tokensOutput, windowSize, nil)
 }
