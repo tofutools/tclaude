@@ -1351,7 +1351,12 @@ func TestDashboardHTML_WizardCogs(t *testing.T) {
 	// no-matches note re-letters to match the Spellbook's own empty state.
 	must("body.wizard .action-menu-filter {", "the cog filter box gets the arcane skin")
 	must("body.wizard .action-menu-filter::placeholder", "the filter box's prompt is re-lettered arcane")
-	must("body.wizard .action-menu button[data-menu-active]", "the keyboard cursor takes the mystic-purple glow in wizard mode")
+	// These are deliberately scoped per cog. The per-agent/per-group resting
+	// rules above carry an extra :not(:disabled); a generic active selector is
+	// less specific and leaves keyboard movement working but invisible.
+	must("body.wizard .filter-bar-cog .action-menu button[data-menu-active]", "the global keyboard cursor takes the mystic-purple glow")
+	must("body.wizard .row-actions .action-menu button[data-menu-active]", "the per-agent keyboard cursor overrides the resting item background")
+	must("body.wizard .group-actions .action-menu button[data-menu-active]", "the per-group keyboard cursor overrides the resting item background")
 	must("body.wizard .action-menu[data-menu-empty]::after", "the empty-result note is re-lettered arcane")
 }
 

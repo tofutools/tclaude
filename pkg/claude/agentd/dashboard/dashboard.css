@@ -11153,7 +11153,13 @@ body.wizard .action-menu-filter {
 }
 body.wizard .action-menu-filter::placeholder { color: #9a86c4; }
 body.wizard .action-menu-filter:focus { border-color: #d9b45a; }
-body.wizard .action-menu button[data-menu-active] {
+/* Keep each selector at least as specific as its resting-item rule above.
+   The row/group rules include :not(:disabled), so the generic active selector
+   lost the cascade there: keyboard navigation moved the cursor, but its
+   highlight stayed hidden under the resting violet background. */
+body.wizard .filter-bar-cog .action-menu button[data-menu-active],
+body.wizard .row-actions .action-menu button[data-menu-active],
+body.wizard .group-actions .action-menu button[data-menu-active] {
   background: rgba(122, 93, 176, 0.3);
 }
 body.wizard .action-menu[data-menu-empty]::after {
