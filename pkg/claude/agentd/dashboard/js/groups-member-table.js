@@ -202,9 +202,13 @@ function sandboxIndicator(member) {
   return { status: danger ? 'OFF' : 'ON', danger, offline };
 }
 
-function sandboxImplementationLabel(member) {
+function sandboxImplementationLabel(member, badge) {
+  if (badge.status === 'OFF') return 'None';
   const implementation = member.state?.sandbox_implementation || 'harness-builtin';
-  if (implementation === 'tclaude-layer' || implementation === 'stacked') return 'TClaude';
+  if (implementation === 'tclaude-layer') return 'TClaude';
+  if (implementation === 'stacked') {
+    return `${harnessLabels(member.state?.harness || 'claude').short}+TClaude`;
+  }
   if (implementation === 'harness-builtin') {
     return harnessLabels(member.state?.harness || 'claude').short;
   }
@@ -221,8 +225,8 @@ function sandboxProfileLabel(member) {
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
   const lines = [
-    `Status: ${badge.status}`,
-    `Implementation: ${sandboxImplementationLabel(member)}`,
+    `Status: ${unlocked && badge.status === 'OFF' ? 'TEMP OFF' : badge.status}`,
+    `Implementation: ${sandboxImplementationLabel(member, badge)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
   ];
   if (actionable) {

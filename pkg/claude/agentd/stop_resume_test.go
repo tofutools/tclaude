@@ -467,11 +467,12 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 }
 
 type recordingResumeSpawner struct {
-	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, approval, askUserQuestionTimeout, codexGitCommonDir string
-	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned                                                   bool
-	effectiveSandbox                                                                                                 *sandboxpolicy.Snapshot
-	spawnErr                                                                                                         error
-	resumeCalls                                                                                                      int
+	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, sandboxImplementation, approval,
+	askUserQuestionTimeout, codexGitCommonDir string
+	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned bool
+	effectiveSandbox                                               *sandboxpolicy.Snapshot
+	spawnErr                                                       error
+	resumeCalls                                                    int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -496,6 +497,7 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.model = args.Model
 	s.harness = args.Harness
 	s.sandbox = args.Sandbox
+	s.sandboxImplementation = args.SandboxImplementation
 	s.approval = args.Approval
 	s.autoReview = args.AutoReview
 	s.askUserQuestionTimeout = args.AskUserQuestionTimeout
@@ -520,6 +522,39 @@ func TestResumeOneConv_SessionProvenanceUsesClaudeHarness(t *testing.T) {
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.Equal(t, physicalCwd, rec.cwd)
 	assert.True(t, rec.harness == "" || strings.EqualFold(rec.harness, harness.DefaultName))
+}
+
+func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
+	setupTestDB(t)
+	rec := installRecordingResumeSpawner(t)
+
+	const convID = "temporary-off-tclaude-layer-12345678"
+	row := saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
+	normalMode := harness.ClaudeSandboxOn
+	normalImplementation := string(sandboxpolicy.ImplementationTclaudeLayer)
+	approval := "default"
+	row.SandboxMode = normalMode
+	row.SandboxImplementation = normalImplementation
+	row.ApprovalPolicy = approval
+	require.NoError(t, db.SaveSession(row))
+
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &normalMode,
+		SandboxImplementation: &normalImplementation, ApprovalPolicy: &approval,
+	}))
+	override := harness.ClaudeSandboxOff
+	require.NoError(t, db.SetTemporarySandboxMode(
+		agentID, normalMode, "", &override,
+	))
+
+	res := resumeOneConv(convID)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, harness.ClaudeSandboxOff, rec.sandbox)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		rec.sandboxImplementation,
+		"temporary off must omit the tclaude outer wrapper as well as disabling Claude's sandbox")
 }
 
 func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -264,6 +265,35 @@ func TestForks_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
 				"forking an ordinary unset OpenCode agent must replay the legacy/default spelling")
 		})
 	}
+}
+
+func TestReincarnate_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+
+	source := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "layered-source",
+		"harness":                harness.DefaultName,
+		"sandbox":                harness.ClaudeSandboxOn,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+	})
+	require.Equalf(t, http.StatusOK, source.Code, "spawn body=%s", source.Raw)
+
+	override := harness.ClaudeSandboxOff
+	require.NoError(t, db.SetTemporarySandboxModeForConv(
+		source.ConvID, harness.ClaudeSandboxOn, "", &override,
+	))
+
+	successor := f.AsHuman().Reincarnate(source.ConvID, "continue").NewConv
+	require.NotEmpty(t, successor)
+	implementation, ok := f.World.SpawnSandboxImplementation(successor)
+	require.True(t, ok, "reincarnation must reach the simulated spawner")
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), implementation,
+		"temporary off must omit the tclaude outer wrapper for the successor")
+	mode, ok := f.World.SpawnSandbox(successor)
+	require.True(t, ok, "reincarnation must record the successor's sandbox mode")
+	assert.Equal(t, harness.ClaudeSandboxOff, mode,
+		"temporary off must also disable the harness-native sandbox")
 }
 
 func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {

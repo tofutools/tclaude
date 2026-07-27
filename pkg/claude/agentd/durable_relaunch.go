@@ -44,6 +44,22 @@ type durableRelaunchConfig struct {
 	AutoCompactWindow      string
 }
 
+// activeSandboxImplementation returns the implementation for this process
+// launch. A temporary sandbox-off override must disable both containment
+// layers: replaying tclaude-layer here would turn the outer wall back on even
+// though the harness-native mode is off. The durable implementation remains
+// unchanged on the config so restore and clone continue to use the preserved
+// normal posture.
+func (c *durableRelaunchConfig) activeSandboxImplementation() string {
+	if c != nil && c.TemporarySandboxMode {
+		return string(sandboxpolicy.ImplementationHarnessBuiltin)
+	}
+	if c == nil {
+		return ""
+	}
+	return c.SandboxImplementation
+}
+
 // temporarySandboxLaunchSnapshot derives the process-only policy paired with a
 // temporary sandbox-off mode. Codex's raw full-access mode cannot accept any
 // profile values; Claude Code and OpenCode can still receive plain environment

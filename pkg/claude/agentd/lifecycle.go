@@ -1222,6 +1222,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// default would silently drop an enforced `sandbox on` posture on resume.
 	relaunchSandbox := launchConfig.Sandbox
 	harnessName := launchConfig.Harness
+	relaunchSandboxImplementation := launchConfig.activeSandboxImplementation()
 	if launchConfig.TemporarySandboxMode {
 		effectiveSandbox = temporarySandboxLaunchSnapshot(harnessName, stableEffectiveSandbox)
 	}
@@ -1229,7 +1230,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		harnessName,
 		relaunchSandbox,
 		effectiveSandbox,
-		launchConfig.SandboxImplementation,
+		relaunchSandboxImplementation,
 	); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
@@ -1371,7 +1372,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		Model:                      launchConfig.Model,
 		Harness:                    harnessName,
 		Sandbox:                    relaunchSandbox,
-		SandboxImplementation:      launchConfig.SandboxImplementation,
+		SandboxImplementation:      relaunchSandboxImplementation,
 		SandboxChosenBy:            launchConfig.SandboxModeSource,
 		Approval:                   approval,
 		AutoReview:                 autoReview,

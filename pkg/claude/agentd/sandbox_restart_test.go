@@ -192,6 +192,9 @@ func TestDurableRelaunchAppliesTemporaryAgentOverrideButKeepsNormalPosture(t *te
 	assert.Equal(t, harness.ClaudeSandboxOn, got.NormalSandbox)
 	assert.Equal(t, normalSource, got.NormalSandboxSource)
 	assert.Equal(t, implementation, got.SandboxImplementation)
+	assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin),
+		got.activeSandboxImplementation(),
+		"temporary off disables the tclaude outer layer for the replacement process")
 }
 
 func TestDurableRelaunchKeepsNormalCodexSSHPostureDuringUnlock(t *testing.T) {
