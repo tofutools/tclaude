@@ -38,7 +38,7 @@ type serveParams struct {
 	Terminal                     string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
 	AgentCloneCooldown           string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
 	DashboardPort                int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
-	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Host/interface the dashboard + approval listener binds to (host only; set the port via --dashboard-port). Default 127.0.0.1 = loopback only. Set e.g. 0.0.0.0 or :: to expose the local dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
+	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Additional host/interface the dashboard + approval server binds to (host only; set the port via --dashboard-port). The 127.0.0.1 loopback endpoint remains available when a concrete non-loopback interface is selected. Set e.g. 0.0.0.0 or :: to expose the dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
@@ -280,12 +280,14 @@ func runServe(p *serveParams) error {
 	// up front so every startup knob reads the same snapshot.
 	cfg, _ := config.Load()
 
-	// Loopback HTTP listener for the human-approval popup (Phase B of the
+	// HTTP listeners for the human-approval popup (Phase B of the
 	// permission story) — the dashboard rides on the same listener. The
 	// port is resolved flag > config > random (0): a fixed port gives a
 	// stable, bookmarkable URL, while the default :0 never collides with
 	// another daemon or app. The URL is derived from ln.Addr() and fed to
-	// xdg-open / `tclaude agent dashboard`, never persisted.
+	// xdg-open / `tclaude agent dashboard`, never persisted. A concrete
+	// non-loopback bind is additive: startPopupServer keeps the same port
+	// available on 127.0.0.1 for local dashboard actions.
 	//
 	// Bind failure is FATAL: the dashboard + approval popup are essential,
 	// and a configured fixed port that is already in use must surface at
@@ -835,10 +837,11 @@ func resolveDashboardPort(flagValue int, cfg *config.Config) (int, string) {
 // share the one canonical default.
 const defaultDashboardBind = "127.0.0.1"
 
-// dashboardBindHost is the resolved host the dashboard/popup listener bound
-// to, set in runServe before the origin checks run. It governs the
+// dashboardBindHost is the resolved configured host the dashboard/popup server
+// bound to, set in runServe before the origin checks run. It governs the
 // same-origin model: a loopback host keeps the strict popupBaseURL pin; a
-// non-loopback host switches the dashboard origin check to host-relative
+// non-loopback host (in addition to the mandatory loopback endpoint) switches
+// the dashboard origin check to host-relative
 // (mirroring the remote listener), so a browser reaching the dashboard
 // through a LAN IP / proxy hostname still authenticates. Defaults to
 // loopback so tests and any pre-runServe reader see the safe value.

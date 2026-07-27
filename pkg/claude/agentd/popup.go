@@ -26,11 +26,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/wsl"
 )
 
-// startPopupServer binds the dashboard HTTP listener (also the home of the
+// startPopupServer binds the dashboard HTTP listeners (also the home of the
 // human-approval "Access requests" surface) and serves the dashboard routes.
-// bindHost is the host/interface to bind (defaultDashboardBind = loopback when
-// empty; a non-loopback host exposes it on the network); port pins the bound
-// TCP port, 0 means an OS-chosen random free port (the historical default).
+// bindHost is the optional additional host/interface to bind
+// (defaultDashboardBind = loopback when empty; a non-loopback host exposes it
+// on the network); port pins the bound TCP port, 0 means an OS-chosen random
+// free port (the historical default). A concrete non-loopback bind always gets
+// a second listener on defaultDashboardBind at the same port, so exposing the
+// dashboard never makes its localhost endpoint disappear. Wildcard and
+// loopback binds already cover loopback and therefore need only one listener.
 //
 // A bind failure is returned as an error, NOT swallowed: the dashboard is
 // essential, and a requested fixed port that is already in use must surface at
@@ -51,6 +55,17 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("bind dashboard listener %s: %w", bindAddr, err)
 	}
+	listeners := []net.Listener{ln}
+	addr := ln.Addr().(*net.TCPAddr)
+	if !addr.IP.IsUnspecified() && !addr.IP.IsLoopback() {
+		loopbackAddr := net.JoinHostPort(defaultDashboardBind, strconv.Itoa(addr.Port))
+		loopback, loopbackErr := net.Listen("tcp", loopbackAddr)
+		if loopbackErr != nil {
+			_ = ln.Close()
+			return nil, "", fmt.Errorf("bind mandatory loopback dashboard listener %s: %w", loopbackAddr, loopbackErr)
+		}
+		listeners = append(listeners, loopback)
+	}
 	mux := http.NewServeMux()
 	// The dashboard is the one human-facing surface on this listener — a
 	// single stable URL we can hand to the tray icon's "Open dashboard"
@@ -70,21 +85,25 @@ func startPopupServer(bindHost string, port int) (*http.Server, string, error) {
 		Handler:           auditRequests(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			slog.Warn("popup: server exited", "err", err)
-		}
-	}()
-	addr := ln.Addr().(*net.TCPAddr)
+	for _, listener := range listeners {
+		go func() {
+			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+				slog.Warn("popup: server exited", "listener", listener.Addr(), "err", err)
+			}
+		}()
+	}
 	// popupBaseURL must be a locally-reachable URL: it drives the local
 	// browser auto-launch, the tray "open dashboard" action, the deep links
-	// agentd builds, and (on a loopback bind) the same-origin pin. A wildcard
-	// bind (0.0.0.0 / ::) isn't itself dialable, so fall back to loopback; a
-	// specific host is used verbatim (JoinHostPort brackets IPv6). When bound
-	// non-loopback the browser typically reaches the dashboard through some
-	// OTHER hostname (a proxy/LAN IP) whose origin the host-relative check
-	// accepts — this base URL just needs to be one that works from this box.
-	return srv, "http://" + net.JoinHostPort(dashboardURLHost(bindHost), strconv.Itoa(addr.Port)), nil
+	// agentd builds, and (on a loopback-only bind) the same-origin pin. When a
+	// concrete non-loopback bind requested the additional listener above,
+	// prefer that guaranteed loopback endpoint for all local actions. A
+	// wildcard bind (0.0.0.0 / ::) already includes loopback but isn't itself
+	// dialable, so dashboardURLHost makes the same choice.
+	urlHost := dashboardURLHost(bindHost)
+	if len(listeners) > 1 {
+		urlHost = defaultDashboardBind
+	}
+	return srv, "http://" + net.JoinHostPort(urlHost, strconv.Itoa(addr.Port)), nil
 }
 
 // dashboardURLHost maps a bind host to the host to put in the

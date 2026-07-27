@@ -147,7 +147,8 @@ reverse proxy with SSO, a mesh VPN, Cloudflare Access, an identity-aware proxy.
 In that case it's more natural to expose the **local** dashboard endpoint and
 let your layer gate it, than to enable the second (mTLS) listener.
 
-For that, agentd lets the loopback dashboard bind to a **non-loopback host**:
+For that, agentd lets the loopback dashboard additionally bind to a
+**non-loopback host**:
 
 | Priority | Where | Value |
 |----------|-------|-------|
@@ -166,7 +167,10 @@ For that, agentd lets the loopback dashboard bind to a **non-loopback host**:
 
 It's a **host**, not a `host:port` — the port stays `dashboard_port` /
 `--dashboard-port`. `0.0.0.0` (or `::`) exposes every interface; a specific IP
-binds one. agentd logs a loud warning at startup whenever it binds non-loopback.
+adds that interface. A concrete non-loopback bind does not replace localhost:
+agentd also listens on `127.0.0.1` at the same port and uses that loopback URL
+for local browser, tray, and approval actions. agentd logs a loud warning at
+startup whenever it binds non-loopback.
 
 From the dashboard, set it in the **Config tab → agentd daemon & server →
 "Dashboard bind"** field (right below "Dashboard port"). **Don't confuse it with
