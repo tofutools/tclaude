@@ -232,6 +232,40 @@ func TestResume_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
 		"the legacy/default recorded spelling is a pure replay and must not strand the agent")
 }
 
+func TestForks_OpenCodeUnsetImplementationRemainsGrandfathered(t *testing.T) {
+	tests := []struct {
+		name string
+		fork func(*testharness.Flow, string) string
+	}{
+		{
+			name: "reincarnate",
+			fork: func(f *testharness.Flow, convID string) string {
+				return f.AsHuman().Reincarnate(convID, "continue").NewConv
+			},
+		},
+		{
+			name: "clone",
+			fork: func(f *testharness.Flow, convID string) string {
+				return f.AsHuman().CloneFresh(convID).NewConv
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			source := f.AsHuman().SpawnHarness("crew", "oc-source", harness.OpenCodeName)
+
+			forkedConv := tt.fork(f, source.ConvID)
+			require.NotEmpty(t, forkedConv)
+			replayed, ok := f.World.SpawnSandboxImplementation(forkedConv)
+			require.True(t, ok, "the fork must reach the simulated spawner")
+			assert.Equal(t, string(sandboxpolicy.ImplementationHarnessBuiltin), replayed,
+				"forking an ordinary unset OpenCode agent must replay the legacy/default spelling")
+		})
+	}
+}
+
 func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
