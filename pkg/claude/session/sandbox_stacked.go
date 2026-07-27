@@ -14,7 +14,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/common/executil"
 )
 
-const stackedSandboxProbeTimeout = 20 * time.Second
+const (
+	stackedSandboxProbeTimeout  = 20 * time.Second
+	stackedProbeOuterSystemPath = "/usr/bin:/bin"
+)
 
 // ValidateStackedSandboxHarness is the descriptor capability gate. It runs
 // before any host probing so a non-stackable harness (notably OpenCode) gets a
@@ -124,10 +127,10 @@ func ProbeStackedSandbox(
 		wrapped,
 	)
 	cmd.Dir = cwd
-	cmd.Env = append([]string(nil), os.Environ()...)
-	for _, entry := range spec.Effective.Environment {
-		cmd.Env = append(cmd.Env, entry.Name+"="+entry.Value)
-	}
+	// The proof shell is a launch authority, not the interactive harness.
+	// Never inherit credentials, shell startup controls, or exported Bash
+	// functions that could spoof one of its fail-closed utility checks.
+	cmd.Env = stackedProbeOuterEnvironment()
 	output := &boundedProbeBuffer{limit: 16 * 1024}
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -160,6 +163,10 @@ func ProbeStackedSandbox(
 		}
 	}
 	return proof, nil
+}
+
+func stackedProbeOuterEnvironment() []string {
+	return []string{"PATH=" + stackedProbeOuterSystemPath}
 }
 
 // StackedLaunchOSSandbox is recorded only after the real nested round-trip
