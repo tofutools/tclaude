@@ -55,7 +55,7 @@ const CASES = [
       os_sandbox_unverified: true, sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: ON\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
   },
   {
     name: 'a tclaude outer layer earns a lock',
@@ -84,7 +84,7 @@ const CASES = [
       sandbox_implementation: 'future-layer',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: ON\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: Unknown\nProfile: None',
   },
   {
     name: 'an unavailable tclaude layer reports off with its profile',
@@ -98,12 +98,13 @@ const CASES = [
   },
   {
     name: 'a legacy Claude off row remains a warning',
+    profileRecorded: false,
     state: {
       harness: 'claude', sandbox_mode: 'off',
       sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
-    tooltip: 'Status: OFF\nImplementation: CC\nProfile: None',
+    tooltip: 'Status: OFF\nImplementation: CC\nProfile: Not recorded',
   },
   {
     name: 'an unconfigured inherit launch renders no badge',
@@ -162,7 +163,10 @@ test('SandboxBadge keeps its posture semantics with the compact tooltip', async 
 
   for (const row of CASES) {
     await t.test(row.name, async () => {
-      const member = { conv_id: 'c1', online: row.online !== false, state: row.state };
+      const state = row.profileRecorded === false
+        ? row.state
+        : { sandbox_profiles_recorded: true, ...row.state };
+      const member = { conv_id: 'c1', online: row.online !== false, state };
       const mounted = await harness.mount(harness.html`<${SandboxBadge} member=${member} />`);
       try {
         const el = mounted.container.querySelector('.sandbox-badge');
@@ -194,7 +198,8 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
   `);
   const { SandboxBadge } = await harness.importDashboardModule('js/groups-member-table.js');
   const mount = async (state, online = true) => harness.mount(harness.html`<${SandboxBadge} member=${{
-    agent_id: 'agt_shortcut', conv_id: 'conv-shortcut', title: 'worker', online, state,
+    agent_id: 'agt_shortcut', conv_id: 'conv-shortcut', title: 'worker', online,
+    state: { sandbox_profiles_recorded: true, ...state },
   }} />`);
 
   await t.test('a live lock offers the temporary disable action', async () => {
@@ -215,7 +220,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
     }
   });
 
-  await t.test('a temporary warning offers re-enabling', async () => {
+  await t.test('a temporary warning offers normal-configuration restoration', async () => {
     const mounted = await mount({
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'off',
       temporary_sandbox_mode: 'off',
@@ -225,7 +230,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.textContent.trim(), '⚠');
       assert.equal(badge.dataset.action, 'restore');
       assert.equal(badge.title,
-        'Status: OFF\nImplementation: CC\nProfile: None\nClick to temporarily re-enable');
+        'Status: OFF\nImplementation: CC\nProfile: None\nClick to restore normal sandbox');
     } finally {
       await mounted.unmount();
     }
@@ -241,7 +246,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
       assert.equal(badge.textContent.trim(), '🔒');
       assert.equal(badge.dataset.action, 'restore');
       assert.equal(badge.title,
-        'Status: ON\nImplementation: CC\nProfile: None\nClick to temporarily re-enable');
+        'Status: ON\nImplementation: CC\nProfile: None\nClick to restore normal sandbox');
     } finally {
       await mounted.unmount();
     }

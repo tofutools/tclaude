@@ -161,13 +161,14 @@ export function HarnessLine({ member }) {
 // the Groups tab only needs the resolved ON/OFF summary now.
 function osSandboxBadge(mode, state, unverified, implementation) {
   if (state === 'on') {
+    const danger = implementation === 'tclaude-layer' || implementation === 'stacked'
+      ? false
+      : implementation && implementation !== 'harness-builtin'
+        ? true
+        : unverified;
     return {
-      status: 'ON',
-      danger: implementation === 'tclaude-layer' || implementation === 'stacked'
-        ? false
-        : implementation && implementation !== 'harness-builtin'
-          ? true
-          : unverified,
+      status: danger ? 'OFF' : 'ON',
+      danger,
     };
   }
   if (mode === 'on' || mode === 'off') return { status: 'OFF', danger: true };
@@ -204,14 +205,18 @@ function sandboxIndicator(member) {
 function sandboxImplementationLabel(member) {
   const implementation = member.state?.sandbox_implementation || 'harness-builtin';
   if (implementation === 'tclaude-layer' || implementation === 'stacked') return 'TClaude';
-  return harnessLabels(member.state?.harness || 'claude').short;
+  if (implementation === 'harness-builtin') {
+    return harnessLabels(member.state?.harness || 'claude').short;
+  }
+  return 'Unknown';
 }
 
 function sandboxProfileLabel(member) {
   const names = (member.state?.sandbox_profiles || [])
     .map((profile) => profile.name)
     .filter(Boolean);
-  return names.length ? names.join(' + ') : 'None';
+  if (names.length) return names.join(' + ');
+  return member.state?.sandbox_profiles_recorded ? 'None' : 'Not recorded';
 }
 
 function sandboxTooltip(member, badge, actionable, unlocked) {
@@ -220,7 +225,9 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
     `Implementation: ${sandboxImplementationLabel(member)}`,
     `Profile: ${sandboxProfileLabel(member)}`,
   ];
-  if (actionable) lines.push(`Click to temporarily ${unlocked ? 're-enable' : 'disable'}`);
+  if (actionable) {
+    lines.push(unlocked ? 'Click to restore normal sandbox' : 'Click to temporarily disable');
+  }
   return lines.join('\n');
 }
 

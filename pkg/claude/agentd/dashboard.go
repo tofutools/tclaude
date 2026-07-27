@@ -1941,11 +1941,8 @@ type agentState struct {
 	// launch MODE cannot combine with the managed permission profile that
 	// renders filesystem rules (a Codex `danger-full-access` spawn), or the
 	// caller asked for none (the spawn dialog's "none", `--omit-sandbox-profiles`).
-	// It is a different fact from "the tiers resolved to nothing", and the
-	// operator-facing difference matters: one says nobody configured a profile,
-	// the other says this launch never consulted the ones that exist. The
-	// dashboard re-derives which of the two applies from the harness and mode
-	// (sandboxProfilesUnsupported) rather than guessing.
+	// It is a different fact from "the tiers resolved to nothing"; the compact
+	// badge intentionally displays both as "Profile: None".
 	SandboxProfilesOmitted bool `json:"sandbox_profiles_omitted,omitempty"`
 	// RemoteControl is tclaude's best-known state of whether the harness's
 	// built-in Remote Access is enabled for this agent (JOH-256). It is a
