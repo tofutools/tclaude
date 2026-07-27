@@ -1888,9 +1888,9 @@ type agentState struct {
 	//
 	// OSSandboxSource below already carries this for a Claude Code launch that
 	// recorded a verdict, folded into the deciding tier's name. This field is
-	// what a harness whose MODE is its posture (Codex) has instead: without it
-	// the badge could only say "this launch", which is exactly the misattribution
-	// the column exists to remove.
+	// what a harness whose MODE is its posture (Codex) has instead. The compact
+	// dashboard badge no longer renders this provenance, but it remains useful
+	// launch metadata for API consumers and diagnostics.
 	SandboxModeSource string `json:"sandbox_mode_source,omitempty"`
 	// SandboxImplementation names who owned OS-level confinement for this
 	// launch. The dashboard needs the resolved implementation, not a source
@@ -1913,9 +1913,9 @@ type agentState struct {
 	OSSandboxSource string `json:"os_sandbox_source,omitempty"`
 	// OSSandboxUnverified marks a verdict that a settings file OUTRANKING the
 	// deciding tier could have overturned, had tclaude been able to read it. The
-	// tooltip always keeps that hedge. Harness-builtin uses the warning glyph;
-	// an exact tclaude-layer implementation may still earn the lock because its
-	// separate outer OS wall is established, with fidelity caveats kept in copy.
+	// Harness-builtin uses the warning glyph; an exact tclaude-layer
+	// implementation may still earn the lock because its separate outer OS wall
+	// is established.
 	OSSandboxUnverified bool `json:"os_sandbox_unverified,omitempty"`
 	// SandboxProfiles names the tclaude sandbox profiles that were applied to
 	// this launch, in resolution order (global → group → explicit).
@@ -1925,10 +1925,8 @@ type agentState struct {
 	// filesystem grants are compiled into the harness's own
 	// `sandbox.filesystem.*` via `--settings` on harness-builtin, while
 	// tclaude-layer renders them into its outer OS wall. Its environment entries
-	// are plain env vars and apply either way. The badge tooltip needs both
-	// halves — naming only the settings file that enabled the sandbox reads as
-	// "this is your whole sandbox configuration" when a profile actually
-	// shaped it.
+	// are plain env vars and apply either way. The compact badge tooltip names
+	// the applied profiles without expanding their rules or provenance.
 	//
 	// Empty means either "no profile applied" or "no snapshot recorded" — the
 	// two are distinguished by SandboxProfilesRecorded, because claiming "none"
