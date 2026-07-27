@@ -973,6 +973,19 @@ func UpdateContextPct(sessionID string, pct float64) error {
 	return err
 }
 
+// ContextSnapshotWriteTiming breaks one context persistence operation into
+// SQLite-facing stages for daemon performance diagnostics.
+type ContextSnapshotWriteTiming struct {
+	Total      time.Duration
+	Open       time.Duration
+	Begin      time.Duration
+	Update     time.Duration
+	Projection time.Duration
+	Commit     time.Duration
+	ExecCommit time.Duration
+	Result     time.Duration
+}
+
 // UpdateContextSnapshot stores the full last-API-response context-window
 // snapshot from Claude Code's statusline. Tokens come from the most
 // recent API response (input includes cache reads/writes), windowSize
@@ -993,10 +1006,21 @@ func UpdateContextPct(sessionID string, pct float64) error {
 // at the DB chokepoint so no caller — present or future — can
 // reintroduce the clobber.
 func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOutput, windowSize int64) error {
+	return UpdateContextSnapshotTimed(sessionID, pct, tokensInput, tokensOutput, windowSize, nil)
+}
+
+// UpdateContextSnapshotTimed is UpdateContextSnapshot with optional DB-stage
+// timing for the dashboard's Codex telemetry diagnostics.
+func UpdateContextSnapshotTimed(
+	sessionID string,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+	record func(ContextSnapshotWriteTiming),
+) error {
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return nil
 	}
-	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{}, `UPDATE sessions
+	return execSessionUpdateAndProjectTimed(sessionID, relaunchProjectionOptions{}, record, `UPDATE sessions
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
 }
@@ -1012,23 +1036,52 @@ func UpdateContextSnapshotIfWindowUnchanged(
 	pct float64,
 	tokensInput, tokensOutput, windowSize int64,
 ) (bool, error) {
+	return UpdateContextSnapshotIfWindowUnchangedTimed(
+		sessionID, convID, createdAt, pct, tokensInput, tokensOutput, windowSize, nil,
+	)
+}
+
+// UpdateContextSnapshotIfWindowUnchangedTimed is the fast-path update with
+// optional DB-stage timing. ExecCommit includes writer-lock wait and SQLite's
+// implicit transaction commit.
+func UpdateContextSnapshotIfWindowUnchangedTimed(
+	sessionID, convID string,
+	createdAt time.Time,
+	pct float64,
+	tokensInput, tokensOutput, windowSize int64,
+	record func(ContextSnapshotWriteTiming),
+) (updated bool, err error) {
+	started := time.Now()
+	timing := ContextSnapshotWriteTiming{}
+	defer func() {
+		timing.Total = time.Since(started)
+		if record != nil {
+			record(timing)
+		}
+	}()
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return false, nil
 	}
+	stageStarted := time.Now()
 	d, err := Open()
+	timing.Open = time.Since(stageStarted)
 	if err != nil {
 		return false, err
 	}
+	stageStarted = time.Now()
 	result, err := d.Exec(`UPDATE sessions
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ? AND conv_id = ? AND created_at = ? AND context_window_size = ?`,
 		pct, tokensInput, tokensOutput, windowSize,
 		sessionID, convID, createdAt.Format(time.RFC3339Nano), windowSize)
+	timing.ExecCommit = time.Since(stageStarted)
 	if err != nil {
 		return false, err
 	}
-	updated, err := result.RowsAffected()
-	return updated > 0, err
+	stageStarted = time.Now()
+	affected, err := result.RowsAffected()
+	timing.Result = time.Since(stageStarted)
+	return affected > 0, err
 }
 
 // UpdateStatuslineSnapshot stores the verbatim raw JSON of the most recent
@@ -2013,13 +2066,30 @@ func GetConvContextSnapshot(convID string) (ContextSnapshot, error) {
 // telemetry snapshot. Zeroing nudged_pct lets a compacted session be re-nudged
 // from scratch as its context climbs again.
 func ResetCompact(sessionID string) error {
+	return ResetCompactTimed(sessionID, nil)
+}
+
+// ResetCompactTimed is ResetCompact with optional DB-stage timing.
+func ResetCompactTimed(sessionID string, record func(ContextSnapshotWriteTiming)) (err error) {
+	started := time.Now()
+	timing := ContextSnapshotWriteTiming{}
+	defer func() {
+		timing.Total = time.Since(started)
+		if record != nil {
+			record(timing)
+		}
+	}()
+	stageStarted := time.Now()
 	db, err := Open()
+	timing.Open = time.Since(stageStarted)
 	if err != nil {
 		return err
 	}
+	stageStarted = time.Now()
 	_, err = db.Exec(`UPDATE sessions
 		SET context_pct = 0, tokens_input = 0, tokens_output = 0, nudged_pct = 0
 		WHERE id = ?`, sessionID)
+	timing.ExecCommit = time.Since(stageStarted)
 	return err
 }
 

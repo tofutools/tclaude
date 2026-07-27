@@ -120,6 +120,15 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 		"claim", "checkpoint_load", "rollout_read", "checkpoint_encode",
 		"checkpoint_write", "context_write", "other",
 	}, codexChildNames)
+	var contextWrite perfPhaseJSON
+	for _, child := range codexTelemetry.Children {
+		if child.Name == "context_write" {
+			contextWrite = child
+			break
+		}
+	}
+	assert.Empty(t, contextWrite.Children,
+		"write-path children are sparse observations, not zero-valued samples on idle polls")
 	collectors := snap.Phases[6]
 	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
 	var usage perfPhaseJSON
