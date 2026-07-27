@@ -319,8 +319,18 @@ func prefixIntersectsLoopback(prefix netip.Prefix) bool {
 		loopback := netip.MustParsePrefix("127.0.0.0/8")
 		return prefixesIntersect(prefix, loopback)
 	}
-	loopback := netip.MustParsePrefix("::1/128")
-	return prefixesIntersect(prefix, loopback)
+	for _, loopback := range []netip.Prefix{
+		netip.MustParsePrefix("::1/128"),
+		// IPv4-mapped IPv6 addresses use a 96-bit ::ffff: prefix. Retain
+		// the IPv4 loopback /8 beneath it so both a single mapped address
+		// and a wider mapped range must use the dedicated loopback selector.
+		netip.MustParsePrefix("::ffff:127.0.0.0/104"),
+	} {
+		if prefixesIntersect(prefix, loopback) {
+			return true
+		}
+	}
+	return false
 }
 
 func prefixesIntersect(a, b netip.Prefix) bool {

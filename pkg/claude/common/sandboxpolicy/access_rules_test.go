@@ -40,6 +40,8 @@ func TestNormalizeAccessRules(t *testing.T) {
 		{"multiple selectors", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "a.test", Domain: "b.test"}}}, "must set exactly one"},
 		{"wildcard", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "*.example.com"}}}, "without scheme, path, port, or wildcard"},
 		{"loopback cidr", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{CIDR: "127.1.2.3/16"}}}, `use {"loopback": true} instead`},
+		{"mapped loopback cidr", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{CIDR: "::ffff:127.0.0.1/128"}}}, `use {"loopback": true} instead`},
+		{"mapped IPv4 space includes loopback", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{CIDR: "::ffff:0:0/96"}}}, `use {"loopback": true} instead`},
 		{"loopback host literal", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "127.0.0.1"}}}, `must use {"loopback": true}`},
 		{"domain IP literal", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Domain: "192.0.2.1"}}}, "IP literals must use cidr"},
 		{"bad port", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Host: "example.com", Ports: []int{0}}}}, "want 1..65535"},
