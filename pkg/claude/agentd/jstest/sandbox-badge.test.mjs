@@ -129,10 +129,11 @@ const CASES = [
     name: 'the OpenCode executor layer reports the split server and attach boundary',
     state: {
       harness: 'opencode', sandbox_mode: 'tclaude-layer', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /tool-executing server/,
       /attach pane stays outside/, /loopback control plane remains reachable/,
       /host networking plus ambient host Unix sockets remain available/],

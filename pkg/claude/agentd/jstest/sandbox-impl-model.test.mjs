@@ -55,16 +55,16 @@ test('sandbox mode help tells the truth for the selected implementation', async 
   );
   assert.equal(
     model.sandboxModeHelpForImplementation(
-      modeHelp['opencode/sandbox/off'], 'tclaude-layer', 'opencode',
+      modeHelp['opencode/sandbox/tclaude-layer'], 'tclaude-layer', 'opencode',
     ),
-    modeHelp['opencode/sandbox/off'],
+    modeHelp['opencode/sandbox/tclaude-layer'],
     'OpenCode keeps its dedicated mode-help branch because its soft rules stay on',
   );
   assert.equal(
     model.sandboxModeHelpForImplementation(
-      modeHelp['opencode/sandbox/off'], '', 'opencode',
+      modeHelp['opencode/sandbox/tclaude-layer'], '', 'opencode',
     ),
-    modeHelp['opencode/sandbox/off'],
+    modeHelp['opencode/sandbox/tclaude-layer'],
     'an inherited OpenCode implementation never shadows its dedicated mode help',
   );
   assert.equal(
