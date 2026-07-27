@@ -31,6 +31,24 @@ func ValidateStackedSandboxHarness(h *harness.Harness) error {
 		fmt.Sprintf("harness %q has no reviewed nested OS-sandbox contract", name))
 }
 
+func stackedSandboxLaunchMode(h *harness.Harness) (string, string, error) {
+	name := "unknown"
+	if h != nil {
+		name = h.Name
+	}
+	switch name {
+	case harness.DefaultName:
+		return harness.ClaudeSandboxOn, "", nil
+	case harness.CodexName:
+		return harness.SandboxManagedProfile, harness.CodexAgentProfile, nil
+	default:
+		return "", "", stackedSandboxRefusal(
+			"stacked_inner_harness_sandbox",
+			fmt.Sprintf("no reviewed inner sandbox forcing for harness %q", name),
+		)
+	}
+}
+
 // StackedSandboxAvailability performs the uncached engine identity check used
 // by launch and disclosure surfaces. It is not the launch authority: a launch
 // must additionally complete ProbeStackedSandbox inside its exact outer spec.
@@ -168,11 +186,7 @@ func StackedEngineBindingRefusal(h *harness.Harness, err error) error {
 	if h != nil {
 		name = h.Name
 	}
-	capability := "stacked_" + name + "_engine_binding"
-	if name == harness.DefaultName {
-		capability = "stacked_claude_engine_binding"
-	}
-	return stackedSandboxRefusal(capability, err.Error())
+	return stackedSandboxRefusal("stacked_"+name+"_engine_binding", err.Error())
 }
 
 func stackedNamespaceWarnings(

@@ -75,6 +75,8 @@ func (codexSpawner) BuildCommand(spec SpawnSpec) string {
 		cmd += " --sandbox " + clcommon.ShellQuoteArg(spec.SandboxMode)
 	}
 	if spec.StrongNestedSandbox {
+		// Verified against codex-cli 0.145.0: false selects the current
+		// bwrap/seccomp backend that the stacked capability probe exercises.
 		cmd += " -c " + clcommon.ShellQuoteArg("features.use_legacy_landlock=false")
 	}
 	if spec.ApprovalPolicy != "" {

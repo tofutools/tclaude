@@ -1,7 +1,10 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +20,22 @@ func TestValidateStackedSandboxHarnessRefusesMissingContract(t *testing.T) {
 			"harness \"opencode\" has no reviewed nested OS-sandbox contract; "+
 			"refusing rather than falling back to tclaude-layer or harness-builtin",
 		err.Error())
+}
+
+func TestStackedSandboxLaunchModeRefusesUnknownHarness(t *testing.T) {
+	_, _, err := stackedSandboxLaunchMode(&harness.Harness{Name: "future"})
+	require.ErrorContains(t, err, "no reviewed inner sandbox forcing")
+	require.ErrorContains(t, err, "refusing rather than falling back")
+}
+
+func TestWaitForStackedBindingReadinessRetriesPartialToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ready")
+	require.NoError(t, os.WriteFile(path, []byte("rea"), 0o600))
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		_ = os.WriteFile(path, []byte("ready\n"), 0o600)
+	}()
+	require.NoError(t, WaitForStackedBindingReadiness(path))
 }
 
 func TestStackedLaunchOSSandboxNamesBothMechanisms(t *testing.T) {

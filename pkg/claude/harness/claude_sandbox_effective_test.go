@@ -132,6 +132,18 @@ func TestSnapshotClaudeManagedPolicyRefusesSymlinkedEntry(t *testing.T) {
 	}
 }
 
+func TestManagedPolicyDescriptorOpenRefusesSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "policy.json")
+	writeSettings(t, target, `{"sandbox":{"enabled":true}}`)
+	link := filepath.Join(t.TempDir(), "managed-settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink managed policy: %v", err)
+	}
+	if _, err := readClaudeManagedPolicyFile(link); err == nil {
+		t.Fatal("descriptor open followed a managed-policy symlink")
+	}
+}
+
 func TestResolveClaudeSandboxEnabledInheritReadsPrecedenceChain(t *testing.T) {
 	home, managed := isolateClaudeSettings(t)
 	project := filepath.Join(home, "work", "repo")

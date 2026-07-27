@@ -281,7 +281,7 @@ func SnapshotClaudeManagedPolicy() ([]ClaudeManagedPolicyFile, error) {
 		case info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular():
 			return fmt.Errorf("managed policy %q is not a regular file", path)
 		}
-		data, readErr := os.ReadFile(path)
+		data, readErr := readClaudeManagedPolicyFile(path)
 		if readErr != nil {
 			return fmt.Errorf("read managed policy %q: %w", path, readErr)
 		}

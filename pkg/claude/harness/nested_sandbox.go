@@ -93,6 +93,9 @@ func (err *NestedSandboxCapabilityError) Error() string {
 // NestedSandboxCapability extracts a named capability from err, falling back to
 // the descriptor's own capability name for ordinary execution errors.
 func NestedSandboxCapability(err error, fallback string) (string, string) {
+	if err == nil {
+		return fallback, ""
+	}
 	var capabilityErr *NestedSandboxCapabilityError
 	if errors.As(err, &capabilityErr) {
 		return capabilityErr.Capability, capabilityErr.Detail
@@ -202,8 +205,7 @@ func (claudeNestedSandbox) PrepareProbe(
 	script := "set -eu; touch " + clcommon.ShellQuoteArg(allowed) +
 		"; if touch " + clcommon.ShellQuoteArg(denied) +
 		"; then echo 'inner deny unexpectedly writable' >&2; exit 91; fi" +
-		"; if python3 -c " + clcommon.ShellQuoteArg("import socket; socket.socket(socket.AF_UNIX)") +
-		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92; fi" +
+		"; " + claudeAFUnixSeccompProbeScript() +
 		"; echo " + clcommon.ShellQuoteArg(marker)
 	pathValue := strings.TrimSpace(os.Getenv("PATH"))
 	if pathValue == "" {
@@ -242,6 +244,23 @@ func (claudeNestedSandbox) PrepareProbe(
 		},
 		Cleanup: cleanup,
 	}, nil
+}
+
+func claudeAFUnixSeccompProbeScript() string {
+	socketProbe := strings.Join([]string{
+		"import errno, socket, sys",
+		"try:",
+		" socket.socket(socket.AF_UNIX)",
+		"except OSError as exc:",
+		" sys.exit(77 if exc.errno in (errno.EPERM, errno.EACCES) else 78)",
+		"sys.exit(0)",
+	}, "\n")
+	return "command -v python3 >/dev/null 2>&1 || " +
+		"{ echo 'inner python3 unavailable; cannot prove SRT seccomp' >&2; exit 96; }" +
+		"; if python3 -c " + clcommon.ShellQuoteArg(socketProbe) +
+		"; then echo 'SRT seccomp unexpectedly allowed AF_UNIX' >&2; exit 92" +
+		"; else socket_status=$?; [ \"$socket_status\" -eq 77 ] || " +
+		"{ echo 'SRT seccomp AF_UNIX probe was untestable' >&2; exit 96; }; fi"
 }
 
 // stackedClaudeProbeServer is a launch-owned, credential-free Messages stub.
@@ -579,10 +598,21 @@ func findCodexNPMNativeBackend(
 		strings.TrimSpace(packageParts[1]) == "" {
 		return "", fmt.Errorf("invalid Codex platform package %q", packageName)
 	}
-	current := filepath.Dir(filepath.Clean(launcherPath))
-	for {
-		candidate := filepath.Join(
-			current,
+	launcherPath = filepath.Clean(launcherPath)
+	packageRoot := filepath.Dir(filepath.Dir(launcherPath))
+	scopeRoot := filepath.Dir(filepath.Dir(packageRoot))
+	if filepath.Base(filepath.Dir(launcherPath)) != "bin" ||
+		filepath.Base(packageRoot) != "codex" ||
+		filepath.Base(filepath.Dir(packageRoot)) != "@openai" ||
+		filepath.Base(scopeRoot) != "node_modules" {
+		return "", fmt.Errorf(
+			"codex launcher %q is outside a recognized node_modules/@openai/codex package",
+			launcherPath,
+		)
+	}
+	candidates := []string{
+		filepath.Join(
+			packageRoot,
 			"node_modules",
 			packageParts[0],
 			packageParts[1],
@@ -590,17 +620,27 @@ func findCodexNPMNativeBackend(
 			targetTriple,
 			"bin",
 			"codex",
-		)
+		),
+		filepath.Join(
+			scopeRoot,
+			packageParts[0],
+			packageParts[1],
+			"vendor",
+			targetTriple,
+			"bin",
+			"codex",
+		),
+	}
+	for _, candidate := range candidates {
 		if evaluated, evalErr := filepath.EvalSymlinks(candidate); evalErr == nil {
-			if info, statErr := os.Stat(evaluated); statErr == nil && info.Mode().IsRegular() {
+			relative, relErr := filepath.Rel(scopeRoot, evaluated)
+			insideScope := relErr == nil && relative != ".." &&
+				!strings.HasPrefix(relative, ".."+string(filepath.Separator))
+			if info, statErr := os.Stat(evaluated); insideScope &&
+				statErr == nil && info.Mode().IsRegular() {
 				return evaluated, nil
 			}
 		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		current = parent
 	}
 	return "", fmt.Errorf("official npm platform package %s is missing", packageName)
 }

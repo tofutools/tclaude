@@ -466,16 +466,11 @@ func runNew(params *NewParams) error {
 		if err := ValidateStackedSandboxHarness(h); err != nil {
 			return err
 		}
-		switch h.Name {
-		case harness.DefaultName:
-			sandboxMode = harness.ClaudeSandboxOn
-			params.Sandbox = sandboxMode
-			params.PermissionProfile = ""
-		case harness.CodexName:
-			sandboxMode = harness.SandboxManagedProfile
-			params.Sandbox = sandboxMode
-			params.PermissionProfile = harness.CodexAgentProfile
+		sandboxMode, params.PermissionProfile, err = stackedSandboxLaunchMode(h)
+		if err != nil {
+			return err
 		}
+		params.Sandbox = sandboxMode
 	}
 	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
 		h.Name, sandboxMode, sandboxImplementation)
@@ -1347,11 +1342,7 @@ func runNew(params *NewParams) error {
 	if stackedProof != nil {
 		if err := WaitForStackedBindingReadiness(stackedProof.ReadyPath); err != nil {
 			killLaunchPane()
-			capability := "stacked_" + h.Name + "_engine_binding"
-			if h.Name == harness.DefaultName {
-				capability = "stacked_claude_engine_binding"
-			}
-			return stackedSandboxRefusal(capability, err.Error())
+			return StackedEngineBindingRefusal(h, err)
 		}
 		stackedProof.Cleanup()
 		stackedProof = nil
@@ -2286,6 +2277,11 @@ func WaitForStackedBindingReadiness(path string) error {
 		case err == nil && strings.TrimSpace(string(raw)) == "ready":
 			return nil
 		case err == nil:
+			status := strings.TrimSpace(string(raw))
+			if status == "" || strings.HasPrefix("ready", status) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 			return fmt.Errorf("stacked relay returned invalid binding readiness")
 		case os.IsNotExist(err):
 			time.Sleep(10 * time.Millisecond)

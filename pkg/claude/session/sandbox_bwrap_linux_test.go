@@ -116,6 +116,36 @@ func TestStackedRelayRefusesChangedManifestAuthority(t *testing.T) {
 	require.ErrorContains(t, err, "manifest changed after capability probe")
 }
 
+func TestStackedRelayRefusesReadinessInsideConsumedStageRoot(t *testing.T) {
+	proof, err := prepareStackedSandboxProof(
+		harness.MustGet(harness.CodexName),
+		codexBindingTestExecutable(t),
+	)
+	require.NoError(t, err)
+	t.Cleanup(proof.Cleanup)
+
+	_, files, err := prepareStackedRelayBinding(stackedRelayBindingOptions{
+		ManifestPath:   proof.ManifestPath,
+		ManifestSHA256: proof.ManifestSHA256,
+		Consume:        true,
+		ReadyPath:      filepath.Join(proof.stageRoot, "ready"),
+	})
+	for _, file := range files {
+		_ = file.Close()
+	}
+	require.ErrorContains(t, err, "readiness path must be outside the staging root")
+}
+
+func TestWriteStackedBindingReadyRefusesSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	link := filepath.Join(root, "ready")
+	require.NoError(t, os.Symlink(target, link))
+	require.Error(t, writeStackedBindingReady(link))
+	_, err := os.Stat(target)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func TestStackedRelayCreatesFreshClaudePolicyRootWithoutHostDirectory(t *testing.T) {
 	managed := t.TempDir()
 	restore := harness.SetClaudeManagedSettingsRootForTest(managed)

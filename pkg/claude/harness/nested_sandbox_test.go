@@ -3,7 +3,9 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -23,7 +25,8 @@ func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
 	assert.True(t, claudeSpec.StrongNestedSandbox)
 	var settings map[string]any
 	require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(claudeSpec)), &settings))
-	block := settings["sandbox"].(map[string]any)
+	block, ok := settings["sandbox"].(map[string]any)
+	require.True(t, ok, "Claude nested launch settings must carry a sandbox block")
 	assert.Equal(t, false, block["enableWeakerNestedSandbox"])
 	assert.Equal(t, true, block["enabled"])
 
@@ -38,6 +41,48 @@ func TestNestedSandboxContractsPrepareRealInnerEngines(t *testing.T) {
 	command := codex.Spawn.BuildCommand(codexSpec)
 	assert.Contains(t, command, "-p "+CodexAgentProfile)
 	assert.Contains(t, command, "features.use_legacy_landlock=false")
+}
+
+func TestNestedSandboxCapabilityHandlesNilError(t *testing.T) {
+	capability, detail := NestedSandboxCapability(nil, "stacked_test")
+	assert.Equal(t, "stacked_test", capability)
+	assert.Empty(t, detail)
+}
+
+func TestClaudeAFUnixSeccompProbeFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		pythonExit *int
+		wantExit   int
+	}{
+		{name: "missing_python", wantExit: 96},
+		{name: "expected_seccomp_refusal", pythonExit: intPointer(77), wantExit: 0},
+		{name: "socket_allowed", pythonExit: intPointer(0), wantExit: 92},
+		{name: "untestable", pythonExit: intPointer(78), wantExit: 96},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pathDir := t.TempDir()
+			if tc.pythonExit != nil {
+				pythonPath := filepath.Join(pathDir, "python3")
+				script := []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", *tc.pythonExit))
+				require.NoError(t, os.WriteFile(pythonPath, script, 0o700))
+			}
+			cmd := exec.Command("/bin/sh", "-c", claudeAFUnixSeccompProbeScript())
+			cmd.Env = []string{"PATH=" + pathDir}
+			err := cmd.Run()
+			if tc.wantExit == 0 {
+				require.NoError(t, err)
+				return
+			}
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
+			require.Equal(t, tc.wantExit, exitErr.ExitCode())
+		})
+	}
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
@@ -99,6 +144,34 @@ func TestCodexNestedSandboxResolvesNPMNativeBackend(t *testing.T) {
 	assert.Equal(t, nativeRoot, resolved.RuntimeRoot)
 }
 
+func TestCodexNPMNativeBackendDoesNotSearchAboveLauncherPackage(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Codex stacked sandbox is Linux-only")
+	}
+	packageName, targetTriple, err := codexLinuxNativeTarget()
+	require.NoError(t, err)
+	root := t.TempDir()
+	launcher := filepath.Join(root, "tools", "codex.js")
+	require.NoError(t, os.MkdirAll(filepath.Dir(launcher), 0o700))
+	require.NoError(t, os.WriteFile(launcher, []byte("launcher"), 0o600))
+	packageParts := strings.Split(packageName, "/")
+	attackerBackend := filepath.Join(
+		root,
+		"node_modules",
+		packageParts[0],
+		packageParts[1],
+		"vendor",
+		targetTriple,
+		"bin",
+		"codex",
+	)
+	require.NoError(t, os.MkdirAll(filepath.Dir(attackerBackend), 0o700))
+	require.NoError(t, os.WriteFile(attackerBackend, []byte("backend"), 0o700))
+
+	_, err = findCodexNPMNativeBackend(launcher, packageName, targetTriple)
+	require.ErrorContains(t, err, "outside a recognized node_modules/@openai/codex package")
+}
+
 func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 	executable := NestedSandboxExecutable{Path: "/usr/bin/engine"}
 	for _, tc := range []struct {
@@ -143,7 +216,12 @@ func TestNestedSandboxProbeCommandsAreModelFreeAndPolicyShaped(t *testing.T) {
 			}
 			assert.Contains(t, joined, string(os.PathSeparator)+"workspace"+string(os.PathSeparator)+"allowed")
 			assert.Contains(t, joined, string(os.PathSeparator)+"private"+string(os.PathSeparator)+"denied")
-			assert.NotContains(t, joined, "prompt")
+			if tc.name == "claude" {
+				assert.Contains(t, joined, "command -v python3")
+				assert.Contains(t, joined, "socket_status")
+				assert.Contains(t, joined, "cannot prove SRT seccomp")
+				assert.Contains(t, stackedClaudeProbeServer, `stop_reason = "tool_use"`)
+			}
 		})
 	}
 }

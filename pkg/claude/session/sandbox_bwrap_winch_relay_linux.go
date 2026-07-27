@@ -246,6 +246,20 @@ func prepareStackedRelayBinding(
 		filepath.Dir(manifestPath) != root {
 		return nil, nil, fmt.Errorf("stacked binding manifest has invalid authority")
 	}
+	if readyPath := filepath.Clean(strings.TrimSpace(options.ReadyPath)); readyPath != "." {
+		if !filepath.IsAbs(readyPath) {
+			return nil, nil, fmt.Errorf("stacked binding readiness path is not absolute")
+		}
+		relative, relErr := filepath.Rel(root, readyPath)
+		if relErr != nil {
+			return nil, nil, fmt.Errorf("resolve stacked binding readiness path: %w", relErr)
+		}
+		if relative == "." || (relative != ".." &&
+			!strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			return nil, nil, fmt.Errorf(
+				"stacked binding readiness path must be outside the staging root")
+		}
+	}
 
 	files := make([]*os.File, 0, 1+len(manifest.ManagedPolicy))
 	closeFiles := func() {
@@ -309,7 +323,10 @@ func prepareStackedRelayBinding(
 			return nil, closeSourceErr
 		}
 		if written != binding.Size ||
-			fmt.Sprintf("%x", hash.Sum(nil)) != binding.SHA256 {
+			!strings.EqualFold(
+				fmt.Sprintf("%x", hash.Sum(nil)),
+				strings.TrimSpace(binding.SHA256),
+			) {
 			_ = file.Close()
 			return nil, fmt.Errorf(
 				"stacked binding file %q changed after capability probe",
@@ -480,10 +497,15 @@ func writeStackedBindingReady(path string) error {
 	if path == "." || !filepath.IsAbs(path) {
 		return fmt.Errorf("stacked binding readiness path is not absolute")
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	fd, err := unix.Open(
+		path,
+		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+		0o600,
+	)
 	if err != nil {
 		return fmt.Errorf("write stacked binding readiness: %w", err)
 	}
+	file := os.NewFile(uintptr(fd), path)
 	if _, err := file.WriteString("ready\n"); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write stacked binding readiness: %w", err)

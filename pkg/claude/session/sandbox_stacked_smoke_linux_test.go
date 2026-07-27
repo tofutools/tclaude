@@ -64,6 +64,7 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 					proof, probeErr := ProbeStackedSandbox(binary, spec, h, cwd)
 					require.NoError(t, probeErr)
 					require.NotNil(t, proof)
+					t.Cleanup(proof.Cleanup)
 					bound, bindErr := WrapTclaudeLayerStackedSpec(
 						binary,
 						spec,
@@ -77,7 +78,6 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 					boundOutput, bindErr := exec.Command("/bin/sh", "-c", bound).CombinedOutput()
 					require.NoError(t, bindErr, string(boundOutput))
 					require.NoError(t, WaitForStackedBindingReadiness(proof.ReadyPath))
-					proof.Cleanup()
 					verdict := StackedLaunchOSSandbox(h, tc.posture)
 					require.Equal(t, "on", verdict.State)
 					require.Contains(t, verdict.Source, h.NestedSandbox.MechanismName())
