@@ -415,7 +415,14 @@ func normalizeSocketAllowEntry(in SocketAllowEntry, index int) (SocketAllowEntry
 		if err != nil {
 			return SocketAllowEntry{}, "", fmt.Errorf("unix_sockets.allow[%d].path: %w", index, err)
 		}
-		return SocketAllowEntry{Path: clean}, clean, nil
+		checkPath, err := canonicalSocketCheckPath(clean)
+		if err != nil {
+			return SocketAllowEntry{}, "", fmt.Errorf(
+				"unix_sockets.allow[%d].path %q: resolve protected-path aliases: %w",
+				index, clean, err,
+			)
+		}
+		return SocketAllowEntry{Path: clean}, checkPath, nil
 	}
 	if strings.Contains(in.PathGlob, "**") {
 		return SocketAllowEntry{}, "", fmt.Errorf("unix_sockets.allow[%d].path_glob must not contain **", index)
@@ -452,7 +459,15 @@ func normalizeSocketAllowEntry(in SocketAllowEntry, index int) (SocketAllowEntry
 	if filepath.VolumeName(clean) != "" && filepath.VolumeName(literalPrefix) == "" {
 		literalPrefix = filepath.VolumeName(clean) + string(filepath.Separator)
 	}
-	info, statErr := os.Stat(literalPrefix)
+	checkPath, evalErr := filepath.EvalSymlinks(literalPrefix)
+	if evalErr != nil {
+		return SocketAllowEntry{}, "", fmt.Errorf(
+			"unix_sockets.allow[%d].path_glob literal ancestor %q: resolve protected-path aliases: %w",
+			index, literalPrefix, evalErr,
+		)
+	}
+	checkPath = filepath.Clean(checkPath)
+	info, statErr := os.Stat(checkPath)
 	if statErr != nil {
 		return SocketAllowEntry{}, "", fmt.Errorf(
 			"unix_sockets.allow[%d].path_glob literal ancestor %q: %w",
@@ -465,7 +480,25 @@ func normalizeSocketAllowEntry(in SocketAllowEntry, index int) (SocketAllowEntry
 			index, literalPrefix,
 		)
 	}
-	return SocketAllowEntry{PathGlob: clean}, filepath.Clean(literalPrefix), nil
+	return SocketAllowEntry{PathGlob: clean}, checkPath, nil
+}
+
+// canonicalSocketCheckPath resolves existing symlink aliases while retaining
+// the final missing socket name. Unix-socket paths commonly do not exist when
+// a profile is authored, but their existing ancestor must still be
+// canonicalized before the protected-root containment check (notably for
+// macOS's /var -> /private/var alias).
+func canonicalSocketCheckPath(clean string) (string, error) {
+	if _, err := os.Lstat(clean); err == nil {
+		resolved, err := filepath.EvalSymlinks(clean)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(resolved), nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return canonicalMissingDirectory(clean)
 }
 
 func validateAccessMode(axis string, mode AccessMode) error {

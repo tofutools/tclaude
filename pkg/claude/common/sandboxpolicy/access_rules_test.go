@@ -114,11 +114,15 @@ func TestNormalizeUnixSocketRulesProtectsRootsAndRetainsMissing(t *testing.T) {
 	t.Setenv("HOME", home)
 	protected := filepath.Join(home, ".tclaude", "data")
 	require.NoError(t, os.MkdirAll(protected, 0o755))
+	alias := filepath.Join(home, "private-socket-alias")
+	require.NoError(t, os.Symlink(protected, alias))
 
 	for _, entry := range []SocketAllowEntry{
 		{Path: filepath.Join(protected, "private.sock")},
 		{PathGlob: filepath.Join(protected, "*.sock")},
 		{PathGlob: filepath.Join(home, ".tclaude", "*", "private.sock")},
+		{Path: filepath.Join(alias, "private.sock")},
+		{PathGlob: filepath.Join(alias, "*.sock")},
 	} {
 		_, _, err := NormalizeForPersistence(Profile{
 			Name: "p", UnixSockets: &UnixSocketRules{
