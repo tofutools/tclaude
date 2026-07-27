@@ -656,8 +656,10 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
 		return fmt.Errorf("tclaude-layer v4 Unix relay requires the isolated network posture")
 	}
-	path := filepath.Clean(strings.TrimSpace(control.SocketPath))
-	if !filepath.IsAbs(path) || filepath.Base(path) != "control.sock" {
+	rawPath := strings.TrimSpace(control.SocketPath)
+	path := filepath.Clean(rawPath)
+	if rawPath != control.SocketPath || path != rawPath ||
+		!filepath.IsAbs(path) || filepath.Base(path) != "control.sock" {
 		return fmt.Errorf("tclaude-layer v4 OpenCode control path %q is invalid", control.SocketPath)
 	}
 	if len(path) >= 108 {
@@ -665,7 +667,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	}
 	parent := filepath.Dir(path)
 	agentID := filepath.Base(parent)
-	if !strings.HasPrefix(agentID, "agt_") || len(agentID) <= len("agt_") {
+	if !strings.HasPrefix(agentID, "agt_") || len(agentID) != len("agt_")+32 {
 		return fmt.Errorf("tclaude-layer v4 OpenCode control path is not under a stable agent child")
 	}
 	for _, r := range strings.TrimPrefix(agentID, "agt_") {

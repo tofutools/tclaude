@@ -95,7 +95,7 @@ func TestRemoveUnixSocketPreservesReplacement(t *testing.T) {
 }
 
 func TestCreateUnixListenerRefusesUnsafeAuthority(t *testing.T) {
-	parent := filepath.Join(shortTempDir(t), "agt_abc")
+	parent := filepath.Join(shortTempDir(t), "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, os.Mkdir(parent, 0o700))
 	path := filepath.Join(parent, "control.sock")
 	require.NoError(t, os.WriteFile(path, []byte("attacker"), 0o600))
@@ -108,7 +108,7 @@ func TestCreateUnixListenerRefusesUnsafeAuthority(t *testing.T) {
 
 func unixHTTPFixture(t *testing.T) (db.OpenCodeRuntime, *http.Server, *atomic.Int32) {
 	t.Helper()
-	parent := filepath.Join(shortTempDir(t), "agt_abc")
+	parent := filepath.Join(shortTempDir(t), "agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, os.Mkdir(parent, 0o700))
 	path := filepath.Join(parent, "control.sock")
 	listener, device, inode, err := CreateUnixListener(path)

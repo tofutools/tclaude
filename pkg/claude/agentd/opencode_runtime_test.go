@@ -36,7 +36,8 @@ func TestOpenCodeHealthyUnixTransportNeverDialsLogicalHostTCP(t *testing.T) {
 		tcpCalls.Add(1)
 	}))
 	defer trap.Close()
-	root := filepath.Join(agentipctest.ShortSocketDir(t), "agt_abc")
+	root := filepath.Join(agentipctest.ShortSocketDir(t),
+		"agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.NoError(t, os.Mkdir(root, 0o700))
 	socketPath := filepath.Join(root, "control.sock")
 	listener, device, inode, err := opencodeapi.CreateUnixListener(socketPath)

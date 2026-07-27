@@ -196,16 +196,18 @@ func validateControlParent(path string) error {
 }
 
 func controlParentIdentity(path string) (int64, int64, error) {
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) || filepath.Base(path) != "control.sock" {
+	cleanPath := filepath.Clean(path)
+	if cleanPath != path || !filepath.IsAbs(cleanPath) ||
+		filepath.Base(cleanPath) != "control.sock" {
 		return 0, 0, fmt.Errorf("invalid OpenCode control socket path")
 	}
+	path = cleanPath
 	if len(path) >= len(unix.RawSockaddrUnix{}.Path) {
 		return 0, 0, fmt.Errorf("OpenCode control socket path exceeds Linux sockaddr capacity")
 	}
 	parent := filepath.Dir(path)
 	agentID := filepath.Base(parent)
-	if !strings.HasPrefix(agentID, "agt_") || len(agentID) == len("agt_") {
+	if !strings.HasPrefix(agentID, "agt_") || len(agentID) != len("agt_")+32 {
 		return 0, 0, fmt.Errorf("OpenCode control socket parent has invalid agent identity")
 	}
 	for _, r := range strings.TrimPrefix(agentID, "agt_") {
