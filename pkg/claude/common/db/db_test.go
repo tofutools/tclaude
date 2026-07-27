@@ -133,6 +133,27 @@ func TestOpenAndMigrate(t *testing.T) {
 	require.Equal(t, currentVersion, ver, "expected version %d, got %d", currentVersion, ver)
 }
 
+func TestOpenUsesNormalSynchronousInProductionMode(t *testing.T) {
+	t.Setenv("TCLAUDE_TEST_KEEP_FSYNC", "1")
+	setupTestDB(t)
+
+	d, err := Open()
+	require.NoError(t, err)
+	var synchronous int
+	require.NoError(t, d.QueryRow("PRAGMA synchronous").Scan(&synchronous))
+	require.Equal(t, 1, synchronous, "production WAL connections should use synchronous=NORMAL")
+}
+
+func TestOpenUsesOffSynchronousInTestsByDefault(t *testing.T) {
+	setupTestDB(t)
+
+	d, err := Open()
+	require.NoError(t, err)
+	var synchronous int
+	require.NoError(t, d.QueryRow("PRAGMA synchronous").Scan(&synchronous))
+	require.Zero(t, synchronous, "tests keep the existing synchronous=OFF fast path")
+}
+
 func TestSessionCRUD(t *testing.T) {
 	setupTestDB(t)
 
