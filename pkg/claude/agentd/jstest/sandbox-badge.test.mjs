@@ -92,6 +92,7 @@ const CASES = [
     state: {
       harness: 'claude', sandbox_mode: 'on', os_sandbox_state: 'on',
       os_sandbox_source: 'this launch (sandbox `on`)', os_sandbox_unverified: true,
+      sandbox_implementation: 'harness-builtin',
     },
     glyph: '⚠', danger: true,
     // The `on?` the chip used to print survives as the opening hedge.
@@ -102,10 +103,11 @@ const CASES = [
     name: 'the Darwin tclaude layer exposes its Seatbelt-specific partial fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; host network and ambient Unix sockets reachable; no mount namespace; hidden paths remain enumerable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem operations/,
       /hidden paths remain enumerable/, /host network plus ambient Unix sockets remain reachable/],
     titleNot: [/filesystem mounts are enforced/, /could not read a settings file/],
@@ -114,10 +116,11 @@ const CASES = [
     name: 'the Darwin isolated tclaude layer reports its platform deltas without claiming host network access',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (Seatbelt/sandbox-exec; filesystem policy enforced; isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted; no PID isolation; no constructed root; hidden paths remain enumerable)',
       os_sandbox_unverified: true,
     },
-    glyph: '⚠', danger: true,
+    glyph: '🔒', danger: false,
     title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: Seatbelt enforces filesystem and network operations/,
       /no PID isolation or constructed root/, /hidden paths remain enumerable/],
     titleNot: [/host network plus ambient Unix sockets remain reachable/, /could not read a settings file/],
@@ -139,13 +142,28 @@ const CASES = [
     name: 'the experimental tclaude layer exposes its partial socket fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
       os_sandbox_source: 'tclaude-layer (bubblewrap; ambient host Unix sockets reachable)',
       os_sandbox_unverified: true,
+      sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
+      sandbox_profiles_recorded: true,
+    },
+    glyph: '🔒', danger: false,
+    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: filesystem mounts are enforced/,
+      /ambient host Unix sockets remain connectable/,
+      /Its filesystem rules are enforced as OS mounts by the tclaude layer \(the inner harness sandbox is off by design\)/,
+      /any environment entries it defines also apply/],
+    titleNot: [/Bash is confined/, /could not read a settings file/, /not in force/],
+  },
+  {
+    name: 'an unverified stacked or unknown implementation does not earn the tclaude-layer lock',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'stacked',
+      os_sandbox_source: 'stacked sandbox implementation', os_sandbox_unverified: true,
     },
     glyph: '⚠', danger: true,
-    title: [/^Sandbox: on \(unverified\) —/, /Partial fidelity: filesystem mounts are enforced/,
-      /ambient host Unix sockets remain connectable/],
-    titleNot: [/Bash is confined/, /could not read a settings file/],
+    title: [/^Sandbox: on \(unverified\) —/],
   },
   {
     name: 'a verified on keeps the plain padlock and the confinement claim',
@@ -160,7 +178,10 @@ const CASES = [
     // A pre-verdict Claude row: `off` is Claude-only and means the sandbox is
     // disabled outright, so the padlock was wrong there for the same reason.
     name: 'a legacy Claude off row with no verdict is a danger badge too',
-    state: { harness: 'claude', sandbox_mode: 'off' },
+    state: {
+      harness: 'claude', sandbox_mode: 'off',
+      sandbox_implementation: 'harness-builtin',
+    },
     glyph: '⚠', danger: true, title: [/^Sandbox: off —/],
   },
   {

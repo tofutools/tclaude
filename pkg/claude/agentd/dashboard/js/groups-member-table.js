@@ -171,12 +171,12 @@ export function HarnessLine({ member }) {
 // screen: the tooltip is now the only place it can be read, and one that opened
 // with the launch's REQUEST would tell an operator the opposite of the truth in
 // exactly the case — a request that lost — where it matters most.
-function osSandboxBadge(mode, state, source, prefix, unverified) {
+function osSandboxBadge(mode, state, source, prefix, unverified, implementation) {
   const via = source ? ` (${source})` : '';
-  // A settings file outranking the one that decided could not be read, so a
-  // policy tclaude never saw may say the opposite. Hedge rather than assert:
-  // the operator reading this badge is deciding whether to trust the agent, and
-  // a padlock on something nothing confines is worse than no padlock at all.
+  // On harness-builtin, a settings file outranking the one that decided could
+  // not be read, so a policy tclaude never saw may say the opposite. The layer
+  // verdicts reuse `unverified` for their explicit partial-fidelity copy; their
+  // separate outer OS wall still earns the lock below.
   const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
   const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
   const openCodeExecutorLayer = unverified
@@ -221,15 +221,18 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
     // below: "on" alone, read first, is the claim this case cannot make.
     const posture = unverified ? 'on (unverified)' : 'on';
     return {
-      danger: unverified,
+      // The exact implementation value is load-bearing: tclaude-layer has
+      // earned the real lock because the OS wall is established even when its
+      // fidelity caveats remain. Future/unknown implementations must earn
+      // their own badge rather than inheriting this exception by name shape.
+      danger: unverified && implementation !== 'tclaude-layer',
       // A mode of `off` means tclaude emitted `{"sandbox":{"enabled":false}}`
       // and, with it, NONE of the profile's filesystem rules (claudeSettingsJSON
       // skips every filesystem key for an `off` launch). Managed policy can
       // still force the sandbox on over that, but what it enforces is the
-      // operator's own settings — the profile's rules were never handed over.
-      // An unverified verdict cannot claim enforcement either: the whole point
-      // of the hedge is that tclaude could not establish the sandbox is active,
-      // so it reports no established reason rather than asserting one.
+      // operator's own settings — the profile's rules were never handed to the
+      // HARNESS. sandboxProfileClause separately accounts for tclaude-layer,
+      // which renders those same profile rules into its outer OS wall.
       rulesWithheldBecause: mode === 'off'
         ? 'this launch requested sandbox `off`, so none of its filesystem rules were emitted'
         : '',
@@ -306,6 +309,17 @@ function sandboxProfileClause(member, withheldBecause) {
     .map((p) => `“${p.name}” (${SANDBOX_SCOPE_LABELS[p.scope] || p.scope})`)
     .join(' + ');
   const clause = ` Customized by tclaude sandbox profile ${names}.`;
+  const harness = (member.state?.harness || 'claude').trim();
+  const rulesEnforcedByTclaudeLayer =
+    member.state?.sandbox_implementation === 'tclaude-layer'
+    && (harness === 'claude' || harness === 'codex');
+  if (rulesEnforcedByTclaudeLayer) {
+    const their = applied.length > 1 ? 'Their' : 'Its';
+    const they = applied.length > 1 ? 'they define' : 'it defines';
+    return clause + ` ${their} filesystem rules are enforced as OS mounts by the tclaude layer`
+      + ` (the inner harness sandbox is off by design);`
+      + ` any environment entries ${they} also apply.`;
+  }
   if (!withheldBecause) return clause;
   const their = applied.length > 1 ? 'Their' : 'Its';
   const they = applied.length > 1 ? 'they define' : 'it defines';
@@ -344,16 +358,17 @@ function sandboxIndicator(member) {
   const state = member.state?.os_sandbox_state || '';
   if (state) {
     const badge = osSandboxBadge(mode, state, member.state?.os_sandbox_source || '', prefix,
-      !!member.state?.os_sandbox_unverified);
+      !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
     // The label the chip used to print ("on", "on overridden", "on?") is not
     // dropped, only moved: every osSandboxBadge title opens with the resolved
     // posture, so the tooltip stays a complete account on its own.
     return {
       danger: badge.danger, offline,
-      // A verdict tclaude could not prove says nothing about the profile's
-      // rules either way, so it reports no withheld-reason at all and the
-      // clause names the profile and stops rather than claiming either.
+      // On the harness-builtin path, a verdict tclaude could not prove says
+      // nothing about the profile's rules either way, so the clause makes no
+      // fresh enforcement claim. The tclaude-layer branch is different: the
+      // outer renderer owns those rules and sandboxProfileClause says so.
       title: badge.title + sandboxProfileClause(member, badge.rulesWithheldBecause),
     };
   }
