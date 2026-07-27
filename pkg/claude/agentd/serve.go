@@ -42,7 +42,7 @@ type serveParams struct {
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
 	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
-	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents and starts new ones. It REPLACES the web dashboard: no HTTP dashboard listener is started, so browser deep links and in-dashboard human-approval requests are unavailable for this daemon lifetime. Quitting the TUI shuts the daemon down. Cannot be combined with --auto-launch-dashboard, --slop, --wizard, --dashboard-port, --dashboard-bind or --no-print-human-token."`
+	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents and starts new ones. It REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable for this daemon lifetime (grant access with 'tclaude agent permissions grant' instead). An enabled remote-access listener is unaffected. Quitting the TUI shuts the daemon down. Cannot be combined with --auto-launch-dashboard, --slop, --wizard, --dashboard-port, --dashboard-bind or --no-print-human-token."`
 }
 
 func serveCmd() *cobra.Command {
@@ -339,16 +339,18 @@ func runServe(p *serveParams) error {
 	// bookmark / reverse-proxy / firewall rule the fixed port was set up
 	// for). An out-of-range port likewise fails the bind and aborts here.
 	//
-	// --tui replaces that whole surface with an in-terminal console, so the
+	// --tui replaces this LOOPBACK surface with an in-terminal console, so the
 	// listener is not started at all and popupBaseURL stays empty. Every
 	// reader of popupBaseURL already handles the empty case (the tray's
 	// dashboard entry, `tclaude agent dashboard`, /v1/info) — with one
 	// consequence worth stating plainly: an agent's ask-human approval
-	// request has no surface to appear on and fails closed, so grants must
-	// come from `tclaude agent permissions grant` while the daemon runs in
-	// TUI mode. Any configured agent.dashboard_port / dashboard_bind is
-	// inert here; the conflicting FLAGS are refused up front by
-	// validateTUIFlags.
+	// request keys on popupBaseURL, so it has no surface to appear on and
+	// fails closed. Grants must come from `tclaude agent permissions grant`
+	// while the daemon runs in TUI mode — and that holds even when the
+	// separate remote-access listener below is enabled, which --tui does NOT
+	// disable (it is its own explicit opt-in, not this flag's business).
+	// Any configured agent.dashboard_port / dashboard_bind is inert here; the
+	// conflicting FLAGS are refused up front by validateTUIFlags.
 	var popupSrv *http.Server
 	if p.TUI {
 		slog.Info("dashboard listener disabled by --tui; the terminal UI is the operator surface")
@@ -609,17 +611,6 @@ func runServe(p *serveParams) error {
 
 	quit := newQuitter()
 
-	// Terminal UI (--tui): the simplified in-terminal dashboard. It runs on
-	// its own goroutine — the main goroutine still belongs to the tray loop —
-	// and stops when the daemon-wide quit channel closes, whichever end
-	// requests the shutdown first. Started after the banner above so the
-	// operator token stays on the scrollback the alt-screen restores on exit.
-	stopTUI := func() error { return nil }
-	if p.TUI {
-		stopTUI = startServeTUI(quit)
-	}
-	defer func() { _ = stopTUI() }()
-
 	// Translate any of: SIGINT/SIGTERM, the socket server dying,
 	// "Quit" from the tray menu, into a single shutdown signal.
 	go func() {
@@ -636,6 +627,11 @@ func runServe(p *serveParams) error {
 		quit.signal()
 	}()
 
+	// The tray probe runs BEFORE the terminal UI starts: on a headless host —
+	// exactly where --tui is most useful — an unavailable tray is the normal
+	// outcome, and its stderr line would otherwise land on top of the freshly
+	// entered alt screen, where bubbletea's diff renderer never repaints over
+	// it.
 	trayDisabled := shouldDisableTray(p.NoTray, cfg)
 	if !trayDisabled {
 		if err := checkTrayPrerequisites(); err != nil {
@@ -648,6 +644,18 @@ func runServe(p *serveParams) error {
 			trayDisabled = true
 		}
 	}
+
+	// Terminal UI (--tui): the simplified in-terminal dashboard. It runs on
+	// its own goroutine — the main goroutine still belongs to the tray loop —
+	// and stops when the daemon-wide quit channel closes, whichever end
+	// requests the shutdown first. Started last so every startup line, the
+	// operator-token banner included, is already on the scrollback the alt
+	// screen restores on exit.
+	stopTUI := func() error { return nil }
+	if p.TUI {
+		stopTUI = startServeTUI(quit)
+	}
+	defer func() { _ = stopTUI() }()
 
 	var unexpectedTrayErr error
 	if trayDisabled {

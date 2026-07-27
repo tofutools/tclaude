@@ -14,6 +14,22 @@ import (
 // listing and spawn handlers the CLI and the web dashboard go through — the
 // console has no private path to either.
 
+// newTUIConsole stands up the console with a deterministic identity: agentd's
+// own process resolves to no harness ancestor (a plain operator shell), and a
+// known operator token is live. Without the proc-tree stub the console would
+// inherit whatever ancestry the `go test` binary happens to have — under a
+// harness-run test suite that is a harness ancestor, which classify() rightly
+// refuses, and the scenario would fail for a reason that has nothing to do
+// with what it is testing.
+func newTUIConsole(t *testing.T) *agentd.TUIConsole {
+	t.Helper()
+	t.Cleanup(agentd.SetProcTreeForTest(nil, nil))
+	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_tui_console_test"))
+	c := agentd.NewTUIConsoleForTest()
+	c.Resize(140, 30)
+	return c
+}
+
 // openSpawnForm walks the console into the "new agent" prompt with the name
 // and directory filled in. The form opens on the group field, so one tab
 // reaches the name and another the directory.
@@ -28,13 +44,11 @@ func openTUISpawnForm(t *testing.T, c *agentd.TUIConsole, name, dir string) {
 
 func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_tui_console_test"))
 	f.HaveGroup("dev")
 	cwd := f.TestCwd("tui-spawn")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
 
-	c := agentd.NewTUIConsoleForTest()
-	c.Resize(140, 30)
+	c := newTUIConsole(t)
 	c.Refresh()
 	require.Contains(t, c.View(), "No agents yet")
 
@@ -51,11 +65,9 @@ func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 
 func TestTUIConsoleReportsASpawnTheDaemonRefuses(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_tui_console_test"))
 	f.HaveGroup("dev")
 
-	c := agentd.NewTUIConsoleForTest()
-	c.Resize(140, 30)
+	c := newTUIConsole(t)
 	c.Refresh()
 
 	openTUISpawnForm(t, c, "reviewer", "/nonexistent/tui/directory")
@@ -70,12 +82,10 @@ func TestTUIConsoleReportsASpawnTheDaemonRefuses(t *testing.T) {
 // operator needs to tell agents apart.
 func TestTUIConsoleListsExistingAgents(t *testing.T) {
 	f := newFlow(t)
-	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_tui_console_test"))
 	f.HaveGroup("dev")
 	sp := f.Spawn("dev", "worker")
 
-	c := agentd.NewTUIConsoleForTest()
-	c.Resize(140, 30)
+	c := newTUIConsole(t)
 	c.Refresh()
 
 	view := c.View()
@@ -93,10 +103,8 @@ func TestTUIConsoleListsExistingAgents(t *testing.T) {
 // Quitting is confirmed first, because it shuts the daemon down.
 func TestTUIConsoleConfirmsQuit(t *testing.T) {
 	newFlow(t)
-	t.Cleanup(agentd.SetOperatorTokenForTest("tclo_tui_console_test"))
 
-	c := agentd.NewTUIConsoleForTest()
-	c.Resize(140, 30)
+	c := newTUIConsole(t)
 	c.Press(t, "q")
 	assert.Contains(t, c.View(), "shut down agentd?")
 	assert.False(t, c.Quit, "asking is not quitting")

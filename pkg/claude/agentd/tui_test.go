@@ -2,9 +2,11 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -13,8 +15,10 @@ import (
 )
 
 // stubTUIAPI builds a console API client whose "daemon" is h, so a test can
-// drive the console's request shaping and response handling without a DB.
-func stubTUIAPI(h http.HandlerFunc) *tuiAPI { return &tuiAPI{handler: h} }
+// drive the console's request shaping and response handling without a DB. The
+// identity is the ordinary one: a real pid, no harness ancestry — the shape a
+// console started from the operator's own shell resolves to.
+func stubTUIAPI(h http.HandlerFunc) *tuiAPI { return &tuiAPI{handler: h, pid: 99999} }
 
 // withOperatorToken installs tok as the live operator token for the duration
 // of the test, restoring whatever was there before.
@@ -152,16 +156,38 @@ func TestTUIRefreshOrdersOnlineAgentsFirst(t *testing.T) {
 	require.Len(t, msg.groups, 1)
 }
 
-func TestTUIRefreshFailureBecomesANotice(t *testing.T) {
-	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
-		writeError(w, http.StatusInternalServerError, "io", "database is locked")
+func TestTUIRefreshFailureIsReportedThenClearedByASuccess(t *testing.T) {
+	fail := true
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			writeError(w, http.StatusInternalServerError, "io", "database is locked")
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/peers":
+			writeJSON(w, http.StatusOK, []tuiAgentRow{{ConvID: "c1", Title: "amy", Online: true}})
+		default:
+			writeJSON(w, http.StatusOK, []tuiGroupRow{{Name: "dev"}})
+		}
 	})
+
 	m := newTUIModel(api)
 	m.refreshing = true
+	m.notice = "Spawned agt_1 in group dev"
 	updated, _ := m.Update(m.refreshCmd()())
 	got := updated.(tuiModel)
 	assert.False(t, got.refreshing)
-	assert.Contains(t, got.notice, "database is locked")
+	assert.Contains(t, got.refreshErr, "database is locked")
+	assert.Equal(t, "Spawned agt_1 in group dev", got.notice,
+		"a poll failure must not overwrite the last action's outcome")
+
+	// A transient failure must not leave the operator reading "refresh
+	// failed" over a listing that is in fact live.
+	fail = false
+	updated, _ = got.Update(got.refreshCmd()())
+	got = updated.(tuiModel)
+	assert.Empty(t, got.refreshErr)
+	assert.Len(t, got.agents, 1)
 }
 
 // The spawn form is the console's one mutating surface: what the operator
@@ -224,6 +250,7 @@ func TestTUISpawnDefaultHarnessIsLeftUnpinned(t *testing.T) {
 
 func TestTUISpawnWithoutAGroupExplainsHowToMakeOne(t *testing.T) {
 	m := newTUIModel(nil)
+	m.lastRefresh = time.Now() // the listing landed; there really are no groups
 	m = m.openSpawnForm()
 	got, cmd := m.submitSpawn()
 	assert.Nil(t, cmd, "nothing is posted without a group")
@@ -258,6 +285,12 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 
 	declined, cmd := got.handleKey(tuiKey("n"))
 	assert.Equal(t, tuiModeList, declined.(tuiModel).mode)
+	assert.Nil(t, cmd)
+
+	// Enter is the reflexive dismiss key and the prompt says anything but
+	// "y" cancels — it must not shut the daemon down.
+	entered, cmd := got.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.Equal(t, tuiModeList, entered.(tuiModel).mode)
 	assert.Nil(t, cmd)
 
 	confirmed, cmd := got.handleKey(tuiKey("y"))
@@ -319,4 +352,76 @@ func TestTUIHelpMentionsTheMissingDashboard(t *testing.T) {
 	// Any key closes it again.
 	closed, _ := got.handleKey(tuiKey("x"))
 	assert.Equal(t, tuiModeList, closed.(tuiModel).mode)
+}
+
+// A handler panic must cost one request, not the daemon: on the socket path
+// net/http contains it, and the console has to match that.
+func TestTUIAPIContainsAHandlerPanic(t *testing.T) {
+	api := stubTUIAPI(func(_ http.ResponseWriter, _ *http.Request) {
+		panic("boom")
+	})
+	var rows []tuiAgentRow
+	err := api.get("/v1/peers", &rows)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "panicked")
+
+	// And the console keeps working afterwards.
+	m := newTUIModel(nil)
+	m.api = api
+	m.refreshing = true
+	updated, _ := m.Update(m.refreshCmd()())
+	assert.Contains(t, updated.(tuiModel).refreshErr, "panicked")
+}
+
+// The console does not get to declare itself the operator: a daemon started
+// from inside a harness session is classified by its ancestry, exactly as
+// classify() treats every other caller holding the token.
+func TestTUIAPIDoesNotOutrankItsHarnessAncestry(t *testing.T) {
+	withOperatorToken(t, "tclo_test-token")
+	var seen callerClass
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = classify(peerFromContext(r.Context()))
+		writeJSON(w, http.StatusOK, []tuiAgentRow{})
+	})
+
+	agentConsole := &tuiAPI{handler: handler, pid: 4242, convID: "conv-1", hasHarnessAncestor: true}
+	require.NoError(t, agentConsole.get("/v1/peers", &[]tuiAgentRow{}))
+	assert.Equal(t, classAgent, seen, "a console under a harness pane stays that agent")
+	assert.Contains(t, agentConsole.identityWarning(), "conv-1")
+
+	operatorConsole := &tuiAPI{handler: handler, pid: 4242}
+	require.NoError(t, operatorConsole.get("/v1/peers", &[]tuiAgentRow{}))
+	assert.Equal(t, classHuman, seen)
+	assert.Empty(t, operatorConsole.identityWarning(), "the ordinary case says nothing")
+}
+
+// The list view must fit the terminal: overflowing it scrolls the screen out
+// from under bubbletea's diff renderer.
+func TestTUIListFitsTheTerminalWithEveryOptionalLineShowing(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+	m.identityWarning = "Note: something about identity"
+	m.refreshErr = "Refresh failed: database is locked"
+	m.notice = "Spawned agt_1 in group dev"
+	m.mode = tuiModeConfirmQuit
+	for i := range 50 {
+		m.agents = append(m.agents, tuiAgentRow{ConvID: fmt.Sprintf("c%d", i), Title: fmt.Sprintf("a%d", i)})
+	}
+
+	for _, height := range []int{24, 30, 60} {
+		m.height = height
+		lines := strings.Count(m.renderList(), "\n")
+		assert.LessOrEqual(t, lines, height, "height=%d", height)
+	}
+}
+
+// The spawn form must not tell an operator to create a group when the group
+// list simply has not arrived yet.
+func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
+	m := newTUIModel(nil)
+	m = m.openSpawnForm()
+	got, cmd := m.submitSpawn()
+	assert.Nil(t, cmd)
+	assert.Contains(t, got.notice, "not loaded yet")
+	assert.NotContains(t, got.notice, "groups create")
 }

@@ -69,17 +69,28 @@ Everything it shows or does goes through the daemon's own API, so a spawn
 started here is the same spawn the CLI and the browser dashboard perform —
 same defaults, same validation, same audit entry.
 
-`--tui` **replaces** the web dashboard rather than sitting beside it: no
-dashboard HTTP listener is started at all. Consequences worth knowing before
-you use it:
+`--tui` **replaces** the web dashboard rather than sitting beside it: the
+loopback dashboard listener is not started at all. Consequences worth knowing
+before you use it:
 
 - `tclaude agent dashboard` and the tray's **Open dashboard** have nothing to
   open, and any `agent.auto_launch_dashboard` config setting is ignored.
 - An agent's `--ask-human` approval request has no surface to appear on and
   fails closed (denied). Grant access with `tclaude agent permissions grant`
-  instead while the daemon runs in this mode.
+  instead while the daemon runs in this mode. This holds even if
+  [remote access](remote-access.md) is enabled: approvals are built around the
+  loopback URL, and `--tui` does not start one.
+- The separate remote-access listener is *not* affected — it is its own
+  explicit opt-in, so a daemon with `remote_access.enabled` still serves the
+  dashboard over it.
 - Quitting the UI stops the daemon — `agentd serve` is a foreground process
   and the UI is its face.
+
+If agentd itself was started from inside a harness pane, the console is
+classified as that agent (the daemon's ordinary rule: a harness ancestor beats
+an operator token, so an agent cannot promote itself with an inherited
+`TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
+daemon from a plain shell to get an operator console.
 
 Because there is no listener to configure, `--tui` refuses to start alongside
 `--auto-launch-dashboard`, `--slop`, `--wizard`, `--dashboard-port` or

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -97,15 +98,26 @@ func tuiEndedNormally(err error) bool {
 //
 // Identity: withIdentity normally resolves the peer from the connecting Unix
 // socket, which does not exist for an in-process call, so the console builds
-// the peer itself. It does NOT assert human-ness by fiat — it presents the
-// live operator token and lets the real verifier decide (verifyHumanToken,
-// constant-time), exactly as a CLI caller does. The remaining assertion is
-// the absence of a harness ancestor, i.e. "this is agentd's own console, not
-// an agent": the console only exists because the operator asked for it on
-// agentd's command line, and it can only be driven from agentd's controlling
-// terminal.
+// the peer itself — but it asserts nothing. It presents the live operator
+// token and lets the real verifier decide (verifyHumanToken, constant-time),
+// and it resolves its own harness ancestry through the same convIDForPID walk
+// the socket path uses. classify() then applies its ordinary precedence.
+//
+// That precedence matters here. A daemon launched from inside a harness pane
+// has a harness ancestor, and classify deliberately lets that beat any
+// operator token — otherwise an agent whose shell inherited TCLAUDE_HUMAN_TOKEN
+// could promote itself. Claiming "the console is always the human" would have
+// re-opened exactly that hole through a console the owning agent can drive
+// with tmux send-keys. So `agentd serve --tui` started from an agent's pane
+// gets an agent-class console, scoped and permission-gated like that agent;
+// started from the operator's own shell it gets the human.
 type tuiAPI struct {
 	handler http.Handler
+	// pid and the resolved ancestry are fixed for the daemon's lifetime, so
+	// the process-tree walk runs once here rather than on every 2s poll.
+	pid                int
+	convID             string
+	hasHarnessAncestor bool
 }
 
 func newTUIAPI() *tuiAPI {
@@ -113,7 +125,40 @@ func newTUIAPI() *tuiAPI {
 	// and holds no per-mux state, so this shares every code path with the
 	// socket server without sharing its identity middleware (which would
 	// overwrite the peer stamped below).
-	return &tuiAPI{handler: buildMux()}
+	pid := os.Getpid()
+	convID, hasAncestor := convIDForPID(pid)
+	return &tuiAPI{
+		handler:            buildMux(),
+		pid:                pid,
+		convID:             convID,
+		hasHarnessAncestor: hasAncestor,
+	}
+}
+
+// identityWarning explains, in one line, a console the daemon will not treat
+// as the operator — empty when it will. Without it, a console started from
+// the wrong place just answers every keystroke with a bare 403 and no hint
+// about why or what to do instead.
+func (a *tuiAPI) identityWarning() string {
+	switch classify(&peer{
+		PID:               a.pid,
+		ConvID:            a.convID,
+		HasClaudeAncestor: a.hasHarnessAncestor,
+		// The console always presents the live token, so it is valid
+		// whenever the daemon managed to mint one.
+		HumanTokenValid: currentOperatorToken() != "",
+	}) {
+	case classHuman:
+		return ""
+	case classAgent:
+		return "Note: agentd was started from inside a harness session, so this console acts as agent " +
+			a.convID + " — listings are scoped to its groups and spawns need its permissions."
+	case classAgentUnknown:
+		return "Note: agentd was started from inside a harness session whose conv-id cannot be resolved, " +
+			"so the daemon refuses this console. Restart agentd from a plain shell to use --tui."
+	default:
+		return "Note: no operator token is available, so the daemon refuses this console."
+	}
 }
 
 func (a *tuiAPI) get(path string, out any) error {
@@ -142,12 +187,16 @@ func (a *tuiAPI) do(method, path string, in, out any) error {
 	}
 	req.Header.Set(humanTokenHeader, currentOperatorToken())
 	req = req.WithContext(context.WithValue(req.Context(), peerKey{}, &peer{
-		PID:             os.Getpid(),
-		HumanTokenValid: verifyHumanToken(req),
+		PID:               a.pid,
+		ConvID:            a.convID,
+		HasClaudeAncestor: a.hasHarnessAncestor,
+		HumanTokenValid:   verifyHumanToken(req),
 	}))
 
 	rec := &tuiResponseRecorder{code: http.StatusOK}
-	a.handler.ServeHTTP(rec, req)
+	if err := serveTUIRequest(a.handler, rec, req); err != nil {
+		return fmt.Errorf("%s %s: %w", method, path, err)
+	}
 	if rec.code >= http.StatusBadRequest {
 		return fmt.Errorf("%s %s: %s", method, path, tuiErrorMessage(rec))
 	}
@@ -157,6 +206,30 @@ func (a *tuiAPI) do(method, path string, in, out any) error {
 	if err := json.Unmarshal(rec.body.Bytes(), out); err != nil {
 		return fmt.Errorf("decode %s response: %w", path, err)
 	}
+	return nil
+}
+
+// serveTUIRequest dispatches one request into the mux and turns a handler
+// panic into an error instead of letting it escape.
+//
+// This restores what the socket path gets for free: net/http recovers a
+// panicking handler and loses only that connection. An in-process call has no
+// such net, and the console calls this from a bubbletea command goroutine, so
+// an unrecovered panic in a handler would take down the whole daemon — and
+// leave the terminal in alt-screen/raw mode on the way out. The console polls
+// /v1/peers every two seconds, so this is not a corner of the code that is
+// rarely reached.
+func serveTUIRequest(h http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			// Same disposition net/http gives a panicking handler: log it
+			// with the stack, fail this one request, keep serving.
+			slog.Error("tui: handler panicked", "path", r.URL.Path, "panic", rec,
+				"stack", string(debug.Stack()))
+			err = fmt.Errorf("the daemon panicked handling this request: %v", rec)
+		}
+	}()
+	h.ServeHTTP(w, r)
 	return nil
 }
 
@@ -297,13 +370,20 @@ type tuiModel struct {
 
 	cursor         int
 	viewportOffset int
-	viewportHeight int
 	width          int
+	height         int
 
 	mode tuiMode
-	// notice is the single status line under the table: the outcome of the
-	// last action, or the last refresh failure. Cleared by the next action.
-	notice string
+	// notice is the outcome of the last thing the operator did (a spawn, a
+	// refused spawn), cleared when they do the next one. refreshErr is the
+	// health of the background poll, cleared by the next poll that works —
+	// two different lifetimes, so they are two different lines rather than
+	// one that can strand a stale "refresh failed" over a live listing.
+	notice     string
+	refreshErr string
+	// identityWarning is fixed for the console's lifetime: it says the
+	// daemon will not treat this console as the operator, and why.
+	identityWarning string
 	// refreshing / spawning keep the periodic tick from stacking requests
 	// and the operator from firing two spawns at once.
 	refreshing  bool
@@ -347,7 +427,39 @@ type (
 )
 
 func newTUIModel(api *tuiAPI) tuiModel {
-	return tuiModel{api: api, viewportHeight: 10}
+	m := tuiModel{api: api}
+	if api != nil {
+		m.identityWarning = api.identityWarning()
+	}
+	return m
+}
+
+// tuiListChrome is what renderList spends on everything that is not a table
+// row: 3 lines of header, the table's own header + separator, a blank line
+// and the summary, and a blank line and the key line.
+const tuiListChrome = 9
+
+// viewportHeight is how many agent rows fit right now. It is derived rather
+// than stored because two of renderList's lines are conditional: a refresh
+// error and the two-line quit prompt. Ignoring them overflowed the terminal
+// exactly when one was showing, which scrolls the screen out from under
+// bubbletea's diff renderer and leaves later partial repaints on the wrong
+// lines.
+func (m tuiModel) viewportHeight() int {
+	chrome := tuiListChrome
+	if m.identityWarning != "" {
+		chrome += 2
+	}
+	if m.refreshErr != "" {
+		chrome++
+	}
+	if m.notice != "" {
+		chrome++
+	}
+	if m.mode == tuiModeConfirmQuit {
+		chrome += 2
+	}
+	return max(m.height-chrome, 3)
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -511,7 +623,14 @@ func (m tuiModel) updateFocusedInput(msg tea.Msg) (tuiModel, tea.Cmd) {
 func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	group := m.selectedGroup()
 	if group == "" {
-		m.notice = "No groups yet — create one first: tclaude agent groups create <name>"
+		// An empty picker means one of two very different things, and saying
+		// "no groups" to someone whose groups simply have not arrived yet
+		// sends them off to create a duplicate.
+		if m.lastRefresh.IsZero() {
+			m.notice = "Group list has not loaded yet — press r to refresh, then try again."
+		} else {
+			m.notice = "No groups yet — create one first: tclaude agent groups create <name>"
+		}
 		return m, nil
 	}
 	if m.spawning {
@@ -534,8 +653,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		// Header, table header/separator, status and help lines.
-		m.viewportHeight = max(msg.Height-10, 3)
+		m.height = msg.Height
 		m.ensureCursorVisible()
 		return m, nil
 
@@ -549,9 +667,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiDataMsg:
 		m.refreshing = false
 		if msg.err != nil {
-			m.notice = "Refresh failed: " + msg.err.Error()
+			m.refreshErr = "Refresh failed: " + msg.err.Error()
 			return m, nil
 		}
+		m.refreshErr = ""
 		m.agents = msg.agents
 		m.groups = msg.groups
 		m.lastRefresh = time.Now()
@@ -603,8 +722,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiModeConfirmQuit:
+		// Only "y" confirms. Enter is the reflexive dismiss key and the
+		// prompt promises that anything other than "y" cancels — accepting
+		// it here would turn a misread prompt into a daemon shutdown, taking
+		// every managed agent's pane with it.
 		switch msg.String() {
-		case "y", "Y", "enter":
+		case "y", "Y":
 			return m, tea.Quit
 		default:
 			m.mode = tuiModeList
@@ -670,14 +793,12 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) ensureCursorVisible() {
-	if m.viewportHeight <= 0 {
-		return
-	}
+	height := m.viewportHeight()
 	if m.cursor < m.viewportOffset {
 		m.viewportOffset = m.cursor
 	}
-	if m.cursor >= m.viewportOffset+m.viewportHeight {
-		m.viewportOffset = m.cursor - m.viewportHeight + 1
+	if m.cursor >= m.viewportOffset+height {
+		m.viewportOffset = m.cursor - height + 1
 	}
 	if m.viewportOffset < 0 {
 		m.viewportOffset = 0
@@ -710,6 +831,9 @@ func (m tuiModel) columns() []table.Column {
 func (m tuiModel) renderList() string {
 	var b strings.Builder
 	b.WriteString("\n  tclaude agentd — terminal UI (no web dashboard in this mode)\n\n")
+	if m.identityWarning != "" {
+		b.WriteString("  " + m.identityWarning + "\n\n")
+	}
 
 	if len(m.agents) == 0 {
 		b.WriteString("  No agents yet.\n")
@@ -718,7 +842,7 @@ func (m tuiModel) renderList() string {
 		tbl.SetTerminalWidth(max(m.width-4, 60))
 		tbl.SelectedIndex = m.cursor
 		tbl.ViewportOffset = m.viewportOffset
-		tbl.ViewportHeight = m.viewportHeight
+		tbl.ViewportHeight = m.viewportHeight()
 		for _, a := range m.agents {
 			tbl.AddRow(table.Row{Cells: []string{
 				a.name(),
@@ -735,6 +859,9 @@ func (m tuiModel) renderList() string {
 	}
 
 	b.WriteString("\n  " + m.summaryLine() + "\n")
+	if m.refreshErr != "" {
+		b.WriteString("  " + m.refreshErr + "\n")
+	}
 	if m.notice != "" {
 		b.WriteString("  " + m.notice + "\n")
 	}
@@ -758,9 +885,9 @@ func (m tuiModel) summaryLine() string {
 	if !m.lastRefresh.IsZero() {
 		line += " • updated " + tuiAgo(time.Since(m.lastRefresh))
 	}
-	if m.viewportHeight > 0 && shown > m.viewportHeight {
+	if height := m.viewportHeight(); shown > height {
 		first := m.viewportOffset + 1
-		last := min(m.viewportOffset+m.viewportHeight, shown)
+		last := min(m.viewportOffset+height, shown)
 		line += fmt.Sprintf(" • showing %d-%d", first, last)
 	}
 	if m.spawning {
