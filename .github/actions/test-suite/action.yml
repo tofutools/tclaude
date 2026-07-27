@@ -12,12 +12,13 @@ description: Set up Go + Node and run the Go test suite, whole or as one shard.
 inputs:
   shard:
     description: >-
-      Which slice to run: all | agentd | jstest | process | rest. The named
-      shards are the measured heavyweights (agentd's ~2.5min serial binary,
-      jstest's 124 Node suites, the process tree's CPU-bound packages);
-      `rest` is derived by subtracting the named shards' own `go list`
-      output from the full package list, so the partition is exact by
-      construction and a removed/renamed shard target fails loudly.
+      Which slice to run: all | agentd | jstest | process | sandbox | rest.
+      The named shards isolate the measured heavyweights (agentd's ~2.5min
+      serial binary, jstest's 124 Node suites, the process tree's CPU-bound
+      packages) and the sandbox packages that modify their environment;
+      `rest` is derived by subtracting the named shards' own `go list` output
+      from the full package list, so the partition is exact by construction
+      and a removed/renamed shard target fails loudly.
     default: all
   race:
     description: Set to 'true' to run with -race (roughly triples wall time).
@@ -68,6 +69,9 @@ runs:
             export TCLAUDE_JS_TEST_CONCURRENCY="$cores"
             ;;
           process) pkgs="./pkg/claude/process/..." ;;
+          sandbox)
+            pkgs="./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/..."
+            ;;
           rest)
             # Everything the named shards don't cover, derived by literally
             # subtracting the named shards' `go list` output from the full
@@ -76,7 +80,7 @@ runs:
             # loudly instead of silently dropping packages.
             pkgs="$(comm -23 \
               <(go list ./... | sort) \
-              <(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... | sort))"
+              <(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... ./pkg/claude/session/... ./pkg/claude/common/sandboxpolicy/... | sort))"
             ;;
           *) echo "unknown shard: ${{ inputs.shard }}" >&2; exit 1 ;;
         esac
