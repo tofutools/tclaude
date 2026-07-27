@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -183,6 +184,14 @@ func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 		"harness":                "opencode",
 		"sandbox_implementation": "tclaude-layer",
 	})
+	if runtime.GOOS == "darwin" {
+		require.Equal(t, http.StatusBadRequest, resp.Code,
+			"macOS must refuse the Linux-only OpenCode executor boundary")
+		failure := decodeFailure(t, resp.Raw)
+		assert.Equal(t, "invalid_sandbox_implementation", failure.Code)
+		assert.Contains(t, failure.Error, "does not support OpenCode on macOS")
+		return
+	}
 	require.Equal(t, http.StatusOK, resp.Code,
 		"tclaude-layer on OpenCode must launch; body=%s", resp.Raw)
 	implementation, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
@@ -233,10 +242,21 @@ func TestSpawn_OpenCodeAcceptsLayerFromLowerTier(t *testing.T) {
 		"name": "oc-worker", "harness": "opencode",
 	})
 	require.Equalf(t, 200, resp.Code,
-		"OpenCode supports the lower-tier outer layer; body=%s", resp.Raw)
+		"the lower-tier implementation either applies or is disclosed and skipped; body=%s", resp.Raw)
 
 	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
+	if runtime.GOOS == "darwin" {
+		assert.Empty(t, got,
+			"an ambient Claude profile cannot apply OpenCode's Linux-only server boundary on macOS")
+		mode, ok := f.World.SpawnSandbox(resp.ConvID)
+		require.True(t, ok)
+		assert.Equal(t, harness.OpenCodeSandboxAccessControl, mode,
+			"the skipped ambient pin must fall through to OpenCode's default")
+		assert.Contains(t, string(resp.Raw), "does not support OpenCode on macOS",
+			"the platform-driven tier skip must be disclosed")
+		return
+	}
 	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), got)
 	mode, ok := f.World.SpawnSandbox(resp.ConvID)
 	require.True(t, ok)
