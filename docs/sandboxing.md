@@ -248,6 +248,14 @@ XDG config are mounted read-only; global config remains at its canonical XDG
 location inside the private layout, so project config keeps OpenCode's native
 higher precedence.
 
+OpenCode 1.18.5 and 1.18.6 try to create `~/.opencode/.gitignore` during
+instance bootstrap, and 1.18.6 aborts when that missing-file write meets the
+read-only install mount. As a compatibility shim, the daemon creates only that
+one file before composing the read-only bind, with OpenCode's exact contents
+and mode `0600`. An existing regular file is left byte-for-byte untouched;
+symlinks and other file types refuse the launch. Agents still receive the
+entire install tree read-only.
+
 On first allocation, regular ambient `auth.json` and `mcp-auth.json` files are
 copied once into the private data root with mode `0600`. Symlinks are refused
 and an existing private credential is never overwritten. This avoids an

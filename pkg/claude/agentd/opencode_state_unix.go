@@ -15,6 +15,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const (
+	openCodeInstallBootstrapFile = ".gitignore"
+	// OpenCode Config.ensureGitignore writes this exact join-with-newlines
+	// payload in both v1.18.5 (e5cc278d) and v1.18.6 (00ac24ee):
+	// https://github.com/anomalyco/opencode/blob/v1.18.5/packages/opencode/src/config/config.ts#L295-L312
+	// https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
+	//
+	// This is the sole approved daemon-side compatibility seed in the
+	// otherwise read-only install tree. Any additional OpenCode write-on-boot
+	// path must be separately reviewed; do not grow this into a file list.
+	openCodeInstallGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore"
+)
+
 type openCodeStateLayout struct {
 	allocation db.OpenCodeAgentStateAllocation
 	parent     string
@@ -248,6 +261,9 @@ func openCodeStateLayoutForAllocation(
 		if resolveErr != nil {
 			return nil, fmt.Errorf("resolve OpenCode install: %w", resolveErr)
 		}
+		if err := ensureOpenCodeInstallGitignore(install); err != nil {
+			return nil, err
+		}
 		layout.readOnlyBinds = append(layout.readOnlyBinds, session.TclaudeLayerReadOnlyBind{
 			Source: install, Target: install,
 		})
@@ -398,6 +414,55 @@ func validateExistingOpenCodeCredential(path string) error {
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return fmt.Errorf("existing private OpenCode credential %q is not a regular file", path)
+	}
+	return nil
+}
+
+func ensureOpenCodeInstallGitignore(installDir string) error {
+	path := filepath.Join(installDir, openCodeInstallBootstrapFile)
+	fd, err := unix.Open(path,
+		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		if err == unix.EEXIST {
+			return validateExistingOpenCodeInstallGitignore(path)
+		}
+		return fmt.Errorf("create OpenCode install bootstrap %q: %w", path, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	keep := false
+	defer func() {
+		_ = file.Close()
+		if !keep {
+			_ = os.Remove(path)
+		}
+	}()
+	if err := unix.Fchmod(fd, 0o600); err != nil {
+		return fmt.Errorf("secure OpenCode install bootstrap %q: %w", path, err)
+	}
+	if _, err := io.WriteString(file, openCodeInstallGitignore); err != nil {
+		return fmt.Errorf("write OpenCode install bootstrap %q: %w", path, err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync OpenCode install bootstrap %q: %w", path, err)
+	}
+	keep = true
+	return nil
+}
+
+func validateExistingOpenCodeInstallGitignore(path string) error {
+	fd, err := unix.Open(
+		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("inspect existing OpenCode install bootstrap %q: %w", path, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return fmt.Errorf("inspect existing OpenCode install bootstrap %q: %w", path, err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fmt.Errorf("existing OpenCode install bootstrap %q is not a regular file", path)
 	}
 	return nil
 }

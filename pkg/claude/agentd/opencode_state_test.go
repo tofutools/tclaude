@@ -239,6 +239,40 @@ func TestPrivateOpenCodeCredentialSeedNeverOverwritesAndRefusesSymlink(t *testin
 	require.ErrorContains(t, err, "not a regular file")
 }
 
+func TestOpenCodeInstallGitignoreSeedAbsentPresentAndRefusesSpecialFiles(t *testing.T) {
+	absent := t.TempDir()
+	require.NoError(t, ensureOpenCodeInstallGitignore(absent))
+	path := filepath.Join(absent, openCodeInstallBootstrapFile)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, openCodeInstallGitignore, string(raw))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	present := t.TempDir()
+	presentPath := filepath.Join(present, openCodeInstallBootstrapFile)
+	require.NoError(t, os.WriteFile(presentPath, []byte("operator-owned"), 0o640))
+	require.NoError(t, ensureOpenCodeInstallGitignore(present))
+	raw, err = os.ReadFile(presentPath)
+	require.NoError(t, err)
+	assert.Equal(t, "operator-owned", string(raw))
+	info, err = os.Stat(presentPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o640), info.Mode().Perm())
+
+	symlink := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(symlink, "elsewhere"), []byte("x"), 0o600))
+	require.NoError(t, os.Symlink("elsewhere",
+		filepath.Join(symlink, openCodeInstallBootstrapFile)))
+	require.ErrorContains(t, ensureOpenCodeInstallGitignore(symlink),
+		"existing OpenCode install bootstrap")
+
+	fifo := t.TempDir()
+	require.NoError(t, unix.Mkfifo(filepath.Join(fifo, openCodeInstallBootstrapFile), 0o600))
+	require.ErrorContains(t, ensureOpenCodeInstallGitignore(fifo), "not a regular file")
+}
+
 func TestOpenCodeServerEnvironmentPinsPrivateXDGAfterProfile(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{
 		Effective: sandboxpolicy.EffectiveProfile{Environment: []sandboxpolicy.EnvironmentEntry{
