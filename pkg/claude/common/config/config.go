@@ -1658,15 +1658,16 @@ type AgentConfig struct {
 	// agentd.resolveDashboardPort.
 	DashboardPort int `json:"dashboard_port,omitempty"`
 
-	// DashboardBind sets the host/interface the agentd dashboard +
-	// human-approval listener binds to. It is a HOST only (no port — the
-	// port is DashboardPort / --dashboard-port); e.g. "127.0.0.1",
-	// "0.0.0.0", "::", or a specific interface IP.
+	// DashboardBind sets an additional host/interface the agentd dashboard +
+	// human-approval server binds to. It is a HOST only (no port — the port
+	// is DashboardPort / --dashboard-port); e.g. "127.0.0.1", "0.0.0.0",
+	// "::", or a specific interface IP. A concrete non-loopback bind is
+	// additive: the same port remains available on 127.0.0.1.
 	//
 	// Empty / absent (the default) means "127.0.0.1" — loopback only, the
 	// historical behaviour: the dashboard + approval popup are reachable
-	// only from this machine. Set a non-loopback host to expose the local
-	// dashboard on the network so an EXTERNALLY-managed auth layer (a
+	// only from this machine. Set a non-loopback host to additionally expose
+	// the dashboard on the network so an EXTERNALLY-managed auth layer (a
 	// reverse proxy, VPN, mesh, Cloudflare Access, …) can front it. That
 	// is the intended use — the dashboard's own gate is only a cookie +
 	// operator token, so binding it wide WITHOUT your own auth in front

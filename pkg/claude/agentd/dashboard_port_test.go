@@ -3,6 +3,7 @@ package agentd
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,43 @@ func TestStartPopupServer_FixedPort(t *testing.T) {
 	require.NotNil(t, srv)
 	t.Cleanup(func() { _ = srv.Close() })
 	assert.Equal(t, fmt.Sprintf("http://127.0.0.1:%d", port), url)
+}
+
+// A concrete non-loopback interface is additive: the requested interface and
+// the mandatory loopback endpoint serve the same dashboard port, while local
+// actions receive the loopback URL. Skip only on hosts without a non-loopback
+// interface (unusual, but possible in a highly isolated test environment).
+func TestStartPopupServer_NonLoopbackBindKeepsLoopback(t *testing.T) {
+	var nonLoopback net.IP
+	addrs, err := net.InterfaceAddrs()
+	require.NoError(t, err)
+	for _, addr := range addrs {
+		ip, _, parseErr := net.ParseCIDR(addr.String())
+		if parseErr == nil && ip.To4() != nil && !ip.IsLoopback() {
+			nonLoopback = ip
+			break
+		}
+	}
+	if nonLoopback == nil {
+		t.Skip("host has no concrete non-loopback IPv4 interface")
+	}
+
+	srv, baseURL, err := startPopupServer(nonLoopback.String(), 0)
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	t.Cleanup(func() { _ = srv.Close() })
+
+	parsed, err := url.Parse(baseURL)
+	require.NoError(t, err)
+	assert.Equal(t, defaultDashboardBind, parsed.Hostname())
+	port := parsed.Port()
+	require.NotEmpty(t, port)
+
+	for _, host := range []string{defaultDashboardBind, nonLoopback.String()} {
+		conn, dialErr := net.Dial("tcp", net.JoinHostPort(host, port))
+		require.NoError(t, dialErr, "dashboard must listen on %s", host)
+		require.NoError(t, conn.Close())
+	}
 }
 
 // A fixed port already in use is a HARD error, not a silent fallback to
