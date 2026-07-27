@@ -179,9 +179,13 @@ function osSandboxBadge(mode, state, source, prefix, unverified) {
   // a padlock on something nothing confines is worse than no padlock at all.
   const partialDarwinTclaudeLayer = unverified && source.includes('Seatbelt/sandbox-exec');
   const partialDarwinIsolated = partialDarwinTclaudeLayer && source.includes('isolated network');
+  const openCodeExecutorLayer = unverified
+    && source.includes('OpenCode tool-executing server confined');
   const partialLinuxTclaudeLayer = unverified
     && source.includes('ambient host Unix sockets reachable');
-  const caveat = partialDarwinIsolated
+  const caveat = openCodeExecutorLayer
+    ? ` ⚠ Partial fidelity: filesystem mounts confine OpenCode's tool-executing server, but the attach pane stays outside the boundary, the authenticated loopback control plane remains reachable, and host networking plus ambient host Unix sockets remain available.`
+    : partialDarwinIsolated
     ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem and network operations, but there is no PID isolation or constructed root, and hidden paths remain enumerable.`
     : partialDarwinTclaudeLayer
     ? ` ⚠ Partial fidelity: Seatbelt enforces filesystem operations, but hidden paths remain enumerable and the host network plus ambient Unix sockets remain reachable.`

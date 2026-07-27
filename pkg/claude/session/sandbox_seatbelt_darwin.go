@@ -303,3 +303,11 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 		}
 	}
 }
+
+func validateTclaudeLayerHarness(harnessName string) error {
+	if harnessName == harness.OpenCodeName {
+		return fmt.Errorf(
+			"tclaude-layer does not support OpenCode on macOS: agentd-owned server wrapping requires the Linux bubblewrap executor boundary")
+	}
+	return nil
+}

@@ -460,6 +460,12 @@ func runNew(params *NewParams) error {
 	}
 	params.SandboxImpl = string(sandboxImplementation)
 	tclaudeLayer := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
+		h.Name, sandboxMode, sandboxImplementation)
+	if err != nil {
+		return err
+	}
+	params.Sandbox = sandboxMode
 	if tclaudeLayer {
 		if err := ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return err
@@ -971,7 +977,7 @@ func runNew(params *NewParams) error {
 	// found nothing that confines it; applyRecordedLaunchPosture separately
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
-	if !tclaudeLayer {
+	if !tclaudeLayer || h.Name == harness.OpenCodeName {
 		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
@@ -1002,6 +1008,9 @@ func runNew(params *NewParams) error {
 	var bwrapCapabilityErr error
 	if tclaudeLayer {
 		bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+		if bwrapCapabilityErr == nil {
+			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
+		}
 	}
 
 	// Ensure the managed profile file exists before launch (self-healing —
@@ -1123,7 +1132,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
-	if tclaudeLayer {
+	if tclaudeLayer && tclaudeLayerWrapsPane(h.Name) {
 		// The inner sandbox is off, so derive the repository grants for the
 		// outer wall independently of the harness-native mode.
 		launchGitWriteDirs = gitWorktreeWriteDirs(params, harness.DefaultName, harness.ClaudeSandboxOn, cwd)

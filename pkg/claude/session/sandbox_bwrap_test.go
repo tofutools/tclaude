@@ -440,10 +440,17 @@ func TestBuildTclaudeLayerLaunchSpecMaterializesSharedContract(t *testing.T) {
 	})
 }
 
-func TestValidateTclaudeLayerHarnessRejectsOpenCode(t *testing.T) {
-	require.ErrorContains(t, ValidateTclaudeLayerHarness(harness.OpenCodeName), "runs outside the wrapped pane")
+func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		require.NoError(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
+	} else {
+		require.Error(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
+	}
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.DefaultName))
 	require.NoError(t, ValidateTclaudeLayerHarness(harness.CodexName))
+	assert.False(t, tclaudeLayerWrapsPane(harness.OpenCodeName),
+		"OpenCode attaches outside the boundary; agentd wraps its tool executor")
+	assert.True(t, tclaudeLayerWrapsPane(harness.CodexName))
 }
 
 func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
@@ -462,14 +469,25 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	assert.Contains(t, isolated.Source, "isolated PIDs")
 	assert.Contains(t, isolated.Source, "agentd socket allowlisted")
 	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
+
+	openCode := TclaudeLayerLaunchOSSandboxForHarness(
+		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen)
+	assert.Equal(t, "on", openCode.State)
+	assert.Equal(t,
+		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)",
+		openCode.Source)
+	assert.True(t, openCode.Unverified)
 }
 
 func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssertion(t *testing.T) {
 	claude := harness.Default()
 	codex, err := harness.Resolve(harness.CodexName)
 	require.NoError(t, err)
+	openCode, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
+	require.ErrorContains(t, ValidateTclaudeLayerNetwork(openCode, closed), "loopback control plane")
 	require.ErrorContains(t, ValidateTclaudeLayerNetwork(claude, closed), "requires hosted model traffic")
 	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
 
@@ -479,6 +497,9 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	require.NoError(t, ValidateTclaudeLayerNetwork(codex, closed))
 
 	require.NoError(t, ValidateTclaudeLayerNetwork(claude, sandboxpolicy.EffectiveProfile{
+		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
+	}))
+	require.NoError(t, ValidateTclaudeLayerNetwork(openCode, sandboxpolicy.EffectiveProfile{
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
 	}))
 }

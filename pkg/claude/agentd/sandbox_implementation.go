@@ -84,6 +84,21 @@ func validateSandboxImplementationForHarness(h *harness.Harness, raw string) (st
 	return string(implementation), nil
 }
 
+func resolveOpenCodeSandboxImplementationMode(
+	h *harness.Harness,
+	mode, rawImplementation string,
+) (string, *spawnFailure) {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox_implementation", err.Error()}
+	}
+	mode, err = harness.ResolveOpenCodeSandboxImplementationMode(h.Name, mode, implementation)
+	if err != nil {
+		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
+	}
+	return mode, nil
+}
+
 // sandboxImplementationHostFailure is the post-resolution host gate. It runs on
 // the value the precedence chain settled on, whichever tier supplied it, and
 // refuses the launch outright rather than degrading to harness-builtin.

@@ -158,6 +158,25 @@ func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 	return tclaudeLayerLaunchOSSandbox(posture)
 }
 
+// TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
+// OpenCode's attach TUI is deliberately outside the wall; its agentd-owned
+// server is the process that executes tools and is the component we confine.
+func TclaudeLayerLaunchOSSandboxForHarness(
+	harnessName string,
+	posture sandboxpolicy.NetworkPosture,
+) harness.LaunchOSSandbox {
+	if harnessName == harness.OpenCodeName {
+		return harness.LaunchOSSandbox{
+			State: "on",
+			Source: "tclaude-layer (bubblewrap; OpenCode tool-executing server confined; " +
+				"attach pane outside the boundary; loopback control plane reachable; " +
+				"host network and ambient host Unix sockets reachable)",
+			Unverified: true,
+		}
+	}
+	return TclaudeLayerLaunchOSSandbox(posture)
+}
+
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
 // both the harness descriptor and the operator's resolved profile assert a
 // model transport that functions across the selected platform's boundary
@@ -166,6 +185,10 @@ func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.Eff
 	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
 	if err != nil {
 		return err
+	}
+	if h.Name == harness.OpenCodeName && posture != sandboxpolicy.NetworkHostOpen {
+		return fmt.Errorf(
+			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires host-open networking for its authenticated loopback control plane and endpoint-ownership proof")
 	}
 	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
 		return nil
@@ -808,10 +831,11 @@ func sandboxLaunchContractReadDirsForEffective(
 // ValidateTclaudeLayerHarness refuses topologies where the wrapped pane does
 // not contain the process that executes tools.
 func ValidateTclaudeLayerHarness(harnessName string) error {
-	if harnessName == harness.OpenCodeName {
-		return fmt.Errorf("tclaude-layer does not yet support OpenCode: its tool-executing server runs outside the wrapped pane")
-	}
-	return nil
+	return validateTclaudeLayerHarness(harnessName)
+}
+
+func tclaudeLayerWrapsPane(harnessName string) bool {
+	return harnessName != harness.OpenCodeName
 }
 
 func bwrapBindSourceExists(path string) (bool, error) {

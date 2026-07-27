@@ -29,3 +29,11 @@ func tclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkPosture) harness.LaunchOSS
 		Source: "tclaude-layer unavailable",
 	}
 }
+
+func validateTclaudeLayerHarness(harnessName string) error {
+	if harnessName == harness.OpenCodeName {
+		return fmt.Errorf(
+			"tclaude-layer does not support OpenCode on this platform: agentd-owned server wrapping requires Linux and bubblewrap")
+	}
+	return nil
+}

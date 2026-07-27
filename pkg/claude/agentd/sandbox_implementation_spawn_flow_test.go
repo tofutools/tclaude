@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -22,15 +24,14 @@ import (
 //     default-off promise and it is the first test below.
 //  2. A profile can pin it, through every precedence tier, and an explicit
 //     request beats them all.
-//  3. HARNESS inapplicability falls through from a lower tier and is disclosed,
-//     but is a LOUD error when it is explicit or when the profile claims the
-//     resolved harness.
+//  3. OpenCode accepts the same outer implementation on Linux and normalizes
+//     its persisted mode to the executor-specific tclaude-layer posture.
 //  4. HOST unavailability NEVER falls through. It refuses, from any tier, and
 //     says which capability is missing.
 //
-// (3) and (4) are two different mechanisms on purpose. Merging them would turn
-// "this machine has no bwrap" into "quietly resolved to harness-builtin" for
-// any tier whose profile happened to name a different harness.
+// Harness applicability and host availability remain separate mechanisms:
+// merging them would turn "this machine has no bwrap" into "quietly resolved
+// to harness-builtin" for a lower-tier profile.
 
 // availableHost / unavailableHost drive the host-capability predicate. Neither
 // branch is reachable on demand otherwise: CI runners have no unprivileged user
@@ -173,11 +174,7 @@ func TestSpawn_ExplicitSandboxImplementationRejectsUnknownValue(t *testing.T) {
 		"the refusal must name what was wrong")
 }
 
-// TestSpawn_ExplicitTclaudeLayerRefusedForIncapableHarness: the harness gate is
-// LOUD when the request is explicit. OpenCode's tool-executing server runs
-// outside the pane the layer wraps, so wrapping the pane would confine nothing
-// — silently downgrading here would hand the operator a false guarantee.
-func TestSpawn_ExplicitTclaudeLayerRefusedForIncapableHarness(t *testing.T) {
+func TestSpawn_ExplicitTclaudeLayerWrapsOpenCodeExecutor(t *testing.T) {
 	f := newFlow(t)
 	availableHost(t)
 	f.HaveGroup("crew")
@@ -187,18 +184,41 @@ func TestSpawn_ExplicitTclaudeLayerRefusedForIncapableHarness(t *testing.T) {
 		"harness":                "opencode",
 		"sandbox_implementation": "tclaude-layer",
 	})
-	require.Equal(t, http.StatusBadRequest, resp.Code,
-		"tclaude-layer on OpenCode must be refused; body=%s", resp.Raw)
-	assert.Contains(t, string(resp.Raw), "OpenCode",
-		"the refusal must name the harness it cannot wrap")
+	require.Equal(t, http.StatusOK, resp.Code,
+		"tclaude-layer on OpenCode must launch; body=%s", resp.Raw)
+	implementation, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), implementation)
+	mode, ok := f.World.SpawnSandbox(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, mode,
+		"the launch record must name the executor boundary, not soft access control")
 }
 
-// TestSpawn_IncompatibleTierSandboxImplementationFallsThroughDisclosed: the
-// other half of the harness gate. A LOWER-tier profile pinned to a different
-// harness is ambient configuration, not intent — so it is skipped, the skip is
-// disclosed in the resolved-launch notes, and the launch proceeds on the
-// default. Exactly the behaviour every other launch field already has.
-func TestSpawn_IncompatibleTierSandboxImplementationFallsThroughDisclosed(t *testing.T) {
+func TestSpawn_OpenCodeModeAndImplementationContradictionsRefuse(t *testing.T) {
+	f := newFlow(t)
+	availableHost(t)
+	f.HaveGroup("crew")
+
+	for _, body := range []map[string]any{
+		{
+			"name": "mode-without-layer", "harness": "opencode",
+			"sandbox": harness.OpenCodeSandboxTclaudeLayer,
+		},
+		{
+			"name": "off-with-layer", "harness": "opencode",
+			"sandbox":                harness.OpenCodeSandboxOff,
+			"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+		},
+	} {
+		resp := f.AsHuman().SpawnWith("crew", body)
+		require.Equalf(t, http.StatusBadRequest, resp.Code,
+			"contradictory OpenCode sandbox axes must fail; body=%s", resp.Raw)
+		assert.Contains(t, string(resp.Raw), "invalid_sandbox")
+	}
+}
+
+func TestSpawn_OpenCodeAcceptsLayerFromLowerTier(t *testing.T) {
 	f := newFlow(t)
 	availableHost(t)
 	f.HaveGroup("crew")
@@ -210,26 +230,18 @@ func TestSpawn_IncompatibleTierSandboxImplementationFallsThroughDisclosed(t *tes
 	rec = setGroupProfile(t, f, "crew", "claude-layered")
 	require.Equalf(t, http.StatusOK, rec.Code, "set default_profile body=%s", rec.Body.String())
 
-	// The spawn resolves to OpenCode, which cannot host the layer. The group
-	// profile is a claude profile, so its value is ambient rather than claimed.
 	resp := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "oc-worker", "harness": "opencode",
 	})
 	require.Equalf(t, 200, resp.Code,
-		"an incompatible LOWER-tier value must fall through, not fail; body=%s", resp.Raw)
+		"OpenCode supports the lower-tier outer layer; body=%s", resp.Raw)
 
 	got, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
 	require.True(t, ok, "the spawn should have been observed by the sim spawner")
-	assert.Empty(t, got, "the skipped value must not reach the launch")
-
-	var parsed struct {
-		Resolved struct {
-			Notes []string `json:"notes"`
-		} `json:"resolved"`
-	}
-	require.NoError(t, json.Unmarshal(resp.Raw, &parsed))
-	assert.Truef(t, hasNoteAbout(parsed.Resolved.Notes, "sandbox_implementation"),
-		"the skip must be disclosed in the resolved-launch notes, got %v", parsed.Resolved.Notes)
+	assert.Equal(t, string(sandboxpolicy.ImplementationTclaudeLayer), got)
+	mode, ok := f.World.SpawnSandbox(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, mode)
 }
 
 // decodeFailure reads the daemon's error envelope. Asserting on the DECODED
@@ -262,7 +274,7 @@ func hasNoteAbout(notes []string, field string) bool {
 // TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability: refuse-don't-degrade.
 // The refusal names the missing capability so the operator can fix it, and says
 // out loud that it is not falling back — the distinction that separates this
-// from the harness-inapplicable case above.
+// from malformed or contradictory launch fields.
 func TestSpawn_TclaudeLayerRefusedWhenHostLacksCapability(t *testing.T) {
 	f := newFlow(t)
 	unavailableHost(t, errNoBwrap)

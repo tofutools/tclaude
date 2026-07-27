@@ -134,3 +134,7 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 		}
 	}
 }
+
+func validateTclaudeLayerHarness(string) error {
+	return nil
+}

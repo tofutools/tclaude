@@ -2942,6 +2942,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
+	sandboxMode, fieldFail = resolveOpenCodeSandboxImplementationMode(
+		h, sandboxMode, body.SandboxImplementation)
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	if sandboxMode != harness.SandboxManagedProfile {
 		if sshWorkaround {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
@@ -3070,7 +3076,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
-	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -4140,6 +4147,10 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
+	if p.SandboxMode, fail = resolveOpenCodeSandboxImplementationMode(
+		h, p.SandboxMode, p.SandboxImplementation); fail != nil {
+		return fail
+	}
 	if p.SandboxMode != harness.SandboxManagedProfile {
 		p.SSHWorkaround = false
 	}
@@ -4269,7 +4280,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		p.EffectiveSandbox = &validated
 	}
-	if fail := sandboxProfileCapabilityFailure(p.Harness, p.SandboxMode, p.EffectiveSandbox); fail != nil {
+	if fail := sandboxProfileCapabilityFailure(
+		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
 		return nil, fail
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {

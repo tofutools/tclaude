@@ -123,6 +123,19 @@ const CASES = [
     titleNot: [/host network plus ambient Unix sockets remain reachable/, /could not read a settings file/],
   },
   {
+    name: 'the OpenCode executor layer reports the split server and attach boundary',
+    state: {
+      harness: 'opencode', sandbox_mode: 'tclaude-layer', os_sandbox_state: 'on',
+      os_sandbox_source: 'tclaude-layer (bubblewrap; OpenCode tool-executing server confined; attach pane outside the boundary; loopback control plane reachable; host network and ambient host Unix sockets reachable)',
+      os_sandbox_unverified: true,
+    },
+    glyph: '⚠', danger: true,
+    title: [/^Sandbox: on \(unverified\) —/, /tool-executing server/,
+      /attach pane stays outside/, /loopback control plane remains reachable/,
+      /host networking plus ambient host Unix sockets remain available/],
+    titleNot: [/could not read a settings file/],
+  },
+  {
     name: 'the experimental tclaude layer exposes its partial socket fidelity',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',

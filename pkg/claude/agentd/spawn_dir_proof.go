@@ -331,7 +331,7 @@ func childSandboxGrantsDirWrite(harnessName, mode string) bool {
 	switch harnessOrDefault(harnessName) {
 	case harness.OpenCodeName:
 		switch strings.TrimSpace(mode) {
-		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxOff:
+		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxTclaudeLayer, harness.OpenCodeSandboxOff:
 			return true
 		default:
 			// Unknown OpenCode modes are rejected by the sandbox-lineage
