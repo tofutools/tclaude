@@ -618,13 +618,20 @@ func TestDashboardAssets_GroupProfileBrainDimming(t *testing.T) {
 	css := dashboardAssetFile(t, "dashboard.css")
 	for _, needle := range []string{
 		`<span class="group-default-profile-icon">🧠</span>`,
-		"color: #d4d4d4;",
-		"opacity: 0.35;",
 		".group-default-profile-icon:hover,",
 		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-default-profile-icon",
 	} {
 		if !strings.Contains(groups+css, needle) {
 			t.Errorf("dashboard assets missing %q — group profile brain dimming regressed", needle)
+		}
+	}
+	iconRule := regexp.MustCompile(`(?s)\.group-default-profile-icon\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if len(iconRule) != 2 {
+		t.Fatal("dashboard CSS is missing the group profile brain's base rule")
+	}
+	for _, declaration := range []string{"color: #d4d4d4;", "opacity: 0.35;"} {
+		if !strings.Contains(iconRule[1], declaration) {
+			t.Errorf("group profile brain base rule missing %q", declaration)
 		}
 	}
 	for _, forbidden := range []string{
