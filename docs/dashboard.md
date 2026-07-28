@@ -202,10 +202,10 @@ tclaude agentd serve --dashboard-port 8321 --dashboard-bind 0.0.0.0
 
 # On this or another machine: use the operator token from agentd's banner.
 export TCLAUDE_HUMAN_TOKEN=tclo_...
-tclaude tui-dashboard --connect-to=agent-host:8321
+tclaude agent tui-dashboard --connect-to=agent-host:8321
 
 # A full URL is also accepted (including an HTTPS reverse-proxy prefix).
-tclaude tui-dashboard --connect-to=https://agents.example.com/tclaude
+tclaude agent tui-dashboard --connect-to=https://agents.example.com/tclaude
 ```
 
 A bare `host[:port]` means HTTP; a URL may use HTTP or HTTPS. The operator

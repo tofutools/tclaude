@@ -25,9 +25,10 @@ type tuiDashboardParams struct {
 	ConnectTo string `long:"connect-to" required:"true" help:"Dashboard URL or host[:port] to connect to (for example 10.0.0.4:8321 or https://agents.example.com)."`
 }
 
-// TUIDashboardCmd builds the standalone remote terminal dashboard command.
-// It lives at the root rather than under agentd: this process is a client and
-// quitting it must not imply that the daemon should stop.
+// TUIDashboardCmd builds the standalone `tclaude agent tui-dashboard`
+// command. Its implementation lives with the shared agentd TUI model, while
+// claude.Cmd mounts it beside `tclaude agent dashboard`; this process is a
+// client, and quitting it must not imply that the daemon should stop.
 func TUIDashboardCmd() *cobra.Command {
 	return boa.CmdT[tuiDashboardParams]{
 		Use:         "tui-dashboard",
