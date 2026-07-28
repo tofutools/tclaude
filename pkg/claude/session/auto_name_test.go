@@ -12,11 +12,13 @@ func TestFreeFloatingAgentName(t *testing.T) {
 	created := time.Date(2026, time.July, 28, 12, 17, 33, 0, time.FixedZone("CEST", 2*60*60))
 	got := FreeFloatingAgentName(created, "agt_f3e10b1d99999999")
 
-	assert.Equal(t, "20260728-101733-f3e10b1d", got)
+	assert.Equal(t, "20260728-1017-f3e10b1d", got)
 	assert.True(t, IsFreeFloatingAgentName(got))
 	assert.False(t, IsFreeFloatingAgentName("explicit-worker"))
 	assert.True(t, IsFreeFloatingAgentName("session-20260728-101733-f3e10b1d"),
 		"historical stored fallbacks remain eligible for optional model refinement")
+	assert.True(t, IsFreeFloatingAgentName("20260728-101733-f3e10b1d"),
+		"the superseded branch shape remains eligible if it was exercised before merge")
 }
 
 func TestAutoNamePromptExcerptBoundsRunes(t *testing.T) {

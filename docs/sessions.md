@@ -353,7 +353,7 @@ Unlike the resume-threshold overrides above, this **is** written into `~/.claude
 A coding session launched with plain `tclaude` or `tclaude session new` is
 automatically enrolled as an agent. Until you rename it, tclaude gives that
 agent a deterministic display name such as
-`20260728-101733-f3e10b1d`: the launch time in UTC plus a short stable
+`20260728-1017-f3e10b1d`: the launch date and time in UTC, to the minute, plus a short stable
 agent-id suffix. This is deliberately cheap and avoids turning the full first
 prompt into the dashboard identity. Agentd-managed group spawns retain their
 requested names.
