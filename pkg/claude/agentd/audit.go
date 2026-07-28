@@ -179,8 +179,9 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "stand-down"}, verb: "group.stand-down"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "stop"}, verb: "group.stop"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "resume"}, verb: "group.resume"},
-	// Record set/clear outcomes without a describer so the URL-bearing body
-	// is neither buffered nor copied into the audit row.
+	// The handler adds the validated new URL (or "cleared") after a successful
+	// write. Keeping this route describer-free avoids buffering or recording
+	// arbitrary denied/invalid request bodies.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "attachment"}, verb: "group.attachment"},
 
 	// Membership + ownership.

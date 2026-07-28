@@ -119,7 +119,7 @@ func TestGroupAttachment_OwnerMayWriteButUnrelatedAgentMayNot(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code, "read-only group references are open like groups ls")
 }
 
-func TestGroupAttachment_AuditsSuccessAndDenialWithoutURL(t *testing.T) {
+func TestGroupAttachment_AuditsValidatedSuccessDetailAndDenial(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const (
@@ -136,17 +136,25 @@ func TestGroupAttachment_AuditsSuccessAndDenialWithoutURL(t *testing.T) {
 		t, http.MethodPost, "/v1/groups/alpha/attachment", map[string]any{"clear": true}), stranger))
 	require.Equalf(t, http.StatusForbidden, rec.Code, "denied clear body=%s", rec.Body.String())
 
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups/alpha/attachment", map[string]any{"clear": true})))
+	require.Equalf(t, http.StatusOK, rec.Code, "human clear body=%s", rec.Body.String())
+
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "group.attachment"})
 	require.NoError(t, err)
-	require.Len(t, rows, 2)
-	assert.Equal(t, http.StatusForbidden, rows[0].Status)
-	assert.Equal(t, db.AuditActorAgent, rows[0].ActorKind)
-	assert.Equal(t, stranger, rows[0].ActorConv)
-	assert.Equal(t, http.StatusOK, rows[1].Status)
-	assert.Equal(t, db.AuditActorHuman, rows[1].ActorKind)
+	require.Len(t, rows, 3)
+	assert.Equal(t, http.StatusOK, rows[0].Status)
+	assert.Equal(t, db.AuditActorHuman, rows[0].ActorKind)
+	assert.Equal(t, "cleared", rows[0].Detail)
+	assert.Equal(t, http.StatusForbidden, rows[1].Status)
+	assert.Equal(t, db.AuditActorAgent, rows[1].ActorKind)
+	assert.Equal(t, stranger, rows[1].ActorConv)
+	assert.Empty(t, rows[1].Detail, "denied request bodies must not flow into audit detail")
+	assert.Equal(t, http.StatusOK, rows[2].Status)
+	assert.Equal(t, db.AuditActorHuman, rows[2].ActorKind)
+	assert.Equal(t, "set "+refURL, rows[2].Detail)
 	for _, row := range rows {
 		assert.Equal(t, "alpha", row.GroupName)
-		assert.Empty(t, row.Detail, "attachment URL/body must not be copied into audit detail")
 		assert.NotContains(t, row.Path, refURL)
 	}
 }

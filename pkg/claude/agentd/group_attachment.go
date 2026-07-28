@@ -74,6 +74,7 @@ func handleGroupAttachment(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 			return
 		}
 		g.AttachmentURL, g.AttachmentLabel = "", ""
+		setAuditDetail(r, "cleared")
 		writeGroupAttachmentResponse(w, g, true)
 		return
 	}
@@ -95,6 +96,7 @@ func handleGroupAttachment(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		return
 	}
 	g.AttachmentURL, g.AttachmentLabel = body.URL, body.Label
+	setAuditDetail(r, "set "+body.URL)
 	writeGroupAttachmentResponse(w, g, false)
 }
 
