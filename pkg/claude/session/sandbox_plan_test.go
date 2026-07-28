@@ -13,7 +13,8 @@ import (
 )
 
 func TestDescribeTclaudeLayerPlanReportsFourClassesWithoutMaterializing(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	tmuxBase := filepath.Join(root, "tmux")
 	require.NoError(t, os.MkdirAll(tmuxBase, 0o755))
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
