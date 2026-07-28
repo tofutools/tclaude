@@ -146,6 +146,11 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeDarwinLayerSmokeSessionID) })
 	require.NotEmpty(t, launch.ConvID)
+	configBootstrap, err := os.ReadFile(
+		filepath.Join(ambientConfig, openCodeInstallBootstrapFile))
+	require.NoError(t, err,
+		"the smoke must exercise the production pre-wall config bootstrap")
+	assert.Equal(t, openCodeInstallGitignore, string(configBootstrap))
 
 	// sandbox-exec applies the profile and then execs the inner command, so
 	// its own process name does not survive at the recorded PID. Pin the
