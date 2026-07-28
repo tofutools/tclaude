@@ -59,6 +59,12 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(empty?.tagName, 'BUTTON');
   assert.equal(empty?.textContent, '📎');
   assertTabReachable(empty);
+  empty.click();
+  assert.equal(
+    harness.document.activeElement,
+    host.querySelector('details[data-group-key="empty"] .group-name'),
+    'the editor returns keyboard focus to the title instead of pinning the overlay open',
+  );
 
   const hostless = attachment('hostless');
   assert.equal(hostless.querySelector('a'), null, 'http(s) without a host must remain inert');

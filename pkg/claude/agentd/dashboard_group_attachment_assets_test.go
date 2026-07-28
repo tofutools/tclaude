@@ -15,6 +15,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		needle string
 	}{
 		{"js/groups-list.js", `<${GroupAttachment} group=${group} actions=${actions} />`},
+		{"js/groups-list.js", `class="group-name" tabindex="-1"`},
 		{"js/groups-list.js", `class="group-attachment group-attachment-empty"`},
 		{"js/groups-list.js", `>📎</a>`},
 		{"js/groups-list.js", `class="group-attachment-invalid"`},
@@ -23,11 +24,11 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},
 		{"js/action-dialog-actions.js", `/api/groups/${encodeURIComponent(group)}/attachment`},
-		{"dashboard.css", `main { padding: 16px 24px; }`},
 		{"dashboard.css", `position: absolute; z-index: 4;`},
-		{"dashboard.css", `inset-block-start: -4px; inset-inline-start: -24px;`},
+		{"dashboard.css", `inset-block-start: -18px; inset-inline-start: 4px;`},
 		{"dashboard.css", `display: inline-flex; flex-direction: column;`},
 		{"dashboard.css", `border: 0; background: transparent; box-shadow: none;`},
+		{"dashboard.css", `text-decoration: none; cursor: pointer;`},
 		{"dashboard.css", `@media (hover: hover) and (pointer: fine)`},
 		{"dashboard.css", `.group-attachment { opacity: 0; pointer-events: none; }`},
 		{"dashboard.css", `summary:hover .group-attachment`},

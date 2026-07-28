@@ -49,6 +49,12 @@ function GroupAttachment({ group, actions }) {
   const openEditor = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    // The shared dialog restores focus to whatever launched it. Move that
+    // return point off the hover-only overlay and onto the stable group title,
+    // otherwise Escape gives the paperclip :focus-visible and pins it open.
+    const title = event.currentTarget.closest('summary')?.querySelector('.group-name');
+    if (title) title.focus({ preventScroll: true });
+    else event.currentTarget.blur();
     actions.openGroupAttachment(group);
   };
   if (!rawURL) {
@@ -368,7 +374,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       editorKey=${renameKey} value=${group.name} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
-    >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
+    >${group.name}<//>` : html`<strong class="group-name" tabindex="-1" data-group-name=${group.name}>${group.name}</strong>`}
     <${GroupAttachment} group=${group} actions=${actions} />
     <${GroupActivity} members=${activity} snapshot=${snapshot} />
     <${ProcessChip} group=${group} />
