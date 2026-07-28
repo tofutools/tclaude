@@ -10,15 +10,19 @@ test('fetchUnsandboxedAutonomy maps a good payload and forwards same-origin cred
     calls.push({ url, options });
     return { ok: true, json: async () => ({ warnings: ['⚠ unconfined'], sandbox_state: 'off', sandbox_source: '~/.claude/settings.json' }) };
   };
-  const result = await fetchUnsandboxedAutonomy(fetchImpl, { harness: 'claude', sandbox: 'off', approval: 'auto', dir: '/repo' });
+  const result = await fetchUnsandboxedAutonomy(fetchImpl, {
+    harness: 'opencode', sandbox: 'access-control',
+    sandboxImplementation: 'tclaude-layer', approval: 'auto', dir: '/repo',
+  });
   assert.deepEqual(result, { warnings: ['⚠ unconfined'], sandboxState: 'off', sandboxSource: '~/.claude/settings.json' });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.credentials, 'same-origin');
   const url = new URL(calls[0].url, 'http://x');
   assert.equal(url.pathname, '/api/spawn/effective-sandbox');
-  assert.equal(url.searchParams.get('harness'), 'claude');
-  assert.equal(url.searchParams.get('sandbox'), 'off');
+  assert.equal(url.searchParams.get('harness'), 'opencode');
+  assert.equal(url.searchParams.get('sandbox'), 'access-control');
+  assert.equal(url.searchParams.get('sandbox_implementation'), 'tclaude-layer');
   assert.equal(url.searchParams.get('approval'), 'auto');
   assert.equal(url.searchParams.get('dir'), '/repo');
 });
@@ -27,7 +31,9 @@ test('fetchUnsandboxedAutonomy defaults every field so a bare call is valid', as
   const fetchImpl = async (url) => {
     const params = new URL(url, 'http://x').searchParams;
     // A missing field would serialize as the string "undefined"; assert it does not.
-    for (const key of ['harness', 'sandbox', 'approval', 'dir']) assert.equal(params.get(key), '');
+    for (const key of ['harness', 'sandbox', 'sandbox_implementation', 'approval', 'dir']) {
+      assert.equal(params.get(key), '');
+    }
     return { ok: true, json: async () => ({}) };
   };
   assert.deepEqual(await fetchUnsandboxedAutonomy(fetchImpl), EMPTY);

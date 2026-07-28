@@ -322,14 +322,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const generation = current.generation;
     const timer = setTimeout(() => {
       actions.loadUnsandboxedAutonomy({
-        harness: draft.harness, sandbox: draft.sandbox, approval: draft.approval, dir: draft.cwd,
+        harness: draft.harness, sandbox: draft.sandbox,
+        sandboxImplementation: draft.sandboxImpl,
+        approval: draft.approval, dir: draft.cwd,
       }).then((value) => {
         if (request !== autonomyRequest.current || !state.isCurrent(generation)) return;
         setAutonomyWarnings(value.warnings || []);
       });
     }, 350);
     return () => clearTimeout(timer);
-  }, [draft.harness, draft.sandbox, draft.approval, draft.cwd]);
+  }, [draft.harness, draft.sandbox, draft.sandboxImpl, draft.approval, draft.cwd]);
 
   const update = (key, value) => {
     touched.current.add(key);

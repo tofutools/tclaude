@@ -261,6 +261,71 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-layer boundary notice', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const openCodeCatalog = catalog.map((entry) => entry.name === 'opencode'
+    ? {
+      ...entry,
+      sandbox_modes: ['access-control', 'tclaude-layer', 'off'],
+      default_sandbox: 'access-control',
+      sandbox_mode_help: {
+        'access-control': 'Lexical soft disk access control',
+        'tclaude-layer': 'tclaude OS containment',
+        off: '⚠ No tclaude OS containment',
+      },
+    }
+    : entry);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'profile-editor',
+    seed: {
+      name: 'contained-opencode', harness: 'opencode', sandbox: 'access-control',
+      sandbox_implementation: 'tclaude-layer',
+    },
+    options: {},
+    catalog: openCodeCatalog,
+    sandboxImpl: {
+      options: [{ value: 'tclaude-layer', label: 'tclaude layer (experimental)' }],
+      default: 'harness-builtin',
+      host_available: true,
+    },
+  });
+  const probes = [];
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: {
+      async saveProfile() {},
+      async loadUnsandboxedAutonomy(input) {
+        probes.push(input);
+        return {
+          warnings: input.sandboxImplementation === 'tclaude-layer'
+            ? ['ℹ OpenCode tool-executing server runs inside tclaude-layer.']
+            : ['⚠ OpenCode has no built-in OS sandbox.'],
+        };
+      },
+    },
+    confirmDiscard: async () => true,
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+
+  assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
+  const notice = host.querySelector('#profile-editor-autonomy-warning');
+  assert.ok(notice, 'the tclaude-layer boundary notice remains visible');
+  assert.match(notice.textContent, /tool-executing server runs inside tclaude-layer/);
+  assert.doesNotMatch(notice.textContent, /no built-in OS sandbox/,
+    'the profile editor does not show the access-control warning for tclaude-layer');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 // The role editor shares HarnessFields, so it must show the same warning under
 // its own element id — asserted here, not just by comment.
 test('role editor shows the unsandboxed-autonomy warning', async (t) => {
