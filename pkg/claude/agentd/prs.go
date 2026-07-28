@@ -30,6 +30,7 @@ const (
 
 var (
 	presentedPRInflight           sync.Map
+	presentedPRCacheMu            sync.Mutex
 	presentedPRInfoResolver       = livePresentedPRInfoResolver
 	recentlyMergedPRsResolver     = liveRecentlyMergedPRsResolver
 	recentlyMergedPRSearch        = liveRecentlyMergedPRSearch
@@ -205,6 +206,25 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 }
 
 func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
+	// The per-PR resolver and daemon-wide merged search write this cache
+	// concurrently. Serialize their read/choose/write sequence so a slower
+	// open result cannot overwrite the durable merged tombstone.
+	presentedPRCacheMu.Lock()
+	defer presentedPRCacheMu.Unlock()
+
+	if row, err := db.LoadGitCache(key); err == nil && row != nil {
+		var current presentedPRInfo
+		if json.Unmarshal(row.Data, &current) == nil {
+			currentAt := current.FetchedAt
+			if currentAt.IsZero() {
+				currentAt = row.FetchedAt
+			}
+			state, fetchedAt := newestPRState(current.State, currentAt, info.State, info.FetchedAt)
+			info.State = state
+			info.FetchedAt = fetchedAt
+			now = fetchedAt
+		}
+	}
 	data, err := json.Marshal(info)
 	if err != nil {
 		return
@@ -213,6 +233,44 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 		slog.Warn("presented-pr: failed to cache PR refresh",
 			"error", err, "url", rawURL, "module", "agentd")
 	}
+}
+
+// cachedPresentedPRStates loads the durable per-PR observations for the URLs
+// already present in dashboard branch/startup slots. The cache survives the
+// presented badge's 90-second grace period, so a merged observation remains a
+// reconciliation tombstone after the agent_prs row is marked handled.
+func cachedPresentedPRStates(rawURLs []string) prStateIndex {
+	urlByKey := make(map[string]string, len(rawURLs))
+	keys := make([]string, 0, len(rawURLs))
+	for _, rawURL := range rawURLs {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" {
+			continue
+		}
+		key := presentedPRCacheKey(rawURL)
+		if _, exists := urlByKey[key]; exists {
+			continue
+		}
+		urlByKey[key] = rawURL
+		keys = append(keys, key)
+	}
+	rows, err := db.LoadGitCacheBatch(keys)
+	if err != nil {
+		return make(prStateIndex)
+	}
+	idx := make(prStateIndex, len(rows))
+	for key, row := range rows {
+		var info presentedPRInfo
+		if row == nil || json.Unmarshal(row.Data, &info) != nil {
+			continue
+		}
+		fetchedAt := info.FetchedAt
+		if fetchedAt.IsZero() {
+			fetchedAt = row.FetchedAt
+		}
+		idx.add(urlByKey[key], info.State, fetchedAt)
+	}
+	return idx
 }
 
 // startRecentlyMergedPRPoller runs one daemon-wide GitHub search immediately,
@@ -510,7 +568,9 @@ func liveGitHubEnvironmentTokenPresent() bool {
 }
 
 func presentedPRCacheKey(rawURL string) string {
-	h := sha256.Sum256([]byte("presented-pr\x00" + strings.TrimSpace(rawURL)))
+	// Canonical GitHub PR identity makes /pull/42 and /pull/42/files share the
+	// same terminal-state tombstone. Non-GitHub URLs retain exact URL identity.
+	h := sha256.Sum256([]byte("presented-pr\x00" + prStateKey(rawURL)))
 	return "ppr_" + hex.EncodeToString(h[:8])
 }
 

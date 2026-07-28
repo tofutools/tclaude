@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -153,4 +154,16 @@ func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) 
 		"visible automatic link takes the fresher presented-PR poll state")
 	require.Len(t, row.PresentedPRs, 1)
 	assert.Equal(t, "merged", row.PresentedPRs[0].State)
+
+	// Once the presented badge ages out, its durable merged observation must
+	// continue to dominate the still-fresh automatic branch cache. Otherwise
+	// the badge can regress to open for the gap between the two independent
+	// 90-second cache expirations.
+	agePresentedPR(t, agentID, prURL, 5*time.Minute)
+	snap = fetchDashSnapshot(t, mux)
+	row = findAgent(snap.Agents, conv)
+	require.NotNil(t, row)
+	assert.Empty(t, row.PresentedPRs, "expired presented badge is omitted")
+	assert.Equal(t, "merged", row.BranchPRState,
+		"durable merged tombstone survives presented badge expiry")
 }
