@@ -82,19 +82,14 @@ func validateRootOwnedExecutable(path string) error {
 }
 
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
-	if _, err := resolveBwrapServerBinary(sandboxpolicy.NetworkIsolatedWithAgentd); err != nil {
+	if _, err := resolveBwrapServerBinary(sandboxpolicy.NetworkFiltered); err != nil {
 		return FilteredNetworkPrerequisite{
 			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
 		}
 	}
-	if _, err := resolveFilteredNetworkExecutables(); err != nil {
-		return FilteredNetworkPrerequisite{
-			Detail: err.Error(),
-		}
-	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables " +
+		Detail: "bubblewrap user/network namespace execution with namespace-root CAP_NET_ADMIN passed; trusted root-owned pasta and nft executables " +
 			"were found; end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }

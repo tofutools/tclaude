@@ -1007,6 +1007,32 @@ func TestBwrapArgsRequiresCompiledFilteredPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "no compiled gateway policy")
 }
 
+func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "192.0.2.0/24", Ports: []int{443},
+		}},
+	})
+	require.NoError(t, err)
+
+	args, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
+		NetworkPosture:  sandboxpolicy.NetworkFiltered,
+		FilteredNetwork: &ir,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(args, " "),
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+}
+
 // TCLAUDE_IGNORE_HOOKS is the blanket soft-disable used by callers that
 // must not generate hook traffic at all — agentd's plugin shells, seance
 // steps, and `tclaude task` subprocesses. It is NOT how tclaude-layer

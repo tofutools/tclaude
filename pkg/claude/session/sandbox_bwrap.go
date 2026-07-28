@@ -1133,7 +1133,7 @@ func bwrapArgsWithDaemonFinal(
 		// Preserve the walking skeleton: the host namespace and read-only host
 		// root stay visible, including ambient pathname sockets.
 		args = append(args, "--ro-bind", "/", "/")
-	case sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.NetworkFiltered:
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		// Bubblewrap brings loopback up in the newly created namespace. Start
 		// from a fresh root so filesystem AF_UNIX sockets are absent unless a
 		// later launch-contract or policy bind explicitly exposes them. Keep
@@ -1141,6 +1141,20 @@ func bwrapArgsWithDaemonFinal(
 		// harness subprocesses and host processes cannot reopen the host mount
 		// namespace through /proc/<pid>/root.
 		args = append(args, "--unshare-net", "--unshare-pid")
+		args = hideRemounts.appendHide(args, "/")
+	case sandboxpolicy.NetworkFiltered:
+		// Rootless bubblewrap maps the invoking host user to namespace root.
+		// That identity is required only so the sealed bootstrap can receive
+		// CAP_NET_ADMIN and install the namespace-local nft policy. Host file
+		// ownership remains the invoking user's, and the bootstrap zeroes and
+		// verifies every capability set before the harness exec.
+		args = append(args,
+			"--unshare-user",
+			"--uid", "0",
+			"--gid", "0",
+			"--unshare-net",
+			"--unshare-pid",
+		)
 		args = hideRemounts.appendHide(args, "/")
 	default:
 		return nil, fmt.Errorf("mount plan has invalid network posture %d", plan.NetworkPosture)

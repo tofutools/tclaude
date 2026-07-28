@@ -64,8 +64,17 @@ func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, erro
 	}
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen:
-	case sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.NetworkFiltered:
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		args = append(args, "--unshare-net", "--unshare-pid")
+	case sandboxpolicy.NetworkFiltered:
+		args = append(args,
+			"--unshare-user",
+			"--uid", "0",
+			"--gid", "0",
+			"--unshare-net",
+			"--unshare-pid",
+			"--cap-add", "CAP_NET_ADMIN",
+		)
 	default:
 		return nil, fmt.Errorf("invalid tclaude-layer network posture %d", posture)
 	}
@@ -83,9 +92,20 @@ func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, erro
 		"--ro-bind", "/dev/null", probeBind,
 		"--remount-ro", "/tmp",
 		"--", "/bin/sh", "-c",
-		"test -e "+probeBind+" && ! touch "+probeWrite,
+		"test -e "+probeBind+" && ! touch "+probeWrite+
+			filteredNetworkProbeCapabilityCheck(posture),
 	)
 	return args, nil
+}
+
+func filteredNetworkProbeCapabilityCheck(posture sandboxpolicy.NetworkPosture) string {
+	if posture != sandboxpolicy.NetworkFiltered {
+		return ""
+	}
+	// CAP_NET_ADMIN is bit 12: the fourth hex digit from the right must be
+	// odd. This stays within POSIX shell vocabulary and needs no probe helper.
+	return ` && cap_eff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)` +
+		` && case "$cap_eff" in *[13579bBdDfF]???) true ;; *) false ;; esac`
 }
 
 func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {

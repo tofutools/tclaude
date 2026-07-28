@@ -4,6 +4,7 @@ package session
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
-		assert.Equal(t, sandboxpolicy.NetworkIsolatedWithAgentd, posture)
+		assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 		return nil
 	}
 	filteredNetworkLookPath = func(name string) (string, error) {
@@ -40,11 +41,22 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	require.True(t, got.Detected)
 	assert.Contains(t, got.Detail, "bubblewrap")
 	assert.Contains(t, got.Detail, "user/network namespace")
+	assert.Contains(t, got.Detail, "CAP_NET_ADMIN")
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.Detail, "nft")
 	assert.Contains(t, got.Detail, "gated launch boundary")
 	assert.Contains(t, got.LaunchWhy(true), "atomic nft policy")
 	assert.NotContains(t, got.LaunchWhy(true), "outbound remains open")
+}
+
+func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {
+	args, err := tclaudeLayerProbeArgs(sandboxpolicy.NetworkFiltered)
+	require.NoError(t, err)
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined,
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid --cap-add CAP_NET_ADMIN")
+	assert.Contains(t, joined, `case "$cap_eff" in`)
+	assert.Contains(t, joined, "[13579bBdDfF]???")
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {
