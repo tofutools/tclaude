@@ -1076,19 +1076,20 @@ details[data-group-key] > summary .group-name {
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
-  /* Use the existing 4px inter-group margin for the upward float. The
-     24px negative inline offset keeps the entire target—not just its glyph—
-     left of the disclosure/title text. Stack the pencil below the paperclip
-     so neither control crosses back over the title. */
-  position: absolute; z-index: 4; inset-block-start: -4px; inset-inline-start: -24px;
-  display: inline-flex; flex-direction: column; align-items: center; gap: 1px; margin: 0;
+  /* Float the paperclip above the first name letter: the disclosure glyph
+     consumes roughly the first 12px, while the 24px target centres its visible
+     glyph another 12px in. Its bottom edge stops before the title's padded
+     content begins. Keep the optional pencil beside—not below—the paperclip so
+     the full overlay stays above the title. No header space is reserved. */
+  position: absolute; z-index: 4; inset-block-start: -18px; inset-inline-start: 4px;
+  display: inline-flex; flex-direction: row; align-items: center; gap: 1px; margin: 0;
   padding: 0; border: 0; background: transparent; box-shadow: none;
   vertical-align: middle; font: inherit; font-size: 12px; line-height: 1;
   opacity: 0.8;
 }
 .group-attachment a {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; color: #8b949e; text-decoration: none;
+  width: 24px; height: 24px; color: #8b949e; text-decoration: none; cursor: pointer;
 }
 .group-attachment a:hover { color: #58a6ff; text-decoration: none; }
 .group-attachment button {

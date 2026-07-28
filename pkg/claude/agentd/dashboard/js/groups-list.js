@@ -49,6 +49,13 @@ function GroupAttachment({ group, actions }) {
   const openEditor = (event) => {
     event.preventDefault();
     event.stopPropagation();
+    // The shared dialog restores focus to whatever launched it. Move that
+    // return point off the hover-only overlay and onto the native group
+    // disclosure, otherwise Escape gives the paperclip :focus-visible and
+    // pins it open. The summary remains a visible, keyboard-operable target.
+    const summary = event.currentTarget.closest('summary');
+    if (summary) summary.focus({ preventScroll: true });
+    else event.currentTarget.blur();
     actions.openGroupAttachment(group);
   };
   if (!rawURL) {
