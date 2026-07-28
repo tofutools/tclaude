@@ -41,6 +41,7 @@ type Harness struct {
     Convs          ConvStore          // assemble conversation metadata from the harness's storage
     Hooks          HookInstaller      // install/check/repair the tclaude callback (+ trust)
     Sandbox        SandboxCatalog     // launch-time sandbox-mode catalog
+    TclaudeLayerMode string            // reviewed harness posture when tclaude-layer is the single OS wall
     BuiltinOSSandbox bool             // true only for a real harness-owned OS sandbox
     Approval       ApprovalCatalog    // launch-time approval policy / permission mode
     AskTimeout     AskTimeoutCatalog  // launch-time AskUserQuestion idle-timeout override
@@ -85,6 +86,14 @@ uses its catalog for `access-control` / `tclaude-layer` / `off`, while
 not confinement. Set `BuiltinOSSandbox: true` only when the harness itself
 launches under a real OS-enforced sandbox; otherwise an explicit
 `sandbox_implementation=harness-builtin` is rejected.
+
+`TclaudeLayerMode` is the separate opt-in for the single-wall
+`sandbox_implementation=tclaude-layer` topology. Set it to the reviewed
+harness-native launch posture that must be recorded inside the outer wall
+(Claude Code uses `off`, Codex uses `danger-full-access`, and OpenCode uses
+`tclaude-layer`). The value is validated through the harness's `Sandbox`
+catalog. Leave it empty to fail closed with a capability error and a named
+remedy rather than guessing how a new harness should launch.
 
 ## The contracts
 
