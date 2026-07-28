@@ -814,6 +814,9 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 
 func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{
+		Contract: session.TclaudeLayerLaunchContract{
+			StateRoot: "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
 		Effective: sandboxpolicy.EffectiveProfile{
 			Environment: []sandboxpolicy.EnvironmentEntry{
 				{Name: "PROFILE_VALUE", Value: "frozen"},
@@ -822,6 +825,7 @@ func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 		},
 	}
 	env := openCodeServerEnvironment([]string{
+		"HOME=/home/ambient",
 		"PATH=/usr/bin",
 		"PROFILE_VALUE=ambient",
 	}, spec)
@@ -832,6 +836,9 @@ func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 
 func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{
+		Contract: session.TclaudeLayerLaunchContract{
+			StateRoot: "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
 		Effective: sandboxpolicy.EffectiveProfile{
 			Network: &sandboxpolicy.NetworkRules{
 				Mode: sandboxpolicy.AccessModeList,
@@ -840,6 +847,7 @@ func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *test
 				}},
 			},
 			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: "/home/profile"},
 				{Name: "OPENCODE_CONFIG_CONTENT", Value: `{"provider":"frozen"}`},
 				{Name: "OPENCODE_PURE", Value: "0"},
 				{Name: "OPENCODE_AUTH_CONTENT", Value: `{"ambient":"profile"}`},
@@ -847,6 +855,7 @@ func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *test
 		},
 	}
 	env := openCodeServerEnvironment([]string{
+		"HOME=/home/ambient",
 		"OPENCODE_CONFIG=/tmp/ambient.json",
 		"OPENCODE_CONFIG_DIR=/tmp/ambient-config",
 		"OPENCODE_DISABLE_PROJECT_CONFIG=0",
@@ -857,6 +866,9 @@ func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *test
 
 	assert.Equal(t, `{"provider":"frozen"}`,
 		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_CONTENT"))
+	assert.Equal(t,
+		"/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"+openCodeFilteredHomeBase,
+		lastOpenCodeEnvironmentValue(env, "HOME"))
 	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG"))
 	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_DIR"))
 	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(

@@ -467,7 +467,7 @@ func ValidateTclaudeLayerNetwork(
 			detail += " If Claude's provider route changes after preflight, an unauthored destination is denied fail-closed for new flows at the packet floor; dynamic provider-resolution follow-up is tracked in TCL-826."
 		}
 		if h.Name == harness.OpenCodeName {
-			detail += " OpenCode filtered supports explicit-provider configs only: the launch model and frozen OPENCODE_CONFIG_CONTENT must name exactly one inspected openai-compatible provider, model, and concrete options.baseURL. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
+			detail += " OpenCode filtered supports explicit-provider configs only: the launch model and frozen OPENCODE_CONFIG_CONTENT must name exactly one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses empty private XDG and HOME config bases and refuses active persistent account/org configuration so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,

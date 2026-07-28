@@ -3,6 +3,7 @@
 package agentd
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net"
 	"os"
@@ -22,6 +23,39 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"golang.org/x/sys/unix"
 )
+
+func TestRefuseOpenCodeFilteredActiveAccount(t *testing.T) {
+	stateRoot := t.TempDir()
+	require.NoError(t, refuseOpenCodeFilteredActiveAccount(stateRoot),
+		"a fresh private state has no account authority")
+
+	databaseDir := filepath.Join(stateRoot, "data", "opencode")
+	require.NoError(t, os.MkdirAll(databaseDir, 0o700))
+	databasePath := filepath.Join(databaseDir, "opencode.db")
+	store, err := sql.Open("sqlite", databasePath)
+	require.NoError(t, err)
+	_, err = store.Exec(`CREATE TABLE account_state (
+		id INTEGER PRIMARY KEY,
+		active_account_id TEXT,
+		active_org_id TEXT
+	)`)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`INSERT INTO account_state(id, active_account_id, active_org_id) VALUES (1, NULL, NULL)`)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	require.NoError(t, refuseOpenCodeFilteredActiveAccount(stateRoot))
+
+	store, err = sql.Open("sqlite", databasePath)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`UPDATE account_state SET active_account_id = 'account', active_org_id = 'org' WHERE id = 1`)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	err = refuseOpenCodeFilteredActiveAccount(stateRoot)
+	require.ErrorContains(t, err, "active persistent account/org")
+	require.ErrorContains(t, err, "network open")
+}
 
 func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *testing.T) {
 	setupTestDB(t)
@@ -158,13 +192,29 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 		}
 		filteredSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 			Name:  "OPENCODE_CONFIG_CONTENT",
-			Value: `{"enabled_providers":["test"],"provider":{"test":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"http://tclaude-host:43210","apiKey":"test"}}}}`,
+			Value: `{"enabled_providers":["test"],"provider":{"test":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"http://host.tclaude.internal:43210","apiKey":"test"}}}}`,
 		}}
 		filteredSpec, filteredErr := openCodeTclaudeLayerLaunchSpec(
 			string(sandboxpolicy.ImplementationTclaudeLayer),
 			cwd, nil, &filteredSnapshot, agentID)
 		require.NoError(t, filteredErr)
 		require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, filteredSpec.Version)
+		require.NoError(t, validateOpenCodeV3LaunchContract(
+			filteredSpec.Contract, true))
+		require.Len(t, filteredSpec.Contract.Environment, 4)
+		assert.Equal(t, sandboxpolicy.EnvironmentEntry{
+			Name: "XDG_CONFIG_HOME",
+			Value: filepath.Join(
+				filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase),
+		}, filteredSpec.Contract.Environment[2])
+		require.DirExists(t, filepath.Join(
+			filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase, "opencode"))
+		require.DirExists(t, filepath.Join(
+			filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase))
+		missingFilteredEnvironment := filteredSpec.Contract
+		missingFilteredEnvironment.Environment = nil
+		require.ErrorContains(t, validateOpenCodeV3LaunchContract(
+			missingFilteredEnvironment, true), "no enforced XDG environment")
 		listenerFD, executableFD, fdErr :=
 			session.TclaudeLayerUnixRelayServerFDs(*filteredSpec)
 		require.NoError(t, fdErr)
@@ -251,7 +301,7 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot, agentB)
 	require.NoError(t, err)
 	require.Equal(t, session.TclaudeLayerLaunchSpecVersion, specA.Version)
-	require.NoError(t, validateOpenCodeV3LaunchContract(specA.Contract))
+	require.NoError(t, validateOpenCodeV3LaunchContract(specA.Contract, false))
 	require.Len(t, specA.Contract.StateDirs, 4)
 	wantEnvironment := []sandboxpolicy.EnvironmentEntry{
 		{Name: "XDG_DATA_HOME", Value: filepath.Join(allocationA.StateRoot, "data")},
@@ -280,21 +330,21 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 	})
 	missingEnvironment := specA.Contract
 	missingEnvironment.Environment = nil
-	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingEnvironment),
+	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingEnvironment, false),
 		"no enforced XDG environment")
 	missingPrivatePair := specA.Contract
 	missingPrivatePair.PrivateWriteDirs = nil
-	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingPrivatePair),
+	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingPrivatePair, false),
 		"does not hide siblings")
 	missingLegacyHides := specA.Contract
 	missingLegacyHides.FinalHideDirs = nil
-	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingLegacyHides),
+	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingLegacyHides, false),
 		"must hide the three ambient")
 	missingConfigBind := specA.Contract
 	missingConfigBind.ReadOnlyBinds = []session.TclaudeLayerReadOnlyBind{
 		{Source: install, Target: install},
 	}
-	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingConfigBind),
+	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingConfigBind, false),
 		"does not bind global config read-only")
 	seeded, err := os.ReadFile(filepath.Join(allocationA.StateRoot, "data", "opencode", "auth.json"))
 	require.NoError(t, err)

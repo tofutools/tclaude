@@ -853,6 +853,9 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	require.Len(t, notices, 1)
 	assert.Contains(t, notices[0].Detail, "explicit-provider configs only")
 	assert.Contains(t, notices[0].Detail, "OPENCODE_CONFIG_CONTENT")
+	assert.Contains(t, notices[0].Detail, "without a provider override")
+	assert.Contains(t, notices[0].Detail, "XDG and HOME config bases")
+	assert.Contains(t, notices[0].Detail, "active persistent account/org")
 	assert.Contains(t, notices[0].Detail, "soft tool policy")
 	assert.Contains(t, notices[0].Detail, "packet-enforced floor")
 }

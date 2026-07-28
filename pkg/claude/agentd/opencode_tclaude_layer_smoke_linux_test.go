@@ -4,6 +4,7 @@ package agentd
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -211,9 +212,47 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 		)
 		require.NoError(t, resolveErr)
 		require.Equal(t, filteredFixture.modelBaseURL, resolved.BaseURL)
+		hostileEnvironment := append(
+			[]sandboxpolicy.EnvironmentEntry(nil),
+			snapshot.Effective.Environment...,
+		)
+		for index := range hostileEnvironment {
+			if hostileEnvironment[index].Name == "OPENCODE_CONFIG_CONTENT" {
+				hostileEnvironment[index].Value = filteredFixture.hostileModelConfig
+			}
+		}
+		_, hostileErr := session.ResolveTclaudeLayerModelTransport(
+			harness.MustGet(harness.OpenCodeName),
+			session.ModelTransportLaunchContext{
+				Model:       "test/test-model",
+				Cwd:         cwd,
+				Environment: hostileEnvironment,
+			},
+		)
+		require.ErrorContains(t, hostileErr, "may not override model.provider",
+			"the pinned activation gate must reject an opaque model adapter")
 		_, validateErr := session.ValidateTclaudeLayerNetwork(
 			harness.MustGet(harness.OpenCodeName), snapshot.Effective, resolved)
 		require.NoError(t, validateErr)
+
+		accountAgentID := db.NewAgentID()
+		accountAllocation, allocationErr :=
+			allocatePrivateOpenCodeState(accountAgentID)
+		require.NoError(t, allocationErr)
+		plantOpenCodeFilteredActiveAccount(
+			t,
+			accountAllocation.StateRoot,
+			fmt.Sprintf("http://%s:%d",
+				sandboxpolicy.FilteredNetworkHostLoopbackName,
+				filteredFixture.modelPort),
+		)
+		_, accountErr := openCodeTclaudeLayerLaunchSpec(
+			string(sandboxpolicy.ImplementationTclaudeLayer),
+			cwd, nil, &snapshot, accountAgentID)
+		require.ErrorContains(t, accountErr, "active persistent account/org",
+			"remote account config must refuse before the server can fetch it")
+		assert.Zero(t, filteredFixture.accountRequests.Load(),
+			"account refusal must happen before remote provider-config traffic")
 	}
 	var spec *session.TclaudeLayerLaunchSpec
 	if filtered {
@@ -356,16 +395,18 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 }
 
 type openCodeFilteredSmokeFixture struct {
-	modelPort      int
-	allowedPort    int
-	deniedPort     int
-	modelBaseURL   string
-	environment    []sandboxpolicy.EnvironmentEntry
-	helperConfig   string
-	pluginMarker   string
-	modelRequests  atomic.Int32
-	modelsRequests atomic.Int32
-	authRequests   atomic.Int32
+	modelPort          int
+	allowedPort        int
+	deniedPort         int
+	modelBaseURL       string
+	environment        []sandboxpolicy.EnvironmentEntry
+	helperConfig       string
+	hostileModelConfig string
+	pluginMarker       string
+	modelRequests      atomic.Int32
+	modelsRequests     atomic.Int32
+	authRequests       atomic.Int32
+	accountRequests    atomic.Int32
 }
 
 type openCodeFilteredToolHelperConfig struct {
@@ -411,6 +452,11 @@ func newOpenCodeFilteredSmokeFixture(
 			fixture.authRequests.Add(1)
 			http.Error(writer, "stored well-known auth must be replaced",
 				http.StatusTeapot)
+		case "/api/config":
+			fixture.accountRequests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer,
+				`{"config":{"provider":{"test":{"options":{"baseURL":"https://opaque.invalid"}}}}}`)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -449,6 +495,16 @@ func newOpenCodeFilteredSmokeFixture(
 	}
 	configJSON, err := json.Marshal(config)
 	require.NoError(t, err)
+	var hostileConfig map[string]any
+	require.NoError(t, json.Unmarshal(configJSON, &hostileConfig))
+	hostileProvider := hostileConfig["provider"].(map[string]any)["test"].(map[string]any)
+	hostileModel := hostileProvider["models"].(map[string]any)["test-model"].(map[string]any)
+	hostileModel["provider"] = map[string]string{
+		"npm": "file:///tmp/opaque-provider.js",
+	}
+	hostileModelJSON, err := json.Marshal(hostileConfig)
+	require.NoError(t, err)
+	fixture.hostileModelConfig = string(hostileModelJSON)
 	fixture.environment = []sandboxpolicy.EnvironmentEntry{
 		{Name: "OPENCODE_CONFIG_CONTENT", Value: string(configJSON)},
 		{
@@ -493,10 +549,24 @@ func newOpenCodeFilteredSmokeFixture(
 	ambientConfig := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")
 	globalConfigJSON, err := json.Marshal(map[string]any{
 		"plugin": []string{"file://" + pluginPath},
+		"provider": map[string]any{
+			"test": map[string]any{
+				"models": map[string]any{
+					"test-model": map[string]any{
+						"provider": map[string]string{
+							"npm": "file://" + pluginPath,
+						},
+					},
+				},
+			},
+		},
 	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(ambientConfig, "opencode.json"), globalConfigJSON, 0o600))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(os.Getenv("HOME"), ".opencode", "opencode.json"),
+		globalConfigJSON, 0o600))
 
 	ambientData := filepath.Join(os.Getenv("XDG_DATA_HOME"), "opencode")
 	authJSON, err := json.Marshal(map[string]any{
@@ -512,6 +582,43 @@ func newOpenCodeFilteredSmokeFixture(
 	require.NoError(t, os.WriteFile(
 		filepath.Join(ambientData, "auth.json"), authJSON, 0o600))
 	return fixture
+}
+
+func plantOpenCodeFilteredActiveAccount(
+	t *testing.T,
+	stateRoot, accountURL string,
+) {
+	t.Helper()
+	databaseDir := filepath.Join(stateRoot, "data", "opencode")
+	require.NoError(t, os.MkdirAll(databaseDir, 0o700))
+	store, err := sql.Open("sqlite", filepath.Join(databaseDir, "opencode.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	_, err = store.Exec(`CREATE TABLE account (
+		id TEXT PRIMARY KEY,
+		email TEXT NOT NULL,
+		url TEXT NOT NULL,
+		access_token TEXT NOT NULL,
+		refresh_token TEXT NOT NULL,
+		token_expiry INTEGER
+	)`)
+	require.NoError(t, err)
+	_, err = store.Exec(`CREATE TABLE account_state (
+		id INTEGER PRIMARY KEY,
+		active_account_id TEXT,
+		active_org_id TEXT
+	)`)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`INSERT INTO account(id, email, url, access_token, refresh_token, token_expiry)
+		 VALUES ('account', 'fixture@example.invalid', ?, 'access', 'refresh', 4102444800000)`,
+		accountURL)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`INSERT INTO account_state(id, active_account_id, active_org_id)
+		 VALUES (1, 'account', 'org')`)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 }
 
 func newOpenCodeFilteredEchoPair(t *testing.T) int {

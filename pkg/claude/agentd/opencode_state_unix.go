@@ -18,6 +18,8 @@ import (
 
 const (
 	openCodeInstallBootstrapFile = ".gitignore"
+	openCodeFilteredConfigBase   = "filtered-config"
+	openCodeFilteredHomeBase     = "filtered-home"
 	// OpenCode Config.ensureGitignore writes this exact join-with-newlines
 	// payload in both v1.18.5 (e5cc278d) and v1.18.6 (00ac24ee):
 	// https://github.com/anomalyco/opencode/blob/v1.18.5/packages/opencode/src/config/config.ts#L295-L312
@@ -40,6 +42,46 @@ type openCodeStateLayout struct {
 	environment   []sandboxpolicy.EnvironmentEntry
 	finalHideDirs []string
 	readOnlyBinds []session.TclaudeLayerReadOnlyBind
+}
+
+// isolateOpenCodeFilteredConfig makes empty per-agent XDG and HOME config
+// bases, rather than ambient global config or ~/.opencode, the sources seen by
+// the pinned server. Inline OPENCODE_CONFIG_CONTENT is then the only
+// non-managed provider config admitted by the filtered launch.
+func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
+	if layout == nil || layout.allocation.Mode != db.OpenCodeStatePrivate {
+		return fmt.Errorf("OpenCode filtered networking requires private state")
+	}
+	configBase := filepath.Join(layout.allocation.StateRoot, openCodeFilteredConfigBase)
+	configApp := filepath.Join(configBase, "opencode")
+	if err := os.MkdirAll(configApp, 0o700); err != nil {
+		return fmt.Errorf("create OpenCode filtered config base: %w", err)
+	}
+	filteredHome := filepath.Join(
+		layout.allocation.StateRoot, openCodeFilteredHomeBase)
+	if err := os.MkdirAll(filteredHome, 0o700); err != nil {
+		return fmt.Errorf("create OpenCode filtered home: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(configApp)
+	if err != nil || resolved != configApp {
+		return fmt.Errorf("OpenCode filtered config base %q is not canonical", configApp)
+	}
+	resolvedHome, err := filepath.EvalSymlinks(filteredHome)
+	if err != nil || resolvedHome != filteredHome {
+		return fmt.Errorf("OpenCode filtered home %q is not canonical", filteredHome)
+	}
+	found := false
+	for index := range layout.environment {
+		if layout.environment[index].Name != "XDG_CONFIG_HOME" {
+			continue
+		}
+		layout.environment[index].Value = configBase
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("OpenCode filtered private state has no XDG_CONFIG_HOME")
+	}
+	return nil
 }
 
 func allocatePrivateOpenCodeState(agentID string) (*db.OpenCodeAgentStateAllocation, error) {

@@ -639,11 +639,16 @@ frozen profile `OPENCODE_CONFIG_CONTENT` must name exactly one provider using
 `@ai-sdk/openai-compatible`, whitelist and define exactly that one launch
 model, and give a concrete `options.baseURL` covered by the authored network
 list. The filtered server forces OpenCode's project-config, custom-config,
-model-fetch, auto-update, stored-auth, and plugin isolation inputs so the
-inspected inline route is the executing route. Managed `/etc/opencode` config,
-opaque or default providers, substitutions, multiple providers/models, and
-other adapters refuse with the named remedy of using the strict explicit shape
-or network open. Unlike Claude/Codex, there is no implicit first-party origin
+model-fetch, auto-update, stored-auth, and plugin isolation inputs and replaces
+the ambient XDG and `$HOME/.opencode` config bases with empty per-agent
+directories. A model-level `provider` override refuses because it can replace
+the inspected adapter. An active persistent OpenCode account/organization also
+refuses because its remote config loads after inline content; sign out or clear
+the active organization,
+or use network open. Managed `/etc/opencode` config, opaque or default
+providers, substitutions, multiple providers/models, and other adapters refuse
+with the named remedy of using the strict explicit shape or network open.
+Unlike Claude/Codex, there is no implicit first-party origin
 set to discover: the authored base URL is the origin authority, and the pinned
 OpenCode 1.18.6 smoke proves the real server consumes it while an unauthorised
 TCP/UDP endpoint remains denied.

@@ -335,6 +335,15 @@ func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *t
 		`"enabled_providers":["corp","other"]`, 1)
 	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
 	require.ErrorContains(t, err, "exactly")
+
+	context.Environment[0].Value = strings.Replace(
+		content,
+		`"models":{"model":{"name":"Model"}}`,
+		`"models":{"model":{"name":"Model","provider":{"npm":"file:///opaque.js"}}}`,
+		1)
+	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.ErrorContains(t, err, "may not override model.provider")
+	require.ErrorContains(t, err, "network open")
 }
 
 func TestResolveTclaudeLayerOpenCodeRefusesManagedConfig(t *testing.T) {

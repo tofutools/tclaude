@@ -165,6 +165,17 @@ func resolveOpenCodeModelTransport(
 			fmt.Sprintf("OpenCode filtered provider %q does not define launch model %q; fix OPENCODE_CONFIG_CONTENT or use network open",
 				provider, modelID))
 	}
+	var selectedModel map[string]json.RawMessage
+	if err := json.Unmarshal(configured.Models[modelID], &selectedModel); err != nil {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q model %q is not inspectable JSON; fix OPENCODE_CONFIG_CONTENT or use network open",
+				provider, modelID))
+	}
+	if _, found := selectedModel["provider"]; found {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q model %q may not override model.provider: it can replace the inspected adapter or endpoint; remove the override or use network open",
+				provider, modelID))
+	}
 	var baseURL string
 	if len(configured.Options.BaseURL) == 0 ||
 		json.Unmarshal(configured.Options.BaseURL, &baseURL) != nil ||

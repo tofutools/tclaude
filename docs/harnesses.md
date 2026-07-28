@@ -116,7 +116,10 @@ traffic cannot cross that boundary. Filtered mode supports explicit-provider
 configs only: the launch model and frozen `OPENCODE_CONFIG_CONTENT` must name
 exactly one `@ai-sdk/openai-compatible` provider, one model, and a concrete
 `options.baseURL` covered by the authored network list. Project/custom config,
-model-catalog fetches, stored auth, and plugins are suppressed for that launch;
+ambient XDG and `$HOME/.opencode` config, model-catalog fetches, stored auth,
+and plugins are suppressed for that launch; a model-level `provider` override
+and an active persistent account/organization refuse because either can replace
+the inspected adapter or route after inline config is parsed;
 opaque, default, dynamically routed, and managed `/etc/opencode` provider
 sources refuse with the remedy of making the route explicit or using network
 open. The relay itself remains Linux-only.
