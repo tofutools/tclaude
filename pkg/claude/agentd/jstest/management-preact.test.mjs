@@ -1209,6 +1209,35 @@ test('sandbox network selector retains empty domain and CIDR kinds through save 
     reopened.unmount();
     reopened.host.remove();
   }
+
+  const mixedState = createManagementState();
+  mixedState.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-mixed', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: '', cidr: '192.0.2.0/24' }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const mixed = mountSandboxEditor(harness, mountManagementIsland, mixedState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(mixed.host.querySelector('.sbx-network-selector')), 'cidr',
+    'a truthy selector takes precedence over an unrelated empty key');
+  assert.equal(mixed.host.querySelector('.sbx-network-value').value, '192.0.2.0/24');
+  mixed.unmount();
+  mixed.host.remove();
+
+  const falseLoopbackState = createManagementState();
+  falseLoopbackState.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-false-loopback', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ loopback: false }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const falseLoopback = mountSandboxEditor(harness, mountManagementIsland, falseLoopbackState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(falseLoopback.host.querySelector('.sbx-network-selector')), 'host');
+  assert.equal(falseLoopback.host.querySelector('.sbx-network-value').value, '');
+  assert.match(falseLoopback.host.querySelector('.sbx-access-validation').textContent,
+    /must set exactly one selector/);
+  falseLoopback.unmount();
+  falseLoopback.host.remove();
 });
 
 test('raw access JSON can repair a structured access validation error', async (t) => {
@@ -1249,6 +1278,23 @@ test('raw access JSON can repair a structured access validation error', async (t
     'the stale structured error cannot make raw repair unreachable');
   assert.equal(host.querySelector('.sbx-access-validation'), null);
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  const rawSockets = host.querySelector('#sandbox-profile-editor-unix-sockets');
+  rawNetwork.value = '{"mode":"list","allow":[null]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#sandbox-profile-editor-modal'),
+    'an in-progress raw network row cannot crash the editor');
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Network row 1 must be a JSON object/);
+  rawNetwork.value = '{"mode":"list","allow":[]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  rawSockets.value = '{"mode":"list","allow":[null]}';
+  rawSockets.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Unix-socket row 1 must be a JSON object/);
+  rawSockets.value = '{"mode":"closed","allow":[]}';
+  rawSockets.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   rawNetwork.value = '"open"';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   await harness.act(() => Promise.resolve());
