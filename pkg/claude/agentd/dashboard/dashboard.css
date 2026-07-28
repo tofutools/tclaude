@@ -1077,10 +1077,11 @@ details[data-group-key] > summary .group-name::before { content: "▶ "; color: 
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
   /* Use the existing 4px inter-group margin for the upward float. The
-     negative inline offset keeps the glyph left of the disclosure/title text
-     without reserving or changing any header space. */
-  position: absolute; z-index: 4; inset-block-start: -4px; inset-inline-start: -12px;
-  display: inline-flex; align-items: center; gap: 1px; margin: 0;
+     24px negative inline offset keeps the entire target—not just its glyph—
+     left of the disclosure/title text. Stack the pencil below the paperclip
+     so neither control crosses back over the title. */
+  position: absolute; z-index: 4; inset-block-start: -4px; inset-inline-start: -24px;
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px; margin: 0;
   padding: 0; border: 0; background: transparent; box-shadow: none;
   vertical-align: middle; font: inherit; font-size: 12px; line-height: 1;
   opacity: 0.8;
