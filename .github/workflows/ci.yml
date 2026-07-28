@@ -76,7 +76,13 @@ jobs:
           # production executable trust walk.
           sudo install -o root -g root -m 0755 \
             "$RUNNER_TEMP/passt/passt" /usr/bin/pasta
-          /usr/bin/pasta --version
+          # The hosted image also carries an older /usr/local/bin/pasta.
+          # Prepend the secure package path for this and all later steps, and
+          # assert the same resolution the production prerequisite will use.
+          echo "/usr/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/bin:$PATH"
+          test "$(command -v pasta)" = "/usr/bin/pasta"
+          pasta --version
 
       - name: Install pinned OpenCode smoke binary
         run: |
