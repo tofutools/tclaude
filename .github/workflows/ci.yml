@@ -54,13 +54,26 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install bubblewrap
+      - name: Install Linux sandbox prerequisites
         run: |
           sudo apt-get update
           # Claude's embedded SRT discovers rg and socat at runtime; keep them
           # explicit so a runner-image change cannot turn the real nested smoke
           # into an accidental dependency check.
           sudo apt-get install --yes bubblewrap iproute2 nftables passt ripgrep socat
+          # Ubuntu's packaged pasta predates the synthetic host-loopback
+          # controls required by the filtered gateway. Build a reproducible
+          # smoke prerequisite from the exact upstream release exercised here.
+          git clone --quiet --depth 1 \
+            --branch 2026_07_28.f8df3f1 \
+            https://passt.top/passt \
+            "$RUNNER_TEMP/passt"
+          test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
+            "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+          make -C "$RUNNER_TEMP/passt" pasta
+          sudo install -o root -g root -m 0755 \
+            "$RUNNER_TEMP/passt/passt" /usr/local/bin/pasta
+          /usr/local/bin/pasta --version
 
       - name: Install pinned OpenCode smoke binary
         run: |
@@ -264,20 +277,29 @@ jobs:
               server_pids+=("$!")
             done
           done
-          for address in fd00:823::10 fd00:823::200; do
-            for port in 41001 41002; do
-              sudo ip netns exec "$namespace" \
-                socat "TCP6-LISTEN:$port,bind=$address,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
-                >"$RUNNER_TEMP/filtered-tcp6-$port.log" 2>&1 &
-              server_pids+=("$!")
-              sudo ip netns exec "$namespace" \
-                socat "UDP6-RECVFROM:$port,bind=$address,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
-                >"$RUNNER_TEMP/filtered-udp6-$port.log" 2>&1 &
-              server_pids+=("$!")
-            done
+          for port in 41001 41002; do
+            sudo ip netns exec "$namespace" \
+              socat "TCP6-LISTEN:$port,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+              >"$RUNNER_TEMP/filtered-tcp6-$port.log" 2>&1 &
+            server_pids+=("$!")
+            sudo ip netns exec "$namespace" \
+              socat "UDP6-RECVFROM:$port,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+              >"$RUNNER_TEMP/filtered-udp6-$port.log" 2>&1 &
+            server_pids+=("$!")
           done
           sleep 1
-          sudo ip netns exec "$namespace" ss -lntu
+          listener_dump=$(sudo ip netns exec "$namespace" ss -lntu6)
+          printf '%s\n' "$listener_dump"
+          for port in 41001 41002; do
+            for protocol in tcp udp; do
+              if ! awk -v protocol="$protocol" -v port="$port" \
+                '$1 == protocol && $5 ~ ":" port "$" { found = 1 } END { exit !found }' \
+                <<<"$listener_dump"; then
+                echo "::error::IPv6 filtered-network fixture failed to bind $protocol port $port"
+                exit 1
+              fi
+            done
+          done
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
           go test ./pkg/claude/session \

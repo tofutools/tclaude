@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -16,6 +17,7 @@ var (
 	filteredNetworkLookPath           = exec.LookPath
 	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
 	validateFilteredNetworkExecutable = validateRootOwnedExecutable
+	inspectFilteredNetworkPasta       = inspectPastaCapabilities
 )
 
 type filteredNetworkExecutables struct {
@@ -23,10 +25,29 @@ type filteredNetworkExecutables struct {
 	NFT   string
 }
 
+var requiredFilteredNetworkPastaOptions = []string{
+	"--foreground",
+	"--quiet",
+	"--config-net",
+	"--no-map-gw",
+	"--map-guest-addr",
+	"--map-host-loopback",
+	"--tcp-ports",
+	"--udp-ports",
+	"--tcp-ns",
+	"--udp-ns",
+	"--no-splice",
+	"--pid",
+}
+
 func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
 	pasta, err := resolveFilteredNetworkExecutable("pasta")
 	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf("rootless pasta is required: %w", err)
+	}
+	if err := inspectFilteredNetworkPasta(pasta); err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf(
+			"rootless pasta lacks the required filtered-network capabilities: %w", err)
 	}
 	nft, err := resolveFilteredNetworkExecutable("nft")
 	if err != nil {
@@ -52,6 +73,29 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 		return "", fmt.Errorf("%s executable %q is not trusted: %w", name, path, err)
 	}
 	return path, nil
+}
+
+func inspectPastaCapabilities(path string) error {
+	cmd := exec.Command(path, "--help")
+	cmd.Env = filteredNetworkHelperEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inspect %q with --help: %w", path, err)
+	}
+	return validatePastaCapabilities(string(output))
+}
+
+func validatePastaCapabilities(help string) error {
+	var missing []string
+	for _, option := range requiredFilteredNetworkPastaOptions {
+		if !strings.Contains(help, option) {
+			missing = append(missing, option)
+		}
+	}
+	if len(missing) != 0 {
+		return fmt.Errorf("missing options: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func validateRootOwnedExecutable(path string) error {

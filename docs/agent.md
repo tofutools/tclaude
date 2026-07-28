@@ -524,8 +524,10 @@ identity for Claude Code and Codex. Host/domain selectors require the M2c DNS
 broker and are shown as refused per-entry; they are never dropped from a mixed
 list. The editor's Linux Full preview is prerequisite-conditional: the exact
 launch must pass live bubblewrap namespace plus trusted root-owned `pasta` and
-`nft` probes. A missing prerequisite keeps the list unenforced and widens to
-host-open with a launch warning.
+`nft` probes. Pasta must expose every forwarding, synthetic-address mapping,
+and splice control used by the gateway; an older binary is unavailable rather
+than accepted with weaker arguments. A missing prerequisite keeps the list
+unenforced and widens to host-open with a launch warning.
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the
 harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both

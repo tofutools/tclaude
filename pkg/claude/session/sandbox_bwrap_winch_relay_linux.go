@@ -172,9 +172,9 @@ func runTclaudeLayerWinchRelay(
 	}
 	_ = statusW.Close()
 	if len(filtered.Files) > 0 {
-		// The child owns its duplicate. Closing the parent's child-side socket
-		// is load-bearing: bootstrap death must become EOF on the supervisor
-		// channel instead of hanging until the outer relay itself exits.
+		// The child owns duplicates of the sealed bootstrap image and policy
+		// files. The parent no longer needs its bootstrap-image descriptor
+		// once bubblewrap has started.
 		_ = filtered.Files[0].Close()
 	}
 

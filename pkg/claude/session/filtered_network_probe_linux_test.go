@@ -19,12 +19,14 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	oldFilteredPath := filteredNetworkLookPath
 	oldFilteredEval := filteredNetworkEvalSymlinks
 	oldFilteredValidate := validateFilteredNetworkExecutable
+	oldFilteredInspect := inspectFilteredNetworkPasta
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
 		filteredNetworkLookPath = oldFilteredPath
 		filteredNetworkEvalSymlinks = oldFilteredEval
 		validateFilteredNetworkExecutable = oldFilteredValidate
+		inspectFilteredNetworkPasta = oldFilteredInspect
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
@@ -36,6 +38,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	}
 	filteredNetworkEvalSymlinks = func(path string) (string, error) { return path, nil }
 	validateFilteredNetworkExecutable = func(string) error { return nil }
+	inspectFilteredNetworkPasta = func(string) error { return nil }
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.True(t, got.Detected)
@@ -47,6 +50,49 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	assert.Contains(t, got.Detail, "gated launch boundary")
 	assert.Contains(t, got.LaunchWhy(true), "atomic nft policy")
 	assert.NotContains(t, got.LaunchWhy(true), "outbound remains open")
+}
+
+func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *testing.T) {
+	help := strings.Join(requiredFilteredNetworkPastaOptions, "\n")
+	require.NoError(t, validatePastaCapabilities(help))
+
+	help = strings.ReplaceAll(help, "--map-host-loopback", "--old-host-loopback")
+	err := validatePastaCapabilities(help)
+	require.ErrorContains(t, err, "--map-host-loopback")
+	assert.NotContains(t, err.Error(), "--map-guest-addr")
+}
+
+func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
+	oldBwrapPath := lookPathBwrap
+	oldBwrapProbe := probeBwrap
+	oldFilteredPath := filteredNetworkLookPath
+	oldFilteredEval := filteredNetworkEvalSymlinks
+	oldFilteredValidate := validateFilteredNetworkExecutable
+	oldFilteredInspect := inspectFilteredNetworkPasta
+	t.Cleanup(func() {
+		lookPathBwrap = oldBwrapPath
+		probeBwrap = oldBwrapProbe
+		filteredNetworkLookPath = oldFilteredPath
+		filteredNetworkEvalSymlinks = oldFilteredEval
+		validateFilteredNetworkExecutable = oldFilteredValidate
+		inspectFilteredNetworkPasta = oldFilteredInspect
+	})
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	filteredNetworkLookPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	filteredNetworkEvalSymlinks = func(path string) (string, error) { return path, nil }
+	validateFilteredNetworkExecutable = func(string) error { return nil }
+	inspectFilteredNetworkPasta = func(string) error {
+		return errors.New("missing options: --map-host-loopback")
+	}
+
+	got := ProbeFilteredNetworkPrerequisite()
+	require.False(t, got.Detected)
+	assert.Contains(t, got.Detail, "pasta")
+	assert.Contains(t, got.Detail, "--map-host-loopback")
+	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
 func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {

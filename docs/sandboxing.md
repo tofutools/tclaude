@@ -561,7 +561,10 @@ silently dropping them. OpenCode waits for its pinned real-harness M3 smoke;
 `stacked` does not claim this cell.
 
 Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
-`nft` through root-owned, non-group/world-writable paths. A missing prerequisite
+`nft` through root-owned, non-group/world-writable paths. The pasta probe also
+requires the exact forwarding, synthetic-address mapping, and splice controls
+used by the gateway; older pasta releases that lack those controls are an
+unavailable prerequisite, not a weakened fallback. A missing prerequisite
 widens the list to host-open with a persisted warning. Consequently, an editor
 Full preview is explicitly prerequisite-conditional; only the resolved launch
 verdict can mint enforcement.
