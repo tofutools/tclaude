@@ -532,15 +532,18 @@ type tuiModel struct {
 	// refreshing / spawning / retiring / resuming keep the periodic tick from
 	// stacking requests and the operator from firing two of the same action at
 	// once.
-	refreshing bool
-	spawning   bool
-	retiring   bool
-	resuming   bool
+	refreshing        bool
+	refreshGeneration uint64
+	spawning          bool
+	retiring          bool
+	resuming          bool
 	// reconcilingMutation latches after a remote mutation's outcome becomes
 	// ambiguous. It survives failed polls and blocks every mutating key until
-	// one complete refresh establishes canonical daemon state.
-	reconcilingMutation bool
-	lastRefresh         time.Time
+	// a refresh started after that mutation establishes canonical daemon
+	// state. The generation prevents an older in-flight poll from clearing it.
+	reconcilingMutation      bool
+	reconciliationRefreshGen uint64
+	lastRefresh              time.Time
 	// retireTarget is the agent the retire confirmation is about, captured
 	// when the prompt opens rather than re-read when it is answered: the
 	// listing re-sorts under the cursor every two seconds, so resolving the
@@ -584,10 +587,11 @@ type (
 	// tuiDataMsg carries one completed refresh — both lists, or the error
 	// that stopped it.
 	tuiDataMsg struct {
-		agents   []tuiAgentRow
-		groups   []tuiGroupRow
-		profiles []tuiProfileRow
-		err      error
+		refreshGeneration uint64
+		agents            []tuiAgentRow
+		groups            []tuiGroupRow
+		profiles          []tuiProfileRow
+		err               error
 		// profilesErr is the profile listing's own failure, kept apart from
 		// err: it costs the spawn form one picker, not the whole console.
 		profilesErr error
@@ -625,8 +629,9 @@ func newTUIModel(api tuiAPI) tuiModel {
 	// and historically represents the embedded console. A real API always
 	// replaces these defaults with its explicit capabilities below.
 	m := tuiModel{
-		api:        api,
-		refreshing: true, // Init immediately starts the first refresh.
+		api:               api,
+		refreshing:        true, // Init immediately starts the first refresh.
+		refreshGeneration: 1,
 		capabilities: tuiCapabilities{
 			attachLocalPane:  true,
 			completeLocalDir: true,
@@ -714,14 +719,15 @@ func tuiTickCmd() tea.Cmd {
 // responsive while it does.
 func (m tuiModel) refreshCmd() tea.Cmd {
 	api := m.api
+	generation := m.refreshGeneration
 	return func() tea.Msg {
 		var agents []tuiAgentRow
 		if err := api.get("/v1/peers", &agents); err != nil {
-			return tuiDataMsg{err: err}
+			return tuiDataMsg{refreshGeneration: generation, err: err}
 		}
 		var groups []tuiGroupRow
 		if err := api.get("/v1/groups", &groups); err != nil {
-			return tuiDataMsg{err: err}
+			return tuiDataMsg{refreshGeneration: generation, err: err}
 		}
 		// The profile list feeds one field of a form that is usually closed,
 		// so its failure travels beside the listing rather than instead of it:
@@ -732,8 +738,22 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		sortTUIAgents(agents)
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 		sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-		return tuiDataMsg{agents: agents, groups: groups, profiles: profiles, profilesErr: profilesErr}
+		return tuiDataMsg{
+			refreshGeneration: generation,
+			agents:            agents,
+			groups:            groups,
+			profiles:          profiles,
+			profilesErr:       profilesErr,
+		}
 	}
+}
+
+// beginRefresh assigns each poll a generation so that a slower, older poll
+// cannot overwrite newer state or settle mutation reconciliation.
+func (m tuiModel) beginRefresh() (tuiModel, tea.Cmd) {
+	m.refreshGeneration++
+	m.refreshing = true
+	return m, m.refreshCmd()
 }
 
 // sortTUIAgents orders the listing online-first, then by name, so the
@@ -1302,17 +1322,29 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.refreshing {
 			return m, tuiTickCmd()
 		}
-		m.refreshing = true
-		return m, tea.Batch(m.refreshCmd(), tuiTickCmd())
+		var refresh tea.Cmd
+		m, refresh = m.beginRefresh()
+		return m, tea.Batch(refresh, tuiTickCmd())
 
 	case tuiDataMsg:
+		// Tests and other direct model callers may leave the generation at
+		// zero; real refresh commands always carry one. A late result is
+		// otherwise wholly stale, including its error and reconciliation
+		// implications.
+		if msg.refreshGeneration != 0 && msg.refreshGeneration < m.refreshGeneration {
+			return m, nil
+		}
 		m.refreshing = false
 		if msg.err != nil {
 			m.refreshErr = "Refresh failed: " + msg.err.Error()
 			return m, nil
 		}
 		m.refreshErr = ""
-		m.reconcilingMutation = false
+		if m.reconcilingMutation &&
+			(msg.refreshGeneration == 0 || msg.refreshGeneration >= m.reconciliationRefreshGen) {
+			m.reconcilingMutation = false
+			m.reconciliationRefreshGen = 0
+		}
 		// Which agent the cursor is on is decided before the listing under it
 		// is replaced — see restoreCursor.
 		selected, hadSelection := m.selectedAgent()
@@ -1344,8 +1376,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Spawn outcome unknown: the connection was lost after the request; refreshing before another action."
 				m.reconcilingMutation = true
-				m.refreshing = true
-				return m, m.refreshCmd()
+				var refresh tea.Cmd
+				m, refresh = m.beginRefresh()
+				m.reconciliationRefreshGen = m.refreshGeneration
+				return m, refresh
 			}
 			return m, nil
 		}
@@ -1355,8 +1389,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return focused, cmd
 		}
 		// Pull the new agent in now rather than waiting out the tick.
-		m.refreshing = true
-		return m, m.refreshCmd()
+		return m.beginRefresh()
 
 	case tuiRetiredMsg:
 		m.retiring = false
@@ -1365,16 +1398,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Retire outcome unknown: the connection was lost after the request; refreshing before another action."
 				m.reconcilingMutation = true
-				m.refreshing = true
-				return m, m.refreshCmd()
+				var refresh tea.Cmd
+				m, refresh = m.beginRefresh()
+				m.reconciliationRefreshGen = m.refreshGeneration
+				return m, refresh
 			}
 			return m, nil
 		}
 		m.notice = tuiRetireSummary(msg)
 		// The row is gone (or offline) now — show that rather than leaving a
 		// retired agent listed until the next tick.
-		m.refreshing = true
-		return m, m.refreshCmd()
+		return m.beginRefresh()
 
 	case tuiResumedMsg:
 		m.resuming = false
@@ -1383,16 +1417,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Start outcome unknown: the connection was lost after the request; refreshing before another action."
 				m.reconcilingMutation = true
-				m.refreshing = true
-				return m, m.refreshCmd()
+				var refresh tea.Cmd
+				m, refresh = m.beginRefresh()
+				m.reconciliationRefreshGen = m.refreshGeneration
+				return m, refresh
 			}
 			return m, nil
 		}
 		m.notice = tuiResumeSummary(msg)
 		// The row is online now — show that rather than leaving it reading
 		// "offline" until the next tick.
-		m.refreshing = true
-		return m, m.refreshCmd()
+		return m.beginRefresh()
 
 	case tuiAttachedMsg:
 		if msg.err != nil {
@@ -1405,8 +1440,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
 		}
 		// The pane may have ended while the operator was on it.
-		m.refreshing = true
-		return m, m.refreshCmd()
+		return m.beginRefresh()
 
 	case tea.KeyPressMsg:
 		// The startup token block is a banner, not a mode: the first keystroke
@@ -1566,9 +1600,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.confirmRetireSelected(), nil
 	case "r":
 		if !m.refreshing {
-			m.refreshing = true
 			m.notice = ""
-			return m, m.refreshCmd()
+			return m.beginRefresh()
 		}
 	case "?", "h":
 		m.mode = tuiModeHelp

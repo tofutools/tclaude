@@ -299,6 +299,36 @@ func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
 	assert.Contains(t, got.keyHintLine(), "new agent")
 }
 
+func TestTUIOlderRefreshCannotSettleAmbiguousMutation(t *testing.T) {
+	m := newTUIModel(nil)
+	m.agents = []tuiAgentRow{{ConvID: "current", Title: "current"}}
+
+	updated, _ := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		err:   &tuiAmbiguousMutationError{err: io.ErrUnexpectedEOF, attempts: 2},
+	})
+	got := updated.(tuiModel)
+	reconciliationGeneration := got.reconciliationRefreshGen
+	require.Greater(t, reconciliationGeneration, uint64(1))
+
+	// This poll began before the ambiguous mutation. Even though it succeeds
+	// after the mutation response arrives, its view of daemon state is too old
+	// to reconcile the outcome.
+	stale, _ := got.Update(tuiDataMsg{
+		refreshGeneration: reconciliationGeneration - 1,
+		agents:            []tuiAgentRow{{ConvID: "stale", Title: "stale"}},
+	})
+	got = stale.(tuiModel)
+	assert.True(t, got.reconcilingMutation)
+	assert.True(t, got.refreshing)
+	assert.Equal(t, "current", got.agents[0].ConvID)
+
+	settled, _ := got.Update(tuiDataMsg{refreshGeneration: reconciliationGeneration})
+	got = settled.(tuiModel)
+	assert.False(t, got.reconcilingMutation)
+	assert.False(t, got.refreshing)
+}
+
 func TestRemoteTUIAPINamesUnsupportedServers(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
