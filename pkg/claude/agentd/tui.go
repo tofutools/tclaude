@@ -458,6 +458,9 @@ type tuiSpawnForm struct {
 	name  textinput.Model
 	dir   textinput.Model
 	brief textinput.Model
+	// dirSuggestions holds the ambiguous Tab-completion candidates for dir,
+	// listed under the field until the next keystroke.
+	dirSuggestions []string
 }
 
 type (
@@ -689,6 +692,37 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 			m.form.harnessIdx = ((m.form.harnessIdx+delta)%n + n) % n
 		}
 	}
+	return m
+}
+
+// completingDir reports whether a Tab should complete a path rather than
+// move to the next field: this is an operator console, the directory field
+// is focused, and there is something to complete.
+//
+// The operator check is the same gate attachSelected uses, for the same
+// reason. Completion reads the filesystem as the process agentd runs in —
+// the human's own, outside any agent sandbox — and a console started from
+// inside a harness pane is agent-class and drivable by that agent through
+// tmux send-keys. Ungated, Tab would hand it bulk directory listings from
+// outside its sandbox. A failed spawn already leaks whether one guessed
+// path exists, but that is a per-path oracle; enumerating names the agent
+// could not have guessed is a different thing, so the console does not
+// offer it to a caller the daemon would not treat as the human.
+func (m tuiModel) completingDir() bool {
+	return m.operator && m.form.field == tuiFieldDir && m.form.dir.Value() != ""
+}
+
+// completeDir runs one round of bash-like directory completion on the
+// directory field — the same helper the `session watch` new-session prompt
+// uses, so both forms complete paths identically. An unambiguous match is
+// completed through its trailing "/" (Tab again walks further down); an
+// ambiguous one extends as far as it can and leaves the candidates for the
+// form to list.
+func (m tuiModel) completeDir() tuiModel {
+	completed, candidates := clcommon.CompleteDirPath(m.form.dir.Value())
+	m.form.dir.SetValue(completed)
+	m.form.dir.CursorEnd()
+	m.form.dirSuggestions = candidates
 	return m
 }
 
@@ -971,7 +1005,14 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+	// The candidate list belongs to the Tab that produced it: anything else
+	// (including a Tab on another field) retires it, so it never lingers as a
+	// stale answer to a path the operator has since edited.
+	if key != "tab" || !m.completingDir() {
+		m.form.dirSuggestions = nil
+	}
+	switch key {
 	case "esc", "ctrl+c":
 		m.mode = tuiModeList
 		return m, nil
@@ -979,7 +1020,15 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.submitSpawn()
 	case "up", "shift+tab":
 		return m.moveSpawnField(-1), nil
-	case "down", "tab":
+	case "down":
+		return m.moveSpawnField(1), nil
+	case "tab":
+		// Tab only completes once there is a path to complete; on the empty
+		// field — its default, meaning "the group's directory" — it keeps
+		// its ordinary next-field job so tabbing through the form works.
+		if m.completingDir() {
+			return m.completeDir(), nil
+		}
 		return m.moveSpawnField(1), nil
 	case "left":
 		if m.form.field == tuiFieldGroup || m.form.field == tuiFieldHarness {
@@ -1196,6 +1245,9 @@ func (m tuiModel) renderSpawnForm() string {
 	b.WriteString("\n")
 	b.WriteString(m.form.dir.View() + tuiHint(m.form.dir.Value() == "", "  (blank = the group's default directory)"))
 	b.WriteString("\n")
+	// Always emit this line, blank or not, so a candidate list appearing and
+	// disappearing doesn't shift the fields below it up and down.
+	b.WriteString(m.dirSuggestionLine() + "\n")
 	harnessChoice := tuiHarnessDefault
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
@@ -1207,8 +1259,46 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.notice != "" {
 		b.WriteString("\n  " + m.notice + "\n")
 	}
-	b.WriteString("\n  enter spawn • ↑/↓/tab next field • ←/→ change group/harness • esc cancel\n")
+	// Name tab-completion only where it works, the same way keyHintLine names
+	// enter only for a console that can attach.
+	completeHint := ""
+	if m.operator {
+		completeHint = "tab complete dir • "
+	}
+	b.WriteString("\n  enter spawn • ↑/↓/tab next field • " + completeHint +
+		"←/→ change group/harness • esc cancel\n")
 	return b.String()
+}
+
+// dirSuggestionLine renders the Tab-completion candidates on a single line,
+// dropping the ones that don't fit. A directory with many children would
+// otherwise wrap and push the rest of the form around — the one thing the
+// always-emitted line above is there to prevent.
+func (m tuiModel) dirSuggestionLine() string {
+	if len(m.form.dirSuggestions) == 0 {
+		return ""
+	}
+	const indent = "  "
+	if m.width <= len(indent) {
+		// No width yet (no WindowSizeMsg): show them all rather than nothing.
+		return indent + strings.Join(m.form.dirSuggestions, "  ")
+	}
+	line := indent
+	for i, name := range m.form.dirSuggestions {
+		next := name
+		if i > 0 {
+			next = "  " + name
+		}
+		more := fmt.Sprintf("  (+%d more)", len(m.form.dirSuggestions)-i)
+		if lipgloss.Width(line+next) > m.width {
+			if lipgloss.Width(line+more) <= m.width {
+				line += more
+			}
+			break
+		}
+		line += next
+	}
+	return line
 }
 
 // tuiChoiceLine renders one of the two cycled fields. The focused one is
@@ -1244,6 +1334,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")
 	b.WriteString("  New agent\n")
 	b.WriteString("    tab/↑/↓    Next / previous field\n")
+	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
+	b.WriteString("               one match completes it, several list below the\n")
+	b.WriteString("               field. Operator consoles only.\n")
 	b.WriteString("    ←/→        Change the group or harness\n")
 	b.WriteString("    enter      Spawn\n")
 	b.WriteString("    esc        Cancel\n\n")
