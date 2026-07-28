@@ -23,9 +23,10 @@ const (
 	// https://github.com/anomalyco/opencode/blob/v1.18.5/packages/opencode/src/config/config.ts#L295-L312
 	// https://github.com/anomalyco/opencode/blob/v1.18.6/packages/opencode/src/config/config.ts#L295-L312
 	//
-	// This is the sole approved daemon-side compatibility seed in the
-	// otherwise read-only install tree. Any additional OpenCode write-on-boot
-	// path must be separately reviewed; do not grow this into a file list.
+	// This is the sole approved daemon-side compatibility payload for the
+	// otherwise read-only install and config app directories. Any additional
+	// OpenCode write-on-boot path must be separately reviewed; do not grow this
+	// into a file list or overwrite an operator-owned file.
 	openCodeInstallGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore"
 )
 
@@ -282,6 +283,9 @@ func openCodeStateLayoutForAllocation(
 				return nil, fmt.Errorf("inspect shared OpenCode path %q: %w", path, statErr)
 			}
 		}
+		if err := adaptOpenCodeStateLayoutForPlatform(layout); err != nil {
+			return nil, err
+		}
 		return layout, nil
 	}
 
@@ -336,6 +340,9 @@ func openCodeStateLayoutForAllocation(
 		})
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return nil, fmt.Errorf("inspect OpenCode install: %w", statErr)
+	}
+	if err := adaptOpenCodeStateLayoutForPlatform(layout); err != nil {
+		return nil, err
 	}
 	if err := seedOpenCodeCredentials(layout.ambient.data, layout.stateDirs[0]); err != nil {
 		return nil, err
@@ -486,14 +493,19 @@ func validateExistingOpenCodeCredential(path string) error {
 }
 
 func ensureOpenCodeInstallGitignore(installDir string) error {
-	path := filepath.Join(installDir, openCodeInstallBootstrapFile)
+	_, err := ensureOpenCodeBootstrapGitignore(installDir, "install")
+	return err
+}
+
+func ensureOpenCodeBootstrapGitignore(dir, surface string) (bool, error) {
+	path := filepath.Join(dir, openCodeInstallBootstrapFile)
 	fd, err := unix.Open(path,
 		unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
 		if err == unix.EEXIST {
-			return validateExistingOpenCodeInstallGitignore(path)
+			return false, validateExistingOpenCodeBootstrapGitignore(path, surface)
 		}
-		return fmt.Errorf("create OpenCode install bootstrap %q: %w", path, err)
+		return false, fmt.Errorf("create OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	keep := false
@@ -504,32 +516,33 @@ func ensureOpenCodeInstallGitignore(installDir string) error {
 		}
 	}()
 	if err := unix.Fchmod(fd, 0o600); err != nil {
-		return fmt.Errorf("secure OpenCode install bootstrap %q: %w", path, err)
+		return false, fmt.Errorf("secure OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	if _, err := io.WriteString(file, openCodeInstallGitignore); err != nil {
-		return fmt.Errorf("write OpenCode install bootstrap %q: %w", path, err)
+		return false, fmt.Errorf("write OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync OpenCode install bootstrap %q: %w", path, err)
+		return false, fmt.Errorf("sync OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	keep = true
-	return nil
+	return true, nil
 }
 
-func validateExistingOpenCodeInstallGitignore(path string) error {
+func validateExistingOpenCodeBootstrapGitignore(path, surface string) error {
 	fd, err := unix.Open(
 		path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return fmt.Errorf("inspect existing OpenCode install bootstrap %q: %w", path, err)
+		return fmt.Errorf("inspect existing OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
-		return fmt.Errorf("inspect existing OpenCode install bootstrap %q: %w", path, err)
+		return fmt.Errorf("inspect existing OpenCode %s bootstrap %q: %w", surface, path, err)
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
-		return fmt.Errorf("existing OpenCode install bootstrap %q is not a regular file", path)
+		return fmt.Errorf("existing OpenCode %s bootstrap %q is not a regular file",
+			surface, path)
 	}
 	return nil
 }

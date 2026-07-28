@@ -33,16 +33,3 @@ func TestSandboxImplementationHostFailureUsesServerProbeForOpenCode(t *testing.T
 	require.NotNil(t, failure)
 	assert.Contains(t, failure.Msg, "pidfd unavailable")
 }
-
-func TestStringLaunchFieldSkipNoteQualifiesOpenCodeDarwinReason(t *testing.T) {
-	note := stringLaunchFieldSkipNote(
-		`group default profile "layered"`,
-		sandboxImplementationField,
-		harness.OpenCodeName,
-		errors.New("tclaude-layer does not support OpenCode on macOS: server wrapping requires Linux"),
-	)
-	assert.Equal(t,
-		`group default profile "layered" sandbox_implementation ignored (not supported for OpenCode on macOS)`,
-		note,
-	)
-}

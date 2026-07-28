@@ -214,22 +214,28 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 	require.Equal(t, session.TclaudeLayerLaunchSpecVersion, specA.Version)
 	require.NoError(t, validateOpenCodeV3LaunchContract(specA.Contract))
 	require.Len(t, specA.Contract.StateDirs, 4)
-	require.Equal(t, []sandboxpolicy.EnvironmentEntry{
+	wantEnvironment := []sandboxpolicy.EnvironmentEntry{
 		{Name: "XDG_DATA_HOME", Value: filepath.Join(allocationA.StateRoot, "data")},
 		{Name: "XDG_CACHE_HOME", Value: filepath.Join(allocationA.StateRoot, "cache")},
 		{Name: "XDG_CONFIG_HOME", Value: filepath.Join(allocationA.StateRoot, "config")},
 		{Name: "XDG_STATE_HOME", Value: filepath.Join(allocationA.StateRoot, "state")},
-	}, specA.Contract.Environment)
+	}
+	wantConfigBind := session.TclaudeLayerReadOnlyBind{
+		Source: ambientConfig,
+		Target: filepath.Join(allocationA.StateRoot, "config", "opencode"),
+	}
+	if runtime.GOOS == "darwin" {
+		wantEnvironment[2].Value = filepath.Join(home, "ambient-config")
+		wantConfigBind.Target = ambientConfig
+	}
+	require.Equal(t, wantEnvironment, specA.Contract.Environment)
 	assert.NotContains(t, environmentNames(specA.Contract.Environment), "OPENCODE_CONFIG_DIR")
 	assert.ElementsMatch(t, []string{
 		filepath.Join(home, "ambient-data", "opencode"),
 		filepath.Join(home, "ambient-cache", "opencode"),
 		filepath.Join(home, "ambient-state", "opencode"),
 	}, specA.Contract.FinalHideDirs)
-	require.Contains(t, specA.Contract.ReadOnlyBinds, session.TclaudeLayerReadOnlyBind{
-		Source: ambientConfig,
-		Target: filepath.Join(allocationA.StateRoot, "config", "opencode"),
-	})
+	require.Contains(t, specA.Contract.ReadOnlyBinds, wantConfigBind)
 	require.Contains(t, specA.Contract.ReadOnlyBinds, session.TclaudeLayerReadOnlyBind{
 		Source: install, Target: install,
 	})
@@ -485,6 +491,27 @@ func TestOpenCodeServerEnvironmentPinsPrivateXDGAfterProfile(t *testing.T) {
 	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(attach, "PATH"))
 	assert.Empty(t, lastOpenCodeEnvironmentValue(attach, "XDG_DATA_HOME"))
 	assert.Empty(t, lastOpenCodeEnvironmentValue(attach, "OPENCODE_CONFIG_DIR"))
+}
+
+func TestOpenCodeRuntimePathsEquivalentAcceptsStableLeafSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "dotfiles", "opencode-global")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	configBase := filepath.Join(base, "config")
+	require.NoError(t, os.MkdirAll(configBase, 0o700))
+	require.NoError(t, os.Symlink(target, filepath.Join(configBase, "opencode")))
+
+	assert.True(t, openCodeRuntimePathsEquivalent(
+		target, filepath.Join(configBase, "opencode")))
+	assert.False(t, openCodeRuntimePathsEquivalent(
+		filepath.Join(base, "other"), filepath.Join(configBase, "opencode")))
+
+	aliasBase := filepath.Join(t.TempDir(), "base-alias")
+	require.NoError(t, os.Symlink(base, aliasBase))
+	assert.True(t, openCodeRuntimePathsEquivalent(
+		filepath.Join(aliasBase, "dotfiles", "opencode-global"),
+		filepath.Join(configBase, "opencode")),
+		"both sides may carry a stable parent alias, as /var does on macOS")
 }
 
 func environmentNames(entries []sandboxpolicy.EnvironmentEntry) string {

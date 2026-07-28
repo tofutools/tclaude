@@ -3969,14 +3969,6 @@ func resolveStringLaunchField(
 
 func stringLaunchFieldSkipNote(source, field, harnessName string, validationErr error) string {
 	reason := fmt.Sprintf("not valid for %s", harnessName)
-	// OpenCode tclaude-layer is a supported harness/value pairing on Linux.
-	// Its Darwin validator rejects the platform topology, so the generic
-	// harness-invalid disclosure would lie about why this ambient tier fell
-	// through.
-	if field == sandboxImplementationField &&
-		strings.Contains(validationErr.Error(), "does not support OpenCode on macOS") {
-		reason = "not supported for OpenCode on macOS"
-	}
 	return fmt.Sprintf("%s %s ignored (%s)", source, field, reason)
 }
 

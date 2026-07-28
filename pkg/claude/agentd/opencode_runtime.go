@@ -431,7 +431,7 @@ func openCodeRuntimeSandboxSpec(
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
 	for _, path := range spec.Contract.WriteDirs {
-		if canonicalOpenCodeRuntimePath(path) == cwd {
+		if openCodeRuntimePathsEquivalent(path, cwd) {
 			hasCwd = true
 			break
 		}
@@ -491,6 +491,9 @@ func startOpenCodeProcess(
 	if sandboxSpec != nil {
 		if err := session.PrepareTclaudeLayerHarnessState(*sandboxSpec); err != nil {
 			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
+		}
+		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
+			return nil, err
 		}
 	}
 	executable, err := harness.OpenCodeExecutable()
@@ -763,8 +766,16 @@ func validateOpenCodeV3LaunchContract(
 				i, entry.Name, name)
 		}
 		wantStateDir := filepath.Join(entry.Value, "opencode")
-		if canonicalOpenCodeRuntimePath(contract.StateDirs[i]) !=
-			canonicalOpenCodeRuntimePath(wantStateDir) {
+		matchesStateDir := canonicalOpenCodeRuntimePath(contract.StateDirs[i]) ==
+			canonicalOpenCodeRuntimePath(wantStateDir)
+		if i == 2 && !matchesStateDir {
+			// Darwin keeps XDG_CONFIG_HOME at the real host base while the
+			// daemon-final read-only root carries the resolved identity of a
+			// possible leaf symlink at <base>/opencode.
+			matchesStateDir = openCodeRuntimePathsEquivalent(
+				contract.StateDirs[i], wantStateDir)
+		}
+		if !matchesStateDir {
 			return fmt.Errorf("private OpenCode v3 %s does not target state directory %q",
 				name, contract.StateDirs[i])
 		}
@@ -799,6 +810,22 @@ func validateOpenCodeV3LaunchContract(
 		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
 	}
 	return nil
+}
+
+func openCodeRuntimePathsEquivalent(left, right string) bool {
+	left = canonicalOpenCodeRuntimePath(left)
+	right = canonicalOpenCodeRuntimePath(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	resolvedLeft, leftErr := filepath.EvalSymlinks(left)
+	resolvedRight, rightErr := filepath.EvalSymlinks(right)
+	return leftErr == nil && rightErr == nil &&
+		canonicalOpenCodeRuntimePath(resolvedLeft) ==
+			canonicalOpenCodeRuntimePath(resolvedRight)
 }
 
 func openCodeServeExec(
@@ -1401,6 +1428,8 @@ func readyOpenCodeRuntime(convID string) (*db.OpenCodeRuntime, error) {
 // the same authenticated endpoint when possible so the attached client can
 // reconnect; return false when recovery failed and the reaper should fail the
 // pane visibly.
+var restartOpenCodeProcess = startOpenCodeProcess
+
 func reconcileOpenCodeRuntime(sessionID string) bool {
 	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
 	reconcileMu := value.(*sync.Mutex)
@@ -1438,7 +1467,7 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 			"session", sessionID, "endpoint", runtime.ServerURL)
 		return false
 	}
-	process, err := startOpenCodeProcess(runtime, sandboxSpec)
+	process, err := restartOpenCodeProcess(runtime, sandboxSpec)
 	if err != nil {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
 		return false

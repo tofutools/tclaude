@@ -665,6 +665,31 @@ func TestTclaudeLayerOpenCodeStateDirsResolveMissingLeafBelowSymlink(t *testing.
 	assert.Contains(t, dirs, filepath.Join(realCache, "opencode"))
 }
 
+func TestBuildTclaudeLayerLaunchSpecFreezesGeneratedPathsThroughParentAlias(t *testing.T) {
+	physicalHome := t.TempDir()
+	aliasHome := filepath.Join(t.TempDir(), "home-alias")
+	require.NoError(t, os.Symlink(physicalHome, aliasHome))
+	t.Setenv("HOME", aliasHome)
+	for _, name := range []string{
+		"XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME",
+	} {
+		t.Setenv(name, "")
+	}
+	cwd := filepath.Join(physicalHome, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(physicalHome, ".opencode", "bin"), 0o700))
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.OpenCodeName,
+		Cwd:         cwd,
+	})
+	require.NoError(t, err)
+	_, err = sandboxpolicy.RevalidateSnapshot(
+		sandboxpolicy.NewSnapshot(spec.Effective, nil))
+	require.NoError(t, err,
+		"daemon-generated filesystem rows must be frozen before the spec is persisted")
+}
+
 func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *testing.T) {
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -689,8 +714,8 @@ func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *tes
 	require.ErrorContains(t, err, "resolves outside state root")
 }
 
-func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {
-	if runtime.GOOS == "linux" {
+func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnUnixSandboxHosts(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		require.NoError(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
 	} else {
 		require.Error(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))

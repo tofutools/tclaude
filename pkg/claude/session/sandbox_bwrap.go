@@ -170,7 +170,8 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
 		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-			if filepath.IsAbs(socket) {
+			socket = canonicalGeneratedSandboxPath(socket)
+			if socket != "" {
 				launchReadDirs = append(launchReadDirs, socket)
 			}
 		}
@@ -222,6 +223,39 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		Effective: effective,
 		Contract:  contract,
 	}, nil
+}
+
+// canonicalGeneratedSandboxPath freezes a daemon-owned path even when its leaf
+// does not exist yet. Generated paths bypass the authored-profile protected
+// root check because the daemon-final contract deliberately re-closes those
+// roots; they still need the same stable parent identity on replay.
+func canonicalGeneratedSandboxPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	ancestor := path
+	var suffix []string
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(ancestor)
+			if resolveErr != nil {
+				return path
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		} else if !os.IsNotExist(err) {
+			return path
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return path
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
+	}
 }
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
@@ -300,14 +334,7 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 	posture sandboxpolicy.NetworkPosture,
 ) harness.LaunchOSSandbox {
 	if harnessName == harness.OpenCodeName {
-		return harness.LaunchOSSandbox{
-			State: "on",
-			// The pane, control-plane and networking caveats live in the badge's
-			// partial-fidelity sentence rather than here, so each is stated once
-			// (TCL-790).
-			Source:     "tclaude-layer (bubblewrap; OpenCode tool-executing server confined)",
-			Unverified: true,
-		}
+		return tclaudeLayerOpenCodeLaunchOSSandbox()
 	}
 	return TclaudeLayerLaunchOSSandbox(posture)
 }

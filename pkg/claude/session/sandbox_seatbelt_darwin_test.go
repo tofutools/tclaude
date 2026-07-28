@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -120,6 +121,31 @@ func TestTclaudeLayerHostAvailabilityDarwinUsesSeatbeltCapability(t *testing.T) 
 	require.ErrorContains(t, TclaudeLayerHostAvailability(), "deny-write capability")
 }
 
+func TestTclaudeLayerServerAvailabilityDarwinUsesSeatbeltCapability(t *testing.T) {
+	oldStat := statDarwinSeatbelt
+	oldProbe := probeDarwinSeatbelt
+	t.Cleanup(func() {
+		statDarwinSeatbelt = oldStat
+		probeDarwinSeatbelt = oldProbe
+	})
+
+	executable, err := os.Stat(os.Args[0])
+	require.NoError(t, err)
+	statDarwinSeatbelt = func(path string) (os.FileInfo, error) {
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return executable, nil
+	}
+	probed := false
+	probeDarwinSeatbelt = func(path string) error {
+		probed = true
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return nil
+	}
+	require.NoError(t, TclaudeLayerServerHostAvailability())
+	assert.True(t, probed,
+		"OpenCode's server boundary must execute the same Seatbelt probe as launch")
+}
+
 func TestDarwinSeatbeltCapabilityProbeHasDeadline(t *testing.T) {
 	oldRun := runDarwinSeatbeltProbe
 	t.Cleanup(func() { runDarwinSeatbeltProbe = oldRun })
@@ -160,6 +186,62 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 		isolated.Source,
 	)
 	assert.True(t, isolated.Unverified)
+
+	openCode := TclaudeLayerLaunchOSSandboxForHarness(
+		"opencode", sandboxpolicy.NetworkHostOpen)
+	assert.Equal(t, "on", openCode.State)
+	assert.Contains(t, openCode.Source, "Seatbelt/sandbox-exec")
+	assert.Contains(t, openCode.Source, "OpenCode tool-executing server confined")
+	assert.Contains(t, openCode.Source,
+		"mutable XDG privacy covers data/cache/state only")
+	assert.Contains(t, openCode.Source, "config-base writes are not redirected")
+	assert.True(t, openCode.Unverified)
+}
+
+func TestDarwinSeatbeltReadOnlyPathsRefusesSourceTargetProjection(t *testing.T) {
+	const (
+		source = "/Users/dev/.config/opencode"
+		target = "/Users/dev/private/config/opencode"
+	)
+	got, err := darwinSeatbeltReadOnlyPaths([]TclaudeLayerReadOnlyBind{{
+		Source: source,
+		Target: source,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{source}, got)
+
+	_, err = darwinSeatbeltReadOnlyPaths([]TclaudeLayerReadOnlyBind{{
+		Source: source,
+		Target: target,
+	}})
+	require.ErrorContains(t, err, "darwin_seatbelt_path_projection")
+	require.ErrorContains(t, err, source)
+	require.ErrorContains(t, err, target)
+}
+
+func TestTclaudeLayerDarwinServerCommandUsesSeatbelt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", "/private/var/folders/ab/runtime/T")
+	cwd := filepath.Join(home, "workspace")
+	config := filepath.Join(home, ".config", "opencode")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	require.NoError(t, os.MkdirAll(config, 0o700))
+
+	command, err := tclaudeLayerServerCommand(
+		darwinSeatbeltExecutable,
+		[]string{cwd},
+		nil,
+		nil,
+		[]TclaudeLayerReadOnlyBind{{Source: config, Target: config}},
+		sandboxpolicy.AgentdSocketFloor(),
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		"opencode serve --hostname 127.0.0.1",
+	)
+	require.NoError(t, err)
+	assert.Contains(t, command, darwinSeatbeltExecutable)
+	assert.Contains(t, command, "opencode serve")
+	assert.Contains(t, command, config)
 }
 
 func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {

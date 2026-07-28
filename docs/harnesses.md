@@ -88,13 +88,19 @@ unsandboxed-autonomy warning) — attaching a filesystem/network sandbox profile
 does not change this by itself, since those profiles compile into the same soft
 OpenCode rules.
 
-On Linux, selecting sandbox implementation `tclaude-layer` adds an OS boundary
+On Linux or macOS, selecting sandbox implementation `tclaude-layer` adds an OS boundary
 around the agentd-owned, tool-executing OpenCode server and records the
 OpenCode sandbox mode as `tclaude-layer`. The attach pane remains outside that
 boundary. Under the supported host-open posture, the authenticated loopback
 control plane, host network, and ambient host Unix sockets remain reachable,
 so the dashboard reports this as a partial boundary rather than a full-fidelity
 lock. The ordered OpenCode permission rules remain active as defense in depth.
+Linux uses bubblewrap; macOS uses Seatbelt through `sandbox-exec`. On macOS,
+per-agent mutable XDG privacy covers OpenCode data, cache, and state. The
+config base is not redirected because Seatbelt cannot project the ambient
+global config onto a private path: OpenCode's global config directory is
+daemon-final read-only, but non-OpenCode config writes inside the wall target
+the real host config base and remain governed by the filesystem policy.
 
 The Linux executor also has a versioned, tclaude-owned Unix relay for carrying
 its authenticated control plane across an isolated network namespace. The
@@ -102,8 +108,7 @@ server receives only an inherited listener fd; agentd dials the recorded Unix
 socket directly, and `opencode attach` runs behind a pre-bound local shim. This
 is control-plane foundation, not a new supported posture: OpenCode still
 refuses isolated profiles because its hosted model traffic cannot cross that
-boundary, filtered remains reserved, and macOS is not supported for this
-server-wrap topology.
+boundary, and filtered remains reserved. The relay itself remains Linux-only.
 OpenCode deliberately has no `stacked` contract: profile apply and launch
 refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval

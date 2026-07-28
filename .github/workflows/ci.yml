@@ -262,6 +262,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up Node for OpenCode smoke
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Keep this deliberately aligned with the Linux executor smoke. A pin
+      # bump changes the exercised upstream tool/server contract and must be a
+      # reviewed source change, never runner-image drift.
+      - name: Install pinned OpenCode smoke binary
+        run: |
+          npm install --global opencode-ai@1.18.6
+          opencode --version
+
       - name: Probe Seatbelt deny-write support
         shell: bash
         run: |
@@ -363,6 +376,25 @@ jobs:
             tee "$refusal_log"
           if ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
             echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode Seatbelt executor smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-tclaude-layer-darwin-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerDarwinExecutorSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeTclaudeLayerDarwinExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode Seatbelt executor smoke did not complete"
+              echo
+              echo "The real OpenCode serve/attach/tool/identity smoke did not report an explicit pass."
+              echo "The job provisions pinned opencode-ai@1.18.6 and refuses a skipped or renamed test."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeTclaudeLayerDarwinExecutorSmoke did not report an explicit pass"
             exit 1
           fi
 

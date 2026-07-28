@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -853,7 +854,7 @@ func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
 		SessionID:             "spwn-wrapped-missing-spec",
 		ConvID:                "ses-wrapped-missing-spec",
-		ServerURL:             "http://127.0.0.1:1",
+		ServerURL:             "http://127.0.0.1:0",
 		Password:              "private",
 		Cwd:                   "/tmp/project",
 		PID:                   99_999_999,
@@ -862,6 +863,54 @@ func TestReconcileOpenCodeRuntimeNeverFallsBackFromMissingWrappedSpec(t *testing
 	}))
 
 	assert.False(t, reconcileOpenCodeRuntime("spwn-wrapped-missing-spec"))
+}
+
+func TestReconcileOpenCodeRuntimeReplaysPersistedWrapperSpec(t *testing.T) {
+	setupTestDB(t)
+	cwd := t.TempDir()
+	agentID := db.NewAgentID()
+	_, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	spec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd,
+		nil,
+		nil,
+		agentID,
+	)
+	require.NoError(t, err)
+	_, encoded, err := openCodeSandboxRecord(spec)
+	require.NoError(t, err)
+
+	previousRestart := restartOpenCodeProcess
+	t.Cleanup(func() { restartOpenCodeProcess = previousRestart })
+	restartAttempted := false
+	restartOpenCodeProcess = func(
+		_ *db.OpenCodeRuntime,
+		replayed *session.TclaudeLayerLaunchSpec,
+	) (*openCodeProcess, error) {
+		restartAttempted = true
+		require.NotNil(t, replayed,
+			"a wrapped runtime restart must never fall back to an unwrapped server")
+		assert.Equal(t, spec.Version, replayed.Version)
+		assert.Equal(t, spec.Contract.HarnessName, replayed.Contract.HarnessName)
+		assert.Equal(t, spec.Contract.StateRoot, replayed.Contract.StateRoot)
+		return nil, errors.New("stop after observing persisted wrapper spec")
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID:             "spwn-wrapped-replay",
+		ConvID:                "ses-wrapped-replay",
+		ServerURL:             "http://127.0.0.1:0",
+		Password:              "private",
+		Cwd:                   cwd,
+		PID:                   99_999_999,
+		PermissionJSON:        openCodeTestPermissionJSON,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: encoded,
+	}))
+
+	assert.False(t, reconcileOpenCodeRuntime("spwn-wrapped-replay"))
+	assert.True(t, restartAttempted)
 }
 
 func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
