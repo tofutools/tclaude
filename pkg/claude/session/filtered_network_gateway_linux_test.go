@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,6 +53,40 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 		"--pid", "/tmp/pasta.pid",
 		"123",
 	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+}
+
+func TestFilteredNetworkPastaReadinessRetriesPartialPIDFile(t *testing.T) {
+	root := t.TempDir()
+	pastaPath := filepath.Join(root, "pasta")
+	require.NoError(t, os.WriteFile(pastaPath, []byte(`#!/bin/sh
+pidfile=
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--pid)
+			pidfile=$2
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+printf 'partial' > "$pidfile"
+sleep 0.1
+printf '%s\n' "$$" > "$pidfile"
+while :; do sleep 1; done
+`), 0o700))
+
+	relay := &preparedFilteredNetworkRelay{
+		PastaPath:    pastaPath,
+		PastaPIDFile: filepath.Join(root, "pasta.pid"),
+	}
+	cmd, waitCh, err := relay.startPasta(os.Getpid())
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+	require.NoError(t, cmd.Process.Signal(syscall.Signal(0)))
+	require.NoError(t, cmd.Process.Kill())
+	require.Error(t, <-waitCh)
 }
 
 func TestFilteredNetworkReadinessAuthenticatesSandboxNetworkNamespace(t *testing.T) {

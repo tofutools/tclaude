@@ -126,9 +126,11 @@ func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, err
 	}
 	if err := probeBwrap(binary, posture); err != nil {
 		requiredNamespaces := "mount namespace and read-only remount support"
-		if posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
-			posture == sandboxpolicy.NetworkFiltered {
+		switch posture {
+		case sandboxpolicy.NetworkIsolatedWithAgentd:
 			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by isolated-with-agentd"
+		case sandboxpolicy.NetworkFiltered:
+			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by filtered network"
 		}
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)

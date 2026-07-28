@@ -268,6 +268,23 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 	}, probed)
 }
 
+func TestResolveTclaudeLayerNamesFilteredNamespaceRequirement(t *testing.T) {
+	oldLookPath := lookPathBwrap
+	oldProbe := probeBwrap
+	t.Cleanup(func() {
+		lookPathBwrap = oldLookPath
+		probeBwrap = oldProbe
+	})
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error {
+		return errors.New("operation not permitted")
+	}
+
+	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	require.ErrorContains(t, err, "required by filtered network")
+	require.NotContains(t, err.Error(), "required by isolated-with-agentd")
+}
+
 func TestResolveTclaudeLayerRefusesUnavailablePidfdRelay(t *testing.T) {
 	oldLookPath := lookPathBwrap
 	oldProbe := probeBwrap
