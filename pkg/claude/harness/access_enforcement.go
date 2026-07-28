@@ -79,8 +79,11 @@ type PredictedAccessAxis struct {
 }
 
 type PredictedAccessAxes struct {
-	Network     PredictedAccessAxis `json:"network"`
-	UnixSockets PredictedAccessAxis `json:"unix_sockets"`
+	Filesystem       PredictedAccessAxis `json:"filesystem"`
+	Environment      PredictedAccessAxis `json:"environment"`
+	AgentDirectories PredictedAccessAxis `json:"agent_directories"`
+	Network          PredictedAccessAxis `json:"network"`
+	UnixSockets      PredictedAccessAxis `json:"unix_sockets"`
 }
 
 type accessEnforcementTableRow struct {

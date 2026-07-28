@@ -51,11 +51,15 @@ type sandboxProfileDraftEnforcementTarget struct {
 }
 
 type sandboxProfileEffectiveContext struct {
-	Context      map[string]string             `json:"context"`
-	Network      sandboxpolicy.NetworkRules    `json:"network"`
-	UnixSockets  sandboxpolicy.UnixSocketRules `json:"unix_sockets"`
-	AgentdSocket string                        `json:"agentd_socket"`
-	Notices      []sandboxpolicy.AccessNotice  `json:"notices"`
+	Context          map[string]string               `json:"context"`
+	Filesystem       []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment      []string                        `json:"environment"`
+	AgentDirectories []string                        `json:"agent_directories"`
+	Network          sandboxpolicy.NetworkRules      `json:"network"`
+	UnixSockets      sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
+	AgentdSocket     string                          `json:"agentd_socket"`
+	Notices          []sandboxpolicy.AccessNotice    `json:"notices"`
+	policy           sandboxpolicy.Profile
 }
 
 type sandboxProfileDraftEnforcementResponse struct {
@@ -128,7 +132,10 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 			Harness:        target.harness.Name,
 			Platform:       target.platform,
 			Predicted:      true,
-			Axes:           harness.DescribePredictedAccess(axes, prediction),
+			Axes: describePredictedSandboxProfile(
+				flattened, target, mode,
+				harness.DescribePredictedAccess(axes, prediction),
+			),
 		}
 		if target.platform != runtime.GOOS {
 			item.Caveat = "(prediction for a non-host platform; host capability probes did not run)"
@@ -190,6 +197,13 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		Targets:  []sandboxProfileDraftEnforcementTarget{},
 		Contexts: []sandboxProfileEffectiveContext{},
 	}
+	contexts, remaining, err := effectiveDraftSandboxProfileContexts(draft, body.Context.Group)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
+	response.Contexts = contexts
+	response.RemainingContexts = remaining
 	for _, requested := range targets {
 		raw := strings.Join([]string{
 			strings.TrimSpace(requested.Implementation),
@@ -209,7 +223,10 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
-		described := harness.DescribePredictedAccess(axes, predicted)
+		described := describePredictedDraftSandboxProfile(
+			flattened, contexts, target, predictedBuiltinMode(target.harness.Name),
+			harness.DescribePredictedAccess(axes, predicted),
+		)
 		response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
 			Target: sandboxProfileEnforcementTargetRequest{
 				Implementation: string(target.implementation),
@@ -221,13 +238,6 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			Axes:       described,
 		})
 	}
-	contexts, remaining, err := effectiveDraftSandboxProfileContexts(draft, body.Context.Group)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
-		return
-	}
-	response.Contexts = contexts
-	response.RemainingContexts = remaining
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -408,12 +418,28 @@ func effectiveDraftSandboxProfileContexts(
 		if item.explicit != nil {
 			context["explicit"] = item.explicit.Name
 		}
+		environment := make([]string, 0, len(effective.Environment))
+		for _, entry := range effective.Environment {
+			environment = append(environment, entry.Name)
+		}
+		policy := sandboxpolicy.Profile{
+			Filesystem:       append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
+			Environment:      append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
+			AgentDirectories: append([]string(nil), effective.AgentDirectories...),
+			NetworkAccess:    effective.NetworkAccess,
+			Network:          effective.Network,
+			UnixSockets:      effective.UnixSockets,
+		}
 		out = append(out, sandboxProfileEffectiveContext{
-			Context:      context,
-			Network:      axes.Network,
-			UnixSockets:  axes.UnixSockets,
-			AgentdSocket: "always reachable",
-			Notices:      notices,
+			Context:          context,
+			Filesystem:       policy.Filesystem,
+			Environment:      environment,
+			AgentDirectories: policy.AgentDirectories,
+			Network:          axes.Network,
+			UnixSockets:      axes.UnixSockets,
+			AgentdSocket:     "always reachable",
+			Notices:          notices,
+			policy:           policy,
 		})
 	}
 	return out, remaining, nil

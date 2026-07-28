@@ -740,12 +740,23 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">
         <strong>${target.target.implementation} · ${target.target.harness} · ${target.target.platform}</strong>${target.resolved_by ? ` — ${target.resolved_by}` : ''}
-        <div>Network: ${target.axes.network.tier} · ${target.axes.network.outcome}</div><div class=${target.axes.network.outcome === 'enforced' ? '' : 'warn'}>${target.axes.network.detail}</div>
-        <div>Unix sockets: ${target.axes.unix_sockets.tier} · ${target.axes.unix_sockets.outcome}</div><div class=${target.axes.unix_sockets.outcome === 'enforced' ? '' : 'warn'}>${target.axes.unix_sockets.detail}</div>
+        ${[
+          ['Directory access', 'filesystem'],
+          ['Environment', 'environment'],
+          ['Agent-owned directories', 'agent_directories'],
+          ['Network', 'network'],
+          ['Unix sockets', 'unix_sockets'],
+        ].map(([label, key]) => target.axes?.[key] && html`
+          <div>${label}: ${target.axes[key].tier} · ${target.axes[key].outcome}</div>
+          <div class=${target.axes[key].outcome === 'enforced' ? '' : 'warn'}>${target.axes[key].detail}</div>
+        `)}
       </div>`)}
       ${(prediction?.contexts?.length || 0) > 1 && html`<label>Assignment context <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
       ${selectedEffective && html`<div class="sbx-effective-values">
         <div><strong>Layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
+        <div><strong>Directory access:</strong> ${(selectedEffective.filesystem || []).map((entry) => `${entry.access} ${entry.path}`).join(' · ') || 'unset'}</div>
+        <div><strong>Environment:</strong> ${(selectedEffective.environment || []).join(', ') || 'unset'}</div>
+        <div><strong>Agent-owned directories:</strong> ${(selectedEffective.agent_directories || []).join(', ') || 'unset'}</div>
         <div><strong>Network:</strong> ${selectedEffectiveAxes.network.mode || 'unset'}${selectedEffectiveAxes.network.mode === 'list' ? ` · ${selectedEffectiveAxes.network.allow.length} destination(s)` : ''}</div>
         <div><strong>Unix sockets:</strong> ${selectedEffectiveAxes.unix_sockets.mode || 'unset'}${selectedEffectiveAxes.unix_sockets.mode === 'list' ? ` · ${selectedEffectiveAxes.unix_sockets.allow.length} entry(s)` : ''}</div>
         <div><strong>agentd socket:</strong> ${selectedEffective.agentd_socket}</div>

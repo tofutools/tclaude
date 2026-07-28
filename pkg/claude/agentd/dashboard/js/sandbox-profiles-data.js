@@ -137,7 +137,7 @@ export function sandboxAccessDraftErrors(draft) {
 export function sandboxPredictionWarnings(prediction) {
   const capability = [];
   for (const target of prediction?.targets || []) {
-    for (const axis of ['network', 'unix_sockets']) {
+    for (const axis of ['filesystem', 'environment', 'agent_directories', 'network', 'unix_sockets']) {
       const verdict = target.axes?.[axis];
       if (verdict && verdict.outcome !== 'enforced') capability.push(verdict.detail);
     }

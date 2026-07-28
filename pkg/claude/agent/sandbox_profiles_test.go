@@ -226,6 +226,9 @@ func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {
 		"implementation":"tclaude-layer","harness":"claude","platform":"linux",
 		"predicted":true,
 		"axes":{
+			"filesystem":{"tier":"1 deny · 1 write","outcome":"enforced","detail":"bubblewrap supports the carve-out"},
+			"environment":{"tier":"1 variable","outcome":"enforced","detail":"literal environment is injected"},
+			"agent_directories":{"tier":"1 directory","outcome":"enforced","detail":"private cache is materialized"},
 			"network":{"tier":"list","outcome":"not_enforced","detail":"bubblewrap has no filtered-egress applier"},
 			"unix_sockets":{"tier":"closed","outcome":"refused","detail":"closed sockets cannot be enforced"}
 		},
@@ -244,6 +247,10 @@ func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {
 	}
 	require.Equal(t, rcOK, runSandboxProfilesShow(params, &stdout, &stderr))
 	assert.Contains(t, calls[0].path, "for=tclaude-layer%2Fclaude%2Flinux")
+	assert.Contains(t, stdout.String(), "directories:")
+	assert.Contains(t, stdout.String(), "bubblewrap supports the carve-out")
+	assert.Contains(t, stdout.String(), "environment:")
+	assert.Contains(t, stdout.String(), "agent dirs:")
 	assert.Contains(t, stdout.String(), "NOT ENFORCED")
 	assert.Contains(t, stdout.String(), "REFUSED at launch")
 	assert.Contains(t, stdout.String(), "prediction for a non-host platform")

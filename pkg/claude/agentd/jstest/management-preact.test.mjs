@@ -783,12 +783,18 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.match(model.sandboxAccessDraftErrors(broken).join(' '), /scheme.*absolute.*\*\*/i);
   const warnings = model.sandboxPredictionWarnings({
     targets: [{ axes: {
+      filesystem: { outcome: 'enforced_partial', detail: 'filesystem carve-out detail' },
+      environment: { outcome: 'enforced', detail: 'environment detail' },
+      agent_directories: { outcome: 'enforced', detail: 'agent-directory detail' },
       network: { outcome: 'not_enforced', detail: 'network detail from resolver' },
       unix_sockets: { outcome: 'enforced', detail: 'socket detail' },
     } }],
     contexts: [{ notices: [{ class: 'composition', detail: 'empty intersection detail' }] }],
   });
-  assert.deepEqual(warnings.capability, ['network detail from resolver']);
+  assert.deepEqual(warnings.capability, [
+    'filesystem carve-out detail',
+    'network detail from resolver',
+  ]);
   assert.equal(warnings.composition[0].detail, 'empty intersection detail');
 });
 
@@ -1074,10 +1080,18 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
       predictions.push({ draft, targets, context });
       return {
         targets: [{ target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' }, resolved_by: 'harness default', predicted: true, axes: {
+          filesystem: { tier: '1 deny · 1 write', outcome: 'enforced', detail: 'resolver-owned directory detail' },
+          environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
+          agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
           network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
           unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
         } }],
-        contexts: [{ context: { global: 'base', group: 'access', group_name: 'crew' }, network: { mode: 'list', allow: [] }, unix_sockets: { mode: 'closed' }, agentd_socket: 'always reachable', notices: [{
+        contexts: [{
+          context: { global: 'base', group: 'access', group_name: 'crew' },
+          filesystem: [{ path: '/home/operator', access: 'deny' }, { path: '/home/operator/work', access: 'write' }],
+          environment: ['POLICY_OWNER'],
+          agent_directories: ['GOCACHE'],
+          network: { mode: 'list', allow: [] }, unix_sockets: { mode: 'closed' }, agentd_socket: 'always reachable', notices: [{
           class: 'composition', axis: 'network', reason: 'empty_intersection', effect: 'nothing_allowed',
           detail: 'global “base” ∩ group “access” leaves no network destinations', tiers: ['global "base"', 'group "access"'],
         }] }],
@@ -1088,13 +1102,17 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
   assert.ok(host.querySelector('#sandbox-profile-editor-network-mode'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
+  assert.match(host.querySelector('.sbx-capability-preview').textContent, /Directory access: 1 deny · 1 write · enforced/);
+  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned environment detail/);
+  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned agent-directory detail/);
   assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned network detail/);
   assert.match(host.querySelector('.sbx-composition-warning').textContent, /leaves no network destinations/);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
     'empty intersections warn but never block save');
   assert.equal(predictions[0].draft.id, 41);
   assert.equal(predictions[0].context.group, 'crew');
-  assert.match(host.querySelector('.sbx-effective-values').textContent, /always reachable/);
+  assert.match(host.querySelector('.sbx-effective-values').textContent,
+    /deny \/home\/operator · write \/home\/operator\/work.*POLICY_OWNER.*GOCACHE.*always reachable/s);
   const rawToggle = host.querySelector('.sbx-advanced-toggle');
   rawToggle.click();
   await harness.act(() => Promise.resolve());
