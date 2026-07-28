@@ -37,7 +37,7 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	body.WriteString("    oifname \"lo\" accept\n")
 	// IPv6 needs neighbor discovery to reach pasta's tap gateway. These are
 	// link-local control packets, not an application egress carve-out.
-	body.WriteString("    ip6 daddr fe80::/10 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n")
+	body.WriteString("    ip6 daddr fe80::/10 icmpv6 type { nd-neighbor-solicit, nd-router-solicit } accept\n")
 	for i, rule := range rules.Rules {
 		if rule.EntryIndex < 0 {
 			return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
@@ -107,6 +107,17 @@ func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, 
 func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 	if len(hostHosts) > 1<<20 {
 		return nil, fmt.Errorf("host /etc/hosts exceeds the filtered-network limit")
+	}
+	for _, line := range strings.Split(string(hostHosts), "\n") {
+		fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
+		for _, alias := range fields[1:] {
+			if strings.EqualFold(alias, FilteredNetworkHostLoopbackName) {
+				return nil, fmt.Errorf(
+					"host /etc/hosts already defines reserved filtered-network name %s; remove that host mapping before launch",
+					FilteredNetworkHostLoopbackName,
+				)
+			}
+		}
 	}
 	out := append([]byte(nil), hostHosts...)
 	if len(out) > 0 && out[len(out)-1] != '\n' {

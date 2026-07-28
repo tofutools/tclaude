@@ -53,3 +53,11 @@ func TestFilteredNetworkHostsFilePreservesHostRowsAndAddsSyntheticMapping(t *tes
 		string(got),
 	)
 }
+
+func TestFilteredNetworkHostsFileRefusesCompetingSyntheticMapping(t *testing.T) {
+	_, err := FilteredNetworkHostsFile([]byte(
+		"192.0.2.4 alias " + FilteredNetworkHostLoopbackName + " # stale\n",
+	))
+	require.ErrorContains(t, err, "reserved filtered-network name")
+	require.ErrorContains(t, err, "remove that host mapping")
+}

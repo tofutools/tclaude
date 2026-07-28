@@ -60,7 +60,7 @@ jobs:
           # Claude's embedded SRT discovers rg and socat at runtime; keep them
           # explicit so a runner-image change cannot turn the real nested smoke
           # into an accidental dependency check.
-          sudo apt-get install --yes bubblewrap ripgrep socat
+          sudo apt-get install --yes bubblewrap iproute2 nftables passt ripgrep socat
 
       - name: Install pinned OpenCode smoke binary
         run: |
@@ -209,6 +209,72 @@ jobs:
               echo "The test name, build constraints, or smoke gate likely changed; see the test log."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::Sandbox v2 bubblewrap smoke did not report an explicit pass (TestTclaudeLayerHostSmoke)"
+            exit 1
+          fi
+
+      - name: Run filtered-network gateway smoke
+        shell: bash
+        env:
+          TCLAUDE_FILTERED_NETWORK_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.0.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.0.200
+          TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.0.0/25
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
+          TCLAUDE_FILTERED_DENIED_PORT: "41002"
+        run: |
+          namespace=tclaude-filtered-target
+          host_link=tclaude-filtered-host
+          peer_link=tclaude-filtered-peer
+          server_pids=()
+          cleanup() {
+            for pid in "${server_pids[@]}"; do
+              sudo kill "$pid" 2>/dev/null || true
+            done
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip address add 198.18.0.1/24 dev "$host_link"
+          sudo ip link set "$host_link" up
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip address add 198.18.0.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.0.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+
+          for address in 198.18.0.10 198.18.0.200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+          sudo ip netns exec "$namespace" ss -lntu
+
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
+          go test ./pkg/claude/session \
+            -run '^TestTclaudeLayerFilteredNetworkSmoke$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network gateway smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute CIDR/port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
             exit 1
           fi
 

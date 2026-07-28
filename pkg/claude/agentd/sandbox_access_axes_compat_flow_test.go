@@ -583,10 +583,13 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Targets, 1)
 	assert.True(t, got.Targets[0].Predicted)
-	assert.Equal(t, harness.AccessPredictionNotEnforced, got.Targets[0].Axes.Network.Outcome)
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Network.Outcome)
+	assert.Contains(t, got.Targets[0].Axes.Network.Detail, "Prerequisite-conditional")
 	require.Len(t, got.Targets[0].ContextAxes, 1)
-	assert.Equal(t, harness.AccessPredictionNotEnforced,
+	assert.Equal(t, harness.AccessPredictionEnforced,
 		got.Targets[0].ContextAxes[0].Network.Outcome)
+	assert.Contains(t, got.Targets[0].ContextAxes[0].Network.Detail,
+		"Prerequisite-conditional")
 	require.Len(t, got.Contexts, 1)
 	assert.Equal(t, "crew", got.Contexts[0].Context["group_name"])
 	assert.Equal(t, "renamed-in-editor", got.Contexts[0].Context["group"],

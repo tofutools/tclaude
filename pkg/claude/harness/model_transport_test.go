@@ -89,6 +89,26 @@ func TestModelTransportCoverageHonorsExplicitSubdomainAndPortBounds(t *testing.T
 	require.NoError(t, ValidateModelTransportCoverage(h, rules, requirement))
 }
 
+func TestModelTransportCoverageAcceptsResolvedIPInsideAuthoredCIDR(t *testing.T) {
+	h := MustGet(DefaultName)
+	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model:            "smoke",
+		Provider:         "custom",
+		BaseURL:          "http://198.18.0.10:41001/v1",
+		ProviderResolved: true,
+	})
+	require.NoError(t, err)
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "198.18.0.0/25", Ports: []int{41001},
+		}},
+	}
+	require.NoError(t, ValidateModelTransportCoverage(h, rules, requirement))
+	rules.Allow[0].CIDR = "198.18.0.128/25"
+	require.Error(t, ValidateModelTransportCoverage(h, rules, requirement))
+}
+
 func TestOpenCodeModelTransportRequiresResolvedProviderEndpoint(t *testing.T) {
 	_, err := ResolveModelTransportRequirement(
 		MustGet(OpenCodeName),

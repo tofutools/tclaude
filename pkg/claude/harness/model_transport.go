@@ -200,8 +200,15 @@ func networkRulesCoverDestination(
 		if !portsCover(candidate.Ports, required.Ports) {
 			continue
 		}
-		if candidate.CIDR != "" && candidate.CIDR == required.CIDR {
-			return true
+		if candidate.CIDR != "" && required.CIDR != "" {
+			candidatePrefix, candidateErr := netip.ParsePrefix(candidate.CIDR)
+			requiredPrefix, requiredErr := netip.ParsePrefix(required.CIDR)
+			if candidateErr == nil && requiredErr == nil &&
+				candidatePrefix.Addr().BitLen() == requiredPrefix.Addr().BitLen() &&
+				candidatePrefix.Bits() <= requiredPrefix.Bits() &&
+				candidatePrefix.Contains(requiredPrefix.Addr()) {
+				return true
+			}
 		}
 		if candidate.Loopback && required.Loopback {
 			return true

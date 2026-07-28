@@ -32,6 +32,7 @@ type AccessEnforcement struct {
 	networkList             EnforcementLevel
 	networkSelectors        []NetworkSelectorCapability
 	networkPorts            EnforcementLevel
+	networkSelectorRefusal  string
 	socketOpen              EnforcementLevel
 	socketClosed            EnforcementLevel
 	socketList              EnforcementLevel
@@ -53,6 +54,8 @@ type PredictedAccessEnforcement struct {
 	NetworkList             EnforcementLevel
 	NetworkSelectors        []NetworkSelectorCapability
 	NetworkPorts            EnforcementLevel
+	NetworkSelectorRefusal  string
+	NetworkListCondition    string
 	SocketOpen              EnforcementLevel
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
@@ -91,6 +94,8 @@ type accessEnforcementTableRow struct {
 	NetworkList             EnforcementLevel
 	NetworkSelectors        []NetworkSelectorCapability
 	NetworkPorts            EnforcementLevel
+	NetworkSelectorRefusal  string
+	NetworkListCondition    string
 	SocketOpen              EnforcementLevel
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
@@ -105,7 +110,8 @@ type accessEnforcementTableRow struct {
 
 // NetworkSelectorCapability is a mechanism's honest rating for one selector
 // class. The stable Detail becomes the persisted per-entry disclosure whenever
-// an adapter rates a class Partial. An omitted class is EnforceNone.
+// an adapter rates a class Partial or explicitly refuses a None class. An
+// omitted class is also EnforceNone.
 type NetworkSelectorCapability struct {
 	Selector string           `json:"selector"`
 	Level    EnforcementLevel `json:"level"`
@@ -252,6 +258,16 @@ func accessEnforcementTable(
 			caps.NetworkList = EnforceFull
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    EnforceNone,
+					Detail:   "host selectors require the M2c DNS broker",
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    EnforceNone,
+					Detail:   "domain selectors require the M2c DNS broker",
+				},
+				{
 					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
 					Level:    EnforceFull,
 				},
@@ -262,6 +278,10 @@ func accessEnforcementTable(
 				},
 			}
 			caps.NetworkPorts = EnforceFull
+			caps.NetworkSelectorRefusal =
+				"the M2b filtered gateway cannot enforce host/domain selectors; remove those entries, author CIDR/host-loopback entries, wait for the M2c DNS broker, or use network open"
+			caps.NetworkListCondition =
+				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised pasta/nftables gateway"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
@@ -355,7 +375,8 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 		networkClosed: row.NetworkClosed, networkList: row.NetworkList,
 		networkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		networkPorts:     row.NetworkPorts, socketOpen: row.SocketOpen,
-		socketClosed: row.SocketClosed, socketList: row.SocketList,
+		networkSelectorRefusal: row.NetworkSelectorRefusal,
+		socketClosed:           row.SocketClosed, socketList: row.SocketList,
 		socketOpenRefusal:       row.SocketOpenRefusal,
 		socketListRefusal:       row.SocketListRefusal,
 		socketCombinationDetail: row.SocketCombinationDetail,
@@ -369,7 +390,9 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		NetworkClosed: row.NetworkClosed, NetworkList: row.NetworkList,
 		NetworkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
-		SocketClosed: row.SocketClosed, SocketList: row.SocketList,
+		NetworkSelectorRefusal: row.NetworkSelectorRefusal,
+		NetworkListCondition:   row.NetworkListCondition,
+		SocketClosed:           row.SocketClosed, SocketList: row.SocketList,
 		SocketOpenRefusal:       row.SocketOpenRefusal,
 		SocketListRefusal:       row.SocketListRefusal,
 		SocketCombinationDetail: row.SocketCombinationDetail,
@@ -418,22 +441,43 @@ func predictNetworkAxis(
 		}
 		unsupported := networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)
 		if len(unsupported) > 0 {
+			if caps.NetworkSelectorRefusal != "" {
+				return predictedRefused(tier, fmt.Sprintf(
+					"%s; affected authored entries: %s",
+					caps.NetworkSelectorRefusal, formatEntryIndices(unsupported)))
+			}
 			return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionNotEnforced,
-				Detail: fmt.Sprintf("%s cannot express one or more destination selectors; all outbound connections are permitted",
-					caps.Mechanism)}
+				Detail: fmt.Sprintf("%s cannot express one or more destination selectors; all outbound connections are permitted; affected authored entries: %s",
+					caps.Mechanism, formatEntryIndices(unsupported))}
 		}
 		partialEntries, _ := networkPartialEntries(rules.Allow, caps.NetworkSelectors)
 		if caps.NetworkList == EnforcePartial || len(partialEntries) > 0 ||
 			(caps.NetworkPorts != EnforceFull && networkRulesHavePorts(rules)) ||
 			caps.Scope == "tools-only" {
-			return predictedPartial(tier, caps.Mechanism,
-				"the allow list is enforced with wider destination, port, or process scope")
+			return withNetworkListCondition(
+				predictedPartial(tier, caps.Mechanism,
+					"the allow list is enforced with wider destination, port, or process scope"),
+				caps.NetworkListCondition,
+			)
 		}
-		return predictedEnforced(tier, caps.Mechanism, "the network allow list")
+		return withNetworkListCondition(
+			predictedEnforced(tier, caps.Mechanism, "the network allow list"),
+			caps.NetworkListCondition,
+		)
 	default:
 		return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionRefused,
 			Detail: "the network tier is invalid"}
 	}
+}
+
+func withNetworkListCondition(
+	axis PredictedAccessAxis,
+	condition string,
+) PredictedAccessAxis {
+	if condition != "" {
+		axis.Detail += " " + condition
+	}
+	return axis
 }
 
 func predictSocketAxis(
@@ -625,6 +669,16 @@ func PlanAccessEnforcement(
 		default:
 			unsupported := networkUnsupportedEntries(axes.Network.Allow, caps.networkSelectors)
 			if len(unsupported) > 0 {
+				if caps.networkSelectorRefusal != "" {
+					return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+						Kind: SandboxCapabilityNetworkAllowlist,
+						Message: fmt.Sprintf(
+							"%s; affected authored entries: %s",
+							caps.networkSelectorRefusal,
+							formatEntryIndices(unsupported),
+						),
+					}
+				}
 				rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
 				notices = append(notices, degradationNotice(
 					"network", "selector_unsupported", sandboxpolicy.AccessNoticeEffectNotEnforced,
@@ -710,6 +764,14 @@ func PlanAccessEnforcement(
 		}
 	}
 	return rendered, notices, nil
+}
+
+func formatEntryIndices(indices []int) string {
+	parts := make([]string, len(indices))
+	for i, index := range indices {
+		parts[i] = fmt.Sprintf("%d", index)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func degradationNotice(

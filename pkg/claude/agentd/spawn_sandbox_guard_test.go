@@ -62,7 +62,7 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 	}
 }
 
-func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapability(t *testing.T) {
+func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *testing.T) {
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -98,10 +98,10 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
 	require.Equal(t, "no_mechanism", notices[0].Reason,
-		"M2a must retain the widening authority")
+		"a non-filtered launch verdict must retain the widening authority")
 	require.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, notices[1].Reason)
 	require.Contains(t, notices[1].Detail, "prerequisite probe: detected")
-	require.Contains(t, notices[1].Detail, "not enabled yet")
+	require.Contains(t, notices[1].Detail, "launch cannot consume")
 	require.Contains(t, notices[1].Detail, "outbound remains open")
 	require.Contains(t, snapshot.Effective.AccessNotices, notices[0])
 	require.Contains(t, snapshot.Effective.AccessNotices, notices[1])
@@ -109,7 +109,7 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	planned, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
 	require.NoError(t, err)
 	require.Equal(t, sandboxpolicy.AccessModeOpen, planned.Network.Mode,
-		"a ready probe must not activate filtered enforcement")
+		"a ready probe without a filtered launch verdict must not activate enforcement")
 }
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {

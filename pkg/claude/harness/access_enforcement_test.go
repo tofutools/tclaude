@@ -352,6 +352,67 @@ func TestM2bNetworkListCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 		"a host-open verdict must not mint filtered enforcement")
 }
 
+func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}
+	caps, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	predicted := DescribePredictedAccess(axes, caps).Network
+	assert.Equal(t, AccessPredictionEnforced, predicted.Outcome)
+	assert.Contains(t, predicted.Detail, "Prerequisite-conditional prediction")
+	assert.Contains(t, predicted.Detail, "pasta")
+	assert.Contains(t, predicted.Detail, "nft")
+	assert.Contains(t, predicted.Detail, "outbound remains open")
+}
+
+func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{CIDR: "192.0.2.0/24", Ports: []int{443}},
+				{Host: "api.example.test", Ports: []int{443}},
+				{Domain: "example.test", IncludeSubdomains: true, Ports: []int{443}},
+			},
+		},
+	}
+	prediction, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	preview := DescribePredictedAccess(axes, prediction).Network
+	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+	assert.Contains(t, preview.Detail, "M2c DNS broker")
+	assert.Contains(t, preview.Detail, "entries: 1, 2")
+
+	launch, err := ResolveAccessEnforcement(
+		Default(),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		LaunchOSSandbox{
+			State:           "on",
+			Source:          "test filtered boundary",
+			FilteredNetwork: true,
+		},
+		ClaudeSandboxOff,
+	)
+	require.NoError(t, err)
+	_, _, err = PlanAccessEnforcement(axes, launch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "M2c DNS broker")
+	assert.Contains(t, err.Error(), "entries: 1, 2")
+}
+
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
