@@ -60,25 +60,31 @@ function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
 
-const SANDBOX_EVALUATION_IMPLEMENTATIONS = {
-  claude: [
-    ['harness-builtin', 'Harness built-in sandbox'],
-    ['tclaude-layer', 'tclaude sandbox'],
-    ['stacked', 'Stacked sandboxes'],
-  ],
-  codex: [
-    ['harness-builtin', 'Harness built-in sandbox'],
-    ['tclaude-layer', 'tclaude sandbox'],
-    ['stacked', 'Stacked sandboxes'],
-  ],
+const SANDBOX_EVALUATION_FALLBACK_HARNESSES = [
+  { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+  { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
   // OpenCode's access-control mode is a command filter, not an OS sandbox.
   // Its agentd-owned server boundary is the one supported evaluation target.
-  opencode: [['tclaude-layer', 'tclaude sandbox']],
-};
+  { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true, can_stacked: false },
+];
 
-function sandboxEvaluationImplementations(harness, platform) {
-  return (SANDBOX_EVALUATION_IMPLEMENTATIONS[harness] || [])
-    .filter(([implementation]) => implementation !== 'stacked' || platform === 'linux');
+function sandboxEvaluationHarnesses(catalog) {
+  const candidates = Array.isArray(catalog) && catalog.length
+    ? catalog
+    : SANDBOX_EVALUATION_FALLBACK_HARNESSES;
+  return candidates.filter((entry) =>
+    entry.can_builtin_os_sandbox || entry.can_tclaude_layer || entry.can_stacked);
+}
+
+function sandboxEvaluationImplementations(harness, platform, catalog) {
+  const entry = sandboxEvaluationHarnesses(catalog)
+    .find((candidate) => candidate.name === harness);
+  if (!entry) return [];
+  const options = [];
+  if (entry.can_builtin_os_sandbox) options.push(['harness-builtin', 'Harness built-in sandbox']);
+  if (entry.can_tclaude_layer) options.push(['tclaude-layer', 'tclaude sandbox']);
+  if (entry.can_stacked && platform === 'linux') options.push(['stacked', 'Stacked sandboxes']);
+  return options;
 }
 
 function sandboxEvaluationTarget(harness, implementation, platform) {
@@ -620,6 +626,7 @@ function sandboxFilesystemWire(draft, baseline) {
 function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
+  const evaluationHarnesses = sandboxEvaluationHarnesses(descriptor.catalog);
   const baseline = useMemo(() => {
     const axes = sandboxAccessAxes(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
@@ -712,7 +719,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
   const evaluationImplementations = sandboxEvaluationImplementations(
-    evaluateHarness, evaluatePlatform,
+    evaluateHarness, evaluatePlatform, descriptor.catalog,
   );
   const evaluationTarget = sandboxEvaluationTarget(
     evaluateHarness, evaluateImplementation, evaluatePlatform,
@@ -811,16 +818,18 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       <div class="sbx-evaluation-target-controls">
         <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
-          const implementations = sandboxEvaluationImplementations(nextHarness, evaluatePlatform);
+          const implementations = sandboxEvaluationImplementations(
+            nextHarness, evaluatePlatform, descriptor.catalog,
+          );
           setEvaluateHarness(nextHarness);
           if (!implementations.some(([value]) => value === evaluateImplementation)) {
             setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
           }
         }}>
           <option value="">Resolved default target</option>
-          <option value="claude">Claude Code</option>
-          <option value="codex">Codex</option>
-          <option value="opencode">OpenCode</option>
+          ${evaluationHarnesses.map((entry) => html`
+            <option value=${entry.name}>${entry.display_name || entry.name}</option>
+          `)}
         </select></label>
         <label>Sandbox implementation <select id="sandbox-profile-editor-evaluate-implementation" value=${evaluateImplementation} disabled=${!evaluateHarness} onChange=${(event) => setEvaluateImplementation(event.currentTarget.value)}>
           ${evaluateHarness
@@ -829,7 +838,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </select></label>
         <label>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
           const nextPlatform = event.currentTarget.value;
-          const implementations = sandboxEvaluationImplementations(evaluateHarness, nextPlatform);
+          const implementations = sandboxEvaluationImplementations(
+            evaluateHarness, nextPlatform, descriptor.catalog,
+          );
           setEvaluatePlatform(nextPlatform);
           if (!implementations.some(([value]) => value === evaluateImplementation)) {
             setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
