@@ -454,7 +454,7 @@ func ValidateTclaudeLayerNetwork(
 		}
 		detail := harness.DescribeModelTransportRequirement(requirement)
 		if requirement.Template != "" {
-			detail += " Hosted endpoint coverage is declared but not empirically validated; it remains provisional until the pinned M2c harness smoke."
+			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,

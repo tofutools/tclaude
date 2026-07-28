@@ -114,6 +114,9 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		{Domain: "auth.openai.com", Ports: []int{443}},
 	}, catalog.NetworkTemplates[1].Entries)
 	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "custom model providers")
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Domain: "api.anthropic.com", Ports: []int{443},
+	}}, catalog.NetworkTemplates[2].Entries)
 	assert.NotContains(t, rec.Body.String(), "net-pypi")
 	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
 		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})

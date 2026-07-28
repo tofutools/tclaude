@@ -149,6 +149,7 @@ func planSandboxProfileAccessForLaunch(
 	harnessName, sandboxMode string,
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
+	modelContext session.ModelTransportLaunchContext,
 ) ([]sandboxpolicy.AccessNotice, *spawnFailure) {
 	if snapshot == nil ||
 		(snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil) {
@@ -225,8 +226,15 @@ func planSandboxProfileAccessForLaunch(
 		plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			plannedEffective.AccessNotices, notices...,
 		)
+		modelContext.Environment = plannedEffective.Environment
+		resolvedModel, resolveModelErr := session.ResolveTclaudeLayerModelTransport(
+			h, modelContext)
+		if resolveModelErr != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				resolveModelErr, harness.SandboxCapabilityModelTransport)
+		}
 		modelNotices, modelErr := session.ValidateTclaudeLayerNetwork(
-			h, plannedEffective, harness.ResolvedModelTransport{},
+			h, plannedEffective, resolvedModel,
 		)
 		if modelErr != nil {
 			return nil, sandboxCapabilitySpawnFailure(

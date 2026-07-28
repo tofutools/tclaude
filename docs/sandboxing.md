@@ -552,14 +552,14 @@ report socket fidelity. Opt into its adjacent details chevron with
 `features.recorded_sandbox_details` for recorded launch fidelity, or use
 `sandbox-profiles plan` for a dry-run of explicit inputs.
 
-The Linux `filtered` posture enforces the M2b packet subset for exact
+The Linux `filtered` posture enforces the packet and DNS subset for exact
 `tclaude-layer` Claude Code and Codex launches: IPv4/IPv6 CIDR destinations,
-TCP/UDP destination ports (including QUIC as UDP), and synthetic host loopback.
-Raw and packet sockets, including authored ICMP access, are not part of the
-network-list contract. Host/domain rules require the M2c DNS broker. The editor
-rates those entries `None` and the launch refuses a mixed list rather than
-silently dropping them. OpenCode waits for its pinned real-harness M3 smoke;
-`stacked` does not claim this cell.
+exact DNS hosts, label-bound domains with optional subdomains, TCP/UDP
+destination ports (including QUIC as UDP), and synthetic host loopback. Raw and
+packet sockets, including authored ICMP access, are not part of the network-list
+contract. Host/domain selectors are `Partial`, because they enforce DNS-derived
+addresses rather than application identity. OpenCode waits for its pinned
+real-harness M3 smoke; `stacked` does not claim this cell.
 
 Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
 `nft` through root-owned, non-group/world-writable paths. The pasta probe also
@@ -589,18 +589,46 @@ dies, bubblewrap and pasta die with it.
 
 Host loopback uses `host.tclaude.internal`, mapped to fixed synthetic IPv4 and
 IPv6 addresses and filtered by the authored ports. Hard-coded `127.0.0.1` and
-`::1` remain sandbox-private.
+`::1` remain sandbox-private. The sandbox's `/etc/resolv.conf` and `/etc/hosts`
+both route through the external DNS broker, so a hosts-file mapping cannot
+bypass the same selector and port checks. A DNS answer containing loopback is
+refused unless the matching rule also authors loopback; when it does, the
+broker rewrites the answer to the same synthetic host-loopback addresses.
+
+Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved
+shared IP can be reused until its lease expires. The broker follows a bounded
+CNAME chain, filters returned A/AAAA records through the authored selector and
+CIDR rules, and adds each admitted address to the matching per-rule nft set for
+no longer than the observed DNS TTL. Only a fresh DNS answer refreshes the
+lease. There is no timer-driven self-refresh and no fixed grace window.
+
+Expiry has two deliberately different directions. A new TCP or UDP flow needs
+a current lease, so an agent that performs no fresh lookup after expiry cannot
+open another connection. An already-established conntrack flow may continue
+after the DNS lease expires; this keeps a long streaming response or connected
+UDP operation alive, but it is also a named residual rather than an
+application-identity guarantee. Re-resolving before a later connection obtains
+a fresh answer and refreshes the lease.
 
 Filtered model traffic has no hidden bypass. The operator-authored list must
 already cover every endpoint from genuinely resolved provider/model context;
-tclaude never fabricates provider resolution or appends endpoints. The current
-Claude/Codex session and agentd launch seam does not yet expose that honest
-provider context, so ordinary filtered launches refuse with a named
-model-transport remedy even after gateway prerequisites pass. M2c owns that
-wiring and the pinned real-harness endpoint evidence. When a static declared
-endpoint template does pass preflight, the resolved-launch note says the hosted
-coverage is declared but not empirically validated and remains provisional
-until that M2c smoke.
+tclaude never fabricates provider resolution or appends endpoints. At the
+executing launch seam, Claude's direct Anthropic default and concrete
+`ANTHROPIC_BASE_URL` are resolved from the launch environment; third-party
+provider modes and provider-changing live settings refuse with a named remedy.
+Codex resolves its selected provider and concrete base URL from the effective
+`config.toml`; provider-changing pass-through overrides and incomplete custom
+providers likewise refuse. OpenCode remains unresolved and refused until M3.
+
+The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
+named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. That
+audit exercises Claude direct API traffic and Codex API-key, ChatGPT model, and
+token-refresh paths, and refuses any undeclared mandatory origin. The minimal
+evidence set is `api.anthropic.com:443` for Claude and
+`api.openai.com:443`, `chatgpt.com:443`, and `auth.openai.com:443` for Codex.
+Codex's optional plugin-marketplace synchronization is not model transport; it
+may be unavailable unless the authored profile separately admits its
+destinations.
 
 Host-loopback isolation also severs editor integrations that connect over a
 localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture

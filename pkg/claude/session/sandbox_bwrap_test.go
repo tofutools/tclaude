@@ -812,7 +812,9 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	require.NoError(t, err)
 	require.Len(t, notices, 1)
 	assert.Contains(t, notices[0].Detail, "no hidden model-traffic bypass")
-	assert.Contains(t, notices[0].Detail, "declared but not empirically validated")
+	assert.Contains(t, notices[0].Detail, "empirically audited")
+	assert.Contains(t, notices[0].Detail, "Claude Code 2.1.220")
+	assert.Contains(t, notices[0].Detail, "Codex CLI 0.145.0")
 	assert.Contains(t, notices[0].Detail, "M2c")
 }
 

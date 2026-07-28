@@ -176,8 +176,10 @@ func sandboxNetworkTemplates() []sandboxAccessTemplateJSON {
 		},
 		{
 			ID: "net-anthropic", Label: "Anthropic API", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "api.anthropic.com"}},
-			Note:    "Anthropic documents the direct Claude API at https://api.anthropic.com: https://platform.claude.com/docs/en/api/overview",
+			Entries: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "api.anthropic.com", Ports: []int{443},
+			}},
+			Note: "Anthropic documents the direct Claude API at https://api.anthropic.com: https://platform.claude.com/docs/en/api/overview",
 		},
 		{
 			ID: "net-go-modules", Label: "Public Go modules", Mode: "list",

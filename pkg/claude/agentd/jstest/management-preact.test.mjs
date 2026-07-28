@@ -1496,6 +1496,12 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /ordinary IPv4\/IPv6 TCP and UDP/);
   assert.match(networkHelp.textContent, /QUIC is UDP/);
   assert.match(networkHelp.textContent, /Raw and packet sockets are not an authored class/);
+  assert.match(networkHelp.textContent, /DNS-to-IP, not SNI or application identity/);
+  assert.match(networkHelp.textContent, /shared IP can be reused until its DNS lease expires/);
+  assert.match(networkHelp.textContent, /Only a fresh DNS answer refreshes/);
+  assert.match(networkHelp.textContent, /no fixed grace window/);
+  assert.match(networkHelp.textContent, /Already-established flows may continue after expiry/);
+  assert.match(networkHelp.textContent, /new flow needs fresh resolution/);
   assert.match(networkHelp.textContent, /compose by intersection/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 

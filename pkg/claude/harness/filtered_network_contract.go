@@ -9,7 +9,7 @@ import (
 
 const (
 	FilteredNetworkDNSIdentityCaveat = "Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved shared IP can be reused until its lease expires."
-	FilteredNetworkDNSLeaseCaveat    = "Fresh DNS answers refresh the lease; already-established flows may continue after lease expiry, while new flows require fresh resolution."
+	FilteredNetworkDNSLeaseCaveat    = "Only fresh DNS answers refresh the lease; there is no fixed grace window. Already-established flows may continue after lease expiry, while new flows require fresh resolution."
 	FilteredNetworkLoopbackCaveat    = "Host loopback uses host.tclaude.internal; 127.0.0.1 and ::1 remain sandbox-private."
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
