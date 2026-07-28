@@ -16,9 +16,7 @@ func TestModelTransportRequirementsAreHarnessOwnedAndExplicit(t *testing.T) {
 		destinations []string
 	}{
 		{DefaultName, "net-anthropic", []string{"api.anthropic.com:443"}},
-		{CodexName, "net-openai-codex", []string{
-			"api.openai.com:443", "chatgpt.com:443", "auth.openai.com:443",
-		}},
+		{CodexName, "net-openai-codex", []string{"api.openai.com:443"}},
 	} {
 		provider := "anthropic"
 		if tc.harnessName == CodexName {
@@ -50,7 +48,7 @@ func TestModelTransportCoverageRefusesWithoutMutatingPolicy(t *testing.T) {
 	rules := sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
-			Domain: "api.openai.com", Ports: []int{443},
+			Domain: "api.openai.com", Ports: []int{80},
 		}},
 	}
 	before := rules
@@ -65,10 +63,7 @@ func TestModelTransportCoverageRefusesWithoutMutatingPolicy(t *testing.T) {
 	assert.Contains(t, err.Error(), "network open")
 	assert.Equal(t, before, rules, "preflight must not auto-union model destinations")
 
-	rules.Allow = append(rules.Allow,
-		sandboxpolicy.NetworkAllowEntry{Domain: "chatgpt.com", Ports: []int{443}},
-		sandboxpolicy.NetworkAllowEntry{Domain: "auth.openai.com", Ports: []int{443}},
-	)
+	rules.Allow[0].Ports = []int{443}
 	require.NoError(t, ValidateModelTransportCoverage(h, rules, requirement))
 }
 

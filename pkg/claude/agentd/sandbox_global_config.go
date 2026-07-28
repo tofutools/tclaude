@@ -168,11 +168,9 @@ func sandboxNetworkTemplates() []sandboxAccessTemplateJSON {
 			ID: "net-openai-codex", Label: "OpenAI models (Codex CLI)", Mode: "list",
 			Entries: []sandboxpolicy.NetworkAllowEntry{
 				{Domain: "api.openai.com", Ports: []int{443}},
-				{Domain: "chatgpt.com", Ports: []int{443}},
-				{Domain: "auth.openai.com", Ports: []int{443}},
 			},
-			Note:    "Codex uses api.openai.com for API-key model traffic, chatgpt.com for ChatGPT model traffic, and auth.openai.com for ChatGPT authentication and token refresh: https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps",
-			Warning: "This preset covers direct OpenAI model transport and authentication only; custom model providers, web search, plugins, MCP servers, and commands run by the agent need their own destinations.",
+			Note:    "The supported filtered Codex route uses api.openai.com for API-key model traffic: https://platform.openai.com/docs/api-reference/introduction",
+			Warning: "ChatGPT-auth Codex is refused in filtered mode because remote provider overrides are not launch-resolvable; custom model providers, web search, plugins, MCP servers, and commands run by the agent need their own destinations.",
 		},
 		{
 			ID: "net-anthropic", Label: "Anthropic API", Mode: "list",

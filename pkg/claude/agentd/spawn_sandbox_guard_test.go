@@ -197,6 +197,8 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 		}, nil
 	}
 	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
 		Environment: []sandboxpolicy.EnvironmentEntry{{
 			Name: "CODEX_HOME", Value: codexHome,
@@ -205,8 +207,6 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 			Mode: sandboxpolicy.AccessModeList,
 			Allow: []sandboxpolicy.NetworkAllowEntry{
 				{Domain: "api.openai.com", Ports: []int{443}},
-				{Domain: "chatgpt.com", Ports: []int{443}},
-				{Domain: "auth.openai.com", Ports: []int{443}},
 			},
 		},
 	}}

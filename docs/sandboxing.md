@@ -631,11 +631,13 @@ with an API key or using network open. Complete dynamic provider resolution is
 tracked in TCL-826. OpenCode remains unresolved and refused until M3.
 
 The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
-named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. That
-audit exercises Claude direct API traffic and Codex API-key, ChatGPT model, and
-token-refresh paths, and refuses any undeclared mandatory origin. The minimal
-evidence set is `api.anthropic.com:443` for Claude and
-`api.openai.com:443`, `chatgpt.com:443`, and `auth.openai.com:443` for Codex.
+named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
+active minimal evidence set is `api.anthropic.com:443` for Claude and
+`api.openai.com:443` for API-key Codex. The same audit separately records
+ChatGPT model and refresh traffic at `chatgpt.com:443` and
+`auth.openai.com:443` for TCL-826, but those destinations are not included in
+the active preset while ChatGPT-auth filtered launches are refused. Any
+undeclared mandatory origin fails the audit.
 Codex's optional plugin-marketplace synchronization is not model transport; it
 may be unavailable unless the authored profile separately admits its
 destinations.
