@@ -871,12 +871,12 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiModeConfirmQuit:
-		// Only "y" confirms. Enter is the reflexive dismiss key and the
+		// Only "y" or a second Ctrl-C confirms. Enter is the reflexive dismiss key and the
 		// prompt promises that anything other than "y" cancels — accepting
 		// it here would turn a misread prompt into a daemon shutdown, taking
 		// every managed agent's pane with it.
 		switch msg.String() {
-		case "y", "Y":
+		case "y", "Y", "ctrl+c":
 			return m, tea.Quit
 		default:
 			m.mode = tuiModeList
