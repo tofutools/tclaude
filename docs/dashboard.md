@@ -1506,6 +1506,11 @@ across all groups (including Ungrouped). Each opens an explicit-selection
 preview before retiring anything. In wizard mode these commands use
 **Banish**, **familiars**, **parties**, and **Unbound**.
 
+The idle/offline status is captured when the preview opens. The checked roster
+is then exact: a checked agent remains selected if it resumes or starts working
+before submit, and is retired only if it remains checked. This intentionally
+differs from the rich cleanup modal's default online-session guard below.
+
 The modal lists the affected agents as an editable include/exclude checklist,
 with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is
 trusted blindly: **the daemon re-checks tmux liveness for every agent at

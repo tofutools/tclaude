@@ -196,9 +196,9 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
     'Banish idle familiars in "alpha team"');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
-    'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
+    'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
-    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
+    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
   assert.equal(host.querySelector('#retire-preview-count').textContent, '2 of 2 selected');
   assert.equal(harness.document.activeElement.id, 'retire-preview-submit');
 
@@ -251,7 +251,8 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   first.reject(new Error('retire backend unavailable'));
   await harness.act(() => first.promise.catch(() => {}));
   assert.equal(host.querySelector('[role="alert"]').textContent, 'retire backend unavailable');
-  assert.equal(host.querySelector('#retire-preview-submit').textContent, 'Retry retire');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent, 'Retry retire');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent, 'Retry banishment');
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 2);
@@ -362,10 +363,16 @@ test('global retire preview identifies every-group scope including Ungrouped and
     /span every group, including Ungrouped/);
   assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
     /span every party, including the Unbound/);
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent,
+    'Retire 2 agents');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent,
+    'Banish 2 familiars');
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(submitted, {
     agents: ['agt_alpha', 'agt_beta'], shutdown: true, deleteWorktrees: true,
   });
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    /Banishment complete — 2 banished/);
   await mounted.mounted.unmount();
 });

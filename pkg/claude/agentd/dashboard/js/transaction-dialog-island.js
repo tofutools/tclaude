@@ -915,6 +915,13 @@ function summaryText(summary) {
   return parts.join(' · ');
 }
 
+function wizardSummaryText(summary) {
+  const parts = [`${summary.retired} banished`];
+  if (summary.skipped) parts.push(`${summary.skipped} skipped`);
+  if (summary.failed) parts.push(`${summary.failed} failed`);
+  return parts.join(' · ');
+}
+
 function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
   const candidates = descriptor.candidates || [];
   const [query, setQuery] = useState('');
@@ -1042,24 +1049,24 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
   const hint = result
     ? html`<${Words}
       plain=${`Retire complete — ${summaryText(summary)}.`}
-      wizard=${`Banishment complete — ${summaryText(summary)}.`}
+      wizard=${`Banishment complete — ${wizardSummaryText(summary)}.`}
     />`
-    : descriptor.kind === 'retire-group-preview'
+      : descriptor.kind === 'retire-group-preview'
       ? html`<${Words}
-        plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
-        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
+        plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
+        wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
       />`
       : descriptor.kind === 'retire-all-preview'
         ? html`<${Words}
-          plain=${`These ${descriptor.status} agents span every group, including Ungrouped. Each ticked agent will be demoted to a plain, reinstatable conversation, removed from every group, and have its grants revoked. Untick any you want to keep; only the ticked agents are retired.`}
-          wizard=${`These ${descriptor.status} familiars span every party, including the Unbound. Each ticked familiar will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`}
+          plain=${`These ${descriptor.status} agents span every group, including Ungrouped. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation, removed from every group, and have its grants revoked. Untick any you want to keep; only the ticked agents are retired.`}
+          wizard=${`These ${descriptor.status} familiars span every party, including the Unbound. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`}
         />`
         : html`<${Words}
           plain=${descriptor.status
-            ? `These ${descriptor.status} agents are in the virtual Ungrouped group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.`
+            ? `These ${descriptor.status} agents are in the virtual Ungrouped group. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.`
             : 'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.'}
           wizard=${descriptor.status
-            ? `These ${descriptor.status} familiars are in the ethereal Unbound party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`
+            ? `These ${descriptor.status} familiars are in the ethereal Unbound party. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`
             : 'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.'}
         />`;
 
@@ -1072,8 +1079,12 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     dirty=${dirty}
     error=${result ? warning : error}
     errorID="retire-preview-error"
-    primaryLabel=${result ? 'Done' : retrying ? 'Retry retire' : selectedCandidates.length === 1
-      ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
+    primaryLabel=${result ? 'Done' : html`<${Words}
+      plain=${retrying ? 'Retry retire' : selectedCandidates.length === 1
+        ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
+      wizard=${retrying ? 'Retry banishment' : selectedCandidates.length === 1
+        ? 'Banish 1 familiar' : `Banish ${selectedCandidates.length} familiars`}
+    />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
       plain=${result ? 'Refreshing…' : 'Retiring…'}
       wizard=${result ? 'Refreshing…' : 'Banishing…'}

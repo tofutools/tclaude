@@ -28,13 +28,14 @@ type cleanupResp struct {
 		Detail string   `json:"detail"`
 		Groups []string `json:"groups"`
 	} `json:"outcomes"`
-	Removed    int      `json:"removed"`
-	Retired    int      `json:"retired"`
-	Deleted    int      `json:"deleted"`
-	Reinstated int      `json:"reinstated"`
-	Skipped    int      `json:"skipped"`
-	Failed     int      `json:"failed"`
-	Warnings   []string `json:"warnings"`
+	Removed         int      `json:"removed"`
+	Retired         int      `json:"retired"`
+	Deleted         int      `json:"deleted"`
+	Reinstated      int      `json:"reinstated"`
+	Skipped         int      `json:"skipped"`
+	Failed          int      `json:"failed"`
+	RhythmsDisabled int      `json:"rhythms_disabled"`
+	Warnings        []string `json:"warnings"`
 }
 
 // postCleanup fires a cleanup request at the dashboard mux and decodes
@@ -524,6 +525,53 @@ func TestCleanup_Agents_RetireBatchKeepsCoSharedWorktree(t *testing.T) {
 	require.Len(t, resp.Outcomes, 2)
 	for _, out := range resp.Outcomes {
 		assert.Contains(t, out.Detail, "shared", "each cohort member must receive the stable shared decision")
+	}
+}
+
+// Scenario: a global cleanup-backed retire spans several groups, including a
+// shared group that is emptied only after the second target settles. Every
+// group-target rhythm left with no live recipients is auto-disabled once,
+// matching the per-group retire lifecycle invariant.
+func TestCleanup_Agents_RetireFleetDisablesEmptiedGroupRhythms(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const convA = "rfra-1111-2222-3333-4444"
+	const convB = "rfrb-1111-2222-3333-4444"
+	for _, conv := range []string{convA, convB} {
+		f.HaveConvWithTitle(conv, "fleet-worker")
+		f.HaveEnrolledAgent(conv)
+	}
+	alpha := f.HaveGroup("retire-fleet-alpha")
+	beta := f.HaveGroup("retire-fleet-beta")
+	shared := f.HaveGroup("retire-fleet-shared")
+	f.HaveMember(alpha.Name, convA)
+	f.HaveMember(beta.Name, convB)
+	f.HaveMember(shared.Name, convA)
+	f.HaveMember(shared.Name, convB)
+
+	jobIDs := make([]int64, 0, 3)
+	for _, group := range []*db.AgentGroup{alpha, beta, shared} {
+		id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+			Name: "rhythm-" + group.Name, TargetKind: db.CronTargetGroup,
+			GroupID: group.ID, IntervalSeconds: 600, Body: "check in", Enabled: true,
+		})
+		require.NoError(t, err)
+		jobIDs = append(jobIDs, id)
+	}
+
+	resp := postCleanup(t, agentd.BuildDashboardHandlerForTest(), "/api/cleanup/agents",
+		`{"agents":["`+convA+`","`+convB+`"],"mode":"retire","include_online":true,"shutdown":false}`)
+
+	assert.Equal(t, 2, resp.Retired)
+	assert.Equal(t, 3, resp.RhythmsDisabled,
+		"alpha, beta, and the shared group are all empty after the fleet sweep")
+	for _, id := range jobIDs {
+		job, err := db.GetAgentCronJob(id)
+		require.NoError(t, err)
+		require.NotNil(t, job)
+		assert.False(t, job.Enabled)
+		assert.Equal(t, db.CronDisabledReasonGroupRetired, job.DisabledReason)
 	}
 }
 
