@@ -616,9 +616,19 @@ tclaude never fabricates provider resolution or appends endpoints. At the
 executing launch seam, Claude's direct Anthropic default and concrete
 `ANTHROPIC_BASE_URL` are resolved from the launch environment; third-party
 provider modes and provider-changing live settings refuse with a named remedy.
+If Claude's provider route changes after that preflight, any unauthored
+destination is denied fail-closed for new flows at the packet floor; complete
+dynamic provider resolution is tracked in TCL-826.
+
 Codex resolves its selected provider and concrete base URL from the effective
 `config.toml`; provider-changing pass-through overrides and incomplete custom
-providers likewise refuse. OpenCode remains unresolved and refused until M3.
+providers likewise refuse. Codex ChatGPT authentication can load and refresh
+remote provider overrides that the launch seam cannot inspect. Filtered mode
+therefore requires inspectable file-backed API-key authentication (or an
+explicit custom provider that does not require OpenAI auth); ChatGPT, external
+token, and opaque keyring routes refuse with the named remedies of signing in
+with an API key or using network open. Complete dynamic provider resolution is
+tracked in TCL-826. OpenCode remains unresolved and refused until M3.
 
 The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. That

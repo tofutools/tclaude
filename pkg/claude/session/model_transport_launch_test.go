@@ -96,6 +96,8 @@ func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {
 			{Name: "CODEX_HOME", Value: codexHome},
 		},
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
 
 	resolved, err := ResolveTclaudeLayerModelTransport(codex, context)
 	require.NoError(t, err)
@@ -184,6 +186,67 @@ func TestResolveTclaudeLayerCodexRefusesUnmergedExternalProviderConfig(t *testin
 	assert.Contains(t, err.Error(), systemConfig)
 	assert.Contains(t, err.Error(), "openai_base_url")
 	assert.Contains(t, err.Error(), "cannot merge exactly")
+}
+
+func TestResolveTclaudeLayerCodexRefusesChatGPTAndOpaqueAuth(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	codex := harness.MustGet(harness.CodexName)
+	context := ModelTransportLaunchContext{
+		Cwd: cwd,
+		Environment: []sandboxpolicy.EnvironmentEntry{
+			{Name: "HOME", Value: home},
+			{Name: "CODEX_HOME", Value: codexHome},
+		},
+	}
+
+	for name, auth := range map[string]string{
+		"chatgpt":     `{"auth_mode":"chatgpt","tokens":{"access_token":"secret"}}`,
+		"legacy_chat": `{"tokens":{"access_token":"secret"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(
+				filepath.Join(codexHome, "auth.json"), []byte(auth), 0o600))
+			_, err := ResolveTclaudeLayerModelTransport(codex, context)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "API key")
+			assert.Contains(t, err.Error(), "network open")
+			assert.Contains(t, err.Error(), "TCL-826")
+		})
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(
+		`cli_auth_credentials_store = "keyring"`), 0o600))
+	_, err := ResolveTclaudeLayerModelTransport(codex, context)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `cli_auth_credentials_store="keyring"`)
+	assert.Contains(t, err.Error(), "TCL-826")
+}
+
+func TestResolveTclaudeLayerCodexAllowsAuthlessExplicitProvider(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
+model_provider = "corp"
+[model_providers.corp]
+base_url = "https://models.example/v1"
+requires_openai_auth = false
+`), 0o600))
+
+	resolved, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.CodexName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CODEX_HOME", Value: codexHome},
+			},
+		})
+	require.NoError(t, err)
+	assert.Equal(t, "corp", resolved.Provider)
+	assert.Equal(t, "https://models.example/v1", resolved.BaseURL)
 }
 
 func TestResolveTclaudeLayerOpenCodeRemainsUnresolved(t *testing.T) {

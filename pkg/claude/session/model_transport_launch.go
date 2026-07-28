@@ -270,6 +270,7 @@ func resolveCodexModelTransport(
 	}
 
 	baseURL := ""
+	requiresOpenAIAuth := true
 	if provider == "openai" {
 		baseURL = strings.TrimSpace(config.OpenAIBaseURL)
 	} else {
@@ -280,6 +281,13 @@ func resolveCodexModelTransport(
 					provider, provider))
 		}
 		baseURL = strings.TrimSpace(configured.BaseURL)
+		requiresOpenAIAuth = configured.RequiresOpenAIAuth
+	}
+	if authErr := validateCodexFilteredAuth(
+		configDir, config.AuthCredentialsStore, environment, requiresOpenAIAuth,
+	); authErr != nil {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			authErr.Error())
 	}
 	return harness.ResolvedModelTransport{
 		Model:            context.Model,
@@ -290,17 +298,87 @@ func resolveCodexModelTransport(
 }
 
 type codexModelTransportConfig struct {
-	ModelProvider  string `toml:"model_provider"`
-	Profile        string `toml:"profile"`
-	OpenAIBaseURL  string `toml:"openai_base_url"`
-	ChatGPTBaseURL string `toml:"chatgpt_base_url"`
-	ModelProviders map[string]struct {
-		BaseURL string `toml:"base_url"`
+	ModelProvider        string `toml:"model_provider"`
+	Profile              string `toml:"profile"`
+	OpenAIBaseURL        string `toml:"openai_base_url"`
+	ChatGPTBaseURL       string `toml:"chatgpt_base_url"`
+	AuthCredentialsStore string `toml:"cli_auth_credentials_store"`
+	ModelProviders       map[string]struct {
+		BaseURL            string `toml:"base_url"`
+		RequiresOpenAIAuth bool   `toml:"requires_openai_auth"`
 	} `toml:"model_providers"`
 	Profiles map[string]struct {
 		ModelProvider  string `toml:"model_provider"`
 		ChatGPTBaseURL string `toml:"chatgpt_base_url"`
 	} `toml:"profiles"`
+}
+
+func validateCodexFilteredAuth(
+	configDir string,
+	store string,
+	environment map[string]string,
+	requiresOpenAIAuth bool,
+) error {
+	if strings.TrimSpace(environment["CODEX_ACCESS_TOKEN"]) != "" {
+		return codexFilteredAuthError(
+			"CODEX_ACCESS_TOKEN selects externally supplied authentication")
+	}
+	switch normalized := strings.ToLower(strings.TrimSpace(store)); normalized {
+	case "", "file":
+	case "auto", "keyring", "ephemeral":
+		return codexFilteredAuthError(fmt.Sprintf(
+			"cli_auth_credentials_store=%q is not inspectable at the launch seam",
+			normalized))
+	default:
+		return codexFilteredAuthError(fmt.Sprintf(
+			"cli_auth_credentials_store=%q is unsupported", normalized))
+	}
+
+	path := filepath.Join(configDir, "auth.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if requiresOpenAIAuth {
+			return codexFilteredAuthError(
+				"no persisted API-key authentication was found")
+		}
+		return nil
+	}
+	if err != nil {
+		return codexFilteredAuthError(fmt.Sprintf(
+			"cannot inspect Codex authentication at %s: %v", path, err))
+	}
+	var auth struct {
+		Mode         *string `json:"auth_mode"`
+		OpenAIAPIKey *string `json:"OPENAI_API_KEY"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return codexFilteredAuthError(fmt.Sprintf(
+			"cannot parse Codex authentication at %s", path))
+	}
+	mode := ""
+	if auth.Mode != nil {
+		mode = strings.TrimSpace(*auth.Mode)
+	} else if auth.OpenAIAPIKey != nil {
+		mode = "apikey"
+	} else {
+		mode = "chatgpt"
+	}
+	if mode != "apikey" {
+		return codexFilteredAuthError(fmt.Sprintf(
+			"persisted Codex auth mode %q can load remote provider overrides",
+			mode))
+	}
+	if auth.OpenAIAPIKey == nil || strings.TrimSpace(*auth.OpenAIAPIKey) == "" {
+		return codexFilteredAuthError(
+			"persisted Codex API-key authentication is missing its key")
+	}
+	return nil
+}
+
+func codexFilteredAuthError(reason string) error {
+	return fmt.Errorf(
+		"%s; filtered networking requires an inspectable API-key route because ChatGPT-auth provider overrides can refresh after launch. Sign in with a Codex API key or use network open (dynamic provider-resolution remedy tracked in TCL-826)",
+		reason)
 }
 
 var codexExternalModelConfigPaths = func() []string {

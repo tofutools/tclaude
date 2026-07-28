@@ -456,6 +456,9 @@ func ValidateTclaudeLayerNetwork(
 		if requirement.Template != "" {
 			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
 		}
+		if requirement.Template == "net-anthropic" {
+			detail += " If Claude's provider route changes after preflight, an unauthored destination is denied fail-closed for new flows at the packet floor; dynamic provider-resolution follow-up is tracked in TCL-826."
+		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
 			Axis:   "network",

@@ -816,6 +816,9 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "Claude Code 2.1.220")
 	assert.Contains(t, notices[0].Detail, "Codex CLI 0.145.0")
 	assert.Contains(t, notices[0].Detail, "M2c")
+	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
+	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
+	assert.Contains(t, notices[0].Detail, "TCL-826")
 }
 
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
