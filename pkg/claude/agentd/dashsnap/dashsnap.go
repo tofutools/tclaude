@@ -32,9 +32,12 @@
 //   - Leakless(false): rod's leakless helper would spawn a watchdog subprocess;
 //     disabling it avoids that friction in a restricted sandbox. We MustClose the
 //     browser ourselves instead.
-//   - Chrome prints harmless stderr noise in this environment — crashpad
-//     "Read-only file system" lines and dbus/UPower "ServiceUnknown" lines. They
-//     are NOT failures; screenshots still render. Ignore them.
+//   - On Linux, Capture points XDG_CONFIG_HOME, XDG_CACHE_HOME, and XDG_DATA_HOME
+//     at subdirectories of its disposable browser directory. Modern Chrome's
+//     crashpad database does not follow --user-data-dir and aborts startup when
+//     its fallback under ~/.config is read-only. The other XDG roots keep
+//     fontconfig, dconf, and NSS state out of the agent's home directory.
+//     dbus/UPower "ServiceUnknown" stderr lines remain harmless.
 //   - On macOS, Capture points MAC_CHROMIUM_TMPDIR at its disposable browser
 //     directory unless the caller already set it. This avoids Chromium ignoring
 //     TMPDIR and trying to create ProcessSingleton state under a restricted

@@ -1795,11 +1795,19 @@ Chrome/Chromium can be found or launched, so an environment gap is never
 mistaken for a dashboard regression; once a browser is up, any failed state is
 a real product failure.
 
-On Linux, the harness launches Chrome with `--no-sandbox` so it can run inside a
-restricted coding-agent environment. On macOS, it also points
-`MAC_CHROMIUM_TMPDIR` at a disposable, writable directory unless that variable
-is already set. That avoids Chromium's otherwise hard-coded user-temp socket
-path, but it cannot bypass a seatbelt sandbox that denies `mach-register`:
+On Linux, the harness launches Chrome with `--no-sandbox` and redirects
+`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME` to its disposable
+browser directory. Chrome's crashpad database does not follow
+`--user-data-dir`; without the XDG config redirect, a read-only `~/.config`
+causes Chrome to abort with `chrome_crashpad_handler: --database is required`.
+The disposable directory is removed after Chrome exits. For a direct headless
+Chrome invocation outside DashSnap, point those XDG variables at a writable
+temporary directory as well.
+
+On macOS, the harness also points `MAC_CHROMIUM_TMPDIR` at a disposable,
+writable directory unless that variable is already set. That avoids Chromium's
+otherwise hard-coded user-temp socket path, but it cannot bypass a seatbelt
+sandbox that denies `mach-register`:
 Chrome's multi-process startup requires the
 `com.google.Chrome.MachPortRendezvousServer.*` service. A sandboxed macOS agent
 must therefore ask the operator to run the command outside the agent sandbox,
