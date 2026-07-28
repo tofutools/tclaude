@@ -512,6 +512,12 @@ remains reachable in every mode. Global, group, and explicit list tiers compose
 by intersection; an empty intersection is saved and launched as authored but
 is disclosed as a composition warning.
 
+The network-list protocol contract is ordinary IPv4/IPv6 **TCP and UDP**
+connections. QUIC is UDP. A portless entry may also permit ICMP echo on a
+best-effort basis, but raw and packet sockets are not an authored connection
+class. Host/domain rules name DNS destinations, not TLS SNI, HTTP hosts,
+certificates, tenants, repositories, or API operations.
+
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the
 harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both
 explicit values use Codex's network boundary. `internet` explicitly disables

@@ -319,6 +319,33 @@ func TclaudeLayerServerHostAvailability() error {
 	return err
 }
 
+// FilteredNetworkPrerequisite is the live control-plane result for the future
+// Linux filtered gateway. Available does not mean NetworkList is enforced; M2a
+// deliberately records the probe while the capability matrix remains None.
+type FilteredNetworkPrerequisite struct {
+	Available bool   `json:"available"`
+	Detail    string `json:"detail"`
+}
+
+// ProbeFilteredNetworkPrerequisite checks the exact host building blocks named
+// by the filtered-network design. It is uncached so a resolved launch cannot
+// carry a stale answer after the operator installs or removes a prerequisite.
+func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
+	return probeFilteredNetworkPrerequisite()
+}
+
+// LaunchWhy is persisted in the resolved snapshot and therefore reaches both
+// launch notes/warnings and the dashboard badge. The last clause prevents a
+// positive prerequisite probe from being mistaken for an enforcement claim.
+func (p FilteredNetworkPrerequisite) LaunchWhy() string {
+	if p.Available {
+		return "filtered-network prerequisite probe: ready (" + p.Detail +
+			"); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open"
+	}
+	return "filtered-network prerequisite probe: unavailable (" + p.Detail +
+		"); the network allow list remains unenforced and outbound remains open"
+}
+
 // TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
 // Partial host-open implementations stay visibly unverified; a constructed
 // isolated root can report the stronger boundary it actually enforces.

@@ -284,8 +284,11 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 		},
 	}
 	caps := AccessEnforcement{
-		networkList: EnforcePartial, networkSelectors: []string{"host"},
-		networkPorts: false, scope: "tools-only",
+		networkList: EnforcePartial,
+		networkSelectors: []NetworkSelectorCapability{{
+			Selector: "host", Level: EnforceFull,
+		}},
+		networkPorts: EnforceNone, scope: "tools-only",
 		mechanism: "Claude Code sandbox", mcpBypass: true,
 	}
 	rendered, notices, err := PlanAccessEnforcement(axes, caps)
@@ -298,6 +301,68 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 	assert.Contains(t, notices[0].Detail, "tools-only scope")
 	assert.Contains(t, notices[0].Detail, "MCP servers bypass")
 	assert.Equal(t, "tools_only_scope", notices[1].Reason)
+}
+
+func TestM2aNetworkListCapabilityMatrixRemainsNone(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+	}
+	targets := []struct {
+		name           string
+		harness        *Harness
+		implementation sandboxpolicy.Implementation
+		mode           string
+	}{
+		{"Claude builtin", Default(), sandboxpolicy.ImplementationHarnessBuiltin, ClaudeSandboxOn},
+		{"Codex builtin", MustGet(CodexName), sandboxpolicy.ImplementationHarnessBuiltin, SandboxManagedProfile},
+		{"Claude tclaude", Default(), sandboxpolicy.ImplementationTclaudeLayer, ClaudeSandboxOff},
+		{"Codex tclaude", MustGet(CodexName), sandboxpolicy.ImplementationTclaudeLayer, SandboxDangerFull},
+		{"OpenCode tclaude", MustGet(OpenCodeName), sandboxpolicy.ImplementationTclaudeLayer, OpenCodeSandboxTclaudeLayer},
+		{"Claude stacked", Default(), sandboxpolicy.ImplementationStacked, ClaudeSandboxOn},
+		{"Codex stacked", MustGet(CodexName), sandboxpolicy.ImplementationStacked, SandboxManagedProfile},
+	}
+	for _, target := range targets {
+		for _, platform := range []string{"linux", "darwin"} {
+			t.Run(target.name+"/"+platform, func(t *testing.T) {
+				row, err := accessEnforcementTable(
+					target.harness, target.implementation, axes,
+					target.mode, platform,
+				)
+				require.NoError(t, err)
+				assert.Equal(t, EnforceNone, row.NetworkList,
+					"M2a is control-plane only; a cell may flip only with its executing CI smoke")
+			})
+		}
+	}
+}
+
+func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Host: "api.example.com", Ports: []int{443}},
+				{CIDR: "192.0.2.0/24", Ports: []int{443}},
+			},
+		},
+	}
+	caps := AccessEnforcement{
+		networkList: EnforceFull,
+		networkSelectors: []NetworkSelectorCapability{
+			{Selector: "host", Level: EnforcePartial, Detail: FilteredNetworkDNSIdentityCaveat},
+			{Selector: "cidr", Level: EnforceFull},
+		},
+		networkPorts: EnforceFull,
+		scope:        "process",
+		mechanism:    "future filtered gateway",
+	}
+	rendered, notices, err := PlanAccessEnforcement(axes, caps)
+	require.NoError(t, err)
+	assert.Equal(t, axes, rendered)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "selector_partial", notices[0].Reason)
+	assert.Equal(t, []int{0}, notices[0].Entries)
+	assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
 }
 
 func TestClosedPartialEnforcesAndWarnsButClosedNoneRefuses(t *testing.T) {

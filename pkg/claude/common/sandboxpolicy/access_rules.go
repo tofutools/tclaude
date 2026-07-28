@@ -76,6 +76,7 @@ const (
 
 	AccessNoticeReasonEmptyIntersection     = "empty_intersection"
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
+	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
 
 	AccessNoticeEffectNotEnforced     = "not_enforced"
 	AccessNoticeEffectEnforcedWider   = "enforced_wider"

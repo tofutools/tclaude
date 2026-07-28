@@ -164,6 +164,20 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nWarning: network access list was not enforced\nClick to temporarily disable',
   },
   {
+    name: 'filtered prerequisite outcome rides the badge why-clause',
+    state: {
+      harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
+      sandbox_implementation: 'tclaude-layer',
+      sandbox_profiles_recorded: true,
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network', reason: 'filtered_prerequisite_probe',
+        detail: 'filtered-network prerequisite probe: ready (bubblewrap user/network namespaces, pasta, and nftables are available); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open',
+      }],
+    },
+    glyph: '🔒', danger: false,
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: ready (bubblewrap user/network namespaces, pasta, and nftables are available); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open\nClick to temporarily disable',
+  },
+  {
     name: 'an offline lock stays informative but non-actionable',
     online: false,
     state: {

@@ -550,8 +550,21 @@ constructed-root posture's socket boundary; the compact badge tooltip does not
 report socket fidelity. Use its adjacent details chevron for recorded launch
 fidelity, or `sandbox-profiles plan` for a dry-run of explicit inputs. The
 reserved `filtered` posture will eventually cover
-proxy-backed host/domain and host-loopback allowlists; no proxy is implemented
-today.
+host/domain, CIDR, host-loopback, and destination-port allowlists. Its authored
+contract is ordinary IPv4/IPv6 TCP and UDP traffic (QUIC is UDP); ICMP echo is
+best-effort for portless entries, and raw/packet sockets are not an authored
+class. No filtered applier is enabled today, so the capability matrix remains
+`None`: list policy widens to host-open with a warning. On Linux, resolved
+launches also record the live prerequisite result for bubblewrap user/network
+namespaces, rootless `pasta`, and nftables. A ready probe is preparation, not
+an enforcement claim, and the warning still says that outbound remains open.
+
+The planned Linux gateway uses DNS-to-IP leases for host/domain rules, not SNI
+or application identity. A resolved shared IP can therefore be reused until
+its lease expires, which keeps those selectors Partial. Host loopback uses the
+synthetic `host.tclaude.internal` endpoint; hard-coded `127.0.0.1` and `::1`
+remain sandbox-private. CIDR and TCP/UDP port matching may become Full only in
+the PR whose named CI smoke actually executes.
 
 Host-loopback isolation also severs editor integrations that connect over a
 localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture

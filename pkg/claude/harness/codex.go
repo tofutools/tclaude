@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // CodexName is the stable identifier Codex conversations are tagged with,
@@ -24,12 +25,20 @@ const CodexName = "codex"
 // ConvStore.SetTitle.
 func init() {
 	Register(&Harness{
-		Name:             CodexName,
-		DisplayName:      "Codex CLI",
-		Spawn:            codexSpawner{},
-		Ask:              codexAsker{},
-		OneShotReplay:    OneShotReplayCodex,
-		Models:           codexModels{},
+		Name:          CodexName,
+		DisplayName:   "Codex CLI",
+		Spawn:         codexSpawner{},
+		Ask:           codexAsker{},
+		OneShotReplay: OneShotReplayCodex,
+		Models:        codexModels{},
+		ModelTransport: staticModelTransport{
+			template: "net-openai-codex",
+			destinations: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Domain: "chatgpt.com", Ports: []int{443}},
+				{Domain: "auth.openai.com", Ports: []int{443}},
+			},
+		},
 		Convs:            codexConvStore{},
 		Hooks:            codexHookInstaller{},
 		Life:             codexLifecycle{},

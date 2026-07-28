@@ -24,6 +24,8 @@ var resolveTclaudeLayerAccessVerdict = func(
 	return verdict, err
 }
 
+var probeFilteredNetworkPrerequisite = session.ProbeFilteredNetworkPrerequisite
+
 // spawnSandboxLineageFailure prevents an agent that can spawn peers from
 // minting a child with a looser launch sandbox than the caller currently has.
 // Humans bypass this check: they are the trust root everywhere else in agentd.
@@ -190,6 +192,17 @@ func planSandboxProfileAccessForLaunch(
 	if err != nil {
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
+	}
+	if implementation.UsesTclaudeLayer() &&
+		axes.Network.Mode == sandboxpolicy.AccessModeList {
+		probe := probeFilteredNetworkPrerequisite()
+		notices = append(notices, sandboxpolicy.AccessNotice{
+			Class:  sandboxpolicy.AccessNoticeClassDegradation,
+			Axis:   "network",
+			Reason: sandboxpolicy.AccessNoticeReasonFilteredPrerequisite,
+			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+			Detail: probe.LaunchWhy(),
+		})
 	}
 	materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(rendered.UnixSockets)
 	if err != nil {
