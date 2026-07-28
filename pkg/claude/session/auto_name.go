@@ -20,7 +20,9 @@ import (
 const autoNameRequestTimeout = 500 * time.Millisecond
 const autoNamePromptRunes = 2048
 
-var freeFloatingAgentNameRe = regexp.MustCompile(`^session-[0-9]{8}-[0-9]{6}-[a-zA-Z0-9]{1,8}$`)
+var freeFloatingAgentNameRe = regexp.MustCompile(
+	`^(?:(?:session-)?[0-9]{8}-[0-9]{6}|[0-9]{8}-[0-9]{4})-[a-zA-Z0-9]{1,8}$`,
+)
 
 // AutoNameRequest asks agentd to refine a free-floating session's generated
 // name from its first prompt. ConvID is only a cross-check; the daemon resolves
@@ -42,7 +44,7 @@ func AutoNamePromptExcerpt(prompt string) string {
 
 // FreeFloatingAgentName returns the deterministic, cheap display-name fallback
 // for a newly enrolled tclaude session. The actor suffix disambiguates sessions
-// started in the same second without introducing random state of its own.
+// started in the same minute without introducing random state of its own.
 func FreeFloatingAgentName(created time.Time, agentID string) string {
 	if created.IsZero() {
 		created = time.Now()
@@ -54,7 +56,7 @@ func FreeFloatingAgentName(created time.Time, agentID string) string {
 	if uniq == "" {
 		uniq = "unknown"
 	}
-	return fmt.Sprintf("session-%s-%s", created.UTC().Format("20060102-150405"), uniq)
+	return fmt.Sprintf("%s-%s", created.UTC().Format("20060102-1504"), uniq)
 }
 
 // IsFreeFloatingAgentName reports whether name is one of this package's
