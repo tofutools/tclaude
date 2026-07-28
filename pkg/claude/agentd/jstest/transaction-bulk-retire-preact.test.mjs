@@ -53,7 +53,8 @@ async function openBulk(t, descriptor, options = {}) {
 const candidates = [
   {
     agent_id: 'agt_alpha', conv_id: 'alpha-1111-2222-3333-444444444444',
-    title: 'Alpha worker', status: 'idle', role: 'builder', groups: ['alpha', 'shared'],
+    title: 'Alpha worker', status: 'idle', role: 'builder',
+    groups: ['alpha', 'research-and-development-with-an-intentionally-long-name', 'shared'],
   },
   {
     agent_id: 'agt_beta', conv_id: 'beta-1111-2222-3333-444444444444',
@@ -369,9 +370,9 @@ test('global retire preview identifies every-group scope including Ungrouped and
     'Banish 2 familiars');
   const rows = host.querySelectorAll('#retire-preview-list .cleanup-row');
   assert.equal(rows[0].querySelector('.retire-preview-groups .theme-copy-regular').textContent,
-    'in: alpha, shared');
+    'in: alpha, research-and-development-with-an-intentionally-long-name, shared');
   assert.equal(rows[0].querySelector('.retire-preview-groups .theme-copy-wizard').textContent,
-    'in party: alpha, shared');
+    'parties: alpha, research-and-development-with-an-intentionally-long-name, shared');
   assert.equal(rows[1].querySelector('.retire-preview-groups .theme-copy-regular').textContent,
     'in: Ungrouped');
   assert.equal(rows[1].querySelector('.retire-preview-groups .theme-copy-wizard').textContent,

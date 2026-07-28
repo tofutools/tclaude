@@ -5151,6 +5151,12 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
   color: #7d8590; flex: 1 1 auto; overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis;
 }
+/* The fleet-retire preview is a destructive review surface: every group name
+   must remain inspectable even when an agent belongs to many/long groups. */
+#retire-preview-modal .cleanup-row .retire-preview-groups {
+  min-width: 0; overflow: visible; white-space: normal;
+  text-overflow: clip; overflow-wrap: anywhere;
+}
 .cleanup-row .seen { color: #7d8590; font-size: 11px; flex: 0 0 auto; }
 .cleanup-badge {
   font-size: 10px; padding: 0 5px; border-radius: 8px;
