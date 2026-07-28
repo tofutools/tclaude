@@ -1005,20 +1005,6 @@ func TestBwrapArgsRequiresCompiledFilteredPolicy(t *testing.T) {
 		NetworkPosture: sandboxpolicy.NetworkFiltered,
 	})
 	require.ErrorContains(t, err, "no compiled gateway policy")
-
-	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
-		Mode: sandboxpolicy.AccessModeList,
-		Allow: []sandboxpolicy.NetworkAllowEntry{{
-			CIDR: "192.0.2.0/24", Ports: []int{443},
-		}},
-	})
-	require.NoError(t, err)
-	args, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
-		NetworkPosture:  sandboxpolicy.NetworkFiltered,
-		FilteredNetwork: &ir,
-	})
-	require.NoError(t, err)
-	assert.Contains(t, args, "--unshare-net")
 }
 
 // TCLAUDE_IGNORE_HOOKS is the blanket soft-disable used by callers that

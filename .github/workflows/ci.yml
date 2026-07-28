@@ -224,8 +224,8 @@ jobs:
           TCLAUDE_FILTERED_DENIED_PORT: "41002"
         run: |
           namespace=tclaude-filtered-target
-          host_link=tclaude-filtered-host
-          peer_link=tclaude-filtered-peer
+          host_link=tclflt0
+          peer_link=tclflt1
           server_pids=()
           cleanup() {
             for pid in "${server_pids[@]}"; do
