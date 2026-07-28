@@ -55,11 +55,11 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 			t.Errorf("transaction island is missing ungrouped-retire contract %q", required)
 		}
 	}
-	if !strings.Contains(controller, "openUngroupedRetirePreviewDialog(candidates)") {
+	if !strings.Contains(controller, "openUngroupedRetirePreviewDialog(candidates, status = '')") {
 		t.Error("transaction controller is missing the ungrouped-retire launcher")
 	}
 	for _, required := range []string{
-		"async retireUngroupedPreview({ agents, shutdown, deleteWorktrees })",
+		"async retireAgentsPreview({ agents, shutdown, deleteWorktrees })",
 		"'/api/cleanup/agents'",
 		"mode: 'retire', include_online: true",
 		"delete_worktrees: !!deleteWorktrees",
@@ -69,11 +69,12 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"function ungroupedRetireCandidates(",
-		"for (const a of (snap.ungrouped || [])) {",
+		"function retireCandidatesByStatus(rows, status = '')",
+		"function ungroupedRetireCandidates(status = '')",
+		"return retireCandidatesByStatus((lastSnapshot || {}).ungrouped, status);",
 		"if (!a.conv_id || seen.has(a.conv_id)) continue;",
-		"const candidates = ungroupedRetireCandidates();",
-		"openUngroupedRetirePreviewDialog(candidates)",
+		"const candidates = ungroupedRetireCandidates(status);",
+		"openUngroupedRetirePreviewDialog(candidates, status)",
 		"from './transaction-dialog-controller.js';",
 	} {
 		if !strings.Contains(operations, required) {

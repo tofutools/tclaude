@@ -1210,6 +1210,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("'Form a party…'", "create-group presents as Form a party in wizard mode (matching the ⚔ Form a party dialog it opens)")
 	must("'Dispel banished familiars…'", "delete-retired presents as Dispel in wizard mode")
 	must("'Banish unbound familiars…'", "retire-ungrouped presents as Banish unbound familiars in wizard mode")
+	must("`Banish ${status} familiars in Unbound`", "status-filtered ungrouped retire uses the Unbound wizard vocabulary")
+	must("`Banish ${status} familiars across all parties`", "global status-filtered retire spans all parties in wizard mode")
 	must("`Banish familiar: ${label}`", "per-agent retire presents as Banish in wizard mode")
 	must("`Scry the ${name}`", "tab navigation presents as Scry in wizard mode")
 	must("`Furl party: ${g.name}`", "group collapse presents as Furl in wizard mode")

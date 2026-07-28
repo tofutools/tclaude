@@ -247,7 +247,7 @@ export function createTransactionDialogActions({
       return payload;
     },
 
-    async retireUngroupedPreview({ agents, shutdown, deleteWorktrees }) {
+    async retireAgentsPreview({ agents, shutdown, deleteWorktrees }) {
       const response = await fetchImpl(
         '/api/cleanup/agents',
         {

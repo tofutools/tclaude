@@ -352,6 +352,11 @@ function cleanupActivityLabel(candidate) {
   return `last seen ${relative}`;
 }
 
+function cleanupGroupSearchText(candidate) {
+  if (candidate.category !== 'agent') return '';
+  return candidate.groups.length ? candidate.groups.join(' ') : 'ungrouped unbound';
+}
+
 function CleanupResult({ response }) {
   const outcomes = response?.outcomes || [];
   return html`<div class="cleanup-list" id="cleanup-list">
@@ -398,10 +403,15 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
   const normalizedQuery = query.trim().toLowerCase();
   const rowVisible = (candidate) => {
     if (normalizedQuery && !candidate.title.toLowerCase().includes(normalizedQuery)
-      && !candidate.conv_id.toLowerCase().includes(normalizedQuery)) return false;
+      && !candidate.conv_id.toLowerCase().includes(normalizedQuery)
+      && !cleanupGroupSearchText(candidate).toLowerCase().includes(normalizedQuery)) return false;
     if (!multiCategory) return true;
     if (!categoryOn[candidate.category]) return false;
     if (!cleanupTierCategories(effectiveTier).includes(candidate.category)) return false;
+    // Ungrouped is an explicit active-agent scope for retire/delete. It has no
+    // membership for the unjoin tier to remove, so keep those no-op rows out.
+    if (effectiveTier === 'unjoin' && candidate.category === 'agent'
+      && candidate.groups.length === 0) return false;
     if (candidate.online && !includeOnline && effectiveTier !== 'reinstate') return false;
     return true;
   };
@@ -592,7 +602,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
         /> h
       </span>
       ${multiCategory ? html`<input
-        type="search" id="cleanup-search" placeholder="filter title / id…"
+        type="search" id="cleanup-search" placeholder="filter title / id / group…"
         value=${query} disabled=${controlsDisabled}
         onInput=${(event) => setQuery(event.currentTarget.value)}
       />` : null}
@@ -632,7 +642,11 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
                 <span class="id">${candidate.conv_id.slice(0, 8)}</span>
                 ${candidate.owner ? html`<span class="cleanup-badge owner">owner</span>` : null}
                 ${candidate.online ? html`<span class="cleanup-badge online">online</span>` : null}
-                <span class="meta">${candidate.groups.length ? `in: ${candidate.groups.join(', ')}` : ''}</span>
+                <span class="meta">${candidate.category === 'agent'
+                  ? candidate.groups.length
+                    ? `in: ${candidate.groups.join(', ')}`
+                    : html`<${Words} plain="in: Ungrouped" wizard="unbound" />`
+                  : ''}</span>
                 <span class="seen">${cleanupActivityLabel(candidate)}</span>
               </label>
             </div>`;
@@ -929,10 +943,18 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
   );
   const regularTitle = descriptor.kind === 'retire-group-preview'
     ? `Retire ${descriptor.status} agents in "${descriptor.group}"`
-    : 'Retire ungrouped agents';
+    : descriptor.kind === 'retire-all-preview'
+      ? `Retire ${descriptor.status} agents across all groups`
+      : descriptor.status
+        ? `Retire ${descriptor.status} agents in "Ungrouped"`
+        : 'Retire ungrouped agents';
   const wizardTitle = descriptor.kind === 'retire-group-preview'
     ? `Banish ${descriptor.status} familiars in "${descriptor.group}"`
-    : 'Banish unbound familiars';
+    : descriptor.kind === 'retire-all-preview'
+      ? `Banish ${descriptor.status} familiars across all parties`
+      : descriptor.status
+        ? `Banish ${descriptor.status} familiars in "Unbound"`
+        : 'Banish unbound familiars';
 
   const updateVisible = (checked) => {
     if (busy || locked) return;
@@ -1004,7 +1026,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     try {
       const response = descriptor.kind === 'retire-group-preview'
         ? await actions.retireGroupPreview(request)
-        : await actions.retireUngroupedPreview(request);
+        : await actions.retireAgentsPreview(request);
       if (activeRef.current) setResult(response || {});
     } catch (cause) {
       if (activeRef.current) setError(cause?.message || String(cause));
@@ -1027,10 +1049,19 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         plain=${`These ${descriptor.status} agents in group "${descriptor.group}" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.`}
         wizard=${`These ${descriptor.status} familiars in party "${descriptor.group}" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.`}
       />`
-      : html`<${Words}
-        plain="These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired."
-        wizard="These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished."
-      />`;
+      : descriptor.kind === 'retire-all-preview'
+        ? html`<${Words}
+          plain=${`These ${descriptor.status} agents span every group, including Ungrouped. Each ticked agent will be demoted to a plain, reinstatable conversation, removed from every group, and have its grants revoked. Untick any you want to keep; only the ticked agents are retired.`}
+          wizard=${`These ${descriptor.status} familiars span every party, including the Unbound. Each ticked familiar will return to a restorable conversation scroll, leave every party, and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`}
+        />`
+        : html`<${Words}
+          plain=${descriptor.status
+            ? `These ${descriptor.status} agents are in the virtual Ungrouped group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.`
+            : 'These agents are not in any group. Each ticked agent will be demoted to a plain, reinstatable conversation and its grants revoked. Untick any you want to keep; only the ticked agents are retired.'}
+          wizard=${descriptor.status
+            ? `These ${descriptor.status} familiars are in the ethereal Unbound party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.`
+            : 'These unbound familiars belong to no party. Each ticked familiar will return to a restorable conversation scroll and lose its boons. Untick any you want to keep; only the ticked familiars are banished.'}
+        />`;
 
   return html`<${TransactionDialogFrame}
     id="retire-preview-modal"
@@ -1797,7 +1828,8 @@ export function TransactionDialogApp({ state, actions, confirmDiscard }) {
     />`;
   }
   if (current.descriptor.kind === 'retire-group-preview'
-    || current.descriptor.kind === 'retire-ungrouped-preview') {
+    || current.descriptor.kind === 'retire-ungrouped-preview'
+    || current.descriptor.kind === 'retire-all-preview') {
     return html`<${BulkRetireDialog}
       key=${current.key}
       descriptor=${current.descriptor}

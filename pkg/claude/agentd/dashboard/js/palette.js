@@ -45,7 +45,8 @@ import { $, $$ } from './helpers.js';
 import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
   openWindowModal,
-  openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
+  openRetireAllPreview, openRetirePreview, openRetireUngroupedPreview,
+  openDeleteRetiredPreview,
   openWorktreeCleanup, openCleanupModal,
   shutdownScope, powerOnScope, resumeAgentReq,
 } from './dashboard-operations.js';
@@ -682,17 +683,53 @@ export function buildCommands(snapshot) {
     }
   }
 
-  // 8) Per-group bulk retire — "Retire idle / offline agents in <group>".
-  //    A cleanup sweep that demotes a whole cohort of a group's members
-  //    to plain (reinstatable) conversations. Opens a PREVIEW modal
-  //    (openRetirePreview) listing precisely the matching members so the
-  //    human can opt individual agents out before the batch fires; submit
-  //    POSTs the explicit conv-id list to /api/groups/{name}/retire, so
-  //    the BE retires exactly what was previewed. Listed only when the
-  //    group actually HAS members of that status, so the palette never
-  //    offers a no-op.
-  for (const g of groups) {
-    for (const status of ['idle', 'offline']) {
+  // 8) Status-filtered bulk retire. Each idle/offline cohort gets separate
+  //    commands for the whole active roster (all real groups + Ungrouped),
+  //    the virtual Ungrouped group, and each real group. Every command opens
+  //    the same explicit-selection preview and is offered only when its
+  //    snapshot scope has a live match.
+  for (const status of ['idle', 'offline']) {
+    const allCount = new Set((snap.agents || [])
+      .filter(agent => status === 'offline'
+        ? !agent.online
+        : agent.online && agent.state?.status === status)
+      .map(agent => agent.conv_id)
+      .filter(Boolean)).size;
+    if (allCount) {
+      const plural = allCount === 1 ? '' : 's';
+      cmds.push({
+        icon: wiz('♻', '🪄'),
+        label: wiz(`Retire ${status} agents across all groups`, `Banish ${status} familiars across all parties`),
+        hint: wiz(`preview + demote ${allCount} ${status} agent${plural} across every group, including Ungrouped`,
+          `preview + banish ${allCount} ${status} familiar${plural} across every party, including the Unbound`),
+        keywords: 'retire demote cleanup remove tidy bulk ' + status
+          + ' agents all groups global everywhere fleet ungrouped'
+          + ' banish exile dismiss familiars all parties tower unbound',
+        run: () => openRetireAllPreview(status),
+      });
+    }
+
+    const ungroupedN = new Set((snap.ungrouped || [])
+      .filter(agent => status === 'offline'
+        ? !agent.online
+        : agent.online && agent.state?.status === status)
+      .map(agent => agent.conv_id)
+      .filter(Boolean)).size;
+    if (ungroupedN) {
+      const plural = ungroupedN === 1 ? '' : 's';
+      cmds.push({
+        icon: wiz('♻', '🪄'),
+        label: wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} familiars in Unbound`),
+        hint: wiz(`preview + demote ${ungroupedN} ${status} ungrouped agent${plural} to plain conversations`,
+          `preview + banish ${ungroupedN} ${status} unbound familiar${plural} back to plain scrolls`),
+        keywords: 'retire demote cleanup remove tidy bulk ' + status
+          + ' agents ungrouped no group groupless loose'
+          + ' banish exile dismiss familiars unbound unattached',
+        run: () => openRetireUngroupedPreview(status),
+      });
+    }
+
+    for (const g of groups) {
       const group = (snap.groups || []).find(candidate => candidate.name === g.name);
       const n = new Set((group?.members || [])
         .filter(member => status === 'offline'
