@@ -201,6 +201,8 @@ func TestUnixLaunchAcceptedPeerHelper(t *testing.T) {
 func TestRemoveUnixSocketPreservesReplacement(t *testing.T) {
 	runtime, server, _ := unixHTTPFixture(t)
 	require.NoError(t, server.Close())
+	// Keep both sockets live under validator-compatible paths so their
+	// identities are guaranteed distinct before the replacement rename (TCL-810).
 	replacementParent := filepath.Join(filepath.Dir(filepath.Dir(runtime.ControlSocketPath)),
 		"agt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	require.NoError(t, os.Mkdir(replacementParent, 0o700))
