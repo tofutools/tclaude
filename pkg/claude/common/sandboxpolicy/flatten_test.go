@@ -66,7 +66,8 @@ func TestFlattenExpandsIncludesWithLocalOverride(t *testing.T) {
 }
 
 func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	target := filepath.Join(root, "target")
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.Mkdir(target, 0o755))

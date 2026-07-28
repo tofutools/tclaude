@@ -636,23 +636,6 @@ func sameDirectoryTarget(left, right string) bool {
 	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }
 
-func cloneFilesystemSpellings(in *FilesystemSpellings) *FilesystemSpellings {
-	if in == nil {
-		return nil
-	}
-	out := &FilesystemSpellings{
-		Version: in.Version,
-		Rules:   make([]FilesystemSpellingRule, len(in.Rules)),
-	}
-	for i, rule := range in.Rules {
-		out.Rules[i] = FilesystemSpellingRule{
-			ResolvedPath: rule.ResolvedPath,
-			Spellings:    append([]string(nil), rule.Spellings...),
-		}
-	}
-	return out
-}
-
 func accessRank(access Access) int {
 	switch access {
 	case AccessDeny:

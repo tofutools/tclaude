@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -490,7 +491,13 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	}
 	var normalized sandboxpolicy.Profile
 	var err error
-	if p.FilesystemSpellings == nil {
+	authoring, err := sandboxFilesystemNeedsAuthoring(
+		p.Filesystem, p.FilesystemSpellings,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if authoring {
 		normalized, _, err = sandboxpolicy.NormalizeForAuthoring(input)
 	} else {
 		normalized, _, err = sandboxpolicy.NormalizeForPersistence(input)
@@ -509,6 +516,61 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	out.UnixSockets = normalized.UnixSockets
 	out.Includes = normalized.Includes
 	return &out, nil
+}
+
+// sandboxFilesystemNeedsAuthoring distinguishes an intentional filesystem
+// replacement from an ordinary edit carrying a pinned spelling sidecar.
+// Direct DB callers historically replace p.Filesystem in place; they cannot
+// be required to know the sidecar's lifecycle. A structurally matching sidecar
+// remains pinned and receives full drift validation. A changed row set enters
+// the authoring seam and produces fresh metadata from only the new spellings.
+func sandboxFilesystemNeedsAuthoring(
+	filesystem []SandboxFilesystemGrant,
+	spellings *sandboxpolicy.FilesystemSpellings,
+) (bool, error) {
+	if spellings == nil {
+		return true, nil
+	}
+	authoritative := make(map[string]struct{}, len(filesystem))
+	retained := make(map[string]map[string]struct{}, len(spellings.Rules))
+	for _, rule := range spellings.Rules {
+		set := retained[rule.ResolvedPath]
+		if set == nil {
+			set = map[string]struct{}{}
+			retained[rule.ResolvedPath] = set
+		}
+		for _, spelling := range rule.Spellings {
+			set[filepath.Clean(spelling)] = struct{}{}
+		}
+	}
+	for _, grant := range filesystem {
+		clean := filepath.Clean(grant.Path)
+		authoritative[clean] = struct{}{}
+		probe, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
+			Name: "filesystem-authoring-probe",
+			Filesystem: []sandboxpolicy.FilesystemGrant{{
+				Path: clean, Access: grant.Access,
+			}},
+		})
+		if err != nil {
+			// The normal authoring/persistence validator owns the actionable
+			// error; structural detection must not weaken or replace it.
+			continue
+		}
+		resolved := probe.Filesystem[0].Path
+		if clean == resolved {
+			continue
+		}
+		if _, ok := retained[resolved][clean]; !ok {
+			return true, nil
+		}
+	}
+	for _, rule := range spellings.Rules {
+		if _, ok := authoritative[rule.ResolvedPath]; !ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func GetSandboxProfile(name string) (*SandboxProfile, error) {

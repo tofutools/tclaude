@@ -239,7 +239,9 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 
 func TestSandboxProfilePreviewAndSaveRejectRetargetedRetainedSpelling(t *testing.T) {
 	f := newFlow(t)
-	root := filepath.Join(os.Getenv("HOME"), "retarget-preview")
+	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	require.NoError(t, err)
+	root := filepath.Join(home, "retarget-preview")
 	original := filepath.Join(root, "original")
 	current := filepath.Join(root, "current")
 	alias := filepath.Join(root, "alias")

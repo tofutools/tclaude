@@ -74,8 +74,7 @@ func TestNormalizeForAuthoringRetainsAliasBesideCanonicalAuthority(t *testing.T)
 }
 
 func TestNormalizeForAuthoringMarksOrdinaryProfileModernWithoutAliases(t *testing.T) {
-	path := t.TempDir()
-	canonical, err := filepath.EvalSymlinks(path)
+	path, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 
 	got, _, err := NormalizeForAuthoring(Profile{
@@ -83,7 +82,7 @@ func TestNormalizeForAuthoringMarksOrdinaryProfileModernWithoutAliases(t *testin
 		Filesystem: []FilesystemGrant{{Path: path, Access: AccessRead}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []FilesystemGrant{{Path: canonical, Access: AccessRead}}, got.Filesystem)
+	assert.Equal(t, []FilesystemGrant{{Path: path, Access: AccessRead}}, got.Filesystem)
 	assert.Equal(t, &FilesystemSpellings{
 		Version: FilesystemSpellingsVersion,
 		Rules:   []FilesystemSpellingRule{},
@@ -100,11 +99,16 @@ func TestNormalizeForAuthoringCaseAndNFCMergeRequiresConfirmedIdentity(t *testin
 		{name: "NFC", first: "\u00e9", last: "e\u0301"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
 			first := filepath.Join(root, tc.first)
 			last := filepath.Join(root, tc.last)
 			require.NoError(t, os.Mkdir(first, 0o755))
-			require.NoError(t, os.Mkdir(last, 0o755))
+			if _, err := os.Stat(last); os.IsNotExist(err) {
+				require.NoError(t, os.Mkdir(last, 0o755))
+			} else {
+				require.NoError(t, err)
+			}
 			grants := []FilesystemGrant{
 				{Path: first, Access: AccessRead},
 				{Path: last, Access: AccessWrite},
@@ -132,7 +136,8 @@ func TestNormalizeForAuthoringCaseAndNFCMergeRequiresConfirmedIdentity(t *testin
 }
 
 func TestNormalizeForPersistenceRejectsRetargetedRetainedSpellingActionably(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	original := filepath.Join(root, "original")
 	current := filepath.Join(root, "current")
 	alias := filepath.Join(root, "alias")
