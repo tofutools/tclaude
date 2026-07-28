@@ -14,6 +14,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		file   string
 		needle string
 	}{
+		{"js/groups-list.js", `snapshot?.group_attachments_enabled`},
 		{"js/groups-list.js", `<${GroupAttachment} group=${group} actions=${actions} />`},
 		{"js/groups-list.js", `class="group-attachment group-attachment-empty"`},
 		{"js/groups-list.js", `>📎</a>`},
@@ -21,6 +22,8 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `parsed.protocol === 'http:' || parsed.protocol === 'https:'`},
 		{"js/groups-actions.js", `openGroupAttachmentDialog({`},
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},
+		{"js/action-dialog-island.js", `snapshot?.value?.group_attachments_enabled`},
+		{"js/action-dialog-island.js", `if (!enabled) state.close(descriptor);`},
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},
 		{"js/action-dialog-actions.js", `/api/groups/${encodeURIComponent(group)}/attachment`},
 		{"dashboard.css", `position: absolute; z-index: 4;`},

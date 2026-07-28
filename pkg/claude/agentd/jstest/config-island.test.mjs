@@ -171,6 +171,49 @@ test('Config keeps the terminal command-palette shortcut default-off with an exp
   await mounted.unmount();
 });
 
+test('Config keeps group attachments default-off with an explicit opt-in', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  let raw = '{}';
+  const state = createConfigState({ activeTab: harness.signals.signal('groups') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw }) }),
+  }} />`);
+
+  await adapter.loadConfigTab();
+  const checkbox = mounted.container.querySelector('#cfg-feature-group-attachments');
+  assert.equal(checkbox.checked, false, 'absent key loads as unchecked');
+  assert.equal(adapter.assembleConfig().features?.group_attachments, undefined,
+    'unchecked default stays omitted');
+
+  raw = JSON.stringify({
+    features: {
+      group_attachments: true,
+      future_feature_owned_elsewhere: true,
+    },
+  });
+  await adapter.loadConfigTab();
+  assert.equal(checkbox.checked, true, 'explicit true loads as checked');
+  assert.equal(adapter.assembleConfig().features.group_attachments, true,
+    'checked persists the explicit opt-in');
+  assert.equal(adapter.assembleConfig().features.future_feature_owned_elsewhere, true,
+    'the form preserves unrelated feature keys');
+
+  await harness.act(() => {
+    checkbox.checked = false;
+    harness.fireEvent(checkbox, 'input');
+  });
+  assert.equal(adapter.assembleConfig().features?.group_attachments, undefined,
+    'unchecking removes only the opt-in');
+  assert.equal(adapter.assembleConfig().features.future_feature_owned_elsewhere, true,
+    'unchecking still preserves unrelated feature keys');
+  await mounted.unmount();
+});
+
 test('Config saves live wizard and slop activity-bot selections over their loaded defaults', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([

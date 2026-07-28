@@ -570,6 +570,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Group attachments</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-group-attachments" /> show persistent <strong>group attachment</strong> paperclips</label>
+        <span class="cfg-hint">Off by default while this interaction is refined. When enabled, a paperclip overlaid above each group title can hold one persistent http(s) reference. Turning the flag off only hides the controls; existing stored attachments remain intact. Takes effect on the next dashboard refresh. Stored as <code>features.group_attachments</code>.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Command palette in terminals</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-terminal-command-palette-shortcut" /> let <strong>Ctrl/Cmd+K</strong> open the command palette while a web terminal has focus</label>
         <span class="cfg-hint">Off by default because Ctrl/Cmd+K clears the current input line in the supported harnesses. When enabled, the dashboard claims that chord inside web terminals instead. Takes effect on the next dashboard refresh. Stored as <code>features.terminal_command_palette_shortcut</code>.</span>

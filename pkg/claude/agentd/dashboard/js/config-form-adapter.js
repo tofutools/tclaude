@@ -443,10 +443,12 @@ function populateConfigForm(cfg) {
   // lives in the slop block.
   $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
 
-  // Feature switches (config features.*). Processes and the terminal command
-  // palette shortcut default off; mounting the shared agent-directory parent
-  // defaults on and only an explicit false unchecks it.
+  // Feature switches (config features.*). Processes, group attachments, and
+  // the terminal command palette shortcut default off; mounting the shared
+  // agent-directory parent defaults on and only an explicit false unchecks it.
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
+  $('#cfg-feature-group-attachments').checked =
+    !!(cfg.features && cfg.features.group_attachments);
   $('#cfg-feature-terminal-command-palette-shortcut').checked =
     !!(cfg.features && cfg.features.terminal_command_palette_shortcut);
   $('#cfg-feature-agent-dirs-mount-parent').checked = cfg.features?.agent_dirs_mount_parent !== false;
@@ -704,13 +706,18 @@ function assembleConfig() {
   if (Object.keys(usage).length) cfg.usage = usage; else delete cfg.usage;
 
   // features is an optional block for in-development feature switches. Clone
-  // the existing one so a future flag with no widget round-trips. Processes
-  // and terminal_command_palette_shortcut default off, while
+  // the existing one so a future flag with no widget round-trips. Processes,
+  // group_attachments, and terminal_command_palette_shortcut default off, while
   // agent_dirs_mount_parent defaults on: omit each key at its default, and drop
   // the block when it is empty, so an all-default config does not marshal a
   // spurious "features": {} diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
+  if ($('#cfg-feature-group-attachments').checked) {
+    feats.group_attachments = true;
+  } else {
+    delete feats.group_attachments;
+  }
   if ($('#cfg-feature-terminal-command-palette-shortcut').checked) {
     feats.terminal_command_palette_shortcut = true;
   } else {

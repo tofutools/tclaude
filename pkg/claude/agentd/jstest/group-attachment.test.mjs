@@ -16,6 +16,9 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     harness.importDashboardModule('js/action-dialog-island.js'),
   ]);
   const state = createActionDialogState();
+  const featureSnapshot = harness.signals.signal({
+    group_attachments_enabled: false,
+  });
   const actions = {
     openGroupAttachment: state.openGroupAttachment,
     close: state.close,
@@ -37,18 +40,28 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     attachment_label: 'No host',
   }];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const mounted = await harness.mount(harness.html`<${GroupsInteractionProvider}>
-    <${GroupsNativeList}
-      groups=${groups}
-      snapshot=${{ activity_bots: {}, links: [], sudo: [] }}
-      actions=${actions}
-    />
-    <${ActionDialogApp}
-      state=${state}
-      actions=${actions}
-      confirmDiscard=${async () => true}
-    />
-  <//>`, host);
+  const view = (enabled) => {
+    featureSnapshot.value = { group_attachments_enabled: enabled };
+    return harness.html`<${GroupsInteractionProvider}>
+      <${GroupsNativeList}
+        groups=${groups}
+        snapshot=${{
+          activity_bots: {},
+          links: [],
+          sudo: [],
+          group_attachments_enabled: enabled,
+        }}
+        actions=${actions}
+      />
+      <${ActionDialogApp}
+        state=${state}
+        actions=${actions}
+        snapshot=${featureSnapshot}
+        confirmDiscard=${async () => true}
+      />
+    <//>`;
+  };
+  const mounted = await harness.mount(view(false), host);
 
   const attachment = (name) => host.querySelector(
     `details[data-group-key="${name}"] > summary .group-attachment`);
@@ -57,6 +70,13 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     assert.notEqual(element?.getAttribute('tabindex'), '-1');
     assert.equal(element?.hasAttribute('hidden'), false);
   };
+  assert.equal(
+    host.querySelector('.group-attachment'),
+    null,
+    'the absent/default-false feature flag keeps every stored attachment dark',
+  );
+
+  await mounted.rerender(view(true));
   const safe = attachment('safe');
   assert.equal(safe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
   assert.equal(safe.querySelector('a')?.textContent, '📎', 'the floating control stays icon-only');
@@ -93,6 +113,24 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'Escape restores focus to the summary instead of pinning the overlay open',
   );
 
+  empty.click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(host.querySelector('#task-link-modal'), 'the editor can reopen while enabled');
+  await harness.act(() => {
+    featureSnapshot.value = { group_attachments_enabled: false };
+  });
+  assert.equal(
+    host.querySelector('#task-link-modal'),
+    null,
+    'a live enabled-to-disabled snapshot immediately hides the open editor',
+  );
+  assert.equal(
+    state.view.value.dialog,
+    null,
+    'disabling also releases dialog ownership instead of leaving hidden stale state',
+  );
+
+  await mounted.rerender(view(true));
   const hostless = attachment('hostless');
   assert.equal(hostless.querySelector('a'), null, 'http(s) without a host must remain inert');
   assertTabReachable(hostless.querySelector('.group-attachment-invalid'));

@@ -154,6 +154,13 @@ type FeaturesConfig struct {
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
 
+	// GroupAttachments enables the in-development persistent http(s)
+	// attachment control overlaid on each group title. It defaults off while
+	// the interaction design is being refined. Disabling it hides the
+	// dashboard surface without deleting attachments already stored for
+	// groups.
+	GroupAttachments bool `json:"group_attachments,omitempty"`
+
 	// TerminalCommandPaletteShortcut lets Ctrl/Cmd+K open the dashboard command
 	// palette while focus is inside a web terminal. It defaults off because the
 	// harnesses use that chord to clear the current input line.
@@ -181,6 +188,13 @@ const ProcessesDisabledMessage = "process commands are disabled; set features.pr
 // a bare Load() result without nil checks.
 func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
+}
+
+// GroupAttachmentsEnabled reports whether the dashboard should expose the
+// experimental per-group persistent attachment control. It defaults off and is
+// nil-safe; stored attachments are independent of this presentation flag.
+func (c *Config) GroupAttachmentsEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.GroupAttachments
 }
 
 // TerminalCommandPaletteShortcutEnabled reports whether Ctrl/Cmd+K should be

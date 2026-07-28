@@ -1135,6 +1135,16 @@ func TestProcessesEnabled(t *testing.T) {
 	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
 }
 
+func TestGroupAttachmentsEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.GroupAttachmentsEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).GroupAttachmentsEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).GroupAttachmentsEnabled(),
+		"features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{GroupAttachments: true}}).
+		GroupAttachmentsEnabled(), "explicit true → true")
+}
+
 func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
 	var nilCfg *Config
 	assert.False(t, nilCfg.TerminalCommandPaletteShortcutEnabled(), "nil config → false")
@@ -1145,22 +1155,23 @@ func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
 		TerminalCommandPaletteShortcutEnabled(), "explicit true → true")
 }
 
-// features.processes and features.terminal_command_palette_shortcut round-trip
-// through the config file, and an absent block stays absent (omitempty) so it
-// never shows as a spurious diff.
+// The default-off feature flags round-trip through the config file, and an
+// absent block stays absent (omitempty) so it never shows as a spurious diff.
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		Processes:                      true,
+		GroupAttachments:               true,
 		TerminalCommandPaletteShortcut: true,
 	}}
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"processes":true,"terminal_command_palette_shortcut":true}`)
+		`"features":{"processes":true,"group_attachments":true,"terminal_command_palette_shortcut":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
+	assert.True(t, out.GroupAttachmentsEnabled())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
 
 	// A default config marshals without a features key at all.

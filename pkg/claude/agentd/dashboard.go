@@ -992,6 +992,12 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
+	// GroupAttachmentsEnabled gates the experimental paperclip overlaid on
+	// group titles. The attachment data and API remain available while this
+	// presentation flag is off, so existing references are not destroyed.
+	// Re-read on every snapshot so a Config-tab change takes effect without
+	// restarting agentd.
+	GroupAttachmentsEnabled bool `json:"group_attachments_enabled"`
 	// TerminalPaletteShortcut mirrors the opt-in feature switch. The palette
 	// island uses it only for requests originating inside xterm; Ctrl/Cmd+K
 	// elsewhere remains the normal dashboard shortcut. Re-read on every
@@ -2670,6 +2676,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
+		GroupAttachmentsEnabled:  cfg.GroupAttachmentsEnabled(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{

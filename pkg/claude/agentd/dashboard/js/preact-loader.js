@@ -600,15 +600,18 @@ const actionDialogsDescriptor = createIslandDescriptor({
     const islandModule = import('./action-dialog-island.js');
     const stateModule = import('./action-dialog-state.js');
     const actionsModule = import('./action-dialog-actions.js');
+    const dashboardStateModule = import('./snapshot-store.js');
     const [
       { mountActionDialogIsland }, { createActionDialogState }, { createActionDialogActions },
-    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+      { dashboardState },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, dashboardStateModule]);
     const state = createActionDialogState();
     const actions = createActionDialogActions({ state, ...dependencies });
     return {
       state,
       mount: (registerCleanup) => mountActionDialogIsland({
         host: hosts.root, state, actions, registerCleanup, ...dependencies,
+        snapshot: dashboardState.snapshot,
       }),
     };
   },
