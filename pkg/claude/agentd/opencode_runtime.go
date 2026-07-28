@@ -492,7 +492,10 @@ func revalidateOpenCodeRuntimeEffective(
 ) (sandboxpolicy.EffectiveProfile, error) {
 	socketFloor := make(map[string]bool)
 	for _, path := range sandboxpolicy.AgentdSocketFloor() {
-		socketFloor[filepath.Clean(path)] = true
+		path = session.CanonicalTclaudeLayerGeneratedPath(path)
+		if path != "" {
+			socketFloor[path] = true
+		}
 	}
 	withoutSocketFloor := effective
 	withoutSocketFloor.Filesystem = make(

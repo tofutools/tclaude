@@ -971,16 +971,24 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 		t.Skip("OpenCode filtered replay is Linux-only")
 	}
 	setupTestDB(t)
-	shortHome := agentipctest.ShortSocketDir(t)
-	t.Setenv("HOME", shortHome)
-	t.Setenv("XDG_DATA_HOME", shortHome)
-	agentSocket := filepath.Join(shortHome, "api", "agentd.sock")
+	shortBase := agentipctest.ShortSocketDir(t)
+	realHome := filepath.Join(shortBase, "home-real")
+	aliasHome := filepath.Join(shortBase, "home-alias")
+	require.NoError(t, os.MkdirAll(realHome, 0o700))
+	require.NoError(t, os.Symlink(realHome, aliasHome))
+	t.Setenv("HOME", aliasHome)
+	shortData, err := os.MkdirTemp("/tmp", "tcl823-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
+	t.Setenv("XDG_DATA_HOME", shortData)
+	agentSocket := agentipc.CanonicalSocketPath()
+	require.Contains(t, sandboxpolicy.AgentdSocketFloor(), agentSocket,
+		"positive control must use a generated agentd socket floor entry")
 	require.NoError(t, os.MkdirAll(filepath.Dir(agentSocket), 0o700))
-	t.Setenv(agentipc.SocketEnv, agentSocket)
 	agentListener, err := net.Listen("unix", agentSocket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = agentListener.Close() })
-	cwd := filepath.Join(shortHome, "work")
+	cwd := filepath.Join(realHome, "work")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	previousResolver := resolveOpenCodeTclaudeLayer
 	previousRelayExecutable := openCodeRelayExecutable
@@ -1015,6 +1023,12 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		cwd, nil, &snapshot, agentID)
 	require.NoError(t, err)
+	frozenAgentSocket := session.CanonicalTclaudeLayerGeneratedPath(agentSocket)
+	require.NotEqual(t, agentSocket, frozenAgentSocket,
+		"positive control requires a symlink-resolved floor identity")
+	require.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: frozenAgentSocket, Access: sandboxpolicy.AccessRead,
+	})
 	_, encoded, err := openCodeSandboxRecord(spec)
 	require.NoError(t, err)
 

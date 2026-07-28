@@ -184,7 +184,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
 		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-			socket = canonicalGeneratedSandboxPath(socket)
+			socket = CanonicalTclaudeLayerGeneratedPath(socket)
 			if socket != "" {
 				launchReadDirs = append(launchReadDirs, socket)
 			}
@@ -239,11 +239,15 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	}, nil
 }
 
-// canonicalGeneratedSandboxPath freezes a daemon-owned path even when its leaf
-// does not exist yet. Generated paths bypass the authored-profile protected
-// root check because the daemon-final contract deliberately re-closes those
-// roots; they still need the same stable parent identity on replay.
-func canonicalGeneratedSandboxPath(path string) string {
+// CanonicalTclaudeLayerGeneratedPath freezes a daemon-owned path even when its
+// leaf does not exist yet. Generated paths bypass the authored-profile
+// protected root check because the daemon-final contract deliberately re-closes
+// those roots; they still need the same stable parent identity on replay.
+//
+// Persisted-spec consumers must use this same identity function when
+// recognizing generated contract rows, rather than comparing textual paths
+// that can differ through a supported symlinked HOME.
+func CanonicalTclaudeLayerGeneratedPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
 		return ""
