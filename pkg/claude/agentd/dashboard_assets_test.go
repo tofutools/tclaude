@@ -608,6 +608,25 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_GroupProfileBrainDimming guards the per-group spawn
+// profile indicator's deliberately narrow brightness states. The glyph needs
+// its own wrapper so a broad summary/chip hover cannot light it; it is bright
+// only under direct pointer hover, or while its group is open and the profile
+// chip is not marked unset.
+func TestDashboardAssets_GroupProfileBrainDimming(t *testing.T) {
+	groups := dashboardAssetFile(t, "js/groups-list.js")
+	css := dashboardAssetFile(t, "dashboard.css")
+	for _, needle := range []string{
+		`<span class="group-default-profile-icon">🧠</span>`,
+		".group-default-profile-icon:hover,",
+		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-default-profile-icon",
+	} {
+		if !strings.Contains(groups+css, needle) {
+			t.Errorf("dashboard assets missing %q — group profile brain dimming regressed", needle)
+		}
+	}
+}
+
 // TestDashboardAssets_QuickChipKeyboardOperability guards the keyboard
 // operability of the quick-option chips (TCL-330), whose pieces span three
 // files that must stay in lockstep — there's no JS render test, so we assert

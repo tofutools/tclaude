@@ -337,7 +337,7 @@ function GroupProfileChip({ group, actions, kind }) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault(); interactions.beginEditor(editorKey, event.currentTarget);
     }}
-  >${sandbox ? '🛡' : '🧠'}<span class="qo-text">${current ? ` ${current}` : ''}</span></span>`;
+  >${sandbox ? '🛡' : html`<span class="group-default-profile-icon">🧠</span>`}<span class="qo-text">${current ? ` ${current}` : ''}</span></span>`;
 }
 
 function ProcessChip({ group }) {
