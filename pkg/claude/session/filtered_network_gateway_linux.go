@@ -44,6 +44,13 @@ func filteredNetworkHelperEnv() []string {
 	}
 }
 
+func filteredNetworkBootstrapCapabilityArgs() []string {
+	return []string{
+		"--cap-add", "CAP_NET_ADMIN",
+		"--cap-add", "CAP_NET_BIND_SERVICE",
+	}
+}
+
 func filteredNetworkNFTCommand(nftPath string) *exec.Cmd {
 	cmd := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
 	cmd.Env = filteredNetworkHelperEnv()
@@ -220,8 +227,8 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		"--perms", "0444",
 		"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
 		resolvDestination,
-		"--cap-add", "CAP_NET_ADMIN",
 	)
+	setupArgs = append(setupArgs, filteredNetworkBootstrapCapabilityArgs()...)
 	return preparedFilteredNetworkRelay{
 		SetupArgs: setupArgs,
 		Command: []string{

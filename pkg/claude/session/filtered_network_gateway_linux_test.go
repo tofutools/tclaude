@@ -24,7 +24,14 @@ func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T)
 	}, filteredNetworkHelperEnv())
 }
 
-func TestFilteredNetworkNFTCommandCarriesOnlyBootstrapCapability(t *testing.T) {
+func TestFilteredNetworkBootstrapCapabilitiesAreMinimal(t *testing.T) {
+	assert.Equal(t, []string{
+		"--cap-add", "CAP_NET_ADMIN",
+		"--cap-add", "CAP_NET_BIND_SERVICE",
+	}, filteredNetworkBootstrapCapabilityArgs())
+}
+
+func TestFilteredNetworkNFTCommandCarriesOnlyRequiredAmbientCapability(t *testing.T) {
 	cmd := filteredNetworkNFTCommand("/usr/sbin/nft")
 	assert.Equal(t, []string{
 		"/usr/sbin/nft",
