@@ -290,12 +290,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const hasModelList = models.length > 0;
   const [customModel, setCustomModel] = useState(() => hasModelList && !!draft.model && !models.includes(draft.model));
 
-  // TCL-586: warn, before save, when this profile pairs an unattended
-  // command-running permission mode with a sandbox that will not confine it.
-  // The daemon decides — an explicit `off` is unsafe on any machine, while
-  // `inherit` is unsafe only when the host's global settings enable no sandbox,
-  // which the browser cannot know. loadUnsandboxedAutonomy probes with no dir,
-  // so the verdict reflects the portable, machine-global tiers.
+  // Preview warning and informational messages for the effective boundary. The
+  // daemon decides — an explicit `off` is unsafe on any machine, while
+  // `inherit` depends on host settings the browser cannot know, and OpenCode's
+  // split server boundary needs a non-warning disclosure. The profile probe has
+  // no dir, so the verdict reflects the portable, machine-global tiers.
   const [autonomyWarnings, setAutonomyWarnings] = useState([]);
   const [sandboxInfo, setSandboxInfo] = useState([]);
   const autonomyRequest = useRef(0);

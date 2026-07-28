@@ -1051,8 +1051,8 @@ func runNew(params *NewParams) error {
 	// sandbox mode cannot say — Claude Code's `inherit` default means "whatever
 	// settings.json says" — and the answer is only knowable HERE, against the
 	// settings files as they are at launch (TCL-729). Same inputs as the
-	// warnings above, so the badge an operator sees later cannot contradict the
-	// warning they saw at spawn.
+	// messages above, so the badge an operator sees later cannot contradict the
+	// disclosure or warning they saw at spawn.
 	// Who chose the mode. The daemon resolves it through its profile tier stack
 	// and passes it in; a direct `session new --sandbox …` is the human's own
 	// choice. A managed launch with nothing passed stays unattributed rather

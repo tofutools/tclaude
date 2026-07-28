@@ -166,11 +166,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
   sandboxPolicyRef.current = sandboxPolicy;
-  // Warnings about the posture this draft would actually launch with — today,
-  // an unattended command-running permission mode with nothing confining it
-  // (TCL-586). Advisory only: it never gates submit, because the operator may
-  // legitimately want that combination and the daemon repeats the warning on
-  // the spawn response regardless.
+  // Messages about the posture this draft would actually launch with: warnings
+  // for risky pairings and informational disclosures for safe but non-obvious
+  // boundaries. Advisory only: neither kind gates submit, and the daemon repeats
+  // them on the spawn response regardless.
   const [autonomyWarnings, setAutonomyWarnings] = useState([]);
   const [sandboxInfo, setSandboxInfo] = useState([]);
   const [attachments, setAttachments] = useState([]);
