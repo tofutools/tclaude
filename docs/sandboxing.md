@@ -235,8 +235,9 @@ also retains the host PID namespace; the isolated posture unshares PIDs as part
 of closing ambient socket access. Under `tclaude-layer`, the harness's own OS
 sandbox is disabled inside the wrapper. The explicit Linux-only `stacked`
 implementation above is the reviewed exception for Claude Code and Codex.
-OpenCode's ordered tool permission rules remain enabled as defense in depth,
-but OpenCode has no stacked contract.
+OpenCode's inner access profile permits all paths without compiling the sandbox
+profile's path scoping; its selected approval policy and independent
+tool-governance setting remain active. OpenCode has no stacked contract.
 
 ### OpenCode state under `tclaude-layer`
 
