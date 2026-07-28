@@ -1066,22 +1066,19 @@ details[open] > summary::before { content: "▼ "; }
    space) drops the pointer cursor so it doesn't advertise a fold it won't
    perform. Non-group <details> (permissions, advanced config) carry no
    data-group-key and keep the generic whole-summary marker + pointer above. */
-details[data-group-key] > summary {
-  cursor: default; position: relative; padding-inline-end: 60px;
-}
+details[data-group-key] > summary { cursor: default; position: relative; }
 details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name {
-  cursor: pointer; user-select: none; overflow-wrap: anywhere;
+  cursor: pointer; user-select: none;
 }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
-  position: absolute; z-index: 4; inset-block-start: 0; inset-inline-end: 4px;
+  position: absolute; z-index: 4; inset-block-start: -8px; inset-inline-start: 0;
   display: inline-flex; align-items: center; gap: 1px; margin: 0;
-  padding: 2px; border: 1px solid #30363d; border-radius: 5px;
-  background: #161b22; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+  padding: 0; border: 0; background: transparent; box-shadow: none;
   vertical-align: middle; font: inherit; font-size: 12px; line-height: 1;
-  opacity: 0.8; transition: opacity 0.1s ease, border-color 0.1s ease;
+  opacity: 0.8;
 }
 .group-attachment a {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1100,31 +1097,25 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .group-attachment-empty {
   box-sizing: border-box; justify-content: center;
-  width: 30px; height: 30px; opacity: 0.8;
+  width: 24px; height: 24px; opacity: 0.8;
 }
 .group-attachment-edit {
   font-size: 10px; opacity: 0.65; transition: opacity 0.1s ease;
 }
-/* Only fine pointers get the hover-reveal treatment. Coarse/touch pointers
-   keep the control visible, so their first tap activates it instead of merely
-   manufacturing a sticky hover state. Opacity keeps hidden controls in the
-   keyboard tab order; focus-within then reveals the whole control. */
+/* Fine pointers reveal the overlay only while the header is actively hovered.
+   Keyboard navigation reveals only the attachment control that owns
+   :focus-visible; pointer clicks therefore cannot leave the icon stuck open.
+   Opacity keeps the hidden controls in the tab order. */
 @media (hover: hover) and (pointer: fine) {
   .group-attachment { opacity: 0; pointer-events: none; }
   details[data-group-key] > summary:hover .group-attachment,
-  details[data-group-key] > summary:focus-within .group-attachment,
-  .group-attachment:focus,
-  .group-attachment:focus-within { opacity: 0.92; pointer-events: auto; }
+  .group-attachment:focus-visible,
+  .group-attachment:has(:focus-visible) { opacity: 0.92; pointer-events: auto; }
   .group-attachment-edit { opacity: 0; pointer-events: none; }
   .group-attachment-set:hover .group-attachment-edit,
-  .group-attachment-set:focus-within .group-attachment-edit,
-  .group-attachment-edit:focus { opacity: 1; pointer-events: auto; }
-}
-/* A hybrid laptop can report a fine primary pointer while also accepting
-   touch. any-pointer keeps the control visible to that coarse input too. */
-@media (any-pointer: coarse) {
-  .group-attachment { opacity: 0.8; pointer-events: auto; }
-  .group-attachment-edit { opacity: 0.65; pointer-events: auto; }
+  .group-attachment-set:has(.group-attachment-edit:focus-visible) .group-attachment-edit {
+    opacity: 1; pointer-events: auto;
+  }
 }
 body.wizard .group-attachment a,
 body.wizard .group-attachment button { color: #b39ddb; }
