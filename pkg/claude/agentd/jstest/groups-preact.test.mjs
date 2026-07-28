@@ -878,7 +878,8 @@ test('native member rows preserve the legacy field, capability and selector matr
       status: '', status_detail: '', last_hook: '2026-07-15T00:00:00Z', harness: 'claude',
       model: 'Opus 4.8 (1M context)', effort_level: 'high', cost_usd: 0.004,
       virtual_cost_usd: 0.42, remote_control: true, sandbox_mode: 'workspace-write',
-      context_pct: 41, context_window_size: 1000000, tokens_input: 400000, tokens_output: 10000,
+      context_pct: 41, context_window_size: 450000, auto_compact_window: 450000,
+      tokens_input: 180000, tokens_output: 4500,
       subagent_count: 2,
     },
   };
@@ -953,6 +954,12 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(richRow.querySelectorAll('.ctx-meter').length, 2);
   assert.equal(richRow.querySelectorAll('.ctx-seg').length, 10);
   assert.equal(richRow.querySelectorAll('.ctx-seg.lit-green').length, 4);
+  assert.equal(richRow.querySelector('.ctx-regular').title,
+    'context: 185k / 450k tokens — 41%',
+    'the effective context window is enough without an inaccurate auto-compaction note');
+  assert.equal(richRow.querySelector('.ctx-mana').title,
+    '🔮 Mana: 185k / 450k channeled — 41%',
+    'the wizard tooltip also omits the inaccurate auto-compaction note');
   assert.equal(richRow.querySelector('.badge-subagents').textContent, '🤖+2');
 
   const backgroundPill = backgroundRow.querySelector('.state-pill');
