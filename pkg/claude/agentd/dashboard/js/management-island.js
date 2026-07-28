@@ -733,13 +733,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="tclaude-layer/claude/linux">tclaude layer · Claude · Linux</option>
         <option value="tclaude-layer/claude/darwin">tclaude layer · Claude · macOS</option>
         <option value="stacked/claude/linux">stacked · Claude · Linux</option>
-        <option value="stacked/claude/darwin">stacked · Claude · macOS</option>
       </select></label>
       ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">
-        <strong>${target.target.implementation} · ${target.target.harness} · ${target.target.platform}</strong>${target.resolved_by ? ` — ${target.resolved_by}` : ''}
+        <strong>${target.target.implementation} · ${target.target.harness} · ${target.target.platform}${target.target.sandbox ? ` · sandbox ${target.target.sandbox}` : ''}</strong>${target.resolved_by ? ` — ${target.resolved_by}` : ''}
         ${[
           ['Directory access', 'filesystem'],
           ['Environment', 'environment'],

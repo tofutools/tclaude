@@ -141,6 +141,11 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "has no built-in OS sandbox",
 		"OpenCode's TCL-793 refusal must happen before any prediction is returned")
+
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/socket-wall/enforcement?for=stacked%2Fclaude%2Fdarwin", nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "stacked sandbox prediction is supported only on linux")
 }
 
 func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectories(t *testing.T) {
@@ -285,6 +290,90 @@ func TestSandboxProfileDraftEnforcementDetectsCrossScopeFilesystemCarveOut(t *te
 	}, got.Contexts[0].Filesystem)
 	assert.Equal(t, []string{"POLICY_OWNER"}, got.Contexts[0].Environment)
 	assert.Equal(t, []string{"GOCACHE"}, got.Contexts[0].AgentDirectories)
+
+	globalProfile, err := db.GetSandboxProfile("deny-parent")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":           globalProfile.ID,
+			"name":         globalProfile.Name,
+			"filesystem":   []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment":  []any{},
+			"network":      map[string]any{},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin", "harness": "codex", "platform": "darwin",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome,
+		"editing the global half must still evaluate each group's narrower directory rules")
+	require.Len(t, got.Contexts, 1)
+	assert.ElementsMatch(t, []sandboxpolicy.FilesystemGrant{
+		{Path: parent, Access: sandboxpolicy.AccessDeny},
+		{Path: child, Access: sandboxpolicy.AccessWrite},
+	}, got.Contexts[0].Filesystem)
+}
+
+func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	globalID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "claude-off", Harness: harness.DefaultName,
+		Sandbox: harness.ClaudeSandboxOff,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "claude-off"))
+	require.NoError(t, db.SetDashboardPref(
+		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
+	))
+	parent := t.TempDir()
+	body := map[string]any{
+		"draft": map[string]any{
+			"name":        "resolved-mode",
+			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment": []any{},
+		},
+	}
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Target struct {
+				Harness string `json:"harness"`
+				Sandbox string `json:"sandbox"`
+			} `json:"target"`
+			ResolvedBy string                      `json:"resolved_by"`
+			Axes       harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.DefaultName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.ClaudeSandboxOff, got.Targets[0].Target.Sandbox)
+	assert.Contains(t, got.Targets[0].ResolvedBy, "claude-off")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-workspace", Harness: harness.CodexName,
+		Sandbox: harness.SandboxWorkspaceWrite,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "codex-workspace").Code)
+	body["context"] = map[string]any{"group": "crew"}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.CodexName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.SandboxWorkspaceWrite, got.Targets[0].Target.Sandbox)
+	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-workspace")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
 }
 
 func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContexts(t *testing.T) {

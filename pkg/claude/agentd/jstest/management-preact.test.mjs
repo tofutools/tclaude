@@ -1101,6 +1101,8 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.ok(host.querySelector('#sandbox-profile-editor-network-mode'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
+  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for option[value="stacked/claude/darwin"]'), null,
+    'the preview never offers the statically unsupported nested Seatbelt target');
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-capability-preview').textContent, /Directory access: 1 deny · 1 write · enforced/);
   assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned environment detail/);
