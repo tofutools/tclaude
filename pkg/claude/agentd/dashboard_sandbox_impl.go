@@ -171,7 +171,7 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 			},
 			{
 				Value:        string(sandboxpolicy.ImplementationTclaudeLayer),
-				Label:        "tclaude layer (experimental)",
+				Label:        "tclaude built-in OS sandbox (experimental)",
 				Experimental: true,
 				Descr: "Runs the authoritative tool executor inside a tclaude-owned bubblewrap mount namespace " +
 					"(the whole pane for interactive harnesses, or OpenCode's managed server). Linux only; " +

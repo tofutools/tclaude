@@ -1580,7 +1580,10 @@ scans the union of every group's default directory and member worktree history,
 deduplicates groups that share a repo, and opens the same explicit-selection
 preview as each group header's **cleanup worktrees…** action. The global
 **🧹 clean up** modal links to this preview too, under its agent cleanup
-options.
+options. Git's registered worktree list is authoritative: linked worktrees
+remain cleanup candidates when their directory was deleted out-of-band or
+their HEAD is detached. Cleanup removes those registrations through the
+surviving main checkout; detached entries have no branch to delete.
 
 The palette's status-filtered retire shortcuts cover the same complete roster.
 For both **idle** and **offline** agents it offers a command for each real

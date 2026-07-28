@@ -63,7 +63,7 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
 // stated rather than implied — a launch that cannot have them refuses.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
   + 'harness-builtin is offered only when the selected harness owns a real OS sandbox. '
-  + 'tclaude-layer is EXPERIMENTAL: it runs the whole '
+  + "tclaude's built-in OS sandbox is EXPERIMENTAL: it runs the whole "
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
@@ -166,12 +166,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
   sandboxPolicyRef.current = sandboxPolicy;
-  // Warnings about the posture this draft would actually launch with — today,
-  // an unattended command-running permission mode with nothing confining it
-  // (TCL-586). Advisory only: it never gates submit, because the operator may
-  // legitimately want that combination and the daemon repeats the warning on
-  // the spawn response regardless.
+  // Messages about the posture this draft would actually launch with: warnings
+  // for risky pairings and informational disclosures for safe but non-obvious
+  // boundaries. Advisory only: neither kind gates submit, and the daemon repeats
+  // them on the spawn response regardless.
   const [autonomyWarnings, setAutonomyWarnings] = useState([]);
+  const [sandboxInfo, setSandboxInfo] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -327,6 +327,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         approval: draft.approval, dir: draft.cwd,
       }).then((value) => {
         if (request !== autonomyRequest.current || !state.isCurrent(generation)) return;
+        setSandboxInfo(value.info || []);
         setAutonomyWarnings(value.warnings || []);
       });
     }, 350);
@@ -905,6 +906,14 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
       disabled=${!view.approval.visible} busy=${busy} />
+    <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
+      id="agent-spawn-sandbox-info">
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target" role="status">
+        ${sandboxInfo.map((message) => html`
+          <div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+      </div>
+    </div>
     ${/* Sits between the two selects it is about — the sandbox above and the
           permission mode right here — because the warning is a statement about
           their combination, not about either field alone. role="alert" so a

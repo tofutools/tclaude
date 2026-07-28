@@ -78,6 +78,10 @@ type ResolvedLaunch struct {
 	// Notes disclose ignored profile fields outside the three echoed values
 	// above (for example a foreign sandbox or auto-review setting).
 	Notes []string `json:"notes,omitempty"`
+	// Info discloses useful details about a safe launch boundary that do not
+	// require operator action. Keep these separate so clients do not style or
+	// announce them as warnings.
+	Info []string `json:"info,omitempty"`
 	// Warnings disclose a resolved launch that is permitted but risky — today,
 	// an approval posture that runs commands unattended while no OS sandbox is
 	// provably active (TCL-586). They are separate from Notes because they say
@@ -1453,6 +1457,9 @@ func printResolvedLaunch(stdout io.Writer, rl *ResolvedLaunch) {
 	}
 	for _, note := range rl.Notes {
 		fmt.Fprintf(stdout, "  Note:    %s\n", note)
+	}
+	for _, info := range rl.Info {
+		fmt.Fprintf(stdout, "  Info:    %s\n", info)
 	}
 	// Warnings print after the notes so the last thing on screen is the thing
 	// most worth acting on, and under their own label so they are not read as

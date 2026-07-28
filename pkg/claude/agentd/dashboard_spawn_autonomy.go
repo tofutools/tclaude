@@ -33,6 +33,10 @@ type spawnEffectiveSandboxJSON struct {
 	// and `tclaude agent spawn` cannot describe one situation two ways. Empty
 	// means the pairing is sound (or does not apply to this harness).
 	Warnings []string `json:"warnings"`
+	// Info describes a safe but non-obvious sandbox boundary. It is separate
+	// from Warnings so the dashboard can use informational color and live-region
+	// semantics rather than presenting it as a security warning.
+	Info []string `json:"info"`
 }
 
 // handleDashboardSpawnEffectiveSandbox serves
@@ -110,6 +114,10 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 		// A JSON null here would make every consumer guard the array.
 		warnings = []string{}
 	}
+	info := harness.SpawnSandboxInfo(h, sandboxMode)
+	if info == nil {
+		info = []string{}
+	}
 	writeJSON(w, http.StatusOK, spawnEffectiveSandboxJSON{
 		Harness:       h.Name,
 		SandboxMode:   sandboxMode,
@@ -117,5 +125,6 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 		SandboxState:  resolution.State.String(),
 		SandboxSource: resolution.Source,
 		Warnings:      warnings,
+		Info:          info,
 	})
 }

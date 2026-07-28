@@ -168,7 +168,7 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
   }
   if (text(implementation) === SANDBOX_IMPL_TCLAUDE_LAYER
     && (harnessName === 'claude' || harnessName === 'codex')) {
-    return "The harness's own sandbox is off by design. The tclaude layer enforces "
+    return "The harness's own sandbox is off by design. tclaude's built-in OS sandbox enforces "
       + 'sandbox-profile filesystem rules as OS mounts; any environment entries also apply.';
   }
   if (text(implementation) === SANDBOX_IMPL_STACKED
@@ -311,7 +311,7 @@ export function sandboxImplHintFor(draft, view) {
       text: explicit
         ? `harness-builtin is invalid for ${harnessLabel}: ${harnessLabel} has no built-in OS sandbox; `
           + 'its access-control mode is a command filter, not confinement; '
-          + 'use tclaude-layer or spawn with the sandbox off.'
+          + "use tclaude's built-in OS sandbox or spawn with the sandbox off."
         : 'No built-in OS sandbox; access-control is a command filter, not confinement.',
     };
   }

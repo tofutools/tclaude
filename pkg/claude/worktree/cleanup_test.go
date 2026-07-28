@@ -166,3 +166,49 @@ func TestRemoveLinkedWorktreeAndBranch_IdempotentOnGoneBranch(t *testing.T) {
 	assert.True(t, branchExistsIn(repoPath, "feature-z"),
 		"the real branch is untouched when a wrong name is passed")
 }
+
+func TestRemoveLinkedWorktreeFrom_RemovesMissingDirectoryAndBranch(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-stale", "", "")
+	require.NoError(t, err)
+	unselectedPath, err := AddWorktreeIn(repoPath, "feature-unselected", "", "")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(linkedPath), "simulate an out-of-band directory deletion")
+	require.NoError(t, os.RemoveAll(unselectedPath), "simulate a second stale registration")
+
+	removed, branchDeleted, branch, err := RemoveLinkedWorktreeFrom(
+		repoPath, linkedPath, true, true,
+	)
+	require.NoError(t, err)
+	assert.True(t, removed, "the stale worktree registration should be removed")
+	assert.True(t, branchDeleted, "the registered branch should be deleted when requested")
+	assert.Equal(t, "feature-stale", branch)
+	assert.False(t, branchExistsIn(repoPath, "feature-stale"))
+
+	wts, err := ListWorktreesIn(repoPath)
+	require.NoError(t, err)
+	require.Len(t, wts, 2, "targeted removal must preserve an unselected stale registration")
+	assert.True(t, wts[0].IsMain)
+	assert.Equal(t, normalizePath(unselectedPath), normalizePath(wts[1].Path))
+	assert.Equal(t, "feature-unselected", wts[1].Branch)
+	assert.True(t, branchExistsIn(repoPath, "feature-unselected"))
+}
+
+func TestRemoveLinkedWorktreeFrom_RemovesMissingDetachedWorktree(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	linkedPath, err := AddWorktreeIn(repoPath, "feature-detached", "", "")
+	require.NoError(t, err)
+	_, err = gitIn(linkedPath, "checkout", "--detach")
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(linkedPath), "simulate an out-of-band directory deletion")
+
+	removed, branchDeleted, branch, err := RemoveLinkedWorktreeFrom(
+		repoPath, linkedPath, true, true,
+	)
+	require.NoError(t, err)
+	assert.True(t, removed, "the detached registration should be removed")
+	assert.False(t, branchDeleted, "detached HEAD has no branch to delete")
+	assert.Empty(t, branch)
+	assert.True(t, branchExistsIn(repoPath, "feature-detached"),
+		"the branch detached from before deletion remains untouched")
+}

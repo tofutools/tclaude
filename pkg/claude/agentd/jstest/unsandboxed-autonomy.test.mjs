@@ -2,19 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fetchUnsandboxedAutonomy } from '../dashboard/js/unsandboxed-autonomy.js';
 
-const EMPTY = { warnings: [], sandboxState: '', sandboxSource: '' };
+const EMPTY = { info: [], warnings: [], sandboxState: '', sandboxSource: '' };
 
 test('fetchUnsandboxedAutonomy maps a good payload and forwards same-origin credentials', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
-    return { ok: true, json: async () => ({ warnings: ['⚠ unconfined'], sandbox_state: 'off', sandbox_source: '~/.claude/settings.json' }) };
+    return { ok: true, json: async () => ({ info: ['confined by tclaude'], warnings: ['⚠ unconfined'], sandbox_state: 'off', sandbox_source: '~/.claude/settings.json' }) };
   };
   const result = await fetchUnsandboxedAutonomy(fetchImpl, {
     harness: 'opencode', sandbox: 'access-control',
     sandboxImplementation: 'tclaude-layer', approval: 'auto', dir: '/repo',
   });
-  assert.deepEqual(result, { warnings: ['⚠ unconfined'], sandboxState: 'off', sandboxSource: '~/.claude/settings.json' });
+  assert.deepEqual(result, { info: ['confined by tclaude'], warnings: ['⚠ unconfined'], sandboxState: 'off', sandboxSource: '~/.claude/settings.json' });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].options.credentials, 'same-origin');
@@ -54,5 +54,5 @@ test('fetchUnsandboxedAutonomy tolerates malformed JSON and a non-array warnings
   assert.deepEqual(await fetchUnsandboxedAutonomy(badJson, {}), EMPTY);
 
   const nonArray = async () => ({ ok: true, json: async () => ({ warnings: 'nope', sandbox_state: 'on' }) });
-  assert.deepEqual(await fetchUnsandboxedAutonomy(nonArray, {}), { warnings: [], sandboxState: 'on', sandboxSource: '' });
+  assert.deepEqual(await fetchUnsandboxedAutonomy(nonArray, {}), { info: [], warnings: [], sandboxState: 'on', sandboxSource: '' });
 });

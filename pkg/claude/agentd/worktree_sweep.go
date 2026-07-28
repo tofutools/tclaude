@@ -53,8 +53,6 @@ var (
 	listWorktreesInFn = worktree.ListWorktreesIn
 	repoRootForPathFn = worktree.RepoRootForPath
 	worktreeDirtyFn   = worktree.IsDirtyIn
-	mainRepoForPathFn = worktree.MainRepoForPath
-	pruneWorktreesFn  = worktree.PruneWorktreesIn
 )
 
 // sweepAgent is an agent bound to a worktree — either its immutable startup
@@ -85,6 +83,14 @@ type sweepWorktree struct {
 	Category string       `json:"category"` // main | live | agent | orphan
 	Checked  bool         `json:"checked"`  // smart-default tick
 	Reason   string       `json:"reason"`   // why this default / what the row is
+}
+
+// registeredSweepWorktree is Git's authoritative record for a worktree plus
+// the surviving main checkout used to mutate it. It remains usable when Path
+// itself no longer exists.
+type registeredSweepWorktree struct {
+	Info     worktree.WorktreeInfo
+	RepoRoot string
 }
 
 // categoryRank orders the list so the safe-to-remove rows (orphans, then
@@ -143,16 +149,10 @@ func dashboardGroupWorktrees(w http.ResponseWriter, r *http.Request, g *db.Agent
 // not duplicate rows or git calls. Ungrouped agents are intentionally outside
 // this scope: this is the all-GROUPS counterpart of the per-group command.
 func dashboardAllGroupWorktrees(w http.ResponseWriter) {
-	groups, err := db.ListAgentGroups()
+	names, dirs, err := allGroupWorktreeDirs()
 	if err != nil {
 		http.Error(w, "list groups: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	var dirs []string
-	names := make([]string, 0, len(groups))
-	for _, g := range groups {
-		names = append(names, g.Name)
-		dirs = append(dirs, groupWorktreeDirs(g)...)
 	}
 	roots, out := discoverSweepWorktrees(dirs)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -163,54 +163,63 @@ func dashboardAllGroupWorktrees(w http.ResponseWriter) {
 	})
 }
 
+func allGroupWorktreeDirs() (names, dirs []string, err error) {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return nil, nil, err
+	}
+	names = make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Name)
+		dirs = append(dirs, groupWorktreeDirs(g)...)
+	}
+	return names, dirs, nil
+}
+
+// registeredWorktreesForCleanup scans every repository for which tclaude has
+// a surviving anchor: group directories plus recorded session locations. This
+// lets per-agent delete/retire dialogs recognize a Git registration even when
+// that agent's own worktree directory is gone.
+func registeredWorktreesForCleanup() map[string]registeredSweepWorktree {
+	_, dirs, _ := allGroupWorktreeDirs()
+	sessions, _ := db.ListSessions()
+	seenConv := map[string]bool{}
+	for _, sess := range sessions {
+		if sess.Cwd != "" {
+			dirs = append(dirs, sess.Cwd)
+		}
+		if physical, err := recordedStartupDir(sess); err == nil && physical != "" {
+			dirs = append(dirs, physical)
+		}
+		if sess.ConvID == "" || seenConv[sess.ConvID] {
+			continue
+		}
+		seenConv[sess.ConvID] = true
+		loc := agent.ResolveLocation(sess.ConvID)
+		dirs = append(dirs, loc.StartupDir, loc.CurrentDir)
+	}
+	_, registered := scanSweepWorktrees(dirs)
+	return registered
+}
+
 // discoverSweepWorktrees resolves candidate directories to repos, lists each
 // distinct repo once, and classifies its linked worktrees. The returned roots
 // are the repos actually scanned (main worktree paths), not every member
 // worktree that happened to serve as a discovery anchor.
 func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
-	// 1. Resolve each candidate dir to its git worktree root, deduped.
-	repoRoots := map[string]bool{}
-	for _, d := range dirs {
-		if root, err := repoRootForPathFn(d); err == nil && root != "" {
-			repoRoots[root] = true
-		}
+	roots, registered := scanSweepWorktrees(dirs)
+	wtByPath := make(map[string]worktree.WorktreeInfo, len(registered))
+	repoByPath := make(map[string]string, len(registered))
+	for path, reg := range registered {
+		wtByPath[path] = reg.Info
+		repoByPath[path] = reg.RepoRoot
 	}
 
-	// 2. List every worktree of each repo, deduped by path. `git worktree
-	//    list` is repo-global, so once a repo is listed (its sibling
-	//    worktree paths land in wtByPath) a later candidate root that is
-	//    one of those paths is skipped — N agents in N worktrees of the
-	//    same repo cost one scan, not N.
-	wtByPath := map[string]worktree.WorktreeInfo{}
-	repoByPath := map[string]string{}
-	scannedRepos := map[string]bool{}
-	for root := range repoRoots {
-		if _, done := wtByPath[root]; done {
-			continue
-		}
-		wts, err := listWorktreesInFn(root)
-		if err != nil {
-			continue
-		}
-		mainRoot := root
-		for _, wt := range wts {
-			if wt.IsMain {
-				mainRoot = wt.Path
-				break
-			}
-		}
-		scannedRepos[mainRoot] = true
-		for _, wt := range wts {
-			wtByPath[wt.Path] = wt
-			repoByPath[wt.Path] = mainRoot
-		}
-	}
+	// Map worktree roots → the agents working there, across ALL
+	// sessions (an agent in another group still pins its worktree).
+	rootConvs := worktreeRootConvs(registered)
 
-	// 3. Map worktree roots → the agents working there, across ALL
-	//    sessions (an agent in another group still pins its worktree).
-	rootConvs := worktreeRootConvs()
-
-	// 4. Classify each worktree.
+	// Classify each worktree.
 	out := make([]sweepWorktree, 0, len(wtByPath))
 	for path, wt := range wtByPath {
 		row := sweepWorktree{
@@ -249,13 +258,6 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 			row.Category, row.Checked, row.Reason = "live", false,
 				"in use by a running agent ("+agentNames(row.Agents)+")"
 		case len(row.Agents) > 0 && allRetiredAgents(row.Agents):
-			// Every bound agent is retired — a demoted, group-stripped conv
-			// that is exactly what this janitor exists to reclaim. Treat it
-			// like an orphan: pre-tick the clean ones, hold dirty ones back
-			// for review. Reinstating the conv later still works, but loses
-			// this working dir (its cwd-scoped resume). Dirtiness matters for
-			// the pre-tickable rows, so the git status call earns its keep
-			// here (skipped on the agent / live / main rows below).
 			row.Dirty = worktreeDirtyFn(path)
 			if row.Dirty {
 				row.Category, row.Checked, row.Reason = "retired", false,
@@ -265,15 +267,9 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 					"retired agent "+agentNames(row.Agents)+" — safe to remove (reinstate-resume loses this dir)"
 			}
 		case len(row.Agents) > 0:
-			// At least one bound conv is not retired — a still-enrolled
-			// (merely-offline) agent, or a plain non-agent conversation.
-			// Either way its resume is cwd-bound, so protect the worktree.
 			row.Category, row.Checked, row.Reason = "agent", false,
 				"belongs to agent "+agentNames(row.Agents)+" — deleting breaks its resume"
 		default:
-			// Orphan: no agent maps here. Dirtiness only matters for the
-			// rows we'd otherwise tick — skip the git status call on main /
-			// live / agent worktrees we won't remove anyway.
 			row.Dirty = worktreeDirtyFn(path)
 			if row.Dirty {
 				row.Category, row.Checked, row.Reason = "orphan", false,
@@ -293,13 +289,78 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 		}
 		return out[i].Path < out[j].Path
 	})
+	return roots, out
+}
+
+// scanSweepWorktrees resolves candidate directories to repositories and reads
+// Git's registered worktree set. The registration is authoritative even when
+// a linked worktree's directory no longer exists.
+func scanSweepWorktrees(dirs []string) ([]string, map[string]registeredSweepWorktree) {
+	// 1. Resolve each candidate dir to its git worktree root, deduped.
+	repoRoots := map[string]bool{}
+	for _, d := range dirs {
+		if root, err := repoRootForPathFn(d); err == nil && root != "" {
+			repoRoots[root] = true
+		}
+	}
+
+	// 2. List every worktree of each repo, deduped by path. `git worktree
+	//    list` is repo-global, so once a repo is listed (its sibling
+	//    worktree paths land in wtByPath) a later candidate root that is
+	//    one of those paths is skipped — N agents in N worktrees of the
+	//    same repo cost one scan, not N.
+	registered := map[string]registeredSweepWorktree{}
+	scannedRepos := map[string]bool{}
+	for root := range repoRoots {
+		if _, done := registered[root]; done {
+			continue
+		}
+		wts, err := listWorktreesInFn(root)
+		if err != nil {
+			continue
+		}
+		mainRoot := root
+		for _, wt := range wts {
+			if wt.IsMain {
+				mainRoot = wt.Path
+				break
+			}
+		}
+		scannedRepos[mainRoot] = true
+		for _, wt := range wts {
+			registered[wt.Path] = registeredSweepWorktree{
+				Info: wt, RepoRoot: mainRoot,
+			}
+		}
+	}
 
 	roots := make([]string, 0, len(scannedRepos))
 	for r := range scannedRepos {
 		roots = append(roots, r)
 	}
 	sort.Strings(roots)
-	return roots, out
+	return roots, registered
+}
+
+// registeredWorktreeForDir resolves dir against Git's registered worktree
+// roots without requiring dir to exist. Stored agent locations can name a
+// subdirectory of the registered root, so exact string equality is
+// insufficient once filesystem/Git inspection is unavailable.
+func registeredWorktreeForDir(
+	registered map[string]registeredSweepWorktree,
+	dir string,
+) (registeredSweepWorktree, bool) {
+	dir = cleanClaimDir(dir)
+	var best registeredSweepWorktree
+	bestLen := -1
+	for _, reg := range registered {
+		root := cleanClaimDir(reg.Info.Path)
+		if !dirContains(root, dir) || len(root) <= bestLen {
+			continue
+		}
+		best, bestLen = reg, len(root)
+	}
+	return best, bestLen >= 0
 }
 
 // worktreeRootConvs maps each git worktree root to the conv-ids of agents
@@ -310,7 +371,7 @@ func discoverSweepWorktrees(dirs []string) ([]string, []sweepWorktree) {
 // inspection per distinct dir. Liveness/title are resolved later, only for the
 // worktrees that survive into the candidate set, to keep the per-session cost
 // cheap here.
-func worktreeRootConvs() map[string][]string {
+func worktreeRootConvs(registered map[string]registeredSweepWorktree) map[string][]string {
 	rootConvs := map[string][]string{}
 	sessions, err := db.ListSessions()
 	if err != nil {
@@ -326,6 +387,11 @@ func worktreeRootConvs() map[string][]string {
 		root, cached := dirRoot[dir]
 		if !cached {
 			root = inspectWorktreeFn(dir).Root
+			if root == "" {
+				if reg, ok := registeredWorktreeForDir(registered, dir); ok {
+					root = reg.Info.Path
+				}
+			}
 			dirRoot[dir] = root
 		}
 		if root == "" {
@@ -392,6 +458,13 @@ func liveAgentWorktreeRoots() map[string]bool {
 		if dir == "" {
 			return
 		}
+		// Keep the lexical claim as well as the inspected root. When the
+		// directory is already missing, Git inspection cannot resolve it,
+		// but an online pane recorded at that exact worktree path must still
+		// block registration/branch cleanup.
+		if claim := cleanClaimDir(dir); claim != "" {
+			roots[claim] = true
+		}
 		root, cached := dirRoot[dir]
 		if !cached {
 			root = inspectWorktreeFn(dir).Root
@@ -433,6 +506,19 @@ func liveAgentWorktreeRoots() map[string]bool {
 		}
 	}
 	return roots
+}
+
+// worktreeClaimedByAny reports whether any live root/directory claim falls
+// inside path. Claims include both successfully inspected worktree roots and
+// lexical startup/current dirs, so a missing worktree remains protected when
+// the recorded CWD names one of its subdirectories.
+func worktreeClaimedByAny(path string, claims map[string]bool) bool {
+	for claim := range claims {
+		if dirContains(path, claim) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSweepAgent resolves a conversation-generation claim through the
@@ -559,15 +645,20 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-read Git's registered worktree set at the destructive boundary.
+	// This is the authoritative fallback when a selected worktree directory
+	// has disappeared since discovery: inspecting that path necessarily says
+	// "none", while the surviving main checkout can still remove its stale
+	// registration (and branch, when requested).
+	_, dirs, err := allGroupWorktreeDirs()
+	if err != nil {
+		http.Error(w, "list groups: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, registered := scanSweepWorktrees(dirs)
 	liveRoots := liveAgentWorktreeRoots()
 	resp := worktreeCleanupResponse{Outcomes: []worktreeCleanupOutcome{}}
 	seen := map[string]bool{}
-	// Main repos of the worktrees we touch — pruned once at the end to
-	// clear any DANGLING worktree links (entries whose dir was deleted
-	// out-of-band). Resolved BEFORE removal, while the worktree dir still
-	// exists to anchor the git call. `git worktree remove` already cleans
-	// the link for the worktrees it removes; this mops up the rest.
-	pruneRepos := map[string]bool{}
 	for _, raw := range body.Paths {
 		path := strings.TrimSpace(raw)
 		if path == "" || seen[path] {
@@ -578,20 +669,44 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		out := worktreeCleanupOutcome{Path: path, Branch: st.Branch}
 		switch {
 		case st.Kind == "none":
-			out.Result, out.Detail = "skipped", "not a git worktree"
-			resp.Skipped++
+			reg, ok := registered[path]
+			switch {
+			case !ok:
+				out.Result, out.Detail = "skipped", "already removed"
+				resp.Skipped++
+			case reg.Info.IsMain:
+				out.Branch = reg.Info.Branch
+				out.Result, out.Detail = "skipped", "main repo — never removed"
+				resp.Skipped++
+			case worktreeClaimedByAny(path, liveRoots):
+				out.Branch = reg.Info.Branch
+				out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
+				resp.Skipped++
+			default:
+				out = removeOneRegisteredWorktree(
+					reg, path, body.DeleteBranches,
+				)
+				switch out.Result {
+				case "removed":
+					resp.Removed++
+				case "removed_with_branch":
+					resp.Removed++
+					resp.Branches++
+				case "skipped":
+					resp.Skipped++
+				default:
+					resp.Failed++
+				}
+			}
 		case st.Kind == "main":
 			out.Result, out.Detail = "skipped", "main repo — never removed"
 			resp.Skipped++
-		case liveRoots[path] || (st.Root != "" && liveRoots[st.Root]):
+		case worktreeClaimedByAny(st.Root, liveRoots):
 			// Re-check against live state: an agent may have started here
 			// between discovery and submit. Never yank a running agent's cwd.
 			out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 			resp.Skipped++
 		default:
-			if main := mainRepoForPathFn(path); main != "" {
-				pruneRepos[main] = true
-			}
 			out = removeOneWorktree(path, st.Branch, body.DeleteBranches)
 			switch out.Result {
 			case "removed":
@@ -607,13 +722,36 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Outcomes = append(resp.Outcomes, out)
 	}
-	// Finishing tidy-up: prune dangling worktree registrations in every
-	// repo we touched. Best-effort — a prune failure never affects the
-	// per-path outcomes already reported.
-	for repo := range pruneRepos {
-		_ = pruneWorktreesFn(repo)
-	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// removeOneRegisteredWorktree is the missing-directory sibling of
+// removeOneWorktree. Git's registration, read through a surviving main
+// checkout, supplies both the linked-worktree identity and its branch.
+func removeOneRegisteredWorktree(
+	reg registeredSweepWorktree,
+	path string,
+	deleteBranch bool,
+) worktreeCleanupOutcome {
+	removed, branchDeleted, branch, err := removeRegisteredWorktreeFn(
+		reg.RepoRoot, path, deleteBranch, true,
+	)
+	out := worktreeCleanupOutcome{Path: path, Branch: branch}
+	switch {
+	case err != nil:
+		out.Result, out.Detail = "failed", err.Error()
+	case removed && branchDeleted:
+		out.Result, out.Detail = "removed_with_branch",
+			"stale worktree + branch "+branch+" removed"
+	case removed && deleteBranch && branch != "" && !isProtectedBranchName(branch):
+		out.Result, out.Detail = "removed",
+			"stale worktree removed (branch "+branch+" kept — already gone or protected)"
+	case removed:
+		out.Result, out.Detail = "removed", "stale worktree registration removed"
+	default:
+		out.Result, out.Detail = "skipped", "already removed"
+	}
+	return out
 }
 
 // removeOneWorktree force-removes one linked worktree and, when

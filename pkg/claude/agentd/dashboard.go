@@ -771,6 +771,8 @@ func autoLaunchDashboard(theme string, out io.Writer) {
 	}
 	if err := dashboardBrowserOpener(url); err != nil {
 		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
+		fmt.Fprintln(out, "  failed to open your browser, open this URL manually:")
+		fmt.Fprintln(out, url)
 		return
 	}
 	fmt.Fprintln(out, "  opening dashboard in your browser…")
