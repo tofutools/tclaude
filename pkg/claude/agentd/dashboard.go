@@ -2585,6 +2585,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	presentedPRsFor := func(agentID string) []presentedPRView {
 		return presentedPRViews(presentedPRs[agentID])
 	}
+	// Resolve one freshest state per PR URL across every dashboard source.
+	// This deliberately crosses agent rows: a presented-PR poll on one row and
+	// an automatic branch link on another are observations of the same PR, not
+	// independent display state.
+	freshPRStates := make(prStateIndex)
+	for _, convID := range convIDs {
+		freshPRStates.addRepoLinks(rc.viewFor(convID).Links)
+	}
+	for _, rows := range presentedPRs {
+		for _, row := range rows {
+			freshPRStates.add(row.PRURL, row.State, row.UpdatedAt)
+		}
+	}
 	// Same preload discipline as taskRefs: one ListAllAgentTags per snapshot,
 	// keyed by agent_id, looked up per row (not a query per member/agent in
 	// this 2s-polled path). The stored set is already sorted alphabetically.
@@ -2609,8 +2622,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		b := rc.viewFor(convID)
-		links := b.Links
-		links.PresentedPRs = presentedPRsFor(b.AgentID)
+		links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
+			withFreshestPRStates(freshPRStates)
 		a := &dashboardAgent{
 			AgentID:           b.AgentID,
 			ConvID:            convID,
@@ -2734,8 +2747,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			memberSet[m.ConvID] = true
 			b := rc.viewFor(m.ConvID)
-			links := b.Links
-			links.PresentedPRs = presentedPRsFor(b.AgentID)
+			links := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
+				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           b.AgentID,
 				ConvID:            m.ConvID,
@@ -2774,8 +2787,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b := rc.viewFor(ownerConv)
-			ownerLinks := b.Links
-			ownerLinks.PresentedPRs = presentedPRsFor(b.AgentID)
+			ownerLinks := b.Links.withPresentedPRs(presentedPRsFor(b.AgentID)).
+				withFreshestPRStates(freshPRStates)
 			dg.Members = append(dg.Members, dashboardMember{
 				AgentID:           b.AgentID,
 				ConvID:            ownerConv,

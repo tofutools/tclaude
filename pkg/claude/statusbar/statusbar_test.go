@@ -3,11 +3,40 @@ package statusbar
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestApplyRenderWritesPreservesGitSnapshotFreshness(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	const conv = "statusline-pr-freshness"
+	fetchedAt := time.Now().Add(-10 * time.Second).Truncate(time.Microsecond)
+	input := StatusLineInput{}
+	input.Workspace.CurrentDir = "/repo"
+
+	require.True(t, applyRenderWrites(renderWrites{
+		Input:         input,
+		WorkspaceConv: conv,
+		Git: &GitSnapshot{
+			RepoURL:       "https://github.com/o/r",
+			Branch:        "feature",
+			DefaultBranch: "main",
+			PRNumber:      42,
+			PRURL:         "https://github.com/o/r/pull/42",
+			PRState:       "open",
+			FetchedAt:     fetchedAt,
+		},
+	}))
+
+	ws, err := db.GetAgentWorkspace(conv)
+	require.NoError(t, err)
+	assert.WithinDuration(t, fetchedAt, ws.UpdatedAt, time.Microsecond,
+		"render time must not make a reused git-cache result look newly fetched")
+}
 
 func TestStatusbarSoftDisablesInsideTclaudeLayer(t *testing.T) {
 	t.Setenv("TCLAUDE_IGNORE_HOOKS", "1")

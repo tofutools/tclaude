@@ -191,6 +191,13 @@ func applyRenderWrites(w renderWrites) (ok bool) {
 			ws.PRNumber = w.Git.PRNumber
 			ws.PRURL = w.Git.PRURL
 			ws.PRState = w.Git.PRState
+			// AgentWorkspace.UpdatedAt is also the freshness clock for the
+			// published git/PR snapshot. A render may reuse the 15-second git
+			// cache, so retain its actual fetch time instead of making stale PR
+			// state look newer merely because the statusline rendered again.
+			if !w.Git.FetchedAt.IsZero() {
+				ws.UpdatedAt = w.Git.FetchedAt
+			}
 		}
 		if err := db.UpsertAgentWorkspace(ws); err != nil {
 			slog.Warn("status-bar: failed to upsert agent_workspace", "error", err, "module", "hooks")
