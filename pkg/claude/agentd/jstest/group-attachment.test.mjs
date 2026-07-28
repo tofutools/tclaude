@@ -16,6 +16,9 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     harness.importDashboardModule('js/action-dialog-island.js'),
   ]);
   const state = createActionDialogState();
+  const featureSnapshot = harness.signals.signal({
+    group_attachments_enabled: false,
+  });
   const actions = {
     openGroupAttachment: state.openGroupAttachment,
     close: state.close,
@@ -37,7 +40,9 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     attachment_label: 'No host',
   }];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const view = (enabled) => harness.html`<${GroupsInteractionProvider}>
+  const view = (enabled) => {
+    featureSnapshot.value = { group_attachments_enabled: enabled };
+    return harness.html`<${GroupsInteractionProvider}>
       <${GroupsNativeList}
         groups=${groups}
         snapshot=${{
@@ -51,9 +56,11 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
       <${ActionDialogApp}
         state=${state}
         actions=${actions}
+        snapshot=${featureSnapshot}
         confirmDiscard=${async () => true}
       />
     <//>`;
+  };
   const mounted = await harness.mount(view(false), host);
 
   const attachment = (name) => host.querySelector(
@@ -106,6 +113,24 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'Escape restores focus to the summary instead of pinning the overlay open',
   );
 
+  empty.click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(host.querySelector('#task-link-modal'), 'the editor can reopen while enabled');
+  await harness.act(() => {
+    featureSnapshot.value = { group_attachments_enabled: false };
+  });
+  assert.equal(
+    host.querySelector('#task-link-modal'),
+    null,
+    'a live enabled-to-disabled snapshot immediately hides the open editor',
+  );
+  assert.equal(
+    state.view.value.dialog,
+    null,
+    'disabling also releases dialog ownership instead of leaving hidden stale state',
+  );
+
+  await mounted.rerender(view(true));
   const hostless = attachment('hostless');
   assert.equal(hostless.querySelector('a'), null, 'http(s) without a host must remain inert');
   assertTabReachable(hostless.querySelector('.group-attachment-invalid'));

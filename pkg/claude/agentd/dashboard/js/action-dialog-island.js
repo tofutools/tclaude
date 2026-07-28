@@ -498,22 +498,37 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
   `;
 }
 
-export function ActionDialogApp({ state, actions, confirmDiscard }) {
+function GroupAttachmentDialogGate({ descriptor, state, snapshot, actions, confirmDiscard }) {
+  const enabled = !!snapshot?.value?.group_attachments_enabled;
+  useEffect(() => {
+    if (!enabled) state.close(descriptor);
+  }, [enabled, descriptor, state]);
+  if (!enabled) return null;
+  return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+}
+
+export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
   const descriptor = state.view.value.dialog;
   if (!descriptor) return null;
   if (descriptor.kind === 'clone-agent') return html`<${CloneAgentDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'group-attachment') return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'group-attachment') return html`<${GroupAttachmentDialogGate}
+    descriptor=${descriptor}
+    state=${state}
+    snapshot=${snapshot}
+    actions=${actions}
+    confirmDiscard=${confirmDiscard}
+  />`;
   if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }
 
-export function mountActionDialogIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
-  render(html`<${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
+export function mountActionDialogIsland({ host, state, actions, confirmDiscard, snapshot, registerCleanup }) {
+  render(html`<${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} snapshot=${snapshot} />`, host);
   const unregister = registerActionDialogController(actions);
   registerCleanup(() => { state.dispose(); unregister(); render(null, host); });
 }
