@@ -157,12 +157,12 @@ func TestRemoteTUIAttachStreamsTheDashboardTerminalWebSocket(t *testing.T) {
 		CheckOrigin: func(*http.Request) bool { return true },
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/tui/v1/peers":
+		switch r.URL.Path {
+		case "/api/tui/v1/peers":
 			assert.Equal(t, "tclo_remote-test", r.Header.Get(agent.HumanTokenHeader))
 			http.SetCookie(w, &http.Cookie{Name: "dash", Value: "session", Path: "/"})
 			_, _ = w.Write([]byte(`[]`))
-		case r.URL.Path == "/api/tui/attach-ws/c1":
+		case "/api/tui/attach-ws/c1":
 			attached.Store(true)
 			assert.Equal(t, srvOrigin(r), r.Header.Get("Origin"))
 			cookie, err := r.Cookie("dash")
