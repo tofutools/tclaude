@@ -185,7 +185,10 @@ func ResolveAccessEnforcement(
 			osSandbox.State, osSandbox.Source,
 		)
 	}
-	row, err := accessEnforcementTable(h, implementation, axes, validatedBuiltinMode, runtime.GOOS)
+	row, err := accessEnforcementTable(
+		h, implementation, axes, validatedBuiltinMode, runtime.GOOS,
+		osSandbox.FilteredNetwork,
+	)
 	if err != nil {
 		return AccessEnforcement{}, err
 	}
@@ -209,7 +212,10 @@ func PredictAccessEnforcement(
 			return PredictedAccessEnforcement{}, err
 		}
 	}
-	row, err := accessEnforcementTable(h, implementation, axes, validatedBuiltinMode, platform)
+	row, err := accessEnforcementTable(
+		h, implementation, axes, validatedBuiltinMode, platform,
+		platform == "linux",
+	)
 	if err != nil {
 		return PredictedAccessEnforcement{}, err
 	}
@@ -221,6 +227,7 @@ func accessEnforcementTable(
 	implementation sandboxpolicy.Implementation,
 	axes sandboxpolicy.ResolvedAxes,
 	validatedBuiltinMode, goos string,
+	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
 	if implementation.UsesTclaudeLayer() {
 		mechanism := "tclaude-layer Seatbelt"
@@ -229,8 +236,7 @@ func accessEnforcementTable(
 		}
 		caps := accessEnforcementTableRow{
 			NetworkClosed: EnforceFull,
-			// NetworkFiltered remains reserved and refused by every applier.
-			NetworkList: EnforceNone,
+			NetworkList:   EnforceNone,
 			// Socket capabilities are combination-aware: the closed-network
 			// posture removes ambient sockets outside explicitly reopened
 			// filesystem roots.
@@ -239,6 +245,24 @@ func accessEnforcementTable(
 			SocketList:   EnforceNone,
 			Scope:        "process",
 			Mechanism:    mechanism,
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			goos == "linux" && filteredNetworkReady &&
+			(h.Name == DefaultName || h.Name == CodexName) {
+			caps.NetworkList = EnforceFull
+			caps.NetworkSelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforceFull,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforcePartial,
+					Detail:   FilteredNetworkLoopbackCaveat,
+				},
+			}
+			caps.NetworkPorts = EnforceFull
+			caps.Mechanism = "tclaude-layer bubblewrap + supervised pasta/nftables gateway"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull

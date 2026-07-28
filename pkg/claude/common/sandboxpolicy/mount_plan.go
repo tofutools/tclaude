@@ -58,7 +58,8 @@ const (
 // Aliases are auxiliary namespace setup rather than authority-bearing mounts;
 // their targets remain governed by Entries.
 type MountPlan struct {
-	Entries        []MountEntry
-	Aliases        []MountAlias
-	NetworkPosture NetworkPosture
+	Entries         []MountEntry
+	Aliases         []MountAlias
+	NetworkPosture  NetworkPosture
+	FilteredNetwork *FilteredNetworkRuleSet
 }

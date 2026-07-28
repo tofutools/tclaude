@@ -64,10 +64,8 @@ func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, erro
 	}
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen:
-	case sandboxpolicy.NetworkIsolatedWithAgentd:
+	case sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.NetworkFiltered:
 		args = append(args, "--unshare-net", "--unshare-pid")
-	case sandboxpolicy.NetworkFiltered:
-		return nil, fmt.Errorf("network posture %s is reserved and has no tclaude-layer probe", posture)
 	default:
 		return nil, fmt.Errorf("invalid tclaude-layer network posture %d", posture)
 	}
@@ -108,11 +106,17 @@ func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, err
 	}
 	if err := probeBwrap(binary, posture); err != nil {
 		requiredNamespaces := "mount namespace and read-only remount support"
-		if posture == sandboxpolicy.NetworkIsolatedWithAgentd {
+		if posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
+			posture == sandboxpolicy.NetworkFiltered {
 			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by isolated-with-agentd"
 		}
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
+	}
+	if posture == sandboxpolicy.NetworkFiltered {
+		if _, err := resolveFilteredNetworkExecutables(); err != nil {
+			return "", fmt.Errorf("tclaude-layer filtered network prerequisite: %w", err)
+		}
 	}
 	return binary, nil
 }
@@ -141,7 +145,11 @@ func tclaudeLayerCommand(
 		return "", err
 	}
 	relay := tclaudeLayerRelayPrefix()
-	return relay + " -- " + command, nil
+	filtered, err := filteredNetworkRelayPrefix(plan)
+	if err != nil {
+		return "", err
+	}
+	return relay + filtered + " -- " + command, nil
 }
 
 func tclaudeLayerStackedCommand(
@@ -156,6 +164,9 @@ func tclaudeLayerStackedCommand(
 	consume bool,
 	harnessCommand string,
 ) (string, error) {
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		return "", fmt.Errorf("stacked filtered-network launches are not enabled in M2b")
+	}
 	command, err := bwrapCommand(
 		binary,
 		phase0WriteDirs,
@@ -191,6 +202,9 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		return "", fmt.Errorf("filtered-network server boundaries remain disabled until M3")
+	}
 	return bwrapCommand(
 		binary,
 		phase0WriteDirs,
@@ -220,6 +234,12 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 		return harness.LaunchOSSandbox{
 			State:  "on",
 			Source: "tclaude-layer (bubblewrap; isolated network; host loopback/IDE bridge unavailable; isolated PIDs; constructed root; agentd socket allowlisted)",
+		}
+	case sandboxpolicy.NetworkFiltered:
+		return harness.LaunchOSSandbox{
+			State:           "on",
+			Source:          "tclaude-layer (bubblewrap; filtered network via supervised rootless pasta + atomic nftables; isolated PIDs; constructed root; agentd socket allowlisted)",
+			FilteredNetwork: true,
 		}
 	default:
 		return harness.LaunchOSSandbox{

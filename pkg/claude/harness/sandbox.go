@@ -189,6 +189,11 @@ func SpawnSandboxInfo(h *Harness, sandboxMode string) []string {
 type LaunchOSSandbox struct {
 	State  string
 	Source string
+	// FilteredNetwork is launch-only evidence that the Linux outer-layer
+	// prerequisite resolved for the filtered posture. It is intentionally not
+	// inferred from State: a functioning host-open bubblewrap boundary must not
+	// mint NetworkList enforcement.
+	FilteredNetwork bool
 	// Unverified marks a verdict tclaude could not fully establish. For a
 	// harness-owned sandbox this means an outranking settings file could not be
 	// read; experimental outer layers may also use it to record a known partial

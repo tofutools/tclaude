@@ -319,10 +319,9 @@ func TclaudeLayerServerHostAvailability() error {
 	return err
 }
 
-// FilteredNetworkPrerequisite is the live control-plane result for the future
-// Linux filtered gateway. Detected does not mean NetworkList is enforced or
-// the gateway is ready; M2a deliberately records the probe while the capability
-// matrix remains None.
+// FilteredNetworkPrerequisite is the live control-plane result for the Linux
+// filtered gateway. Detected does not itself mean NetworkList is enforced:
+// the exact launch remains gated on policy installation and gateway readiness.
 type FilteredNetworkPrerequisite struct {
 	Detected bool   `json:"detected"`
 	Detail   string `json:"detail"`
@@ -336,14 +335,15 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 }
 
 // LaunchWhy is persisted in the resolved snapshot and therefore reaches both
-// launch notes/warnings and the dashboard badge. A positive result says only
-// what M2a actually proves: bubblewrap ran the namespace probe, while the pasta
-// and nft executables were discovered. End-to-end gateway readiness belongs to
-// the smoke-gated data-plane slice.
-func (p FilteredNetworkPrerequisite) LaunchWhy() string {
+// launch notes/warnings and the dashboard badge.
+func (p FilteredNetworkPrerequisite) LaunchWhy(enforcing bool) string {
+	if p.Detected && enforcing {
+		return "filtered-network prerequisite probe: detected (" + p.Detail +
+			"); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available"
+	}
 	if p.Detected {
 		return "filtered-network prerequisite probe: detected (" + p.Detail +
-			"); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open"
+			"); this launch cannot consume the authored list, so the network allow list remains unenforced and outbound remains open"
 	}
 	return "filtered-network prerequisite probe: unavailable (" + p.Detail +
 		"); the network allow list remains unenforced and outbound remains open"
@@ -354,13 +354,18 @@ func (p FilteredNetworkPrerequisite) LaunchWhy() string {
 // session boundary's final persisted snapshot.
 func FilteredNetworkPrerequisiteNotice(
 	probe FilteredNetworkPrerequisite,
+	enforcing bool,
 ) sandboxpolicy.AccessNotice {
+	effect := sandboxpolicy.AccessNoticeEffectNotEnforced
+	if probe.Detected && enforcing {
+		effect = sandboxpolicy.AccessNoticeEffectLaunchGated
+	}
 	return sandboxpolicy.AccessNotice{
 		Class:  sandboxpolicy.AccessNoticeClassDegradation,
 		Axis:   "network",
 		Reason: sandboxpolicy.AccessNoticeReasonFilteredPrerequisite,
-		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-		Detail: probe.LaunchWhy(),
+		Effect: effect,
+		Detail: probe.LaunchWhy(enforcing),
 	}
 }
 
@@ -368,12 +373,13 @@ func appendFilteredNetworkPrerequisiteNotice(
 	notices []sandboxpolicy.AccessNotice,
 	outerLayer bool,
 	network sandboxpolicy.NetworkRules,
+	enforcing bool,
 	probe func() FilteredNetworkPrerequisite,
 ) []sandboxpolicy.AccessNotice {
 	if !outerLayer || network.Mode != sandboxpolicy.AccessModeList {
 		return notices
 	}
-	return append(notices, FilteredNetworkPrerequisiteNotice(probe()))
+	return append(notices, FilteredNetworkPrerequisiteNotice(probe(), enforcing))
 }
 
 // TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
@@ -400,26 +406,54 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 // both the harness descriptor and the operator's resolved profile assert a
 // model transport that functions across the selected platform's boundary
 // (a network namespace on Linux, Seatbelt network denies on Darwin).
-func ValidateTclaudeLayerNetwork(h *harness.Harness, effective sandboxpolicy.EffectiveProfile) error {
-	posture, err := sandboxpolicy.NetworkPostureForAccess(effective.NetworkAccess)
+func ValidateTclaudeLayerNetwork(
+	h *harness.Harness,
+	effective sandboxpolicy.EffectiveProfile,
+	resolvedModel harness.ResolvedModelTransport,
+) ([]sandboxpolicy.AccessNotice, error) {
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
-		return nil
+	switch axes.Network.Mode {
+	case sandboxpolicy.AccessModeUnset, sandboxpolicy.AccessModeOpen:
+		return nil, nil
+	case sandboxpolicy.AccessModeList:
+		requirement, resolveErr := harness.ResolveModelTransportRequirement(h, resolvedModel)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if coverageErr := harness.ValidateModelTransportCoverage(
+			h, axes.Network, requirement); coverageErr != nil {
+			return nil, coverageErr
+		}
+		detail := harness.DescribeModelTransportRequirement(requirement)
+		if requirement.Template != "" {
+			detail += " Hosted endpoint coverage is declared but not empirically validated; it remains provisional until the pinned M2c harness smoke."
+		}
+		return []sandboxpolicy.AccessNotice{{
+			Class:  sandboxpolicy.AccessNoticeClassDegradation,
+			Axis:   "network",
+			Reason: sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
+			Effect: sandboxpolicy.AccessNoticeEffectLaunchGated,
+			Detail: detail,
+		}}, nil
+	case sandboxpolicy.AccessModeClosed:
+	default:
+		return nil, fmt.Errorf("unsupported tclaude-layer network mode %q", axes.Network.Mode)
 	}
 	if !h.SupportsOfflineModelTransport() {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"unsupported_sandbox_profile_network: network_access none isolates the whole tclaude-layer process, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
 			h.Name,
 		)
 	}
 	for _, entry := range effective.Environment {
 		if entry.Name == sandboxpolicy.OfflineModelTransportEnv && entry.Value == "1" {
-			return nil
+			return nil, nil
 		}
 	}
-	return fmt.Errorf(
+	return nil, fmt.Errorf(
 		"unsupported_sandbox_profile_network: network_access none requires %s=1 in the resolved sandbox profile, asserting a model transport that functions across the isolated network boundary; see docs/sandboxing.md#isolated-with-agentd-network-posture",
 		sandboxpolicy.OfflineModelTransportEnv,
 	)
@@ -727,7 +761,7 @@ func tclaudeLayerSpecRenderInput(
 		}
 	}
 	socketPaths := sandboxpolicy.AgentdSocketFloor()
-	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd &&
+	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) &&
 		spec.Effective.UnixSockets != nil {
 		var authoredSockets []string
 		if spec.Contract.MaterializedUnixSocketPaths != nil {
@@ -1052,6 +1086,16 @@ func bwrapArgsWithDaemonFinal(
 	opaqueStateDirs []string,
 ) ([]string, error) {
 	var hideRemounts tclaudeLayerHideRemounts
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		if plan.FilteredNetwork == nil {
+			return nil, fmt.Errorf("filtered network posture has no compiled gateway policy")
+		}
+		if _, err := sandboxpolicy.RenderFilteredNetworkNFT(*plan.FilteredNetwork); err != nil {
+			return nil, fmt.Errorf("validate filtered network gateway policy: %w", err)
+		}
+	} else if plan.FilteredNetwork != nil {
+		return nil, fmt.Errorf("non-filtered network posture unexpectedly carries a gateway policy")
+	}
 	args := []string{
 		"--die-with-parent",
 		// Give the wrapped process a new terminal session so a copied tmux
@@ -1064,7 +1108,7 @@ func bwrapArgsWithDaemonFinal(
 		// Preserve the walking skeleton: the host namespace and read-only host
 		// root stay visible, including ambient pathname sockets.
 		args = append(args, "--ro-bind", "/", "/")
-	case sandboxpolicy.NetworkIsolatedWithAgentd:
+	case sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.NetworkFiltered:
 		// Bubblewrap brings loopback up in the newly created namespace. Start
 		// from a fresh root so filesystem AF_UNIX sockets are absent unless a
 		// later launch-contract or policy bind explicitly exposes them. Keep
@@ -1073,8 +1117,6 @@ func bwrapArgsWithDaemonFinal(
 		// namespace through /proc/<pid>/root.
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
-	case sandboxpolicy.NetworkFiltered:
-		return nil, fmt.Errorf("network posture %s is reserved and has no tclaude-layer applier", plan.NetworkPosture)
 	default:
 		return nil, fmt.Errorf("mount plan has invalid network posture %d", plan.NetworkPosture)
 	}
@@ -1084,7 +1126,7 @@ func bwrapArgsWithDaemonFinal(
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	)
-	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
 		var err error
 		args, err = appendTclaudeLayerAliases(args, plan.Aliases)
 		if err != nil {
@@ -1149,7 +1191,7 @@ func bwrapArgsWithDaemonFinal(
 		args = hideRemounts.appendHide(args, root)
 	}
 	liveSocketPaths := make([]string, 0, len(socketPaths))
-	if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
@@ -1216,7 +1258,7 @@ func bwrapArgsWithDaemonFinal(
 			)
 		case sandboxpolicy.MountHide:
 			args = hideRemounts.appendHide(args, path)
-			if plan.NetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+			if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
 				args = appendTclaudeLayerAliasRepairs(
 					args,
 					path,
@@ -1313,6 +1355,11 @@ func bwrapArgsWithDaemonFinal(
 		"--remount-ro", tmuxSocketDir,
 	)
 	return args, nil
+}
+
+func tclaudeLayerConstructedRootPosture(posture sandboxpolicy.NetworkPosture) bool {
+	return posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
+		posture == sandboxpolicy.NetworkFiltered
 }
 
 func appendTclaudeLayerOpaqueState(
@@ -1818,6 +1865,6 @@ func bwrapCommand(
 	}
 	// Harness spawners return a safe shell command rather than argv. Keep that
 	// contract intact inside the namespace instead of reparsing it here.
-	command += " -- sh -c " + clcommon.ShellQuoteArg(harnessCommand)
+	command += " -- /bin/sh -c " + clcommon.ShellQuoteArg(harnessCommand)
 	return command, nil
 }

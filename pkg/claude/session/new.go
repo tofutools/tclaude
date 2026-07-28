@@ -577,7 +577,11 @@ func runNew(params *NewParams) error {
 		if launchSandbox != nil {
 			effective = launchSandbox.Effective
 		}
-		if err := ValidateTclaudeLayerNetwork(h, effective); err != nil {
+		if _, err := ValidateTclaudeLayerNetwork(
+			h,
+			effective,
+			harness.ResolvedModelTransport{Model: model},
+		); err != nil {
 			return err
 		}
 	}
@@ -921,11 +925,27 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
+	var filteredNetworkProbe *FilteredNetworkPrerequisite
+	if outerLayer &&
+		sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		launchSandbox != nil && launchSandbox.Effective.Network != nil {
+		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(launchSandbox.Effective)
+		if axesErr != nil {
+			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
+		}
+		if axes.Network.Mode == sandboxpolicy.AccessModeList {
+			probe := ProbeFilteredNetworkPrerequisite()
+			filteredNetworkProbe = &probe
+			if probe.Detected {
+				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
+			}
+		}
+	}
 	if err := ApplyAgentSocketEnv(
 		h.Name,
 		params.Sandbox,
 		params.PermissionProfile,
-		outerLayer && tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd,
+		outerLayer && tclaudeLayerConstructedRootPosture(tclaudeLayerPosture),
 		additionalEnv,
 	); err != nil {
 		return err
@@ -1107,10 +1127,38 @@ func runNew(params *NewParams) error {
 		if planErr != nil {
 			return planErr
 		}
+		filteredEnforcing := rendered.Network.Mode == sandboxpolicy.AccessModeList &&
+			launchOSSandbox.FilteredNetwork
 		notices = appendFilteredNetworkPrerequisiteNotice(
 			notices, outerLayer, axes.Network,
-			ProbeFilteredNetworkPrerequisite,
+			filteredEnforcing,
+			func() FilteredNetworkPrerequisite {
+				if filteredNetworkProbe != nil {
+					return *filteredNetworkProbe
+				}
+				return ProbeFilteredNetworkPrerequisite()
+			},
 		)
+		if tclaudeLayerPosture == sandboxpolicy.NetworkFiltered && !filteredEnforcing {
+			tclaudeLayerPosture = sandboxpolicy.NetworkHostOpen
+			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
+				h.Name, tclaudeLayerPosture)
+		}
+		if outerLayer {
+			plannedEffective := launchSandbox.Effective
+			plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+				plannedEffective.AccessNotices, notices...,
+			)
+			modelNotices, modelErr := ValidateTclaudeLayerNetwork(
+				h,
+				plannedEffective,
+				harness.ResolvedModelTransport{Model: model},
+			)
+			if modelErr != nil {
+				return modelErr
+			}
+			notices = append(notices, modelNotices...)
+		}
 		materialization := launchSandbox.UnixSocketMaterialization
 		if materialization == nil || rendered.UnixSockets.Mode != sandboxpolicy.AccessModeList {
 			var materializationErr error
@@ -1130,11 +1178,6 @@ func runNew(params *NewParams) error {
 			)
 			sandboxpolicy.SetUnixSocketLaunchMaterialization(
 				effectiveSandbox, materialization)
-		}
-		if outerLayer {
-			if err := ValidateTclaudeLayerNetwork(h, launchSandbox.Effective); err != nil {
-				return err
-			}
 		}
 	}
 	if launchSandbox != nil {

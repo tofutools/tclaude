@@ -170,10 +170,18 @@ func planSandboxProfileAccessForLaunch(
 			"invalid_sandbox_profile", err.Error()}
 	}
 	var verdict harness.LaunchOSSandbox
+	var filteredProbe *session.FilteredNetworkPrerequisite
 	if implementation.UsesTclaudeLayer() {
 		posture := sandboxpolicy.NetworkHostOpen
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			posture = sandboxpolicy.NetworkIsolatedWithAgentd
+		} else if axes.Network.Mode == sandboxpolicy.AccessModeList &&
+			implementation == sandboxpolicy.ImplementationTclaudeLayer {
+			probe := probeFilteredNetworkPrerequisite()
+			filteredProbe = &probe
+			if probe.Detected {
+				posture = sandboxpolicy.NetworkFiltered
+			}
 		}
 		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
 		if err != nil {
@@ -195,8 +203,30 @@ func planSandboxProfileAccessForLaunch(
 	}
 	if implementation.UsesTclaudeLayer() &&
 		axes.Network.Mode == sandboxpolicy.AccessModeList {
-		probe := probeFilteredNetworkPrerequisite()
-		notices = append(notices, session.FilteredNetworkPrerequisiteNotice(probe))
+		if filteredProbe == nil {
+			probe := probeFilteredNetworkPrerequisite()
+			filteredProbe = &probe
+		}
+		notices = append(notices, session.FilteredNetworkPrerequisiteNotice(
+			*filteredProbe,
+			rendered.Network.Mode == sandboxpolicy.AccessModeList &&
+				verdict.FilteredNetwork,
+		))
+	}
+	if implementation.UsesTclaudeLayer() &&
+		rendered.Network.Mode == sandboxpolicy.AccessModeList {
+		plannedEffective := snapshot.Effective
+		plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			plannedEffective.AccessNotices, notices...,
+		)
+		modelNotices, modelErr := session.ValidateTclaudeLayerNetwork(
+			h, plannedEffective, harness.ResolvedModelTransport{},
+		)
+		if modelErr != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				modelErr, harness.SandboxCapabilityModelTransport)
+		}
+		notices = append(notices, modelNotices...)
 	}
 	materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(rendered.UnixSockets)
 	if err != nil {

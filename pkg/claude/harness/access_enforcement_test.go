@@ -267,7 +267,8 @@ func accessEnforcementForTargetForTest(
 	axes sandboxpolicy.ResolvedAxes,
 	validatedBuiltinMode, goos string,
 ) (AccessEnforcement, error) {
-	row, err := accessEnforcementTable(h, implementation, axes, validatedBuiltinMode, goos)
+	row, err := accessEnforcementTable(
+		h, implementation, axes, validatedBuiltinMode, goos, false)
 	if err != nil {
 		return AccessEnforcement{}, err
 	}
@@ -303,7 +304,7 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 	assert.Equal(t, "tools_only_scope", notices[1].Reason)
 }
 
-func TestM2aNetworkListCapabilityMatrixRemainsNone(t *testing.T) {
+func TestM2bNetworkListCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
 	}
@@ -327,13 +328,28 @@ func TestM2aNetworkListCapabilityMatrixRemainsNone(t *testing.T) {
 				row, err := accessEnforcementTable(
 					target.harness, target.implementation, axes,
 					target.mode, platform,
+					true,
 				)
 				require.NoError(t, err)
-				assert.Equal(t, EnforceNone, row.NetworkList,
-					"M2a is control-plane only; a cell may flip only with its executing CI smoke")
+				want := EnforceNone
+				if platform == "linux" &&
+					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+					(target.harness.Name == DefaultName || target.harness.Name == CodexName) {
+					want = EnforceFull
+				}
+				assert.Equal(t, want, row.NetworkList,
+					"only the M2b Linux Claude/Codex tclaude-layer cells have an executing CI smoke")
 			})
 		}
 	}
+
+	row, err := accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes,
+		ClaudeSandboxOff, "linux", false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, row.NetworkList,
+		"a host-open verdict must not mint filtered enforcement")
 }
 
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {

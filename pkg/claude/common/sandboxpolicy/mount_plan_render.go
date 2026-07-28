@@ -133,6 +133,13 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 		return MountPlan{}, err
 	}
 	plan.NetworkPosture = posture
+	if posture == NetworkFiltered {
+		filtered, filteredErr := CompileFilteredNetworkRules(axes.Network)
+		if filteredErr != nil {
+			return MountPlan{}, fmt.Errorf("compile filtered network plan: %w", filteredErr)
+		}
+		plan.FilteredNetwork = &filtered
+	}
 	return plan, nil
 }
 

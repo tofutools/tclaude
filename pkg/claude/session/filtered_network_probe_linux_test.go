@@ -15,10 +15,14 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
 	oldFilteredPath := filteredNetworkLookPath
+	oldFilteredEval := filteredNetworkEvalSymlinks
+	oldFilteredValidate := validateFilteredNetworkExecutable
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
 		filteredNetworkLookPath = oldFilteredPath
+		filteredNetworkEvalSymlinks = oldFilteredEval
+		validateFilteredNetworkExecutable = oldFilteredValidate
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
@@ -28,6 +32,8 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
+	filteredNetworkEvalSymlinks = func(path string) (string, error) { return path, nil }
+	validateFilteredNetworkExecutable = func(string) error { return nil }
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.True(t, got.Detected)
@@ -35,9 +41,9 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	assert.Contains(t, got.Detail, "user/network namespace")
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.Detail, "nft")
-	assert.Contains(t, got.Detail, "not verified in M2a")
-	assert.Contains(t, got.LaunchWhy(), "not enabled yet")
-	assert.Contains(t, got.LaunchWhy(), "remains unenforced")
+	assert.Contains(t, got.Detail, "gated launch boundary")
+	assert.Contains(t, got.LaunchWhy(true), "atomic nft policy")
+	assert.NotContains(t, got.LaunchWhy(true), "outbound remains open")
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {
@@ -61,8 +67,8 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 	got := ProbeFilteredNetworkPrerequisite()
 	require.False(t, got.Detected)
 	assert.Contains(t, got.Detail, "pasta")
-	assert.Contains(t, got.LaunchWhy(), "unavailable")
-	assert.Contains(t, got.LaunchWhy(), "outbound remains open")
+	assert.Contains(t, got.LaunchWhy(false), "unavailable")
+	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
 func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
@@ -77,6 +83,7 @@ func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
 		prior,
 		true,
 		sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+		true,
 		func() FilteredNetworkPrerequisite {
 			return FilteredNetworkPrerequisite{
 				Detected: true,
@@ -88,13 +95,16 @@ func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
 	require.Len(t, persisted, 2)
 	assert.Equal(t, "no_mechanism", persisted[0].Reason)
 	assert.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, persisted[1].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated, persisted[1].Effect)
 	assert.Contains(t, persisted[1].Detail, "prerequisite probe: detected")
-	assert.Contains(t, persisted[1].Detail, "outbound remains open")
+	assert.Contains(t, persisted[1].Detail, "atomic nft policy")
+	assert.NotContains(t, persisted[1].Detail, "outbound remains open")
 
 	unchanged := appendFilteredNetworkPrerequisiteNotice(
 		prior,
 		false,
 		sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+		false,
 		func() FilteredNetworkPrerequisite {
 			t.Fatal("non-outer launch must not run the filtered prerequisite probe")
 			return FilteredNetworkPrerequisite{}
