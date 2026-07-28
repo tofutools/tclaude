@@ -330,6 +330,7 @@ func TestDirectParallelEntryFansOutAndReducesAtJoinAll(t *testing.T) {
 		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
 		if command == nil {
 			t.Fatalf("only %d branch commands were planned", len(commands))
+			continue
 		}
 		commands[command.NodeID] = *command
 	}

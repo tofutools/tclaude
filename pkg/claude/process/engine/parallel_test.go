@@ -681,6 +681,7 @@ func observeNext(t *testing.T, checkpoint Checkpoint, definition *Definition, no
 	next, command := advanceAndPlan(t, checkpoint, definition)
 	if command == nil {
 		t.Fatalf("no command was planned; expected one for %q", nodeID)
+		return Checkpoint{}
 	}
 	if command.NodeID != nodeID {
 		t.Fatalf("planned command for %q, want %q", command.NodeID, nodeID)

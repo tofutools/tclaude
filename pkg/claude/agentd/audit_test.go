@@ -364,6 +364,7 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	}
 	if fallback == nil {
 		t.Fatalf("want a fallback-labeled approval.request row distinct from the titled one")
+		return
 	}
 	if fallback.ActorLabel != short8(req.convID) {
 		t.Errorf("fallback actor label = %q, want %q (short conv-id)", fallback.ActorLabel, short8(req.convID))
