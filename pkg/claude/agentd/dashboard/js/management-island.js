@@ -49,6 +49,15 @@ const html = htm.bind(h);
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
+function accessRowShapeError(network, unixSockets) {
+  const isRow = (row) => !!row && typeof row === 'object' && !Array.isArray(row);
+  const networkIndex = (network.allow || []).findIndex((row) => !isRow(row));
+  if (networkIndex >= 0) return `Network row ${networkIndex + 1} must be a JSON object containing a host, domain, CIDR, or loopback selector.`;
+  const socketIndex = (unixSockets.allow || []).findIndex((row) => !isRow(row));
+  return socketIndex >= 0
+    ? `Unix-socket row ${socketIndex + 1} must be a JSON object containing a path or path_glob selector.`
+    : '';
+}
 
 /* One entry of the common-rule preset menu: a button that inserts the entry's
    audited paths as ordinary deny rows, with its rationale, warning and the
@@ -89,7 +98,15 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   const rules = sandboxAccessAxes({ network: draft.network }).network;
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
-  const selector = (row) => row.domain ? 'domain' : row.cidr ? 'cidr' : row.loopback ? 'loopback' : 'host';
+  // Prefer the selector that survives wire normalization, then preserve an
+  // intentionally empty domain/CIDR key while its value is being authored.
+  const selector = (row) => row.domain ? 'domain'
+    : row.cidr ? 'cidr'
+      : row.loopback === true ? 'loopback'
+        : row.host ? 'host'
+          : Object.hasOwn(row, 'domain') ? 'domain'
+            : Object.hasOwn(row, 'cidr') ? 'cidr'
+              : 'host';
   const changeSelector = (index, kind) => {
     const next = kind === 'loopback' ? { loopback: true, ports: rules.allow[index].ports || [] } : { [kind]: '', ports: rules.allow[index].ports || [] };
     update({ allow: rules.allow.map((row, i) => i === index ? next : row) });
@@ -575,7 +592,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
@@ -597,10 +614,18 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     try { predictionDraft = { ...draft, ...parseRaw() }; }
     catch (error) { predictionDraftError = message(error); }
   }
+  const accessErrors = sandboxAccessDraftErrors(draft);
+  // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
+  // can resume preview even if the hidden structured draft remains invalid.
+  const predictionAccessErrors = predictionDraftError ? [] : advanced
+    ? sandboxAccessDraftErrors(predictionDraft)
+    : accessErrors;
+  const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
+  const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
   const predictionSignature = JSON.stringify([predictionDraftError ? null : predictionDraft, evaluateFor, options.group || '']);
   useEffect(() => {
     if (typeof actions.predictSandbox !== 'function') return undefined;
-    if (predictionDraftError || !predictionDraft.name.trim()) {
+    if (predictionDraftError || !predictionDraft.name.trim() || predictionAccessErrors.length > 0) {
       setPrediction(null); setPredictionError(''); setPredictionBusy(false);
       return undefined;
     }
@@ -646,7 +671,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const globalConfigWarnings = commonRules.global_config_warnings || [];
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
-  const accessErrors = sandboxAccessDraftErrors(draft);
   const warnings = sandboxPredictionWarnings(prediction);
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
   const selectedEffectiveAxes = selectedEffective ? sandboxAccessAxes(selectedEffective) : null;
@@ -700,6 +724,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="stacked/claude/linux">stacked · Claude · Linux</option>
         <option value="stacked/claude/darwin">stacked · Claude · macOS</option>
       </select></label>
+      ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">

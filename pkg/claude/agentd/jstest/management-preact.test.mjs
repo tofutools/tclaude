@@ -1120,6 +1120,126 @@ test('blank new sandbox drafts do not request an enforcement prediction', async 
   unmount();
 });
 
+test('sandbox enforcement preview pauses for an incomplete access row and resumes when completed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-draft', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [] }, unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox(draft) {
+      predictions.push(draft);
+      return { targets: [], contexts: [] };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 1);
+
+  const network = host.querySelector('#sandbox-profile-editor-network-mode').closest('fieldset');
+  await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Network row 1 must set exactly one selector/);
+
+  const value = network.querySelector('.sbx-network-value');
+  value.value = 'api.example.com';
+  await harness.act(() => harness.fireEvent(value, 'input'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 2, 'preview resumes after the row becomes valid');
+  assert.equal(host.querySelector('.sbx-preview-status'), null);
+  assert.equal(predictions.at(-1).network.allow[0].host, 'api.example.com');
+  unmount();
+});
+
+test('sandbox network selector retains empty domain and CIDR kinds through save and reload', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const cases = [
+    ['domain', 'api.example.com', 'example.com'],
+    ['cidr', '192.0.2.0/24', '192.0.2.0/24'],
+  ];
+
+  for (const [kind, authored, placeholder] of cases) {
+    const state = createManagementState();
+    state.openDialog({ kind: 'sandbox-editor', seed: {
+      name: `network-${kind}`, filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: { mode: 'list', allow: [{ host: 'old.example.com' }] },
+      unix_sockets: { mode: 'closed' },
+    }, options: {} });
+    let saved = null;
+    const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+      async saveSandbox(value) { saved = value; },
+    });
+    await harness.act(() => Promise.resolve());
+
+    const selector = mounted.host.querySelector('.sbx-network-selector');
+    choose(selector, kind);
+    await harness.act(() => harness.fireEvent(selector, 'change'));
+    const renderedSelector = mounted.host.querySelector('.sbx-network-selector');
+    const value = mounted.host.querySelector('.sbx-network-value');
+    assert.equal(renderedSelector.querySelector('option:checked')?.value, kind,
+      `${kind} remains selected with an empty value`);
+    assert.equal(value.value, '');
+    assert.equal(value.placeholder, placeholder);
+
+    value.value = authored;
+    await harness.act(() => harness.fireEvent(value, 'input'));
+    await harness.act(() => harness.fireEvent(
+      mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+    assert.equal(saved.draft.network.allow[0][kind], authored);
+    assert.equal(Object.hasOwn(saved.draft.network.allow[0], 'host'), false,
+      `${kind} selection drops the previous host selector`);
+    mounted.unmount();
+    mounted.host.remove();
+
+    const reopenedState = createManagementState();
+    reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
+    const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
+    await harness.act(() => Promise.resolve());
+    assert.equal(selectedValue(reopened.host.querySelector('.sbx-network-selector')), kind);
+    assert.equal(reopened.host.querySelector('.sbx-network-value').value, authored);
+    reopened.unmount();
+    reopened.host.remove();
+  }
+
+  const mixedState = createManagementState();
+  mixedState.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-mixed', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: '', cidr: '192.0.2.0/24' }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const mixed = mountSandboxEditor(harness, mountManagementIsland, mixedState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(mixed.host.querySelector('.sbx-network-selector')), 'cidr',
+    'a truthy selector takes precedence over an unrelated empty key');
+  assert.equal(mixed.host.querySelector('.sbx-network-value').value, '192.0.2.0/24');
+  mixed.unmount();
+  mixed.host.remove();
+
+  const falseLoopbackState = createManagementState();
+  falseLoopbackState.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-false-loopback', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ loopback: false }] },
+    unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const falseLoopback = mountSandboxEditor(harness, mountManagementIsland, falseLoopbackState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(falseLoopback.host.querySelector('.sbx-network-selector')), 'host');
+  assert.equal(falseLoopback.host.querySelector('.sbx-network-value').value, '');
+  assert.match(falseLoopback.host.querySelector('.sbx-access-validation').textContent,
+    /must set exactly one selector/);
+  falseLoopback.unmount();
+  falseLoopback.host.remove();
+});
+
 test('raw access JSON can repair a structured access validation error', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1158,6 +1278,23 @@ test('raw access JSON can repair a structured access validation error', async (t
     'the stale structured error cannot make raw repair unreachable');
   assert.equal(host.querySelector('.sbx-access-validation'), null);
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  const rawSockets = host.querySelector('#sandbox-profile-editor-unix-sockets');
+  rawNetwork.value = '{"mode":"list","allow":[null]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#sandbox-profile-editor-modal'),
+    'an in-progress raw network row cannot crash the editor');
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Network row 1 must be a JSON object/);
+  rawNetwork.value = '{"mode":"list","allow":[]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  rawSockets.value = '{"mode":"list","allow":[null]}';
+  rawSockets.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Unix-socket row 1 must be a JSON object/);
+  rawSockets.value = '{"mode":"closed","allow":[]}';
+  rawSockets.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   rawNetwork.value = '"open"';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   await harness.act(() => Promise.resolve());
