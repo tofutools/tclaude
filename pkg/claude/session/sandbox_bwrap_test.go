@@ -819,6 +819,26 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
 	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
 	assert.Contains(t, notices[0].Detail, "TCL-826")
+
+	custom := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "gateway.example", Ports: []int{443},
+			}},
+		},
+	}
+	notices, err = ValidateTclaudeLayerNetwork(
+		claude, custom, harness.ResolvedModelTransport{
+			Model:            "claude-sonnet",
+			Provider:         "anthropic",
+			BaseURL:          "https://gateway.example/v1",
+			ProviderResolved: true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
+	assert.Contains(t, notices[0].Detail, "TCL-826")
 }
 
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {

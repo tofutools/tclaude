@@ -55,6 +55,37 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
 }
 
+func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "etc")
+	runtimeRoot := filepath.Join(root, "run")
+	target := filepath.Join(runtimeRoot, "systemd", "resolve", "stub-resolv.conf")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	require.NoError(t, os.MkdirAll(configRoot, 0o700))
+	require.NoError(t, os.WriteFile(target, []byte("host resolver"), 0o600))
+	resolv := filepath.Join(configRoot, "resolv.conf")
+	require.NoError(t, os.Symlink(
+		filepath.Join("..", "run", "systemd", "resolve", "stub-resolv.conf"),
+		resolv))
+
+	destination, dirs, err := filteredNetworkResolvMount(resolv, runtimeRoot)
+	require.NoError(t, err)
+	assert.Equal(t, target, destination)
+	assert.Equal(t, []string{
+		runtimeRoot,
+		filepath.Join(runtimeRoot, "systemd"),
+		filepath.Join(runtimeRoot, "systemd", "resolve"),
+	}, dirs)
+
+	outside := filepath.Join(root, "home", "resolver")
+	require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o700))
+	require.NoError(t, os.WriteFile(outside, []byte("outside"), 0o600))
+	require.NoError(t, os.Remove(resolv))
+	require.NoError(t, os.Symlink(outside, resolv))
+	_, _, err = filteredNetworkResolvMount(resolv, runtimeRoot)
+	require.ErrorContains(t, err, "outside supported")
+}
+
 func TestFilteredNetworkPastaReadinessRetriesPartialPIDFile(t *testing.T) {
 	root := t.TempDir()
 	pastaPath := filepath.Join(root, "pasta")

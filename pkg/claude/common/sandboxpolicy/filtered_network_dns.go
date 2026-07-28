@@ -2,7 +2,6 @@ package sandboxpolicy
 
 import (
 	"fmt"
-	"net/netip"
 	"strings"
 )
 
@@ -54,29 +53,6 @@ func FilteredNetworkAllowsDNSLoopbackAnswer(rules FilteredNetworkRuleSet) bool {
 	for _, rule := range rules.Rules {
 		if rule.Selector == NetworkSelectorLoopback &&
 			rule.Value == FilteredNetworkHostLoopbackName {
-			return true
-		}
-	}
-	return false
-}
-
-// FilteredNetworkCIDRCoversAddress lets the broker preserve CIDR-authored
-// reachability for applications which name a destination instead of dialing an
-// IP literal. No dynamic lease is needed: the static CIDR rule remains the
-// packet authority and its authored ports still apply.
-func FilteredNetworkCIDRCoversAddress(
-	rules FilteredNetworkRuleSet,
-	address netip.Addr,
-) bool {
-	if !address.IsValid() {
-		return false
-	}
-	for _, rule := range rules.Rules {
-		if rule.Selector != NetworkSelectorCIDR {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(rule.Value)
-		if err == nil && prefix.Contains(address) {
 			return true
 		}
 	}

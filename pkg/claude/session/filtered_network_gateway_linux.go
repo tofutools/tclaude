@@ -134,6 +134,11 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		return preparedFilteredNetworkRelay{}, fmt.Errorf(
 			"read host /etc/resolv.conf: %w", err)
 	}
+	resolvDestination, resolvDirs, err := filteredNetworkResolvMount(
+		"/etc/resolv.conf", "/run")
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, err
+	}
 	dnsUpstreams, err := parseFilteredNetworkDNSUpstreams(resolvConf)
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
@@ -198,23 +203,29 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		return preparedFilteredNetworkRelay{}, err
 	}
 	files = append(files, resolvFile)
+	setupArgs := []string{
+		"--ro-bind", syncHostPath, filteredNetworkBootstrapSyncPath,
+		"--perms", "0500",
+		"--file", strconv.Itoa(filteredNetworkBootstrapBinaryFD),
+		sandboxpolicy.FilteredNetworkBootstrapPath,
+		"--perms", "0400",
+		"--ro-bind-data", strconv.Itoa(filteredNetworkPolicyFD),
+		sandboxpolicy.FilteredNetworkNFTPolicyPath,
+		"--perms", "0444",
+		"--ro-bind-data", strconv.Itoa(filteredNetworkHostsFD),
+		"/etc/hosts",
+	}
+	for _, dir := range resolvDirs {
+		setupArgs = append(setupArgs, "--dir", dir)
+	}
+	setupArgs = append(setupArgs,
+		"--perms", "0444",
+		"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
+		resolvDestination,
+		"--cap-add", "CAP_NET_ADMIN",
+	)
 	return preparedFilteredNetworkRelay{
-		SetupArgs: []string{
-			"--ro-bind", syncHostPath, filteredNetworkBootstrapSyncPath,
-			"--perms", "0500",
-			"--file", strconv.Itoa(filteredNetworkBootstrapBinaryFD),
-			sandboxpolicy.FilteredNetworkBootstrapPath,
-			"--perms", "0400",
-			"--ro-bind-data", strconv.Itoa(filteredNetworkPolicyFD),
-			sandboxpolicy.FilteredNetworkNFTPolicyPath,
-			"--perms", "0444",
-			"--ro-bind-data", strconv.Itoa(filteredNetworkHostsFD),
-			"/etc/hosts",
-			"--perms", "0444",
-			"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
-			"/etc/resolv.conf",
-			"--cap-add", "CAP_NET_ADMIN",
-		},
+		SetupArgs: setupArgs,
 		Command: []string{
 			sandboxpolicy.FilteredNetworkBootstrapPath,
 			"session",
@@ -230,6 +241,54 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		DNSUpstreams: dnsUpstreams,
 		DNSHosts:     dnsHosts,
 	}, nil
+}
+
+func filteredNetworkResolvMount(
+	path string,
+	runtimeRoot string,
+) (destination string, createDirs []string, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", nil, fmt.Errorf(
+			"inspect host resolver path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return filepath.Clean(path), nil, nil
+	}
+	destination, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", nil, fmt.Errorf(
+			"resolve host resolver symlink %s: %w", path, err)
+	}
+	destination = filepath.Clean(destination)
+	runtimeRoot = filepath.Clean(runtimeRoot)
+	configRoot := filepath.Dir(filepath.Clean(path))
+	switch {
+	case sandboxpolicy.PathContainsOrEqual(configRoot, destination):
+		return destination, nil, nil
+	case sandboxpolicy.PathContainsOrEqual(runtimeRoot, destination):
+	default:
+		return "", nil, fmt.Errorf(
+			"host resolver symlink %s resolves outside supported %s or %s roots: %s",
+			path, configRoot, runtimeRoot, destination)
+	}
+	parent := filepath.Dir(destination)
+	relative, err := filepath.Rel(runtimeRoot, parent)
+	if err != nil || relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", nil, fmt.Errorf(
+			"host resolver target %s escapes runtime root %s",
+			destination, runtimeRoot)
+	}
+	createDirs = append(createDirs, runtimeRoot)
+	if relative != "." {
+		current := runtimeRoot
+		for _, part := range strings.Split(relative, string(filepath.Separator)) {
+			current = filepath.Join(current, part)
+			createDirs = append(createDirs, current)
+		}
+	}
+	return destination, createDirs, nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

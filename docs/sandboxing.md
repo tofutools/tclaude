@@ -597,9 +597,11 @@ broker rewrites the answer to the same synthetic host-loopback addresses.
 
 Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved
 shared IP can be reused until its lease expires. The broker follows a bounded
-CNAME chain, filters returned A/AAAA records through the authored selector and
-CIDR rules, and adds each admitted address to the matching per-rule nft set for
-no longer than the observed DNS TTL. Only a fresh DNS answer refreshes the
+CNAME chain, filters returned A/AAAA records for the matching authored
+host/domain selector, and adds each admitted address to the matching per-rule
+nft set for no longer than the observed DNS TTL. CIDR rows are IP-literal
+packet authority only; they do not authorize arbitrary DNS queries whose
+answers happen to fall inside the CIDR. Only a fresh DNS answer refreshes the
 lease. There is no timer-driven self-refresh and no fixed grace window.
 
 Expiry has two deliberately different directions. A new TCP or UDP flow needs
@@ -629,6 +631,10 @@ explicit custom provider that does not require OpenAI auth); ChatGPT, external
 token, and opaque keyring routes refuse with the named remedies of signing in
 with an API key or using network open. Complete dynamic provider resolution is
 tracked in TCL-826. OpenCode remains unresolved and refused until M3.
+For both supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
+`ALL_PROXY` (including lowercase variants) changes the actual transport
+boundary and therefore refuses filtered launch until TCL-826 adds proxy-aware
+resolution; remove the proxy variable or use network open.
 
 The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The

@@ -1,7 +1,6 @@
 package sandboxpolicy
 
 import (
-	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,23 +44,6 @@ func TestMatchFilteredNetworkDNSNameIsExactAndLabelBound(t *testing.T) {
 			assert.Equal(t, test.want, got)
 		})
 	}
-}
-
-func TestFilteredNetworkCIDRCoversAddress(t *testing.T) {
-	rules, err := CompileFilteredNetworkRules(NetworkRules{
-		Mode: AccessModeList,
-		Allow: []NetworkAllowEntry{
-			{CIDR: "192.0.2.0/24", Ports: []int{443}},
-			{CIDR: "2001:db8::/32"},
-		},
-	})
-	require.NoError(t, err)
-	assert.True(t, FilteredNetworkCIDRCoversAddress(
-		rules, netip.MustParseAddr("192.0.2.41")))
-	assert.False(t, FilteredNetworkCIDRCoversAddress(
-		rules, netip.MustParseAddr("192.0.3.41")))
-	assert.True(t, FilteredNetworkCIDRCoversAddress(
-		rules, netip.MustParseAddr("2001:db8::41")))
 }
 
 func TestMatchFilteredNetworkDNSNameRejectsMalformedQueries(t *testing.T) {

@@ -50,29 +50,36 @@ func TestPinnedFilteredModelEndpointEvidence(t *testing.T) {
 				"--print", "--model", "sonnet", "Reply with exactly ok.",
 			},
 			env:      map[string]string{"ANTHROPIC_API_KEY": "invalid-ci-evidence-key"},
-			expected: []string{"api.anthropic.com"},
+			expected: []string{"api.anthropic.com:443"},
 		})
 	})
 	t.Run("codex-api-key", func(t *testing.T) {
 		t.Parallel()
+		home := t.TempDir()
+		codexHome := filepath.Join(home, ".codex")
+		require.NoError(t, os.MkdirAll(codexHome, 0o700))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(codexHome, "auth.json"),
+			[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"invalid-ci-evidence-key"}`),
+			0o600))
 		runFilteredEndpointEvidence(t, filteredEndpointEvidenceCase{
 			binary: codex,
 			args: append(filteredCodexEndpointEvidenceArgs(),
 				"exec", "--skip-git-repo-check", "--model", "gpt-5.4",
 				"Reply with exactly ok."),
-			env:      map[string]string{"OPENAI_API_KEY": "invalid-ci-evidence-key"},
-			expected: []string{"api.openai.com"},
+			env:      map[string]string{"CODEX_HOME": codexHome},
+			expected: []string{"api.openai.com:443"},
 		})
 	})
 	t.Run("codex-chatgpt", func(t *testing.T) {
 		t.Parallel()
 		runFilteredCodexChatGPTEndpointEvidence(
-			t, codex, time.Now().Add(time.Hour), "chatgpt.com")
+			t, codex, time.Now().Add(time.Hour), "chatgpt.com:443")
 	})
 	t.Run("codex-token-refresh", func(t *testing.T) {
 		t.Parallel()
 		runFilteredCodexChatGPTEndpointEvidence(
-			t, codex, time.Now().Add(-time.Hour), "auth.openai.com")
+			t, codex, time.Now().Add(-time.Hour), "auth.openai.com:443")
 	})
 }
 
@@ -279,10 +286,10 @@ func (p *filteredEndpointAuditProxy) handle(connection net.Conn) {
 	}
 	fields := strings.Fields(line)
 	if len(fields) == 3 && fields[0] == "CONNECT" {
-		host, _, splitErr := net.SplitHostPort(fields[1])
+		host, port, splitErr := net.SplitHostPort(fields[1])
 		if splitErr == nil {
 			p.mu.Lock()
-			p.seen[strings.ToLower(host)] = struct{}{}
+			p.seen[net.JoinHostPort(strings.ToLower(host), port)] = struct{}{}
 			p.mu.Unlock()
 		}
 	}

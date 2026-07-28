@@ -37,6 +37,11 @@ func ResolveTclaudeLayerModelTransport(
 			nil, "cannot resolve provider configuration without a harness")
 	}
 	environment := launchModelEnvironment(context.Environment)
+	if variable := modelTransportProxyVariable(environment); variable != "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("model transport proxy variable %s changes the actual network boundary; remove it or use network open (proxy-aware resolution tracked in TCL-826)",
+				variable))
+	}
 	switch h.Name {
 	case harness.DefaultName:
 		return resolveClaudeModelTransport(h, context, environment)
@@ -248,21 +253,9 @@ func resolveCodexModelTransport(
 	if provider == "" {
 		provider = "openai"
 	}
-	if profileName := strings.TrimSpace(config.Profile); profileName != "" {
-		profile, ok := config.Profiles[profileName]
-		if !ok {
-			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				fmt.Sprintf("Codex profile %q is selected but not defined; fix config.toml or use network open",
-					profileName))
-		}
-		if selected := strings.TrimSpace(profile.ModelProvider); selected != "" {
-			provider = selected
-		}
-		if strings.TrimSpace(profile.ChatGPTBaseURL) != "" {
-			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				fmt.Sprintf("Codex profile %q overrides chatgpt_base_url, which has no complete filtered auth-endpoint resolver; remove the override or use network open",
-					profileName))
-		}
+	if strings.TrimSpace(config.Profile) != "" || len(config.Profiles) != 0 {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"Codex 0.145.0 rejects legacy profile/[profiles] configuration; remove it and use concrete top-level provider configuration, or use network open")
 	}
 	if strings.TrimSpace(config.ChatGPTBaseURL) != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
@@ -449,6 +442,19 @@ func launchModelEnvironment(
 	return environment
 }
 
+func modelTransportProxyVariable(environment map[string]string) string {
+	for _, variable := range []string{
+		"HTTPS_PROXY", "https_proxy",
+		"HTTP_PROXY", "http_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		if strings.TrimSpace(environment[variable]) != "" {
+			return variable
+		}
+	}
+	return ""
+}
+
 func providerChangingArg(
 	args []string,
 	flags map[string]bool,
@@ -460,6 +466,15 @@ func providerChangingArg(
 		}
 		if _, found := flags[name]; found {
 			return name, true
+		}
+		for flag, takesValue := range flags {
+			if !takesValue || !strings.HasPrefix(flag, "-") ||
+				strings.HasPrefix(flag, "--") {
+				continue
+			}
+			if strings.HasPrefix(argument, flag) && len(argument) > len(flag) {
+				return flag, true
+			}
 		}
 	}
 	return "", false

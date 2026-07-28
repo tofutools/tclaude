@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -246,7 +247,7 @@ func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
 		return packFilteredDNSResponse(
 			request, dnsmessage.RCodeRefused, nil), nil
 	}
-	if len(matches) == 0 && !filteredNetworkHasCIDRRule(b.rules) {
+	if len(matches) == 0 {
 		return packFilteredDNSResponse(
 			request, dnsmessage.RCodeRefused, nil), nil
 	}
@@ -282,17 +283,6 @@ func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
 	}
 }
 
-func filteredNetworkHasCIDRRule(
-	rules sandboxpolicy.FilteredNetworkRuleSet,
-) bool {
-	for _, rule := range rules.Rules {
-		if rule.Selector == sandboxpolicy.NetworkSelectorCIDR {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *filteredNetworkDNSBroker) resolveAddresses(
 	question dnsmessage.Question,
 	matches []sandboxpolicy.FilteredNetworkRule,
@@ -301,7 +291,7 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 	seen := make(map[string]struct{}, filteredNetworkDNSMaxChain+1)
 	answers := make([]dnsmessage.Resource, 0, 4)
 	chainTTL := uint32(filteredNetworkDNSMaxLease / time.Second)
-	for depth := 0; depth <= filteredNetworkDNSMaxChain; depth++ {
+	for range filteredNetworkDNSMaxChain + 1 {
 		currentKey := strings.ToLower(current.String())
 		if _, exists := seen[currentKey]; exists {
 			return nil, dnsmessage.RCodeServerFailure,
@@ -309,9 +299,14 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 		}
 		seen[currentKey] = struct{}{}
 
+		queryID, randomErr := filteredNetworkDNSQuestionID()
+		if randomErr != nil {
+			return nil, dnsmessage.RCodeServerFailure,
+				fmt.Errorf("generate filtered DNS query ID: %w", randomErr)
+		}
 		upstreamRequest := dnsmessage.Message{
 			Header: dnsmessage.Header{
-				ID: questionID(question, depth), RecursionDesired: true,
+				ID: queryID, RecursionDesired: true,
 			},
 			Questions: []dnsmessage.Question{{
 				Name: current, Type: question.Type, Class: dnsmessage.ClassINET,
@@ -447,13 +442,6 @@ func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 		}
 		return record, true, nil
 	}
-	if len(matches) == 0 {
-		if !sandboxpolicy.FilteredNetworkCIDRCoversAddress(b.rules, address) {
-			return dnsmessage.Resource{}, false, nil
-		}
-		record.Header.TTL = uint32(ttl / time.Second)
-		return record, true, nil
-	}
 	effectiveTTL, err := b.leases.Ensure(matches, address, ttl)
 	if err != nil {
 		return dnsmessage.Resource{}, false, &filteredDNSFatalError{err: fmt.Errorf(
@@ -517,13 +505,12 @@ func filterAddressBearingDNSResources(
 	return filtered
 }
 
-func questionID(question dnsmessage.Question, depth int) uint16 {
-	var value uint32 = uint32(depth + 1)
-	for _, char := range question.Name.String() {
-		value = value*33 + uint32(char)
+func filteredNetworkDNSQuestionID() (uint16, error) {
+	var encoded [2]byte
+	if _, err := cryptorand.Read(encoded[:]); err != nil {
+		return 0, err
 	}
-	value = value*33 + uint32(question.Type)
-	return uint16(value)
+	return binary.BigEndian.Uint16(encoded[:]), nil
 }
 
 func minUint32(a, b uint32) uint32 {
@@ -825,15 +812,38 @@ func hostFilteredDNSExchange(
 				failures = append(failures, exchangeErr)
 				continue
 			}
-			if response.ID != request.ID {
-				failures = append(failures, fmt.Errorf(
-					"filtered DNS upstream returned a mismatched query ID"))
+			if validateErr := validateFilteredDNSUpstreamResponse(
+				request, response,
+			); validateErr != nil {
+				failures = append(failures, validateErr)
 				continue
 			}
 			return response, nil
 		}
 		return dnsmessage.Message{}, errors.Join(failures...)
 	}
+}
+
+func validateFilteredDNSUpstreamResponse(
+	request dnsmessage.Message,
+	response dnsmessage.Message,
+) error {
+	if response.ID != request.ID {
+		return fmt.Errorf("filtered DNS upstream returned a mismatched query ID")
+	}
+	if !response.Response || response.OpCode != request.OpCode {
+		return fmt.Errorf("filtered DNS upstream returned invalid response flags")
+	}
+	if len(request.Questions) != 1 || len(response.Questions) != 1 {
+		return fmt.Errorf("filtered DNS upstream returned an invalid question count")
+	}
+	want := request.Questions[0]
+	got := response.Questions[0]
+	if !strings.EqualFold(got.Name.String(), want.Name.String()) ||
+		got.Type != want.Type || got.Class != want.Class {
+		return fmt.Errorf("filtered DNS upstream returned a mismatched question")
+	}
+	return nil
 }
 
 func filteredDNSHostsResponse(

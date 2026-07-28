@@ -62,6 +62,20 @@ func TestResolveTclaudeLayerClaudeModelTransportFromExactLaunchInputs(t *testing
 		})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--settings")
+
+	_, err = ResolveTclaudeLayerModelTransport(
+		claude, ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "HTTPS_PROXY", Value: "http://proxy.example:8443"},
+			},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTPS_PROXY")
+	assert.Contains(t, err.Error(), "actual network boundary")
+	assert.Contains(t, err.Error(), "network open")
+	assert.Contains(t, err.Error(), "TCL-826")
 }
 
 func TestResolveTclaudeLayerClaudeRefusesMutableSettingsProvider(t *testing.T) {
@@ -108,8 +122,6 @@ func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {
 	}, resolved)
 
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-profile = "work"
-[profiles.work]
 model_provider = "corp"
 [model_providers.corp]
 base_url = "https://models.example/v1"
@@ -149,7 +161,7 @@ chatgpt_base_url = "https://auth-gateway.example"
 `), 0o600))
 	_, err := ResolveTclaudeLayerModelTransport(codex, context)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chatgpt_base_url")
+	assert.Contains(t, err.Error(), "rejects legacy profile")
 
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
 model_provider = "missing"
@@ -162,6 +174,16 @@ model_provider = "missing"
 	_, err = ResolveTclaudeLayerModelTransport(codex, context)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"-c"`)
+
+	context.ExtraArgs = []string{`-cmodel_provider="other"`}
+	_, err = ResolveTclaudeLayerModelTransport(codex, context)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"-c"`)
+
+	context.ExtraArgs = []string{"-pwork"}
+	_, err = ResolveTclaudeLayerModelTransport(codex, context)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"-p"`)
 }
 
 func TestResolveTclaudeLayerCodexRefusesUnmergedExternalProviderConfig(t *testing.T) {
@@ -268,6 +290,13 @@ func isolateModelTransportLaunch(t *testing.T) (home, cwd string) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	for _, variable := range []string{
+		"HTTPS_PROXY", "https_proxy",
+		"HTTP_PROXY", "http_proxy",
+		"ALL_PROXY", "all_proxy",
+	} {
+		t.Setenv(variable, "")
+	}
 	for variable := range claudeProviderSettingVariables {
 		t.Setenv(variable, "")
 	}

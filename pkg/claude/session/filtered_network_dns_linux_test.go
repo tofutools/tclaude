@@ -122,6 +122,49 @@ func TestFilteredDNSBrokerRefusesSiblingWithoutUpstreamLookup(t *testing.T) {
 	assert.False(t, upstreamCalled)
 }
 
+func TestValidateFilteredDNSUpstreamResponseBindsWholeQuestion(t *testing.T) {
+	request := dnsmessage.Message{
+		Header: dnsmessage.Header{ID: 41, RecursionDesired: true},
+		Questions: []dnsmessage.Question{{
+			Name: dnsmessage.MustNewName("api.example.test."),
+			Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
+		}},
+	}
+	response := dnsmessage.Message{
+		Header:    dnsmessage.Header{ID: 41, Response: true},
+		Questions: append([]dnsmessage.Question(nil), request.Questions...),
+	}
+	require.NoError(t, validateFilteredDNSUpstreamResponse(request, response))
+
+	for name, mutate := range map[string]func(*dnsmessage.Message){
+		"not_response": func(message *dnsmessage.Message) {
+			message.Response = false
+		},
+		"opcode": func(message *dnsmessage.Message) {
+			message.OpCode = dnsmessage.OpCode(1)
+		},
+		"id": func(message *dnsmessage.Message) {
+			message.ID++
+		},
+		"name": func(message *dnsmessage.Message) {
+			message.Questions[0].Name =
+				dnsmessage.MustNewName("attacker.example.")
+		},
+		"type": func(message *dnsmessage.Message) {
+			message.Questions[0].Type = dnsmessage.TypeAAAA
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := response
+			candidate.Questions = append(
+				[]dnsmessage.Question(nil), response.Questions...)
+			mutate(&candidate)
+			require.Error(t,
+				validateFilteredDNSUpstreamResponse(request, candidate))
+		})
+	}
+}
+
 func TestFilteredDNSBrokerLoopbackRebindingRequiresSelectorAndRewrites(t *testing.T) {
 	answer := func(
 		_ context.Context,
@@ -171,46 +214,23 @@ func TestFilteredDNSBrokerLoopbackRebindingRequiresSelectorAndRewrites(t *testin
 		"the static loopback rule, not a domain lease, remains port authority")
 }
 
-func TestFilteredDNSBrokerCIDROnlyFiltersAnswersWithoutLeases(t *testing.T) {
+func TestFilteredDNSBrokerCIDROnlyRefusesNamesWithoutUpstreamLookup(t *testing.T) {
 	rules := compileFilteredDNSRules(t, []sandboxpolicy.NetworkAllowEntry{{
 		CIDR: "192.0.2.0/24", Ports: []int{443},
 	}})
-	answer := func(address [4]byte) filteredDNSExchange {
-		return func(
-			_ context.Context,
-			request dnsmessage.Message,
-		) (dnsmessage.Message, error) {
-			q := request.Questions[0]
-			return dnsmessage.Message{
-				Header:    dnsmessage.Header{ID: request.ID, Response: true},
-				Questions: request.Questions,
-				Answers: []dnsmessage.Resource{{
-					Header: dnsmessage.ResourceHeader{
-						Name: q.Name, Type: dnsmessage.TypeA,
-						Class: dnsmessage.ClassINET, TTL: 30,
-					},
-					Body: &dnsmessage.AResource{A: address},
-				}},
-			}, nil
-		}
-	}
-	leases := &fakeFilteredDNSLeaseStore{}
-	allowed := queryFilteredDNSBroker(
-		t, testFilteredDNSBroker(
-			rules, leases, answer([4]byte{192, 0, 2, 55})),
+	upstreamCalled := false
+	response := queryFilteredDNSBroker(
+		t, testFilteredDNSBroker(rules, &fakeFilteredDNSLeaseStore{},
+			func(context.Context, dnsmessage.Message) (dnsmessage.Message, error) {
+				upstreamCalled = true
+				return dnsmessage.Message{}, nil
+			}),
 		"arbitrary.example.", dnsmessage.TypeA,
 	)
-	assert.Equal(t, dnsmessage.RCodeSuccess, allowed.RCode)
-	require.Len(t, allowed.Answers, 1)
-	assert.Empty(t, leases.calls)
-
-	denied := queryFilteredDNSBroker(
-		t, testFilteredDNSBroker(
-			rules, leases, answer([4]byte{192, 0, 3, 55})),
-		"arbitrary.example.", dnsmessage.TypeA,
-	)
-	assert.Equal(t, dnsmessage.RCodeRefused, denied.RCode)
-	assert.Empty(t, denied.Answers)
+	assert.Equal(t, dnsmessage.RCodeRefused, response.RCode)
+	assert.Empty(t, response.Answers)
+	assert.False(t, upstreamCalled,
+		"CIDR packet authority must not become arbitrary DNS-query authority")
 }
 
 func TestFilteredDNSBrokerLeaseAuthorityFailureIsFatal(t *testing.T) {
