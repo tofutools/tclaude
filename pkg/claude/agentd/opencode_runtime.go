@@ -1401,6 +1401,8 @@ func readyOpenCodeRuntime(convID string) (*db.OpenCodeRuntime, error) {
 // the same authenticated endpoint when possible so the attached client can
 // reconnect; return false when recovery failed and the reaper should fail the
 // pane visibly.
+var restartOpenCodeProcess = startOpenCodeProcess
+
 func reconcileOpenCodeRuntime(sessionID string) bool {
 	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
 	reconcileMu := value.(*sync.Mutex)
@@ -1438,7 +1440,7 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 			"session", sessionID, "endpoint", runtime.ServerURL)
 		return false
 	}
-	process, err := startOpenCodeProcess(runtime, sandboxSpec)
+	process, err := restartOpenCodeProcess(runtime, sandboxSpec)
 	if err != nil {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
 		return false
