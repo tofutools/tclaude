@@ -123,6 +123,8 @@ func TestTUIRefreshOrdersOnlineAgentsFirst(t *testing.T) {
 			})
 		case "/v1/groups":
 			writeJSON(w, http.StatusOK, []tuiGroupRow{{Name: "dev"}})
+		case "/v1/spawn-profiles":
+			writeJSON(w, http.StatusOK, []tuiProfileRow{})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -220,15 +222,240 @@ func TestTUISpawnFormPostsWhatTheOperatorTyped(t *testing.T) {
 	assert.NotNil(t, refresh)
 }
 
-// A blank harness must stay blank on the wire: that is what lets the
-// daemon's own profile chain pick the harness.
-func TestTUISpawnDefaultHarnessIsLeftUnpinned(t *testing.T) {
+// Starting an agent is how you get to it: a landed spawn goes straight to the
+// new agent's pane, the same handover enter makes on its row.
+func TestTUISpawnGoesToTheNewAgentsPane(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		resp:  agent.SpawnResponse{AgentID: "agt_1", TmuxSession: "cc-dev-1"},
+	})
+	got := updated.(tuiModel)
+	require.NotNil(t, cmd)
+	require.True(t, rec.called)
+	assert.Equal(t, "cc-dev-1", rec.session)
+	assert.Equal(t, "agt_1", rec.agent)
+	assert.Contains(t, got.notice, "Spawned agt_1")
+	assert.False(t, got.spawning)
+
+	// Coming back off the pane is the ordinary return path, which refreshes.
+	back, refresh := got.Update(cmd())
+	assert.NotNil(t, refresh)
+	assert.True(t, back.(tuiModel).refreshing)
+}
+
+// An agent that has no pane yet — a Codex spawn held behind a startup gate —
+// has nothing to go to, so the spawn just lands in the listing.
+func TestTUISpawnWithoutAPaneJustRefreshes(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.api = stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []tuiAgentRow{})
+	})
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", resp: agent.SpawnResponse{AgentID: "agt_1"}})
+	got := updated.(tuiModel)
+	assert.False(t, rec.called)
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd)
+	assert.NotContains(t, got.notice, "attaching")
+}
+
+// Going to a pane is an operator move wherever it is triggered from: a
+// console the daemon classifies as an agent may spawn, but the terminal
+// handover stays closed to it.
+func TestTUISpawnDoesNotFocusForANonOperatorConsole(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.api = stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []tuiAgentRow{})
+	})
+	m.operator = false
+
+	updated, _ := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		resp:  agent.SpawnResponse{AgentID: "agt_1", TmuxSession: "cc-dev-1"},
+	})
+	assert.False(t, rec.called)
+	assert.True(t, updated.(tuiModel).refreshing)
+	assert.NotContains(t, updated.(tuiModel).renderSpawnForm(), "go to its pane")
+}
+
+// A failed spawn has no pane and must not claim otherwise.
+func TestTUIFailedSpawnDoesNotFocusAnything(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", err: errors.New("group is archived")})
+	assert.False(t, rec.called)
+	assert.Nil(t, cmd)
+	assert.Contains(t, updated.(tuiModel).notice, "Spawn failed")
+}
+
+// The profile picker is the console's way of saying "one of these kinds of
+// agent" — the name has to reach the request the daemon resolves against.
+func TestTUISpawnFormPostsTheChosenProfile(t *testing.T) {
+	var gotReq agent.SpawnRequest
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+
+	m := newTUIModel(api)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "reviewer-kit"}, {Name: "scribe-kit"}}
+	m = m.openSpawnForm()
+	require.Equal(t, []string{tuiProfileDefault, "reviewer-kit", "scribe-kit"}, m.form.profileNames)
+
+	// Tab off the group onto the profile, then pick the second one.
+	m = m.moveSpawnField(1)
+	require.Equal(t, tuiFieldProfile, m.form.field)
+	m = m.cycleChoice(1)
+	m = m.cycleChoice(1)
+	assert.Equal(t, "scribe-kit", m.selectedProfile())
+	assert.Contains(t, m.renderSpawnForm(), "< scribe-kit >")
+
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "scribe-kit", gotReq.Profile)
+}
+
+// "(default)" is not "no profile": it names none and leaves the group's and
+// the global default profile in force, which the form says out loud because
+// the two readings differ in what the agent ends up being.
+func TestTUISpawnDefaultProfileIsLeftUnpinned(t *testing.T) {
 	m := newTUIModel(nil)
 	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "reviewer-kit"}}
 	m = m.openSpawnForm()
-	m.form.harnessNames = []string{tuiHarnessDefault}
-	m.form.harnessIdx = 0
+
+	assert.Empty(t, m.selectedProfile())
+	view := m.renderSpawnForm()
+	assert.Contains(t, view, "Profile:")
+	assert.Contains(t, view, "< "+tuiProfileDefault+" >")
+	assert.Contains(t, view, "default profile still applies")
+}
+
+// An empty picker has three causes and they ask different things of the
+// operator, so the form must not answer all of them with "create one".
+func TestTUISpawnProfilePickerExplainsAnEmptyList(t *testing.T) {
+	t.Run("the listing landed and there really are none", func(t *testing.T) {
+		m := newTUIModel(nil)
+		m.lastRefresh = time.Now()
+		m = m.openSpawnForm()
+		assert.Equal(t, []string{tuiProfileDefault}, m.form.profileNames)
+		assert.Contains(t, m.renderSpawnForm(), "profiles create")
+	})
+
+	t.Run("nothing has loaded yet", func(t *testing.T) {
+		m := newTUIModel(nil).openSpawnForm()
+		view := m.renderSpawnForm()
+		assert.Contains(t, view, "has not loaded yet")
+		assert.NotContains(t, view, "profiles create")
+	})
+
+	t.Run("the profile listing failed", func(t *testing.T) {
+		m := newTUIModel(nil)
+		m.lastRefresh = time.Now()
+		m.profilesErr = "database is locked"
+		m = m.openSpawnForm()
+		view := m.renderSpawnForm()
+		assert.Contains(t, view, "profile list unavailable")
+		assert.NotContains(t, view, "profiles create")
+	})
+}
+
+// A profile read that fails costs the spawn form its picker, not the console
+// its listing: the agents were fetched successfully and must stay on screen.
+func TestTUIProfileListFailureDoesNotBlankTheListing(t *testing.T) {
+	failProfiles := false
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/peers":
+			writeJSON(w, http.StatusOK, []tuiAgentRow{{ConvID: "c1", Title: "amy", Online: true}})
+		case "/v1/groups":
+			writeJSON(w, http.StatusOK, []tuiGroupRow{{Name: "dev"}})
+		default:
+			if failProfiles {
+				writeError(w, http.StatusInternalServerError, "io", "database is locked")
+				return
+			}
+			writeJSON(w, http.StatusOK, []tuiProfileRow{{Name: "reviewer-kit"}})
+		}
+	})
+
+	m := newTUIModel(api)
+	m.width = 120
+	updated, _ := m.Update(m.refreshCmd()())
+	got := updated.(tuiModel)
+	require.Len(t, got.profiles, 1)
+
+	failProfiles = true
+	updated, _ = got.Update(got.refreshCmd()())
+	got = updated.(tuiModel)
+	assert.Empty(t, got.refreshErr, "the agent listing succeeded and must not be reported as failed")
+	assert.Len(t, got.agents, 1)
+	assert.Contains(t, got.renderList(), "amy")
+	assert.Contains(t, got.profilesErr, "database is locked")
+	assert.Len(t, got.profiles, 1, "the last good picker is kept rather than emptied")
+
+	// And it clears once the read works again.
+	failProfiles = false
+	updated, _ = got.Update(got.refreshCmd()())
+	assert.Empty(t, updated.(tuiModel).profilesErr)
+}
+
+// A disabled profile is refused at spawn and cannot be enabled from here, so
+// the picker does not offer it.
+func TestTUISpawnProfilePickerSkipsDisabledProfiles(t *testing.T) {
+	on, off := true, false
+	got := tuiProfileOptions([]tuiProfileRow{
+		{Name: "live-kit", Disabled: &off},
+		{Name: "retired-kit", Disabled: &on},
+		{Name: "legacy-kit"},
+	})
+	assert.Equal(t, []string{tuiProfileDefault, "live-kit", "legacy-kit"}, got)
+}
+
+// A blank harness must stay blank on the wire: that is what lets the
+// daemon's own profile chain pick the harness. The form opens that way, so a
+// profile that selects a harness is not overruled by a field the operator
+// never touched.
+func TestTUISpawnDefaultHarnessIsLeftUnpinned(t *testing.T) {
+	var gotReq agent.SpawnRequest
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+	m := newTUIModel(api)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "codex-kit"}}
+	m = m.openSpawnForm()
+
+	require.Equal(t, tuiHarnessDefault, m.form.harnessNames[m.form.harnessIdx],
+		"the harness picker opens on the sentinel, not on the default harness by name")
 	assert.Empty(t, m.selectedHarness())
+	assert.Contains(t, m.renderSpawnForm(), "the profile chain decides")
+
+	// Pick a profile and leave the harness alone: the request must carry the
+	// profile and no harness, or the profile's own harness would be overruled.
+	m = m.moveSpawnField(1)
+	m = m.cycleChoice(1)
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "codex-kit", gotReq.Profile)
+	assert.Empty(t, gotReq.Harness, "an untouched harness field must not pin one")
 }
 
 func TestTUISpawnWithoutAGroupExplainsHowToMakeOne(t *testing.T) {
@@ -280,6 +507,169 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 	assert.Equal(t, tuiModeConfirmQuit, confirmed.(tuiModel).mode)
 	require.NotNil(t, cmd)
 	assert.IsType(t, tea.QuitMsg{}, cmd())
+}
+
+// Retiring stops an agent and revokes its authority, so the console asks
+// first — and then goes through the daemon's own retire verb.
+func TestTUIRetireAsksThenPostsToTheDaemon(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		writeJSON(w, http.StatusOK, map[string]any{
+			"conv_id":  "c1",
+			"outcome":  retireConvOutcome{GroupsLeft: []string{"dev"}, Retired: true},
+			"shutdown": memberOpResult{ConvID: "c1", Action: "soft_stopped"},
+		})
+	})
+	m := newTUIModel(api)
+	m.width = 120
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+
+	asked, cmd := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+	assert.Nil(t, cmd, "nothing is retired until it is confirmed")
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+	assert.Contains(t, got.renderList(), "Retire worker and stop its session?")
+
+	// Anything but "y" cancels.
+	declined, cmd := got.handleKey(tuiKey("n"))
+	assert.Nil(t, cmd)
+	assert.Equal(t, tuiModeList, declined.(tuiModel).mode)
+
+	confirmed, cmd := got.handleKey(tuiKey("y"))
+	retiring := confirmed.(tuiModel)
+	require.NotNil(t, cmd)
+	assert.Equal(t, tuiModeList, retiring.mode)
+	assert.True(t, retiring.retiring)
+
+	msg, ok := cmd().(tuiRetiredMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
+	assert.Empty(t, gotQuery, "the console keeps the endpoint's own defaults: stop the pane, keep the worktree")
+
+	updated, refresh := retiring.Update(msg)
+	done := updated.(tuiModel)
+	assert.False(t, done.retiring)
+	assert.Contains(t, done.notice, "Retired worker")
+	assert.Contains(t, done.notice, "left dev")
+	assert.Contains(t, done.notice, "asked to exit")
+	assert.NotNil(t, refresh, "the retired agent leaves the listing right away")
+}
+
+// The prompt names one agent and must retire that one: the listing re-sorts
+// under the cursor every couple of seconds.
+func TestTUIRetireActsOnTheAgentTheOperatorConfirmed(t *testing.T) {
+	var gotPath string
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": "c1"})
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{
+		{ConvID: "c1", Title: "worker", Online: true},
+		{ConvID: "c2", Title: "other", Online: true},
+	}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+
+	// A refresh lands under the prompt and reverses the listing.
+	shuffled, _ := got.Update(tuiDataMsg{agents: []tuiAgentRow{
+		{ConvID: "c2", Title: "other", Online: true},
+		{ConvID: "c1", Title: "worker", Online: true},
+	}})
+	got = shuffled.(tuiModel)
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+
+	_, cmd := got.handleKey(tuiKey("y"))
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiRetiredMsg)
+	require.True(t, ok)
+	assert.Equal(t, "worker", msg.agent)
+	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
+}
+
+// The prompt is budgeted as exactly one line, and the only variable part of
+// it is a conversation title — which is routinely long. It has to be capped,
+// or the list view runs past the terminal's last row.
+func TestTUIRetirePromptStaysOnOneLine(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 80
+	m.height = 24
+	m.agents = []tuiAgentRow{{
+		ConvID: "c1",
+		Title:  "review the whole authentication subsystem and write it up in detail",
+		Online: true,
+	}}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+
+	for _, width := range []int{80, 100, 120} {
+		got.width = width
+		prompt := got.confirmPrompt()
+		assert.LessOrEqual(t, lipgloss.Width(prompt)+2, width, "width=%d prompt=%q", width, prompt)
+		assert.Contains(t, prompt, "review the", "the operator can still tell which agent it is")
+		assert.Contains(t, prompt, "stop its session", "and what retiring will do to it")
+		assert.Contains(t, got.renderList(), prompt)
+	}
+
+	got.width = 80
+	for _, height := range []int{24, 30, 60} {
+		got.height = height
+		assert.LessOrEqual(t, strings.Count(got.renderList(), "\n"), height, "height=%d", height)
+	}
+}
+
+func TestTUITruncate(t *testing.T) {
+	assert.Equal(t, "worker", tuiTruncate("worker", 10))
+	assert.Equal(t, "worker", tuiTruncate("worker", 6))
+	assert.Equal(t, "work…", tuiTruncate("worker", 5))
+	assert.Equal(t, "", tuiTruncate("worker", 0))
+}
+
+// A shutdown that fails says why. On this console there is no browser to go
+// and look it up in, and the agent's pane is still running.
+func TestTUIRetireReportsWhyAShutdownFailed(t *testing.T) {
+	msg := tuiRetiredMsg{agent: "worker"}
+	msg.res.Shutdown = memberOpResult{Action: "error", Detail: "tmux send-keys: no server running"}
+	summary := tuiRetireSummary(msg)
+	assert.Contains(t, summary, "Retired worker")
+	assert.Contains(t, summary, "error")
+	assert.Contains(t, summary, "no server running")
+}
+
+func TestTUIRetireFailureIsReported(t *testing.T) {
+	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "forbidden", "agent.retire is not granted")
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	confirmed, cmd := asked.(tuiModel).handleKey(tuiKey("y"))
+	require.NotNil(t, cmd)
+
+	updated, _ := confirmed.(tuiModel).Update(cmd())
+	got := updated.(tuiModel)
+	assert.False(t, got.retiring, "a refused retire releases the in-flight guard")
+	assert.Contains(t, got.notice, "agent.retire is not granted")
+}
+
+// An empty list has nothing to retire, and the key line does not offer it.
+func TestTUIRetireOnAnEmptyListDoesNothing(t *testing.T) {
+	m := newTUIModel(nil)
+	updated, cmd := m.handleKey(tuiKey("x"))
+	got := updated.(tuiModel)
+	assert.Nil(t, cmd)
+	assert.Equal(t, tuiModeList, got.mode)
+	assert.NotContains(t, got.keyHintLine(), "x retire")
+
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+	assert.Contains(t, m.keyHintLine(), "x retire")
 }
 
 func TestTUIListRendersTheAgentsItWasGiven(t *testing.T) {
@@ -585,7 +975,7 @@ func TestTUISpawnTabOnAnotherFieldMovesOn(t *testing.T) {
 	m = m.openSpawnForm()
 	require.Equal(t, tuiFieldGroup, m.form.field)
 	updated, _ := m.handleSpawnKey(tuiTabKey())
-	assert.Equal(t, tuiFieldName, updated.(tuiModel).form.field)
+	assert.Equal(t, tuiFieldProfile, updated.(tuiModel).form.field)
 }
 
 // The candidate list is one line by contract: the form renders it whether

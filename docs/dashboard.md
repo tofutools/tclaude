@@ -53,15 +53,27 @@ use it immediately.
 
 `tclaude agentd serve --tui` runs a small text UI in the daemon's own terminal.
 It covers the moves the dashboard is most often opened for — see which agents
-exist, start a new one, go look at one — and nothing else:
+exist, start a new one, go look at one, retire one that is done — and nothing
+else:
 
 ```
 enter  go to the selected agent's tmux session
-n      start a new agent (group, name, directory, harness, startup brief)
+n      start a new agent (group, spawn profile, name, directory, harness,
+       startup brief)
+x      retire the selected agent (it asks first)
+f      filter the list down to the active agents (toggle)
 r      refresh now (the list also polls every 2s)
 ?      key help
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
+
+**x** is the console's `tclaude agent retire`: the agent leaves its groups,
+loses its permission and sudo grants, and its session is asked to exit. The
+conversation stays on disk and any worktree is left alone — the console never
+deletes an operator's work, so a worktree you no longer want goes through the
+CLI or the dashboard, which probe it first. Retiring is confirmed before
+anything happens, and the confirmation acts on the agent it names even if the
+listing re-sorted under the cursor in the meantime.
 
 **enter** does what it does in `tclaude session watch` — it puts you on the
 selected agent's pane. When agentd itself runs inside tmux it uses
@@ -69,6 +81,25 @@ selected agent's pane. When agentd itself runs inside tmux it uses
 keys bring you back; outside tmux it attaches, and the console repaints when
 you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
 an operator console can do this (see the identity note below).
+
+A spawn that lands goes straight to the new agent's pane — the same handover
+**enter** performs on its row, so starting an agent leaves you in front of it.
+Only an operator console does this, and an agent that has no pane yet (a Codex
+spawn held behind a startup gate) simply appears in the list instead; detaching
+brings you back to the console with the listing refreshed.
+
+**n** opens the spawn form. Its **Profile** picker lists the daemon's saved
+[spawn profiles](agent.md) (`tclaude agent profiles ls`) and sends the one you
+land on as the spawn's `--profile`. `(default)` names no profile, which is not
+the same as "no profile at all": it hands the choice back to the daemon's own
+chain, so the group's default profile and then the global one still apply.
+Disabled profiles are left out of the picker — a spawn that names one is
+refused, and nothing here can re-enable it.
+
+The **Harness** field opens on `(default)` for the same reason, and leaving it
+there is what lets a profile choose the harness: an explicit harness outranks
+every profile tier, so a pinned one would quietly overrule the Codex or
+opencode profile you just picked.
 
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.

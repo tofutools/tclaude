@@ -2,7 +2,8 @@ package agentd
 
 // Terminal UI for `tclaude agentd serve --tui` — a deliberately small
 // in-terminal stand-in for the web dashboard's most-used moves: see which
-// agents exist, start a new one, and go to one's tmux session. On its own it
+// agents exist, start a new one, go to one's tmux session, and retire one that
+// is done. On its own it
 // is the whole operator surface (runServe starts no dashboard listener); it
 // also runs happily beside the web dashboard when the operator asks for both.
 // Either way it is plain text with no color scheme, no theming and no
@@ -373,6 +374,24 @@ type tuiGroupRow struct {
 	Name string `json:"name"`
 }
 
+// tuiProfileRow is the subset of /v1/spawn-profiles the spawn form picks
+// from. Disabled comes along because a disabled profile is refused at spawn,
+// so offering one would only produce a rejection the operator cannot act on
+// from here.
+type tuiProfileRow struct {
+	Name     string `json:"name"`
+	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+func (p tuiProfileRow) disabled() bool { return p.Disabled != nil && *p.Disabled }
+
+// tuiRetireResult is the subset of the retire response the console reports:
+// what the demotion actually revoked, and what became of the agent's session.
+type tuiRetireResult struct {
+	Outcome  retireConvOutcome `json:"outcome"`
+	Shutdown memberOpResult    `json:"shutdown"`
+}
+
 // ---- model -----------------------------------------------------------------
 
 type tuiMode int
@@ -382,11 +401,15 @@ const (
 	tuiModeSpawn
 	tuiModeHelp
 	tuiModeConfirmQuit
+	tuiModeConfirmRetire
 )
 
-// Spawn-form fields, in tab order.
+// Spawn-form fields, in tab order. The profile sits directly under the group
+// because it is the field the others are read against: it decides what a
+// blank harness (or model, or approval posture) ends up being.
 const (
 	tuiFieldGroup = iota
+	tuiFieldProfile
 	tuiFieldName
 	tuiFieldDir
 	tuiFieldHarness
@@ -398,11 +421,17 @@ const (
 // request leaves Harness empty and the daemon's own profile chain decides.
 const tuiHarnessDefault = "(default)"
 
+// tuiProfileDefault is the same idea for the profile picker: naming no
+// profile is NOT "no profile at all", it hands the choice back to the
+// daemon's chain — the group's default profile, then the global one.
+const tuiProfileDefault = "(default)"
+
 type tuiModel struct {
 	api *tuiAPI
 
-	agents []tuiAgentRow
-	groups []tuiGroupRow
+	agents   []tuiAgentRow
+	groups   []tuiGroupRow
+	profiles []tuiProfileRow
 
 	cursor         int
 	viewportOffset int
@@ -417,6 +446,9 @@ type tuiModel struct {
 	// one that can strand a stale "refresh failed" over a live listing.
 	notice     string
 	refreshErr string
+	// profilesErr is the spawn-profile listing's last failure, shown in the
+	// spawn form rather than over the agent list — it costs one picker.
+	profilesErr string
 	// identityWarning is fixed for the console's lifetime: it says the
 	// daemon will not treat this console as the operator, and why.
 	identityWarning string
@@ -433,24 +465,33 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
-	// refreshing / spawning keep the periodic tick from stacking requests
-	// and the operator from firing two spawns at once.
+	// refreshing / spawning / retiring keep the periodic tick from stacking
+	// requests and the operator from firing two of the same action at once.
 	refreshing  bool
 	spawning    bool
+	retiring    bool
 	lastRefresh time.Time
+	// retireTarget is the agent the retire confirmation is about, captured
+	// when the prompt opens rather than re-read when it is answered: the
+	// listing re-sorts under the cursor every two seconds, so resolving the
+	// target on "y" could retire an agent the operator never saw named.
+	retireTarget tuiAgentRow
 
 	filterActive bool
 
 	form tuiSpawnForm
 }
 
-// tuiSpawnForm is the "new agent" prompt. Group and harness are cycled
-// choices; the rest are text inputs.
+// tuiSpawnForm is the "new agent" prompt. Group, profile and harness are
+// cycled choices; the rest are text inputs.
 type tuiSpawnForm struct {
 	field int
 
 	groupNames []string
 	groupIdx   int
+
+	profileNames []string
+	profileIdx   int
 
 	harnessNames []string
 	harnessIdx   int
@@ -468,9 +509,13 @@ type (
 	// tuiDataMsg carries one completed refresh — both lists, or the error
 	// that stopped it.
 	tuiDataMsg struct {
-		agents []tuiAgentRow
-		groups []tuiGroupRow
-		err    error
+		agents   []tuiAgentRow
+		groups   []tuiGroupRow
+		profiles []tuiProfileRow
+		err      error
+		// profilesErr is the profile listing's own failure, kept apart from
+		// err: it costs the spawn form one picker, not the whole console.
+		profilesErr error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -484,6 +529,12 @@ type (
 		agent   string
 		session string
 		err     error
+	}
+	// tuiRetiredMsg carries the outcome of one retire request.
+	tuiRetiredMsg struct {
+		agent string
+		res   tuiRetireResult
+		err   error
 	}
 )
 
@@ -534,7 +585,7 @@ func (m tuiModel) viewportHeight() int {
 	if m.notice != "" {
 		chrome += lipgloss.Height(m.renderWrapped(m.notice))
 	}
-	if m.mode == tuiModeConfirmQuit {
+	if m.confirmPrompt() != "" {
 		chrome += 2
 	}
 	return max(m.height-chrome, 1)
@@ -576,9 +627,16 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err := api.get("/v1/groups", &groups); err != nil {
 			return tuiDataMsg{err: err}
 		}
+		// The profile list feeds one field of a form that is usually closed,
+		// so its failure travels beside the listing rather than instead of it:
+		// a console whose agents are all live and visible must not go blank
+		// because a profile read hit the DB at a bad moment.
+		var profiles []tuiProfileRow
+		profilesErr := api.get("/v1/spawn-profiles", &profiles)
 		sortTUIAgents(agents)
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
-		return tuiDataMsg{agents: agents, groups: groups}
+		sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+		return tuiDataMsg{agents: agents, groups: groups, profiles: profiles, profilesErr: profilesErr}
 	}
 }
 
@@ -602,6 +660,19 @@ func tuiSpawnCmd(api *tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 	}
 }
 
+// tuiRetireCmd retires one agent through the daemon's own verb. It sends no
+// query parameters, which is the documented default pair for that endpoint:
+// the pane is asked to exit (?shutdown), and the worktree is left alone
+// (?delete_worktree) — the console never deletes an operator's work, and has
+// no probe of the kind the dashboard runs before offering to.
+func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var res tuiRetireResult
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
+		return tuiRetiredMsg{agent: name, res: res, err: err}
+	}
+}
+
 // tuiHarnessOptions lists the harnesses a spawn may name, led by the
 // "(default)" sentinel that pins nothing.
 func tuiHarnessOptions() []string {
@@ -614,6 +685,20 @@ func tuiHarnessOptions() []string {
 	return out
 }
 
+// tuiProfileOptions lists the spawn profiles the form may name, led by the
+// "(default)" sentinel that names none. A disabled profile is left out: the
+// daemon refuses a spawn that selects one, and nothing in this console can
+// re-enable it.
+func tuiProfileOptions(profiles []tuiProfileRow) []string {
+	out := []string{tuiProfileDefault}
+	for _, p := range profiles {
+		if p.Name != "" && !p.disabled() {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
 func newTUITextInput(prompt string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = prompt
@@ -621,23 +706,25 @@ func newTUITextInput(prompt string) textinput.Model {
 	return ti
 }
 
-// openSpawnForm builds a fresh "new agent" prompt over the current group
-// list, defaulting the harness to the daemon's default harness.
+// openSpawnForm builds a fresh "new agent" prompt over the current group and
+// profile lists.
+//
+// Both cycled launch fields start on "(default)", which is the only setting
+// under which the daemon's resolution chain can do its job. The harness picker
+// used to open on the default harness by name instead, which reads the same
+// but is an explicit pin on the wire — and an explicit harness outranks every
+// profile tier, so a profile that selects Codex would have been overruled by a
+// field the operator never touched.
 func (m tuiModel) openSpawnForm() tuiModel {
 	form := tuiSpawnForm{
 		harnessNames: tuiHarnessOptions(),
+		profileNames: tuiProfileOptions(m.profiles),
 		name:         newTUITextInput("  Name:      "),
 		dir:          newTUITextInput("  Directory: "),
 		brief:        newTUITextInput("  Brief:     "),
 	}
 	for _, g := range m.groups {
 		form.groupNames = append(form.groupNames, g.Name)
-	}
-	for i, name := range form.harnessNames {
-		if name == harness.DefaultName {
-			form.harnessIdx = i
-			break
-		}
 	}
 	m.form = form
 	m.mode = tuiModeSpawn
@@ -649,6 +736,19 @@ func (m tuiModel) selectedGroup() string {
 		return ""
 	}
 	return m.form.groupNames[m.form.groupIdx]
+}
+
+// selectedProfile is the profile name the request should carry, empty for the
+// "(default)" sentinel — which is what lets the group's and the global default
+// profile apply as they do for every other spawn surface.
+func (m tuiModel) selectedProfile() string {
+	if m.form.profileIdx < 0 || m.form.profileIdx >= len(m.form.profileNames) {
+		return ""
+	}
+	if name := m.form.profileNames[m.form.profileIdx]; name != tuiProfileDefault {
+		return name
+	}
+	return ""
 }
 
 func (m tuiModel) selectedHarness() string {
@@ -680,12 +780,16 @@ func (m tuiModel) moveSpawnField(delta int) tuiModel {
 	return m
 }
 
-// cycleChoice steps whichever of the two choice fields is focused.
+// cycleChoice steps whichever of the choice fields is focused.
 func (m tuiModel) cycleChoice(delta int) tuiModel {
 	switch m.form.field {
 	case tuiFieldGroup:
 		if n := len(m.form.groupNames); n > 0 {
 			m.form.groupIdx = ((m.form.groupIdx+delta)%n + n) % n
+		}
+	case tuiFieldProfile:
+		if n := len(m.form.profileNames); n > 0 {
+			m.form.profileIdx = ((m.form.profileIdx+delta)%n + n) % n
 		}
 	case tuiFieldHarness:
 		if n := len(m.form.harnessNames); n > 0 {
@@ -693,6 +797,17 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 		}
 	}
 	return m
+}
+
+// tuiIsChoiceField reports whether field is one of the cycled pickers, which
+// is what makes ←/→ (and space) change a value rather than reach a text input.
+func tuiIsChoiceField(field int) bool {
+	switch field {
+	case tuiFieldGroup, tuiFieldProfile, tuiFieldHarness:
+		return true
+	default:
+		return false
+	}
 }
 
 // completingDir reports whether a Tab should complete a path rather than
@@ -762,6 +877,7 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	req := agent.SpawnRequest{
 		Name:           strings.TrimSpace(m.form.name.Value()),
 		Cwd:            strings.TrimSpace(m.form.dir.Value()),
+		Profile:        m.selectedProfile(),
 		Harness:        m.selectedHarness(),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
@@ -844,6 +960,69 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	return m, tuiAttachToPane(row.name(), sess.TmuxSession, insideTmux())
 }
 
+// confirmRetireSelected opens the retire confirmation over the selected row.
+// Retiring is not undoable from here (reinstating is a CLI/dashboard move) and
+// it stops the agent's pane, so it always asks first — the same rule quitting
+// follows.
+func (m tuiModel) confirmRetireSelected() tuiModel {
+	visible := m.visibleAgents()
+	if m.cursor < 0 || m.cursor >= len(visible) {
+		return m
+	}
+	if m.retiring {
+		m.notice = "A retire is already in flight."
+		return m
+	}
+	m.retireTarget = visible[m.cursor]
+	m.mode = tuiModeConfirmRetire
+	return m
+}
+
+// retireConfirmed fires the retire the operator just confirmed. Permission is
+// the daemon's call, not the console's: the endpoint gates every caller class
+// itself, so an agent-class console gets the same refusal here it would get
+// over the socket rather than a second, divergent rule.
+func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
+	row := m.retireTarget
+	m.retireTarget = tuiAgentRow{}
+	m.mode = tuiModeList
+	if row.ConvID == "" {
+		return m, nil
+	}
+	m.retiring = true
+	m.notice = "Retiring " + row.name() + "…"
+	return m, tuiRetireCmd(m.api, row.ConvID, row.name())
+}
+
+// tuiRetireSummary describes a landed retire in one line: what the demotion
+// gave up, and what happened to the pane.
+func tuiRetireSummary(msg tuiRetiredMsg) string {
+	out := "Retired " + msg.agent
+	if groups := msg.res.Outcome.GroupsLeft; len(groups) > 0 {
+		out += " — left " + strings.Join(groups, ", ")
+	}
+	switch msg.res.Shutdown.Action {
+	case "":
+		// No shutdown block at all: an older daemon, or a response shape
+		// that did not carry one. Say nothing rather than guess.
+	case "skipped:already_offline":
+		out += "; it had no live session"
+	case "soft_stopped":
+		out += "; its session was asked to exit"
+	default:
+		// Anything else is a shutdown that did not go to plan — "error" above
+		// all, which carries its reason in Detail. This console has no browser
+		// to go and read that in, so the reason travels with the verdict or it
+		// is lost: the operator would otherwise be told only that something
+		// went wrong with a pane that is, in that case, still running.
+		out += "; session: " + msg.res.Shutdown.Action
+		if detail := strings.TrimSpace(msg.res.Shutdown.Detail); detail != "" {
+			out += " (" + detail + ")"
+		}
+	}
+	return out + "."
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -868,6 +1047,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshErr = ""
 		m.agents = msg.agents
 		m.groups = msg.groups
+		// A failed profile read keeps the last list it managed to fetch: a
+		// stale picker is worth more than an empty one, and the form says so.
+		if msg.profilesErr != nil {
+			m.profilesErr = msg.profilesErr.Error()
+		} else {
+			m.profilesErr = ""
+			m.profiles = msg.profiles
+		}
 		m.lastRefresh = time.Now()
 		visible := m.visibleAgents()
 		if m.cursor >= len(visible) {
@@ -883,7 +1070,23 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = tuiSpawnSummary(msg)
+		if focused, cmd := m.focusSpawned(msg); cmd != nil {
+			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
+			return focused, cmd
+		}
 		// Pull the new agent in now rather than waiting out the tick.
+		m.refreshing = true
+		return m, m.refreshCmd()
+
+	case tuiRetiredMsg:
+		m.retiring = false
+		if msg.err != nil {
+			m.notice = "Retire failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.notice = tuiRetireSummary(msg)
+		// The row is gone (or offline) now — show that rather than leaving a
+		// retired agent listed until the next tick.
 		m.refreshing = true
 		return m, m.refreshCmd()
 
@@ -909,6 +1112,37 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// focusSpawned goes straight to a freshly spawned agent's pane — what the
+// operator would do next anyway, and the reason they started it. It is enter
+// on the new row, taken automatically: the same handover, the same gate.
+//
+// It stays out of the way in the two cases where that gate says no. A console
+// the daemon does not classify as the human cannot attach at all (see
+// attachSelected), and a spawn that has not produced a tmux session yet —
+// a Codex agent held behind a startup gate — has no pane to go to. Both fall
+// back to the ordinary "spawned, here it is in the listing" path.
+func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
+	session := msg.resp.TmuxSession
+	if !m.operator || session == "" {
+		return m, nil
+	}
+	name := msg.resp.AgentID
+	if name == "" {
+		name = msg.resp.ConvID
+	}
+	if name == "" {
+		// Nothing has an identity yet; the pane's own name is what the
+		// operator has to go on.
+		name = session
+	}
+	if insideTmux() {
+		m.notice += " — switching to " + session + "…"
+	} else {
+		m.notice += " — attaching; detach (ctrl-b d) to come back."
+	}
+	return m, tuiAttachToPane(name, session, insideTmux())
 }
 
 // tuiSpawnSummary describes a landed spawn in one line. A Codex agent held
@@ -945,6 +1179,20 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		default:
 			m.mode = tuiModeList
+		}
+		return m, nil
+
+	case tuiModeConfirmRetire:
+		// Same contract as the quit prompt: only "y" goes through, and the
+		// prompt says so. Ctrl-C is a cancel here rather than a second
+		// confirmation — it means "get me out of this", and the destructive
+		// reading of it belongs to the prompt that offers it.
+		switch msg.String() {
+		case "y", "Y":
+			return m.retireConfirmed()
+		default:
+			m.mode = tuiModeList
+			m.retireTarget = tuiAgentRow{}
 		}
 		return m, nil
 
@@ -992,6 +1240,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
+	case "x", "X":
+		m.notice = ""
+		return m.confirmRetireSelected(), nil
 	case "r":
 		if !m.refreshing {
 			m.refreshing = true
@@ -1031,11 +1282,11 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.moveSpawnField(1), nil
 	case "left":
-		if m.form.field == tuiFieldGroup || m.form.field == tuiFieldHarness {
+		if tuiIsChoiceField(m.form.field) {
 			return m.cycleChoice(-1), nil
 		}
 	case "right", " ":
-		if m.form.field == tuiFieldGroup || m.form.field == tuiFieldHarness {
+		if tuiIsChoiceField(m.form.field) {
 			return m.cycleChoice(1), nil
 		}
 	}
@@ -1163,10 +1414,75 @@ func (m tuiModel) renderList() string {
 	}
 	b.WriteString("\n  " + m.keyHintLine() + "\n")
 
-	if m.mode == tuiModeConfirmQuit {
-		b.WriteString("\n  Quit and shut down agentd? [y / any other key = cancel]\n")
+	if prompt := m.confirmPrompt(); prompt != "" {
+		b.WriteString("\n  " + prompt + "\n")
 	}
 	return b.String()
+}
+
+// confirmPrompt is the question the list view is waiting on, empty when it is
+// waiting on none. Both prompts are one line by contract — viewportHeight pays
+// for exactly two (the blank line and the question), so a second line would
+// overflow the terminal.
+func (m tuiModel) confirmPrompt() string {
+	switch m.mode {
+	case tuiModeConfirmQuit:
+		return "Quit and shut down agentd? [y / any other key = cancel]"
+	case tuiModeConfirmRetire:
+		const prefix = "Retire "
+		const suffix = " and stop its session? [y / any other key = cancel]"
+		return prefix +
+			tuiTruncate(m.retireTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
+			suffix
+	default:
+		return ""
+	}
+}
+
+// promptNameBudget is how many columns the retire prompt may spend on the
+// agent's name: what the terminal leaves after the indent and the fixed text,
+// capped at the AGENT column's own width so a name that fits the listing reads
+// identically here.
+//
+// The name is a conversation title — harness- or operator-authored, routinely
+// long — and the prompt is budgeted as exactly one line, so an uncapped title
+// is the one thing that could push the list view past the terminal's last row.
+// On a terminal too narrow for even the fixed text the floor wins and the line
+// wraps; that is the quit prompt's existing behaviour, not a new failure.
+func (m tuiModel) promptNameBudget(fixed int) int {
+	if m.width <= 0 {
+		// No WindowSizeMsg yet: fall back to the listing's own cap.
+		return tuiPromptNameWidth
+	}
+	const indent = 2
+	return max(min(m.width-indent-fixed, tuiPromptNameWidth), tuiPromptNameFloor)
+}
+
+const (
+	// tuiPromptNameWidth matches the AGENT column's MaxWidth.
+	tuiPromptNameWidth = 28
+	// tuiPromptNameFloor is the shortest name worth showing: below this the
+	// prompt would name an agent the operator cannot recognise.
+	tuiPromptNameFloor = 8
+)
+
+// tuiTruncate shortens s to at most width columns, marking a cut with "…".
+func tuiTruncate(s string, width int) string {
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	for len(runes) > 0 {
+		candidate := string(runes) + "…"
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return ""
 }
 
 // keyHintLine names enter only when it can do something — an agent-class
@@ -1177,6 +1493,12 @@ func (m tuiModel) keyHintLine() string {
 		filterLabel = "f show all"
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
+	if len(m.visibleAgents()) > 0 {
+		// Unlike enter, retire is not statically an operator-only move: an
+		// agent-class console can hold agent.retire over its own group's
+		// members, so the daemon decides and the key stays advertised.
+		hints = "x retire • " + hints
+	}
 	if m.operator && len(m.visibleAgents()) > 0 {
 		verb := "attach"
 		if insideTmux() {
@@ -1240,7 +1562,9 @@ func (m tuiModel) renderSpawnForm() string {
 	if group == "" {
 		group = "(no groups — create one with `tclaude agent groups create <name>`)"
 	}
-	b.WriteString(tuiChoiceLine("  Group:     ", group, m.form.field == tuiFieldGroup))
+	b.WriteString(tuiChoiceLine("  Group:     ", group, "", m.form.field == tuiFieldGroup))
+	b.WriteString(tuiChoiceLine("  Profile:   ", m.profileChoice(), m.profileChoiceHint(),
+		m.form.field == tuiFieldProfile))
 	b.WriteString(m.form.name.View() + tuiHint(m.form.name.Value() == "", "  (blank = auto-generated)"))
 	b.WriteString("\n")
 	b.WriteString(m.form.dir.View() + tuiHint(m.form.dir.Value() == "", "  (blank = the group's default directory)"))
@@ -1252,7 +1576,10 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
 	}
-	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice, m.form.field == tuiFieldHarness))
+	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice,
+		tuiHint(harnessChoice == tuiHarnessDefault,
+			"  (the profile chain decides — "+harness.DefaultName+" if nothing pins one)"),
+		m.form.field == tuiFieldHarness))
 	b.WriteString(m.form.brief.View() + tuiHint(m.form.brief.Value() == "", "  (blank = no startup brief)"))
 	b.WriteString("\n")
 
@@ -1265,9 +1592,46 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.operator {
 		completeHint = "tab complete dir • "
 	}
-	b.WriteString("\n  enter spawn • ↑/↓/tab next field • " + completeHint +
-		"←/→ change group/harness • esc cancel\n")
+	spawnHint := "enter spawn"
+	if m.operator {
+		spawnHint = "enter spawn + go to its pane"
+	}
+	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
+		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
+}
+
+// profileChoice is the profile picker's current value.
+func (m tuiModel) profileChoice() string {
+	if m.form.profileIdx >= 0 && m.form.profileIdx < len(m.form.profileNames) {
+		return m.form.profileNames[m.form.profileIdx]
+	}
+	return tuiProfileDefault
+}
+
+// profileChoiceHint says what the picker's state means. "(default)" is the
+// easy one to misread — it looks like "no profile", when what it actually
+// does is leave the group's and the global default profile in force.
+//
+// An empty picker is the other misreadable state, and it has three causes
+// that ask different things of the operator: the list has not arrived, the
+// list could not be read, or there really are no profiles. Only the last one
+// is worth pointing at `profiles create`.
+func (m tuiModel) profileChoiceHint() string {
+	if m.profileChoice() != tuiProfileDefault {
+		return ""
+	}
+	if len(m.form.profileNames) <= 1 {
+		switch {
+		case m.profilesErr != "":
+			return "  (profile list unavailable — press r to retry)"
+		case m.lastRefresh.IsZero():
+			return "  (profile list has not loaded yet — press r)"
+		default:
+			return "  (none saved — `tclaude agent profiles create`)"
+		}
+	}
+	return "  (the group's or global default profile still applies)"
 }
 
 // dirSuggestionLine renders the Tab-completion candidates on a single line,
@@ -1301,14 +1665,14 @@ func (m tuiModel) dirSuggestionLine() string {
 	return line
 }
 
-// tuiChoiceLine renders one of the two cycled fields. The focused one is
-// marked with a caret rather than a color, since the console has no palette
-// (the text fields mark focus with their own cursor).
-func tuiChoiceLine(label, value string, focused bool) string {
+// tuiChoiceLine renders one of the cycled fields, with an optional trailing
+// hint. The focused one is marked with a caret rather than a color, since the
+// console has no palette (the text fields mark focus with their own cursor).
+func tuiChoiceLine(label, value, hint string, focused bool) string {
 	if focused {
 		label = "> " + strings.TrimPrefix(label, "  ")
 	}
-	return label + "< " + value + " >\n"
+	return label + "< " + value + " >" + hint + "\n"
 }
 
 // tuiHint appends an inline explanation to an empty field.
@@ -1328,6 +1692,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
 	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
 	b.WriteString("    n          Start a new agent\n")
+	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
+	b.WriteString("               groups, loses its grants and its session is asked to\n")
+	b.WriteString("               exit. The conversation and any worktree are kept.\n")
 	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
@@ -1337,8 +1704,13 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
 	b.WriteString("               one match completes it, several list below the\n")
 	b.WriteString("               field. Operator consoles only.\n")
-	b.WriteString("    ←/→        Change the group or harness\n")
-	b.WriteString("    enter      Spawn\n")
+	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
+	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
+	b.WriteString("               group's and the global default profile in force.\n")
+	b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
+	b.WriteString("               the same move enter makes on its row. Operator\n")
+	b.WriteString("               consoles only; an agent still starting up (no pane\n")
+	b.WriteString("               yet) just lands in the list.\n")
 	b.WriteString("    esc        Cancel\n\n")
 	if m.dashboardURL != "" {
 		b.WriteString("  The web dashboard is running alongside this console:\n")

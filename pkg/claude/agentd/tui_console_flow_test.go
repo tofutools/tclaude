@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"net/http"
 	"os"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Flow coverage for the `tclaude agentd serve --tui` console. It drives the
@@ -32,15 +34,38 @@ func newTUIConsole(t *testing.T) *agentd.TUIConsole {
 }
 
 // openSpawnForm walks the console into the "new agent" prompt with the name
-// and directory filled in. The form opens on the group field, so one tab
-// reaches the name and another the directory.
+// and directory filled in. The form opens on the group field, so two tabs
+// (past the profile picker) reach the name and another the directory.
 func openTUISpawnForm(t *testing.T, c *agentd.TUIConsole, name, dir string) {
 	t.Helper()
 	c.Press(t, "n")
-	c.Press(t, "tab")
+	c.Press(t, "tab", "tab")
 	c.Type(t, name)
 	c.Press(t, "tab")
 	c.Type(t, dir)
+}
+
+// tuiAttachLog records where the console asked to send this terminal.
+type tuiAttachLog struct {
+	called  bool
+	agent   string
+	session string
+	inTmux  bool
+}
+
+// stubTUIAttach swaps the console's terminal handover for a recorder: a flow
+// test has no terminal to give away, but the target the console picks is real
+// and worth asserting on. The returned command feeds the ordinary
+// came-back-from-the-pane message in, so the console finishes the move.
+func stubTUIAttach(t *testing.T) *tuiAttachLog {
+	t.Helper()
+	log := &tuiAttachLog{}
+	t.Cleanup(agentd.SetTUIAttachForTest(func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+		log.called = true
+		log.agent, log.session, log.inTmux = agentName, tmuxSession, inTmux
+		return nil
+	}))
+	return log
 }
 
 func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
@@ -48,6 +73,7 @@ func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 	f.HaveGroup("dev")
 	cwd := f.TestCwd("tui-spawn")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	attach := stubTUIAttach(t)
 
 	c := newTUIConsole(t)
 	c.Refresh()
@@ -59,9 +85,19 @@ func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 
 	view := c.View()
 	assert.Contains(t, view, "Spawned", "the console reports the outcome")
-	assert.Contains(t, view, "1 agents (1 online)", "and lists the new agent")
 	assert.Contains(t, view, "dev", "under the group it was spawned into")
 	assert.False(t, c.Quit)
+
+	// Starting an agent goes straight to its pane — the same handover enter
+	// makes on its row, aimed at the session the daemon just created.
+	require.Len(t, f.ListGroupMembers("dev"), 1)
+	require.True(t, attach.called, "a landed spawn goes to the new agent's pane")
+	assert.NotEmpty(t, attach.agent)
+	assert.True(t, f.World.Tmux.IsAlive(attach.session),
+		"and it is the live session the daemon just created: %q", attach.session)
+
+	c.Refresh()
+	assert.Contains(t, c.View(), "1 agents (1 online)", "and lists the new agent")
 }
 
 func TestTUIConsoleReportsASpawnTheDaemonRefuses(t *testing.T) {
@@ -110,32 +146,135 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 	f.HaveGroup("dev")
 	sp := f.Spawn("dev", "worker")
 
-	var gotAgent, gotSession string
-	var gotInTmux, called bool
-	t.Cleanup(agentd.SetTUIAttachForTest(func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
-		called = true
-		gotAgent, gotSession, gotInTmux = agentName, tmuxSession, inTmux
-		return nil
-	}))
+	attach := stubTUIAttach(t)
 
 	c := newTUIConsole(t)
 	c.Refresh()
 	c.Press(t, "enter")
 
-	require.True(t, called, "enter on an online agent asks for its pane")
-	assert.Equal(t, sp.TmuxSession, gotSession)
-	assert.NotEmpty(t, gotAgent)
-	assert.Equal(t, os.Getenv("TMUX") != "", gotInTmux,
+	require.True(t, attach.called, "enter on an online agent asks for its pane")
+	assert.Equal(t, sp.TmuxSession, attach.session)
+	assert.NotEmpty(t, attach.agent)
+	assert.Equal(t, os.Getenv("TMUX") != "", attach.inTmux,
 		"switch-client inside tmux, attach outside it")
 
 	// An agent whose pane is gone has nothing to go to, and the console says
 	// so instead of handing the terminal to a dead session.
-	called = false
+	attach.called = false
 	f.MarkOffline(sp.TmuxSession)
 	c.Refresh()
 	c.Press(t, "enter")
-	assert.False(t, called)
+	assert.False(t, attach.called)
 	assert.Contains(t, c.View(), "no live tmux session")
+}
+
+// The spawn form's profile picker offers the daemon's saved profiles, and the
+// one the operator lands on reaches the launch — asserted on the model the
+// profile pins, which nothing else in this spawn asks for.
+func TestTUIConsoleSpawnsWithTheChosenProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	rec := createProfile(t, f, map[string]any{"name": "haiku-kit", "harness": "claude", "model": "haiku"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	cwd := f.TestCwd("tui-profile")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	c.Press(t, "n")
+	c.Press(t, "tab") // group → profile
+	require.Contains(t, c.View(), "< (default) >", "the picker starts on the daemon's own chain")
+	c.Press(t, "right")
+	require.Contains(t, c.View(), "< haiku-kit >", "and offers the saved profiles")
+	c.Press(t, "tab")
+	c.Type(t, "reviewer")
+	c.Press(t, "tab")
+	c.Type(t, cwd)
+	c.Press(t, "enter")
+
+	require.Contains(t, c.View(), "Spawned", "the console reports the outcome")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	model, ok := f.World.SpawnModel(members[0].ConvID)
+	require.True(t, ok, "the spawn should have been observed by the sim spawner")
+	assert.Equal(t, "haiku", model, "the chosen profile's model must reach the launch")
+}
+
+// A profile that selects a harness must not be overruled by a harness field
+// the operator never touched — the form opens on "(default)", which is the
+// only setting that leaves the daemon's chain free to apply the profile.
+func TestTUIConsoleProfileHarnessSurvivesTheUntouchedHarnessField(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	rec := createProfile(t, f, map[string]any{"name": "other-harness-kit", "harness": "codex"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	// A directory name with nothing harness-shaped in it: the listing shows
+	// the working directory, and a "codex" in the path would make the
+	// assertion below pass for the wrong reason.
+	cwd := f.TestCwd("tui-profile-harness")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	c.Press(t, "n")
+	c.Press(t, "tab") // group → profile
+	c.Press(t, "right")
+	require.Contains(t, c.View(), "< other-harness-kit >")
+	require.Contains(t, c.View(), "Harness:   < (default) >",
+		"the harness field must not pin one on the operator's behalf")
+	c.Press(t, "tab")
+	c.Type(t, "reviewer")
+	c.Press(t, "tab")
+	c.Type(t, cwd)
+	c.Press(t, "enter")
+
+	require.Contains(t, c.View(), "Spawned", "the console reports the outcome")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	sessions, err := db.FindSessionsByConvID(members[0].ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, "codex", sessions[0].Harness,
+		"the profile's harness must reach the launch, not the form's default")
+}
+
+// x retires the selected agent through the daemon's own retire verb: the
+// demotion, the group exit and the pane shutdown are the daemon's, so this
+// asserts on enrollment state and tmux liveness rather than on the console.
+func TestTUIConsoleRetiresAnAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	require.Contains(t, c.View(), "1 agents (1 online)")
+
+	// The prompt names the agent, and anything but "y" leaves it alone.
+	c.Press(t, "x")
+	require.Contains(t, c.View(), "and stop its session?")
+	c.Press(t, "n")
+	c.Refresh()
+	state, err := db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	require.Equal(t, db.AgentStateActive, state, "a cancelled prompt retires nothing")
+	require.True(t, f.World.Tmux.IsAlive(sp.TmuxSession))
+
+	c.Press(t, "x", "y")
+
+	view := c.View()
+	assert.Contains(t, view, "Retired worker", "the console reports the outcome")
+	assert.Contains(t, view, "left dev", "including the groups the agent gave up")
+	assert.Contains(t, view, "No agents yet", "and the roster drops it right away")
+
+	state, err = db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state)
+	assert.False(t, flowGroupHasMember(f, "dev", sp.ConvID), "a retired agent leaves its groups")
 }
 
 // Quitting is confirmed first, because it shuts the daemon down.
