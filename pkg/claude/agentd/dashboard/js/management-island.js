@@ -18,7 +18,7 @@ import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
-import { HelpField } from './help-field.js';
+import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   autoCompactWindowHintFor, sandboxModeHelpForImplementation,
@@ -43,6 +43,13 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
+const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matches one exact DNS '
+  + 'name. Domain matches the named domain and can optionally include its subdomains. CIDR matches '
+  + 'an IP network. Loopback covers connections to the local machine. Ports are optional integer '
+  + 'ports; blank allows all ports for that destination. Applied global, group, and explicit list '
+  + 'policies compose by intersection, so a destination and port must be present in every '
+  + 'applicable list. The Effective policy preview reports enforcement capability limits for the '
+  + 'selected implementation, harness, and platform.';
 
 const html = htm.bind(h);
 
@@ -92,6 +99,7 @@ const ACCESS_MODE_OPTIONS = [
 ];
 
 function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
+  const [helpOpen, setHelpOpen] = useState('');
   // Access-rule arrays are sparse on the wire: Go deliberately omits an empty
   // `allow`, including for list-mode empty intersections. Normalize at the
   // render boundary so legacy and modern-empty payloads share one safe shape.
@@ -118,11 +126,13 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     update({ mode: entry.mode || 'list', allow: [...rules.allow, ...added] });
     setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, warning: entry.warning || '', note: entry.note || '' });
   };
-  return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend>Network</legend>
+  return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend class="sbx-section-legend">Network <${HelpDisclosure}
+      id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
+      open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
     <${Select} id="sandbox-profile-editor-network-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
       <${Select} class="sbx-network-selector" value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
-      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly">localhost</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
+      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
       <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
       <input class="sbx-network-ports" list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
       <button type="button" aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>

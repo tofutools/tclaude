@@ -4158,6 +4158,24 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   padding: 0; margin-bottom: 2px; color: #8b949e;
   font-size: 12px; font-weight: 600;
 }
+.sbx-section-legend {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sbx-section-legend .spawn-field-help-trigger {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  line-height: 1;
+}
+.sbx-section-legend .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
+.sbx-section-legend .spawn-field-description:focus {
+  right: auto;
+  width: min(32rem, calc(100vw - 64px));
+}
 .sbx-rows { display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows:empty { display: none; }
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }

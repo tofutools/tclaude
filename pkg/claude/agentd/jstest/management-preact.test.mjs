@@ -1264,8 +1264,13 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
     'every network kind reserves the modifier column');
   assert.ok(networkRows[0].querySelector('.sbx-network-modifier .sbx-inline-check'));
   assert.equal(networkRows[1].querySelector('.sbx-network-modifier').textContent, '');
-  const localhost = networkRows[1].querySelector('span.sbx-network-value.sbx-network-value-readonly');
-  assert.equal(localhost.textContent, 'localhost');
+  const loopbackValue = networkRows[1].querySelector('span.sbx-network-value.sbx-network-value-readonly');
+  assert.equal(loopbackValue.textContent, '—');
+  assert.equal(loopbackValue.getAttribute('aria-hidden'), 'true');
+  const networkHelp = host.querySelector('#sandbox-profile-editor-network-help-hint');
+  assert.match(networkHelp.textContent, /Host matches one exact DNS name/);
+  assert.match(networkHelp.textContent, /blank allows all ports/);
+  assert.match(networkHelp.textContent, /compose by intersection/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 
   unmount();
