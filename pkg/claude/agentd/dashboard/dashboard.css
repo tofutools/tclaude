@@ -856,11 +856,26 @@ table tr:hover { background: #161b22; }
 }
 /* Agent hook details can include long tool names. Bound only the Groups
    table's state pill so those details cannot widen every member column;
-   StatePill's title and aria-label retain the complete status text. Other
-   tabs reuse .state-pill for unrelated values and remain content-sized. */
+   StatePill's wrapper retains the complete status text. Other tabs reuse
+   .state-pill for unrelated values and remain content-sized. */
+.state-pill-wrap { display: inline-block; position: relative; vertical-align: middle; }
 .state-cell .state-pill {
   max-width: 24ch; overflow: hidden; text-overflow: ellipsis;
   vertical-align: middle;
+}
+/* Only clipped pills enter the tab order. Pointer users keep the native title
+   tooltip; keyboard and touch focus reveal the same full value immediately. */
+.state-pill-wrap[data-truncated]:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.state-pill-wrap[data-truncated]:focus::after {
+  content: attr(data-full-status);
+  position: absolute; z-index: 300; left: 0; top: calc(100% + 5px);
+  box-sizing: border-box; width: max-content;
+  max-width: min(48ch, calc(100vw - 24px)); padding: 5px 7px;
+  border: 1px solid #30363d; border-radius: 4px;
+  background: #161b22; color: #c9d1d9;
+  font: 11px/1.4 ui-monospace, monospace;
+  white-space: normal; overflow-wrap: anywhere;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 .state-working   { background: #0a3622; color: #3fb950; border-color: #1d4d2c; }
 .state-idle      { background: #36280a; color: #d29922; border-color: #4d3a1d; }
@@ -5636,7 +5651,7 @@ body.slop .slop-machine {
    (render.js). Other tabs reuse .state-pill with no slot machine —
    the Audit tab's Outcome column, the Plugins status/step pills — so
    an unscoped rule would blank those cells in slop mode. */
-body.slop .state-cell .state-pill { display: none; }
+body.slop .state-cell .state-pill-wrap { display: none; }
 
 .slop-reel {
   display: inline-block; width: 1.3em; height: 1.3em;
@@ -7030,7 +7045,7 @@ body.wizard #dnd-trash.dnd-drop-over .dnd-trash-glyph-wizard {
    re-render. Scoped to .state-cell so other tabs' .state-pill (Audit
    Outcome, Plugins) are untouched — same care slop takes. */
 .wizard-pill { display: none; }
-body.wizard .state-cell .state-pill,
+body.wizard .state-cell .state-pill-wrap,
 body.wizard .state-cell .slop-machine { display: none; }
 body.wizard .wizard-pill {
   display: inline-flex; align-items: center; gap: 5px;

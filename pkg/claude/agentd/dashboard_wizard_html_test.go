@@ -1294,7 +1294,7 @@ func TestDashboardCSS_WizardCommandPaletteScoped(t *testing.T) {
 // `body.wizard .state-pill { display: none }` would blank the Audit Outcome
 // and Plugins pills too.
 func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
-	if !strings.Contains(dashboardAssets, "body.wizard .state-cell .state-pill") {
+	if !strings.Contains(dashboardAssets, "body.wizard .state-cell .state-pill-wrap") {
 		t.Error("wizard-mode pill hide is not scoped to .state-cell — would blank other tabs' pills")
 	}
 	// And the plain pill must NOT be hidden unscoped in wizard mode.

@@ -363,6 +363,8 @@ function statusInfo(state, online) {
 }
 
 function StatePill({ state, online }) {
+  const shellRef = useRef(null);
+  const pillRef = useRef(null);
   const info = statusInfo(state, online);
   let className = online ? 'state-idle' : 'state-offline';
   if (info.status === 'crashed') className = 'state-crashed';
@@ -383,7 +385,25 @@ function StatePill({ state, online }) {
   const ariaLabel = backgroundActive
     ? `idle; background work is still running${info.detail ? `: ${info.detail}` : ''}`
     : info.title;
-  return html`<span class=${`state-pill ${className}`} title=${info.title} aria-label=${ariaLabel}>${label}</span>`;
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    const pill = pillRef.current;
+    if (!shell || !pill) return;
+    const syncClipped = () => {
+      const clipped = pill.scrollWidth > pill.clientWidth;
+      shell.toggleAttribute('data-truncated', clipped);
+      if (clipped) shell.setAttribute('tabindex', '0');
+      else shell.removeAttribute('tabindex');
+    };
+    syncClipped();
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(syncClipped);
+    observer.observe(pill);
+    return () => observer.disconnect();
+  }, [label]);
+  return html`<span ref=${shellRef} class="state-pill-wrap" title=${info.title}
+    aria-label=${ariaLabel} data-full-status=${info.title}><span ref=${pillRef}
+    class=${`state-pill ${className}`} aria-hidden="true">${label}</span></span>`;
 }
 
 const SLOP_STOPPED = {

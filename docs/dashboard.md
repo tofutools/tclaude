@@ -278,7 +278,8 @@ for Codex sessions, the dashboard additionally replays the rollout's
 the next refresh instead of waiting for that timeout.
 
 Long state details, such as tool names, are ellipsized in the pill so the state
-column stays compact. Hover the pill to see the complete status and detail.
+column stays compact. Hover the pill, or focus it with the keyboard or a tap, to
+see the complete status and detail.
 
 Alongside it sits a **background-shell badge** — `⚙+N`, shown when the agent
 has *N* background shell commands (`Bash` with `run_in_background: true`)

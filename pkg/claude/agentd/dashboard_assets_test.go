@@ -144,7 +144,7 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 		".slop-reel",
 		".slop-strip",
 		"@keyframes slop-spin",
-		"body.slop .state-cell .state-pill { display: none; }",
+		"body.slop .state-cell .state-pill-wrap { display: none; }",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard CSS missing %q — slot machine styling broken", needle)
@@ -167,7 +167,7 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
 	}
 	css := string(cssBytes)
-	if !strings.Contains(css, "body.slop .state-cell .state-pill { display: none; }") {
+	if !strings.Contains(css, "body.slop .state-cell .state-pill-wrap { display: none; }") {
 		t.Error("dashboard.css missing the .state-cell-scoped slop pill-hide rule — " +
 			"reused .state-pill cells (Audit Outcome, Plugins status) go blank in slop mode")
 	}
@@ -187,19 +187,37 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 func TestDashboardCSS_AgentStatePillTruncates(t *testing.T) {
 	css := dashboardAssetFile(t, "dashboard.css")
 	js := dashboardAssetFile(t, "js/groups-member-table.js")
-	for _, needle := range []string{
-		".state-cell .state-pill {",
-		"max-width: 24ch; overflow: hidden; text-overflow: ellipsis;",
+	match := regexp.MustCompile(`(?ms)^\.state-cell\s+\.state-pill\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if len(match) != 2 {
+		t.Fatal("dashboard.css is missing the Groups-scoped agent state-pill rule")
+	}
+	for _, declaration := range []string{
+		`max-width:\s*24ch`, `overflow:\s*hidden`, `text-overflow:\s*ellipsis`,
 	} {
-		if !strings.Contains(css, needle) {
-			t.Errorf("dashboard.css missing %q — long agent statuses may widen the Groups table", needle)
+		if !regexp.MustCompile(declaration).MatchString(match[1]) {
+			t.Errorf("Groups agent state-pill rule is missing %q", declaration)
 		}
 	}
-	if strings.Contains(css, "\n.state-pill {\n  max-width:") {
+	if regexp.MustCompile(`(?ms)^\.state-pill\s*\{[^}]*\bmax-width\s*:`).MatchString(css) {
 		t.Error("state-pill truncation is unscoped — would cap unrelated Audit, Jobs, and Plugins pills")
 	}
-	if !strings.Contains(js, "title=${info.title} aria-label=${ariaLabel}>${label}</span>") {
-		t.Error("agent state pill no longer retains the complete status in its tooltip/accessibility label")
+	for _, needle := range []string{
+		`class="state-pill-wrap" title=${info.title}`,
+		`aria-label=${ariaLabel} data-full-status=${info.title}`,
+		`const clipped = pill.scrollWidth > pill.clientWidth;`,
+		`if (clipped) shell.setAttribute('tabindex', '0');`,
+		`const observer = new ResizeObserver(syncClipped);`,
+		`return () => observer.disconnect();`,
+		`.state-pill-wrap[data-truncated]:focus::after`,
+		`content: attr(data-full-status);`,
+	} {
+		source := js
+		if strings.HasPrefix(needle, ".") || strings.HasPrefix(needle, "content:") {
+			source = css
+		}
+		if !strings.Contains(source, needle) {
+			t.Errorf("agent state pill is missing %q — clipped text must remain available to pointer, keyboard, and touch users", needle)
+		}
 	}
 }
 
