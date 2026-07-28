@@ -129,6 +129,12 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		out.AgentDirectories = append(out.AgentDirectories, name)
 	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
+	if out.FilesystemSpellings != nil {
+		sort.Slice(out.FilesystemSpellings.Rules, func(i, j int) bool {
+			return out.FilesystemSpellings.Rules[i].ResolvedPath <
+				out.FilesystemSpellings.Rules[j].ResolvedPath
+		})
+	}
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
 	return out, accessCompositionNotices(parts), nil

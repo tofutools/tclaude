@@ -345,9 +345,9 @@ func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testin
 
 func TestSandboxProfileCreateRetainsAliasSpellingThroughRegistryResolution(t *testing.T) {
 	setupTestDB(t)
-	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	root := filepath.Join(home, "alias-profile")
+	root = filepath.Join(root, "alias-profile")
 	target := filepath.Join(root, "real")
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.MkdirAll(target, 0o755))
@@ -387,9 +387,9 @@ func TestSandboxProfileCreateRetainsAliasSpellingThroughRegistryResolution(t *te
 
 func TestSandboxProfileFilesystemReplacementReauthorsStaleSidecar(t *testing.T) {
 	setupTestDB(t)
-	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	root := filepath.Join(home, "alias-replacement")
+	root = filepath.Join(root, "alias-replacement")
 	firstTarget := filepath.Join(root, "first-target")
 	secondTarget := filepath.Join(root, "second-target")
 	firstAlias := filepath.Join(root, "first-alias")

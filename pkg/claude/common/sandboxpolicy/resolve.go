@@ -76,6 +76,7 @@ type resolvedFilesystemGrant struct {
 }
 
 type observableFilesystemSpelling struct {
+	profile  string
 	resolved string
 	spelling string
 }
@@ -139,6 +140,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 					observableFilesystemSpellings = append(
 						observableFilesystemSpellings,
 						observableFilesystemSpelling{
+							profile:  normalized.Name,
 							resolved: rule.ResolvedPath,
 							spelling: spelling,
 						},
@@ -161,6 +163,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 				observableFilesystemSpellings = append(
 					observableFilesystemSpellings,
 					observableFilesystemSpelling{
+						profile:  normalized.Name,
 						resolved: canonical,
 						spelling: grant.Path,
 					},
@@ -275,6 +278,14 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 				"discover mount aliases for effective filesystem path %q: %w",
 				observable.spelling, err,
 			)
+		}
+		// Alias discovery touches the filesystem after tier normalization.
+		// Revalidate in the same pass before publishing any aliases so a
+		// spelling retargeted in that interval cannot become launch authority.
+		if err := validateFilesystemSpellingTarget(
+			observable.profile, observable.spelling, observable.resolved, true,
+		); err != nil {
+			return EffectiveProfile{}, err
 		}
 		for _, alias := range aliases {
 			if previous, exists := aliasesByLink[alias.Link]; exists && previous.Target != alias.Target {

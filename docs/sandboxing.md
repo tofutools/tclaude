@@ -534,9 +534,11 @@ Retained spellings are revalidated during save preview and again at launch. If
 a symlink or case/NFC-equivalent spelling now resolves to a different object,
 tclaude refuses it and names the profile, spelling, original target, current
 target, and both remedies: re-save the spelling to adopt the new target, or
-remove it. Launch authority is never recomputed from retained spelling
-metadata. Editing the filesystem paths is the explicit re-authoring operation;
-ordinary edits keep the original binding pinned and revalidate it.
+remove it. Here, “re-save the spelling” means explicitly edit that filesystem
+path and save, which enters the re-authoring flow; an ordinary profile save
+does not adopt drift. Launch authority is never recomputed from retained
+spelling metadata. Ordinary edits keep the original binding pinned and
+revalidate it.
 
 The isolated posture blocks TCP egress and host-loopback TCP. It also closes
 the Linux abstract Unix-socket namespace. PID isolation prevents the harness

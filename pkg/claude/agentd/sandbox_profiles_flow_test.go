@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -286,7 +287,8 @@ func TestSandboxProfilePreviewAndSaveRejectRetargetedRetainedSpelling(t *testing
 		"/v1/sandbox-profiles/retargeted?dry_run=1", saved)
 	require.Equalf(t, http.StatusOK, rec.Code, "re-author preview body=%s", rec.Body.String())
 	var preview struct {
-		After wireSandboxProfile `json:"after"`
+		After    wireSandboxProfile `json:"after"`
+		Revision string             `json:"revision"`
 	}
 	testharness.DecodeJSON(t, rec, &preview)
 	canonicalCurrent, err := filepath.EvalSymlinks(current)
@@ -296,6 +298,19 @@ func TestSandboxProfilePreviewAndSaveRejectRetargetedRetainedSpelling(t *testing
 	require.NotNil(t, preview.After.FilesystemSpellings)
 	require.Len(t, preview.After.FilesystemSpellings.Rules, 1)
 	assert.Equal(t, []string{alias}, preview.After.FilesystemSpellings.Rules[0].Spellings)
+
+	rec = profileReq(t, f, http.MethodPatch,
+		"/v1/sandbox-profiles/retargeted?revision="+url.QueryEscape(preview.Revision),
+		preview.After)
+	require.Equalf(t, http.StatusOK, rec.Code, "re-author save body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/retargeted", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var reauthored wireSandboxProfile
+	testharness.DecodeJSON(t, rec, &reauthored)
+	require.Len(t, reauthored.Filesystem, 1)
+	assert.Equal(t, canonicalCurrent, reauthored.Filesystem[0].Path)
+	require.NotNil(t, reauthored.FilesystemSpellings)
+	assert.Equal(t, []string{alias}, reauthored.FilesystemSpellings.Rules[0].Spellings)
 }
 
 func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {

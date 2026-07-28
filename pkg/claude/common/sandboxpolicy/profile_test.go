@@ -104,11 +104,10 @@ func TestNormalizeForAuthoringCaseAndNFCMergeRequiresConfirmedIdentity(t *testin
 			first := filepath.Join(root, tc.first)
 			last := filepath.Join(root, tc.last)
 			require.NoError(t, os.Mkdir(first, 0o755))
-			if _, err := os.Stat(last); os.IsNotExist(err) {
-				require.NoError(t, os.Mkdir(last, 0o755))
-			} else {
-				require.NoError(t, err)
+			if _, err := os.Stat(last); err == nil {
+				t.Skip("filesystem folds these spellings; distinct-object refusal is not observable here")
 			}
+			require.NoError(t, os.Mkdir(last, 0o755))
 			grants := []FilesystemGrant{
 				{Path: first, Access: AccessRead},
 				{Path: last, Access: AccessWrite},

@@ -326,19 +326,11 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	byPath := make(map[string]Access, len(in))
 	missingPaths := map[string]bool{}
 	for i, grant := range in {
-		if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
-			return nil, nil, fmt.Errorf("filesystem[%d].access %q is invalid (want read, write, or deny)", i, grant.Access)
-		}
-		path, missing, err := canonicalDirectory(grant.Path, allowMissing)
+		_, path, missing, err := normalizeFilesystemGrant(
+			i, grant, allowMissing, protected,
+		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
-		}
-		if grant.Access != AccessDeny {
-			for _, denied := range protected {
-				if pathsIntersect(path, denied) {
-					return nil, nil, fmt.Errorf("filesystem[%d].path %q intersects protected directory %q", i, path, denied)
-				}
-			}
+			return nil, nil, err
 		}
 		if missing {
 			missingPaths[path] = true
@@ -358,6 +350,39 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	}
 	sort.Strings(missing)
 	return out, missing, nil
+}
+
+func normalizeFilesystemGrant(
+	index int,
+	grant FilesystemGrant,
+	allowMissing bool,
+	protected []string,
+) (spelling, resolved string, missing bool, err error) {
+	if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
+		return "", "", false, fmt.Errorf(
+			"filesystem[%d].access %q is invalid (want read, write, or deny)",
+			index, grant.Access,
+		)
+	}
+	spelling, err = cleanDirectoryPath(grant.Path)
+	if err != nil {
+		return "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+	}
+	resolved, missing, err = canonicalDirectory(spelling, allowMissing)
+	if err != nil {
+		return "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+	}
+	if grant.Access != AccessDeny {
+		for _, denied := range protected {
+			if pathsIntersect(resolved, denied) {
+				return "", "", false, fmt.Errorf(
+					"filesystem[%d].path %q intersects protected directory %q",
+					index, resolved, denied,
+				)
+			}
+		}
+	}
+	return spelling, resolved, missing, nil
 }
 
 type authoredFilesystemCandidate struct {
@@ -394,29 +419,11 @@ func normalizeFilesystemForAuthoringWithIdentity(
 	}
 	candidates := make([]authoredFilesystemCandidate, 0, len(in))
 	for i, grant := range in {
-		if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
-			return nil, nil, nil, fmt.Errorf(
-				"filesystem[%d].access %q is invalid (want read, write, or deny)",
-				i, grant.Access,
-			)
-		}
-		spelling, err := cleanDirectoryPath(grant.Path)
+		spelling, resolved, missing, err := normalizeFilesystemGrant(
+			i, grant, allowMissing, protected,
+		)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
-		}
-		resolved, missing, err := canonicalDirectory(spelling, allowMissing)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
-		}
-		if grant.Access != AccessDeny {
-			for _, denied := range protected {
-				if pathsIntersect(resolved, denied) {
-					return nil, nil, nil, fmt.Errorf(
-						"filesystem[%d].path %q intersects protected directory %q",
-						i, resolved, denied,
-					)
-				}
-			}
+			return nil, nil, nil, err
 		}
 		var info os.FileInfo
 		if !missing {
@@ -584,18 +591,10 @@ func normalizeFilesystemSpellings(
 			if spelling == resolved {
 				continue
 			}
-			current, _, err := canonicalDirectory(spelling, allowMissing)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"sandbox profile %q retained spelling %q originally resolved to %q but its current target is unavailable (%v); re-save the profile to adopt the new target, or remove the retained spelling",
-					profileName, spelling, resolved, err,
-				)
-			}
-			if !sameDirectoryTarget(resolved, current) {
-				return nil, fmt.Errorf(
-					"sandbox profile %q retained spelling %q originally resolved to %q but now resolves to %q; re-save the profile to adopt the new target, or remove the retained spelling",
-					profileName, spelling, resolved, current,
-				)
+			if err := validateFilesystemSpellingTarget(
+				profileName, spelling, resolved, allowMissing,
+			); err != nil {
+				return nil, err
 			}
 			spellings[spelling] = struct{}{}
 		}
@@ -622,6 +621,26 @@ func normalizeFilesystemSpellings(
 		return out.Rules[i].ResolvedPath < out.Rules[j].ResolvedPath
 	})
 	return out, nil
+}
+
+func validateFilesystemSpellingTarget(
+	profileName, spelling, resolved string,
+	allowMissing bool,
+) error {
+	current, _, err := canonicalDirectory(spelling, allowMissing)
+	if err != nil {
+		return fmt.Errorf(
+			"sandbox profile %q retained spelling %q originally resolved to %q but its current target is unavailable (%v); re-save the profile to adopt the new target, or remove the retained spelling",
+			profileName, spelling, resolved, err,
+		)
+	}
+	if !sameDirectoryTarget(resolved, current) {
+		return fmt.Errorf(
+			"sandbox profile %q retained spelling %q originally resolved to %q but now resolves to %q; re-save the profile to adopt the new target, or remove the retained spelling",
+			profileName, spelling, resolved, current,
+		)
+	}
+	return nil
 }
 
 func sameDirectoryTarget(left, right string) bool {
