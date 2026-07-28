@@ -1274,7 +1274,7 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	if m.capabilities.attachLocalPane {
 		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
 	} else {
-		m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] to come back."
+		m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] d to come back."
 	}
 	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
@@ -1528,7 +1528,7 @@ func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 	if m.capabilities.attachLocalPane {
 		m.notice += " — attaching; detach (ctrl-b d) to come back."
 	} else {
-		m.notice += " — opening its remote terminal; press ctrl-] to come back."
+		m.notice += " — opening its remote terminal; press ctrl-] d to come back."
 	}
 	return m, m.attachCmd(name, convID, session)
 }
@@ -2185,7 +2185,8 @@ func (m tuiModel) renderHelp() string {
 		} else {
 			b.WriteString("               On a live one: stream its daemon-host tmux session through\n")
 			b.WriteString("               the dashboard's authenticated terminal WebSocket. Press\n")
-			b.WriteString("               ctrl-] to close only that stream and return.\n")
+			b.WriteString("               ctrl-] d to close only that stream and return; press\n")
+			b.WriteString("               ctrl-] ctrl-] to send a literal ctrl-] remotely.\n")
 		}
 		b.WriteString("               Going to a pane is operator consoles only;\n")
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")

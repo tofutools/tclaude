@@ -28,8 +28,10 @@ import (
 )
 
 const (
-	tuiHTTPPrefix       = "/api/tui"
-	remoteTUIDetachByte = byte(0x1d) // Ctrl-]
+	tuiHTTPPrefix               = "/api/tui"
+	remoteTUIEscapeByte         = byte(0x1d) // Ctrl-]
+	remoteTUIDetachCommand      = byte('d')
+	remoteTUIDetachCommandUpper = byte('D')
 )
 
 var errRemoteTUIDetached = errors.New("remote terminal detached")
@@ -274,10 +276,11 @@ func (a *remoteTUIAPI) attach(agentName, convID, _ string) tea.Cmd {
 
 // remoteTUIAttachCommand lets bubbletea release its alternate screen and input
 // reader while the dashboard's existing terminal WebSocket owns this terminal.
-// Ctrl-] is consumed here as a transport-level detach escape, so it works even
-// when the dashboard itself is running inside another tmux. When that escape,
-// the server-side tmux detach, or an agentd restart closes the socket, Run
-// returns and bubbletea restores the dashboard.
+// Ctrl-] D is consumed here as a transport-level detach escape, so it works
+// even when the dashboard itself is running inside another tmux. Ctrl-] Ctrl-]
+// sends one literal Ctrl-] to the remote terminal. When the detach escape, the
+// server-side tmux detach, or an agentd restart closes the socket, Run returns
+// and bubbletea restores the dashboard.
 type remoteTUIAttachCommand struct {
 	api       *remoteTUIAPI
 	agentName string
@@ -364,29 +367,33 @@ func (c *remoteTUIAttachCommand) Run() error {
 	go func() {
 		defer pumps.Done()
 		buf := make([]byte, 4096)
+		escapePending := false
 		for {
 			n, readErr := cancelInput.Read(buf)
 			if n > 0 {
-				data := buf[:n]
-				if detachAt := bytes.IndexByte(data, remoteTUIDetachByte); detachAt >= 0 {
-					if detachAt > 0 {
-						if writeErr := writeMessage(websocket.BinaryMessage, data[:detachAt]); writeErr != nil {
-							inputErr <- writeErr
-							_ = conn.Close()
-							return
-						}
+				data, detach, pending := remoteTUIInput(buf[:n], escapePending)
+				escapePending = pending
+				if len(data) > 0 {
+					if writeErr := writeMessage(websocket.BinaryMessage, data); writeErr != nil {
+						inputErr <- writeErr
+						_ = conn.Close()
+						return
 					}
-					inputErr <- errRemoteTUIDetached
-					_ = conn.Close()
-					return
 				}
-				if writeErr := writeMessage(websocket.BinaryMessage, data); writeErr != nil {
-					inputErr <- writeErr
+				if detach {
+					inputErr <- errRemoteTUIDetached
 					_ = conn.Close()
 					return
 				}
 			}
 			if readErr != nil {
+				if escapePending {
+					if writeErr := writeMessage(websocket.BinaryMessage, []byte{remoteTUIEscapeByte}); writeErr != nil {
+						inputErr <- writeErr
+						_ = conn.Close()
+						return
+					}
+				}
 				if !errors.Is(readErr, cancelreader.ErrCanceled) {
 					inputErr <- readErr
 					_ = conn.Close()
@@ -427,6 +434,33 @@ func (c *remoteTUIAttachCommand) Run() error {
 		return fmt.Errorf("remote terminal stream: %w", streamErr)
 	}
 	return nil
+}
+
+// remoteTUIInput applies the remote stream's two-byte escape protocol. An
+// escape can straddle reads, so pending is passed back to the caller. Doubling
+// the prefix quotes it; an unrecognized command remains transparent.
+func remoteTUIInput(input []byte, pending bool) (output []byte, detach, stillPending bool) {
+	output = make([]byte, 0, len(input))
+	for _, b := range input {
+		if !pending {
+			if b == remoteTUIEscapeByte {
+				pending = true
+			} else {
+				output = append(output, b)
+			}
+			continue
+		}
+		switch b {
+		case remoteTUIDetachCommand, remoteTUIDetachCommandUpper:
+			return output, true, false
+		case remoteTUIEscapeByte:
+			output = append(output, remoteTUIEscapeByte)
+		default:
+			output = append(output, remoteTUIEscapeByte, b)
+		}
+		pending = false
+	}
+	return output, false, pending
 }
 
 func (c *remoteTUIAttachCommand) dial() (*websocket.Conn, error) {

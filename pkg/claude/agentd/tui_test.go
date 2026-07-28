@@ -1161,6 +1161,7 @@ type tuiAttachRecord struct {
 
 // Enter on a row with no live pane must say so, not silently do nothing.
 func TestTUIAttachWithoutALivePaneSaysSo(t *testing.T) {
+	setupTestDB(t)
 	rec := stubAttach(t)
 	m := newTUIModel(nil)
 	m.operator = true
@@ -1350,6 +1351,7 @@ func TestTUIResumeCarriesItsWarnings(t *testing.T) {
 // the listing is up to two seconds stale, and enter says so rather than
 // silently starting a second session for an agent that may still be up.
 func TestTUIEnterOnALiveRowWithoutAPaneSaysSo(t *testing.T) {
+	setupTestDB(t)
 	rec := stubAttach(t)
 	m := newTUIModel(nil)
 	m.operator = true

@@ -253,16 +253,36 @@ func TestRemoteTUIAttachClientEscapeClosesOnlyTheStream(t *testing.T) {
 		stdout:    io.Discard,
 	}
 	go func() {
-		_, _ = inputWriter.Write([]byte{'b', 'e', 'f', 'o', 'r', 'e', remoteTUIDetachByte, 'a', 'f', 't', 'e', 'r'})
+		_, _ = inputWriter.Write([]byte{
+			'b', 'e', 'f', 'o', 'r', 'e',
+			remoteTUIEscapeByte, remoteTUIEscapeByte,
+			'a', 'f', 't', 'e', 'r',
+			remoteTUIEscapeByte, remoteTUIDetachCommand,
+			'i', 'g', 'n', 'o', 'r', 'e', 'd',
+		})
 	}()
 
 	require.NoError(t, command.Run())
 	select {
 	case input := <-received:
-		assert.Equal(t, []byte("before"), input, "detach escape and later bytes stay local")
+		assert.Equal(t, append([]byte("before"), append([]byte{remoteTUIEscapeByte}, []byte("after")...)...), input,
+			"doubled escape is quoted and bytes after detach are discarded")
 	case <-time.After(time.Second):
 		t.Fatal("remote terminal server did not observe the client detach")
 	}
+}
+
+func TestRemoteTUIInputCarriesEscapeStateAcrossReads(t *testing.T) {
+	output, detach, pending := remoteTUIInput([]byte{'x', remoteTUIEscapeByte}, false)
+	assert.Equal(t, []byte("x"), output)
+	assert.False(t, detach)
+	assert.True(t, pending)
+
+	output, detach, pending = remoteTUIInput([]byte{'q', remoteTUIEscapeByte, 'D', 'z'}, pending)
+	assert.Equal(t, []byte{remoteTUIEscapeByte, 'q'}, output,
+		"an unknown escape command remains transparent")
+	assert.True(t, detach)
+	assert.False(t, pending)
 }
 
 func srvOrigin(r *http.Request) string {
