@@ -903,7 +903,7 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 		},
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
-			"#cfg-feature-group-attachments", "feats.group_attachments = true",
+			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",
 			"feats.terminal_command_palette_shortcut = true",
 		},

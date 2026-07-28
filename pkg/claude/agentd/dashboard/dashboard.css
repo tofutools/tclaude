@@ -1075,7 +1075,7 @@ details[data-group-key] > summary .group-name {
 }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
-.group-attachment {
+.group-attachment-float {
   /* Float the paperclip above the first name letter: the disclosure glyph
      consumes roughly the first 12px, while the 24px target centres its visible
      glyph another 12px in. Its bottom edge stops before the title's padded
@@ -1114,15 +1114,55 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
    :focus-visible; pointer clicks therefore cannot leave the icon stuck open.
    Opacity keeps the hidden controls in the tab order. */
 @media (hover: hover) and (pointer: fine) {
-  .group-attachment { opacity: 0; pointer-events: none; }
-  details[data-group-key] > summary:hover .group-attachment,
-  .group-attachment:focus-visible,
-  .group-attachment:has(:focus-visible) { opacity: 0.92; pointer-events: auto; }
-  .group-attachment-edit { opacity: 0; pointer-events: none; }
-  .group-attachment-set:hover .group-attachment-edit,
-  .group-attachment-set:has(.group-attachment-edit:focus-visible) .group-attachment-edit {
+  .group-attachment-float { opacity: 0; pointer-events: none; }
+  details[data-group-key] > summary:hover .group-attachment-float,
+  .group-attachment-float:focus-visible,
+  .group-attachment-float:has(:focus-visible) { opacity: 0.92; pointer-events: auto; }
+  .group-attachment-float .group-attachment-edit { opacity: 0; pointer-events: none; }
+  .group-attachment-float.group-attachment-set:hover .group-attachment-edit,
+  .group-attachment-float.group-attachment-set:has(.group-attachment-edit:focus-visible) .group-attachment-edit {
     opacity: 1; pointer-events: auto;
   }
+}
+
+/* Fixed mode is a normal, in-flow group quick item at the far right of the
+   header. Its link/ticket label deliberately does NOT use .qo-text, so the
+   group's hover-fold preference can never collapse it. Only the edit pencil
+   is hover-revealed. */
+.group-attachment-fixed {
+  position: static; z-index: auto;
+  display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
+  width: auto; height: auto; margin: 0 0 0 8px; padding: 1px 6px;
+  border: 1px solid transparent; border-radius: 4px; background: transparent;
+  box-shadow: none; color: #7d8590; opacity: 1;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.4;
+  white-space: nowrap; cursor: pointer;
+}
+.group-attachment-fixed:hover { color: #d4d4d4; border-color: #58a6ff; }
+.group-attachment-fixed.group-attachment-empty {
+  width: auto; height: auto; box-sizing: border-box; justify-content: center;
+}
+.group-attachment-fixed > a,
+.group-attachment-fixed > button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  width: auto; height: auto; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; line-height: inherit; text-decoration: none;
+  cursor: pointer;
+}
+.group-attachment-fixed > a:hover,
+.group-attachment-fixed > button:hover {
+  color: #58a6ff; background: transparent; text-decoration: none;
+}
+.group-attachment-label {
+  display: inline-block; max-width: 48ch; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.group-attachment-fixed .group-attachment-edit {
+  width: 18px; height: 18px; margin: -2px -3px -2px 0;
+  opacity: 0; pointer-events: none;
+}
+.group-attachment-fixed:hover .group-attachment-edit {
+  opacity: 1; pointer-events: auto;
 }
 body.wizard .group-attachment a,
 body.wizard .group-attachment button { color: #b39ddb; }

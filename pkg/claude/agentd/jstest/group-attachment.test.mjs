@@ -5,7 +5,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 test('group attachments enforce http(s) again at the render boundary', async (t) => {
   const harness = await createPreactHarness(t);
   const [
-    { GroupsNativeList },
+    { GroupsNativeList, safeGroupAttachmentURL },
     { GroupsInteractionProvider },
     { createActionDialogState },
     { ActionDialogApp },
@@ -17,13 +17,22 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   ]);
   const state = createActionDialogState();
   const featureSnapshot = harness.signals.signal({
-    group_attachments_enabled: false,
+    group_attachments_mode: 'off',
   });
   const actions = {
     openGroupAttachment: state.openGroupAttachment,
     close: state.close,
     setGroupAttachment: async () => {},
   };
+  const normalizedHostCases = [
+    ['one-slash', 'https:/evil.example'],
+    ['three-slashes', 'https:///evil.example'],
+    ['no-slashes', 'https:evil.example'],
+  ];
+  for (const [, malformedURL] of normalizedHostCases) {
+    assert.equal(safeGroupAttachmentURL(malformedURL), '',
+      'browser URL normalization must not repair a malformed authority');
+  }
   const groups = [{
     name: 'safe', members: [], online: 0,
     attachment_url: 'https://example.com/project',
@@ -40,8 +49,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     attachment_label: 'No host',
   }];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const view = (enabled) => {
-    featureSnapshot.value = { group_attachments_enabled: enabled };
+  const view = (mode) => {
+    featureSnapshot.value = { group_attachments_mode: mode };
     return harness.html`<${GroupsInteractionProvider}>
       <${GroupsNativeList}
         groups=${groups}
@@ -49,7 +58,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
           activity_bots: {},
           links: [],
           sudo: [],
-          group_attachments_enabled: enabled,
+          group_attachments_mode: mode,
         }}
         actions=${actions}
       />
@@ -61,7 +70,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
       />
     <//>`;
   };
-  const mounted = await harness.mount(view(false), host);
+  const mounted = await harness.mount(view('off'), host);
 
   const attachment = (name) => host.querySelector(
     `details[data-group-key="${name}"] > summary .group-attachment`);
@@ -73,11 +82,14 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(
     host.querySelector('.group-attachment'),
     null,
-    'the absent/default-false feature flag keeps every stored attachment dark',
+    'the absent/default-off feature mode keeps every stored attachment dark',
   );
 
-  await mounted.rerender(view(true));
+  await mounted.rerender(view('float'));
   const safe = attachment('safe');
+  assert.ok(safe.classList.contains('group-attachment-float'));
+  assert.equal(safe.querySelector('.group-attachment-label'), null,
+    'float mode stays icon-only');
   assert.equal(safe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
   assert.equal(safe.querySelector('a')?.textContent, '📎', 'the floating control stays icon-only');
   assert.match(safe.querySelector('a')?.getAttribute('title'), /Safe project/);
@@ -117,7 +129,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.ok(host.querySelector('#task-link-modal'), 'the editor can reopen while enabled');
   await harness.act(() => {
-    featureSnapshot.value = { group_attachments_enabled: false };
+    featureSnapshot.value = { group_attachments_mode: 'off' };
   });
   assert.equal(
     host.querySelector('#task-link-modal'),
@@ -130,9 +142,36 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'disabling also releases dialog ownership instead of leaving hidden stale state',
   );
 
-  await mounted.rerender(view(true));
-  const hostless = attachment('hostless');
-  assert.equal(hostless.querySelector('a'), null, 'http(s) without a host must remain inert');
-  assertTabReachable(hostless.querySelector('.group-attachment-invalid'));
+  await mounted.rerender(view('fixed'));
+  assert.equal(host.querySelector('.group-attachment-float'), null,
+    'fixed mode does not retain the floating overlay');
+
+  const fixedSafe = attachment('safe');
+  assert.ok(fixedSafe.classList.contains('group-attachment-fixed'));
+  assert.equal(fixedSafe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
+  assert.equal(fixedSafe.querySelector('.group-attachment-label')?.textContent, 'Safe project',
+    'fixed mode keeps the link/ticket label in the DOM');
+  assert.equal(fixedSafe.querySelector('.qo-text'), null,
+    'the fixed label does not participate in quick-item auto-folding');
+  const safeSummary = host.querySelector('details[data-group-key="safe"] > summary');
+  assert.equal(safeSummary.lastElementChild, fixedSafe,
+    'fixed mode is the far-right group quick item');
+
+  const fixedEmpty = attachment('empty');
+  assert.equal(fixedEmpty?.tagName, 'BUTTON');
+  assert.equal(fixedEmpty.querySelector('.group-attachment-label')?.textContent, 'attach');
+  fixedEmpty.focus();
+  fixedEmpty.click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(host.querySelector('#task-link-modal'), 'the fixed quick item opens the editor');
+  harness.document.dispatchEvent(escape);
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, fixedEmpty,
+    'fixed mode restores focus to its stable quick item');
+
+  const fixedHostless = attachment('hostless');
+  assert.equal(fixedHostless.querySelector('a'), null,
+    'http(s) without a host must remain inert in fixed mode');
+  assertTabReachable(fixedHostless.querySelector('.group-attachment-invalid'));
   await mounted.unmount();
 });
