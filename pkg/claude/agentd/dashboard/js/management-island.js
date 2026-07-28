@@ -47,9 +47,10 @@ const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matc
   + 'name. Domain matches the named domain and can optionally include its subdomains. CIDR matches '
   + 'an IP network. Loopback covers connections to the local machine. Ports are optional integer '
   + 'ports; blank allows all ports for that destination. Applied global, group, and explicit list '
-  + 'policies compose by intersection, so a destination and port must be present in every '
-  + 'applicable list. The Effective policy preview reports enforcement capability limits for the '
-  + 'selected implementation, harness, and platform.';
+  + 'policies compose by intersection: destinations and ports must be allowed by every applicable '
+  + 'list, and compatible destination selectors and port sets are intersected. The Effective '
+  + 'policy preview reports enforcement capability limits for the selected implementation, '
+  + 'harness, and platform.';
 
 const html = htm.bind(h);
 
