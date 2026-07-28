@@ -369,11 +369,15 @@ the session's first prompt:
 }
 ```
 
-This setting defaults to `false` because it makes one additional model call
-per eligible session. When enabled, the call is non-interactive, read-only,
-ephemeral, and limited to one attempt. It runs asynchronously after the prompt
-hook has completed, so a slow, failed, unsupported, or malformed response
-leaves the deterministic fallback in place and never delays session startup or
+This setting defaults to `false` because it normally makes an additional model
+call for each eligible session. When enabled, the call is non-interactive,
+read-only, and ephemeral. Agentd keeps a bounded recent-attempt cache to avoid
+repeatedly spending tokens on later prompts after a failure; restarting the
+daemon or eventually evicting an old entry permits a retry. When the single
+naming slot is busy, the attempt is dropped rather than queued and a later
+prompt may retry. The work runs asynchronously after the prompt hook has
+completed, so a slow, failed, unsupported, or malformed response leaves the
+deterministic fallback in place and never delays session startup or waits on
 the user's turn. Claude Code and Codex both use their own one-shot harness
 adapter for the same flow. An explicit rename always wins.
 

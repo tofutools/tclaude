@@ -279,7 +279,7 @@ type SessionConfig struct {
 	// pass their agent name as the label and are unaffected.
 	TmuxNameStyle string `json:"tmux_name_style,omitempty"`
 
-	// AutoNameFromPrompt lets agentd make one bounded, non-interactive model
+	// AutoNameFromPrompt lets agentd make a bounded, non-interactive model
 	// call to replace a free-floating session's deterministic display-name
 	// fallback after its first prompt. It defaults off: starting a session
 	// must not silently spend tokens or wait on another model invocation.

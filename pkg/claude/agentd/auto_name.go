@@ -75,7 +75,8 @@ func handleWhoamiAutoName(w http.ResponseWriter, r *http.Request) {
 }
 
 // scheduleAutoName performs only cheap eligibility checks synchronously, then
-// runs at most one naming attempt for an actor in a detached goroutine.
+// starts a naming attempt in a detached goroutine unless the recent-attempt
+// cache already contains this actor.
 func scheduleAutoName(convID, harnessName, cwd, prompt string) {
 	cfg, err := config.Load()
 	if err != nil || !cfg.AutoNameFromPromptEnabled() || strings.TrimSpace(prompt) == "" {
@@ -101,7 +102,8 @@ func scheduleAutoName(convID, harnessName, cwd, prompt string) {
 		}(actor.AgentID, actor.PendingName)
 	default:
 		// A naming call is an optional polish operation. Do not queue it behind
-		// another model invocation or retry it on every prompt.
+		// another model invocation; a later prompt may retry once the slot is
+		// free.
 	}
 }
 
