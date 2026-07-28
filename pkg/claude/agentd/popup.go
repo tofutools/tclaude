@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -738,6 +739,22 @@ func snapshotRequestBody(r *http.Request) string {
 //   - xdg-open is the final fallback (and may still hit a Linux
 //     browser → keyring prompt; we accept that on hosts where neither
 //     of the above works).
+//
+// Start() alone only catches a missing launcher binary. The interesting
+// failures are exit codes: xdg-open reports "no method available" (3) or
+// "action failed" (4) on a headless/misconfigured host, and open(1) and
+// `start` fail similarly — all with a zero-valued Start(). So we also wait
+// briefly for the launcher to exit and surface a non-zero status, with the
+// launcher's stderr attached (that is where "xdg-open: no method available
+// for opening …" lands).
+//
+// The wait is bounded because success is not always a prompt exit: with a
+// desktop environment xdg-open delegates and returns immediately, but its
+// generic fallback execs the browser in the FOREGROUND and does not return
+// until the browser is closed. Blocking on that would hang the tray's event
+// loop for the length of a browsing session. A launcher still running after
+// browserLaunchProbe is therefore treated as a successful launch, and reaped
+// by the background goroutine.
 func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -758,7 +775,68 @@ func openBrowser(url string) error {
 		}
 		cmd = exec.Command("xdg-open", url)
 	}
-	return cmd.Start()
+	name := filepath.Base(cmd.Path)
+	// Bounded so a launcher that survives the probe (or a browser that
+	// inherited stderr and spews for its whole lifetime) can't grow this
+	// buffer inside a long-lived daemon.
+	var stderr cappedBuffer
+	stderr.max = maxBrowserStderr
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case err := <-waited:
+		if err == nil {
+			return nil
+		}
+		// Wait has returned, so os/exec's stderr copier is done and the
+		// buffer is safe to read.
+		if msg := auditClip(stderr.String(), 200); msg != "" {
+			return fmt.Errorf("%s: %w: %s", name, err, msg)
+		}
+		return fmt.Errorf("%s: %w", name, err)
+	case <-time.After(browserLaunchProbe):
+		return nil
+	}
+}
+
+const (
+	// browserLaunchProbe bounds how long openBrowser waits for a launcher
+	// to exit before calling the launch good. Real launcher failures are
+	// immediate (bad URL, no handler, no display); anything still alive
+	// this long has handed off or is fronting the browser itself.
+	browserLaunchProbe = 2 * time.Second
+	// maxBrowserStderr caps the launcher stderr kept for the error message.
+	maxBrowserStderr = 4 << 10
+)
+
+// cappedBuffer is an io.Writer that retains the first max bytes written and
+// discards the rest, never reporting a short write. os/exec's copier writes
+// to it from its own goroutine and openBrowser may abandon it at the probe
+// timeout while that goroutine is still running, so the mutex keeps the
+// abandoned case race-free.
+type cappedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if room := c.max - len(c.buf); room > 0 {
+		c.buf = append(c.buf, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(c.buf)
 }
 
 // escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing
