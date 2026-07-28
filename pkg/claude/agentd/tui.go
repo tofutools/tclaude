@@ -1262,20 +1262,20 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 		m.notice = "This console cannot attach to an agent's terminal."
 		return m, nil
 	}
-	if m.capabilities.attachLocalPane && insideTmux() {
+	if m.capabilities.attachLocalPane {
 		sess := pickAliveSession(row.ConvID)
 		if sess == nil || sess.TmuxSession == "" {
 			m.notice = row.name() + " has no live tmux session to attach to."
 			return m, nil
 		}
-		m.notice = "Switching to " + sess.TmuxSession + "…"
+		if insideTmux() {
+			m.notice = "Switching to " + sess.TmuxSession + "…"
+			return m, m.attachCmd(row.name(), row.ConvID, sess.TmuxSession)
+		}
+		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
 		return m, m.attachCmd(row.name(), row.ConvID, sess.TmuxSession)
 	}
-	if m.capabilities.attachLocalPane {
-		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
-	} else {
-		m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] d to come back."
-	}
+	m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] d to come back."
 	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
 
