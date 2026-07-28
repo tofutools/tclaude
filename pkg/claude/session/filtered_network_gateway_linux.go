@@ -357,14 +357,15 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 		data, err := os.ReadFile(p.PastaPIDFile)
 		if err == nil {
 			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-			if parseErr != nil || pid != cmd.Process.Pid {
-				_ = cmd.Process.Kill()
-				<-waitCh
-				return nil, nil, fmt.Errorf("pasta readiness pid is invalid")
+			if parseErr == nil {
+				if pid != cmd.Process.Pid {
+					_ = cmd.Process.Kill()
+					<-waitCh
+					return nil, nil, fmt.Errorf("pasta readiness pid is invalid")
+				}
+				return cmd, waitCh, nil
 			}
-			return cmd, waitCh, nil
-		}
-		if !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			_ = cmd.Process.Kill()
 			<-waitCh
 			return nil, nil, fmt.Errorf("read pasta readiness: %w", err)

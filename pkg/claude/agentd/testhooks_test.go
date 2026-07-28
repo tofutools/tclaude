@@ -715,6 +715,14 @@ func SetTclaudeLayerAccessVerdictForTest(
 	return func() { resolveTclaudeLayerAccessVerdict = previous }
 }
 
+func SetFilteredNetworkPrerequisiteForTest(
+	fn func() session.FilteredNetworkPrerequisite,
+) func() {
+	previous := probeFilteredNetworkPrerequisite
+	probeFilteredNetworkPrerequisite = fn
+	return func() { probeFilteredNetworkPrerequisite = previous }
+}
+
 // SetStackedSandboxHostAvailabilityForTest swaps the inner-engine probe used
 // by the launch gate so flow tests do not depend on a real harness executable
 // being installed on the test host.
