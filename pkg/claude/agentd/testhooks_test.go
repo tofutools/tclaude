@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -1272,4 +1273,127 @@ func ResetBrokerLimiterForTest() func() {
 func ResetBrokerRefusalsForTest() func() {
 	brokerRefusals.resetForTest()
 	return func() { brokerRefusals.resetForTest() }
+}
+
+// TUIConsole drives the `agentd serve --tui` terminal console from a flow
+// test: it holds the real model, wired to the real in-process API client, and
+// applies messages the way the bubbletea runtime would — including running the
+// commands an update returns, so a keypress that spawns an agent completes
+// before the assertion. The periodic poll command is skipped (a flow test
+// refreshes explicitly with Refresh) and Quit is recorded rather than
+// executed, since there is no program to stop.
+type TUIConsole struct {
+	m tuiModel
+	// Quit records that the console asked the runtime to exit — the console's
+	// way of shutting the daemon down.
+	Quit bool
+}
+
+// NewTUIConsoleForTest builds the console over the daemon's own /v1 mux.
+func NewTUIConsoleForTest() *TUIConsole {
+	return &TUIConsole{m: newTUIModel(newTUIAPI())}
+}
+
+// Resize gives the console a terminal size, as the runtime does on startup.
+func (c *TUIConsole) Resize(width, height int) {
+	c.send(tea.WindowSizeMsg{Width: width, Height: height})
+}
+
+// Refresh re-reads the agent + group listings, synchronously.
+func (c *TUIConsole) Refresh() {
+	c.m.refreshing = true
+	c.send(c.m.refreshCmd()())
+}
+
+// Press feeds one keystroke per argument — a single printable character, or
+// one of the named keys below — and runs whatever command the console
+// returns, so an action key finishes its work before the test looks.
+func (c *TUIConsole) Press(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		c.send(tuiKeyForTest(t, key))
+	}
+}
+
+// Type feeds a string into the focused text field, one character at a time.
+// Unlike Press it drops the returned command: a text field's only command is
+// the cursor's blink timer, and running those would make a typed word cost a
+// second per character.
+func (c *TUIConsole) Type(t *testing.T, text string) {
+	t.Helper()
+	for _, r := range text {
+		updated, _ := c.m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		c.m = updated.(tuiModel)
+	}
+}
+
+// View renders whatever the console is currently showing.
+func (c *TUIConsole) View() string {
+	return c.m.View().Content
+}
+
+func (c *TUIConsole) send(msg tea.Msg) {
+	if msg == nil {
+		return
+	}
+	updated, cmd := c.m.Update(msg)
+	c.m = updated.(tuiModel)
+	c.run(cmd, 0)
+}
+
+// run executes a returned command and feeds its message back in, the way the
+// runtime's event loop does. Depth-bounded so a refresh-after-spawn chain
+// cannot loop forever if a future change makes one self-perpetuating.
+func (c *TUIConsole) run(cmd tea.Cmd, depth int) {
+	if cmd == nil || depth > 8 {
+		return
+	}
+	switch msg := cmd().(type) {
+	case nil:
+	case tea.BatchMsg:
+		for _, sub := range msg {
+			c.run(sub, depth+1)
+		}
+	case tuiTickMsg:
+		// The 2s poll: a flow test drives refreshes itself.
+	case tea.QuitMsg:
+		c.Quit = true
+	default:
+		c.send(msg)
+	}
+}
+
+func tuiKeyForTest(t *testing.T, key string) tea.KeyPressMsg {
+	t.Helper()
+	switch key {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "left":
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		return tea.KeyPressMsg{Code: tea.KeyRight}
+	}
+	runes := []rune(key)
+	if len(runes) != 1 {
+		t.Fatalf("tuiKeyForTest: %q is not a single key", key)
+	}
+	return tea.KeyPressMsg{Code: runes[0], Text: key}
+}
+
+// SetTUIAttachForTest replaces the console's terminal handover with a
+// recorder, so a flow test can assert which tmux session `enter` aims at
+// without a tmux server or a real terminal to give away. Returns a restore
+// function tests schedule via t.Cleanup.
+func SetTUIAttachForTest(fn func(agentName, tmuxSession string, inTmux bool) tea.Cmd) func() {
+	prev := tuiAttachToPane
+	tuiAttachToPane = fn
+	return func() { tuiAttachToPane = prev }
 }

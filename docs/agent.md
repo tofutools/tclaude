@@ -105,7 +105,11 @@ also leaves the daemon running normally. Pass `--no-tray` (or set
 `agent.disable_tray: true` in
 `~/.tclaude/data/config.json`) to skip the tray entirely. Pass
 `--auto-launch-dashboard` (or set `agent.auto_launch_dashboard` in
-config) to open the dashboard on startup.
+config) to open the dashboard on startup. Pass `--tui` to run a small
+terminal UI for listing, starting and visiting agents; on its own it
+replaces the web dashboard (no listener is started), and combined with
+any dashboard flag it runs alongside it. See
+[Terminal UI](dashboard.md#terminal-ui---tui).
 
 `agentd serve` also accepts `--agent-clone-cooldown <duration>` — the
 minimum cooldown between two clones of the same agent (a Go duration,

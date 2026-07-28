@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
@@ -756,7 +757,7 @@ func shouldAutoLaunchDashboard(flagSet bool, cfg *config.Config) bool {
 // Best-effort — a missing loopback listener or a failed browser launch
 // is logged and otherwise ignored; the daemon keeps running and the
 // human can still run `tclaude agent dashboard`.
-func autoLaunchDashboard(theme string) {
+func autoLaunchDashboard(theme string, out io.Writer) {
 	if popupBaseURL == "" {
 		slog.Warn("auto-launch-dashboard: no loopback URL bound; dashboard unavailable in this process")
 		return
@@ -772,7 +773,7 @@ func autoLaunchDashboard(theme string) {
 		slog.Warn("auto-launch-dashboard: failed to open browser", "error", err, "url", url)
 		return
 	}
-	fmt.Println("  opening dashboard in your browser…")
+	fmt.Fprintln(out, "  opening dashboard in your browser…")
 }
 
 // checkDashboardAuth gates every /api/* call: dashboard cookie value match +

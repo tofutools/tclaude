@@ -49,6 +49,89 @@ Other entry points:
 The `--print` URL carries a single-use token that expires in ~60 seconds, so
 use it immediately.
 
+## Terminal UI (`--tui`)
+
+`tclaude agentd serve --tui` runs a small text UI in the daemon's own terminal.
+It covers the moves the dashboard is most often opened for — see which agents
+exist, start a new one, go look at one — and nothing else:
+
+```
+enter  go to the selected agent's tmux session
+n      start a new agent (group, name, directory, harness, startup brief)
+r      refresh now (the list also polls every 2s)
+?      key help
+q      quit — this SHUTS DOWN the daemon (it asks first)
+```
+
+**enter** does what it does in `tclaude session watch` — it puts you on the
+selected agent's pane. When agentd itself runs inside tmux it uses
+`switch-client`, so the console stays live in its own window and tmux's own
+keys bring you back; outside tmux it attaches, and the console repaints when
+you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
+an operator console can do this (see the identity note below).
+
+The UI is deliberately plain: no colour scheme, no theming, no per-terminal
+palette. The cursor row is inverse video and that is the whole visual system.
+Everything it shows or does goes through the daemon's own API, so a spawn
+started here is the same spawn the CLI and the browser dashboard perform —
+same defaults, same validation, same audit entry.
+
+### With or without the web dashboard
+
+`--tui` on its own is a terminal-only daemon: no loopback dashboard listener is
+started. Add any of `--dashboard-port`, `--dashboard-bind` or
+`--auto-launch-dashboard` and you get **both** surfaces over the same daemon —
+the text UI in your terminal and the web dashboard in the browser, showing the
+same agents. The console names the dashboard's URL in its header when one is
+running.
+
+```bash
+tclaude agentd serve --tui                        # terminal UI only
+tclaude agentd serve --tui --auto-launch-dashboard # both, browser opened for you
+tclaude agentd serve --tui --dashboard-port 8321   # both, dashboard on a fixed port
+```
+
+The theme flags (`--slop`, `--wizard`) work as always — they re-skin the
+browser dashboard and never touch the terminal UI, which has no theming at all.
+On their own they do not start a listener.
+
+### Output under `--tui`
+
+The console owns the terminal, so `--tui` keeps stdout clear of the usual
+startup narration — no socket paths, no dashboard URL, no selected terminal.
+Those events still go to `~/.tclaude/data/output.log` (the dashboard's **Logs**
+tab reads the same file), and real failures still go to stderr.
+
+**Schema migrations are the exception** and still print. They run before the UI
+starts, a first run can spend a while in them, and a silent multi-minute
+upgrade is indistinguishable from a hang.
+
+The one thing you do need from startup — the **operator token**, for signing in
+to the web dashboard or exporting to a CLI in another window — is therefore
+shown *inside* the UI. It appears at the top on startup, disappears on your
+first keystroke, and `?` brings it back for as long as the daemon runs.
+`--no-print-human-token` suppresses it there as everywhere else.
+
+With **no** dashboard listener (a bare `--tui`), two things are worth knowing:
+
+- `tclaude agent dashboard` and the tray's **Open dashboard** have nothing to
+  open, and any `agent.auto_launch_dashboard` config setting is inert.
+- An agent's `--ask-human` approval request has no surface to appear on and
+  fails closed (denied). Grant access with `tclaude agent permissions grant`
+  instead. This holds even if [remote access](remote-access.md) is enabled:
+  approvals are built around the loopback URL. The remote listener itself is
+  unaffected by `--tui` — it is its own explicit opt-in, so a daemon with
+  `remote_access.enabled` still serves the dashboard over it.
+
+Either way, quitting the UI stops the daemon — `agentd serve` is a foreground
+process and the UI is its face.
+
+If agentd itself was started from inside a harness pane, the console is
+classified as that agent (the daemon's ordinary rule: a harness ancestor beats
+an operator token, so an agent cannot promote itself with an inherited
+`TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
+daemon from a plain shell to get an operator console.
+
 ## Fixed loopback port
 
 By default the dashboard (and the approval popup it shares a listener with)
