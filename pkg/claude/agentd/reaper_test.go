@@ -25,6 +25,24 @@ func TestReaperFallbackExitReason(t *testing.T) {
 	assert.Equal(t, "", reaperFallbackExitReason(session.ShellHarnessName), "clean shell exit is normal, not unexpected")
 }
 
+func TestEnrollOnlineSessionAssignsFallbackWhenStartHookWasMissed(t *testing.T) {
+	setupTestDB(t)
+	st := &session.SessionState{
+		ID:      "missed-start",
+		ConvID:  "conv-missed-start",
+		Status:  session.StatusWorking,
+		Created: time.Date(2026, time.July, 28, 12, 17, 33, 0, time.UTC),
+	}
+
+	enrollOnlineSession(st)
+
+	actor, err := db.GetAgentByConv(st.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, actor)
+	assert.True(t, session.IsFreeFloatingAgentName(actor.PendingName), actor.PendingName)
+	assert.Contains(t, actor.PendingName, "20260728-121733")
+}
+
 func TestSessionReaper_OpenCodeServerLossOverridesLivePane(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

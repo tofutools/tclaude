@@ -1267,7 +1267,7 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
 		} else {
-			assignFreeFloatingFallback(state, agentID, created)
+			AssignFreeFloatingFallback(state, agentID, created)
 		}
 	}
 
@@ -1365,12 +1365,12 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	return nil
 }
 
-// assignFreeFloatingFallback covers both the normal hook-first enrollment and
+// AssignFreeFloatingFallback covers both the normal hook-first enrollment and
 // the daemon-reconcile race where the same plain session was enrolled moments
 // earlier. Managed spawns have another CreatedVia value and are never touched.
 // The empty-name CAS is the final guard against overwriting a name installed
 // concurrently by spawn completion or an explicit operation.
-func assignFreeFloatingFallback(state *SessionState, agentID string, created bool) {
+func AssignFreeFloatingFallback(state *SessionState, agentID string, created bool) {
 	actor, err := db.GetAgent(agentID)
 	if err != nil || actor == nil || !actor.Active() || actor.PendingName != "" {
 		return

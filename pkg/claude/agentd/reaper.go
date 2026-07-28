@@ -282,9 +282,12 @@ func enrollOnlineSession(st *session.SessionState) {
 	if st.ConvID == "" {
 		return
 	}
-	if _, _, err := db.EnsureAgentForConv(st.ConvID, "online-reconcile"); err != nil {
+	agentID, created, err := db.EnsureAgentForConv(st.ConvID, "online-reconcile")
+	if err != nil {
 		slog.Warn("reaper: ensure online session actor failed", "conv", st.ConvID, "error", err)
+		return
 	}
+	session.AssignFreeFloatingFallback(st, agentID, created)
 }
 
 // tick is one reaper sweep. For every non-exited session it refreshes

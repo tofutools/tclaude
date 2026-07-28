@@ -93,3 +93,22 @@ func TestRunAutoNameKeepsUniqueFallbackOnGeneratedNameCollision(t *testing.T) {
 	assert.Equal(t, secondFallback, second.PendingName,
 		"a colliding generated title must preserve the actor's unique fallback")
 }
+
+func TestBrokeredAutoNameTargetRejectsForeignConversation(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID:      "broker-caller",
+		ConvID:  "caller-conv",
+		Harness: harness.CodexName,
+		Cwd:     t.TempDir(),
+		Status:  session.StatusWorking,
+	}))
+
+	_, _, ok := brokeredAutoNameTarget("broker-caller", "victim-conv")
+	assert.False(t, ok, "an ignored foreign-conversation hook must not continue into naming")
+
+	gotHarness, gotCwd, ok := brokeredAutoNameTarget("broker-caller", "caller-conv")
+	assert.True(t, ok)
+	assert.Equal(t, harness.CodexName, gotHarness)
+	assert.NotEmpty(t, gotCwd)
+}
