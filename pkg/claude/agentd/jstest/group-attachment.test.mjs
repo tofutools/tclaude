@@ -37,18 +37,24 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     attachment_label: 'No host',
   }];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const mounted = await harness.mount(harness.html`<${GroupsInteractionProvider}>
-    <${GroupsNativeList}
-      groups=${groups}
-      snapshot=${{ activity_bots: {}, links: [], sudo: [] }}
-      actions=${actions}
-    />
-    <${ActionDialogApp}
-      state=${state}
-      actions=${actions}
-      confirmDiscard=${async () => true}
-    />
-  <//>`, host);
+  const view = (enabled) => harness.html`<${GroupsInteractionProvider}>
+      <${GroupsNativeList}
+        groups=${groups}
+        snapshot=${{
+          activity_bots: {},
+          links: [],
+          sudo: [],
+          group_attachments_enabled: enabled,
+        }}
+        actions=${actions}
+      />
+      <${ActionDialogApp}
+        state=${state}
+        actions=${actions}
+        confirmDiscard=${async () => true}
+      />
+    <//>`;
+  const mounted = await harness.mount(view(false), host);
 
   const attachment = (name) => host.querySelector(
     `details[data-group-key="${name}"] > summary .group-attachment`);
@@ -57,6 +63,13 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     assert.notEqual(element?.getAttribute('tabindex'), '-1');
     assert.equal(element?.hasAttribute('hidden'), false);
   };
+  assert.equal(
+    host.querySelector('.group-attachment'),
+    null,
+    'the absent/default-false feature flag keeps every stored attachment dark',
+  );
+
+  await mounted.rerender(view(true));
   const safe = attachment('safe');
   assert.equal(safe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
   assert.equal(safe.querySelector('a')?.textContent, '📎', 'the floating control stays icon-only');

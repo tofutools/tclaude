@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -17,6 +18,20 @@ type groupAttachmentResp struct {
 	Label         string `json:"attachment_label"`
 	LabelOverride string `json:"attachment_label_override"`
 	Cleared       bool   `json:"cleared"`
+}
+
+func TestGroupAttachment_DashboardFlagDefaultsOffAndRefreshes(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.False(t, snap.GroupAttachmentsEnabled)
+
+	require.NoError(t, config.Save(&config.Config{
+		Features: &config.FeaturesConfig{GroupAttachments: true},
+	}))
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.True(t, snap.GroupAttachmentsEnabled)
 }
 
 func TestGroupAttachment_SetRenderAndClear(t *testing.T) {

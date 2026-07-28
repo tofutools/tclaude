@@ -14,6 +14,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		file   string
 		needle string
 	}{
+		{"js/groups-list.js", `snapshot?.group_attachments_enabled`},
 		{"js/groups-list.js", `<${GroupAttachment} group=${group} actions=${actions} />`},
 		{"js/groups-list.js", `class="group-attachment group-attachment-empty"`},
 		{"js/groups-list.js", `>📎</a>`},

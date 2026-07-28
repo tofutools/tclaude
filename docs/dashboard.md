@@ -452,17 +452,23 @@ toolbar chips are keyboard-operable: Tab reaches them, Enter/Space activates,
 and focusing a collapsed group's chips reveals their folded labels just like
 hovering does.
 
-A group may also carry one persistent http(s) attachment, exposed as a compact
-**📎 paperclip** overlaid just above the first letter of its title rather than as
-another quick-item chip. It is absolutely positioned with no frame or reserved
-header space, so it never moves or resizes neighboring controls. Fine pointers
-show it only while the group header is hovered; keyboard focus reveals the
-attachment control itself, while non-hover touch devices keep it visible. An
-existing attachment's paperclip opens it; hovering the paperclip reveals the
-pencil to edit or clear it. The editor accepts an optional display name and
-otherwise derives a short Linear issue key, GitHub number, or hostname. Closing
-the editor returns focus to the group's native disclosure summary so the hover
-overlay does not remain visible after Escape.
+A group may also carry one persistent http(s) attachment. This experimental
+surface is **off by default**; opt in with
+`features.group_attachments: true` in tclaude's config file or the
+**Config → Experimental features → Group attachments** checkbox. Enabling it
+exposes a compact **📎 paperclip** overlaid just above the first letter of each
+group title rather than as another quick-item chip. Turning the flag off hides
+the controls without deleting stored attachments.
+
+The paperclip is absolutely positioned with no frame or reserved header space,
+so it never moves or resizes neighboring controls. Fine pointers show it only
+while the group header is hovered; keyboard focus reveals the attachment
+control itself, while non-hover touch devices keep it visible. An existing
+attachment's paperclip opens it; hovering the paperclip reveals the pencil to
+edit or clear it. The editor accepts an optional display name and otherwise
+derives a short Linear issue key, GitHub number, or hostname. Closing the editor
+returns focus to the group's native disclosure summary so the hover overlay does
+not remain visible after Escape.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
