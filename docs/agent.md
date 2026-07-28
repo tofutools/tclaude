@@ -416,6 +416,9 @@ tclaude agent groups revoke-owner <group> <conv>
 tclaude agent groups set-default-dir <group> [dir]        # default cwd for agents spawned into the group
 tclaude agent groups set-max-members <group> [max]        # cap member count; a spawn that would exceed it is refused (0 = unlimited)
 tclaude agent groups set-context <group> [text]           # shared startup context delivered to every spawned agent's inbox
+tclaude agent groups attachment set <group> <url> [--label TEXT]  # persistent Linear/GitHub/doc reference
+tclaude agent groups attachment show <group>
+tclaude agent groups attachment clear <group>
 tclaude agent groups set-remote-control <group> [inherit|optin|deny]  # group remote-control policy; overrides the spawn profile's default (Claude Code only)
 tclaude agent groups archive <group>                      # soft-delete: freeze, hide, keep history
 tclaude agent groups unarchive <group>                    # reverse an archive
@@ -435,6 +438,13 @@ explicit empty string) to clear a field. To rename an agent use
 `tclaude agent rename`. `--member` on `create` bootstraps a whole team
 in one call (each value is a comma-separated `key=value` list —
 `name=lead,role=tech-lead,cwd=.`).
+
+Each group can carry one persistent http(s) attachment — typically a Linear
+project, GitHub board, or shared design document. A blank `--label` derives a
+compact display name using the same Linear/GitHub/hostname rules as agent task
+links. The reference is stored on the group, survives daemon restarts and
+renames, and is copied by `groups clone`. Writes require `groups.attachment` or
+ownership of the group.
 
 **Inter-group links** are directed edges that let one group's members
 message another group's members without co-membership:

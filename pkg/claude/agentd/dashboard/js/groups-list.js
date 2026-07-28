@@ -31,6 +31,55 @@ function GroupActivity({ members, snapshot }) {
   return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
+function safeGroupAttachmentURL(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host ? raw : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function GroupAttachment({ group, actions }) {
+  const rawURL = String(group.attachment_url || '').trim();
+  const url = safeGroupAttachmentURL(rawURL);
+  const label = group.attachment_label || rawURL;
+  const openEditor = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    actions.openGroupAttachment(group);
+  };
+  if (!rawURL) {
+    return html`<button
+      type="button" class="group-attachment group-attachment-empty"
+      aria-label=${`Attach a persistent link to ${group.name}`}
+      title="Attach a persistent Linear project, GitHub board, or other reference"
+      onClick=${openEditor}
+    >📌</button>`;
+  }
+  const display = url
+    ? html`<a
+        href=${url} target="_blank" rel="noopener noreferrer" draggable=${false}
+        title=${`Open ${label} — ${url}`}
+        onClick=${(event) => event.stopPropagation()}
+      >📌 ${label}</a>`
+    : html`<span
+        class="group-attachment-invalid muted"
+        title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
+      >📌 ${label}</span>`;
+  return html`<span class="group-attachment group-attachment-set">
+    ${display}
+    <button
+      type="button" class="group-attachment-edit"
+      aria-label=${`Edit the persistent link for ${group.name}`}
+      title="Edit or clear this group attachment"
+      onClick=${openEditor}
+    >✎</button>
+  </span>`;
+}
+
 function MenuButton({ regular, wizard = regular, className, ...props }) {
   return h('button', { role: 'menuitem', class: className || undefined, ...props },
     h(ThemeText, { regular, wizard }));
@@ -317,6 +366,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
     >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
+    <${GroupAttachment} group=${group} actions=${actions} />
     <${GroupActivity} members=${activity} snapshot=${snapshot} />
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}

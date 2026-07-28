@@ -392,6 +392,14 @@ toolbar chips are keyboard-operable: Tab reaches them, Enter/Space activates,
 and focusing a collapsed group's chips reveals their folded labels just like
 hovering does.
 
+A group may also carry one persistent http(s) attachment, shown as a compact
+**📌 label** immediately beside its name rather than as another quick-item
+chip. Click the label to open it; hover or keyboard-focus it to reveal the edit
+pencil. For groups without an attachment, the pin appears only while the group
+header is hovered or focused, keeping the normal header uncluttered. The editor
+accepts an optional display name and otherwise derives a short Linear issue
+key, GitHub number, or hostname. Clearing its URL removes the attachment.
+
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
 exported `.zip`), **🧹 clean up** (the all-categories cleanup tool — see

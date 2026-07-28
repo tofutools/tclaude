@@ -210,6 +210,11 @@ var permissionRegistry = []PermSlug{
 		Description:  "Nest a group under another as a subgroup, or clear its parent (tclaude agent groups nest <child> --under <parent> | --none). Board-organisation only — it shapes the dashboard tree, not messaging or permissions. Group owners can re-parent groups they own without this slug.",
 	},
 	{
+		Slug:         PermGroupsAttachment,
+		OwnerImplied: true,
+		Description:  "Set or clear a group's persistent external reference link (tclaude agent groups attachment set/clear). Group owners can manage the attachment on groups they own without this slug.",
+	},
+	{
 		Slug:         PermAgentDelete,
 		OwnerImplied: true,
 		Description:  "Permanently delete ANOTHER agent (tclaude agent delete): purges its rows in every agent / conv / session table and deletes its .jsonl. NOT default-granted; this is destructive and not undoable. Group owners can delete members of groups they own without this slug.",

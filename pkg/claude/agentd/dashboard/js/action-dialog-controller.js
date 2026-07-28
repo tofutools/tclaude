@@ -29,6 +29,10 @@ export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
   return requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
 }
 
+export function openGroupAttachmentDialog({ group, url, attachmentLabel }) {
+  return requireController().openGroupAttachment({ group, url, attachmentLabel });
+}
+
 export function openPresetCloneDialog(options) {
   return requireController().openPresetClone(options);
 }

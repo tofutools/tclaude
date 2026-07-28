@@ -645,6 +645,7 @@ func looksLikeConvID(s string) bool {
 //	POST   /api/groups/{name}/links             → add link (body: {to, mode?, bidir?})
 //	PATCH  /api/groups/{name}/links/{id}        → update link mode
 //	DELETE /api/groups/{name}/links/{id}        → remove link
+//	GET/POST /api/groups/{name}/attachment      → persistent group reference
 //
 // The {name} / {conv} / {id} wildcards are matched and percent-decoded
 // by the mux itself (read via r.PathValue), which replaces the old
@@ -676,6 +677,9 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("PATCH /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupUpdate(w, asDashboardHumanPeer(r), g)
+	}))
+	mux.HandleFunc("/api/groups/{name}/attachment", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+		handleGroupAttachment(w, asDashboardHumanPeer(r), g)
 	}))
 	mux.HandleFunc("POST /api/groups/{name}/clone", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		// asDashboardHumanPeer so the shared, permission-checked

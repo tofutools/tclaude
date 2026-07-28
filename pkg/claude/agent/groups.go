@@ -61,6 +61,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
 			groupsCloneCmd(),
+			groupAttachmentCmd(),
 			groupsLinkCmd(),
 			groupsLinksAllCmd(),
 			groupsWhyCanMessageCmd(),
@@ -95,15 +96,18 @@ func groupsLsCmd() *cobra.Command {
 }
 
 type groupSummary struct {
-	Name           string `json:"name"`
-	Descr          string `json:"descr,omitempty"`
-	Members        int    `json:"members"`
-	Online         int    `json:"online"`
-	MaxMembers     int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
-	DefaultProfile string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
-	Archived       bool   `json:"archived,omitempty"`
-	NotifyMuted    bool   `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
-	RemoteControl  string `json:"remote_control_policy,omitempty"` // group remote-control policy: inherit | optin | deny (JOH-262)
+	Name                    string `json:"name"`
+	Descr                   string `json:"descr,omitempty"`
+	AttachmentURL           string `json:"attachment_url,omitempty"`
+	AttachmentLabel         string `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string `json:"attachment_label_override,omitempty"`
+	Members                 int    `json:"members"`
+	Online                  int    `json:"online"`
+	MaxMembers              int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
+	DefaultProfile          string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
+	Archived                bool   `json:"archived,omitempty"`
+	NotifyMuted             bool   `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
+	RemoteControl           string `json:"remote_control_policy,omitempty"` // group remote-control policy: inherit | optin | deny (JOH-262)
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {

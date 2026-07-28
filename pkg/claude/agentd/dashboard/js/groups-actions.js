@@ -15,6 +15,7 @@ import {
   loadAddMemberPromotionPool,
 } from './add-member-actions.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
+import { openGroupAttachmentDialog } from './action-dialog-controller.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -85,6 +86,13 @@ export function createGroupsActions({
     },
     openSpawnHarnessPolicy(group) {
       return openSpawnHarnessPolicy(group?.name || group || '');
+    },
+    openGroupAttachment(group) {
+      return openGroupAttachmentDialog({
+        group: group.name,
+        url: group.attachment_url || '',
+        attachmentLabel: group.attachment_label_override || '',
+      });
     },
     closeAddMember() {
       state.closeAddMember();

@@ -401,6 +401,30 @@ func TestGroupImport_RejectsUnsupportedVersion(t *testing.T) {
 		"a too-new format version must be refused: body=%s", rec.Body.String())
 }
 
+func TestGroupImport_RejectsUnsafeAttachmentBeforeFilesystem(t *testing.T) {
+	f := newFlow(t)
+	exp := &groupexport.Export{
+		FormatVersion: groupexport.FormatVersion,
+		SourceGroup:   "unsafe-attachment",
+		Group: groupexport.Group{
+			AttachmentURL:   "javascript:alert(document.domain)",
+			AttachmentLabel: "Unsafe",
+		},
+	}
+	archive, err := groupexport.Marshal(exp)
+	require.NoError(t, err)
+	targetCwd := filepath.Join(f.World.HomeDir, "unsafe-attachment-target")
+
+	rec := importArchive(f, archive, targetCwd, "")
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid group attachment")
+	_, err = os.Stat(targetCwd)
+	assert.ErrorIs(t, err, os.ErrNotExist, "unsafe archive must be rejected before file placement")
+	group, err := db.GetAgentGroupByName("unsafe-attachment")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+}
+
 // TestGroupImport_CrossHomePathRewrite imports an archive crafted as if
 // exported by a different user on a different machine (a foreign home
 // dir) and asserts every source path is rewritten out of the .jsonl —

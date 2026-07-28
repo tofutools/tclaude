@@ -234,7 +234,7 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 }
 
 // Scenario: the clone carries EVERY configurable group setting, not
-// just the description — default cwd, startup context, default profile,
+// just the description — default cwd, startup context, default profile, attachment,
 // live group permissions, the max-members cap and the notify switch. Each is set to a
 // distinctive non-default value on the source; the clone must match all
 // of them. Runs --no-agents so the assertion is purely about the group
@@ -251,6 +251,7 @@ func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	mustSet(db.SetAgentGroupDefaultProfile("team", "fast"))
 	mustSet(db.SetAgentGroupMaxMembers("team", 7))
 	mustSet(db.SetAgentGroupNotifyEnabled("team", false))
+	mustSet(db.SetAgentGroupAttachment("team", "https://linear.app/acme/project/team", "Team project"))
 	require.NoError(t, db.ReplaceAgentGroupPermissions(source.ID, []string{agentd.PermHumanNotify}, "test"))
 
 	resp := groupCloneRequest(t, f, "team", map[string]any{"no_clone_members": true})
@@ -261,6 +262,8 @@ func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	assert.Equal(t, "fast", newGroup.DefaultProfile, "default profile copied")
 	assert.Equal(t, 7, newGroup.MaxMembers, "max members copied")
 	assert.False(t, newGroup.NotifyEnabled, "notify switch copied (false, not re-defaulted to true)")
+	assert.Equal(t, "https://linear.app/acme/project/team", newGroup.AttachmentURL, "attachment URL copied")
+	assert.Equal(t, "Team project", newGroup.AttachmentLabel, "attachment label copied")
 	groupPermissions, err := db.ListAgentGroupPermissions(newGroup.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{agentd.PermHumanNotify}, groupPermissions, "live group permissions copied")

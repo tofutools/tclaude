@@ -91,9 +91,11 @@ type Export struct {
 // on import) and default_cwd (a source path — reset to the import
 // target).
 type Group struct {
-	Descr          string            `json:"descr"`
-	DefaultContext string            `json:"default_context"`
-	Permissions    []GroupPermission `json:"permissions,omitempty"`
+	Descr           string            `json:"descr"`
+	DefaultContext  string            `json:"default_context"`
+	AttachmentURL   string            `json:"attachment_url,omitempty"`
+	AttachmentLabel string            `json:"attachment_label,omitempty"`
+	Permissions     []GroupPermission `json:"permissions,omitempty"`
 	// DefaultModel is LEGACY / import-only (JOH-220). The vestigial
 	// per-group default_model column was dropped, so a current export
 	// never writes this field — CollectGroupExport leaves it "" and

@@ -10,7 +10,7 @@ import (
 // the CLI `permissions ls` show as "held via ownership", so it must stay in
 // lockstep with the daemon's actual owner-bypass call sites:
 //
-//   - requireGroupPermission     → groups.{stop,resume,retire,spawn}
+//   - requireGroupPermission     → groups.{stop,resume,retire,spawn,attachment}
 //   - groups_links owner bypass  → groups.link.{add,rm}
 //   - requireCrossAgentPermission/requireGroupContextAccess →
 //     agent.{reincarnate,compact,rename,clone,context-info,task,pr,tags,
@@ -43,6 +43,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsResume,
 		PermGroupsRetire,
 		PermGroupsSpawn,
+		PermGroupsAttachment,
 		PermGroupsLinkAdd,
 		PermGroupsLinkRm,
 		PermGroupsNest,

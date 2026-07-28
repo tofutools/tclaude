@@ -317,6 +317,7 @@ const (
 	PermGroupsNest         = "groups.nest"
 	PermAgentInboxWatch    = "agent.inbox-watch"
 	PermGroupsRename       = "groups.rename"
+	PermGroupsAttachment   = "groups.attachment"
 	PermGroupsClone        = "groups.clone"
 	PermGroupsLinkAdd      = "groups.link.add"
 	PermGroupsLinkRm       = "groups.link.rm"
