@@ -31,6 +31,7 @@ func useFakeTmux(t *testing.T, names ...string) {
 	prev := clcommon.Default
 	clcommon.Default = fakeAliveTmux{alive: alive}
 	t.Cleanup(func() { clcommon.Default = prev })
+	t.Cleanup(SetTmuxCacheTTLForTest(0))
 }
 
 // enableSpawnLabelFromName persists the opt-in flag into the test HOME's
