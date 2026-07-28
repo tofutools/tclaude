@@ -457,12 +457,13 @@ or profile tier that selected it, restate implementation caveats, or infer which
 rules a named profile contributed. Those details are deliberately not part of
 the Groups-row hover surface.
 
-For OpenCode on macOS, the launch disclosure and this guide also name the
-XDG-config remainder: mutable per-agent privacy covers data/cache/state, while
-the config base is not redirected. OpenCode's global config directory is
-read-only, but a non-OpenCode config write from inside the wall targets the real
-host config base and is controlled only by the filesystem policy. That detail
-is not repeated in the compact badge tooltip.
+For OpenCode on macOS, mutable per-agent privacy covers data/cache/state. When
+an ambient global OpenCode config directory exists, the config base is not
+redirected: that directory is read-only, but a non-OpenCode config write from
+inside the wall targets the real host config base and is controlled only by the
+filesystem policy. With no ambient global config, the empty private config base
+remains in use. These guide-level details are not repeated in the compact badge
+tooltip.
 
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's

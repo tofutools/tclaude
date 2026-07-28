@@ -248,13 +248,15 @@ raw, validated stable-agent-id child. It also hides the ambient OpenCode data,
 cache, and state directories. On Linux all four XDG bases point under the
 private root, with ambient global config mounted at the private config
 location. On macOS data/cache/state remain private, while `XDG_CONFIG_HOME`
-names the real canonical host config base because Seatbelt cannot project one
-path onto another. The OpenCode global config directory and ambient
-`~/.opencode` install tree are daemon-final read-only on both platforms, so
-project config keeps OpenCode's native higher precedence. The macOS remainder
-is explicit: non-OpenCode config writes inside the wall are not redirected to
-the private root; they target the real host config base and remain governed by
-the filesystem policy.
+names the real canonical host config base when an ambient global OpenCode
+config directory exists, because Seatbelt cannot project one path onto another.
+With no ambient global config, the empty private config base remains in use.
+The OpenCode global config directory, when present, and ambient `~/.opencode`
+install tree are daemon-final read-only on both platforms, so project config
+keeps OpenCode's native higher precedence. In the ambient-config case,
+non-OpenCode config writes inside the wall are not redirected to the private
+root; they target the real host config base and remain governed by the
+filesystem policy.
 
 OpenCode 1.18.5 and 1.18.6 try to create `~/.opencode/.gitignore` during
 instance bootstrap, and 1.18.6 aborts when that missing-file write meets the
@@ -473,14 +475,14 @@ case-sensitive APFS volume keeps distinct objects distinct. Persisted registry
 profiles may already have discarded their operator spelling; that separate
 limitation remains tracked by TCL-762.
 
-The launch disclosure records the Darwin-specific partial boundary rather than
-treating it as an unverified posture: Seatbelt filesystem policy is active and
-paths remain enumerable. The compact row tooltip does not repeat that caveat.
-Host-open retains the host network and ambient Unix sockets; isolated blocks
-network operations except the agentd socket but still has no PID isolation or
-constructed root. `sandbox-exec` is deprecated but still functional and is the
-mechanism for this experimental slice. A future replacement would call
-libsandbox/`sandbox_init` directly; the fallback is not part of this slice.
+The Darwin boundary is partial rather than unverified: Seatbelt filesystem
+policy is active and paths remain enumerable. The compact row tooltip does not
+repeat that caveat. Host-open retains the host network and ambient Unix sockets;
+isolated blocks network operations except the agentd socket but still has no
+PID isolation or constructed root. `sandbox-exec` is deprecated but still
+functional and is the mechanism for this experimental slice. A future
+replacement would call libsandbox/`sandbox_init` directly; the fallback is not
+part of this slice.
 
 ### Isolated-with-agentd network posture
 
@@ -532,10 +534,11 @@ the Linux abstract Unix-socket namespace. PID isolation prevents the harness
 from escaping the constructed root through a host process's
 `/proc/<pid>/root`. A filesystem Unix socket is visible only when it was
 explicitly bound, or when an operator-authored filesystem grant re-exposes a
-parent directory under the normal most-specific-wins policy. The badge
-therefore reports full socket fidelity for the constructed-root posture. The
-reserved `filtered` posture will eventually cover proxy-backed host/domain and
-host-loopback allowlists; no proxy is implemented today.
+parent directory under the normal most-specific-wins policy. This is the
+constructed-root posture's socket boundary; the compact badge does not report
+socket fidelity. The reserved `filtered` posture will eventually cover
+proxy-backed host/domain and host-loopback allowlists; no proxy is implemented
+today.
 
 Host-loopback isolation also severs editor integrations that connect over a
 localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture
@@ -557,10 +560,10 @@ The remaining limitation in the host-open posture is explicit:
 
 - Ambient host Unix sockets remain connectable through the read-only root.
   Privileged daemon sockets such as `docker.sock` or containerd-class sockets
-  are host-root-equivalent escapes when present. The launch records this as
-  partial fidelity even though the established outer implementation earns the
-  row's `🔒`; the compact tooltip does not restate the caveat. The open posture
-  deliberately does not maintain a misleading dangerous-socket blocklist.
+  are host-root-equivalent escapes when present. This is partial fidelity even
+  though the established outer implementation earns the row's `🔒`; the compact
+  tooltip does not restate the caveat. The open posture deliberately does not
+  maintain a misleading dangerous-socket blocklist.
 
 ## Hook and status-line callbacks under the layer
 
