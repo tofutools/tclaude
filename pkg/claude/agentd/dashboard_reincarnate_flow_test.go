@@ -176,12 +176,10 @@ func TestDashboardReincarnate_SelfMode_NoFocusHintGeneralHandoff(t *testing.T) {
 		"a blank focus hint adds no focus-hint section")
 }
 
-// Scenario: self mode against an OFFLINE target. The force path needs
-// a live tmux session to spawn into and would 503 here — but self mode
-// just queues the instruction in the inbox, to be picked up when the
-// agent next comes online. This is the property that lets self mode
-// work where force cannot.
-func TestDashboardReincarnate_SelfMode_OfflineTargetQueuesInInbox(t *testing.T) {
+// Scenario: self mode against an OFFLINE target. Reincarnation is a live-agent
+// handoff, so the dashboard reports an actionable error instead of leaving a
+// dormant instruction for the agent to discover after some later resume.
+func TestDashboardReincarnate_SelfMode_OfflineTargetReturnsError(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "reid-aaaa-bbbb-cccc-000000000001"
@@ -191,20 +189,15 @@ func TestDashboardReincarnate_SelfMode_OfflineTargetQueuesInInbox(t *testing.T) 
 
 	mux := reincDashMux(t)
 	rec := postReincarnate(t, mux, conv, map[string]any{"mode": "self"})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	var resp struct {
-		Delivered bool  `json:"delivered"`
-		MessageID int64 `json:"message_id"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "body=%s", rec.Body.String())
-	assert.False(t, resp.Delivered, "an offline target cannot be nudged immediately")
-	assert.Greater(t, resp.MessageID, int64(0), "the instruction is still queued")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"no_tmux"`)
+	assert.Contains(t, rec.Body.String(), "agent is offline")
+	assert.Contains(t, rec.Body.String(), "only run on a live agent")
+	assert.Contains(t, rec.Body.String(), "tclaude agent resume reid-aaa")
 
 	rows, err := db.ListAgentMessagesForConv(conv, 100)
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "the instruction waits in the inbox for the agent to come online")
-	assert.Contains(t, rows[0].Body, "reincarnate yourself")
+	assert.Empty(t, rows, "an offline reincarnate request must not queue an instruction")
 }
 
 // Scenario: a focus hint carrying a control character is rejected with

@@ -202,6 +202,17 @@ var reincarnateAliveTimeout = 60 * time.Second
 // Same `var` rationale as reincarnateAliveTimeout above.
 var reincarnateReadyDelay = 1 * time.Second
 
+// writeReincarnateOfflineError keeps the CLI and dashboard surfaces on the
+// same user-facing contract. Reincarnation is a live-agent handoff: even the
+// dashboard's graceful self mode must not leave a dormant instruction queued
+// for an offline agent to discover on some later resume.
+func writeReincarnateOfflineError(w http.ResponseWriter, target string) {
+	writeError(w, http.StatusServiceUnavailable, "no_tmux",
+		"cannot reincarnate "+short8(target)+": the agent is offline. "+
+			"Reincarnation can only run on a live agent; resume it first with "+
+			"`tclaude agent resume "+short8(target)+"`.")
+}
+
 // handleWhoamiReincarnate handles POST /v1/whoami/reincarnate (self path).
 // A confirmed active agent may always replace itself: reincarnation cannot
 // select a different cwd or sandbox policy, so an additional permission gate
@@ -335,8 +346,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// final /exit injection.
 	oldSess := pickAliveSession(target)
 	if oldSess == nil {
-		writeError(w, http.StatusServiceUnavailable, "no_tmux",
-			"target conv "+short8(target)+" has no live tmux session; can't reincarnate without a cwd to spawn into (try `tclaude agent groups resume` first if it's offline)")
+		writeReincarnateOfflineError(w, target)
 		return
 	}
 	relaunch, relaunchErr := durableRelaunchConfigForConv(target)
