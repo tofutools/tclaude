@@ -159,7 +159,9 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
 
   const fixedEmpty = attachment('empty');
   assert.equal(fixedEmpty?.tagName, 'BUTTON');
-  assert.equal(fixedEmpty.querySelector('.group-attachment-label')?.textContent, 'attach');
+  assert.equal(fixedEmpty.textContent, '📎',
+    'an unset fixed attachment stays paperclip-only');
+  assert.equal(fixedEmpty.querySelector('.group-attachment-label'), null);
   fixedEmpty.focus();
   fixedEmpty.click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));

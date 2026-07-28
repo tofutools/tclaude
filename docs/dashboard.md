@@ -466,7 +466,8 @@ the attachment control itself, while non-hover touch devices keep it visible.
 In **fixed** mode, the paperclip is a normal in-flow quick item at the far right
 of the group header, after the sandbox-profile control and any link-status chip.
 Its link/ticket label remains visible even when the other quick-item labels
-auto-fold; only the edit pencil appears on hover.
+auto-fold; the item dims and brightens with the other group quick controls, and
+only the edit pencil appears on hover.
 
 An existing attachment's paperclip opens it; its pencil edits or clears it. The
 editor accepts an optional display name and otherwise derives a short Linear
