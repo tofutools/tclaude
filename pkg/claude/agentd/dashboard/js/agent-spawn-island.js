@@ -906,7 +906,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
       disabled=${!view.approval.visible} busy=${busy} />
-    <div class="cron-create-row" id="agent-spawn-sandbox-info" hidden=${sandboxInfo.length === 0}>
+    <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
+      id="agent-spawn-sandbox-info">
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="status">
         ${sandboxInfo.map((message) => html`

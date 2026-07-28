@@ -968,13 +968,16 @@ test('Preact agent-spawn renders sandbox boundary disclosures as info, not warni
     await flush(harness);
     const initialNotice = host.querySelector('#agent-spawn-sandbox-info');
     assert.ok(initialNotice, 'the empty status region exists before the async disclosure');
-    assert.equal(initialNotice.hidden, true);
+    assert.equal(initialNotice.hidden, false, 'the live region remains in the accessibility tree');
+    assert.match(initialNotice.className, /sandbox-info-pending/,
+      'the empty live region is visually clipped without using hidden');
     await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
     await flush(harness);
 
     const notice = host.querySelector('#agent-spawn-sandbox-info');
     assert.ok(notice);
     assert.equal(notice.hidden, false);
+    assert.doesNotMatch(notice.className, /sandbox-info-pending/);
     assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
     assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
       /tclaude's built-in OS sandbox/);
