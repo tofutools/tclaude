@@ -431,6 +431,39 @@ func TestSandboxProfileFilesystemReplacementReauthorsStaleSidecar(t *testing.T) 
 	}, updated.FilesystemSpellings)
 }
 
+func TestSandboxProfileUnrelatedUpdateRejectsPinnedTargetDrift(t *testing.T) {
+	setupTestDB(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	original := filepath.Join(root, "original")
+	current := filepath.Join(root, "current")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(original, 0o755))
+	require.NoError(t, os.Mkdir(current, 0o755))
+	require.NoError(t, os.Symlink(original, alias))
+
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name:       "pinned-drift",
+		Filesystem: []SandboxFilesystemGrant{{Path: alias, Access: sandboxpolicy.AccessRead}},
+	})
+	require.NoError(t, err)
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.NotNil(t, stored.FilesystemSpellings)
+
+	require.NoError(t, os.Remove(original))
+	require.NoError(t, os.Symlink(current, original))
+	stored.Environment = []SandboxEnvironmentEntry{{Name: "CACHE_ROOT", Value: "/cache"}}
+	err = UpdateSandboxProfile(stored)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `sandbox profile "pinned-drift"`)
+	assert.ErrorContains(t, err, `retained spelling "`+alias+`"`)
+	assert.ErrorContains(t, err, `originally resolved to "`+original+`"`)
+	assert.ErrorContains(t, err, `now resolves to "`+current+`"`)
+	assert.ErrorContains(t, err, "re-save the profile to adopt the new target")
+	assert.ErrorContains(t, err, "remove the retained spelling")
+}
+
 func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	setupTestDB(t)
 	profileID, err := CreateSandboxProfile(&SandboxProfile{Name: "original"})

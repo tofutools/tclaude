@@ -267,6 +267,36 @@ func TestResolveCarriesPersistedFilesystemSpellingsIntoMountPlan(t *testing.T) {
 	assert.Equal(t, effective.MountAliases, plan.Aliases)
 }
 
+func TestAliasDiscoveryValidatesTheTargetCapturedByTheSameWalk(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	original := filepath.Join(root, "original")
+	current := filepath.Join(root, "current")
+	link := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(original, 0o755))
+	require.NoError(t, os.Mkdir(current, 0o755))
+	require.NoError(t, os.Symlink(current, link))
+
+	aliases, discovered, err := mountAliasesForPath(link)
+	require.NoError(t, err)
+	require.Equal(t, []MountAlias{{Link: link, Target: current}}, aliases)
+	require.Equal(t, current, discovered)
+
+	// Restore the spelling before validation. A second filesystem walk would
+	// now pass and publish the stale alias captured above; validating the
+	// discovered target itself must still refuse it.
+	require.NoError(t, os.Remove(link))
+	require.NoError(t, os.Symlink(original, link))
+	err = validateDiscoveredFilesystemSpellingTarget(
+		"race", link, original, discovered,
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `sandbox profile "race"`)
+	assert.ErrorContains(t, err, `retained spelling "`+link+`"`)
+	assert.ErrorContains(t, err, `originally resolved to "`+original+`"`)
+	assert.ErrorContains(t, err, `now resolves to "`+current+`"`)
+}
+
 func TestResolveEnforcesAggregateEnvironmentLimits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	entries := func(prefix string, count int) []EnvironmentEntry {

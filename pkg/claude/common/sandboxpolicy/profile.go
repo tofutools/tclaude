@@ -571,6 +571,16 @@ func normalizeFilesystemSpellings(
 			)
 		}
 		if _, ok := active[resolved]; !ok {
+			if len(rule.Spellings) > 0 {
+				spelling, cleanErr := cleanDirectoryPath(rule.Spellings[0])
+				if cleanErr == nil {
+					if driftErr := validateFilesystemSpellingTarget(
+						profileName, spelling, resolved, allowMissing,
+					); driftErr != nil {
+						return nil, driftErr
+					}
+				}
+			}
 			return nil, fmt.Errorf(
 				"sandbox profile %q authoritative filesystem target %q changed before spelling validation",
 				profileName, resolved,
@@ -634,6 +644,14 @@ func validateFilesystemSpellingTarget(
 			profileName, spelling, resolved, err,
 		)
 	}
+	return validateDiscoveredFilesystemSpellingTarget(
+		profileName, spelling, resolved, current,
+	)
+}
+
+func validateDiscoveredFilesystemSpellingTarget(
+	profileName, spelling, resolved, current string,
+) error {
 	if !sameDirectoryTarget(resolved, current) {
 		return fmt.Errorf(
 			"sandbox profile %q retained spelling %q originally resolved to %q but now resolves to %q; re-save the profile to adopt the new target, or remove the retained spelling",

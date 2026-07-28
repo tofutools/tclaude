@@ -546,6 +546,12 @@ func sandboxFilesystemNeedsAuthoring(
 	for _, grant := range filesystem {
 		clean := filepath.Clean(grant.Path)
 		authoritative[clean] = struct{}{}
+		if _, pinned := retained[clean]; pinned {
+			// This lexical path is already launch authority for retained
+			// spellings. Do not reinterpret a filesystem retarget as an
+			// intentional row edit; persistence validation must fail closed.
+			continue
+		}
 		probe, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
 			Name: "filesystem-authoring-probe",
 			Filesystem: []sandboxpolicy.FilesystemGrant{{

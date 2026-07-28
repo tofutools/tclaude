@@ -272,18 +272,19 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if !activeCanonicalPaths[observable.resolved] {
 			continue
 		}
-		aliases, err := mountAliasesForPath(observable.spelling)
+		aliases, discoveredTarget, err := mountAliasesForPath(observable.spelling)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf(
 				"discover mount aliases for effective filesystem path %q: %w",
 				observable.spelling, err,
 			)
 		}
-		// Alias discovery touches the filesystem after tier normalization.
-		// Revalidate in the same pass before publishing any aliases so a
-		// spelling retargeted in that interval cannot become launch authority.
-		if err := validateFilesystemSpellingTarget(
-			observable.profile, observable.spelling, observable.resolved, true,
+		// Alias discovery returns the final target from the same component walk
+		// that captured alias targets. Comparing that value—not a second walk—
+		// prevents a swap-and-restore race from publishing stale routing.
+		if err := validateDiscoveredFilesystemSpellingTarget(
+			observable.profile, observable.spelling, observable.resolved,
+			discoveredTarget,
 		); err != nil {
 			return EffectiveProfile{}, err
 		}
@@ -347,27 +348,30 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 // for one spelling to resolve like the host. Each link points at its fully
 // resolved target prefix. Continuing the walk from that target finds a second
 // alias when a later path component is itself a symlink.
-func mountAliasesForPath(path string) ([]MountAlias, error) {
+func mountAliasesForPath(path string) ([]MountAlias, string, error) {
 	clean, err := cleanDirectoryPath(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	volume := filepath.VolumeName(clean)
 	root := volume + string(filepath.Separator)
 	remaining := strings.TrimPrefix(clean, root)
 	if remaining == "" {
-		return nil, nil
+		return nil, root, nil
 	}
 	current := root
 	aliases := []MountAlias{}
-	for _, component := range strings.Split(remaining, string(filepath.Separator)) {
+	components := strings.Split(remaining, string(filepath.Separator))
+	for index, component := range components {
 		candidate := filepath.Join(current, component)
 		info, err := os.Lstat(candidate)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return aliases, nil
+				return aliases, filepath.Join(
+					append([]string{current}, components[index:]...)...,
+				), nil
 			}
-			return nil, err
+			return nil, "", err
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
 			current = candidate
@@ -375,7 +379,7 @@ func mountAliasesForPath(path string) ([]MountAlias, error) {
 		}
 		target, err := filepath.EvalSymlinks(candidate)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		target = filepath.Clean(target)
 		aliases = append(aliases, MountAlias{
@@ -384,7 +388,7 @@ func mountAliasesForPath(path string) ([]MountAlias, error) {
 		})
 		current = target
 	}
-	return aliases, nil
+	return aliases, current, nil
 }
 
 func canonicalSources(in []ProfileSource) []ProfileSource {
