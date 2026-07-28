@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -215,6 +217,9 @@ func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
 // a test can assert which worktrees were (and were not) touched.
 type fakeWorktrees struct {
 	byDir map[string]worktree.WorktreeStatus
+	// registeredBranches models a Git worktree-list entry whose directory
+	// cannot be inspected (normally because it was deleted out-of-band).
+	registeredBranches map[string]string
 	// mu guards byDir/removed/branchRemoved: the deferred retire path both
 	// re-inspects (retireWorktreeDrift) and records removals from a background
 	// goroutine (scheduleRetireWorktreeCleanup) while the test goroutine polls
@@ -275,6 +280,41 @@ func (f *fakeWorktrees) removeBranch(root, branch string, _ bool) (bool, bool, e
 	return true, deleted, nil
 }
 
+func (f *fakeWorktrees) removeRegistered(
+	_ string,
+	root string,
+	deleteBranch, _ bool,
+) (bool, bool, string, error) {
+	f.mu.Lock()
+	branch, ok := f.registeredBranches[root]
+	if ok {
+		f.removed = append(f.removed, root)
+		if deleteBranch {
+			f.branchRemoved = append(f.branchRemoved, branch)
+		} else {
+			f.branchRemoved = append(f.branchRemoved, "")
+		}
+	}
+	removeErr := f.removeErr
+	f.mu.Unlock()
+	if removeErr != nil {
+		return false, false, branch, removeErr
+	}
+	if !ok {
+		return false, false, "", nil
+	}
+	deleted := deleteBranch && branch != "" &&
+		strings.ToLower(branch) != "main" &&
+		strings.ToLower(branch) != "master"
+	return true, deleted, branch, nil
+}
+
+func (f *fakeWorktrees) setRegisteredBranch(root, branch string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registeredBranches[root] = branch
+}
+
 func (f *fakeWorktrees) wasRemoved(root string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -303,9 +343,13 @@ func (f *fakeWorktrees) branchesRemoved() []string {
 // use the same helper.
 func installFakeWorktrees(t *testing.T, byDir map[string]worktree.WorktreeStatus) *fakeWorktrees {
 	t.Helper()
-	fw := &fakeWorktrees{byDir: byDir}
+	fw := &fakeWorktrees{
+		byDir:              byDir,
+		registeredBranches: map[string]string{},
+	}
 	t.Cleanup(agentd.SetWorktreeFnsForTest(fw.inspect, fw.remove))
 	t.Cleanup(agentd.SetRetireWorktreeFnForTest(fw.removeBranch))
+	t.Cleanup(agentd.SetRegisteredWorktreeFnForTest(fw.removeRegistered))
 	return fw
 }
 
@@ -333,6 +377,154 @@ func TestCleanup_Agents_DeleteRemovesLinkedWorktree(t *testing.T) {
 	require.Len(t, resp.Outcomes, 1)
 	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
 	f.AssertDeleted(conv)
+}
+
+// Inspection receives the stored path spelling even when it resolves through
+// a symlink. macOS temp directories expose this routinely as /var pointing at
+// /private/var; canonicalization belongs in comparisons, not at the git seam.
+func TestCleanup_Agents_InspectsLexicalWorktreePath(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wtlx-1111-2222-3333-4444"
+	target := f.TestCwd("wt-lexical-target")
+	require.NoError(t, os.MkdirAll(target, 0o755))
+	alias := filepath.Join(filepath.Dir(target), "wt-lexical-alias")
+	require.NoError(t, os.Symlink(target, alias))
+	t.Cleanup(func() { _ = os.Remove(alias) })
+
+	f.HaveConvWithTitle(conv, "lexical-worktree-worker")
+	f.HaveAliveSession(conv, "spwn-wtlx", "tmux-wtlx", alias)
+	f.MarkOffline("tmux-wtlx")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		alias: {Root: alias, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.True(t, fw.wasRemoved(alias))
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
+}
+
+// A missing directory does not erase Git's linked-worktree registration.
+// The per-agent probe and delete operation both resolve it through the
+// surviving repo anchor; delete removes the registration but keeps its branch.
+func TestCleanup_Agents_DeleteRemovesMissingRegisteredWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wmrg-1111-2222-3333-4444"
+	repo := f.TestCwd("wt-registered-main")
+	missing := filepath.Join(filepath.Dir(repo), "wt-registered-missing")
+	f.HaveConvWithTitle(conv, "missing-worktree-worker")
+	f.HaveAliveSession(conv, "spwn-wmrg", "tmux-wmrg",
+		filepath.Join(missing, "nested"))
+	f.MarkOffline("tmux-wmrg")
+	f.HaveGroup("squad")
+	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
+	require.NoError(t, err)
+
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		repo: {Root: repo, Branch: "main", Kind: "main"},
+	})
+	fw.setRegisteredBranch(missing, "feature-missing")
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{
+				{Path: repo, Branch: "main", IsMain: true},
+				{Path: missing, Branch: "feature-missing"},
+			}, nil
+		},
+		func(path string) (string, error) {
+			if path == repo {
+				return repo, nil
+			}
+			return "", assertNotRepo(path)
+		},
+		func(string) bool { return false },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	probe := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+	require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+	assert.Contains(t, probe.Body.String(), `"kind":"linked"`)
+	assert.Contains(t, probe.Body.String(), `"removable":true`)
+	assert.Contains(t, probe.Body.String(), `"branch":"feature-missing"`)
+
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+	assert.Equal(t, 1, resp.Deleted)
+	assert.True(t, fw.wasRemoved(missing))
+	assert.NotContains(t, fw.branchesRemoved(), "feature-missing",
+		"permanent delete keeps the branch")
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
+}
+
+// Composed fallback views are agent-specific: two agents can share the same
+// missing/non-Git current directory while their distinct startup paths map to
+// different registered worktrees. A batch must resolve and remove both roots.
+func TestCleanup_Agents_MissingRegisteredFallbackIsPerAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const (
+		convA = "wmfa-1111-2222-3333-4444"
+		convB = "wmfb-1111-2222-3333-4444"
+	)
+	repo := f.TestCwd("wt-fallback-main")
+	scratch := f.TestCwd("wt-shared-non-git-current")
+	missingA := filepath.Join(filepath.Dir(repo), "wt-fallback-missing-a")
+	missingB := filepath.Join(filepath.Dir(repo), "wt-fallback-missing-b")
+	for _, row := range []struct {
+		conv, label, tmux, startup string
+	}{
+		{convA, "spwn-wmfa", "tmux-wmfa", missingA},
+		{convB, "spwn-wmfb", "tmux-wmfb", missingB},
+	} {
+		f.HaveConvWithTitle(row.conv, "fallback-worker")
+		f.HaveAliveSession(row.conv, row.label, row.tmux, row.startup)
+		f.MarkOffline(row.tmux)
+		f.HaveEnrolledAgent(row.conv)
+		require.NoError(t, db.UpsertAgentWorkdir(row.conv, scratch, "", ""))
+	}
+	f.HaveGroup("squad")
+	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
+	require.NoError(t, err)
+
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		repo: {Root: repo, Branch: "main", Kind: "main"},
+	})
+	fw.setRegisteredBranch(missingA, "feature-a")
+	fw.setRegisteredBranch(missingB, "feature-b")
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{
+				{Path: repo, Branch: "main", IsMain: true},
+				{Path: missingA, Branch: "feature-a"},
+				{Path: missingB, Branch: "feature-b"},
+			}, nil
+		},
+		func(path string) (string, error) {
+			if path == repo {
+				return repo, nil
+			}
+			return "", assertNotRepo(path)
+		},
+		func(string) bool { return false },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+convA+`","`+convB+`"],"delete":true,"delete_worktrees":true}`)
+	assert.Equal(t, 2, resp.Deleted)
+	assert.True(t, fw.wasRemoved(missingA))
+	assert.True(t, fw.wasRemoved(missingB))
 }
 
 // Scenario: a worktree a *surviving* agent still works in is never

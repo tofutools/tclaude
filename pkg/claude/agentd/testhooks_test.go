@@ -1112,28 +1112,31 @@ func SetRetireWorktreeFnForTest(
 	return func() { removeWorktreeBranchFn = prev }
 }
 
+// SetRegisteredWorktreeFnForTest swaps the repo-anchored removal seam used
+// when Git still lists a worktree whose directory is already missing.
+func SetRegisteredWorktreeFnForTest(
+	remove func(repoPath, root string, deleteBranch, force bool) (bool, bool, string, error),
+) func() {
+	prev := removeRegisteredWorktreeFn
+	removeRegisteredWorktreeFn = remove
+	return func() { removeRegisteredWorktreeFn = prev }
+}
+
 // SetSweepWorktreeFnsForTest swaps the repo-wide worktree-janitor seams
-// — repo listing, repo-root resolution, dirty detection, main-repo
-// resolution and prune — so the worktree-sweep discovery/cleanup flow
-// tests run without real git repos. Returns a restore func for
-// t.Cleanup.
+// — repo listing, repo-root resolution and dirty detection — so the
+// worktree-sweep discovery/cleanup flow tests run without real git repos.
+// Returns a restore func for t.Cleanup.
 func SetSweepWorktreeFnsForTest(
 	list func(dir string) ([]worktree.WorktreeInfo, error),
 	repoRoot func(path string) (string, error),
 	dirty func(dir string) bool,
-	mainRepo func(dir string) string,
-	prune func(dir string) error,
 ) func() {
 	prevList, prevRoot, prevDirty := listWorktreesInFn, repoRootForPathFn, worktreeDirtyFn
-	prevMain, prevPrune := mainRepoForPathFn, pruneWorktreesFn
 	listWorktreesInFn = list
 	repoRootForPathFn = repoRoot
 	worktreeDirtyFn = dirty
-	mainRepoForPathFn = mainRepo
-	pruneWorktreesFn = prune
 	return func() {
 		listWorktreesInFn, repoRootForPathFn, worktreeDirtyFn = prevList, prevRoot, prevDirty
-		mainRepoForPathFn, pruneWorktreesFn = prevMain, prevPrune
 	}
 }
 

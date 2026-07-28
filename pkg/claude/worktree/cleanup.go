@@ -97,6 +97,56 @@ func RemoveLinkedWorktreeAndBranch(root, branch string, force bool) (removed, br
 	return removeLinkedWorktree(root, branch, force)
 }
 
+// RemoveLinkedWorktreeFrom removes root while anchored at a surviving
+// worktree of the same repo. Unlike RemoveLinkedWorktree, root itself need not
+// exist: Git retains enough administrative state for `git worktree remove` to
+// forget a worktree whose directory was deleted out-of-band.
+//
+// The current registration is re-read from repoPath before removal. This both
+// refuses the main worktree and supplies the authoritative branch name. When
+// deleteBranch is true, a non-detached, non-protected branch is force-deleted
+// after its worktree registration is removed.
+func RemoveLinkedWorktreeFrom(
+	repoPath, root string,
+	deleteBranch, force bool,
+) (removed, branchDeleted bool, branch string, err error) {
+	repoPath = strings.TrimSpace(repoPath)
+	root = strings.TrimSpace(root)
+	if repoPath == "" || root == "" {
+		return false, false, "", nil
+	}
+	wts, listErr := ListWorktreesIn(repoPath)
+	if listErr != nil {
+		return false, false, "", fmt.Errorf("list worktrees: %w", listErr)
+	}
+	mainPath := ""
+	var target *WorktreeInfo
+	for i := range wts {
+		if wts[i].IsMain {
+			mainPath = wts[i].Path
+		}
+		if sameDir(wts[i].Path, root) {
+			target = &wts[i]
+		}
+	}
+	if target == nil {
+		return false, false, "", nil
+	}
+	if target.IsMain || mainPath == "" || sameDir(mainPath, root) {
+		return false, false, target.Branch,
+			fmt.Errorf("refusing to remove the main worktree %s", root)
+	}
+	branch = target.Branch
+	removeBranch := ""
+	if deleteBranch {
+		removeBranch = branch
+	}
+	removed, branchDeleted, err = removeLinkedWorktreeAt(
+		mainPath, root, removeBranch, force,
+	)
+	return removed, branchDeleted, branch, err
+}
+
 // removeLinkedWorktree is the shared core behind RemoveLinkedWorktree
 // (branch == "") and RemoveLinkedWorktreeAndBranch (branch set). It
 // removes the linked worktree at root and, when branch is a non-empty
@@ -129,6 +179,13 @@ func removeLinkedWorktree(root, branch string, force bool) (removed, branchDelet
 	if mainPath == "" || sameDir(mainPath, root) {
 		return false, false, fmt.Errorf("refusing to remove the main worktree %s", root)
 	}
+	return removeLinkedWorktreeAt(mainPath, root, branch, force)
+}
+
+// removeLinkedWorktreeAt performs the mutation from the surviving main
+// checkout. root may already be absent as long as Git still has a linked
+// worktree registration for it.
+func removeLinkedWorktreeAt(mainPath, root, branch string, force bool) (removed, branchDeleted bool, err error) {
 	args := []string{"worktree", "remove"}
 	if force {
 		args = append(args, "--force")
