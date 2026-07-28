@@ -860,21 +860,47 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   broken.network.allow[0].domain = 'https://example.com';
   broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
   assert.match(model.sandboxAccessDraftErrors(broken).join(' '), /scheme.*absolute.*\*\*/i);
-  const warnings = model.sandboxPredictionWarnings({
-    targets: [{ axes: {
-      filesystem: { outcome: 'enforced_partial', detail: 'filesystem carve-out detail' },
-      environment: { outcome: 'enforced', detail: 'environment detail' },
-      agent_directories: { outcome: 'enforced', detail: 'agent-directory detail' },
-      network: { outcome: 'not_enforced', detail: 'network detail from resolver' },
-      unix_sockets: { outcome: 'enforced', detail: 'socket detail' },
-    } }],
-    contexts: [{ notices: [{ class: 'composition', detail: 'empty intersection detail' }] }],
+  const buckets = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced_partial', detail: 'filesystem carve-out detail' },
+    environment: { outcome: 'enforced', detail: 'environment detail' },
+    agent_directories: { outcome: 'enforced', detail: 'agent-directory detail' },
+    network: { outcome: 'refused', detail: 'network detail from resolver' },
+    unix_sockets: { outcome: 'enforced', detail: 'socket detail' },
+  }, {
+    filesystem: [
+      { path: '/home/operator', access: 'deny' },
+      { path: '/home/operator/work', access: 'write' },
+    ],
+    environment: ['POLICY_OWNER'],
+    agent_directories: ['GOCACHE'],
+    network: { mode: 'list', allow: [{ domain: 'api.example.com', ports: [443] }] },
+    unix_sockets: { mode: 'closed' },
+    agentd_socket: 'always reachable',
   });
-  assert.deepEqual(warnings.capability, [
-    'filesystem carve-out detail',
-    'network detail from resolver',
+  assert.deepEqual(buckets.applied.rules, [
+    'Set environment: POLICY_OWNER',
+    'Private read/write directory: $GOCACHE',
+    'Block Unix sockets',
+    'Allow Unix socket: tclaude agent control',
   ]);
-  assert.equal(warnings.composition[0].detail, 'empty intersection detail');
+  assert.deepEqual(buckets.partial.rules, [
+    'Block: /home/operator',
+    'Read/write: /home/operator/work',
+  ]);
+  assert.deepEqual(buckets.notApplied.rules, [
+    'Allow network: domain api.example.com · port 443',
+    'Block all other network destinations',
+  ]);
+  assert.equal(buckets.launchRefused, true);
+  assert.deepEqual(buckets.partial.reasons, [
+    { label: 'Limitation', detail: 'filesystem carve-out detail' },
+  ]);
+  assert.deepEqual(buckets.notApplied.reasons, [
+    { label: 'Launch blocked', detail: 'network detail from resolver' },
+  ]);
+  assert.equal(model.sandboxTargetLabel({
+    implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
+  }), 'Codex on macOS · built-in sandbox');
 });
 
 test('sandbox import accepts the current v2 export envelope', async (t) => {
@@ -1044,8 +1070,18 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
     const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
       async saveSandbox(value) { saved = value; },
       async predictSandbox() {
+        const enforced = {
+          filesystem: { outcome: 'enforced', detail: 'directory detail' },
+          environment: { outcome: 'enforced', detail: 'environment detail' },
+          agent_directories: { outcome: 'enforced', detail: 'agent-directory detail' },
+          network: { outcome: 'enforced', detail: 'network detail' },
+          unix_sockets: { outcome: 'enforced', detail: 'socket detail' },
+        };
         return {
-          targets: [],
+          targets: [{
+            target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+            axes: enforced, context_axes: [enforced],
+          }],
           contexts: [{
             context: {},
             // Empty Go slices are intentionally omitted from these rule
@@ -1061,9 +1097,9 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
     assert.ok(host.querySelector('#sandbox-profile-editor-modal'), `${label} renders`);
-    assert.match(host.querySelector('.sbx-effective-values').textContent,
-      /Network: list · 0 destination\(s\).*Unix sockets: list · 0 entry\(s\)/s,
-      `${label} renders sparse effective axes as empty lists`);
+    assert.match(host.querySelector('.sbx-rule-bucket-applied').textContent,
+      /Block outbound network \(allow list is empty\).*Block Unix sockets \(allow list is empty\)/s,
+      `${label} renders sparse effective axes as concrete empty-list rules`);
 
     if (label === 'legacy') {
       const mode = host.querySelector('#sandbox-profile-editor-network-mode');
@@ -1142,7 +1178,7 @@ test('sandbox editor renders one authored-spelling row and keeps authority pinne
   unmount();
 });
 
-test('sandbox editor renders both access axes, authoritative prediction, and non-blocking composition warnings', async (t) => {
+test('sandbox editor groups concrete rules by the selected assignment outcome', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1159,12 +1195,18 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
       predictions.push({ draft, targets, context });
       return {
         targets: [{ target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' }, resolved_by: 'harness default', predicted: true, axes: {
-          filesystem: { tier: '1 deny · 1 write', outcome: 'enforced', detail: 'resolver-owned directory detail' },
+          filesystem: { tier: '11 effective contexts', outcome: 'refused', detail: 'another assignment refuses its carve-out' },
           environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
           agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
           network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
           unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
-        } }],
+        }, context_axes: [{
+          filesystem: { tier: '1 deny · 1 write', outcome: 'enforced_partial', detail: 'built-in tools cannot preserve this carve-out' },
+          environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
+          agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
+          network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
+          unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
+        }] }],
         contexts: [{
           context: { global: 'base', group: 'access', group_name: 'crew' },
           filesystem: [{ path: '/home/operator', access: 'deny' }, { path: '/home/operator/work', access: 'write' }],
@@ -1183,17 +1225,32 @@ test('sandbox editor renders both access axes, authoritative prediction, and non
   assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for option[value="stacked/claude/darwin"]'), null,
     'the preview never offers the statically unsupported nested Seatbelt target');
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
-  assert.match(host.querySelector('.sbx-capability-preview').textContent, /Directory access: 1 deny · 1 write · enforced/);
-  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned environment detail/);
-  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned agent-directory detail/);
-  assert.match(host.querySelector('.sbx-capability-preview').textContent, /resolver-owned network detail/);
-  assert.match(host.querySelector('.sbx-composition-warning').textContent, /leaves no network destinations/);
+  assert.match(host.querySelector('.sbx-policy-target').textContent,
+    /Claude on Linux · tclaude sandbox/);
+  const applied = host.querySelector('.sbx-rule-bucket-applied');
+  assert.equal(applied.hasAttribute('open'), false,
+    'successful rules stay folded when attention is needed elsewhere');
+  assert.match(applied.textContent,
+    /Set environment: POLICY_OWNER.*Private read\/write directory: \$GOCACHE.*Block Unix sockets.*tclaude agent control/s);
+  const partial = host.querySelector('.sbx-rule-bucket-partial');
+  assert.equal(partial.hasAttribute('open'), true);
+  assert.match(partial.textContent,
+    /Block: \/home\/operator.*Read\/write: \/home\/operator\/work.*built-in tools cannot preserve this carve-out/s);
+  assert.doesNotMatch(partial.textContent, /another assignment refuses/,
+    'the selected assignment uses its own verdict instead of the aggregate worst case');
+  const notApplied = host.querySelector('.sbx-rule-bucket-not-applied');
+  assert.equal(notApplied.hasAttribute('open'), true);
+  assert.match(notApplied.textContent,
+    /Block outbound network \(allow list is empty\).*resolver-owned network detail/s);
+  const composition = host.querySelector('.sbx-composition-details');
+  assert.equal(composition.hasAttribute('open'), false);
+  assert.match(composition.textContent, /How these rules were combined.*leaves no network destinations/s);
+  assert.equal(host.querySelector('.sbx-capability-preview'), null,
+    'raw evaluator axes are not exposed in the primary read model');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
     'empty intersections warn but never block save');
   assert.equal(predictions[0].draft.id, 41);
   assert.equal(predictions[0].context.group, 'crew');
-  assert.match(host.querySelector('.sbx-effective-values').textContent,
-    /deny \/home\/operator · write \/home\/operator\/work.*POLICY_OWNER.*GOCACHE.*always reachable/s);
   const rawToggle = host.querySelector('.sbx-advanced-toggle');
   rawToggle.click();
   await harness.act(() => Promise.resolve());

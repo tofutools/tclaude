@@ -46,10 +46,11 @@ type sandboxProfileDraftEnforcementContextHint struct {
 }
 
 type sandboxProfileDraftEnforcementTarget struct {
-	Target     sandboxProfileEnforcementTargetRequest `json:"target"`
-	ResolvedBy string                                 `json:"resolved_by,omitempty"`
-	Predicted  bool                                   `json:"predicted"`
-	Axes       harness.PredictedAccessAxes            `json:"axes"`
+	Target      sandboxProfileEnforcementTargetRequest `json:"target"`
+	ResolvedBy  string                                 `json:"resolved_by,omitempty"`
+	Predicted   bool                                   `json:"predicted"`
+	Axes        harness.PredictedAccessAxes            `json:"axes"`
+	ContextAxes []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -236,10 +237,17 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
-		described := describePredictedDraftSandboxProfile(
+		described, contextAxes, describeErr := describePredictedDraftSandboxProfile(
 			flattened, contexts, target, mode,
 			harness.DescribePredictedAccess(axes, predicted),
 		)
+		if describeErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", describeErr.Error())
+			return
+		}
+		if len(contextAxes) > len(response.Contexts) {
+			contextAxes = contextAxes[:len(response.Contexts)]
+		}
 		response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
 			Target: sandboxProfileEnforcementTargetRequest{
 				Implementation: string(target.implementation),
@@ -247,9 +255,10 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 				Platform:       target.platform,
 				Sandbox:        mode,
 			},
-			ResolvedBy: resolvedBy,
-			Predicted:  true,
-			Axes:       described,
+			ResolvedBy:  resolvedBy,
+			Predicted:   true,
+			Axes:        described,
+			ContextAxes: contextAxes,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)

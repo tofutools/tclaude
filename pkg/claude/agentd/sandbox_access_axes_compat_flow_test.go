@@ -453,7 +453,8 @@ func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *te
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Targets []struct {
-			Axes harness.PredictedAccessAxes `json:"axes"`
+			Axes        harness.PredictedAccessAxes   `json:"axes"`
+			ContextAxes []harness.PredictedAccessAxes `json:"context_axes"`
 		} `json:"targets"`
 		Contexts []struct {
 			Context map[string]string `json:"context"`
@@ -466,6 +467,11 @@ func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *te
 		"the omitted eleventh display context must still participate in aggregate prediction")
 	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, child)
 	assert.Len(t, got.Contexts, 10)
+	require.Len(t, got.Targets[0].ContextAxes, 10)
+	for _, axes := range got.Targets[0].ContextAxes {
+		assert.Equal(t, harness.AccessPredictionEnforced, axes.Filesystem.Outcome,
+			"each displayed assignment should carry its own non-carve-out verdict")
+	}
 	assert.Equal(t, 1, got.RemainingContexts)
 	for _, context := range got.Contexts {
 		assert.NotEqual(t, "crew-10", context.Context["group_name"])
@@ -515,8 +521,9 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Targets []struct {
-			Predicted bool                        `json:"predicted"`
-			Axes      harness.PredictedAccessAxes `json:"axes"`
+			Predicted   bool                          `json:"predicted"`
+			Axes        harness.PredictedAccessAxes   `json:"axes"`
+			ContextAxes []harness.PredictedAccessAxes `json:"context_axes"`
 		} `json:"targets"`
 		Contexts []struct {
 			Context map[string]string            `json:"context"`
@@ -528,6 +535,9 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	require.Len(t, got.Targets, 1)
 	assert.True(t, got.Targets[0].Predicted)
 	assert.Equal(t, harness.AccessPredictionNotEnforced, got.Targets[0].Axes.Network.Outcome)
+	require.Len(t, got.Targets[0].ContextAxes, 1)
+	assert.Equal(t, harness.AccessPredictionNotEnforced,
+		got.Targets[0].ContextAxes[0].Network.Outcome)
 	require.Len(t, got.Contexts, 1)
 	assert.Equal(t, "crew", got.Contexts[0].Context["group_name"])
 	assert.Equal(t, "renamed-in-editor", got.Contexts[0].Context["group"],

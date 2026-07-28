@@ -145,3 +145,114 @@ export function sandboxPredictionWarnings(prediction) {
   const composition = (prediction?.contexts || []).flatMap((context) => context.notices || []);
   return { capability: [...new Set(capability)], composition };
 }
+
+function networkRuleLabel(entry = {}) {
+  let selector = '';
+  if (entry.host) selector = `host ${entry.host}`;
+  if (entry.domain) selector = `domain ${entry.domain}${entry.include_subdomains ? ' and subdomains' : ''}`;
+  if (entry.cidr) selector = `network ${entry.cidr}`;
+  if (entry.loopback) selector = 'local machine';
+  const ports = Array.isArray(entry.ports) ? entry.ports : [];
+  return `Allow network: ${selector || 'configured destination'}${ports.length ? ` · port${ports.length === 1 ? '' : 's'} ${ports.join(', ')}` : ''}`;
+}
+
+function effectiveRuleRows(context = {}) {
+  const rows = [];
+  for (const entry of context.filesystem || []) {
+    const prefix = entry.access === 'write' ? 'Read/write'
+      : entry.access === 'read' ? 'Read-only' : 'Block';
+    rows.push({ axis: 'filesystem', label: `${prefix}: ${entry.path}` });
+  }
+  for (const name of context.environment || []) {
+    rows.push({ axis: 'environment', label: `Set environment: ${name}` });
+  }
+  for (const name of context.agent_directories || []) {
+    rows.push({ axis: 'agent_directories', label: `Private read/write directory: $${name}` });
+  }
+
+  const axes = sandboxAccessAxes(context);
+  if (axes.network.mode === 'open') {
+    rows.push({ axis: 'network', label: 'Allow outbound network' });
+  } else if (axes.network.mode === 'closed') {
+    rows.push({ axis: 'network', label: 'Block outbound network' });
+  } else if (axes.network.mode === 'list') {
+    if (axes.network.allow.length) {
+      rows.push(...axes.network.allow.map((entry) => ({ axis: 'network', label: networkRuleLabel(entry) })));
+      rows.push({ axis: 'network', label: 'Block all other network destinations' });
+    } else {
+      rows.push({ axis: 'network', label: 'Block outbound network (allow list is empty)' });
+    }
+  }
+
+  if (axes.unix_sockets.mode === 'open') {
+    rows.push({ axis: 'unix_sockets', label: 'Allow Unix sockets' });
+  } else if (axes.unix_sockets.mode === 'closed') {
+    rows.push({ axis: 'unix_sockets', label: 'Block Unix sockets' });
+  } else if (axes.unix_sockets.mode === 'list') {
+    if (axes.unix_sockets.allow.length) {
+      rows.push(...axes.unix_sockets.allow.map((entry) => ({
+        axis: 'unix_sockets',
+        label: `Allow Unix socket: ${entry.path_glob || entry.path || 'configured path'}`,
+      })));
+      rows.push({ axis: 'unix_sockets', label: 'Block all other Unix sockets' });
+    } else {
+      rows.push({ axis: 'unix_sockets', label: 'Block Unix sockets (allow list is empty)' });
+    }
+  }
+  if (context.agentd_socket && axes.unix_sockets.mode !== 'open') {
+    rows.push({ axis: 'control_socket', label: 'Allow Unix socket: tclaude agent control' });
+  }
+  return rows;
+}
+
+function bucketKey(outcome) {
+  if (outcome === 'enforced') return 'applied';
+  if (outcome === 'enforced_partial') return 'partial';
+  return 'notApplied';
+}
+
+// Turns the evaluator's axis-oriented response into the operator's read model:
+// concrete effective rules grouped only by whether this target applies them.
+// `axes` should be the selected assignment's context_axes entry when present;
+// callers fall back to the target-wide worst-case axes for older daemons.
+export function sandboxRuleBuckets(axes = {}, context = {}) {
+  const buckets = {
+    applied: { key: 'applied', label: 'Rules fully applied', rules: [], reasons: [] },
+    partial: { key: 'partial', label: 'Rules partially applied', rules: [], reasons: [] },
+    notApplied: { key: 'not-applied', label: 'Rules not applied', rules: [], reasons: [] },
+  };
+  const seenReasons = new Set();
+  let launchRefused = false;
+  for (const rule of effectiveRuleRows(context)) {
+    const verdict = rule.axis === 'control_socket'
+      ? { outcome: 'enforced', detail: '' }
+      : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' };
+    const bucket = buckets[bucketKey(verdict.outcome)];
+    bucket.rules.push(rule.label);
+    if (verdict.outcome === 'refused') launchRefused = true;
+    if (bucket !== buckets.applied && verdict.detail) {
+      const identity = `${rule.axis}\0${verdict.outcome}\0${verdict.detail}`;
+      if (!seenReasons.has(identity)) {
+        seenReasons.add(identity);
+        bucket.reasons.push({
+          label: verdict.outcome === 'refused' ? 'Launch blocked'
+            : verdict.outcome === 'enforced_partial' ? 'Limitation' : 'Unsupported',
+          detail: verdict.detail,
+        });
+      }
+    }
+  }
+  return { ...buckets, launchRefused };
+}
+
+export function sandboxTargetLabel(value = {}) {
+  const target = value.target || value;
+  const harness = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' }[target.harness] || target.harness || 'Harness';
+  const platform = { linux: 'Linux', darwin: 'macOS' }[target.platform] || target.platform || 'current platform';
+  const implementation = {
+    'harness-builtin': 'built-in sandbox',
+    'tclaude-layer': 'tclaude sandbox',
+    stacked: 'stacked sandboxes',
+  }[target.implementation] || target.implementation || 'default sandbox';
+  return `${harness} on ${platform} · ${implementation}`;
+}

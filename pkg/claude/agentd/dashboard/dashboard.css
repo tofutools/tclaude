@@ -4198,16 +4198,79 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-effective-preview {
   margin-top: .65rem;
 }
-.sbx-capability-preview,
-.sbx-effective-values {
-  background: color-mix(in srgb, var(--panel-bg) 80%, var(--accent) 20%);
-  border-radius: .35rem;
-  margin-top: .5rem;
-  padding: .55rem;
+.sbx-policy-result {
+  margin-top: .45rem;
 }
-.sbx-capability-preview .warn,
+.sbx-policy-target {
+  display: block;
+  margin-bottom: .45rem;
+}
+.sbx-rule-bucket {
+  border: 1px solid #30363d;
+  border-left-width: 3px;
+  border-radius: .35rem;
+  margin-top: .4rem;
+  padding: .45rem .6rem;
+}
+.sbx-rule-bucket > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.sbx-rule-bucket-applied {
+  background: rgba(46, 160, 67, .07);
+  border-left-color: #3fb950;
+}
+.sbx-rule-bucket-partial {
+  background: rgba(210, 153, 34, .08);
+  border-left-color: #d29922;
+}
+.sbx-rule-bucket-not-applied {
+  background: rgba(248, 81, 73, .08);
+  border-left-color: #f85149;
+}
+.sbx-rule-count {
+  background: #21262d;
+  border-radius: 999px;
+  float: right;
+  font-size: .75rem;
+  font-weight: 500;
+  min-width: 1.4rem;
+  padding: .05rem .4rem;
+  text-align: center;
+}
+.sbx-rule-bucket ul {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  margin: .5rem 0 .2rem;
+  overflow-wrap: anywhere;
+  padding-left: 1.4rem;
+}
+.sbx-rule-bucket li + li {
+  margin-top: .25rem;
+}
+.sbx-rule-reason {
+  color: var(--text-muted);
+  font-size: .82rem;
+  margin-top: .45rem;
+}
+.sbx-launch-blocked {
+  background: rgba(248, 81, 73, .1);
+  border-left: 3px solid #f85149;
+  border-radius: .25rem;
+  color: #ff7b72;
+  margin: .45rem 0;
+  padding: .4rem .55rem;
+}
+.sbx-target-details,
+.sbx-composition-details {
+  color: var(--text-muted);
+  font-size: .82rem;
+  margin-top: .5rem;
+}
+.sbx-target-details > summary,
+.sbx-composition-details > summary {
+  cursor: pointer;
+}
 .sbx-composition-warning,
-.sbx-capability-warning,
 .sbx-access-validation,
 .sbx-preview-error {
   color: var(--warning-text, #d99a2b);
