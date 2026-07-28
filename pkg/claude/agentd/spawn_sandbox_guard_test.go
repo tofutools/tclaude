@@ -112,6 +112,63 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		"a ready probe without a filtered launch verdict must not activate enforcement")
 }
 
+func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.T) {
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	resolveTclaudeLayerAccessVerdict = func(
+		string, sandboxpolicy.NetworkPosture,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{State: "on", Source: "test bwrap"}, nil
+	}
+	newSnapshot := func() *sandboxpolicy.Snapshot {
+		return &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					CIDR: "192.0.2.0/24", Ports: []int{443},
+				}},
+			},
+		}}
+	}
+
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: false,
+			Detail:   "pasta unavailable",
+		}
+	}
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		newSnapshot(),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	)
+	require.Nil(t, failure)
+	require.Len(t, notices, 2)
+	require.Equal(t, "no_mechanism", notices[0].Reason)
+	require.Contains(t, notices[1].Detail, "prerequisite probe: unavailable")
+
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace, pasta, and nft detected",
+		}
+	}
+	_, failure = planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		newSnapshot(),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	)
+	require.NotNil(t, failure)
+	require.Equal(t, harness.SandboxCapabilityNetworkAllowlist, failure.Kind)
+	require.Contains(t, failure.Msg, "real-OpenCode M3 smoke")
+}
+
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

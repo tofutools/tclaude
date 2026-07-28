@@ -220,6 +220,9 @@ jobs:
           TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.0.10
           TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.0.200
           TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.0.0/25
+          TCLAUDE_FILTERED_ALLOWED_ADDR6: "fd00:823::10"
+          TCLAUDE_FILTERED_ADJACENT_ADDR6: "fd00:823::200"
+          TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:823::/120"
           TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
           TCLAUDE_FILTERED_DENIED_PORT: "41002"
         run: |
@@ -240,10 +243,13 @@ jobs:
           sudo ip link add "$host_link" type veth peer name "$peer_link"
           sudo ip link set "$peer_link" netns "$namespace"
           sudo ip address add 198.18.0.1/24 dev "$host_link"
+          sudo ip -6 address add fd00:823::1/64 dev "$host_link"
           sudo ip link set "$host_link" up
           sudo ip netns exec "$namespace" ip link set lo up
           sudo ip netns exec "$namespace" ip address add 198.18.0.10/24 dev "$peer_link"
           sudo ip netns exec "$namespace" ip address add 198.18.0.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link"
           sudo ip netns exec "$namespace" ip link set "$peer_link" up
 
           for address in 198.18.0.10 198.18.0.200; do
@@ -255,6 +261,18 @@ jobs:
               sudo ip netns exec "$namespace" \
                 socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
                 >"$RUNNER_TEMP/filtered-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=$address,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp6-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=$address,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp6-$port.log" 2>&1 &
               server_pids+=("$!")
             done
           done
@@ -272,7 +290,7 @@ jobs:
               echo
               echo "The named real boundary did not report an explicit pass."
               echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
-              echo "The smoke must execute CIDR/port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
+              echo "The smoke must execute IPv4/IPv6 CIDR+port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
             exit 1

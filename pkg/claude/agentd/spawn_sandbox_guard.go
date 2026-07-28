@@ -179,6 +179,12 @@ func planSandboxProfileAccessForLaunch(
 			implementation == sandboxpolicy.ImplementationTclaudeLayer {
 			probe := probeFilteredNetworkPrerequisite()
 			filteredProbe = &probe
+			if supportErr := session.ValidateFilteredNetworkHarnessSupport(
+				h, implementation, axes, probe,
+			); supportErr != nil {
+				return nil, sandboxCapabilitySpawnFailure(
+					supportErr, "unsupported_sandbox_profile_access")
+			}
 			if probe.Detected {
 				posture = sandboxpolicy.NetworkFiltered
 			}

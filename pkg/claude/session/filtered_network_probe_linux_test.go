@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
@@ -69,6 +70,44 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.LaunchWhy(false), "unavailable")
 	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
+}
+
+func TestOpenCodeFilteredNetworkRefusesOnlyAfterPrerequisitesResolve(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "192.0.2.0/24", Ports: []int{443},
+		}},
+	}}
+	openCode := harness.MustGet(harness.OpenCodeName)
+
+	err := ValidateFilteredNetworkHarnessSupport(
+		openCode,
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{
+			Detected: false,
+			Detail:   "pasta is unavailable",
+		},
+	)
+	require.NoError(t, err,
+		"an unavailable prerequisite must retain widen-and-disclose behavior")
+
+	err = ValidateFilteredNetworkHarnessSupport(
+		openCode,
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{Detected: true},
+	)
+	require.ErrorContains(t, err, "real-OpenCode M3 smoke")
+
+	err = ValidateFilteredNetworkHarnessSupport(
+		harness.Default(),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		FilteredNetworkPrerequisite{Detected: true},
+	)
+	require.NoError(t, err)
 }
 
 func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {

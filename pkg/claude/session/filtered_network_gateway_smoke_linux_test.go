@@ -30,6 +30,9 @@ const (
 	filteredGatewayAllowedAddrEnv    = "TCLAUDE_FILTERED_ALLOWED_ADDR"
 	filteredGatewayAdjacentAddrEnv   = "TCLAUDE_FILTERED_ADJACENT_ADDR"
 	filteredGatewayAllowedPrefixEnv  = "TCLAUDE_FILTERED_ALLOWED_PREFIX"
+	filteredGatewayAllowedAddr6Env   = "TCLAUDE_FILTERED_ALLOWED_ADDR6"
+	filteredGatewayAdjacentAddr6Env  = "TCLAUDE_FILTERED_ADJACENT_ADDR6"
+	filteredGatewayAllowedPrefix6Env = "TCLAUDE_FILTERED_ALLOWED_PREFIX6"
 	filteredGatewayAllowedPortEnv    = "TCLAUDE_FILTERED_ALLOWED_PORT"
 	filteredGatewayDeniedPortEnv     = "TCLAUDE_FILTERED_DENIED_PORT"
 	filteredGatewayLoopbackPortEnv   = "TCLAUDE_FILTERED_LOOPBACK_PORT"
@@ -58,6 +61,9 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 	allowedAddr := requireFilteredSmokeEnv(t, filteredGatewayAllowedAddrEnv)
 	adjacentAddr := requireFilteredSmokeEnv(t, filteredGatewayAdjacentAddrEnv)
 	allowedPrefix := requireFilteredSmokeEnv(t, filteredGatewayAllowedPrefixEnv)
+	allowedAddr6 := requireFilteredSmokeEnv(t, filteredGatewayAllowedAddr6Env)
+	adjacentAddr6 := requireFilteredSmokeEnv(t, filteredGatewayAdjacentAddr6Env)
+	allowedPrefix6 := requireFilteredSmokeEnv(t, filteredGatewayAllowedPrefix6Env)
 	allowedPort := requireFilteredSmokePort(t, filteredGatewayAllowedPortEnv)
 	deniedPort := requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv)
 
@@ -73,10 +79,8 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 	}
 	t.Cleanup(func() { tclaudeLayerRelayPrefix = previousRelay })
 
-	hostAllowed := startFilteredSmokeTCPEcho(t)
-	hostDenied := startFilteredSmokeTCPEcho(t)
-	hostAllowedPort := hostAllowed.Addr().(*net.TCPAddr).Port
-	hostDeniedPort := hostDenied.Addr().(*net.TCPAddr).Port
+	hostAllowedPort := startFilteredSmokeLoopbackEcho(t)
+	hostDeniedPort := startFilteredSmokeLoopbackEcho(t)
 
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
@@ -92,6 +96,7 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 	require.NoError(t, os.MkdirAll(smokeHome, 0o700))
 	require.NoError(t, os.MkdirAll(helperDir, 0o700))
 	t.Setenv("HOME", smokeHome)
+	prepareStackedSmokeControlPlane(t)
 	helperBinary := filepath.Join(helperDir, "filtered-smoke-helper")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
@@ -99,6 +104,7 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
 			{CIDR: allowedPrefix, Ports: []int{allowedPort}},
+			{CIDR: allowedPrefix6, Ports: []int{allowedPort}},
 			{Loopback: true, Ports: []int{hostAllowedPort}},
 		},
 	}
@@ -157,7 +163,8 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 			cmd.Env = filteredSmokeHelperEnv(
-				os.Environ(), allowedAddr, adjacentAddr, allowedPort, deniedPort,
+				os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+				allowedPort, deniedPort,
 				hostAllowedPort, hostDeniedPort, "", false,
 			)
 			output, runErr := cmd.CombinedOutput()
@@ -174,7 +181,8 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", wrapped[harness.DefaultName])
 	cmd.Env = filteredSmokeHelperEnv(
-		os.Environ(), allowedAddr, adjacentAddr, allowedPort, deniedPort,
+		os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+		allowedPort, deniedPort,
 		hostAllowedPort, hostDeniedPort, readyPath, true,
 	)
 	cmd.Stdout = logFile
@@ -218,28 +226,54 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 
 	allowedAddr := requireFilteredSmokeEnv(t, filteredGatewayAllowedAddrEnv)
 	adjacentAddr := requireFilteredSmokeEnv(t, filteredGatewayAdjacentAddrEnv)
+	allowedAddr6 := requireFilteredSmokeEnv(t, filteredGatewayAllowedAddr6Env)
+	adjacentAddr6 := requireFilteredSmokeEnv(t, filteredGatewayAdjacentAddr6Env)
 	allowedPort := requireFilteredSmokePort(t, filteredGatewayAllowedPortEnv)
 	deniedPort := requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv)
 	loopbackPort := requireFilteredSmokePort(t, filteredGatewayLoopbackPortEnv)
 	loopbackDeniedPort := requireFilteredSmokePort(t, filteredGatewayLoopbackDenyEnv)
 
-	filteredSmokeTCPRoundTrip(t, net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))
-	filteredSmokeUDPRoundTrip(t, net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))
-	filteredSmokeTCPDenied(t, net.JoinHostPort(allowedAddr, strconv.Itoa(deniedPort)))
-	filteredSmokeUDPDenied(t, net.JoinHostPort(allowedAddr, strconv.Itoa(deniedPort)))
-	filteredSmokeTCPDenied(t, net.JoinHostPort(adjacentAddr, strconv.Itoa(allowedPort)))
-	filteredSmokeUDPDenied(t, net.JoinHostPort(adjacentAddr, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPRoundTrip(t, "tcp4", net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))
+	filteredSmokeUDPRoundTrip(t, "udp4", net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort(allowedAddr, strconv.Itoa(deniedPort)))
+	filteredSmokeUDPDenied(t, "udp4", net.JoinHostPort(allowedAddr, strconv.Itoa(deniedPort)))
+	filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort(adjacentAddr, strconv.Itoa(allowedPort)))
+	filteredSmokeUDPDenied(t, "udp4", net.JoinHostPort(adjacentAddr, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPRoundTrip(t, "tcp6", net.JoinHostPort(allowedAddr6, strconv.Itoa(allowedPort)))
+	filteredSmokeUDPRoundTrip(t, "udp6", net.JoinHostPort(allowedAddr6, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort(allowedAddr6, strconv.Itoa(deniedPort)))
+	filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort(allowedAddr6, strconv.Itoa(deniedPort)))
+	filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort(adjacentAddr6, strconv.Itoa(allowedPort)))
+	filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort(adjacentAddr6, strconv.Itoa(allowedPort)))
 
 	synthetic := net.JoinHostPort(
 		sandboxpolicy.FilteredNetworkHostLoopbackName,
 		strconv.Itoa(loopbackPort),
 	)
-	filteredSmokeTCPRoundTrip(t, synthetic)
-	filteredSmokeTCPDenied(t, net.JoinHostPort(
+	filteredSmokeTCPRoundTrip(t, "tcp4", synthetic)
+	filteredSmokeUDPRoundTrip(t, "udp4", synthetic)
+	filteredSmokeTCPRoundTrip(t, "tcp6", synthetic)
+	filteredSmokeUDPRoundTrip(t, "udp6", synthetic)
+	filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort(
 		sandboxpolicy.FilteredNetworkHostLoopbackName,
 		strconv.Itoa(loopbackDeniedPort),
 	))
-	filteredSmokeTCPDenied(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(loopbackPort)))
+	filteredSmokeUDPDenied(t, "udp4", net.JoinHostPort(
+		sandboxpolicy.FilteredNetworkHostLoopbackName,
+		strconv.Itoa(loopbackDeniedPort),
+	))
+	filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort(
+		sandboxpolicy.FilteredNetworkHostLoopbackName,
+		strconv.Itoa(loopbackDeniedPort),
+	))
+	filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort(
+		sandboxpolicy.FilteredNetworkHostLoopbackName,
+		strconv.Itoa(loopbackDeniedPort),
+	))
+	filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(loopbackPort)))
+	filteredSmokeUDPDenied(t, "udp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(loopbackPort)))
+	filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort("::1", strconv.Itoa(loopbackPort)))
+	filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort("::1", strconv.Itoa(loopbackPort)))
 
 	if readyPath := strings.TrimSpace(os.Getenv(filteredGatewayReadyPathEnv)); readyPath != "" {
 		require.NoError(t, os.WriteFile(readyPath, []byte("ready"), 0o600))
@@ -251,7 +285,7 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 
 func filteredSmokeHelperEnv(
 	base []string,
-	allowedAddr, adjacentAddr string,
+	allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6 string,
 	allowedPort, deniedPort, loopbackPort, loopbackDeniedPort int,
 	readyPath string,
 	hold bool,
@@ -261,6 +295,8 @@ func filteredSmokeHelperEnv(
 		filteredGatewayHelperEnv+"=1",
 		filteredGatewayAllowedAddrEnv+"="+allowedAddr,
 		filteredGatewayAdjacentAddrEnv+"="+adjacentAddr,
+		filteredGatewayAllowedAddr6Env+"="+allowedAddr6,
+		filteredGatewayAdjacentAddr6Env+"="+adjacentAddr6,
 		filteredGatewayAllowedPortEnv+"="+strconv.Itoa(allowedPort),
 		filteredGatewayDeniedPortEnv+"="+strconv.Itoa(deniedPort),
 		filteredGatewayLoopbackPortEnv+"="+strconv.Itoa(loopbackPort),
@@ -289,30 +325,66 @@ func requireFilteredSmokePort(t *testing.T, name string) int {
 	return value
 }
 
-func startFilteredSmokeTCPEcho(t *testing.T) net.Listener {
+func startFilteredSmokeLoopbackEcho(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	tcp4, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		for {
-			connection, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func() {
-				defer func() { _ = connection.Close() }()
-				_, _ = io.Copy(connection, connection)
-			}()
-		}
-	}()
-	return listener
+	port := tcp4.Addr().(*net.TCPAddr).Port
+	tcp6, err := net.ListenTCP("tcp6", &net.TCPAddr{
+		IP: net.ParseIP("::1"), Port: port,
+	})
+	require.NoError(t, err)
+	udp4, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP: net.ParseIP("127.0.0.1"), Port: port,
+	})
+	require.NoError(t, err)
+	udp6, err := net.ListenUDP("udp6", &net.UDPAddr{
+		IP: net.ParseIP("::1"), Port: port,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = tcp4.Close()
+		_ = tcp6.Close()
+		_ = udp4.Close()
+		_ = udp6.Close()
+	})
+	for _, listener := range []*net.TCPListener{tcp4, tcp6} {
+		go runFilteredSmokeTCPEcho(listener)
+	}
+	for _, connection := range []*net.UDPConn{udp4, udp6} {
+		go runFilteredSmokeUDPEcho(connection)
+	}
+	return port
 }
 
-func filteredSmokeTCPRoundTrip(t *testing.T, address string) {
+func runFilteredSmokeTCPEcho(listener *net.TCPListener) {
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer func() { _ = connection.Close() }()
+			_, _ = io.Copy(connection, connection)
+		}()
+	}
+}
+
+func runFilteredSmokeUDPEcho(connection *net.UDPConn) {
+	buffer := make([]byte, 2048)
+	for {
+		n, remote, err := connection.ReadFromUDP(buffer)
+		if err != nil {
+			return
+		}
+		_, _ = connection.WriteToUDP(buffer[:n], remote)
+	}
+}
+
+func filteredSmokeTCPRoundTrip(t *testing.T, network, address string) {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp4", address, filteredGatewayConnectionTimeout)
-	require.NoErrorf(t, err, "TCP allow %s", address)
+	connection, err := net.DialTimeout(network, address, filteredGatewayConnectionTimeout)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
 	payload := []byte("tclaude-filtered-tcp")
@@ -324,20 +396,20 @@ func filteredSmokeTCPRoundTrip(t *testing.T, address string) {
 	assert.Equal(t, payload, reply)
 }
 
-func filteredSmokeTCPDenied(t *testing.T, address string) {
+func filteredSmokeTCPDenied(t *testing.T, network, address string) {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp4", address, filteredGatewayConnectionTimeout)
+	connection, err := net.DialTimeout(network, address, filteredGatewayConnectionTimeout)
 	if err == nil {
 		_ = connection.Close()
 	}
-	require.Errorf(t, err, "TCP deny %s", address)
+	require.Errorf(t, err, "%s deny %s", network, address)
 }
 
-func filteredSmokeUDPRoundTrip(t *testing.T, address string) {
+func filteredSmokeUDPRoundTrip(t *testing.T, network, address string) {
 	t.Helper()
-	remote, err := net.ResolveUDPAddr("udp4", address)
+	remote, err := net.ResolveUDPAddr(network, address)
 	require.NoError(t, err)
-	connection, err := net.DialUDP("udp4", nil, remote)
+	connection, err := net.DialUDP(network, nil, remote)
 	require.NoError(t, err)
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
@@ -346,15 +418,15 @@ func filteredSmokeUDPRoundTrip(t *testing.T, address string) {
 	require.NoError(t, err)
 	reply := make([]byte, len(payload))
 	_, err = io.ReadFull(connection, reply)
-	require.NoErrorf(t, err, "UDP allow %s", address)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
 	assert.Equal(t, payload, reply)
 }
 
-func filteredSmokeUDPDenied(t *testing.T, address string) {
+func filteredSmokeUDPDenied(t *testing.T, network, address string) {
 	t.Helper()
-	remote, err := net.ResolveUDPAddr("udp4", address)
+	remote, err := net.ResolveUDPAddr(network, address)
 	require.NoError(t, err)
-	connection, err := net.DialUDP("udp4", nil, remote)
+	connection, err := net.DialUDP(network, nil, remote)
 	require.NoError(t, err)
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
@@ -362,7 +434,7 @@ func filteredSmokeUDPDenied(t *testing.T, address string) {
 	require.NoError(t, err)
 	buffer := make([]byte, 64)
 	_, err = connection.Read(buffer)
-	require.Errorf(t, err, "UDP deny %s", address)
+	require.Errorf(t, err, "%s deny %s", network, address)
 }
 
 func waitForFilteredSmokeReady(

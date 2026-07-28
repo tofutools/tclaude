@@ -936,6 +936,11 @@ func runNew(params *NewParams) error {
 		if axes.Network.Mode == sandboxpolicy.AccessModeList {
 			probe := ProbeFilteredNetworkPrerequisite()
 			filteredNetworkProbe = &probe
+			if supportErr := ValidateFilteredNetworkHarnessSupport(
+				h, sandboxImplementation, axes, probe,
+			); supportErr != nil {
+				return supportErr
+			}
 			if probe.Detected {
 				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
 			}

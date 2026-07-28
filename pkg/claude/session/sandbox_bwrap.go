@@ -334,6 +334,31 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	return probeFilteredNetworkPrerequisite()
 }
 
+// ValidateFilteredNetworkHarnessSupport keeps the M2b OpenCode boundary
+// fail-closed once the host could otherwise activate filtered enforcement.
+// Missing prerequisites retain the existing honest widen-and-warn behavior;
+// M3 may remove this refusal only after its pinned real-OpenCode smoke passes.
+func ValidateFilteredNetworkHarnessSupport(
+	h *harness.Harness,
+	implementation sandboxpolicy.Implementation,
+	axes sandboxpolicy.ResolvedAxes,
+	probe FilteredNetworkPrerequisite,
+) error {
+	if h == nil ||
+		implementation != sandboxpolicy.ImplementationTclaudeLayer ||
+		axes.Network.Mode != sandboxpolicy.AccessModeList ||
+		!probe.Detected ||
+		h.Name != harness.OpenCodeName {
+		return nil
+	}
+	return &harness.SandboxCapabilityError{
+		Kind: harness.SandboxCapabilityNetworkAllowlist,
+		Message: "OpenCode filtered networking remains disabled until the pinned " +
+			"real-OpenCode M3 smoke; use Claude Code or Codex with tclaude-layer, " +
+			"or use network open",
+	}
+}
+
 // LaunchWhy is persisted in the resolved snapshot and therefore reaches both
 // launch notes/warnings and the dashboard badge.
 func (p FilteredNetworkPrerequisite) LaunchWhy(enforcing bool) string {

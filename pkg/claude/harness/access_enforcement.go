@@ -32,6 +32,7 @@ type AccessEnforcement struct {
 	networkList             EnforcementLevel
 	networkSelectors        []NetworkSelectorCapability
 	networkPorts            EnforcementLevel
+	networkListRefusal      string
 	networkSelectorRefusal  string
 	socketOpen              EnforcementLevel
 	socketClosed            EnforcementLevel
@@ -54,6 +55,7 @@ type PredictedAccessEnforcement struct {
 	NetworkList             EnforcementLevel
 	NetworkSelectors        []NetworkSelectorCapability
 	NetworkPorts            EnforcementLevel
+	NetworkListRefusal      string
 	NetworkSelectorRefusal  string
 	NetworkListCondition    string
 	SocketOpen              EnforcementLevel
@@ -94,6 +96,7 @@ type accessEnforcementTableRow struct {
 	NetworkList             EnforcementLevel
 	NetworkSelectors        []NetworkSelectorCapability
 	NetworkPorts            EnforcementLevel
+	NetworkListRefusal      string
 	NetworkSelectorRefusal  string
 	NetworkListCondition    string
 	SocketOpen              EnforcementLevel
@@ -284,6 +287,12 @@ func accessEnforcementTable(
 				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised pasta/nftables gateway"
 		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			goos == "linux" && filteredNetworkReady &&
+			h.Name == OpenCodeName {
+			caps.NetworkListRefusal =
+				"OpenCode filtered networking remains disabled until the pinned real-OpenCode M3 smoke; use Claude Code or Codex with tclaude-layer, install missing filtered-network prerequisites if reported, or use network open"
+		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull
 			// M3 materializes the resolved list at launch. Seatbelt provides
@@ -375,6 +384,7 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 		networkClosed: row.NetworkClosed, networkList: row.NetworkList,
 		networkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		networkPorts:     row.NetworkPorts, socketOpen: row.SocketOpen,
+		networkListRefusal:     row.NetworkListRefusal,
 		networkSelectorRefusal: row.NetworkSelectorRefusal,
 		socketClosed:           row.SocketClosed, socketList: row.SocketList,
 		socketOpenRefusal:       row.SocketOpenRefusal,
@@ -390,6 +400,7 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		NetworkClosed: row.NetworkClosed, NetworkList: row.NetworkList,
 		NetworkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
+		NetworkListRefusal:     row.NetworkListRefusal,
 		NetworkSelectorRefusal: row.NetworkSelectorRefusal,
 		NetworkListCondition:   row.NetworkListCondition,
 		SocketClosed:           row.SocketClosed, SocketList: row.SocketList,
@@ -435,6 +446,9 @@ func predictNetworkAxis(
 		}
 	case sandboxpolicy.AccessModeList:
 		if caps.NetworkList == EnforceNone {
+			if caps.NetworkListRefusal != "" {
+				return predictedRefused(tier, caps.NetworkListRefusal)
+			}
 			return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionNotEnforced,
 				Detail: fmt.Sprintf("%s: no filtered-egress applier exists; all outbound connections are permitted",
 					caps.Mechanism)}
@@ -661,6 +675,12 @@ func PlanAccessEnforcement(
 	if axes.Network.Mode == sandboxpolicy.AccessModeList {
 		switch caps.networkList {
 		case EnforceNone:
+			if caps.networkListRefusal != "" {
+				return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+					Kind:    SandboxCapabilityNetworkAllowlist,
+					Message: caps.networkListRefusal,
+				}
+			}
 			rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
 			notices = append(notices, degradationNotice(
 				"network", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,

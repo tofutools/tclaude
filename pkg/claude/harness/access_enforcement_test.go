@@ -374,6 +374,46 @@ func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
 	assert.Contains(t, predicted.Detail, "outbound remains open")
 }
 
+func TestM2bOpenCodeFilteredPredictionAndReadyPlanRefuseUntilM3(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}
+	openCode := MustGet(OpenCodeName)
+	prediction, err := PredictAccessEnforcement(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		axes, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	preview := DescribePredictedAccess(axes, prediction).Network
+	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+	assert.Contains(t, preview.Detail, "real-OpenCode M3 smoke")
+
+	row, err := accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	_, _, err = PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
+	require.ErrorContains(t, err, "real-OpenCode M3 smoke")
+
+	row, err = accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", false,
+	)
+	require.NoError(t, err)
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
+}
+
 func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
