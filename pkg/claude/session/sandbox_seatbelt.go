@@ -58,6 +58,7 @@ func renderSeatbeltProfile(
 	protectedRoots []string,
 	tmuxSocketDir, runtimeTempDir string,
 	identity seatbeltIdentityLookup,
+	daemonReadOnlyPaths []string,
 	privateWriteDirs ...TclaudeLayerPrivateWriteDir,
 ) (string, []seatbeltProfileParam, error) {
 	switch plan.NetworkPosture {
@@ -93,6 +94,11 @@ func renderSeatbeltProfile(
 		return "", nil, err
 	}
 	runtimeTempDir, err = cleanSeatbeltPath("darwin runtime TMPDIR", runtimeTempDir)
+	if err != nil {
+		return "", nil, err
+	}
+	daemonReadOnly, err := cleanSeatbeltPaths(
+		"daemon-final read-only path", daemonReadOnlyPaths)
 	if err != nil {
 		return "", nil, err
 	}
@@ -209,6 +215,17 @@ func renderSeatbeltProfile(
 				daemonReopen: true,
 			},
 		)
+	}
+
+	// A daemon-final read-only bind is a recursive write boundary. Seatbelt
+	// cannot project one host path onto another, so the Darwin adapter admits
+	// only same-path binds and supplies their targets here. unshadowable keeps
+	// an earlier, more-specific profile RW row from piercing the boundary.
+	// A profile hide below the path remains a separate read/write/connect deny.
+	for _, path := range daemonReadOnly {
+		ordered = append(ordered, seatbeltRegion{
+			path: path, mode: sandboxpolicy.MountRO, unshadowable: true,
+		})
 	}
 
 	// Class 4 is last and receives no carveout at all.

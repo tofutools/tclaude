@@ -32,6 +32,7 @@ func TestRenderSeatbeltProfileGolden(t *testing.T) {
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	assertSeatbeltAllowDenyOrder(t, got)
@@ -190,6 +191,7 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *test
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	assertSeatbeltAllowDenyOrder(t, profile)
@@ -237,6 +239,7 @@ func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testi
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -263,6 +266,7 @@ func TestSeatbeltRuntimeCarveoutsPierceOnlyBaselineWriteDeny(t *testing.T) {
 		[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -310,6 +314,7 @@ func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		sameIdentity,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -341,6 +346,7 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 		[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -388,6 +394,7 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 		TclaudeLayerPrivateWriteDir{Parent: parent, Current: current},
 	)
 	require.NoError(t, err)
@@ -429,6 +436,43 @@ func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *tes
 		"the break-glass sibling must not become a private-parent exception")
 }
 
+func TestSeatbeltDaemonFinalReadOnlyCannotBePiercedByPolicyWrite(t *testing.T) {
+	const (
+		shared     = "/Users/dev/.config/opencode"
+		descendant = shared + "/plugins/operator"
+	)
+	profile, params, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkHostOpen,
+			Entries: []sandboxpolicy.MountEntry{{
+				Path: descendant,
+				Mode: sandboxpolicy.MountRW,
+			}},
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		[]string{shared},
+	)
+	require.NoError(t, err)
+
+	var sharedParam string
+	for _, param := range params {
+		if param.path == shared && strings.HasPrefix(param.name, "WRITE_DENY_") {
+			sharedParam = param.name
+			break
+		}
+	}
+	require.NotEmpty(t, sharedParam,
+		"daemon-final read-only root must emit its own write deny")
+	rule := seatbeltRuleContaining(profile, `(param "`+sharedParam+`")`)
+	assert.NotContains(t, rule, "_REOPEN_",
+		"an earlier, more-specific policy write must not pierce daemon-final read-only state")
+}
+
 // Class 4 (host tmux control) is strictly unreachable at the applier itself:
 // an ordinary profile may legitimately grant a parent of the socket directory,
 // so the renderer has to refuse the descendant reopen on its own.
@@ -447,6 +491,7 @@ func TestSeatbeltClass4TmuxHideHasNoDescendantReopens(t *testing.T) {
 		[]string{"/Users/dev/.tclaude/data"},
 		tmuxDir,
 		"/private/var/folders/ab/runtime/T",
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -511,6 +556,7 @@ func TestSeatbeltClass3ProtectedRootsGetNoCarveOutFromAnyLegalProfile(t *testing
 		protectedRoots,
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
+		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -606,6 +652,7 @@ func TestSeatbeltAliasesCoverLinkAndResolvedTargetWithoutInterpolation(t *testin
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	assert.NotContains(t, profile, operatorPath,
@@ -637,6 +684,7 @@ func TestSeatbeltAliasesRequireAbsoluteParameterizedPaths(t *testing.T) {
 		"/private/tmp/tmux-501",
 		"/private/var/folders/ab/runtime/T",
 		nil,
+		nil,
 	)
 	require.ErrorContains(t, err, "mount alias 0 link has non-absolute path")
 }
@@ -653,6 +701,7 @@ func TestRenderSeatbeltProfileRefusesFilteredAndInvalidPostures(t *testing.T) {
 			[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
 			"/private/tmp/tmux-501",
 			"/private/var/folders/ab/runtime/T",
+			nil,
 			nil,
 		)
 		require.Error(t, err)

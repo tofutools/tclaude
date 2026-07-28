@@ -689,8 +689,8 @@ func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *tes
 	require.ErrorContains(t, err, "resolves outside state root")
 }
 
-func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnLinux(t *testing.T) {
-	if runtime.GOOS == "linux" {
+func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnUnixSandboxHosts(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		require.NoError(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))
 	} else {
 		require.Error(t, ValidateTclaudeLayerHarness(harness.OpenCodeName))

@@ -282,6 +282,9 @@ func openCodeStateLayoutForAllocation(
 				return nil, fmt.Errorf("inspect shared OpenCode path %q: %w", path, statErr)
 			}
 		}
+		if err := adaptOpenCodeStateLayoutForPlatform(layout); err != nil {
+			return nil, err
+		}
 		return layout, nil
 	}
 
@@ -336,6 +339,9 @@ func openCodeStateLayoutForAllocation(
 		})
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return nil, fmt.Errorf("inspect OpenCode install: %w", statErr)
+	}
+	if err := adaptOpenCodeStateLayoutForPlatform(layout); err != nil {
+		return nil, err
 	}
 	if err := seedOpenCodeCredentials(layout.ambient.data, layout.stateDirs[0]); err != nil {
 		return nil, err

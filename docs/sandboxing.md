@@ -125,8 +125,8 @@ are configured — not in the sandbox profile.
 `tclaude session new --sandbox-impl tclaude-layer` runs the tool-executing
 harness process inside a tclaude-owned operating-system sandbox: a bubblewrap
 mount namespace on Linux or a Seatbelt profile on macOS. For Claude Code and
-Codex this is the pane harness itself. For OpenCode on Linux it is the
-agentd-owned `opencode serve` executor; the attach pane stays outside. The
+Codex this is the pane harness itself. For OpenCode on Linux and macOS it is
+the agentd-owned `opencode serve` executor; the attach pane stays outside. The
 default remains
 `harness-builtin`, which preserves the current harness-native behavior exactly.
 The implementation choice is recorded with the conversation, so a flagless
@@ -217,14 +217,14 @@ network/PID isolation. Known namespace gaps are warned about, never repaired by
 silently widening the outer policy.
 
 Claude Code and Codex are supported on Linux and macOS. OpenCode is supported
-on Linux in the host-open posture: agentd wraps its server rather than its
-attach pane. Its Linux control-plane engine can cross an isolated namespace
+on both platforms in the host-open posture: agentd wraps its server rather
+than its attach pane. Its Linux control-plane engine can cross an isolated namespace
 through an owned Unix relay, without exposing the socket path inside the server
 wall or routing agentd through host TCP. That engine does not enable a posture:
 OpenCode isolated profiles still refuse because OpenCode requires hosted model
 traffic, filtered remains reserved because no proxy-backed applier exists, and
-OpenCode server wrapping on macOS is still refused. Linux uses `bwrap` from
-`PATH` and requires working unprivileged user namespaces. macOS uses
+the Unix relay remains Linux-only. Linux uses `bwrap` from `PATH` and requires
+working unprivileged user namespaces. macOS uses
 `/usr/bin/sandbox-exec` for filesystem confinement and for the
 isolated-with-agentd network boundary. If any required capability is missing,
 tclaude refuses the launch instead of silently falling back.
@@ -239,15 +239,21 @@ but OpenCode has no stacked contract.
 
 ### OpenCode state under `tclaude-layer`
 
-A new Linux OpenCode agent using `tclaude-layer` receives four durable,
-per-agent XDG roots under
+A new OpenCode agent using `tclaude-layer` receives durable per-agent mutable
+state under
 `$XDG_DATA_HOME/tclaude/opencode-agents/<agent-id>/` (falling back to
 `~/.local/share`). The launch contract hides the parent and reopens only that
 raw, validated stable-agent-id child. It also hides the ambient OpenCode data,
-cache, and state directories. The ambient `~/.opencode` install tree and global
-XDG config are mounted read-only; global config remains at its canonical XDG
-location inside the private layout, so project config keeps OpenCode's native
-higher precedence.
+cache, and state directories. On Linux all four XDG bases point under the
+private root, with ambient global config mounted at the private config
+location. On macOS data/cache/state remain private, while `XDG_CONFIG_HOME`
+names the real canonical host config base because Seatbelt cannot project one
+path onto another. The OpenCode global config directory and ambient
+`~/.opencode` install tree are daemon-final read-only on both platforms, so
+project config keeps OpenCode's native higher precedence. The macOS remainder
+is explicit: non-OpenCode config writes inside the wall are not redirected to
+the private root; they target the real host config base and remain governed by
+the filesystem policy.
 
 OpenCode 1.18.5 and 1.18.6 try to create `~/.opencode/.gitignore` during
 instance bootstrap, and 1.18.6 aborts when that missing-file write meets the
@@ -693,14 +699,26 @@ TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
 ```
 
 The Darwin job likewise verifies that Seatbelt enforces its deny-write probe
-before running the real smoke, and fails if that prerequisite changes. To repeat
-it on a macOS host:
+before running the real filesystem smoke and the OpenCode executor smoke, and
+fails if either named test does not report its explicit top-level PASS line.
+The CI job installs the deliberately pinned `opencode-ai@1.18.6` used by the
+Linux executor smoke. To repeat the filesystem smoke on a macOS host:
 
 ```bash
 go build -o "$TMPDIR/tclaude-sandbox-v2-smoke" .
 TCLAUDE_SANDBOX_V2_SMOKE=1 \
   TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$TMPDIR/tclaude-sandbox-v2-smoke" \
   go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s
+```
+
+After installing that pinned OpenCode binary, repeat the Darwin executor smoke
+with:
+
+```bash
+TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
+  TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$TMPDIR/tclaude-sandbox-v2-smoke" \
+  go test ./pkg/claude/agentd \
+    -run '^TestOpenCodeTclaudeLayerDarwinExecutorSmoke$' -count=1 -v -timeout=120s
 ```
 
 ## The shape that does the work: deny + reopen

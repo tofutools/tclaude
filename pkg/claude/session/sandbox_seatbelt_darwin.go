@@ -112,9 +112,8 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return darwinSeatbeltExecutable, nil
 }
 
-func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
-	return "", fmt.Errorf(
-		"tclaude-layer server wrapping requires Linux and bubblewrap")
+func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
+	return resolveBwrapBinary(posture)
 }
 
 func tclaudeLayerStackedCommand(
@@ -140,7 +139,7 @@ func tclaudeLayerCommand(
 	phase0WriteDirs []string,
 	privateWriteDirs []TclaudeLayerPrivateWriteDir,
 	finalHideDirs []string,
-	_ []TclaudeLayerReadOnlyBind,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
 	socketPaths []string,
 	plan sandboxpolicy.MountPlan,
 	harnessCommand string,
@@ -209,6 +208,10 @@ func tclaudeLayerCommand(
 		}
 		socketPaths[i] = canonicalSeatbeltOwnedPath(socketPaths[i])
 	}
+	readOnlyPaths, err := darwinSeatbeltReadOnlyPaths(readOnlyBinds)
+	if err != nil {
+		return "", err
+	}
 	profile, params, err := renderSeatbeltProfile(
 		filteredContract,
 		socketPaths,
@@ -217,6 +220,7 @@ func tclaudeLayerCommand(
 		tmuxSocketDir,
 		runtimeTempDir,
 		darwinSeatbeltLstatIdentity,
+		readOnlyPaths,
 		canonicalPrivateWriteDirs...,
 	)
 	if err != nil {
@@ -232,17 +236,42 @@ func tclaudeLayerCommand(
 }
 
 func tclaudeLayerServerCommand(
-	string,
-	[]string,
-	[]TclaudeLayerPrivateWriteDir,
-	[]string,
-	[]TclaudeLayerReadOnlyBind,
-	[]string,
-	sandboxpolicy.MountPlan,
-	string,
+	binary string,
+	phase0WriteDirs []string,
+	privateWriteDirs []TclaudeLayerPrivateWriteDir,
+	finalHideDirs []string,
+	readOnlyBinds []TclaudeLayerReadOnlyBind,
+	socketPaths []string,
+	plan sandboxpolicy.MountPlan,
+	serverCommand string,
 ) (string, error) {
-	return "", fmt.Errorf(
-		"tclaude-layer server wrapping requires Linux and bubblewrap")
+	return tclaudeLayerCommand(
+		binary,
+		phase0WriteDirs,
+		privateWriteDirs,
+		finalHideDirs,
+		readOnlyBinds,
+		socketPaths,
+		plan,
+		serverCommand,
+	)
+}
+
+func darwinSeatbeltReadOnlyPaths(
+	binds []TclaudeLayerReadOnlyBind,
+) ([]string, error) {
+	out := make([]string, 0, len(binds))
+	for _, bind := range binds {
+		source := canonicalSeatbeltOwnedPath(bind.Source)
+		target := canonicalSeatbeltOwnedPath(bind.Target)
+		if source != target {
+			return nil, fmt.Errorf(
+				"darwin_seatbelt_path_projection: Seatbelt cannot project daemon-final read-only source %q onto target %q",
+				source, target)
+		}
+		out = append(out, target)
+	}
+	return out, nil
 }
 
 func existingSeatbeltPositivePaths(label string, paths []string) ([]string, error) {
@@ -371,10 +400,15 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 	}
 }
 
-func validateTclaudeLayerHarness(harnessName string) error {
-	if harnessName == harness.OpenCodeName {
-		return fmt.Errorf(
-			"tclaude-layer does not support OpenCode on macOS: agentd-owned server wrapping requires the Linux bubblewrap executor boundary")
+func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {
+	return harness.LaunchOSSandbox{
+		State: "on",
+		Source: "tclaude-layer (Seatbelt/sandbox-exec; OpenCode tool-executing server confined; " +
+			"mutable XDG privacy covers data/cache/state only; config-base writes are not redirected)",
+		Unverified: true,
 	}
+}
+
+func validateTclaudeLayerHarness(harnessName string) error {
 	return nil
 }

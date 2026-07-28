@@ -451,6 +451,12 @@ and the host network plus ambient Unix sockets remain reachable. Neither is the
 `(unverified)` case above — that word is reserved for a posture tclaude could
 not establish, and partial fidelity is a boundary it did.
 
+For OpenCode on macOS, the partial disclosure also names the XDG-config
+remainder: mutable per-agent privacy covers data/cache/state, while the config
+base is not redirected. OpenCode's global config directory is read-only, but a
+non-OpenCode config write from inside the wall targets the real host config
+base and is controlled only by the filesystem policy.
+
 Every warning shares the one ⚠ glyph, so a row tells you at a glance that
 something is off; hover for which of the three it is. The one exception to
 purely informational warnings is an active temporary sandbox override: its

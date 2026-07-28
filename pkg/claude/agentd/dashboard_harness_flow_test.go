@@ -116,8 +116,8 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.True(t, opencode.CanSandbox, "OpenCode surfaces soft, outer-layer, and explicit off postures")
 	assert.False(t, opencode.CanBuiltinOSSandbox,
 		"OpenCode's mode catalog must not be mistaken for a built-in OS sandbox")
-	assert.Equal(t, runtime.GOOS == "linux", opencode.CanTclaudeLayer,
-		"OpenCode tclaude-layer capability is Linux-only")
+	assert.Equal(t, runtime.GOOS == "linux" || runtime.GOOS == "darwin", opencode.CanTclaudeLayer,
+		"OpenCode tclaude-layer capability is available on Linux and macOS")
 	assert.True(t, opencode.TclaudeLayerServerBoundary,
 		"OpenCode availability must use the relay-free executor-server probe")
 	assert.Equal(t, []string{"access-control", "tclaude-layer", "off"}, opencode.SandboxModes)

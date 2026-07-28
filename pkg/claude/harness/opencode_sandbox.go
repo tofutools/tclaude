@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -42,7 +43,7 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 	case OpenCodeSandboxAccessControl:
 		return "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules."
 	case OpenCodeSandboxTclaudeLayer:
-		return "Linux OS containment for the agentd-owned, tool-executing OpenCode server. The attach pane stays outside the boundary; authenticated loopback control traffic, host networking, and ambient host Unix sockets remain reachable. Ordered OpenCode permission rules stay active as defense in depth."
+		return "Linux/macOS OS containment for the agentd-owned, tool-executing OpenCode server. The attach pane stays outside the boundary; authenticated loopback control traffic, host networking, and ambient host Unix sockets remain reachable. Ordered OpenCode permission rules stay active as defense in depth."
 	case OpenCodeSandboxOff:
 		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 	default:
@@ -112,9 +113,15 @@ func ResolveOpenCodeSandboxImplementationMode(
 func openCodeSandboxWarnings(sandboxMode string) []string {
 	switch strings.TrimSpace(sandboxMode) {
 	case OpenCodeSandboxTclaudeLayer:
-		return []string{
+		warnings := []string{
 			"ℹ OpenCode's tool-executing server runs inside tclaude-layer; the attach pane remains outside the boundary, and the authenticated loopback control plane remains reachable.",
 		}
+		if runtime.GOOS == "darwin" {
+			warnings = append(warnings,
+				"⚠ On macOS, per-agent mutable XDG privacy covers OpenCode data/cache/state only; "+
+					"the config base is not redirected, so non-OpenCode config writes inside the wall target the real host config base and remain governed by the filesystem policy.")
+		}
+		return warnings
 	case OpenCodeSandboxAccessControl:
 	default:
 		return nil
@@ -125,6 +132,6 @@ func openCodeSandboxWarnings(sandboxMode string) []string {
 			"so shell redirection, symlinks, and subprocesses still reach files and the " +
 			"network outside the allowed directories. Treat this agent as effectively " +
 			"unsandboxed — use a container or a restricted OS account for real isolation " +
-			"— or select the tclaude-layer sandbox implementation on Linux.",
+			"— or select the tclaude-layer sandbox implementation on Linux or macOS.",
 	}
 }

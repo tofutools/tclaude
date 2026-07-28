@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -124,12 +123,6 @@ func TestSpawnProfile_AcceptsTclaudeLayerForOpenCodeExecutor(t *testing.T) {
 	rec := createProfile(t, f, map[string]any{
 		"name": "oc-layered", "harness": "opencode", "sandbox_implementation": "tclaude-layer",
 	})
-	if runtime.GOOS == "darwin" {
-		require.Equal(t, http.StatusBadRequest, rec.Code,
-			"macOS must refuse an OpenCode profile whose executor boundary cannot be reproduced")
-		assert.Contains(t, rec.Body.String(), "does not support OpenCode on macOS")
-		return
-	}
 	require.Equal(t, http.StatusCreated, rec.Code,
 		"OpenCode executor-layer intent must be accepted at save; body=%s", rec.Body.String())
 	got := readProfile(t, f, "oc-layered")
