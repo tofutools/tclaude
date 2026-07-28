@@ -59,10 +59,10 @@ func sandboxProfilesCmd() *cobra.Command {
 }
 
 type sandboxProfilesPlanParams struct {
-	Agent          string `long:"agent" help:"Inspect the latest recorded launch row for one agent selector"`
-	Group          string `long:"group" help:"Resolve the hypothetical group sandbox-profile tier"`
-	SandboxProfile string `long:"sandbox-profile" help:"Add one explicit hypothetical sandbox profile"`
-	Cwd            string `long:"cwd" help:"Absolute hypothetical launch directory (default: current directory)"`
+	Agent          string `long:"agent" optional:"true" help:"Inspect the latest recorded launch row for one agent selector"`
+	Group          string `long:"group" optional:"true" help:"Resolve the hypothetical group sandbox-profile tier"`
+	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Add one explicit hypothetical sandbox profile"`
+	Cwd            string `long:"cwd" optional:"true" help:"Absolute hypothetical launch directory (default: current directory)"`
 	For            string `long:"for" optional:"true" help:"Hypothetical implementation[/harness[/platform]] target; 'all' is not supported"`
 	JSON           bool   `long:"json" help:"Emit the stable JSON object instead of the human view"`
 }
