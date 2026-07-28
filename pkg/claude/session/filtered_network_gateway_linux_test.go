@@ -34,6 +34,26 @@ func TestFilteredNetworkNFTCommandCarriesOnlyBootstrapCapability(t *testing.T) {
 	assert.Equal(t, filteredNetworkHelperEnv(), cmd.Env)
 }
 
+func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
+	assert.Equal(t, []string{
+		"--foreground",
+		"--quiet",
+		"--config-net",
+		"--gateway", sandboxpolicy.FilteredNetworkGatewayIPv6,
+		"--no-map-gw",
+		"--map-guest-addr", "none",
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
+		"--tcp-ports", "none",
+		"--udp-ports", "none",
+		"--tcp-ns", "none",
+		"--udp-ns", "none",
+		"--no-splice",
+		"--pid", "/tmp/pasta.pid",
+		"123",
+	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+}
+
 func TestFilteredNetworkReadinessAuthenticatesSandboxNetworkNamespace(t *testing.T) {
 	socketPath := filepath.Join(agentipctest.ShortSocketDir(t), "ready.sock")
 	listener, err := net.ListenUnix(

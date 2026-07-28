@@ -11,6 +11,7 @@ const (
 	FilteredNetworkNFTTable       = "tclaude_filter"
 	FilteredNetworkLoopbackIPv4   = "169.254.2.2"
 	FilteredNetworkLoopbackIPv6   = "fd00::2"
+	FilteredNetworkGatewayIPv6    = "fe80::1"
 	FilteredNetworkBootstrapPath  = "/tmp/.tclaude-filtered-bootstrap"
 	FilteredNetworkNFTPolicyPath  = "/tmp/.tclaude-filtered-policy.nft"
 	FilteredNetworkBootstrapReady = "filtered-network-policy-ready"

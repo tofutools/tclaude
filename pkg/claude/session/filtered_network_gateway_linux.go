@@ -341,22 +341,7 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 	if p == nil || p.PastaPath == "" {
 		return nil, nil, nil
 	}
-	args := []string{
-		"--foreground",
-		"--quiet",
-		"--config-net",
-		"--no-map-gw",
-		"--map-guest-addr", "none",
-		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
-		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
-		"--tcp-ports", "none",
-		"--udp-ports", "none",
-		"--tcp-ns", "none",
-		"--udp-ns", "none",
-		"--no-splice",
-		"--pid", p.PastaPIDFile,
-		strconv.Itoa(namespacePID),
-	}
+	args := filteredNetworkPastaArgs(p.PastaPIDFile, namespacePID)
 	cmd := exec.Command(p.PastaPath, args...)
 	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdout = os.Stderr
@@ -395,6 +380,29 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 			return nil, nil, fmt.Errorf("pasta readiness timed out after %s", filteredNetworkPastaReadyTimeout)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func filteredNetworkPastaArgs(pidFile string, namespacePID int) []string {
+	return []string{
+		"--foreground",
+		"--quiet",
+		"--config-net",
+		// Give the namespace an IPv6 default route to pasta's emulated
+		// gateway. The reserved fd00::2 host-loopback mapping must not depend
+		// on an unrelated route existing in the host's selected template.
+		"--gateway", sandboxpolicy.FilteredNetworkGatewayIPv6,
+		"--no-map-gw",
+		"--map-guest-addr", "none",
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
+		"--tcp-ports", "none",
+		"--udp-ports", "none",
+		"--tcp-ns", "none",
+		"--udp-ns", "none",
+		"--no-splice",
+		"--pid", pidFile,
+		strconv.Itoa(namespacePID),
 	}
 }
 

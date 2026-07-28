@@ -60,9 +60,11 @@ func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *test
 	require.NoError(t, validatePastaCapabilities(help))
 
 	help = strings.ReplaceAll(help, "--map-host-loopback", "--old--map-host-loopback")
+	help = strings.ReplaceAll(help, "--gateway", "--old--gateway")
 	help = strings.ReplaceAll(help, "--pid", "--pidfile")
 	err := validatePastaCapabilities(help)
 	require.ErrorContains(t, err, "--map-host-loopback")
+	assert.ErrorContains(t, err, "--gateway")
 	assert.ErrorContains(t, err, "--pid")
 	assert.NotContains(t, err.Error(), "--map-guest-addr")
 }

@@ -35,6 +35,7 @@ var requiredFilteredNetworkPastaOptions = []string{
 	"--foreground",
 	"--quiet",
 	"--config-net",
+	"--gateway",
 	"--no-map-gw",
 	"--map-guest-addr",
 	"--map-host-loopback",
