@@ -153,6 +153,11 @@ func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectori
 	parent := t.TempDir()
 	child := filepath.Join(parent, "workspace")
 	require.NoError(t, os.Mkdir(child, 0o755))
+	var err error
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
 		"name": "split-policy",
 		"filesystem": []any{
@@ -197,8 +202,15 @@ func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectori
 
 func TestSandboxProfileEnforcementIncludesGeneratedAgentDirectoryCarveOut(t *testing.T) {
 	f := newFlow(t)
+	realCacheHome := t.TempDir()
+	cacheLink := filepath.Join(t.TempDir(), "cache-link")
+	require.NoError(t, os.Symlink(realCacheHome, cacheLink))
+	t.Setenv("XDG_CACHE_HOME", cacheLink)
 	cache := tclcommon.CacheDir()
 	require.NoError(t, os.MkdirAll(cache, 0o755))
+	var err error
+	cache, err = filepath.EvalSymlinks(cache)
+	require.NoError(t, err)
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
 		"name":              "private-cache-under-deny",
 		"filesystem":        []any{map[string]any{"path": cache, "access": "deny"}},
@@ -232,6 +244,10 @@ func TestSandboxProfileDraftEnforcementDetectsCrossScopeFilesystemCarveOut(t *te
 	parent := t.TempDir()
 	child := filepath.Join(parent, "workspace")
 	require.NoError(t, os.Mkdir(child, 0o755))
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
 	for _, body := range []map[string]any{
 		{
 			"name":        "deny-parent",
@@ -394,6 +410,11 @@ func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *te
 	parent := t.TempDir()
 	child := filepath.Join(parent, "workspace")
 	require.NoError(t, os.Mkdir(child, 0o755))
+	var err error
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
 	for _, body := range []map[string]any{
 		{
 			"name":        "global-deny",
@@ -410,7 +431,7 @@ func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *te
 		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	}
 	require.NoError(t, db.SetGlobalSandboxProfile("global-deny"))
-	_, err := db.SetAgentGroupSandboxProfile("crew-10", "last-group-reopen")
+	_, err = db.SetAgentGroupSandboxProfile("crew-10", "last-group-reopen")
 	require.NoError(t, err)
 	globalProfile, err := db.GetSandboxProfile("global-deny")
 	require.NoError(t, err)

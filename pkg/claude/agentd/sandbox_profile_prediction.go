@@ -75,7 +75,13 @@ func predictSandboxFilesystem(
 	validatedBuiltinMode string,
 ) harness.PredictedAccessAxis {
 	tier := sandboxFilesystemTier(profile.Filesystem, len(profile.AgentDirectories))
-	grants := filesystemGrantsWithPredictedAgentDirectories(profile)
+	grants, err := filesystemGrantsWithPredictedAgentDirectories(profile)
+	if err != nil {
+		return predictedSandboxFeature(
+			tier, harness.AccessPredictionRefused,
+			"cannot resolve the generated agent-owned directory policy: "+err.Error(),
+		)
+	}
 	reopens := sandboxpolicy.ReopensUnderDeny(grants)
 	if len(profile.Filesystem) == 0 && len(profile.AgentDirectories) == 0 {
 		return predictedSandboxFeature(
@@ -234,18 +240,22 @@ func predictSandboxAgentDirectories(
 
 func filesystemGrantsWithPredictedAgentDirectories(
 	profile sandboxpolicy.Profile,
-) []sandboxpolicy.FilesystemGrant {
+) ([]sandboxpolicy.FilesystemGrant, error) {
 	grants := append([]sandboxpolicy.FilesystemGrant(nil), profile.Filesystem...)
 	if len(profile.AgentDirectories) == 0 {
-		return grants
+		return grants, nil
 	}
-	base := filepath.Join(tclcommon.CacheDir(), "agent-dirs", "predicted-agent")
+	cacheDir, err := canonicalizeForSecureMkdir(tclcommon.CacheDir())
+	if err != nil {
+		return nil, fmt.Errorf("resolve tclaude cache directory: %w", err)
+	}
+	base := filepath.Join(cacheDir, "agent-dirs", "predicted-agent")
 	for _, name := range profile.AgentDirectories {
 		grants = append(grants, sandboxpolicy.FilesystemGrant{
 			Path: filepath.Join(base, name), Access: sandboxpolicy.AccessWrite,
 		})
 	}
-	return grants
+	return grants, nil
 }
 
 func sandboxFilesystemTier(
