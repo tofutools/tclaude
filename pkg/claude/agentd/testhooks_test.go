@@ -1417,6 +1417,8 @@ func tuiKeyForTest(t *testing.T, key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
 		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "delete":
+		return tea.KeyPressMsg{Code: tea.KeyDelete}
 	}
 	runes := []rune(key)
 	if len(runes) != 1 {

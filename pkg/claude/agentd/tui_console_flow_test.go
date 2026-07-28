@@ -370,10 +370,9 @@ func TestGroupsListServesTheDefaultDirToHumansOnly(t *testing.T) {
 	assert.NotContains(t, agentSide.Body.String(), "/work/dev", "but not the operator's directory")
 }
 
-// x retires the selected agent through the daemon's own retire verb: the
-// demotion, the group exit and the pane shutdown are the daemon's, so this
-// asserts on enrollment state and tmux liveness rather than on the console.
-func TestTUIConsoleRetiresAnAgent(t *testing.T) {
+// Delete moves an agent one step toward removal through the daemon's own
+// lifecycle verbs: live → offline, then offline → retired.
+func TestTUIConsoleDeleteStepsAnAgentOfflineThenRetiresIt(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("dev")
 	sp := f.Spawn("dev", "worker")
@@ -383,18 +382,28 @@ func TestTUIConsoleRetiresAnAgent(t *testing.T) {
 	require.Contains(t, c.View(), "1 agents (1 online)")
 
 	// The prompt names the agent, and anything but "y" leaves it alone.
-	c.Press(t, "x")
-	require.Contains(t, c.View(), "and stop its session?")
+	c.Press(t, "delete")
+	require.Contains(t, c.View(), "Take worker offline?")
 	c.Press(t, "n")
 	c.Refresh()
 	state, err := db.AgentState(sp.ConvID)
 	require.NoError(t, err)
-	require.Equal(t, db.AgentStateActive, state, "a cancelled prompt retires nothing")
+	require.Equal(t, db.AgentStateActive, state, "a cancelled prompt changes nothing")
 	require.True(t, f.World.Tmux.IsAlive(sp.TmuxSession))
 
-	c.Press(t, "x", "y")
-
+	c.Press(t, "delete", "y")
 	view := c.View()
+	assert.Contains(t, view, "Took worker offline", "the console reports the first step")
+	assert.Contains(t, view, "1 agents (0 online)", "the roster keeps the now-offline agent")
+	state, err = db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state, "taking an agent offline does not retire it")
+	assert.True(t, flowGroupHasMember(f, "dev", sp.ConvID), "the offline agent stays in its group")
+
+	c.Press(t, "delete")
+	require.Contains(t, c.View(), "Retire worker?")
+	c.Press(t, "y")
+	view = c.View()
 	assert.Contains(t, view, "Retired worker", "the console reports the outcome")
 	assert.Contains(t, view, "left dev", "including the groups the agent gave up")
 	assert.Contains(t, view, "No agents yet", "and the roster drops it right away")
