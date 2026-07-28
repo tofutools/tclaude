@@ -192,6 +192,50 @@ an operator token, so an agent cannot promote itself with an inherited
 `TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
 daemon from a plain shell to get an operator console.
 
+### Standalone / remote terminal dashboard
+
+The same terminal UI can run as a separate HTTP client:
+
+```bash
+# On the agentd host: give the dashboard a stable network endpoint.
+tclaude agentd serve --dashboard-port 8321 --dashboard-bind 0.0.0.0
+
+# On this or another machine: use the operator token from agentd's banner.
+export TCLAUDE_HUMAN_TOKEN=tclo_...
+tclaude agent tui-dashboard --connect-to=agent-host:8321
+
+# A full URL is also accepted (including an HTTPS reverse-proxy prefix).
+tclaude agent tui-dashboard --connect-to=https://agents.example.com/tclaude
+```
+
+A bare `host[:port]` means HTTP; a URL may use HTTP or HTTPS. The operator
+token is a bearer credential with full human authority, so do not send it over
+an untrusted network. Prefer HTTPS or a trusted VPN/tunnel when the listener is
+not confined to the local machine.
+
+The terminal model talks through a small Go API interface with separate
+in-process and HTTP implementations. Listing, spawning, starting offline
+agents, and retiring are identical on both transports and reach the same
+versioned daemon handlers. Host-local operations are intentionally not faked:
+a remote console cannot attach its terminal to the daemon host's tmux server
+or tab-complete the daemon host's filesystem. Quitting a remote console exits
+only that client; agentd and its agents keep running.
+
+The remote client polls every two seconds and treats connection failures as
+transient. It keeps the current listing visible while agentd is down and
+automatically repopulates it when the same address returns. The first request
+authenticates with `TCLAUDE_HUMAN_TOKEN` (or the same persisted-token fallback
+ordinary human CLI commands use) and receives the dashboard session cookie.
+That cookie uses the web dashboard's clean-restart grace/rotation path, so a
+normal agentd restart reconnects without asking for a new token. Persist the
+operator token (`agent.persist_operator_token` or
+`--persist-operator-token`) as well if reconnecting after an unclean stop must
+work, because an ungraceful exit cannot save the previous dashboard session.
+
+The server exposes only the six versioned operations this TUI uses under
+`/api/tui/`; it does not publish agentd's entire Unix-socket API on the
+dashboard listener.
+
 ## Fixed loopback port
 
 By default the dashboard (and the approval popup it shares a listener with)

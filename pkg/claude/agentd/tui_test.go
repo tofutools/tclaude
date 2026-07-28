@@ -23,7 +23,9 @@ import (
 // drive the console's request shaping and response handling without a DB. The
 // identity is the ordinary one: a real pid, no harness ancestry — the shape a
 // console started from the operator's own shell resolves to.
-func stubTUIAPI(h http.HandlerFunc) *tuiAPI { return &tuiAPI{handler: h, pid: 99999} }
+func stubTUIAPI(h http.HandlerFunc) *inProcessTUIAPI {
+	return &inProcessTUIAPI{handler: h, pid: 99999}
+}
 
 // withOperatorToken installs tok as the live operator token for the duration
 // of the test, restoring whatever was there before.
@@ -761,12 +763,12 @@ func TestTUIAPIDoesNotOutrankItsHarnessAncestry(t *testing.T) {
 		writeJSON(w, http.StatusOK, []tuiAgentRow{})
 	})
 
-	agentConsole := &tuiAPI{handler: handler, pid: 4242, convID: "conv-1", hasHarnessAncestor: true}
+	agentConsole := &inProcessTUIAPI{handler: handler, pid: 4242, convID: "conv-1", hasHarnessAncestor: true}
 	require.NoError(t, agentConsole.get("/v1/peers", &[]tuiAgentRow{}))
 	assert.Equal(t, classAgent, seen, "a console under a harness pane stays that agent")
 	assert.Contains(t, agentConsole.identityWarning(), "conv-1")
 
-	operatorConsole := &tuiAPI{handler: handler, pid: 4242}
+	operatorConsole := &inProcessTUIAPI{handler: handler, pid: 4242}
 	require.NoError(t, operatorConsole.get("/v1/peers", &[]tuiAgentRow{}))
 	assert.Equal(t, classHuman, seen)
 	assert.Empty(t, operatorConsole.identityWarning(), "the ordinary case says nothing")

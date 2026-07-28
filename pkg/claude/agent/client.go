@@ -318,12 +318,17 @@ func attachCallerIdentity(req *http.Request) {
 	if hasAgentHint() {
 		req.Header.Set(agentipc.AgentHintHeader, "1")
 	}
-	if tok := humanToken(); tok != "" {
+	if tok := OperatorToken(); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)
 	}
 }
 
-func humanToken() string {
+// OperatorToken returns the operator credential used by human CLI clients.
+// An explicit TCLAUDE_HUMAN_TOKEN wins; otherwise a non-agent caller
+// best-effort reads the persisted token. Standalone operator surfaces such as
+// the remote terminal dashboard use the same resolution path as ordinary
+// `tclaude agent` commands rather than growing a second token lookup.
+func OperatorToken() string {
 	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
 		return tok
 	}
@@ -682,6 +687,17 @@ func attachIdempotencyKey(req *http.Request) error {
 		req.Header.Set(RequestDigestHeader, fmt.Sprintf("%x", h.Sum(nil)))
 	}
 	return nil
+}
+
+// PrepareIdempotentRequest attaches the daemon's stable mutation identity to
+// req. Alternate transports that reach the same /v1 handlers (the remote
+// terminal dashboard, for example) use this before retrying a logical request
+// so a committed mutation with a lost response cannot execute twice.
+//
+// The request body must be replayable (http.NewRequest provides GetBody for
+// bytes.Reader/Buffer and strings.Reader). Read-only requests are unchanged.
+func PrepareIdempotentRequest(req *http.Request) error {
+	return attachIdempotencyKey(req)
 }
 
 func replayableRequest(req *http.Request) (*http.Request, error) {
