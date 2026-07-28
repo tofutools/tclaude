@@ -44,7 +44,7 @@ func AutoNamePromptExcerpt(prompt string) string {
 
 // FreeFloatingAgentName returns the deterministic, cheap display-name fallback
 // for a newly enrolled tclaude session. The actor suffix disambiguates sessions
-// started in the same second without introducing random state of its own.
+// started in the same minute without introducing random state of its own.
 func FreeFloatingAgentName(created time.Time, agentID string) string {
 	if created.IsZero() {
 		created = time.Now()
