@@ -318,12 +318,17 @@ func attachCallerIdentity(req *http.Request) {
 	if hasAgentHint() {
 		req.Header.Set(agentipc.AgentHintHeader, "1")
 	}
-	if tok := humanToken(); tok != "" {
+	if tok := OperatorToken(); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)
 	}
 }
 
-func humanToken() string {
+// OperatorToken returns the operator credential used by human CLI clients.
+// An explicit TCLAUDE_HUMAN_TOKEN wins; otherwise a non-agent caller
+// best-effort reads the persisted token. Standalone operator surfaces such as
+// the remote terminal dashboard use the same resolution path as ordinary
+// `tclaude agent` commands rather than growing a second token lookup.
+func OperatorToken() string {
 	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
 		return tok
 	}

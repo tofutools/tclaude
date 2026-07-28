@@ -82,7 +82,7 @@ func startServeTUI(quit *quitter, startup tuiStartup) func() error {
 		cancel()
 	}()
 
-	m := newTUIModel(newTUIAPI())
+	m := newTUIModel(newInProcessTUIAPI())
 	m.dashboardURL = startup.dashboardURL
 	m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
 	m.showTokenBanner = len(m.tokenLines) > 0
@@ -119,9 +119,32 @@ func tuiEndedNormally(err error) bool {
 	return errors.Is(err, tea.ErrProgramKilled) || errors.Is(err, tea.ErrInterrupted)
 }
 
-// ---- in-process API client -------------------------------------------------
+// ---- API seam + in-process client -----------------------------------------
 
-// tuiAPI issues requests against the daemon's own /v1 mux from inside the
+// tuiCapabilities names the operations that depend on the console sharing the
+// daemon host and process lifetime. API-backed operations (list, spawn, retire,
+// resume) need no capability bit: both implementations support them.
+type tuiCapabilities struct {
+	attachLocalPane  bool
+	completeLocalDir bool
+	shutdownOnQuit   bool
+}
+
+// tuiAPI is the terminal dashboard's only data/control dependency. The
+// in-process implementation below dispatches directly into the daemon mux;
+// remoteTUIAPI uses HTTP. Keeping the model on this deliberately small
+// interface makes the two transports share all rendering and interaction
+// behavior without pretending host-local actions work remotely.
+type tuiAPI interface {
+	get(path string, out any) error
+	post(path string, in, out any) error
+	isOperator() bool
+	identityWarning() string
+	connectionLabel() string
+	capabilities() tuiCapabilities
+}
+
+// inProcessTUIAPI issues requests against the daemon's own /v1 mux from inside the
 // daemon process. The console is a client like any other: it reaches the
 // real handlers, with their validation, permission checks and audit trail,
 // rather than calling spawn/DB internals directly.
@@ -141,7 +164,7 @@ func tuiEndedNormally(err error) bool {
 // with tmux send-keys. So `agentd serve --tui` started from an agent's pane
 // gets an agent-class console, scoped and permission-gated like that agent;
 // started from the operator's own shell it gets the human.
-type tuiAPI struct {
+type inProcessTUIAPI struct {
 	handler http.Handler
 	// pid and the resolved ancestry are fixed for the daemon's lifetime, so
 	// the process-tree walk runs once here rather than on every 2s poll.
@@ -150,14 +173,14 @@ type tuiAPI struct {
 	hasHarnessAncestor bool
 }
 
-func newTUIAPI() *tuiAPI {
+func newInProcessTUIAPI() *inProcessTUIAPI {
 	// A second mux instance: buildMux only registers package-level handlers
 	// and holds no per-mux state, so this shares every code path with the
 	// socket server without sharing its identity middleware (which would
 	// overwrite the peer stamped below).
 	pid := os.Getpid()
 	convID, hasAncestor := convIDForPID(pid)
-	return &tuiAPI{
+	return &inProcessTUIAPI{
 		handler:            buildMux(),
 		pid:                pid,
 		convID:             convID,
@@ -168,7 +191,7 @@ func newTUIAPI() *tuiAPI {
 // callerClass is how the daemon classifies this console — the same verdict
 // its requests get, computed once so the UI can say up front what the operator
 // is working as.
-func (a *tuiAPI) callerClass() callerClass {
+func (a *inProcessTUIAPI) callerClass() callerClass {
 	return classify(&peer{
 		PID:               a.pid,
 		ConvID:            a.convID,
@@ -183,7 +206,7 @@ func (a *tuiAPI) callerClass() callerClass {
 // as the operator — empty when it will. Without it, a console started from
 // the wrong place just answers every keystroke with a bare 403 and no hint
 // about why or what to do instead.
-func (a *tuiAPI) identityWarning() string {
+func (a *inProcessTUIAPI) identityWarning() string {
 	switch a.callerClass() {
 	case classHuman:
 		return ""
@@ -198,15 +221,31 @@ func (a *tuiAPI) identityWarning() string {
 	}
 }
 
-func (a *tuiAPI) get(path string, out any) error {
+func (a *inProcessTUIAPI) isOperator() bool {
+	return a.callerClass() == classHuman
+}
+
+func (a *inProcessTUIAPI) connectionLabel() string {
+	return "in-process"
+}
+
+func (a *inProcessTUIAPI) capabilities() tuiCapabilities {
+	return tuiCapabilities{
+		attachLocalPane:  true,
+		completeLocalDir: true,
+		shutdownOnQuit:   true,
+	}
+}
+
+func (a *inProcessTUIAPI) get(path string, out any) error {
 	return a.do(http.MethodGet, path, nil, out)
 }
 
-func (a *tuiAPI) post(path string, in, out any) error {
+func (a *inProcessTUIAPI) post(path string, in, out any) error {
 	return a.do(http.MethodPost, path, in, out)
 }
 
-func (a *tuiAPI) do(method, path string, in, out any) error {
+func (a *inProcessTUIAPI) do(method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)
@@ -445,7 +484,7 @@ const tuiHarnessDefault = "(default)"
 const tuiProfileDefault = "(default)"
 
 type tuiModel struct {
-	api *tuiAPI
+	api tuiAPI
 
 	agents   []tuiAgentRow
 	groups   []tuiGroupRow
@@ -473,6 +512,13 @@ type tuiModel struct {
 	// operator is true when the daemon classifies this console as the human.
 	// Attaching to a pane is gated on it — see attachSelected.
 	operator bool
+	// capabilities are the host/lifetime-dependent operations supported by
+	// this API implementation. A remote operator is still the operator, but
+	// its terminal and filesystem are not the daemon's.
+	capabilities tuiCapabilities
+	// connectionLabel distinguishes the embedded console from a standalone
+	// client and names the latter's endpoint in the header/help.
+	connectionLabel string
 	// dashboardURL is the web dashboard running beside this console, empty
 	// when --tui is the only surface. It changes what the console can honestly
 	// say about approvals and deep links.
@@ -570,11 +616,24 @@ type (
 	}
 )
 
-func newTUIModel(api *tuiAPI) tuiModel {
-	m := tuiModel{api: api}
+func newTUIModel(api tuiAPI) tuiModel {
+	// The zero-transport model is used by focused rendering/interaction tests
+	// and historically represents the embedded console. A real API always
+	// replaces these defaults with its explicit capabilities below.
+	m := tuiModel{
+		api: api,
+		capabilities: tuiCapabilities{
+			attachLocalPane:  true,
+			completeLocalDir: true,
+			shutdownOnQuit:   true,
+		},
+		connectionLabel: "in-process",
+	}
 	if api != nil {
 		m.identityWarning = api.identityWarning()
-		m.operator = api.callerClass() == classHuman
+		m.operator = api.isOperator()
+		m.capabilities = api.capabilities()
+		m.connectionLabel = api.connectionLabel()
 	}
 	return m
 }
@@ -684,7 +743,7 @@ func sortTUIAgents(agents []tuiAgentRow) {
 	})
 }
 
-func tuiSpawnCmd(api *tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
+func tuiSpawnCmd(api tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 	return func() tea.Msg {
 		var resp agent.SpawnResponse
 		err := api.post("/v1/groups/"+url.PathEscape(group)+"/spawn", req, &resp)
@@ -697,7 +756,7 @@ func tuiSpawnCmd(api *tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 // the pane is asked to exit (?shutdown), and the worktree is left alone
 // (?delete_worktree) — the console never deletes an operator's work, and has
 // no probe of the kind the dashboard runs before offering to.
-func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
+func tuiRetireCmd(api tuiAPI, convID, name string) tea.Cmd {
 	return func() tea.Msg {
 		var res tuiRetireResult
 		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
@@ -710,7 +769,7 @@ func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
 // leaves ?recreate=1 off: re-creating a launch directory the operator has
 // since deleted is a decision the console has no way to put to them, so a
 // vanished directory comes back as an error they can act on instead.
-func tuiResumeCmd(api *tuiAPI, convID, name string) tea.Cmd {
+func tuiResumeCmd(api tuiAPI, convID, name string) tea.Cmd {
 	return func() tea.Msg {
 		var res tuiResumeResult
 		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/resume", nil, &res)
@@ -901,8 +960,9 @@ func tuiIsChoiceField(field int) bool {
 }
 
 // completingDir reports whether a Tab should complete a path rather than
-// move to the next field: this is an operator console, the directory field
-// is focused, and there is something to complete.
+// move to the next field: this transport shares the daemon filesystem, the
+// caller is an operator, the directory field is focused, and there is
+// something to complete.
 //
 // The operator check is the same gate attachSelected uses, for the same
 // reason. Completion reads the filesystem as the process agentd runs in —
@@ -914,7 +974,7 @@ func tuiIsChoiceField(field int) bool {
 // could not have guessed is a different thing, so the console does not
 // offer it to a caller the daemon would not treat as the human.
 func (m tuiModel) completingDir() bool {
-	if !m.operator || m.form.field != tuiFieldDir {
+	if !m.operator || !m.capabilities.completeLocalDir || m.form.field != tuiFieldDir {
 		return false
 	}
 	// Only a path the operator has typed into is completed. An untouched
@@ -1145,6 +1205,10 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
 	}
+	if !m.capabilities.attachLocalPane {
+		m.notice = "This console is remote; attach to the agent from the daemon host."
+		return m, nil
+	}
 	sess := pickAliveSession(row.ConvID)
 	if sess == nil || sess.TmuxSession == "" {
 		m.notice = row.name() + " has no live tmux session to attach to."
@@ -1341,7 +1405,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // back to the ordinary "spawned, here it is in the listing" path.
 func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 	session := msg.resp.TmuxSession
-	if !m.operator || session == "" {
+	if !m.operator || !m.capabilities.attachLocalPane || session == "" {
 		return m, nil
 	}
 	name := msg.resp.AgentID
@@ -1420,7 +1484,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	visible := m.visibleAgents()
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
-		// Quitting stops the daemon, so it always asks first.
+		// The embedded console owns the daemon lifetime; a standalone remote
+		// console owns only itself. Both ask so q remains hard to hit by
+		// accident, while the prompt says exactly what will stop.
 		m.mode = tuiModeConfirmQuit
 	case "up", "k":
 		if m.cursor > 0 {
@@ -1601,8 +1667,10 @@ func writeTokenBlock(b *strings.Builder, lines []string, indent string) {
 
 func (m tuiModel) renderList() string {
 	var b strings.Builder
-	b.WriteString("\n  tclaude agentd — terminal UI")
-	if m.dashboardURL != "" {
+	b.WriteString("\n  tclaude terminal dashboard")
+	if m.connectionLabel != "" && m.connectionLabel != "in-process" {
+		b.WriteString(" • connected to " + m.connectionLabel)
+	} else if m.dashboardURL != "" {
 		b.WriteString(" • web dashboard: " + m.dashboardURL)
 	} else {
 		b.WriteString(" (no web dashboard in this mode)")
@@ -1666,6 +1734,9 @@ func (m tuiModel) renderList() string {
 func (m tuiModel) confirmPrompt() string {
 	switch m.mode {
 	case tuiModeConfirmQuit:
+		if !m.capabilities.shutdownOnQuit {
+			return "Quit this remote console? [y / any other key = cancel]"
+		}
 		return "Quit and shut down agentd? [y / any other key = cancel]"
 	case tuiModeConfirmRetire:
 		const prefix = "Retire "
@@ -1736,7 +1807,7 @@ func (m tuiModel) enterHint() string {
 		return ""
 	case !row.Online:
 		return "enter start"
-	case !m.operator:
+	case !m.operator || !m.capabilities.attachLocalPane:
 		return ""
 	case insideTmux():
 		return "enter switch to"
@@ -1751,7 +1822,11 @@ func (m tuiModel) keyHintLine() string {
 	if m.filterActive {
 		filterLabel = "f show all"
 	}
-	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
+	quitHint := "q quit"
+	if m.capabilities.shutdownOnQuit {
+		quitHint += " (shuts down agentd)"
+	}
+	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
 	if len(m.visibleAgents()) > 0 {
 		// Unlike attaching, retire is not statically an operator-only move: an
 		// agent-class console can hold agent.retire over its own group's
@@ -1847,11 +1922,11 @@ func (m tuiModel) renderSpawnForm() string {
 	// Name tab-completion only where it works, the same way keyHintLine names
 	// enter only for a console that can attach.
 	completeHint := ""
-	if m.operator {
+	if m.operator && m.capabilities.completeLocalDir {
 		completeHint = "tab complete dir • "
 	}
 	spawnHint := "enter spawn"
-	if m.operator {
+	if m.operator && m.capabilities.attachLocalPane {
 		spawnHint = "enter spawn + go to its pane"
 	}
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
@@ -1959,15 +2034,19 @@ func tuiHint(show bool, hint string) string {
 
 func (m tuiModel) renderHelp() string {
 	var b strings.Builder
-	b.WriteString("\n  tclaude agentd terminal UI — keys\n\n")
+	b.WriteString("\n  tclaude terminal dashboard — keys\n\n")
 	b.WriteString("  List\n")
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
 	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
-	b.WriteString("               conversation it was last running. On a live one: go to its\n")
-	b.WriteString("               tmux session — switch-client when agentd runs inside tmux,\n")
-	b.WriteString("               otherwise attach until you detach with ctrl-b d. Going to a\n")
-	b.WriteString("               pane is operator consoles only; starting one is whatever\n")
-	b.WriteString("               the daemon grants this console.\n")
+	b.WriteString("               conversation it was last running.\n")
+	if m.capabilities.attachLocalPane {
+		b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
+		b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
+		b.WriteString("               with ctrl-b d. Going to a pane is operator consoles only;\n")
+		b.WriteString("               starting one is whatever the daemon grants this console.\n")
+	} else {
+		b.WriteString("               A remote console cannot attach to a live daemon-host pane.\n")
+	}
 	b.WriteString("    n          Start a new agent\n")
 	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
 	b.WriteString("               groups, loses its grants and its session is asked to\n")
@@ -1975,25 +2054,38 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
-	b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")
+	if m.capabilities.shutdownOnQuit {
+		b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")
+	} else {
+		b.WriteString("    q/esc      Quit this console; agentd keeps running (asks first)\n\n")
+	}
 	b.WriteString("  New agent\n")
 	b.WriteString("    tab/↑/↓    Next / previous field\n")
-	b.WriteString("    tab        On a Directory you have typed into, complete the path\n")
-	b.WriteString("               instead: one match completes it, several list below\n")
-	b.WriteString("               the field. Operator consoles only. On the field as the\n")
-	b.WriteString("               form left it, tab still moves to the next field.\n")
+	if m.capabilities.completeLocalDir {
+		b.WriteString("    tab        On a Directory you have typed into, complete the path\n")
+		b.WriteString("               instead: one match completes it, several list below\n")
+		b.WriteString("               the field. Operator consoles only. On the field as the\n")
+		b.WriteString("               form left it, tab still moves to the next field.\n")
+	}
 	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
 	b.WriteString("               Directory starts on the group's own default directory\n")
 	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
 	b.WriteString("               group picker until you type a path of your own.\n")
-	b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
-	b.WriteString("               the same move enter makes on its row. Operator\n")
-	b.WriteString("               consoles only; an agent still starting up (no pane\n")
-	b.WriteString("               yet) just lands in the list.\n")
+	if m.capabilities.attachLocalPane {
+		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
+		b.WriteString("               the same move enter makes on its row. Operator\n")
+		b.WriteString("               consoles only; an agent still starting up (no pane\n")
+		b.WriteString("               yet) just lands in the list.\n")
+	} else {
+		b.WriteString("    enter      Spawn; the new agent lands in the remote listing.\n")
+	}
 	b.WriteString("    esc        Cancel\n\n")
-	if m.dashboardURL != "" {
+	if m.connectionLabel != "" && m.connectionLabel != "in-process" {
+		b.WriteString("  Connected to " + m.connectionLabel + ". The console keeps polling\n")
+		b.WriteString("  through outages and reconnects when agentd returns at this address.\n\n")
+	} else if m.dashboardURL != "" {
 		b.WriteString("  The web dashboard is running alongside this console:\n")
 		b.WriteString("    " + m.dashboardURL + "\n")
 		b.WriteString("  Both drive the same daemon, so human-approval requests still\n")

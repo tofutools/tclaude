@@ -47,6 +47,7 @@ func Cmd() *cobra.Command {
 			task.Cmd(),
 			agent.Cmd(),
 			agentd.Cmd(),
+			agentd.TUIDashboardCmd(),
 			memoryfiles.Cmd(),
 			processcmd.Cmd(),
 			dbcmd.Cmd(),
