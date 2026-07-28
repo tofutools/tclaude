@@ -44,7 +44,17 @@ func CompleteDirPath(input string) (completed string, candidates []string) {
 		return input, nil
 	}
 
-	dir, prefix := filepath.Split(ExpandHomePrefix(input))
+	expanded := ExpandHomePrefix(input)
+	// Expansion goes through filepath.Join, which cleans a trailing separator
+	// off "~/" — leaving the home directory's own basename looking like the
+	// segment being completed rather than an empty one. Put the separator
+	// back, so a trailing slash keeps meaning "list this directory's
+	// children" for "~/" exactly as it does for "/home/you/".
+	if strings.HasSuffix(input, "/") && !strings.HasSuffix(expanded, "/") {
+		expanded += "/"
+	}
+
+	dir, prefix := filepath.Split(expanded)
 	if dir == "" {
 		dir = "."
 	}
@@ -74,7 +84,13 @@ func CompleteDirPath(input string) (completed string, candidates []string) {
 	// expansion only ever rewrites the directory portion before it), so
 	// trimming that many characters off the end of input recovers the
 	// unexpanded lead-in (e.g. "~/" stays "~/" rather than becoming the
-	// resolved home directory).
+	// resolved home directory). The guard is belt and braces: an expansion
+	// that ever broke that invariant would otherwise slice out of range and
+	// panic, and this runs in a TUI update loop where a panic costs the
+	// operator their console.
+	if !strings.HasSuffix(input, prefix) {
+		return input, names
+	}
 	head := input[:len(input)-len(prefix)]
 	completed = head + common
 	if len(names) == 1 {

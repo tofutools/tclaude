@@ -93,6 +93,67 @@ func TestCompleteDirPath(t *testing.T) {
 	})
 }
 
+// "~/" means "list my home directory", the same as any other path ending in
+// a separator. Home expansion runs through filepath.Join, which cleans that
+// separator off, and the completion below used to read the resulting last
+// segment (the home directory's own basename) as the segment being
+// completed — slicing out of range and panicking in the middle of a TUI
+// update loop, which costs the operator their console.
+func TestCompleteDirPathListsHomeChildren(t *testing.T) {
+	root := t.TempDir()
+
+	t.Run("several children list as candidates", func(t *testing.T) {
+		home := filepath.Join(root, "home-many")
+		for _, name := range []string{"alpha", "beta"} {
+			if err := os.MkdirAll(filepath.Join(home, name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("HOME", home)
+
+		completed, candidates := CompleteDirPath("~/")
+		if completed != "~/" {
+			t.Errorf("completed = %q, want %q", completed, "~/")
+		}
+		want := []string{"alpha", "beta"}
+		if len(candidates) != len(want) || candidates[0] != want[0] || candidates[1] != want[1] {
+			t.Errorf("candidates = %v, want %v", candidates, want)
+		}
+	})
+
+	t.Run("a single child completes without resolving the tilde", func(t *testing.T) {
+		home := filepath.Join(root, "home-one")
+		if err := os.MkdirAll(filepath.Join(home, "only"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+
+		completed, candidates := CompleteDirPath("~/")
+		if completed != "~/only/" {
+			t.Errorf("completed = %q, want %q", completed, "~/only/")
+		}
+		if candidates != nil {
+			t.Errorf("candidates = %v, want nil", candidates)
+		}
+	})
+
+	t.Run("a partial home-relative segment still completes", func(t *testing.T) {
+		home := filepath.Join(root, "home-partial")
+		if err := os.MkdirAll(filepath.Join(home, "workspace"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+
+		completed, candidates := CompleteDirPath("~/work")
+		if completed != "~/workspace/" {
+			t.Errorf("completed = %q, want %q", completed, "~/workspace/")
+		}
+		if candidates != nil {
+			t.Errorf("candidates = %v, want nil", candidates)
+		}
+	})
+}
+
 func TestExpandHomePrefix(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
