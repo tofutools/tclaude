@@ -454,21 +454,26 @@ hovering does.
 
 A group may also carry one persistent http(s) attachment. This experimental
 surface is **off by default**; opt in with
-`features.group_attachments: true` in tclaude's config file or the
-**Config → Experimental features → Group attachments** checkbox. Enabling it
-exposes a compact **📎 paperclip** overlaid just above the first letter of each
-group title rather than as another quick-item chip. Turning the flag off hides
-the controls without deleting stored attachments.
+`features.group_attachments: "float"` or `"fixed"` in tclaude's config file, or
+choose the corresponding mode in the
+**Config → Experimental features → Group attachments** selector. Enabling it
+in **float** mode exposes a compact **📎 paperclip** overlaid just above the
+first letter of each group title. It is absolutely positioned with no frame or
+reserved header space, so it never moves or resizes neighboring controls. Fine
+pointers show it only while the group header is hovered; keyboard focus reveals
+the attachment control itself, while non-hover touch devices keep it visible.
 
-The paperclip is absolutely positioned with no frame or reserved header space,
-so it never moves or resizes neighboring controls. Fine pointers show it only
-while the group header is hovered; keyboard focus reveals the attachment
-control itself, while non-hover touch devices keep it visible. An existing
-attachment's paperclip opens it; hovering the paperclip reveals the pencil to
-edit or clear it. The editor accepts an optional display name and otherwise
-derives a short Linear issue key, GitHub number, or hostname. Closing the editor
-returns focus to the group's native disclosure summary so the hover overlay does
-not remain visible after Escape.
+In **fixed** mode, the paperclip is a normal in-flow quick item at the far right
+of the group header, after the sandbox-profile control and any link-status chip.
+Its link/ticket label remains visible even when the other quick-item labels
+auto-fold; only the edit pencil appears on hover.
+
+An existing attachment's paperclip opens it; its pencil edits or clears it. The
+editor accepts an optional display name and otherwise derives a short Linear
+issue key, GitHub number, or hostname. Closing a floating editor returns focus
+to the group's native disclosure summary so the hover overlay does not remain
+visible after Escape. Turning the setting off hides both presentations without
+deleting stored attachments.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an

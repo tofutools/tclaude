@@ -499,7 +499,8 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function GroupAttachmentDialogGate({ descriptor, state, snapshot, actions, confirmDiscard }) {
-  const enabled = !!snapshot?.value?.group_attachments_enabled;
+  const mode = snapshot?.value?.group_attachments_mode;
+  const enabled = mode === 'float' || mode === 'fixed';
   useEffect(() => {
     if (!enabled) state.close(descriptor);
   }, [enabled, descriptor, state]);

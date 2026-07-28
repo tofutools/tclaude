@@ -20,18 +20,24 @@ type groupAttachmentResp struct {
 	Cleared       bool   `json:"cleared"`
 }
 
-func TestGroupAttachment_DashboardFlagDefaultsOffAndRefreshes(t *testing.T) {
+func TestGroupAttachment_DashboardModeDefaultsOffAndRefreshes(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.False(t, snap.GroupAttachmentsEnabled)
+	assert.Equal(t, "off", snap.GroupAttachmentsMode)
 
 	require.NoError(t, config.Save(&config.Config{
-		Features: &config.FeaturesConfig{GroupAttachments: true},
+		Features: &config.FeaturesConfig{GroupAttachments: config.GroupAttachmentsFloat},
 	}))
 	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
-	assert.True(t, snap.GroupAttachmentsEnabled)
+	assert.Equal(t, "float", snap.GroupAttachmentsMode)
+
+	require.NoError(t, config.Save(&config.Config{
+		Features: &config.FeaturesConfig{GroupAttachments: config.GroupAttachmentsFixed},
+	}))
+	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Equal(t, "fixed", snap.GroupAttachmentsMode)
 }
 
 func TestGroupAttachment_SetRenderAndClear(t *testing.T) {
