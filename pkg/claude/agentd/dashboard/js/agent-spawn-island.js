@@ -906,14 +906,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
       disabled=${!view.approval.visible} busy=${busy} />
-    ${sandboxInfo.length > 0 && html`
-      <div class="cron-create-row" id="agent-spawn-sandbox-info">
-        <span class="cron-create-label"></span>
-        <div class="cron-create-target" role="status">
-          ${sandboxInfo.map((message) => html`
-            <div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
-        </div>
-      </div>`}
+    <div class="cron-create-row" id="agent-spawn-sandbox-info" hidden=${sandboxInfo.length === 0}>
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target" role="status">
+        ${sandboxInfo.map((message) => html`
+          <div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+      </div>
+    </div>
     ${/* Sits between the two selects it is about — the sandbox above and the
           permission mode right here — because the warning is a statement about
           their combination, not about either field alone. role="alert" so a

@@ -318,11 +318,15 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
     registerCleanup(fn) { cleanups.push(fn); },
   });
   await harness.act(() => Promise.resolve());
+  const initialNotice = host.querySelector('#profile-editor-sandbox-info');
+  assert.ok(initialNotice, 'the empty status region exists before the async disclosure');
+  assert.equal(initialNotice.hidden, true);
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
 
   assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
   const notice = host.querySelector('#profile-editor-sandbox-info');
   assert.ok(notice, 'the tclaude-layer boundary notice remains visible');
+  assert.equal(notice.hidden, false);
   assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
   assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
     /tool-executing server runs inside tclaude's built-in OS sandbox/);

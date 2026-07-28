@@ -424,12 +424,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       onChange=${(event) => change(setDraft, 'tools', event.currentTarget.value)}
       help=${toolsHelp} open=${helpOpen === toolsID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_tools} />
-    ${sandboxInfo.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-sandbox-info`}>
+    <div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-sandbox-info`} hidden=${sandboxInfo.length === 0}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="status">
         ${sandboxInfo.map((message) => html`<div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
       </div>
-    </div>`}
+    </div>
     ${autonomyWarnings.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-autonomy-warning`}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="alert">
