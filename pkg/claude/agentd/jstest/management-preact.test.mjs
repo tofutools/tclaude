@@ -1120,6 +1120,95 @@ test('blank new sandbox drafts do not request an enforcement prediction', async 
   unmount();
 });
 
+test('sandbox enforcement preview pauses for an incomplete access row and resumes when completed', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'network-draft', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [] }, unix_sockets: { mode: 'closed' },
+  }, options: {} });
+  const predictions = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox(draft) {
+      predictions.push(draft);
+      return { targets: [], contexts: [] };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 1);
+
+  const network = host.querySelector('#sandbox-profile-editor-network-mode').closest('fieldset');
+  await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: complete the highlighted Network or Unix-socket rows/);
+
+  const value = network.querySelector('.sbx-network-value');
+  value.value = 'api.example.com';
+  await harness.act(() => harness.fireEvent(value, 'input'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(predictions.length, 2, 'preview resumes after the row becomes valid');
+  assert.equal(host.querySelector('.sbx-preview-status'), null);
+  assert.equal(predictions.at(-1).network.allow[0].host, 'api.example.com');
+  unmount();
+});
+
+test('sandbox network selector retains empty domain and CIDR kinds through save and reload', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const cases = [
+    ['domain', 'api.example.com', 'example.com'],
+    ['cidr', '192.0.2.0/24', '192.0.2.0/24'],
+  ];
+
+  for (const [kind, authored, placeholder] of cases) {
+    const state = createManagementState();
+    state.openDialog({ kind: 'sandbox-editor', seed: {
+      name: `network-${kind}`, filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: { mode: 'list', allow: [{ host: 'old.example.com' }] },
+      unix_sockets: { mode: 'closed' },
+    }, options: {} });
+    let saved = null;
+    const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+      async saveSandbox(value) { saved = value; },
+    });
+    await harness.act(() => Promise.resolve());
+
+    const selector = mounted.host.querySelector('.sbx-network-selector');
+    choose(selector, kind);
+    await harness.act(() => harness.fireEvent(selector, 'change'));
+    const value = mounted.host.querySelector('.sbx-network-value');
+    assert.equal(selectedValue(selector), kind, `${kind} remains selected with an empty value`);
+    assert.equal(value.value, '');
+    assert.equal(value.placeholder, placeholder);
+
+    value.value = authored;
+    await harness.act(() => harness.fireEvent(value, 'input'));
+    await harness.act(() => harness.fireEvent(
+      mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+    assert.equal(saved.draft.network.allow[0][kind], authored);
+    assert.equal(Object.hasOwn(saved.draft.network.allow[0], 'host'), false,
+      `${kind} selection drops the previous host selector`);
+    mounted.unmount();
+    mounted.host.remove();
+
+    const reopenedState = createManagementState();
+    reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
+    const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
+    await harness.act(() => Promise.resolve());
+    assert.equal(selectedValue(reopened.host.querySelector('.sbx-network-selector')), kind);
+    assert.equal(reopened.host.querySelector('.sbx-network-value').value, authored);
+    reopened.unmount();
+    reopened.host.remove();
+  }
+});
+
 test('raw access JSON can repair a structured access validation error', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([

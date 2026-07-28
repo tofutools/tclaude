@@ -89,7 +89,10 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   const rules = sandboxAccessAxes({ network: draft.network }).network;
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
-  const selector = (row) => row.domain ? 'domain' : row.cidr ? 'cidr' : row.loopback ? 'loopback' : 'host';
+  const selector = (row) => Object.hasOwn(row, 'domain') ? 'domain'
+    : Object.hasOwn(row, 'cidr') ? 'cidr'
+      : Object.hasOwn(row, 'loopback') ? 'loopback'
+        : 'host';
   const changeSelector = (index, kind) => {
     const next = kind === 'loopback' ? { loopback: true, ports: rules.allow[index].ports || [] } : { [kind]: '', ports: rules.allow[index].ports || [] };
     update({ allow: rules.allow.map((row, i) => i === index ? next : row) });
@@ -597,10 +600,17 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     try { predictionDraft = { ...draft, ...parseRaw() }; }
     catch (error) { predictionDraftError = message(error); }
   }
+  const accessErrors = sandboxAccessDraftErrors(draft);
+  // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
+  // can resume preview even if the hidden structured draft remains invalid.
+  const predictionAccessErrors = predictionDraftError ? [] : advanced
+    ? sandboxAccessDraftErrors(predictionDraft)
+    : accessErrors;
+  const predictionPaused = !!predictionDraft.name.trim() && predictionAccessErrors.length > 0;
   const predictionSignature = JSON.stringify([predictionDraftError ? null : predictionDraft, evaluateFor, options.group || '']);
   useEffect(() => {
     if (typeof actions.predictSandbox !== 'function') return undefined;
-    if (predictionDraftError || !predictionDraft.name.trim()) {
+    if (predictionDraftError || !predictionDraft.name.trim() || predictionAccessErrors.length > 0) {
       setPrediction(null); setPredictionError(''); setPredictionBusy(false);
       return undefined;
     }
@@ -646,7 +656,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const globalConfigWarnings = commonRules.global_config_warnings || [];
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
-  const accessErrors = sandboxAccessDraftErrors(draft);
   const warnings = sandboxPredictionWarnings(prediction);
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
   const selectedEffectiveAxes = selectedEffective ? sandboxAccessAxes(selectedEffective) : null;
@@ -700,6 +709,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="stacked/claude/linux">stacked · Claude · Linux</option>
         <option value="stacked/claude/darwin">stacked · Claude · macOS</option>
       </select></label>
+      ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: complete the highlighted Network or Unix-socket rows.</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">
