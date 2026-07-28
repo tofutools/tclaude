@@ -32,6 +32,14 @@ const (
 	filteredNetworkPastaReadyTimeout     = 5 * time.Second
 )
 
+func filteredNetworkHelperEnv() []string {
+	return []string{
+		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+		"LANG=C",
+		"LC_ALL=C",
+	}
+}
+
 type preparedFilteredNetworkRelay struct {
 	SetupArgs    []string
 	Command      []string
@@ -273,6 +281,7 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 		strconv.Itoa(namespacePID),
 	}
 	cmd := exec.Command(p.PastaPath, args...)
+	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
@@ -333,6 +342,7 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 		return fmt.Errorf("filtered-network bootstrap contract is invalid")
 	}
 	nft := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
+	nft.Env = filteredNetworkHelperEnv()
 	nft.Stdin = nil
 	nft.Stdout = os.Stderr
 	nft.Stderr = os.Stderr
