@@ -1,12 +1,12 @@
 package agentd
 
 import (
-	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
 )
 
 // taskref.go carries the per-agent task-reference link — an http(s) URL
@@ -28,8 +28,8 @@ import (
 // guards, not security ones. 2048 is the conventional practical URL
 // ceiling; a display label is a ticket id, so 200 is generous.
 const (
-	maxTaskRefURLLen   = 2048
-	maxTaskRefLabelLen = 200
+	maxTaskRefURLLen   = reflink.MaxURLLen
+	maxTaskRefLabelLen = reflink.MaxLabelLen
 )
 
 // taskRefView is the per-row task-reference block embedded in the
@@ -142,28 +142,7 @@ func taskRefBindState(convID, wantURL string) string {
 // An empty string is the caller's "clear the link" signal and is
 // validated separately (never reaches here).
 func validateTaskRefURL(rawURL string) error {
-	rawURL = strings.TrimSpace(rawURL)
-	if rawURL == "" {
-		return fmt.Errorf("reference URL is empty")
-	}
-	// Bound the length: the value rides every 2s dashboard snapshot, and an
-	// agent holds self.task by default, so a runaway string shouldn't be
-	// storable. 2048 is the conventional practical URL ceiling.
-	if len(rawURL) > maxTaskRefURLLen {
-		return fmt.Errorf("reference URL is too long (%d > %d chars)", len(rawURL), maxTaskRefURLLen)
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("reference URL is not a valid URL: %w", err)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("reference URL must be http(s), got %q", u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("reference URL must include a host")
-	}
-	return nil
+	return reflink.ValidateURL(rawURL)
 }
 
 // validateTaskRefLabel bounds the optional explicit display label. Empty
@@ -171,10 +150,7 @@ func validateTaskRefURL(rawURL string) error {
 // rationale as the URL cap; the value is rendered esc'd, so this is not a
 // security check.
 func validateTaskRefLabel(label string) error {
-	if len(label) > maxTaskRefLabelLen {
-		return fmt.Errorf("reference label is too long (%d > %d chars)", len(label), maxTaskRefLabelLen)
-	}
-	return nil
+	return reflink.ValidateLabel(label)
 }
 
 // pathSegments splits a URL path into its non-empty segments.

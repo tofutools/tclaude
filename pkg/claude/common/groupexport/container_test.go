@@ -123,6 +123,8 @@ func TestUnmarshalAcceptsOlderV2Archive(t *testing.T) {
 	assert.Equal(t, 2, exp.FormatVersion)
 	assert.Equal(t, "legacy", exp.Group.Descr)
 	assert.Empty(t, exp.Group.Permissions)
+	assert.Empty(t, exp.Group.AttachmentURL)
+	assert.Empty(t, exp.Group.AttachmentLabel)
 }
 
 // TestUnmarshalMissingFormatVersion rejects a manifest with no (or zero)

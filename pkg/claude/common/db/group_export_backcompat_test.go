@@ -163,6 +163,19 @@ func TestGroupExport_AttachmentRoundTrip(t *testing.T) {
 	assert.Equal(t, attachmentLabel, dst.AttachmentLabel)
 }
 
+func TestImportGroup_RejectsUnsafeAttachment(t *testing.T) {
+	setupTestDB(t)
+
+	_, err := ImportGroup(minimalImportPlan("unsafe", groupexport.Group{
+		AttachmentURL: "data:text/html,unsafe",
+	}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid group attachment")
+	group, lookupErr := GetAgentGroupByName("unsafe")
+	require.NoError(t, lookupErr)
+	assert.Nil(t, group)
+}
+
 // TestGroupExport_GroupTargetCronJob_RoundTrips covers the JOH-26 PR3a fix to
 // the cron export/import path: a group fan-out job (target_kind='group') must
 // round-trip as one. Before the fix the export dropped target_kind, so the

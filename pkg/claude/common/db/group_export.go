@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
 )
 
 // ErrGroupNotFound is returned by CollectGroupExport when the named
@@ -559,6 +560,12 @@ func ImportGroup(plan GroupImportPlan) (*GroupImportResult, error) {
 	if plan.Export == nil {
 		return nil, errors.New("ImportGroup: nil export")
 	}
+	attachmentURL, attachmentLabel, err := reflink.NormalizeOptional(
+		plan.Export.Group.AttachmentURL, plan.Export.Group.AttachmentLabel)
+	if err != nil {
+		return nil, fmt.Errorf("ImportGroup: invalid group attachment: %w", err)
+	}
+	plan.Export.Group.AttachmentURL, plan.Export.Group.AttachmentLabel = attachmentURL, attachmentLabel
 	d, err := Open()
 	if err != nil {
 		return nil, err

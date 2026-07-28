@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/groupexport"
+	"github.com/tofutools/tclaude/pkg/claude/common/reflink"
 )
 
 // groups_export.go is the daemon half of per-group export / import. It
@@ -332,6 +333,12 @@ func inspectGroupImport(archive []byte, asName string) (*importInspection, int, 
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	attachmentURL, attachmentLabel, err := reflink.NormalizeOptional(
+		exp.Group.AttachmentURL, exp.Group.AttachmentLabel)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: invalid group attachment: %w", err)
+	}
+	exp.Group.AttachmentURL, exp.Group.AttachmentLabel = attachmentURL, attachmentLabel
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
@@ -461,6 +468,12 @@ func runGroupImport(archive []byte, into, asName, caller string) (*importRespons
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
+	attachmentURL, attachmentLabel, err := reflink.NormalizeOptional(
+		exp.Group.AttachmentURL, exp.Group.AttachmentLabel)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("import: invalid group attachment: %w", err)
+	}
+	exp.Group.AttachmentURL, exp.Group.AttachmentLabel = attachmentURL, attachmentLabel
 	if err := validateImportedConvIDs(exp); err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("import: %w", err)
 	}
