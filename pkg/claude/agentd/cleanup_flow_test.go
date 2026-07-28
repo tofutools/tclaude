@@ -434,6 +434,67 @@ func TestCleanup_Agents_DeleteRemovesMissingRegisteredWorktree(t *testing.T) {
 	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
 }
 
+// Composed fallback views are agent-specific: two agents can share the same
+// missing/non-Git current directory while their distinct startup paths map to
+// different registered worktrees. A batch must resolve and remove both roots.
+func TestCleanup_Agents_MissingRegisteredFallbackIsPerAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const (
+		convA = "wmfa-1111-2222-3333-4444"
+		convB = "wmfb-1111-2222-3333-4444"
+	)
+	repo := f.TestCwd("wt-fallback-main")
+	scratch := f.TestCwd("wt-shared-non-git-current")
+	missingA := filepath.Join(filepath.Dir(repo), "wt-fallback-missing-a")
+	missingB := filepath.Join(filepath.Dir(repo), "wt-fallback-missing-b")
+	for _, row := range []struct {
+		conv, label, tmux, startup string
+	}{
+		{convA, "spwn-wmfa", "tmux-wmfa", missingA},
+		{convB, "spwn-wmfb", "tmux-wmfb", missingB},
+	} {
+		f.HaveConvWithTitle(row.conv, "fallback-worker")
+		f.HaveAliveSession(row.conv, row.label, row.tmux, row.startup)
+		f.MarkOffline(row.tmux)
+		f.HaveEnrolledAgent(row.conv)
+		require.NoError(t, db.UpsertAgentWorkdir(row.conv, scratch, "", ""))
+	}
+	f.HaveGroup("squad")
+	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
+	require.NoError(t, err)
+
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		repo: {Root: repo, Branch: "main", Kind: "main"},
+	})
+	fw.setRegisteredBranch(missingA, "feature-a")
+	fw.setRegisteredBranch(missingB, "feature-b")
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{
+				{Path: repo, Branch: "main", IsMain: true},
+				{Path: missingA, Branch: "feature-a"},
+				{Path: missingB, Branch: "feature-b"},
+			}, nil
+		},
+		func(path string) (string, error) {
+			if path == repo {
+				return repo, nil
+			}
+			return "", assertNotRepo(path)
+		},
+		func(string) bool { return false },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+convA+`","`+convB+`"],"delete":true,"delete_worktrees":true}`)
+	assert.Equal(t, 2, resp.Deleted)
+	assert.True(t, fw.wasRemoved(missingA))
+	assert.True(t, fw.wasRemoved(missingB))
+}
+
 // Scenario: a worktree a *surviving* agent still works in is never
 // removed, even when one of its sharers is being deleted.
 func TestCleanup_Agents_KeepsSharedWorktree(t *testing.T) {

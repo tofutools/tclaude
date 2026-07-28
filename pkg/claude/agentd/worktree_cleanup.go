@@ -244,9 +244,6 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		}
 	}
 
-	// Cache the full view per directory: agents commonly co-share a cwd, and
-	// InspectWorktree shells out to git.
-	dirViews := map[string]agentWorktreeView{}
 	for convID := range claimants {
 		loc := agent.ResolveLocation(convID)
 		dir := loc.CurrentDir
@@ -254,16 +251,11 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			dir = loc.StartupDir
 		}
 		if dir != "" {
-			view, cached := dirViews[dir]
-			if !cached {
-				dirs := []string{loc.CurrentDir, loc.StartupDir}
-				for extra := range extraDirs[convID] {
-					dirs = append(dirs, extra)
-				}
-				view = inspectWorktreeDirs(dirs, registered)
-				dirViews[dir] = view
+			dirs := []string{loc.CurrentDir, loc.StartupDir}
+			for extra := range extraDirs[convID] {
+				dirs = append(dirs, extra)
 			}
-			snap.views[convID] = view
+			snap.views[convID] = inspectWorktreeDirs(dirs, registered)
 		}
 		for _, claimDir := range []string{loc.StartupDir, loc.CurrentDir} {
 			addExtraDir(convID, claimDir)
