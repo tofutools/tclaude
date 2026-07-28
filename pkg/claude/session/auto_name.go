@@ -20,7 +20,7 @@ import (
 const autoNameRequestTimeout = 500 * time.Millisecond
 const autoNamePromptRunes = 2048
 
-var freeFloatingAgentNameRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[a-zA-Z0-9]{1,8}$`)
+var freeFloatingAgentNameRe = regexp.MustCompile(`^(?:session-)?[0-9]{8}-[0-9]{6}-[a-zA-Z0-9]{1,8}$`)
 
 // AutoNameRequest asks agentd to refine a free-floating session's generated
 // name from its first prompt. ConvID is only a cross-check; the daemon resolves

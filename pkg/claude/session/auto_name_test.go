@@ -15,8 +15,8 @@ func TestFreeFloatingAgentName(t *testing.T) {
 	assert.Equal(t, "20260728-101733-f3e10b1d", got)
 	assert.True(t, IsFreeFloatingAgentName(got))
 	assert.False(t, IsFreeFloatingAgentName("explicit-worker"))
-	assert.False(t, IsFreeFloatingAgentName("session-20260728-101733-f3e10b1d"),
-		"the superseded prefixed shape must not be treated as the current generated fallback")
+	assert.True(t, IsFreeFloatingAgentName("session-20260728-101733-f3e10b1d"),
+		"historical stored fallbacks remain eligible for optional model refinement")
 }
 
 func TestAutoNamePromptExcerptBoundsRunes(t *testing.T) {
