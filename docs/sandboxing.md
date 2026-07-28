@@ -570,8 +570,11 @@ On a positive launch, bubblewrap creates the constructed network/PID namespace
 without connectivity. Rootless bubblewrap maps the invoking host user to
 namespace UID/GID 0 so the sealed bootstrap can receive namespace-local
 `CAP_NET_ADMIN`; host file ownership remains mapped to the invoking user. The
-bootstrap installs the complete
-default-drop nftables output policy as one atomic `nft -f` transaction and
+final harness also runs as namespace UID/GID 0 after the verified capability
+drop. This is a one-ID rootless mapping, not host root: the invoking user's
+files appear owned by namespace root inside the wall, and files the harness
+creates map back to the invoking host UID/GID. The bootstrap installs the
+complete default-drop nftables output policy as one atomic `nft -f` transaction and
 signals the outer supervisor. Only then does the supervisor start foreground
 rootless `pasta` with inbound forwarding, namespace forwarding, gateway
 mapping, and splice shortcuts disabled. Harness exec stays gated until pasta's
