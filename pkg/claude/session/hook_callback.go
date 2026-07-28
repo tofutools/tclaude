@@ -655,7 +655,8 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// boundary, but a failed/aborted compaction may only produce another
 	// turn hook). Clear the phase eagerly so even an event whose arm below
 	// only stamps last_hook cannot leave the dashboard wedged on it.
-	if state.Status == StatusWorking && state.StatusDetail == "compacting" {
+	wasCompacting := state.Status == StatusWorking && state.StatusDetail == "compacting"
+	if wasCompacting {
 		state.StatusDetail = ""
 		if err := SaveSessionState(state); err != nil {
 			slog.Warn("failed to clear compacting status", "error", err, "module", "hooks")
@@ -1068,7 +1069,14 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// A manual /compact returns the human to an idle prompt instead.
 		// SessionStart(source=compact), which follows this hook, preserves
 		// whichever status this boundary selected.
-		if input.Trigger == "manual" {
+		// PostCompact is exempt from the mismatched-conversation guard
+		// because a legitimate compaction can rotate the conv-id before its
+		// SessionStart(compact) announces that rotation. Do not let that
+		// exemption turn a foreign child's manual PostCompact into an idle
+		// stamp on the host: require either the ordinary attribution check,
+		// or the attributed compacting phase this hook just cleared.
+		attributed := wasCompacting || hookBelongsToTrackedMainConversation(state, input)
+		if input.Trigger == "manual" && attributed {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
 			if err := SaveSessionState(state); err != nil {

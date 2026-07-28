@@ -473,6 +473,7 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 	feedHook(t, "pc-sess", map[string]any{
 		"session_id":      "conv-pc-rotated",
 		"hook_event_name": "PostCompact",
+		"trigger":         "manual",
 		"cwd":             dir,
 		"model":           "gpt-5.5",
 	})
@@ -484,6 +485,8 @@ func TestRunHookCallback_PostCompactExemptFromForeignGuard(t *testing.T) {
 
 	got, err := LoadSessionState("pc-sess")
 	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status,
+		"a foreign manual PostCompact must not mark the tracked host idle")
 	assert.Equal(t, "conv-pc", got.ConvID,
 		"PostCompact must not advance the conv-id (its case returns early)")
 	snap, err := db.GetContextSnapshot("pc-sess")
