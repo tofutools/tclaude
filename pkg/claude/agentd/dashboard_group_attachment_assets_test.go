@@ -23,6 +23,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},
 		{"js/action-dialog-actions.js", `/api/groups/${encodeURIComponent(group)}/attachment`},
+		{"dashboard.css", `main { padding: 16px 24px; }`},
 		{"dashboard.css", `position: absolute; z-index: 4;`},
 		{"dashboard.css", `inset-block-start: -4px; inset-inline-start: -24px;`},
 		{"dashboard.css", `display: inline-flex; flex-direction: column;`},
