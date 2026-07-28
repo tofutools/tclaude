@@ -1103,7 +1103,7 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment a:focus-visible,
 .group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .group-attachment-empty {
-  box-sizing: border-box; justify-content: center;
+  box-sizing: border-box; justify-content: center; cursor: pointer;
   width: 24px; height: 24px; opacity: 0.8;
 }
 .group-attachment-edit {

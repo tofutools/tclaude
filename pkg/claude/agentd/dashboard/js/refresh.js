@@ -621,6 +621,11 @@ function bindGroupTitleToggle() {
       recordGroupInteraction(key);
       return; // the title — allow toggle
     }
+    // A validated attachment renders as a real anchor. Let its native
+    // navigation survive this capture-phase guard; its own click handler stops
+    // propagation, and interactive content inside <summary> does not toggle the
+    // disclosure. Unsafe/hostless values never render an anchor here.
+    if (e.target.closest('.group-attachment a[href]')) return;
     e.preventDefault();
   };
   root.addEventListener('click', onClick, true);

@@ -100,13 +100,23 @@ test('production disclosure binder persists an intentional fold as zero', async 
   harness.document.body.innerHTML = `
     <div id="groups-list">
       <details data-group-key="pending-root" open>
-        <summary><strong class="group-name">pending-root</strong></summary>
+        <summary>
+          <strong class="group-name">pending-root</strong>
+          <span class="group-attachment">
+            <a href="https://example.com/project">📎</a>
+          </span>
+        </summary>
       </details>
     </div>`;
   const details = harness.document.querySelector('details');
   const title = details.querySelector('.group-name');
+  const attachment = details.querySelector('.group-attachment a');
   const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
   t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
+
+  const attachmentClick = harness.fireEvent(attachment, 'click', { detail: 1 });
+  assert.equal(attachmentClick.defaultPrevented, false,
+    'the summary capture guard must not cancel native attachment navigation');
 
   harness.fireEvent(title, 'click', { detail: 1 });
   details.open = false;
