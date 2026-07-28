@@ -73,6 +73,22 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await harness.act(() => { escape = harness.fireEvent(harness.document, 'keydown', { key: 'Escape' }); });
   assert.equal(await cancelled, false);
   assert.equal(escape.defaultPrevented, true);
+
+  let closed;
+  await harness.act(() => {
+    closed = feedback.confirm({
+      title: 'Recorded details', body: 'Status: ON\nProfile: base',
+      okLabel: 'Close', informational: true, preformatted: true,
+    });
+  });
+  const body = mounted.container.querySelector('#confirm-body');
+  assert.equal(body.textContent, 'Status: ON\nProfile: base');
+  assert.equal(body.classList.contains('confirm-body-preformatted'), true);
+  assert.equal(mounted.container.querySelector('#confirm-cancel'), null);
+  const close = getByRole(mounted.container, 'button', { name: 'Close' });
+  assert.equal(close.classList.contains('confirm-danger'), false);
+  await harness.act(() => close.click());
+  assert.equal(await closed, true);
   await mounted.unmount();
 });
 

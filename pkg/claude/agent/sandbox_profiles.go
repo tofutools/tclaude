@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -52,9 +53,166 @@ func sandboxProfilesCmd() *cobra.Command {
 			sandboxProfilesLsCmd(), sandboxProfilesShowCmd(), sandboxProfilesCreateCmd(),
 			sandboxProfilesEditCmd(), sandboxProfilesRmCmd(), sandboxProfilesDefaultCmd(),
 			sandboxProfilesGroupCmd(), sandboxProfilesExportCmd(), sandboxProfilesImportCmd(),
-			sandboxProfilesDraftCmd(),
+			sandboxProfilesDraftCmd(), sandboxProfilesPlanCmd(),
 		},
 	}.ToCobra()
+}
+
+type sandboxProfilesPlanParams struct {
+	Agent          string `long:"agent" optional:"true" help:"Inspect the latest recorded launch row for one agent selector"`
+	Group          string `long:"group" optional:"true" help:"Resolve the hypothetical group sandbox-profile tier"`
+	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Add one explicit hypothetical sandbox profile"`
+	Cwd            string `long:"cwd" optional:"true" help:"Absolute hypothetical launch directory (default: current directory)"`
+	For            string `long:"for" optional:"true" help:"Hypothetical implementation[/harness[/platform]] target; 'all' is not supported"`
+	JSON           bool   `long:"json" help:"Emit the stable JSON object instead of the human view"`
+}
+
+type sandboxProfilePlanRequestJSON struct {
+	Agent          string `json:"agent,omitempty"`
+	Group          string `json:"group,omitempty"`
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	Cwd            string `json:"cwd,omitempty"`
+	For            string `json:"for,omitempty"`
+}
+
+type sandboxProfilePlanTargetJSON struct {
+	Implementation string `json:"implementation"`
+	Harness        string `json:"harness"`
+	Platform       string `json:"platform"`
+	ResolvedBy     string `json:"resolved_by,omitempty"`
+}
+
+type sandboxProfilePlanJSON struct {
+	Source          string                         `json:"source"`
+	Agent           string                         `json:"agent,omitempty"`
+	Cwd             string                         `json:"cwd"`
+	Target          sandboxProfilePlanTargetJSON   `json:"target"`
+	Profiles        []sandboxpolicy.AppliedProfile `json:"profiles"`
+	PolicyRecorded  bool                           `json:"policy_recorded"`
+	ProfilesOmitted bool                           `json:"profiles_omitted,omitempty"`
+	RecordedAxes    *sandboxpolicy.ResolvedAxes    `json:"recorded_axes,omitempty"`
+	Notices         []sandboxpolicy.AccessNotice   `json:"notices"`
+	PredictedAxes   *harness.PredictedAccessAxes   `json:"predicted_axes,omitempty"`
+	Plan            session.SandboxPlanDescription `json:"plan"`
+}
+
+func sandboxProfilesPlanCmd() *cobra.Command {
+	return boa.CmdT[sandboxProfilesPlanParams]{
+		Use:         "plan",
+		Short:       "Inspect an effective outer-layer mount plan without launching",
+		Long:        "Inspect either one agent's frozen recorded launch row or a hypothetical global/group/explicit profile composition. The command predicts access and describes the mount contract without probing a wrapper, creating paths, or launching anything.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *sandboxProfilesPlanParams, _ *cobra.Command, _ []string) {
+			os.Exit(runSandboxProfilesPlan(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runSandboxProfilesPlan(p *sandboxProfilesPlanParams, stdout, stderr io.Writer) int {
+	agentSelector := strings.TrimSpace(p.Agent)
+	if agentSelector != "" &&
+		(strings.TrimSpace(p.Group) != "" || strings.TrimSpace(p.SandboxProfile) != "" ||
+			strings.TrimSpace(p.Cwd) != "" || strings.TrimSpace(p.For) != "") {
+		fmt.Fprintln(stderr, "Error: --agent cannot be combined with --group, --sandbox-profile, --cwd, or --for")
+		return rcInvalidArg
+	}
+	cwd := strings.TrimSpace(p.Cwd)
+	if agentSelector == "" && cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: resolve current directory: %v\n", err)
+			return rcIOFailure
+		}
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	request := sandboxProfilePlanRequestJSON{
+		Agent:          agentSelector,
+		Group:          strings.TrimSpace(p.Group),
+		SandboxProfile: strings.TrimSpace(p.SandboxProfile),
+		Cwd:            cwd,
+		For:            strings.TrimSpace(p.For),
+	}
+	var result sandboxProfilePlanJSON
+	if err := DaemonRequest(http.MethodPost, "/v1/sandbox-profile-plan", request, &result, DaemonOpts{}); err != nil {
+		return printSandboxProfileDaemonError(stderr, err)
+	}
+	if p.JSON {
+		return writeSandboxProfileJSON(stdout, stderr, result)
+	}
+	printSandboxProfilePlan(stdout, result)
+	return rcOK
+}
+
+func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
+	fmt.Fprintf(w, "Sandbox plan (%s)\n", result.Source)
+	if result.Agent != "" {
+		fmt.Fprintf(w, "  agent: %s\n", result.Agent)
+	}
+	fmt.Fprintf(w, "  target: %s/%s/%s\n",
+		result.Target.Implementation, result.Target.Harness, result.Target.Platform)
+	if result.Target.ResolvedBy != "" {
+		fmt.Fprintf(w, "  resolved by: %s\n", result.Target.ResolvedBy)
+	}
+	fmt.Fprintf(w, "  cwd: %s\n", result.Cwd)
+	if !result.PolicyRecorded {
+		fmt.Fprintln(w, "  profiles: (not recorded)")
+	} else if result.ProfilesOmitted {
+		fmt.Fprintln(w, "  profiles: (omitted at launch)")
+	} else if len(result.Profiles) == 0 {
+		fmt.Fprintln(w, "  profiles: (none)")
+	} else {
+		fmt.Fprintln(w, "  profiles:")
+		for _, profile := range result.Profiles {
+			fmt.Fprintf(w, "    %s: %s\n", profile.Scope, profile.Name)
+		}
+	}
+	if result.PredictedAxes != nil {
+		fmt.Fprintln(w, "  predicted access:")
+		printPredictedAccessAxis(w, "network", result.PredictedAxes.Network)
+		printPredictedAccessAxis(w, "Unix sockets", result.PredictedAxes.UnixSockets)
+	}
+	if result.RecordedAxes != nil {
+		fmt.Fprintln(w, "  recorded access:")
+		fmt.Fprintf(w, "    network: %s\n", result.RecordedAxes.Network.Mode)
+		fmt.Fprintf(w, "    Unix sockets: %s\n", result.RecordedAxes.UnixSockets.Mode)
+	}
+	for _, notice := range result.Notices {
+		fmt.Fprintf(w, "  notice: %s\n", notice.Detail)
+	}
+	if !result.Plan.Applicable {
+		fmt.Fprintf(w, "  mount plan: not applicable (%s)\n", result.Plan.Reason)
+		return
+	}
+	if result.Plan.Coverage != "" {
+		fmt.Fprintf(w, "  plan coverage: %s\n", result.Plan.Coverage)
+	}
+	for _, unavailable := range result.Plan.Unavailable {
+		fmt.Fprintf(w, "  unavailable: %s\n", unavailable)
+	}
+	for _, entry := range result.Plan.UnavailableEntries {
+		fmt.Fprintf(w, "  %d %-18s %-4s %-24s %s [unavailable: %s]\n",
+			entry.Class, entry.ClassName, entry.Mode, entry.Origin,
+			entry.Target, entry.Reason)
+	}
+	fmt.Fprintf(w, "  network posture: %s\n", result.Plan.NetworkPosture)
+	for _, entry := range result.Plan.Entries {
+		source := ""
+		if entry.Source != "" && entry.Source != entry.Target {
+			source = entry.Source + " -> "
+		}
+		fmt.Fprintf(w, "  %d %-18s %-4s %-24s %s%s [%s]\n",
+			entry.Class, entry.ClassName, entry.Mode, entry.Origin,
+			source, entry.Target, entry.Disposition)
+	}
+	if len(result.Plan.Aliases) > 0 {
+		fmt.Fprintln(w, "  aliases:")
+		for _, alias := range result.Plan.Aliases {
+			fmt.Fprintf(w, "    %s -> %s\n", alias.Link, alias.Target)
+		}
+	}
 }
 
 type sandboxProfilesLsParams struct {

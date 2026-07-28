@@ -302,6 +302,59 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
   });
 });
 
+test('SandboxBadge adds an adjacent recorded-facts chevron without changing the glyph action', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { SandboxBadge } = await harness.importDashboardModule('js/groups-member-table.js');
+  const member = {
+    agent_id: 'agt_details', conv_id: 'conv-details', title: 'worker', online: true,
+    state: {
+      harness: 'claude', sandbox_mode: 'off', sandbox_implementation: 'tclaude-layer',
+      os_sandbox_state: 'on', os_sandbox_unverified: true,
+      os_sandbox_source: 'tclaude-layer (bubblewrap; host network)',
+      sandbox_profiles_recorded: true,
+      sandbox_profiles: [{ name: 'base' }],
+      sandbox_access_notices: [{ detail: 'socket selector did not materialize' }],
+    },
+  };
+  const mounted = await harness.mount(harness.html`<${SandboxBadge} member=${member} />`);
+  try {
+    const badge = mounted.container.querySelector('.sandbox-badge');
+    const details = mounted.container.querySelector('.sandbox-details-chevron');
+    assert.ok(badge);
+    assert.ok(details);
+    assert.equal(badge.dataset.act, 'sandbox-restart');
+    assert.equal(badge.dataset.action, 'unlock');
+    assert.equal(badge.title,
+      'Status: ON\nImplementation: TClaude\nProfile: base\nWarning: socket selector did not materialize\nClick to temporarily disable');
+    assert.equal(details.dataset.act, 'sandbox-details');
+    assert.match(details.dataset.details, /Source: tclaude-layer \(bubblewrap; host network\)/);
+    assert.match(details.dataset.details, /Notice: socket selector did not materialize/);
+    assert.match(details.dataset.details, /Known partial boundary: host networking/);
+  } finally {
+    await mounted.unmount();
+  }
+
+  const spoofed = await harness.mount(harness.html`<${SandboxBadge} member=${{
+    ...member,
+    state: {
+      ...member.state,
+      os_sandbox_source: 'profile "tclaude-layer (bubblewrap; host network)"',
+    },
+  }} />`);
+  try {
+    const text = spoofed.container.querySelector('.sandbox-details-chevron').dataset.details;
+    assert.match(text, /Recorded as unverified; no further fidelity detail was recorded/);
+    assert.doesNotMatch(text, /Known partial boundary: host networking/,
+      'producer fidelity uses exact source+implementation equality, never substrings');
+  } finally {
+    await spoofed.unmount();
+  }
+});
+
 test('the sandbox glyph rides the harness line, left of the remote indicator', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `

@@ -129,6 +129,14 @@ sandbox-access `Warning` lines, and a click action when the badge supports a
 temporary disable or restore. It does not show mode/settings provenance or
 infer the effects of a named profile. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
+The adjacent **›** is a separate, non-mutating details action. It expands only
+facts frozen on that launch row: recorded mode and provenance, applied profile
+names, persisted access notices, and a known partial-fidelity sentence when the
+recorded implementation/source pair exactly matches a ruled producer literal.
+An unknown unverified pair gets a generic recorded-as-unverified sentence; the
+dashboard does not guess from source substrings or predict current capability.
+The padlock/warning itself keeps the compact tooltip and temporary
+disable/restore action described above.
 
 A successfully live-probed Linux `stacked` launch uses the distinct `🔒²`
 glyph. Its compact tooltip reports `Status: ON` and identifies the implementation

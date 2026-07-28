@@ -931,9 +931,10 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(dot.dataset.conv, 'conv-rich');
   assert.match(dot.title, /Claude Code · Opus 4\.8/);
   const harnessLine = richRow.querySelector('.agent-harness');
-  // The sandbox and remote indicators are the tail of this one line — bare
-  // glyphs, sandbox first — not a second line under the control cell.
-  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42🔒📱/);
+  // The sandbox group and remote indicator are the tail of this one line —
+  // glyph, adjacent details chevron, then remote — not a second line under
+  // the control cell.
+  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42🔒›📱/);
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
   const sandboxGlyph = harnessLine.querySelector('.sandbox-badge');
   assert.equal(sandboxGlyph.textContent, '🔒');

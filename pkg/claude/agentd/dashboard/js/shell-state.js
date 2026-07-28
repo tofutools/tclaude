@@ -37,6 +37,8 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         meta: String(options.meta || ''),
         okLabel: String(options.okLabel || 'Confirm'),
         cancelLabel: String(options.cancelLabel || 'Cancel'),
+        informational: !!options.informational,
+        preformatted: !!options.preformatted,
       };
     });
   }
