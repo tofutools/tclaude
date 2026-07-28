@@ -67,6 +67,34 @@ func TestGitHubPRRefFromURL(t *testing.T) {
 	}
 }
 
+func TestPresentedPRCacheKeepsMergedTombstoneAcrossURLVariants(t *testing.T) {
+	setupTestDB(t)
+	const (
+		canonical = "https://github.com/tofutools/tclaude/pull/800"
+		files     = "https://github.com/TofuTools/TClaude/pull/800/files"
+	)
+	mergedAt := time.Now().Add(-time.Minute)
+	savePresentedPRCache(presentedPRCacheKey(canonical), canonical, presentedPRInfo{
+		URL: canonical, State: "merged", FetchedAt: mergedAt,
+	}, mergedAt)
+
+	// Model the late per-PR refresh completing with an apparently newer open
+	// result and a non-canonical spelling of the same GitHub PR.
+	openAt := time.Now()
+	savePresentedPRCache(presentedPRCacheKey(files), files, presentedPRInfo{
+		URL: files, State: "open", FetchedAt: openAt,
+	}, openAt)
+
+	states := cachedPresentedPRStates([]string{canonical})
+	got, ok := states[prStateKey(canonical)]
+	require.True(t, ok)
+	assert.Equal(t, "merged", got.state)
+	assert.True(t, got.updatedAt.Equal(mergedAt),
+		"rejected open result must not make the tombstone appear newer")
+	assert.Equal(t, presentedPRCacheKey(canonical), presentedPRCacheKey(files),
+		"equivalent GitHub PR URLs must share one tombstone")
+}
+
 func TestRecentlyMergedPRRetryDelay(t *testing.T) {
 	assert.Equal(t, 10*time.Second, recentlyMergedPRRetryDelay(0))
 	assert.Equal(t, 20*time.Second, recentlyMergedPRRetryDelay(1))

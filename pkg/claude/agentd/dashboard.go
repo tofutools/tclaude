@@ -2564,13 +2564,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	span.addChildDuration("preload", "conv_set", time.Since(convSetStart))
 	var (
-		taskRefs     map[string]db.AgentTaskRef
-		presentedPRs map[string][]db.AgentPR
-		allTags      map[string][]string
+		taskRefs          map[string]db.AgentTaskRef
+		presentedPRs      map[string][]db.AgentPR
+		cachedPRStates    prStateIndex
+		allTags           map[string][]string
+		branchPRCacheURLs []string
 	)
 	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
 		span.addChildren("preload", phases...)
 	})
+	branchPRCacheURLs = make([]string, 0, len(convIDs)*2)
+	for _, convID := range convIDs {
+		links := rc.viewFor(convID).Links
+		branchPRCacheURLs = append(branchPRCacheURLs, links.BranchPRURL, links.StartupPRURL)
+	}
 	visibleAgentIDs := make([]string, 0, len(rc.agents))
 	visibleAgentSet := make(map[string]struct{}, len(rc.agents))
 	for _, actor := range rc.agents {
@@ -2588,6 +2595,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			taskRefs, _ = db.ListAgentTaskRefsByAgentIDs(visibleAgentIDs)
 		}},
 		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
+		snapshotNamedLoad{"pr_state_cache", func() { cachedPRStates = cachedPresentedPRStates(branchPRCacheURLs) }},
 		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
 	)...)
 
@@ -2604,6 +2612,16 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	freshPRStates := make(prStateIndex)
 	for _, convID := range convIDs {
 		freshPRStates.addRepoLinks(rc.viewFor(convID).Links)
+	}
+	for key, candidate := range cachedPRStates {
+		current, ok := freshPRStates[key]
+		if !ok {
+			freshPRStates[key] = candidate
+			continue
+		}
+		state, updatedAt := newestPRState(
+			current.state, current.updatedAt, candidate.state, candidate.updatedAt)
+		freshPRStates[key] = prStateObservation{state: state, updatedAt: updatedAt}
 	}
 	for _, rows := range presentedPRs {
 		for _, row := range rows {

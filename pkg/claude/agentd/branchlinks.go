@@ -257,10 +257,25 @@ func (v repoLinksView) withFreshestPRStates(idx prStateIndex) repoLinksView {
 }
 
 func newestPRState(current string, currentAt time.Time, candidate string, candidateAt time.Time) (string, time.Time) {
-	if strings.TrimSpace(candidate) == "" {
+	currentState := strings.TrimSpace(current)
+	candidateState := strings.TrimSpace(candidate)
+	if candidateState == "" {
 		return current, currentAt
 	}
-	if strings.TrimSpace(current) == "" {
+	if currentState == "" {
+		return candidate, candidateAt
+	}
+	// A GitHub PR cannot be reopened after it is merged. In particular, a
+	// slower gh-pr-view request can return its older "open" observation after
+	// the quick merged-PR search has completed. Wall-clock freshness cannot
+	// make that lifecycle transition valid, so merged wins in either source
+	// position before timestamps are considered.
+	currentMerged := strings.EqualFold(currentState, "merged")
+	candidateMerged := strings.EqualFold(candidateState, "merged")
+	if currentMerged != candidateMerged {
+		if currentMerged {
+			return current, currentAt
+		}
 		return candidate, candidateAt
 	}
 	if candidateAt.IsZero() && !currentAt.IsZero() {
