@@ -31,6 +31,37 @@ function GroupActivity({ members, snapshot }) {
   return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
+function GroupAttachment({ group, actions }) {
+  const url = group.attachment_url || '';
+  const label = group.attachment_label || url;
+  const openEditor = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    actions.openGroupAttachment(group);
+  };
+  if (!url) {
+    return html`<button
+      type="button" class="group-attachment group-attachment-empty"
+      aria-label=${`Attach a persistent link to ${group.name}`}
+      title="Attach a persistent Linear project, GitHub board, or other reference"
+      onClick=${openEditor}
+    >📌</button>`;
+  }
+  return html`<span class="group-attachment group-attachment-set">
+    <a
+      href=${url} target="_blank" rel="noopener noreferrer" draggable=${false}
+      title=${`Open ${label} — ${url}`}
+      onClick=${(event) => event.stopPropagation()}
+    >📌 ${label}</a>
+    <button
+      type="button" class="group-attachment-edit"
+      aria-label=${`Edit the persistent link for ${group.name}`}
+      title="Edit or clear this group attachment"
+      onClick=${openEditor}
+    >✎</button>
+  </span>`;
+}
+
 function MenuButton({ regular, wizard = regular, className, ...props }) {
   return h('button', { role: 'menuitem', class: className || undefined, ...props },
     h(ThemeText, { regular, wizard }));
@@ -317,6 +348,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
     >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
+    <${GroupAttachment} group=${group} actions=${actions} />
     <${GroupActivity} members=${activity} snapshot=${snapshot} />
     <${ProcessChip} group=${group} />
     ${group.waves?.pending_waves ? html`<span class="group-waves-chip" title=${`Staged spawn — ${group.waves.pending_agents} agent(s) in ${group.waves.pending_waves} more wave(s) will spawn as each wave settles${group.waves.deadline_at ? `\nnext wave by ${group.waves.deadline_at} at the latest` : ''}`}>🌊 wave ${group.waves.current_wave}/${group.waves.total_waves} pending</span>` : null}

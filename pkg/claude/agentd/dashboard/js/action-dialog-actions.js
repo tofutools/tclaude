@@ -68,6 +68,7 @@ export function createActionDialogActions({
       state.openNest({ group });
     },
     openTaskLink: state.openTaskLink,
+    openGroupAttachment: state.openGroupAttachment,
     openPresetClone(options) {
       if (!options?.source?.name || typeof options.create !== 'function') {
         notify('nothing to clone', true);
@@ -169,6 +170,20 @@ export function createActionDialogActions({
       });
       state.close(owner);
       notify(url ? `task link updated: ${label}` : `task link cleared: ${label}`);
+      await refresh();
+    },
+    async setGroupAttachment({ group, url, attachmentLabel, changed }, owner) {
+      if (!changed) {
+        state.close(owner);
+        notify('no changes');
+        return;
+      }
+      await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/attachment`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(url ? { url, label: attachmentLabel } : { clear: true }),
+      });
+      state.close(owner);
+      notify(url ? `${group}: attachment updated` : `${group}: attachment cleared`);
       await refresh();
     },
     async clonePreset({ source, create, name }, owner) {

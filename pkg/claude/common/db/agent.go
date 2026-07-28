@@ -22,6 +22,11 @@ type AgentGroup struct {
 	MaxMembers       int    // hard cap on member count; a spawn that would exceed it is refused. 0 = unlimited
 	NotifyEnabled    bool   // OS notifications for member agents; false mutes the whole group (a per-agent 'on' pref still overrides)
 	RemoteControl    *bool  // remote-control policy for agents spawned into this group; tri-state: nil = inherit (defer to the spawn profile), false = actively deny (force off), true = actively opt-in (force on). Overrides the profile default (JOH-262)
+	// AttachmentURL is the group's optional persistent http(s) reference
+	// (a Linear project, GitHub board, design doc, …). AttachmentLabel is an
+	// optional display override; callers derive a compact label when blank.
+	AttachmentURL   string
+	AttachmentLabel string
 	// Mission and SourceTemplate are deployment provenance (JOH-245): what a
 	// task force was deployed against (a free-text topic or Linear link) and the
 	// template it was instantiated/deployed from (surfaced as its current name
@@ -708,7 +713,7 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 
 // CreateAgentGroupFrom inserts a new group named `name` that carries
 // every configurable setting from `src` — descr, default cwd / context
-// / profile, live group permissions, the max-members cap and the notify switch. created_at is
+// / profile, attachment, live group permissions, the max-members cap and the notify switch. created_at is
 // stamped fresh and the new group comes up active (archived_at left
 // zero) regardless of src's archived state, so cloning an archived
 // group yields a live one. Returns the new group's ID.
@@ -761,11 +766,11 @@ func CreateAgentGroupFrom(name string, src AgentGroup) (int64, error) {
 		INSERT INTO agent_groups
 			(name, descr, default_cwd, default_context, default_profile, default_profile_id,
 			 sandbox_profile, sandbox_profile_id, max_members, notify_enabled, remote_control,
-			 mission, source_template, source_template_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 attachment_url, attachment_label, mission, source_template, source_template_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		name, src.Descr, src.DefaultCwd, src.DefaultContext, src.DefaultProfile, defaultProfileID,
 		sandboxProfileName, sandboxProfileID, src.MaxMembers, src.NotifyEnabled, boolPtrToNull(src.RemoteControl),
-		src.Mission, src.SourceTemplate, sourceTemplateID,
+		src.AttachmentURL, src.AttachmentLabel, src.Mission, src.SourceTemplate, sourceTemplateID,
 		time.Now().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
@@ -947,6 +952,32 @@ func SetAgentGroupRemoteControl(name string, policy *bool) (int64, error) {
 	return res.RowsAffected()
 }
 
+// SetAgentGroupAttachment sets (or, with url == "", clears) the group's
+// persistent reference. Clearing the URL also clears the optional label so a
+// stale label cannot outlive the attachment it described.
+func SetAgentGroupAttachment(name, url, label string) (int64, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, errors.New("SetAgentGroupAttachment: group name required")
+	}
+	url = strings.TrimSpace(url)
+	label = strings.TrimSpace(label)
+	if url == "" {
+		label = ""
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(
+		`UPDATE agent_groups SET attachment_url = ?, attachment_label = ? WHERE name = ?`,
+		url, label, name)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteAgentGroup removes a group by name. Cascades to membership +
 // ownership rows (ON DELETE CASCADE in schema) and, within the same
 // transaction, rewrites the group's messages to group_id = 0 so the
@@ -1019,7 +1050,7 @@ const agentGroupSelect = `SELECT id, name, descr, default_cwd, default_context,
 	CASE WHEN sandbox_profile_id IS NULL THEN sandbox_profile
 	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = sandbox_profile_id), '') END,
 	COALESCE(sandbox_profile_id, 0),
-	max_members, notify_enabled, remote_control, mission,
+	max_members, notify_enabled, remote_control, attachment_url, attachment_label, mission,
 	CASE WHEN source_template_id IS NULL THEN source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = source_template_id), source_template) END,
 	COALESCE(source_template_id, 0),
@@ -1031,7 +1062,7 @@ const agentGroupAliasedSelect = `SELECT g.id, g.name, g.descr, g.default_cwd, g.
 	CASE WHEN g.sandbox_profile_id IS NULL THEN g.sandbox_profile
 	     ELSE COALESCE((SELECT name FROM sandbox_profiles WHERE id = g.sandbox_profile_id), '') END,
 	COALESCE(g.sandbox_profile_id, 0),
-	g.max_members, g.notify_enabled, g.remote_control, g.mission,
+	g.max_members, g.notify_enabled, g.remote_control, g.attachment_url, g.attachment_label, g.mission,
 	CASE WHEN g.source_template_id IS NULL THEN g.source_template
 	     ELSE COALESCE((SELECT name FROM group_templates WHERE id = g.source_template_id), g.source_template) END,
 	COALESCE(g.source_template_id, 0),
@@ -2936,8 +2967,8 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 // their row processed.
 //
 // read_at is deliberately the only delivery predicate here, which rests on an
-// invariant worth stating explicitly: on a regular_send row, read_at != '' with
-// processed_at == '' can only mean inline pane delivery. Exactly three writers
+// invariant worth stating explicitly: on a regular_send row, read_at != ” with
+// processed_at == ” can only mean inline pane delivery. Exactly three writers
 // produce that state, and all three put the full body in the pane:
 //
 //   - MarkAgentMessageDeliveredState (the direct-send twin), consumed only
@@ -2988,7 +3019,7 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 // the other way round: MAX stays NULL and the fallback carries everything, one
 // row per completed turn. That regime is self-sustaining, because once the
 // fallback acknowledges a row, that row's own later UserPromptSubmit hits
-// MarkRegularAgentMessageStarted's processed_at = '' guard and never stamps
+// MarkRegularAgentMessageStarted's processed_at = ” guard and never stamps
 // started_at. Both regimes drain; neither can wedge.
 //
 // Both subqueries MUST stay non-correlated — they may reference bound
@@ -3910,7 +3941,7 @@ func scanAgentGroup(s rowScanner) (*AgentGroup, error) {
 	var remoteControl, parentID sql.NullInt64
 	if err := s.Scan(&g.ID, &g.Name, &g.Descr, &g.DefaultCwd, &g.DefaultContext,
 		&g.DefaultProfile, &g.SandboxProfile, &g.SandboxProfileID,
-		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.Mission,
+		&g.MaxMembers, &g.NotifyEnabled, &remoteControl, &g.AttachmentURL, &g.AttachmentLabel, &g.Mission,
 		&g.SourceTemplate, &g.SourceTemplateID, &createdAt, &archivedAt, &parentID); err != nil {
 		return nil, err
 	}

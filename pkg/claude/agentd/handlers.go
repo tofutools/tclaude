@@ -2927,10 +2927,13 @@ func groupByID(id int64) (*db.AgentGroup, error) {
 // --- /v1/groups (GET = anyone, POST = human only) ---
 
 type groupSummary struct {
-	Name    string `json:"name"`
-	Descr   string `json:"descr,omitempty"`
-	Members int    `json:"members"`
-	Online  int    `json:"online"`
+	Name                    string `json:"name"`
+	Descr                   string `json:"descr,omitempty"`
+	AttachmentURL           string `json:"attachment_url,omitempty"`
+	AttachmentLabel         string `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string `json:"attachment_label_override,omitempty"`
+	Members                 int    `json:"members"`
+	Online                  int    `json:"online"`
 	// MaxMembers is the group's hard member cap (agent_groups.max_members);
 	// 0 = unlimited. A spawn that would exceed it is refused.
 	MaxMembers int `json:"max_members,omitempty"`
@@ -3040,19 +3043,23 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 					online++
 				}
 			}
+			attachment := groupAttachmentViewFor(g)
 			out = append(out, groupSummary{
-				Name:                g.Name,
-				Descr:               g.Descr,
-				Members:             len(members),
-				Online:              online,
-				MaxMembers:          g.MaxMembers,
-				DefaultProfile:      g.DefaultProfile,
-				Permissions:         groupPermissions,
-				Archived:            g.IsArchived(),
-				NotifyMuted:         !g.NotifyEnabled,
-				RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl),
-				Mission:             g.Mission,
-				SourceTemplate:      g.SourceTemplate,
+				Name:                    g.Name,
+				Descr:                   g.Descr,
+				AttachmentURL:           attachment.URL,
+				AttachmentLabel:         attachment.Label,
+				AttachmentLabelOverride: attachment.LabelOverride,
+				Members:                 len(members),
+				Online:                  online,
+				MaxMembers:              g.MaxMembers,
+				DefaultProfile:          g.DefaultProfile,
+				Permissions:             groupPermissions,
+				Archived:                g.IsArchived(),
+				NotifyMuted:             !g.NotifyEnabled,
+				RemoteControlPolicy:     remoteControlPolicyToWire(g.RemoteControl),
+				Mission:                 g.Mission,
+				SourceTemplate:          g.SourceTemplate,
 			})
 		}
 		writeJSON(w, http.StatusOK, out)
@@ -3226,6 +3233,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 //	PATCH  /v1/groups/{name}/members/{conv}  → update role/descr
 //	DELETE /v1/groups/{name}/members/{conv}  → remove member
 //	       /v1/groups/{name}/links[/{id}]    → link CRUD (own method dispatch)
+//	GET/POST /v1/groups/{name}/attachment    → persistent group reference
 //	PATCH  /v1/groups/{name}                 → update settings
 //	DELETE /v1/groups/{name}                 → delete group
 //
@@ -3293,6 +3301,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/groups/{name}/links/{id}", v1GroupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupLinks(w, r, g, []string{r.PathValue("id")})
 	}))
+	mux.HandleFunc("/v1/groups/{name}/attachment", v1GroupRoute(handleGroupAttachment))
 
 	mux.HandleFunc("PATCH /v1/groups/{name}", v1GroupRoute(handleGroupUpdate))
 	mux.HandleFunc("DELETE /v1/groups/{name}", v1GroupRoute(handleGroupDelete))

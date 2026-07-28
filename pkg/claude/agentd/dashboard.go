@@ -1499,15 +1499,18 @@ type snapshotPermissionsView struct {
 }
 
 type dashboardGroup struct {
-	Name           string   `json:"name"`
-	Descr          string   `json:"descr"`
-	DefaultCwd     string   `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
-	DefaultContext string   `json:"default_context"` // shared startup context injected into spawned agents; "" = none
-	DefaultProfile string   `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
-	SandboxProfile string   `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
-	Permissions    []string `json:"permissions"`     // live additive grants held by current group members
-	MaxMembers     int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
-	NotifyEnabled  bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
+	Name                    string   `json:"name"`
+	Descr                   string   `json:"descr"`
+	AttachmentURL           string   `json:"attachment_url,omitempty"`
+	AttachmentLabel         string   `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string   `json:"attachment_label_override,omitempty"`
+	DefaultCwd              string   `json:"default_cwd"`     // pre-fills the spawn form's cwd; "" = none
+	DefaultContext          string   `json:"default_context"` // shared startup context injected into spawned agents; "" = none
+	DefaultProfile          string   `json:"default_profile"` // spawn profile whose launch fields fill blank spawn fields for this group's agents; "" = none (the spawn default's single source — the vestigial default_model was dropped, JOH-220)
+	SandboxProfile          string   `json:"sandbox_profile"` // filesystem/environment profile assigned to this group; "" = inherit global
+	Permissions             []string `json:"permissions"`     // live additive grants held by current group members
+	MaxMembers              int      `json:"max_members"`     // hard member cap; 0 = unlimited. A spawn that would exceed it is refused.
+	NotifyEnabled           bool     `json:"notify_enabled"`  // group OS-notification switch; false mutes every member (per-agent 'on' still overrides)
 	// RemoteControlPolicy is the group's remote-control policy that overrides a
 	// spawn profile's remote-control default (JOH-262): "inherit" (defer to the
 	// profile), "optin" (force Remote Access on) or "deny" (force it off).
@@ -2696,7 +2699,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, g := range groups {
 		groupPermissions, _ := db.ListAgentGroupPermissions(g.ID)
-		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
+		attachment := groupAttachmentViewFor(g)
+		dg := dashboardGroup{Name: g.Name, Descr: g.Descr, AttachmentURL: attachment.URL, AttachmentLabel: attachment.Label, AttachmentLabelOverride: attachment.LabelOverride, DefaultCwd: g.DefaultCwd, DefaultContext: g.DefaultContext, DefaultProfile: g.DefaultProfile, SandboxProfile: g.SandboxProfile, Permissions: groupPermissions, MaxMembers: g.MaxMembers, NotifyEnabled: g.NotifyEnabled, RemoteControlPolicy: remoteControlPolicyToWire(g.RemoteControl), Mission: g.Mission, SourceTemplate: g.SourceTemplate, Scribe: isScribeGroup(g), Members: []dashboardMember{}}
 		if g.ParentGroupID != nil {
 			dg.Parent = groupNameByID[*g.ParentGroupID]
 		}

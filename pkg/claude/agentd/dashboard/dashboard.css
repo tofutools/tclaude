@@ -1048,6 +1048,42 @@ details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
+.group-attachment {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
+  vertical-align: middle; font: inherit; font-size: 11px;
+}
+.group-attachment a {
+  max-width: 28ch; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: #8b949e; text-decoration: none;
+}
+.group-attachment a:hover { color: #58a6ff; text-decoration: underline; }
+.group-attachment button {
+  border: 0; background: none; color: #6e7681; padding: 1px 2px;
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  border-radius: 3px;
+}
+.group-attachment button:hover { color: #58a6ff; background: rgba(88, 166, 255, 0.12); }
+.group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.group-attachment-empty {
+  opacity: 0.65; transition: opacity 0.1s ease;
+}
+.group-attachment-edit {
+  opacity: 0.65; transition: opacity 0.1s ease;
+}
+@media (hover: hover) {
+  .group-attachment-empty,
+  .group-attachment-edit { opacity: 0; pointer-events: none; }
+  details[data-group-key] > summary:hover .group-attachment-empty,
+  details[data-group-key] > summary:focus-within .group-attachment-empty,
+  .group-attachment-empty:focus { opacity: 0.65; pointer-events: auto; }
+  .group-attachment-set:hover .group-attachment-edit,
+  .group-attachment-set:focus-within .group-attachment-edit,
+  .group-attachment-edit:focus { opacity: 1; pointer-events: auto; }
+}
+body.wizard .group-attachment a,
+body.wizard .group-attachment button { color: #b39ddb; }
+body.wizard .group-attachment a:hover,
+body.wizard .group-attachment button:hover { color: #f3e6c0; }
 
 /* ── Group activity bots ──────────────────────────────────────────────
    The deduped per-status robot row (group-activity.js → ActivityModes)

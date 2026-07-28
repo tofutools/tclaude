@@ -93,13 +93,16 @@ type dashPending struct {
 }
 
 type dashGroup struct {
-	Name          string       `json:"name"`
-	Descr         string       `json:"descr"`
-	Permissions   []string     `json:"permissions"`
-	MaxMembers    int          `json:"max_members"`
-	NotifyEnabled bool         `json:"notify_enabled"`
-	Scribe        bool         `json:"scribe,omitempty"`
-	Members       []dashMember `json:"members"`
+	Name                    string       `json:"name"`
+	Descr                   string       `json:"descr"`
+	AttachmentURL           string       `json:"attachment_url,omitempty"`
+	AttachmentLabel         string       `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string       `json:"attachment_label_override,omitempty"`
+	Permissions             []string     `json:"permissions"`
+	MaxMembers              int          `json:"max_members"`
+	NotifyEnabled           bool         `json:"notify_enabled"`
+	Scribe                  bool         `json:"scribe,omitempty"`
+	Members                 []dashMember `json:"members"`
 }
 
 type dashMember struct {

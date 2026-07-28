@@ -363,16 +363,17 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
+  const groupAttachment = descriptor.kind === 'group-attachment';
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const oldURL = (descriptor.url || '').trim();
-  const oldLabel = (descriptor.taskLabel || '').trim();
+  const oldLabel = ((groupAttachment ? descriptor.attachmentLabel : descriptor.taskLabel) || '').trim();
   const [url, setUrl] = useState(oldURL);
   const [taskLabel, setTaskLabel] = useState(oldLabel);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const urlRef = useRef(null);
   const submitGuard = useRef(false);
-  const agentLabel = descriptor.agentLabel || '';
+  const subjectLabel = groupAttachment ? descriptor.group : (descriptor.agentLabel || '');
   const dirty = url.trim() !== oldURL || taskLabel.trim() !== oldLabel;
 
   const submit = async () => {
@@ -393,19 +394,29 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
         let parsed;
         try { parsed = new URL(nextURL); } catch (_) {}
         if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-          setError('Task URL must be a complete http:// or https:// URL.');
+          setError(`${groupAttachment ? 'Attachment' : 'Task'} URL must be a complete http:// or https:// URL.`);
           urlRef.current?.focus();
           return;
         }
       }
       setBusy(true);
-      await actions.setTaskLink({
-        conv: descriptor.conv,
-        label: agentLabel,
-        url: nextURL,
-        taskLabel: nextURL ? nextLabel : '',
-        changed: nextURL !== oldURL || nextLabel !== oldLabel,
-      }, descriptor);
+      const changed = nextURL !== oldURL || nextLabel !== oldLabel;
+      if (groupAttachment) {
+        await actions.setGroupAttachment({
+          group: descriptor.group,
+          url: nextURL,
+          attachmentLabel: nextURL ? nextLabel : '',
+          changed,
+        }, descriptor);
+      } else {
+        await actions.setTaskLink({
+          conv: descriptor.conv,
+          label: subjectLabel,
+          url: nextURL,
+          taskLabel: nextURL ? nextLabel : '',
+          changed,
+        }, descriptor);
+      }
     } catch (cause) { setError(errorMessage(cause)); }
     finally {
       submitGuard.current = false;
@@ -437,8 +448,8 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       confirmDiscard=${confirmDiscard}
       registerClose=${registerClose}
     >
-      <h3 id="task-link-title"><${Words} plain="Task link" wizard="Bind a quest link"/></h3>
-      ${agentLabel && html`<div class="modal-meta" id="task-link-meta">${agentLabel}</div>`}
+      <h3 id="task-link-title"><${Words} plain=${groupAttachment ? 'Group attachment' : 'Task link'} wizard=${groupAttachment ? 'Bind a party portal' : 'Bind a quest link'}/></h3>
+      ${subjectLabel && html`<div class="modal-meta" id="task-link-meta">${subjectLabel}</div>`}
       <div class="field">
         <label for="task-link-url"><${Words} plain="URL" wizard="Portal URL"/></label>
         <input
@@ -455,7 +466,10 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
           onInput=${(event) => setUrl(event.currentTarget.value)}
           onKeyDown=${onFieldKeyDown}
         />
-        <span class="task-link-hint"><${Words} plain="Leave the URL empty to clear this agent's task link." wizard="Leave the portal empty to unbind this familiar's quest."/></span>
+        <span class="task-link-hint"><${Words}
+          plain=${groupAttachment ? "Leave the URL empty to clear this group's attachment." : "Leave the URL empty to clear this agent's task link."}
+          wizard=${groupAttachment ? "Leave the portal empty to unbind this party's portal." : "Leave the portal empty to unbind this familiar's quest."}
+        /></span>
       </div>
       <div class="field">
         <label for="task-link-label"><${Words} plain="Display name" wizard="Quest name"/> <span class="muted">(optional)</span></label>
@@ -491,6 +505,7 @@ export function ActionDialogApp({ state, actions, confirmDiscard }) {
   if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'group-attachment') return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;

@@ -144,24 +144,24 @@ func taskRefBindState(convID, wantURL string) string {
 func validateTaskRefURL(rawURL string) error {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return fmt.Errorf("task reference URL is empty")
+		return fmt.Errorf("reference URL is empty")
 	}
 	// Bound the length: the value rides every 2s dashboard snapshot, and an
 	// agent holds self.task by default, so a runaway string shouldn't be
 	// storable. 2048 is the conventional practical URL ceiling.
 	if len(rawURL) > maxTaskRefURLLen {
-		return fmt.Errorf("task reference URL is too long (%d > %d chars)", len(rawURL), maxTaskRefURLLen)
+		return fmt.Errorf("reference URL is too long (%d > %d chars)", len(rawURL), maxTaskRefURLLen)
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("task reference URL is not a valid URL: %w", err)
+		return fmt.Errorf("reference URL is not a valid URL: %w", err)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("task reference URL must be http(s), got %q", u.Scheme)
+		return fmt.Errorf("reference URL must be http(s), got %q", u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("task reference URL must include a host")
+		return fmt.Errorf("reference URL must include a host")
 	}
 	return nil
 }
@@ -172,7 +172,7 @@ func validateTaskRefURL(rawURL string) error {
 // security check.
 func validateTaskRefLabel(label string) error {
 	if len(label) > maxTaskRefLabelLen {
-		return fmt.Errorf("task reference label is too long (%d > %d chars)", len(label), maxTaskRefLabelLen)
+		return fmt.Errorf("reference label is too long (%d > %d chars)", len(label), maxTaskRefLabelLen)
 	}
 	return nil
 }
