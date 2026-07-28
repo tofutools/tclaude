@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -600,7 +601,10 @@ func TestOpenCodeFilteredNetworkToolHelper(t *testing.T) {
 	defer deniedUDP.Close()
 	require.NoError(t, deniedUDP.SetDeadline(time.Now().Add(500*time.Millisecond)))
 	_, writeErr := deniedUDP.Write([]byte("must-not-arrive"))
-	if writeErr == nil {
+	if writeErr != nil {
+		require.ErrorIs(t, writeErr, syscall.EPERM,
+			"immediate UDP denial must be the packet policy rejection")
+	} else {
 		_, readErr := deniedUDP.Read(make([]byte, 64))
 		require.Error(t, readErr, "unauthorised UDP port returned traffic")
 	}
