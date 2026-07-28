@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"sync/atomic"
@@ -857,6 +858,31 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 		return presentedPRInfo{Number: number, URL: resolvedURL, State: state}, true
 	}
 	return func() { presentedPRInfoResolver = prev }
+}
+
+// SetRecentlyMergedPRsResolverForTest swaps the single bulk GitHub-search
+// boundary behind the daemon-wide presented-PR poller. The fake receives the
+// deduped repository list and returns merged PR URLs.
+func SetRecentlyMergedPRsResolverForTest(fn func(repos []string, resultLimit int) ([]string, bool)) func() {
+	prev := recentlyMergedPRsResolver
+	recentlyMergedPRsResolver = func(repos []string, resultLimit int) ([]presentedPRInfo, error) {
+		urls, ok := fn(repos, resultLimit)
+		if !ok {
+			return nil, errors.New("test resolver failure")
+		}
+		out := make([]presentedPRInfo, 0, len(urls))
+		for _, u := range urls {
+			out = append(out, presentedPRInfo{URL: u, State: "merged"})
+		}
+		return out, nil
+	}
+	return func() { recentlyMergedPRsResolver = prev }
+}
+
+// PollRecentlyMergedPRsForTest runs one synchronous daemon-wide merged-PR
+// poll, avoiding the production ticker in flow tests.
+func PollRecentlyMergedPRsForTest() {
+	_, _ = pollRecentlyMergedPRs()
 }
 
 // SetAsyncSpawnInlineGraceForTest shrinks the non-blocking spawn's

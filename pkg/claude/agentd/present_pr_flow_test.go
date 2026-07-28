@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -141,6 +142,79 @@ func TestPresentPR_DashboardRefreshesAndExpiresTerminalState(t *testing.T) {
 	row, err := db.GetAgentPR(agentID, prURL)
 	require.NoError(t, err)
 	assert.Equal(t, "handled", row.State)
+}
+
+func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		workerA = "pprm-aaaa-bbbb-cccc-dddd"
+		workerB = "pprm-eeee-ffff-gggg-hhhh"
+		workerC = "pprm-iiii-jjjj-kkkk-llll"
+		merged  = "https://github.com/tofutools/tclaude/pull/800"
+		other   = "https://github.com/tofutools/other/pull/7"
+	)
+
+	f.HaveGroup("alpha")
+	f.HaveGroup("beta")
+	for _, worker := range []string{workerA, workerB, workerC} {
+		f.HaveConvWithTitle(worker, worker)
+		f.HaveAliveSession(worker, "lbl-"+worker, "tmux-"+worker, f.TestCwd(worker))
+	}
+	f.HaveMember("alpha", workerA)
+	f.HaveMember("beta", workerB)
+	f.HaveMember("beta", workerC)
+
+	agentA, err := db.AgentIDForConv(workerA)
+	require.NoError(t, err)
+	agentB, err := db.AgentIDForConv(workerB)
+	require.NoError(t, err)
+	agentC, err := db.AgentIDForConv(workerC)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentA, merged, "same PR, first group", "open")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentB, merged, "same PR, second group", "open")
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentC, other, "different repo", "open")
+	require.NoError(t, err)
+
+	var calls int
+	var gotRepos []string
+	var gotResultLimit int
+	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
+		func(repos []string, resultLimit int) ([]string, bool) {
+			calls++
+			gotRepos = append([]string(nil), repos...)
+			gotResultLimit = resultLimit
+			return []string{merged}, true
+		}))
+
+	agentd.PollRecentlyMergedPRsForTest()
+
+	assert.Equal(t, 1, calls, "one bulk GitHub search covers every agent and group")
+	assert.Equal(t, []string{"tofutools/other", "tofutools/tclaude"}, gotRepos)
+	assert.True(t, slices.IsSorted(gotRepos), "repository arguments are deterministic")
+	assert.Equal(t, 20, gotResultLimit, "small sets retain the useful recent-results floor")
+
+	rowA, err := db.GetAgentPR(agentA, merged)
+	require.NoError(t, err)
+	rowB, err := db.GetAgentPR(agentB, merged)
+	require.NoError(t, err)
+	rowC, err := db.GetAgentPR(agentC, other)
+	require.NoError(t, err)
+	assert.Equal(t, "merged", rowA.State)
+	assert.Equal(t, "merged", rowB.State, "one result updates every agent referencing that PR")
+	assert.Equal(t, "open", rowC.State, "unmatched PRs retain the individual-refresh fallback")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	memberA := findDashMember(snap, "alpha", workerA)
+	require.NotNil(t, memberA)
+	require.Len(t, memberA.PresentedPRs, 1)
+	assert.Equal(t, "merged", memberA.PresentedPRs[0].State)
+	memberB := findDashMember(snap, "beta", workerB)
+	require.NotNil(t, memberB)
+	require.Len(t, memberB.PresentedPRs, 1)
+	assert.Equal(t, "merged", memberB.PresentedPRs[0].State)
 }
 
 func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {

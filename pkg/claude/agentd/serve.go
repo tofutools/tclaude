@@ -565,6 +565,13 @@ func runServe(p *serveParams) error {
 	// spawning a subprocess. Shares the daemon-wide stop channel.
 	startPluginChecker(cronStop)
 
+	// Recently merged presented PR poller. One global, repo-deduped
+	// GitHub Search API call catches the common authored-by-me merge case
+	// within about ten seconds; the existing individual PR refresh remains
+	// the best-effort fallback for everything else. Shares the daemon stop
+	// channel and never scales its poll count with agents or groups.
+	startRecentlyMergedPRPoller(cronStop)
+
 	// Subscription-usage poller. Disabled by default; when
 	// usage.poll_anthropic_api is enabled it keeps the SQLite usage_cache
 	// row fresh via the Anthropic usage API even when no Claude Code
