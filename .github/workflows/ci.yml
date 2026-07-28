@@ -71,17 +71,20 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
             "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
           make -C "$RUNNER_TEMP/passt" pasta
-          # Replace the packaged binary in its root-owned path: hosted runners
+          # Install into a dedicated root-owned path: hosted runners
           # deliberately leave /usr/local/bin writable, which must fail the
-          # production executable trust walk.
+          # production executable trust walk. A pasta-only prefix also avoids
+          # shadowing the Actions-managed Go toolchain with /usr/bin/go.
+          sudo install -d -o root -g root -m 0755 \
+            /opt/tclaude-filtered/bin
           sudo install -o root -g root -m 0755 \
-            "$RUNNER_TEMP/passt/passt" /usr/bin/pasta
+            "$RUNNER_TEMP/passt/passt" /opt/tclaude-filtered/bin/pasta
           # The hosted image also carries an older /usr/local/bin/pasta.
-          # Prepend the secure package path for this and all later steps, and
+          # Prepend the secure dedicated path for this and all later steps, and
           # assert the same resolution the production prerequisite will use.
-          echo "/usr/bin" >> "$GITHUB_PATH"
-          export PATH="/usr/bin:$PATH"
-          test "$(command -v pasta)" = "/usr/bin/pasta"
+          echo "/opt/tclaude-filtered/bin" >> "$GITHUB_PATH"
+          export PATH="/opt/tclaude-filtered/bin:$PATH"
+          test "$(command -v pasta)" = "/opt/tclaude-filtered/bin/pasta"
           pasta --version
 
       - name: Install pinned OpenCode smoke binary
