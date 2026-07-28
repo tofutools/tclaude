@@ -439,7 +439,7 @@ that verdict to a compact status:
 | `⚠` | `UNKNOWN` | The row records an on verdict, but an unverified harness-builtin verdict or unknown implementation fails closed instead of earning a lock. |
 | *(none)* | — | The plain `inherit` launch has no configured verdict to report. This is the posture the unsandboxed-autonomy warning is about. |
 
-Hovering the glyph shows only the compact summary:
+Hovering the glyph shows the compact summary and any persisted access warnings:
 
 - `Status`: `ON`, `OFF`, or `UNKNOWN`; an active temporary-off override reports
   `TEMP OFF` when the resulting posture is off.
@@ -449,13 +449,17 @@ Hovering the glyph shows only the compact summary:
 - `Profile`: the applied tclaude sandbox-profile names in resolution order,
   `None` when the launch recorded an empty profile chain, or `Not recorded` for
   an older row.
+- Zero or more `Warning:` lines for persisted sandbox access notices. These
+  report launch-specific access composition, enforcement degradation, or
+  materialization warnings; they are distinct from the removed provenance and
+  generic fidelity prose.
 - A click action when one is available: `Click to temporarily disable` for a
   live lock, or `Click to restore normal sandbox` for a temporary override.
 
 The compact tooltip does not repeat the requested mode, name the settings file
-or profile tier that selected it, restate implementation caveats, or infer which
-rules a named profile contributed. Those details are deliberately not part of
-the Groups-row hover surface.
+or profile tier that selected it, restate the guides' generic implementation
+caveats, or infer which rules a named profile contributed. Those details are
+deliberately not part of the Groups-row hover surface.
 
 For OpenCode on macOS, mutable per-agent privacy covers data/cache/state. When
 an ambient global OpenCode config directory exists, the config base is not

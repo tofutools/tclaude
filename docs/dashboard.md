@@ -124,9 +124,10 @@ sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflect
 what actually confined the launch, not which mode was requested, so a Claude
 agent sandboxed through your own `settings.json` is badged even though it was
 spawned under the default `inherit`. Hovering it shows the compact recorded
-summary: `Status`, `Implementation`, `Profile`, and a click action when the
-badge supports a temporary disable or restore. It does not show mode/settings
-provenance or infer the effects of a named profile. See
+summary: `Status`, `Implementation`, `Profile`, zero or more persisted
+sandbox-access `Warning` lines, and a click action when the badge supports a
+temporary disable or restore. It does not show mode/settings provenance or
+infer the effects of a named profile. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 
 A successfully live-probed Linux `stacked` launch uses the distinct `🔒²`
