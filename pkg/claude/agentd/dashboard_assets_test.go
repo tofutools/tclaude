@@ -195,7 +195,7 @@ func TestDashboardCSS_AgentStatePillTruncates(t *testing.T) {
 			t.Errorf("dashboard.css missing %q — long agent statuses may widen the Groups table", needle)
 		}
 	}
-	if strings.Contains(css, ".state-pill {\n  max-width:") {
+	if strings.Contains(css, "\n.state-pill {\n  max-width:") {
 		t.Error("state-pill truncation is unscoped — would cap unrelated Audit, Jobs, and Plugins pills")
 	}
 	if !strings.Contains(js, "title=${info.title} aria-label=${ariaLabel}>${label}</span>") {
