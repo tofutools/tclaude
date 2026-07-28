@@ -119,7 +119,10 @@ exactly one `@ai-sdk/openai-compatible` provider, one model, and a concrete
 ambient XDG and `$HOME/.opencode` config, model-catalog fetches, stored auth,
 and plugins are suppressed for that launch; a model-level `provider` override
 and an active persistent account/organization refuse because either can replace
-the inspected adapter or route after inline config is parsed;
+the inspected adapter or route after inline config is parsed. The selected
+provider-empty private config directories are daemon-final read-only, and both their
+canonical contents and account/org absence are re-proved before every initial
+server exec and persisted restart;
 opaque, default, dynamically routed, and managed `/etc/opencode` provider
 sources refuse with the remedy of making the route explicit or using network
 open. The relay itself remains Linux-only.

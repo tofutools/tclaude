@@ -475,6 +475,10 @@ func openCodeRuntimeSandboxSpec(
 	if err := session.ValidateTclaudeLayerLaunchSpec(spec); err != nil {
 		return nil, fmt.Errorf("validate OpenCode tclaude-layer renderer contract: %w", err)
 	}
+	if err := validateOpenCodeFilteredProviderAuthority(&spec); err != nil {
+		return nil, fmt.Errorf(
+			"revalidate OpenCode filtered provider authority: %w", err)
+	}
 	return &spec, nil
 }
 
@@ -516,6 +520,10 @@ func startOpenCodeProcess(
 		return nil, err
 	}
 	defer cleanup()
+	if err := validateOpenCodeFilteredProviderAuthority(sandboxSpec); err != nil {
+		return nil, fmt.Errorf(
+			"prepare OpenCode filtered provider authority: %w", err)
+	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = runtime.Cwd
 	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
@@ -880,7 +888,39 @@ func validateOpenCodeV3LaunchContract(
 	if !configReadOnly {
 		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
 	}
+	if filtered {
+		expected := []string{
+			filepath.Join(stateRoot, openCodeFilteredConfigBase, "opencode"),
+			filepath.Join(stateRoot, openCodeFilteredHomeBase, ".opencode"),
+		}
+		if len(contract.ReadOnlyBinds) < len(expected) {
+			return fmt.Errorf(
+				"private filtered OpenCode contract does not seal its provider-empty config roots")
+		}
+		tail := contract.ReadOnlyBinds[len(contract.ReadOnlyBinds)-len(expected):]
+		for index, path := range expected {
+			if canonicalOpenCodeRuntimePath(tail[index].Source) != path ||
+				canonicalOpenCodeRuntimePath(tail[index].Target) != path {
+				return fmt.Errorf(
+					"private filtered OpenCode contract does not daemon-final seal provider config root %q",
+					path)
+			}
+		}
+	}
 	return nil
+}
+
+func validateOpenCodeFilteredProviderAuthority(
+	spec *session.TclaudeLayerLaunchSpec,
+) error {
+	if !openCodeFilteredNetworkSpec(spec) {
+		return nil
+	}
+	if err := validateOpenCodeFilteredProviderSources(
+		spec.Contract.StateRoot); err != nil {
+		return err
+	}
+	return refuseOpenCodeFilteredActiveAccount(spec.Contract.StateRoot)
 }
 
 func openCodeRuntimePathsEquivalent(left, right string) bool {

@@ -531,8 +531,11 @@ supports strict explicit-provider configs only: the launch model and frozen
 `OPENCODE_CONFIG_CONTENT` must name one inspected openai-compatible provider,
 one model, and a concrete covered `options.baseURL`; opaque/default/dynamic
 routes, model-level provider overrides, and active persistent account/org
-configuration refuse or require network open. Its built-in webfetch/websearch
-network rules remain soft tool policy, distinct from the packet-enforced nft floor.
+configuration refuse or require network open. The provider-empty private config
+directories are read-only inside the executor, and both those directories and account state
+are rechecked before every initial server exec or restart. Its built-in
+webfetch/websearch network rules remain soft tool policy, distinct from the
+packet-enforced nft floor.
 Codex filtered launches also refuse ChatGPT or opaque
 authentication because those routes can load provider overrides after
 preflight; use inspectable file-backed API-key authentication or network open

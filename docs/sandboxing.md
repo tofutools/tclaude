@@ -640,8 +640,11 @@ frozen profile `OPENCODE_CONFIG_CONTENT` must name exactly one provider using
 model, and give a concrete `options.baseURL` covered by the authored network
 list. The filtered server forces OpenCode's project-config, custom-config,
 model-fetch, auto-update, stored-auth, and plugin isolation inputs and replaces
-the ambient XDG and `$HOME/.opencode` config bases with empty per-agent
-directories. A model-level `provider` override refuses because it can replace
+the ambient XDG and `$HOME/.opencode` config sources with provider-empty
+per-agent directories that are daemon-final read-only inside the executor. Their
+canonical contents and persistent account/org absence are rechecked immediately
+before every initial server exec and persisted restart. A model-level
+`provider` override refuses because it can replace
 the inspected adapter. An active persistent OpenCode account/organization also
 refuses because its remote config loads after inline content; sign out or clear
 the active organization,

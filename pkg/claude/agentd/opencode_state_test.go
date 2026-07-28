@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -55,6 +56,53 @@ func TestRefuseOpenCodeFilteredActiveAccount(t *testing.T) {
 	err = refuseOpenCodeFilteredActiveAccount(stateRoot)
 	require.ErrorContains(t, err, "active persistent account/org")
 	require.ErrorContains(t, err, "network open")
+}
+
+func plantOpenCodeFilteredActiveAccount(
+	t *testing.T,
+	stateRoot, accountURL string,
+) {
+	t.Helper()
+	databaseDir := filepath.Join(stateRoot, "data", "opencode")
+	require.NoError(t, os.MkdirAll(databaseDir, 0o700))
+	databasePath := filepath.Join(databaseDir, "opencode.db")
+	dsn := (&url.URL{
+		Scheme: "file", Path: databasePath,
+		RawQuery: "_pragma=busy_timeout(5000)",
+	}).String()
+	store, err := sql.Open("sqlite", dsn)
+	require.NoError(t, err)
+	_, err = store.Exec(`CREATE TABLE IF NOT EXISTS account (
+		id TEXT PRIMARY KEY,
+		email TEXT NOT NULL,
+		url TEXT NOT NULL,
+		access_token TEXT NOT NULL,
+		refresh_token TEXT NOT NULL,
+		token_expiry INTEGER
+	)`)
+	require.NoError(t, err)
+	_, err = store.Exec(`CREATE TABLE IF NOT EXISTS account_state (
+		id INTEGER PRIMARY KEY,
+		active_account_id TEXT,
+		active_org_id TEXT
+	)`)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`INSERT OR REPLACE INTO account(
+			id, email, url, access_token, refresh_token, token_expiry
+		 ) VALUES (
+			'account', 'fixture@example.invalid', ?, 'access', 'refresh', 4102444800000
+		 )`,
+		accountURL)
+	require.NoError(t, err)
+	_, err = store.Exec(
+		`INSERT INTO account_state(id, active_account_id, active_org_id)
+		 VALUES (1, 'account', 'org')
+		 ON CONFLICT(id) DO UPDATE SET
+			active_account_id = excluded.active_account_id,
+			active_org_id = excluded.active_org_id`)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
 }
 
 func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *testing.T) {
@@ -210,11 +258,47 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 		require.DirExists(t, filepath.Join(
 			filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase, "opencode"))
 		require.DirExists(t, filepath.Join(
-			filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase))
+			filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase, ".opencode"))
+		require.NoError(t, validateOpenCodeFilteredProviderAuthority(filteredSpec))
+		require.GreaterOrEqual(t, len(filteredSpec.Contract.ReadOnlyBinds), 2)
+		sealed := filteredSpec.Contract.ReadOnlyBinds[len(filteredSpec.Contract.ReadOnlyBinds)-2:]
+		assert.Equal(t, []session.TclaudeLayerReadOnlyBind{
+			{
+				Source: filepath.Join(
+					filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
+					"opencode"),
+				Target: filepath.Join(
+					filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
+					"opencode"),
+			},
+			{
+				Source: filepath.Join(
+					filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
+					".opencode"),
+				Target: filepath.Join(
+					filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
+					".opencode"),
+			},
+		}, sealed)
 		missingFilteredEnvironment := filteredSpec.Contract
 		missingFilteredEnvironment.Environment = nil
 		require.ErrorContains(t, validateOpenCodeV3LaunchContract(
 			missingFilteredEnvironment, true), "no enforced XDG environment")
+		unsealedFiltered := filteredSpec.Contract
+		unsealedFiltered.ReadOnlyBinds =
+			unsealedFiltered.ReadOnlyBinds[:len(unsealedFiltered.ReadOnlyBinds)-1]
+		require.ErrorContains(t, validateOpenCodeV3LaunchContract(
+			unsealedFiltered, true), "seal provider config root")
+		hostileFilteredConfig := filepath.Join(
+			filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
+			"opencode", "opencode.json")
+		require.NoError(t, os.WriteFile(
+			hostileFilteredConfig, []byte(`{"provider":{"opaque":{}}}`), 0o600))
+		require.ErrorContains(t,
+			validateOpenCodeFilteredProviderAuthority(filteredSpec),
+			"not provider-empty")
+		require.NoError(t, os.Remove(hostileFilteredConfig))
+		require.NoError(t, validateOpenCodeFilteredProviderAuthority(filteredSpec))
 		listenerFD, executableFD, fdErr :=
 			session.TclaudeLayerUnixRelayServerFDs(*filteredSpec)
 		require.NoError(t, fdErr)
@@ -234,6 +318,15 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 			"-- /proc/self/fd/4 session tclaude-layer-winch-relay")
 		assert.Contains(t, filteredJoined, "--preserve-fds 2")
 		assert.Contains(t, filteredJoined, "--filtered-network-policy")
+		for _, path := range []string{
+			filepath.Join(filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
+				"opencode"),
+			filepath.Join(filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
+				".opencode"),
+		} {
+			assert.Contains(t, filteredJoined, "--ro-bind "+path+" "+path,
+				"provider-empty config roots must be final read-only mounts")
+		}
 		assert.Contains(t, filteredJoined,
 			"/proc/self/fd/9 "+opencodeapi.InheritedUnixRelayMode+" 8 ",
 			"the filtered supervisor must remap both inherited authorities after its sealed gateway fds")

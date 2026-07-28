@@ -44,10 +44,11 @@ type openCodeStateLayout struct {
 	readOnlyBinds []session.TclaudeLayerReadOnlyBind
 }
 
-// isolateOpenCodeFilteredConfig makes empty per-agent XDG and HOME config
-// bases, rather than ambient global config or ~/.opencode, the sources seen by
-// the pinned server. Inline OPENCODE_CONFIG_CONTENT is then the only
-// non-managed provider config admitted by the filtered launch.
+// isolateOpenCodeFilteredConfig makes provider-empty per-agent XDG and HOME
+// config bases, rather than ambient global config or ~/.opencode, the sources
+// seen by the pinned server. The bases contain only OpenCode's required
+// bootstrap .gitignore and are daemon-final self-bound read-only, so the
+// executor cannot plant a provider source for a later reload or restart.
 func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
 	if layout == nil || layout.allocation.Mode != db.OpenCodeStatePrivate {
 		return fmt.Errorf("OpenCode filtered networking requires private state")
@@ -59,8 +60,20 @@ func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
 	}
 	filteredHome := filepath.Join(
 		layout.allocation.StateRoot, openCodeFilteredHomeBase)
-	if err := os.MkdirAll(filteredHome, 0o700); err != nil {
+	homeApp := filepath.Join(filteredHome, ".opencode")
+	if err := os.MkdirAll(homeApp, 0o700); err != nil {
 		return fmt.Errorf("create OpenCode filtered home: %w", err)
+	}
+	for _, source := range []struct {
+		path, surface string
+	}{
+		{path: configApp, surface: "filtered XDG config"},
+		{path: homeApp, surface: "filtered HOME config"},
+	} {
+		if _, err := ensureOpenCodeBootstrapGitignore(
+			source.path, source.surface); err != nil {
+			return err
+		}
 	}
 	resolved, err := filepath.EvalSymlinks(configApp)
 	if err != nil || resolved != configApp {
@@ -80,6 +93,85 @@ func isolateOpenCodeFilteredConfig(layout *openCodeStateLayout) error {
 	}
 	if !found {
 		return fmt.Errorf("OpenCode filtered private state has no XDG_CONFIG_HOME")
+	}
+	for _, path := range []string{configApp, homeApp} {
+		layout.readOnlyBinds = append(layout.readOnlyBinds,
+			session.TclaudeLayerReadOnlyBind{Source: path, Target: path})
+	}
+	return nil
+}
+
+// validateOpenCodeFilteredProviderSources proves that the two config roots
+// selected by a filtered server still have the provider-empty shape frozen in
+// its serialized launch contract. It runs immediately before every exec,
+// including persisted-spec replay.
+func validateOpenCodeFilteredProviderSources(stateRoot string) error {
+	stateRoot = canonicalOpenCodeRuntimePath(stateRoot)
+	if stateRoot == "" {
+		return fmt.Errorf("OpenCode filtered provider state root is not canonical")
+	}
+	configBase := filepath.Join(stateRoot, openCodeFilteredConfigBase)
+	filteredHome := filepath.Join(stateRoot, openCodeFilteredHomeBase)
+	for _, expected := range []struct {
+		path, surface string
+	}{
+		{
+			path:    filepath.Join(configBase, "opencode"),
+			surface: "XDG config directory",
+		},
+		{
+			path:    filepath.Join(filteredHome, ".opencode"),
+			surface: "HOME config directory",
+		},
+	} {
+		if err := validateOpenCodeFilteredProviderDirectory(
+			expected.path, expected.surface); err != nil {
+			return err
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(configBase, "opencode", openCodeInstallBootstrapFile),
+		filepath.Join(filteredHome, ".opencode", openCodeInstallBootstrapFile),
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil || string(content) != openCodeInstallGitignore {
+			return fmt.Errorf(
+				"OpenCode filtered provider bootstrap %q is not the pinned provider-empty marker; clear the filtered config state or use network open",
+				path)
+		}
+	}
+	return nil
+}
+
+func validateOpenCodeFilteredProviderDirectory(
+	path string,
+	surface string,
+) error {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf(
+			"OpenCode filtered %s %q is not a canonical directory; clear the filtered config state or use network open",
+			surface, path)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved != path {
+		return fmt.Errorf(
+			"OpenCode filtered %s %q is not canonical; clear the filtered config state or use network open",
+			surface, path)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 {
+		return fmt.Errorf(
+			"OpenCode filtered %s %q is not provider-empty; clear it or use network open",
+			surface, path)
+	}
+	entry := entries[0]
+	entryInfo, infoErr := os.Lstat(filepath.Join(path, entry.Name()))
+	if entry.Name() != openCodeInstallBootstrapFile ||
+		infoErr != nil || !entryInfo.Mode().IsRegular() {
+		return fmt.Errorf(
+			"OpenCode filtered %s %q contains unapproved provider authority; clear it or use network open",
+			surface, path)
 	}
 	return nil
 }

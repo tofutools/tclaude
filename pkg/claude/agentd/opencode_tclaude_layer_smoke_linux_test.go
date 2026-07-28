@@ -4,7 +4,6 @@ package agentd
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -336,6 +335,9 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	t.Cleanup(stopAttach)
 
 	networkCommand := ""
+	expectedConfigHome := filepath.Join(allocation.StateRoot, "config")
+	expectedHome := home
+	filteredConfigWriteChecks := ""
 	if filtered {
 		networkCommand = fmt.Sprintf(
 			"%s=%s %s -test.run=^TestOpenCodeFilteredNetworkToolHelper$; ",
@@ -343,11 +345,19 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			clcommon.ShellQuoteArg(filteredFixture.helperConfig),
 			clcommon.ShellQuoteArg(networkProbeBinary),
 		)
+		expectedConfigHome = filepath.Join(
+			allocation.StateRoot, openCodeFilteredConfigBase)
+		expectedHome = filepath.Join(
+			allocation.StateRoot, openCodeFilteredHomeBase)
+		filteredConfigWriteChecks =
+			"if printf hostile > \"$XDG_CONFIG_HOME/opencode/opencode.json\"; then exit 101; fi; " +
+				"if printf hostile > \"$HOME/.opencode/opencode.json\"; then exit 102; fi; "
 	}
 	command := fmt.Sprintf(
 		"set -eu; test \"$TCLAUDE_OPENCODE_EXECUTOR_SMOKE\" = frozen-profile-value; "+
 			"test \"$XDG_DATA_HOME\" = %s; test \"$XDG_CACHE_HOME\" = %s; "+
-			"test \"$XDG_CONFIG_HOME\" = %s; test \"$XDG_STATE_HOME\" = %s; "+
+			"test \"$XDG_CONFIG_HOME\" = %s; test \"$XDG_STATE_HOME\" = %s; test \"$HOME\" = %s; "+
+			"%s"+
 			"printf executor-ok > %s; printf state-ok > \"$XDG_STATE_HOME/opencode/tool-state\"; "+
 			"if printf blocked > %s; then exit 97; fi; "+
 			"for hidden in %s %s %s %s; do if test -r \"$hidden\"; then exit 98; fi; done; "+
@@ -358,8 +368,10 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			"%s%s agent whoami",
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "data")),
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "cache")),
-		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "config")),
+		clcommon.ShellQuoteArg(expectedConfigHome),
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "state")),
+		clcommon.ShellQuoteArg(expectedHome),
+		filteredConfigWriteChecks,
 		clcommon.ShellQuoteArg(filepath.Join(cwd, "tool-written")),
 		clcommon.ShellQuoteArg(filepath.Join(outside, "blocked")),
 		clcommon.ShellQuoteArg(siblingMarker),
@@ -392,6 +404,25 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	require.NotEmptyf(t, identityLine, "tool output did not contain managed identity: %q", output)
 	assert.Equal(t, expectedAgentID, strings.Fields(identityLine)[0],
 		"agentd must resolve the exact managed identity through the wrapped server ancestry")
+
+	if filtered {
+		plantOpenCodeFilteredActiveAccount(
+			t,
+			allocation.StateRoot,
+			fmt.Sprintf("http://%s:%d",
+				sandboxpolicy.FilteredNetworkHostLoopbackName,
+				filteredFixture.modelPort),
+		)
+		stopOpenCodeProcess(*runtime, nil)
+		require.Eventually(t, func() bool {
+			return !session.IsProcessAlive(runtime.PID)
+		}, 5*time.Second, 25*time.Millisecond,
+			"filtered OpenCode server did not stop for persisted replay proof")
+		assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID),
+			"persisted filtered replay must refuse newly active account/org authority")
+		assert.Zero(t, filteredFixture.accountRequests.Load(),
+			"persisted replay refusal must happen before remote provider-config traffic")
+	}
 }
 
 type openCodeFilteredSmokeFixture struct {
@@ -582,43 +613,6 @@ func newOpenCodeFilteredSmokeFixture(
 	require.NoError(t, os.WriteFile(
 		filepath.Join(ambientData, "auth.json"), authJSON, 0o600))
 	return fixture
-}
-
-func plantOpenCodeFilteredActiveAccount(
-	t *testing.T,
-	stateRoot, accountURL string,
-) {
-	t.Helper()
-	databaseDir := filepath.Join(stateRoot, "data", "opencode")
-	require.NoError(t, os.MkdirAll(databaseDir, 0o700))
-	store, err := sql.Open("sqlite", filepath.Join(databaseDir, "opencode.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	_, err = store.Exec(`CREATE TABLE account (
-		id TEXT PRIMARY KEY,
-		email TEXT NOT NULL,
-		url TEXT NOT NULL,
-		access_token TEXT NOT NULL,
-		refresh_token TEXT NOT NULL,
-		token_expiry INTEGER
-	)`)
-	require.NoError(t, err)
-	_, err = store.Exec(`CREATE TABLE account_state (
-		id INTEGER PRIMARY KEY,
-		active_account_id TEXT,
-		active_org_id TEXT
-	)`)
-	require.NoError(t, err)
-	_, err = store.Exec(
-		`INSERT INTO account(id, email, url, access_token, refresh_token, token_expiry)
-		 VALUES ('account', 'fixture@example.invalid', ?, 'access', 'refresh', 4102444800000)`,
-		accountURL)
-	require.NoError(t, err)
-	_, err = store.Exec(
-		`INSERT INTO account_state(id, active_account_id, active_org_id)
-		 VALUES (1, 'account', 'org')`)
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
 }
 
 func newOpenCodeFilteredEchoPair(t *testing.T) int {
