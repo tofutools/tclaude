@@ -1145,7 +1145,7 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
   assert.match(host.querySelector('.sbx-preview-status').textContent,
-    /preview paused: complete the highlighted Network or Unix-socket rows/);
+    /preview paused: Network row 1 must set exactly one selector/);
 
   const value = network.querySelector('.sbx-network-value');
   value.value = 'api.example.com';
@@ -1183,8 +1183,10 @@ test('sandbox network selector retains empty domain and CIDR kinds through save 
     const selector = mounted.host.querySelector('.sbx-network-selector');
     choose(selector, kind);
     await harness.act(() => harness.fireEvent(selector, 'change'));
+    const renderedSelector = mounted.host.querySelector('.sbx-network-selector');
     const value = mounted.host.querySelector('.sbx-network-value');
-    assert.equal(selectedValue(selector), kind, `${kind} remains selected with an empty value`);
+    assert.equal(renderedSelector.querySelector('option:checked')?.value, kind,
+      `${kind} remains selected with an empty value`);
     assert.equal(value.value, '');
     assert.equal(value.placeholder, placeholder);
 

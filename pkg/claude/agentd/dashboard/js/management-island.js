@@ -709,7 +709,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="stacked/claude/linux">stacked · Claude · Linux</option>
         <option value="stacked/claude/darwin">stacked · Claude · macOS</option>
       </select></label>
-      ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: complete the highlighted Network or Unix-socket rows.</div>`}
+      ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionAccessErrors[0]}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">
