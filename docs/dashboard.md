@@ -58,7 +58,8 @@ else:
 
 ```
 enter  go to the selected agent's tmux session
-n      start a new agent (group, name, directory, harness, startup brief)
+n      start a new agent (group, spawn profile, name, directory, harness,
+       startup brief)
 x      retire the selected agent (it asks first)
 f      filter the list down to the active agents (toggle)
 r      refresh now (the list also polls every 2s)
@@ -80,6 +81,14 @@ selected agent's pane. When agentd itself runs inside tmux it uses
 keys bring you back; outside tmux it attaches, and the console repaints when
 you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
 an operator console can do this (see the identity note below).
+
+**n** opens the spawn form. Its **Profile** picker lists the daemon's saved
+[spawn profiles](agent.md) (`tclaude agent profiles ls`) and sends the one you
+land on as the spawn's `--profile`. `(default)` names no profile, which is not
+the same as "no profile at all": it hands the choice back to the daemon's own
+chain, so the group's default profile and then the global one still apply.
+Disabled profiles are left out of the picker — a spawn that names one is
+refused, and nothing here can re-enable it.
 
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.

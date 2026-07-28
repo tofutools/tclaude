@@ -374,6 +374,17 @@ type tuiGroupRow struct {
 	Name string `json:"name"`
 }
 
+// tuiProfileRow is the subset of /v1/spawn-profiles the spawn form picks
+// from. Disabled comes along because a disabled profile is refused at spawn,
+// so offering one would only produce a rejection the operator cannot act on
+// from here.
+type tuiProfileRow struct {
+	Name     string `json:"name"`
+	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+func (p tuiProfileRow) disabled() bool { return p.Disabled != nil && *p.Disabled }
+
 // tuiRetireResult is the subset of the retire response the console reports:
 // what the demotion actually revoked, and what became of the agent's session.
 type tuiRetireResult struct {
@@ -393,9 +404,12 @@ const (
 	tuiModeConfirmRetire
 )
 
-// Spawn-form fields, in tab order.
+// Spawn-form fields, in tab order. The profile sits directly under the group
+// because it is the field the others are read against: it decides what a
+// blank harness (or model, or approval posture) ends up being.
 const (
 	tuiFieldGroup = iota
+	tuiFieldProfile
 	tuiFieldName
 	tuiFieldDir
 	tuiFieldHarness
@@ -407,11 +421,17 @@ const (
 // request leaves Harness empty and the daemon's own profile chain decides.
 const tuiHarnessDefault = "(default)"
 
+// tuiProfileDefault is the same idea for the profile picker: naming no
+// profile is NOT "no profile at all", it hands the choice back to the
+// daemon's chain — the group's default profile, then the global one.
+const tuiProfileDefault = "(default)"
+
 type tuiModel struct {
 	api *tuiAPI
 
-	agents []tuiAgentRow
-	groups []tuiGroupRow
+	agents   []tuiAgentRow
+	groups   []tuiGroupRow
+	profiles []tuiProfileRow
 
 	cursor         int
 	viewportOffset int
@@ -459,13 +479,16 @@ type tuiModel struct {
 	form tuiSpawnForm
 }
 
-// tuiSpawnForm is the "new agent" prompt. Group and harness are cycled
-// choices; the rest are text inputs.
+// tuiSpawnForm is the "new agent" prompt. Group, profile and harness are
+// cycled choices; the rest are text inputs.
 type tuiSpawnForm struct {
 	field int
 
 	groupNames []string
 	groupIdx   int
+
+	profileNames []string
+	profileIdx   int
 
 	harnessNames []string
 	harnessIdx   int
@@ -483,9 +506,10 @@ type (
 	// tuiDataMsg carries one completed refresh — both lists, or the error
 	// that stopped it.
 	tuiDataMsg struct {
-		agents []tuiAgentRow
-		groups []tuiGroupRow
-		err    error
+		agents   []tuiAgentRow
+		groups   []tuiGroupRow
+		profiles []tuiProfileRow
+		err      error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -597,9 +621,14 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err := api.get("/v1/groups", &groups); err != nil {
 			return tuiDataMsg{err: err}
 		}
+		var profiles []tuiProfileRow
+		if err := api.get("/v1/spawn-profiles", &profiles); err != nil {
+			return tuiDataMsg{err: err}
+		}
 		sortTUIAgents(agents)
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
-		return tuiDataMsg{agents: agents, groups: groups}
+		sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+		return tuiDataMsg{agents: agents, groups: groups, profiles: profiles}
 	}
 }
 
@@ -648,6 +677,20 @@ func tuiHarnessOptions() []string {
 	return out
 }
 
+// tuiProfileOptions lists the spawn profiles the form may name, led by the
+// "(default)" sentinel that names none. A disabled profile is left out: the
+// daemon refuses a spawn that selects one, and nothing in this console can
+// re-enable it.
+func tuiProfileOptions(profiles []tuiProfileRow) []string {
+	out := []string{tuiProfileDefault}
+	for _, p := range profiles {
+		if p.Name != "" && !p.disabled() {
+			out = append(out, p.Name)
+		}
+	}
+	return out
+}
+
 func newTUITextInput(prompt string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = prompt
@@ -655,11 +698,12 @@ func newTUITextInput(prompt string) textinput.Model {
 	return ti
 }
 
-// openSpawnForm builds a fresh "new agent" prompt over the current group
-// list, defaulting the harness to the daemon's default harness.
+// openSpawnForm builds a fresh "new agent" prompt over the current group and
+// profile lists, defaulting the harness to the daemon's default harness.
 func (m tuiModel) openSpawnForm() tuiModel {
 	form := tuiSpawnForm{
 		harnessNames: tuiHarnessOptions(),
+		profileNames: tuiProfileOptions(m.profiles),
 		name:         newTUITextInput("  Name:      "),
 		dir:          newTUITextInput("  Directory: "),
 		brief:        newTUITextInput("  Brief:     "),
@@ -683,6 +727,19 @@ func (m tuiModel) selectedGroup() string {
 		return ""
 	}
 	return m.form.groupNames[m.form.groupIdx]
+}
+
+// selectedProfile is the profile name the request should carry, empty for the
+// "(default)" sentinel — which is what lets the group's and the global default
+// profile apply as they do for every other spawn surface.
+func (m tuiModel) selectedProfile() string {
+	if m.form.profileIdx < 0 || m.form.profileIdx >= len(m.form.profileNames) {
+		return ""
+	}
+	if name := m.form.profileNames[m.form.profileIdx]; name != tuiProfileDefault {
+		return name
+	}
+	return ""
 }
 
 func (m tuiModel) selectedHarness() string {
@@ -714,12 +771,16 @@ func (m tuiModel) moveSpawnField(delta int) tuiModel {
 	return m
 }
 
-// cycleChoice steps whichever of the two choice fields is focused.
+// cycleChoice steps whichever of the choice fields is focused.
 func (m tuiModel) cycleChoice(delta int) tuiModel {
 	switch m.form.field {
 	case tuiFieldGroup:
 		if n := len(m.form.groupNames); n > 0 {
 			m.form.groupIdx = ((m.form.groupIdx+delta)%n + n) % n
+		}
+	case tuiFieldProfile:
+		if n := len(m.form.profileNames); n > 0 {
+			m.form.profileIdx = ((m.form.profileIdx+delta)%n + n) % n
 		}
 	case tuiFieldHarness:
 		if n := len(m.form.harnessNames); n > 0 {
@@ -727,6 +788,17 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 		}
 	}
 	return m
+}
+
+// tuiIsChoiceField reports whether field is one of the cycled pickers, which
+// is what makes ←/→ (and space) change a value rather than reach a text input.
+func tuiIsChoiceField(field int) bool {
+	switch field {
+	case tuiFieldGroup, tuiFieldProfile, tuiFieldHarness:
+		return true
+	default:
+		return false
+	}
 }
 
 // completingDir reports whether a Tab should complete a path rather than
@@ -796,6 +868,7 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	req := agent.SpawnRequest{
 		Name:           strings.TrimSpace(m.form.name.Value()),
 		Cwd:            strings.TrimSpace(m.form.dir.Value()),
+		Profile:        m.selectedProfile(),
 		Harness:        m.selectedHarness(),
 		InitialMessage: strings.TrimSpace(m.form.brief.Value()),
 	}
@@ -957,6 +1030,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshErr = ""
 		m.agents = msg.agents
 		m.groups = msg.groups
+		m.profiles = msg.profiles
 		m.lastRefresh = time.Now()
 		visible := m.visibleAgents()
 		if m.cursor >= len(visible) {
@@ -1149,11 +1223,11 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.moveSpawnField(1), nil
 	case "left":
-		if m.form.field == tuiFieldGroup || m.form.field == tuiFieldHarness {
+		if tuiIsChoiceField(m.form.field) {
 			return m.cycleChoice(-1), nil
 		}
 	case "right", " ":
-		if m.form.field == tuiFieldGroup || m.form.field == tuiFieldHarness {
+		if tuiIsChoiceField(m.form.field) {
 			return m.cycleChoice(1), nil
 		}
 	}
@@ -1380,7 +1454,9 @@ func (m tuiModel) renderSpawnForm() string {
 	if group == "" {
 		group = "(no groups — create one with `tclaude agent groups create <name>`)"
 	}
-	b.WriteString(tuiChoiceLine("  Group:     ", group, m.form.field == tuiFieldGroup))
+	b.WriteString(tuiChoiceLine("  Group:     ", group, "", m.form.field == tuiFieldGroup))
+	b.WriteString(tuiChoiceLine("  Profile:   ", m.profileChoice(), m.profileChoiceHint(),
+		m.form.field == tuiFieldProfile))
 	b.WriteString(m.form.name.View() + tuiHint(m.form.name.Value() == "", "  (blank = auto-generated)"))
 	b.WriteString("\n")
 	b.WriteString(m.form.dir.View() + tuiHint(m.form.dir.Value() == "", "  (blank = the group's default directory)"))
@@ -1392,7 +1468,7 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
 	}
-	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice, m.form.field == tuiFieldHarness))
+	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice, "", m.form.field == tuiFieldHarness))
 	b.WriteString(m.form.brief.View() + tuiHint(m.form.brief.Value() == "", "  (blank = no startup brief)"))
 	b.WriteString("\n")
 
@@ -1406,8 +1482,29 @@ func (m tuiModel) renderSpawnForm() string {
 		completeHint = "tab complete dir • "
 	}
 	b.WriteString("\n  enter spawn • ↑/↓/tab next field • " + completeHint +
-		"←/→ change group/harness • esc cancel\n")
+		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
+}
+
+// profileChoice is the profile picker's current value.
+func (m tuiModel) profileChoice() string {
+	if m.form.profileIdx >= 0 && m.form.profileIdx < len(m.form.profileNames) {
+		return m.form.profileNames[m.form.profileIdx]
+	}
+	return tuiProfileDefault
+}
+
+// profileChoiceHint says what the picker's state means. "(default)" is the
+// easy one to misread — it looks like "no profile", when what it actually
+// does is leave the group's and the global default profile in force.
+func (m tuiModel) profileChoiceHint() string {
+	if m.profileChoice() != tuiProfileDefault {
+		return ""
+	}
+	if len(m.form.profileNames) <= 1 {
+		return "  (none saved — `tclaude agent profiles create`)"
+	}
+	return "  (the group's or global default profile still applies)"
 }
 
 // dirSuggestionLine renders the Tab-completion candidates on a single line,
@@ -1441,14 +1538,14 @@ func (m tuiModel) dirSuggestionLine() string {
 	return line
 }
 
-// tuiChoiceLine renders one of the two cycled fields. The focused one is
-// marked with a caret rather than a color, since the console has no palette
-// (the text fields mark focus with their own cursor).
-func tuiChoiceLine(label, value string, focused bool) string {
+// tuiChoiceLine renders one of the cycled fields, with an optional trailing
+// hint. The focused one is marked with a caret rather than a color, since the
+// console has no palette (the text fields mark focus with their own cursor).
+func tuiChoiceLine(label, value, hint string, focused bool) string {
 	if focused {
 		label = "> " + strings.TrimPrefix(label, "  ")
 	}
-	return label + "< " + value + " >\n"
+	return label + "< " + value + " >" + hint + "\n"
 }
 
 // tuiHint appends an inline explanation to an empty field.
@@ -1480,7 +1577,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
 	b.WriteString("               one match completes it, several list below the\n")
 	b.WriteString("               field. Operator consoles only.\n")
-	b.WriteString("    ←/→        Change the group or harness\n")
+	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
+	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
+	b.WriteString("               group's and the global default profile in force.\n")
 	b.WriteString("    enter      Spawn\n")
 	b.WriteString("    esc        Cancel\n\n")
 	if m.dashboardURL != "" {

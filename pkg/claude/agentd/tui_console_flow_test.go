@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"net/http"
 	"os"
 	"testing"
 
@@ -33,12 +34,12 @@ func newTUIConsole(t *testing.T) *agentd.TUIConsole {
 }
 
 // openSpawnForm walks the console into the "new agent" prompt with the name
-// and directory filled in. The form opens on the group field, so one tab
-// reaches the name and another the directory.
+// and directory filled in. The form opens on the group field, so two tabs
+// (past the profile picker) reach the name and another the directory.
 func openTUISpawnForm(t *testing.T, c *agentd.TUIConsole, name, dir string) {
 	t.Helper()
 	c.Press(t, "n")
-	c.Press(t, "tab")
+	c.Press(t, "tab", "tab")
 	c.Type(t, name)
 	c.Press(t, "tab")
 	c.Type(t, dir)
@@ -137,6 +138,39 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 	c.Press(t, "enter")
 	assert.False(t, called)
 	assert.Contains(t, c.View(), "no live tmux session")
+}
+
+// The spawn form's profile picker offers the daemon's saved profiles, and the
+// one the operator lands on reaches the launch — asserted on the model the
+// profile pins, which nothing else in this spawn asks for.
+func TestTUIConsoleSpawnsWithTheChosenProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	rec := createProfile(t, f, map[string]any{"name": "haiku-kit", "harness": "claude", "model": "haiku"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	cwd := f.TestCwd("tui-profile")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	c.Press(t, "n")
+	c.Press(t, "tab") // group → profile
+	require.Contains(t, c.View(), "< (default) >", "the picker starts on the daemon's own chain")
+	c.Press(t, "right")
+	require.Contains(t, c.View(), "< haiku-kit >", "and offers the saved profiles")
+	c.Press(t, "tab")
+	c.Type(t, "reviewer")
+	c.Press(t, "tab")
+	c.Type(t, cwd)
+	c.Press(t, "enter")
+
+	require.Contains(t, c.View(), "Spawned", "the console reports the outcome")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	model, ok := f.World.SpawnModel(members[0].ConvID)
+	require.True(t, ok, "the spawn should have been observed by the sim spawner")
+	assert.Equal(t, "haiku", model, "the chosen profile's model must reach the launch")
 }
 
 // x retires the selected agent through the daemon's own retire verb: the

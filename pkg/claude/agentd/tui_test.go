@@ -123,6 +123,8 @@ func TestTUIRefreshOrdersOnlineAgentsFirst(t *testing.T) {
 			})
 		case "/v1/groups":
 			writeJSON(w, http.StatusOK, []tuiGroupRow{{Name: "dev"}})
+		case "/v1/spawn-profiles":
+			writeJSON(w, http.StatusOK, []tuiProfileRow{})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -218,6 +220,74 @@ func TestTUISpawnFormPostsWhatTheOperatorTyped(t *testing.T) {
 	assert.Contains(t, got.notice, "agt_1")
 	assert.Contains(t, got.notice, "ops")
 	assert.NotNil(t, refresh)
+}
+
+// The profile picker is the console's way of saying "one of these kinds of
+// agent" — the name has to reach the request the daemon resolves against.
+func TestTUISpawnFormPostsTheChosenProfile(t *testing.T) {
+	var gotReq agent.SpawnRequest
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+
+	m := newTUIModel(api)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "reviewer-kit"}, {Name: "scribe-kit"}}
+	m = m.openSpawnForm()
+	require.Equal(t, []string{tuiProfileDefault, "reviewer-kit", "scribe-kit"}, m.form.profileNames)
+
+	// Tab off the group onto the profile, then pick the second one.
+	m = m.moveSpawnField(1)
+	require.Equal(t, tuiFieldProfile, m.form.field)
+	m = m.cycleChoice(1)
+	m = m.cycleChoice(1)
+	assert.Equal(t, "scribe-kit", m.selectedProfile())
+	assert.Contains(t, m.renderSpawnForm(), "< scribe-kit >")
+
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "scribe-kit", gotReq.Profile)
+}
+
+// "(default)" is not "no profile": it names none and leaves the group's and
+// the global default profile in force, which the form says out loud because
+// the two readings differ in what the agent ends up being.
+func TestTUISpawnDefaultProfileIsLeftUnpinned(t *testing.T) {
+	m := newTUIModel(nil)
+	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "reviewer-kit"}}
+	m = m.openSpawnForm()
+
+	assert.Empty(t, m.selectedProfile())
+	view := m.renderSpawnForm()
+	assert.Contains(t, view, "Profile:")
+	assert.Contains(t, view, "< "+tuiProfileDefault+" >")
+	assert.Contains(t, view, "default profile still applies")
+}
+
+// A daemon with no saved profiles offers only the sentinel, and says where
+// profiles come from rather than showing an empty picker.
+func TestTUISpawnProfilePickerWithoutAnyProfiles(t *testing.T) {
+	m := newTUIModel(nil)
+	m = m.openSpawnForm()
+	assert.Equal(t, []string{tuiProfileDefault}, m.form.profileNames)
+	assert.Contains(t, m.renderSpawnForm(), "profiles create")
+}
+
+// A disabled profile is refused at spawn and cannot be enabled from here, so
+// the picker does not offer it.
+func TestTUISpawnProfilePickerSkipsDisabledProfiles(t *testing.T) {
+	on, off := true, false
+	got := tuiProfileOptions([]tuiProfileRow{
+		{Name: "live-kit", Disabled: &off},
+		{Name: "retired-kit", Disabled: &on},
+		{Name: "legacy-kit"},
+	})
+	assert.Equal(t, []string{tuiProfileDefault, "live-kit", "legacy-kit"}, got)
 }
 
 // A blank harness must stay blank on the wire: that is what lets the
@@ -697,7 +767,7 @@ func TestTUISpawnTabOnAnotherFieldMovesOn(t *testing.T) {
 	m = m.openSpawnForm()
 	require.Equal(t, tuiFieldGroup, m.form.field)
 	updated, _ := m.handleSpawnKey(tuiTabKey())
-	assert.Equal(t, tuiFieldName, updated.(tuiModel).form.field)
+	assert.Equal(t, tuiFieldProfile, updated.(tuiModel).form.field)
 }
 
 // The candidate list is one line by contract: the form renders it whether
