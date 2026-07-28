@@ -374,6 +374,27 @@ jobs:
             exit 1
           fi
 
+      - name: Run pinned filtered model endpoint evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedFilteredModelEndpointEvidence$' \
+            -count=1 -v -timeout=60s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned filtered model endpoint evidence did not complete"
+              echo
+              echo "The named real Claude/Codex origin audit did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must execute Claude 2.1.220 API-key traffic and Codex 0.145.0 API-key, ChatGPT, and token-refresh traffic, refusing every undeclared origin."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedFilteredModelEndpointEvidence did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run OpenCode executor sandbox smoke
         env:
           TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
