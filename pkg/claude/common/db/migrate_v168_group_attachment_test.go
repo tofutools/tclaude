@@ -31,3 +31,14 @@ func TestMigrateV167toV168AddsGroupAttachment(t *testing.T) {
 	assert.Equal(t, 168, schemaVersion(d))
 	require.NoError(t, migrateV167toV168(d), "partially applied migration converges")
 }
+
+func TestMigrateV167toV168ToleratesMissingAgentGroupsInHistoricalHealFixture(t *testing.T) {
+	d, err := sql.Open("sqlite", "file:migrate-v168-no-groups?mode=memory&cache=shared")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (167)`)
+
+	require.NoError(t, migrateV167toV168(d))
+	assert.Equal(t, 168, schemaVersion(d))
+}

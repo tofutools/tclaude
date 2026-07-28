@@ -18,16 +18,29 @@ func migrateV167toV168(d *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for _, col := range []string{"attachment_url", "attachment_label"} {
-		var have int
-		if err := tx.QueryRow(
-			`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = ?`, col,
-		).Scan(&have); err != nil {
-			return fmt.Errorf("migrate v167→v168 (group attachment): probe %s: %w", col, err)
-		}
-		if have == 0 {
-			if _, err := tx.Exec(`ALTER TABLE agent_groups ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
-				return fmt.Errorf("migrate v167→v168 (group attachment): add %s: %w", col, err)
+	var haveTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_groups'`,
+	).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v167→v168 (group attachment): probe table: %w", err)
+	}
+	// Missing-table tolerance is for the repository's minimal historical
+	// migration-heal fixtures, matching the v166/v167 convention. Production
+	// creates agent_groups only in v8, before this step; there is no later
+	// creator that could leave a v168 database with this table but without
+	// the attachment columns.
+	if haveTable > 0 {
+		for _, col := range []string{"attachment_url", "attachment_label"} {
+			var have int
+			if err := tx.QueryRow(
+				`SELECT COUNT(*) FROM pragma_table_info('agent_groups') WHERE name = ?`, col,
+			).Scan(&have); err != nil {
+				return fmt.Errorf("migrate v167→v168 (group attachment): probe %s: %w", col, err)
+			}
+			if have == 0 {
+				if _, err := tx.Exec(`ALTER TABLE agent_groups ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+					return fmt.Errorf("migrate v167→v168 (group attachment): add %s: %w", col, err)
+				}
 			}
 		}
 	}
