@@ -2,10 +2,31 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestUpdateAgentPRState_RefreshesSameStateObservationTime(t *testing.T) {
+	setupTestDB(t)
+	const url = "https://github.com/tofutools/tclaude/pull/125"
+
+	agent, _, err := EnsureAgentForConv("prst-aaaa-bbbb-cccc-000000000002", "test")
+	require.NoError(t, err)
+	before, err := UpsertAgentPR(agent, url, "ready", "open")
+	require.NoError(t, err)
+
+	time.Sleep(time.Millisecond)
+	n, err := UpdateAgentPRState(agent, url, "open")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "same-state refresh is still a fresh observation")
+
+	after, err := GetAgentPR(agent, url)
+	require.NoError(t, err)
+	assert.True(t, after.UpdatedAt.After(before.UpdatedAt),
+		"same-state observation must advance the freshness clock")
+}
 
 // TestUpdateAgentPRState_DoesNotResurrectHandled pins the interleaving behind
 // a flaky dashboard test and a real UX bug: a background PR-state poll is

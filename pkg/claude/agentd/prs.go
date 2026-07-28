@@ -53,6 +53,7 @@ type presentedPRView struct {
 	Summary   string `json:"summary,omitempty"`
 	State     string `json:"state,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	updatedAt time.Time
 }
 
 func presentedPRViews(rows []db.AgentPR) []presentedPRView {
@@ -68,10 +69,11 @@ func presentedPRViews(rows []db.AgentPR) []presentedPRView {
 		}
 		seen[u] = true
 		v := presentedPRView{
-			URL:     u,
-			Number:  deriveGitHubPRNumber(u),
-			Summary: row.Summary,
-			State:   row.State,
+			URL:       u,
+			Number:    deriveGitHubPRNumber(u),
+			Summary:   row.Summary,
+			State:     row.State,
+			updatedAt: row.UpdatedAt,
 		}
 		if !row.UpdatedAt.IsZero() {
 			v.UpdatedAt = row.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")

@@ -78,9 +78,12 @@ func MarkAgentPRHandled(agentID, prURL string) (int64, error) {
 	return res.RowsAffected()
 }
 
-// UpdateAgentPRState refreshes a presented PR's state without touching its
-// summary. It is used by the daemon's best-effort GitHub polling path, where
-// writing an old summary from a stale in-memory row would be surprising.
+// UpdateAgentPRState records a presented PR state observation without touching
+// its summary. UpdatedAt advances even when the state is unchanged: dashboard
+// reconciliation uses it as the observation's freshness clock, not merely a
+// mutation timestamp. It is used by the daemon's best-effort GitHub polling
+// path, where writing an old summary from a stale in-memory row would be
+// surprising.
 // It never resurrects a handled row: the poll that produced this state was
 // scheduled from an unhandled snapshot, and MarkAgentPRHandled may have run
 // while the (slow) `gh` resolve was in flight. Only an explicit re-present
@@ -101,8 +104,8 @@ func UpdateAgentPRState(agentID, prURL, state string) (int64, error) {
 	}
 	res, err := d.Exec(`UPDATE agent_prs
 		SET state = ?, updated_at = ?
-		WHERE agent_id = ? AND pr_url = ? AND state <> ? AND state <> 'handled'`,
-		state, time.Now().UTC().Format(time.RFC3339Nano), agentID, prURL, state)
+		WHERE agent_id = ? AND pr_url = ? AND state <> 'handled'`,
+		state, time.Now().UTC().Format(time.RFC3339Nano), agentID, prURL)
 	if err != nil {
 		return 0, err
 	}

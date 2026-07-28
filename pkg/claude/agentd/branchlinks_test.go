@@ -2,11 +2,103 @@ package agentd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
+
+func TestRepoLinksViewUsesFreshestPRStateAcrossSources(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/42"
+
+	links := repoLinksView{
+		BranchPRURL:      prURL,
+		BranchPRState:    "open",
+		StartupPRURL:     prURL,
+		StartupPRState:   "open",
+		branchPRUpdated:  now.Add(-time.Minute),
+		startupPRUpdated: now.Add(-time.Minute),
+	}.withPresentedPRs([]presentedPRView{{
+		URL:       "https://github.com/O/R/pull/42/files",
+		State:     "merged",
+		updatedAt: now,
+	}})
+
+	assert.Equal(t, "merged", links.BranchPRState,
+		"a fresher presented result owns the duplicate branch badge state")
+	assert.Equal(t, "merged", links.StartupPRState,
+		"a fresher presented result owns the duplicate startup badge state")
+
+	links = repoLinksView{
+		BranchPRURL:     prURL,
+		BranchPRState:   "merged",
+		branchPRUpdated: now,
+	}.withPresentedPRs([]presentedPRView{{
+		URL:       prURL,
+		State:     "open",
+		updatedAt: now.Add(-time.Minute),
+	}})
+
+	assert.Equal(t, "merged", links.BranchPRState,
+		"an older presented result cannot regress a fresher branch result")
+
+	index := make(prStateIndex)
+	index.add(prURL, "merged", now)
+	links = repoLinksView{
+		PresentedPRs: []presentedPRView{{
+			URL:       prURL,
+			State:     "open",
+			updatedAt: now.Add(-time.Minute),
+		}},
+	}.withFreshestPRStates(index)
+	assert.Equal(t, "merged", links.PresentedPRs[0].State,
+		"a presented-only badge uses a fresher observation from another row")
+}
+
+func TestBranchLinksForPartsUsesFreshestWorkspaceOrBranchState(t *testing.T) {
+	now := time.Now()
+	const prURL = "https://github.com/o/r/pull/42"
+	loc := agentLocationView{
+		CurrentDir:    "/repo",
+		StartupDir:    "/repo",
+		Branch:        "feature",
+		StartupBranch: "feature",
+	}
+	ws := db.AgentWorkspace{
+		ConvID:        "conv",
+		Cwd:           "/repo",
+		Branch:        "feature",
+		RepoURL:       "https://github.com/o/r",
+		DefaultBranch: "main",
+		PRNumber:      42,
+		PRURL:         prURL,
+		PRState:       "open",
+		UpdatedAt:     now.Add(-time.Minute),
+	}
+
+	links := branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature",
+				42, prURL, "merged", now
+		})
+
+	assert.Equal(t, "merged", links.BranchPRState,
+		"a stale workspace render cannot regress a fresher branch-cache state")
+	assert.Equal(t, "merged", links.StartupPRState)
+
+	ws.PRState = "merged"
+	ws.UpdatedAt = now
+	links = branchLinksForParts("conv", loc, ws,
+		func(string, string) (string, int, string, string, time.Time) {
+			return "https://github.com/o/r/compare/main...feature",
+				42, prURL, "open", now.Add(-time.Minute)
+		})
+	assert.Equal(t, "merged", links.BranchPRState,
+		"a fresher workspace result owns the state")
+	assert.Equal(t, "merged", links.StartupPRState)
+}
 
 // resolverReturning installs a git-info resolver fake that reports a
 // fixed PR for any branch, and returns a restore closure.

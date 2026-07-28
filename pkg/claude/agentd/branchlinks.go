@@ -63,6 +63,8 @@ type repoLinksView struct {
 	StartupPRURL     string            `json:"startup_pr_url,omitempty"`     // web link to that PR
 	StartupPRState   string            `json:"startup_pr_state,omitempty"`   // open|merged|closed for the startup branch's PR
 	PresentedPRs     []presentedPRView `json:"presented_prs,omitempty"`      // agent-authored PRs shown alongside branch PRs
+	branchPRUpdated  time.Time
+	startupPRUpdated time.Time
 }
 
 // repoBranchInfo is the cached git/gh resolution for one
@@ -128,7 +130,7 @@ var branchLinkInflight sync.Map
 // to scheduleBranchLinkRefresh — so a cold or aged entry keeps driving the async
 // git/gh resolution across the 2s poll.
 func branchLinksForRow(convID string, loc agentLocationView, ws db.AgentWorkspace, gitCache map[string]*db.GitCacheRow) repoLinksView {
-	return branchLinksForParts(convID, loc, ws, func(repoDir, branch string) (string, int, string, string) {
+	return branchLinksForParts(convID, loc, ws, func(repoDir, branch string) (string, int, string, string, time.Time) {
 		return lookupBranchLinkRow(gitCache, repoDir, branch)
 	})
 }
@@ -139,13 +141,14 @@ func branchLinksForRow(convID string, loc agentLocationView, ws db.AgentWorkspac
 // source (a preloaded git_cache map, via lookupBranchLinkRow) and the workspace
 // row are threaded in as arguments so the resolution + override logic stays a
 // single implementation.
-func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorkspace, lookup func(repoDir, branch string) (string, int, string, string)) repoLinksView {
+func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorkspace, lookup func(repoDir, branch string) (string, int, string, string, time.Time)) repoLinksView {
 	var v repoLinksView
-	v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState = lookup(loc.CurrentDir, loc.Branch)
+	v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState, v.branchPRUpdated = lookup(loc.CurrentDir, loc.Branch)
 	if loc.StartupBranch == loc.Branch && loc.StartupDir == loc.CurrentDir {
 		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState
+		v.startupPRUpdated = v.branchPRUpdated
 	} else {
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState = lookup(loc.StartupDir, loc.StartupBranch)
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState, v.startupPRUpdated = lookup(loc.StartupDir, loc.StartupBranch)
 	}
 
 	if convID == "" {
@@ -158,14 +161,131 @@ func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorksp
 	// Branch slot: only override when the agent is on the launch dir
 	// (the dir agent_workspace describes) AND the branch matches.
 	if ws.Branch == loc.Branch && ws.Cwd != "" && loc.CurrentDir == ws.Cwd {
-		v.BranchURL, v.BranchPRNumber, v.BranchPRURL = webURL, ws.PRNumber, ws.PRURL
+		state, updated := ws.PRState, ws.UpdatedAt
+		if samePRURL(ws.PRURL, v.BranchPRURL) {
+			state, updated = newestPRState(v.BranchPRState, v.branchPRUpdated, state, updated)
+		}
+		v.BranchURL, v.BranchPRNumber, v.BranchPRURL, v.BranchPRState =
+			webURL, ws.PRNumber, ws.PRURL, state
+		v.branchPRUpdated = updated
 	}
 	// Startup slot: workspace's Cwd is by definition the launch dir, so
 	// matching ws.Branch to StartupBranch is enough.
 	if ws.Branch == loc.StartupBranch && ws.Cwd != "" && loc.StartupDir == ws.Cwd {
-		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL = webURL, ws.PRNumber, ws.PRURL
+		state, updated := ws.PRState, ws.UpdatedAt
+		if samePRURL(ws.PRURL, v.StartupPRURL) {
+			state, updated = newestPRState(v.StartupPRState, v.startupPRUpdated, state, updated)
+		}
+		v.StartupBranchURL, v.StartupPRNumber, v.StartupPRURL, v.StartupPRState =
+			webURL, ws.PRNumber, ws.PRURL, state
+		v.startupPRUpdated = updated
 	}
 	return v
+}
+
+// withPresentedPRs attaches explicitly presented PRs and reconciles duplicate
+// URLs against the branch/startup slots. Link placement and state freshness are
+// deliberately independent: whichever source most recently checked a PR owns
+// its displayed open/merged/closed state, even when the frontend later hides a
+// duplicate presented badge.
+func (v repoLinksView) withPresentedPRs(prs []presentedPRView) repoLinksView {
+	v.PresentedPRs = prs
+	for _, pr := range prs {
+		if samePRURL(pr.URL, v.BranchPRURL) {
+			v.BranchPRState, v.branchPRUpdated =
+				newestPRState(v.BranchPRState, v.branchPRUpdated, pr.State, pr.updatedAt)
+		}
+		if samePRURL(pr.URL, v.StartupPRURL) {
+			v.StartupPRState, v.startupPRUpdated =
+				newestPRState(v.StartupPRState, v.startupPRUpdated, pr.State, pr.updatedAt)
+		}
+	}
+	return v
+}
+
+type prStateObservation struct {
+	state     string
+	updatedAt time.Time
+}
+
+type prStateIndex map[string]prStateObservation
+
+func (idx prStateIndex) add(rawURL, state string, updatedAt time.Time) {
+	key := prStateKey(rawURL)
+	state = strings.ToLower(strings.TrimSpace(state))
+	if key == "" || state == "" {
+		return
+	}
+	current, ok := idx[key]
+	if !ok {
+		idx[key] = prStateObservation{state: state, updatedAt: updatedAt}
+		return
+	}
+	selected, selectedAt := newestPRState(current.state, current.updatedAt, state, updatedAt)
+	idx[key] = prStateObservation{state: selected, updatedAt: selectedAt}
+}
+
+func (idx prStateIndex) addRepoLinks(v repoLinksView) {
+	idx.add(v.BranchPRURL, v.BranchPRState, v.branchPRUpdated)
+	idx.add(v.StartupPRURL, v.StartupPRState, v.startupPRUpdated)
+}
+
+// withFreshestPRStates gives every badge for the same PR the same state,
+// regardless of whether that badge originated from automatic branch discovery
+// or explicit presentation, and regardless of which agent row observed it.
+func (v repoLinksView) withFreshestPRStates(idx prStateIndex) repoLinksView {
+	if state, ok := idx[prStateKey(v.BranchPRURL)]; ok {
+		v.BranchPRState = state.state
+		v.branchPRUpdated = state.updatedAt
+	}
+	if state, ok := idx[prStateKey(v.StartupPRURL)]; ok {
+		v.StartupPRState = state.state
+		v.startupPRUpdated = state.updatedAt
+	}
+	for i := range v.PresentedPRs {
+		state, ok := idx[prStateKey(v.PresentedPRs[i].URL)]
+		if !ok {
+			continue
+		}
+		v.PresentedPRs[i].State = state.state
+		v.PresentedPRs[i].updatedAt = state.updatedAt
+		if !state.updatedAt.IsZero() {
+			v.PresentedPRs[i].UpdatedAt = state.updatedAt.Format("2006-01-02T15:04:05Z07:00")
+		}
+	}
+	return v
+}
+
+func newestPRState(current string, currentAt time.Time, candidate string, candidateAt time.Time) (string, time.Time) {
+	if strings.TrimSpace(candidate) == "" {
+		return current, currentAt
+	}
+	if strings.TrimSpace(current) == "" {
+		return candidate, candidateAt
+	}
+	if candidateAt.IsZero() && !currentAt.IsZero() {
+		return current, currentAt
+	}
+	if currentAt.IsZero() || !candidateAt.Before(currentAt) {
+		return candidate, candidateAt
+	}
+	return current, currentAt
+}
+
+func prStateKey(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if ref, ok := githubPRRefFromURL(rawURL); ok {
+		return "github:" + ref.key()
+	}
+	return "url:" + rawURL
+}
+
+func samePRURL(a, b string) bool {
+	aKey := prStateKey(a)
+	return aKey != "" && aKey == prStateKey(b)
 }
 
 // lookupBranchLinkRow returns the web link + PR info for a (repoDir, branch)
@@ -174,9 +294,9 @@ func branchLinksForParts(convID string, loc agentLocationView, ws db.AgentWorksp
 // shared core — which STILL schedules a background refresh on a stale/missing
 // entry. A blank repoDir/branch — a detached HEAD, or an agent outside a git
 // repo — resolves to no link.
-func lookupBranchLinkRow(gitCache map[string]*db.GitCacheRow, repoDir, branch string) (url string, prNumber int, prURL, prState string) {
+func lookupBranchLinkRow(gitCache map[string]*db.GitCacheRow, repoDir, branch string) (url string, prNumber int, prURL, prState string, fetchedAt time.Time) {
 	if repoDir == "" || branch == "" {
-		return "", 0, "", ""
+		return "", 0, "", "", time.Time{}
 	}
 	key := branchLinkCacheKey(repoDir, branch)
 	return lookupBranchLinkFromCache(repoDir, branch, key, gitCache[key])
@@ -189,7 +309,7 @@ func lookupBranchLinkRow(gitCache map[string]*db.GitCacheRow, repoDir, branch st
 // The refresh side effect is load-bearing — it is what drives PR/branch state
 // forward across the 2s poll — so both the singular and the batch caller route
 // through here to keep it firing.
-func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow) (url string, prNumber int, prURL, prState string) {
+func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow) (url string, prNumber int, prURL, prState string, fetchedAt time.Time) {
 	var info repoBranchInfo
 	fresh := false
 	if row != nil {
@@ -200,7 +320,8 @@ func lookupBranchLinkFromCache(repoDir, branch, key string, row *db.GitCacheRow)
 	if !fresh {
 		scheduleBranchLinkRefresh(repoDir, branch, key)
 	}
-	return branchWebURL(info.RepoURL, info.DefaultBranch, branch), info.PRNumber, info.PRURL, info.PRState
+	return branchWebURL(info.RepoURL, info.DefaultBranch, branch),
+		info.PRNumber, info.PRURL, info.PRState, info.FetchedAt
 }
 
 // scheduleBranchLinkRefresh kicks a single background git/gh

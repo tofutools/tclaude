@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Scenario: two agents working on feature branches of a GitHub repo —
@@ -102,4 +103,54 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 	assert.Equal(t, "https://github.com/acme/app/compare/main...feature-login",
 		aliceMember.BranchURL, "groups-tab branch URL")
 	assert.Equal(t, 42, aliceMember.BranchPRNum, "groups-tab PR number")
+}
+
+// A PR can reach the Branch column through two independent paths: automatic
+// branch discovery and explicit presentation. The UI deduplicates those links
+// by URL, so the surviving automatic link must carry the freshest state from
+// either source. This pins the merge-latency regression where the 10-second
+// presented-PR poll observed "merged" but the visible badge stayed "open"
+// until the separate 90-second branch cache expired.
+func TestDashboardBranchLinks_DuplicateUsesFreshestPresentedState(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	const (
+		conv   = "freshpr0-0000-0000-0000-000000000001"
+		prURL  = "https://github.com/acme/app/pull/1659"
+		branch = "feature-fast-pr"
+	)
+
+	t.Cleanup(agentd.SetGitInfoResolverForTest(
+		func(string, string) (string, string, int, string, string, bool) {
+			return "https://github.com/acme/app", "main", 1659, prURL, "open", true
+		}))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSessionOnBranch(conv, "spwn-freshpr", "tmux-freshpr", f.TestCwd("wt/freshpr"), branch)
+	f.HaveMember("squad", conv)
+	require.NotNil(t, agent.FreshConvRowResolved(conv), "conv_index scan")
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	_ = fetchDashSnapshot(t, mux)
+	agentd.WaitForBackgroundForTest()
+	snap := fetchDashSnapshot(t, mux)
+	row := findAgent(snap.Agents, conv)
+	require.NotNil(t, row)
+	require.Equal(t, "open", row.BranchPRState, "automatic branch cache starts open")
+
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	_, err = db.UpsertAgentPR(agentID, prURL, "ready", "open")
+	require.NoError(t, err)
+	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
+		func([]string, int) ([]string, bool) { return []string{prURL}, true }))
+	agentd.PollRecentlyMergedPRsForTest()
+
+	snap = fetchDashSnapshot(t, mux)
+	row = findAgent(snap.Agents, conv)
+	require.NotNil(t, row)
+	assert.Equal(t, "merged", row.BranchPRState,
+		"visible automatic link takes the fresher presented-PR poll state")
+	require.Len(t, row.PresentedPRs, 1)
+	assert.Equal(t, "merged", row.PresentedPRs[0].State)
 }
