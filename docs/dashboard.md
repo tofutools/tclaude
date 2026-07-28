@@ -639,17 +639,25 @@ protected-root, reserved-variable, containment, and harness capability checks.
 The editor has separate **Network** and **Unix sockets** fieldsets with
 unset/open/closed/list modes, editable list rows, inherited harness-global
 context, and audited insert-only presets. Its **Effective policy preview**
-shows the real global/group/explicit intersection for directory access,
-environment names, agent-owned directories, network, and Unix sockets, then
-asks the daemon to predict the selected implementation/harness/platform.
-Filesystem prediction evaluates the effective assignment contexts, so a
-narrower read/write carve-out beneath a denied parent is visible even when the
-two rows come from different profile scopes. It distinguishes the tclaude
-layer's process wall from Claude Code's built-in-tool carve-out gap and Codex's
-macOS denied-parent refusal. Empty list intersections are loud warnings, never
-save blockers. Capability warnings use the daemon's exact resolver detail; the
-editor does not guess support from the selected mode. The raw JSON view
-includes both `network` and `unix_sockets`.
+shows concrete effective rules grouped as **Fully supported rules**,
+**Partially supported rules**, and **Unsupported rules** for the selected
+implementation/harness/platform. Partial and unsupported groups open
+automatically; successful rules stay folded when another group needs
+attention. Unset axes are omitted, and profile-layer composition details stay
+behind a secondary disclosure.
+
+Each assignment context has its own verdict, while the daemon also evaluates
+every context for the aggregate safety result. If another assignment has a
+worse result, a concise warning remains visible even when that context is
+omitted from the selector. A narrower read/write carve-out
+beneath a denied parent is therefore visible even when the two rows come from
+different profile scopes, without making an unaffected selected group inherit
+another group's warning. The prediction distinguishes the tclaude layer's
+process wall from Claude Code's built-in-tool carve-out gap and Codex's macOS
+denied-parent refusal. Empty list intersections are warnings, never save
+blockers. Limitation text uses the daemon's exact resolver detail; the editor
+does not guess support from the selected mode. The raw JSON view includes both
+`network` and `unix_sockets`.
 
 The selector's **none** choice explicitly omits every tclaude sandbox-profile
 tier for that launch, including global/group environment values and agent-owned

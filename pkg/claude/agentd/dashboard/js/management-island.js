@@ -8,8 +8,10 @@ import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
-  sandboxPredictionWarnings,
+  sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
+  sandboxRuleBuckets,
+  sandboxTargetLabel,
 } from './sandbox-profiles-data.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
@@ -57,6 +59,44 @@ const html = htm.bind(h);
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
+
+function SandboxOutcomeBucket({ bucket, open }) {
+  if (!bucket.rules.length) return null;
+  return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
+    <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
+    <ul>${bucket.rules.map((rule, index) => html`<li key=${index}>${rule}</li>`)}</ul>
+    ${bucket.reasons.map((reason, index) => html`<div key=${index} class="sbx-rule-reason"><strong>${reason.label}:</strong> ${reason.detail}</div>`)}
+  </details>`;
+}
+
+function SandboxPolicyResult({ target, context, contextIndex }) {
+  const axes = target.context_axes?.[contextIndex] || target.axes || {};
+  const buckets = sandboxRuleBuckets(axes, context);
+  const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
+  const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
+  const hasProblems = buckets.partial.rules.length > 0 || buckets.notApplied.rules.length > 0;
+  const partialCount = buckets.partial.rules.length;
+  const unsupportedCount = buckets.notApplied.rules.length;
+  const a11ySummary = `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
+  return html`<div class="sbx-policy-result">
+    <strong class="sbx-policy-target">${sandboxTargetLabel(target)}</strong>
+    ${!buckets.launchRefused && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">${a11ySummary}</div>`}
+    ${otherWarnings.length > 0 && html`<div class=${`sbx-other-assignments${otherLaunchRefused ? ' refused' : ''}`} role=${otherLaunchRefused ? 'alert' : 'status'}>
+      <strong>Other assignments need attention.</strong>
+      <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
+      <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
+    </div>`}
+    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
+    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${!hasProblems}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}/>
+    <details class="sbx-target-details"><summary>Evaluation details</summary>
+      ${target.target.sandbox ? html`<div>Sandbox mode: ${target.target.sandbox}</div>` : null}
+      ${target.resolved_by ? html`<div>Resolved from: ${target.resolved_by}</div>` : null}
+    </details>
+  </div>`;
+}
+
 function accessRowShapeError(network, unixSockets) {
   const isRow = (row) => !!row && typeof row === 'object' && !Array.isArray(row);
   const networkIndex = (network.allow || []).findIndex((row) => !isRow(row));
@@ -692,9 +732,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const globalConfigWarnings = commonRules.global_config_warnings || [];
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
-  const warnings = sandboxPredictionWarnings(prediction);
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
-  const selectedEffectiveAxes = selectedEffective ? sandboxAccessAxes(selectedEffective) : null;
   const submitBlocked = saving || directoryBusy || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${networkTemplateNotice} setNotice=${setNetworkTemplateNotice}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
@@ -735,44 +773,26 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
     <fieldset class="sbx-section sbx-effective-preview"><legend>Effective policy preview</legend>
       <label>Evaluate for <select id="sandbox-profile-editor-evaluate-for" value=${evaluateFor} onChange=${(event) => setEvaluateFor(event.currentTarget.value)}>
-        <option value="">Resolved default target</option>
-        <option value="harness-builtin/claude/linux">Claude builtin · Linux</option>
-        <option value="harness-builtin/claude/darwin">Claude builtin · macOS</option>
-        <option value="harness-builtin/codex/linux">Codex builtin · Linux</option>
-        <option value="harness-builtin/codex/darwin">Codex builtin · macOS</option>
-        <option value="tclaude-layer/claude/linux">tclaude layer · Claude · Linux</option>
-        <option value="tclaude-layer/claude/darwin">tclaude layer · Claude · macOS</option>
-        <option value="stacked/claude/linux">stacked · Claude · Linux</option>
+        <option value="">Default for this profile</option>
+        <option value="harness-builtin/claude/linux">Claude on Linux · built-in sandbox</option>
+        <option value="harness-builtin/claude/darwin">Claude on macOS · built-in sandbox</option>
+        <option value="harness-builtin/codex/linux">Codex on Linux · built-in sandbox</option>
+        <option value="harness-builtin/codex/darwin">Codex on macOS · built-in sandbox</option>
+        <option value="tclaude-layer/claude/linux">Claude on Linux · tclaude sandbox</option>
+        <option value="tclaude-layer/claude/darwin">Claude on macOS · tclaude sandbox</option>
+        <option value="stacked/claude/linux">Claude on Linux · stacked sandboxes</option>
       </select></label>
       ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
-      ${prediction?.targets?.map((target, index) => html`<div key=${index} class="sbx-capability-preview">
-        <strong>${target.target.implementation} · ${target.target.harness} · ${target.target.platform}${target.target.sandbox ? ` · sandbox ${target.target.sandbox}` : ''}</strong>${target.resolved_by ? ` — ${target.resolved_by}` : ''}
-        ${[
-          ['Directory access', 'filesystem'],
-          ['Environment', 'environment'],
-          ['Agent-owned directories', 'agent_directories'],
-          ['Network', 'network'],
-          ['Unix sockets', 'unix_sockets'],
-        ].map(([label, key]) => target.axes?.[key] && html`
-          <div>${label}: ${target.axes[key].tier} · ${target.axes[key].outcome}</div>
-          <div class=${target.axes[key].outcome === 'enforced' ? '' : 'warn'}>${target.axes[key].detail}</div>
-        `)}
-      </div>`)}
-      ${(prediction?.contexts?.length || 0) > 1 && html`<label>Assignment context <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
-      ${selectedEffective && html`<div class="sbx-effective-values">
-        <div><strong>Layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
-        <div><strong>Directory access:</strong> ${(selectedEffective.filesystem || []).map((entry) => `${entry.access} ${entry.path}`).join(' · ') || 'unset'}</div>
-        <div><strong>Environment:</strong> ${(selectedEffective.environment || []).join(', ') || 'unset'}</div>
-        <div><strong>Agent-owned directories:</strong> ${(selectedEffective.agent_directories || []).join(', ') || 'unset'}</div>
-        <div><strong>Network:</strong> ${selectedEffectiveAxes.network.mode || 'unset'}${selectedEffectiveAxes.network.mode === 'list' ? ` · ${selectedEffectiveAxes.network.allow.length} destination(s)` : ''}</div>
-        <div><strong>Unix sockets:</strong> ${selectedEffectiveAxes.unix_sockets.mode || 'unset'}${selectedEffectiveAxes.unix_sockets.mode === 'list' ? ` · ${selectedEffectiveAxes.unix_sockets.allow.length} entry(s)` : ''}</div>
-        <div><strong>agentd socket:</strong> ${selectedEffective.agentd_socket}</div>
-      </div>`}
-      ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 contexts; ${prediction.remaining_contexts} more assignment contexts are omitted.</div>` : null}
-      ${warnings.composition.map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
-      ${warnings.capability.map((detail, index) => html`<div key=${index} class="sbx-capability-warning" role="status">⚠ ${detail}</div>`)}
+      ${(prediction?.contexts?.length || 0) > 1 && html`<label>Rules for <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
+      ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}
+      ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
+      ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
+        <div><strong>Profile layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
+        ${(selectedEffective.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}
+        ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 assignments; ${prediction.remaining_contexts} more are omitted from this selector but still included in the overall safety check.</div>` : null}
+      </details>`}
     </fieldset>
     ${!advanced && accessErrors.map((error, index) => html`<div key=${index} class="sbx-access-validation" role="alert">⚠ ${error}</div>`)}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}

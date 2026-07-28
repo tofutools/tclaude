@@ -39,16 +39,28 @@ func describePredictedDraftSandboxProfile(
 	target parsedSandboxProfileEnforcementTarget,
 	validatedBuiltinMode string,
 	described harness.PredictedAccessAxes,
-) harness.PredictedAccessAxes {
+) (harness.PredictedAccessAxes, []harness.PredictedAccessAxes, error) {
 	if len(contexts) == 0 {
 		return describePredictedSandboxProfile(
 			flattened, target, validatedBuiltinMode, described,
-		)
+		), nil, nil
 	}
 	predictions := make([]harness.PredictedAccessAxes, 0, len(contexts))
 	for _, context := range contexts {
+		axes, err := sandboxpolicy.DeriveAccessAxes(context.policy)
+		if err != nil {
+			return harness.PredictedAccessAxes{}, nil, err
+		}
+		predicted, err := harness.PredictAccessEnforcement(
+			target.harness, target.implementation, axes,
+			validatedBuiltinMode, target.platform,
+		)
+		if err != nil {
+			return harness.PredictedAccessAxes{}, nil, err
+		}
 		predictions = append(predictions, describePredictedSandboxProfile(
-			context.policy, target, validatedBuiltinMode, harness.PredictedAccessAxes{},
+			context.policy, target, validatedBuiltinMode,
+			harness.DescribePredictedAccess(axes, predicted),
 		))
 	}
 	described.Filesystem = aggregateSandboxFeature(
@@ -66,7 +78,17 @@ func describePredictedDraftSandboxProfile(
 			return value.AgentDirectories
 		},
 	)
-	return described
+	described.Network = aggregateSandboxFeature(
+		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+			return value.Network
+		},
+	)
+	described.UnixSockets = aggregateSandboxFeature(
+		predictions, func(value harness.PredictedAccessAxes) harness.PredictedAccessAxis {
+			return value.UnixSockets
+		},
+	)
+	return described, predictions, nil
 }
 
 func predictSandboxFilesystem(
