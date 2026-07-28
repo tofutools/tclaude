@@ -65,6 +65,46 @@ func TestFlattenExpandsIncludesWithLocalOverride(t *testing.T) {
 	}, got.Environment)
 }
 
+func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(target, 0o755))
+	require.NoError(t, os.Symlink(target, alias))
+	included, _, err := NormalizeForAuthoring(Profile{
+		Name: "included",
+		Filesystem: []FilesystemGrant{{
+			Path: alias, Access: AccessRead,
+		}},
+	})
+	require.NoError(t, err)
+	parent, _, err := NormalizeForAuthoring(Profile{
+		Name: "parent",
+		Filesystem: []FilesystemGrant{{
+			Path: target, Access: AccessWrite,
+		}},
+		Includes: []string{"included"},
+	})
+	require.NoError(t, err)
+
+	got, err := Flatten(parent, registryLookup(map[string]*Profile{
+		"included": &included,
+	}))
+	require.NoError(t, err)
+	canonical, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{
+		Path: canonical, Access: AccessWrite,
+	}}, got.Filesystem)
+	assert.Equal(t, &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules: []FilesystemSpellingRule{{
+			ResolvedPath: canonical,
+			Spellings:    []string{alias},
+		}},
+	}, got.FilesystemSpellings)
+}
+
 func TestFlattenLaterIncludeOverridesEarlier(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

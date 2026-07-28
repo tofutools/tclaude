@@ -471,9 +471,11 @@ interpolated into SBPL. Resolved symlink targets and any `MountPlan.Aliases`
 that survived profile resolution are both covered; no constructed-root symlink
 is created on Darwin. Case/NFC-equivalent spellings are merged only after
 Darwin `lstat` file identity confirms matching device and inode, so a
-case-sensitive APFS volume keeps distinct objects distinct. Persisted registry
-profiles may already have discarded their operator spelling; that separate
-limitation remains tracked by TCL-762.
+case-sensitive APFS volume keeps distinct objects distinct. Newly saved
+registry profiles retain those operator spellings separately from their
+canonical filesystem authority. Profiles created by an older tclaude build
+remain canonical-only until they are edited and saved; spellings discarded
+before this metadata existed cannot be reconstructed.
 
 The Darwin boundary is partial rather than unverified: Seatbelt filesystem
 policy is active and paths remain enumerable. The compact row tooltip does not
@@ -522,12 +524,19 @@ loopback exception that silently reopens host services.
 
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep
-using that spelling while the mount plan binds the resolved target. There is a
-temporary authoring limitation: registry profiles are canonicalized when they
-are saved, so their original symlink spellings are not yet preserved for later
-resolution. Aliases are therefore materialized only when the spelling is still
-present in the value passed to resolution; host-open continues to inherit
-aliases from its read-only host root.
+using that spelling while the mount plan binds the resolved target. Registry
+profiles store the canonical path as the sole launch authority and retain
+operator spellings in separate, versioned metadata. The editor therefore shows
+one row per canonical rule, with the authored spelling and a `binds →` target,
+rather than presenting aliases as additional grants.
+
+Retained spellings are revalidated during save preview and again at launch. If
+a symlink or case/NFC-equivalent spelling now resolves to a different object,
+tclaude refuses it and names the profile, spelling, original target, current
+target, and both remedies: re-save the spelling to adopt the new target, or
+remove it. Launch authority is never recomputed from retained spelling
+metadata. Editing the filesystem paths is the explicit re-authoring operation;
+ordinary edits keep the original binding pinned and revalidate it.
 
 The isolated posture blocks TCP egress and host-loopback TCP. It also closes
 the Linux abstract Unix-socket namespace. PID isolation prevents the harness

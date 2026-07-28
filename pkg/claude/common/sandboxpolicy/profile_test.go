@@ -40,6 +40,126 @@ func TestNormalizeFilesystemCanonicalizesFoldsAndSorts(t *testing.T) {
 	assert.Equal(t, alias, in.Filesystem[1].Path, "caller input must not be mutated")
 }
 
+func TestNormalizeForAuthoringRetainsAliasBesideCanonicalAuthority(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(real, 0o755))
+	require.NoError(t, os.Symlink(real, alias))
+	canonical, err := filepath.EvalSymlinks(real)
+	require.NoError(t, err)
+
+	got, missing, err := NormalizeForAuthoring(Profile{
+		Name: "retained",
+		Filesystem: []FilesystemGrant{{
+			Path: alias, Access: AccessWrite,
+		}},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+	assert.Equal(t, []FilesystemGrant{{
+		Path: canonical, Access: AccessWrite,
+	}}, got.Filesystem)
+	require.Equal(t, &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules: []FilesystemSpellingRule{{
+			ResolvedPath: canonical,
+			Spellings:    []string{alias},
+		}},
+	}, got.FilesystemSpellings)
+
+	revalidated, _, err := NormalizeForPersistence(got)
+	require.NoError(t, err)
+	assert.Equal(t, got, revalidated)
+}
+
+func TestNormalizeForAuthoringMarksOrdinaryProfileModernWithoutAliases(t *testing.T) {
+	path := t.TempDir()
+	canonical, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+
+	got, _, err := NormalizeForAuthoring(Profile{
+		Name:       "ordinary",
+		Filesystem: []FilesystemGrant{{Path: path, Access: AccessRead}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{Path: canonical, Access: AccessRead}}, got.Filesystem)
+	assert.Equal(t, &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules:   []FilesystemSpellingRule{},
+	}, got.FilesystemSpellings)
+}
+
+func TestNormalizeForAuthoringCaseAndNFCMergeRequiresConfirmedIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		first string
+		last  string
+	}{
+		{name: "case", first: "Cache", last: "cache"},
+		{name: "NFC", first: "\u00e9", last: "e\u0301"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			first := filepath.Join(root, tc.first)
+			last := filepath.Join(root, tc.last)
+			require.NoError(t, os.Mkdir(first, 0o755))
+			require.NoError(t, os.Mkdir(last, 0o755))
+			grants := []FilesystemGrant{
+				{Path: first, Access: AccessRead},
+				{Path: last, Access: AccessWrite},
+			}
+
+			distinct, sidecar, _, err := normalizeFilesystemForAuthoringWithIdentity(
+				grants, false, func(os.FileInfo, os.FileInfo) bool { return false },
+			)
+			require.NoError(t, err)
+			assert.Len(t, distinct, 2, "folding alone must not merge distinct objects")
+			assert.Empty(t, sidecar.Rules)
+
+			merged, sidecar, _, err := normalizeFilesystemForAuthoringWithIdentity(
+				grants, false, func(os.FileInfo, os.FileInfo) bool { return true },
+			)
+			require.NoError(t, err)
+			require.Len(t, merged, 1)
+			assert.Equal(t, AccessWrite, merged[0].Access)
+			require.Len(t, sidecar.Rules, 1)
+			assert.Equal(t, merged[0].Path, sidecar.Rules[0].ResolvedPath)
+			assert.Len(t, sidecar.Rules[0].Spellings, 1)
+			assert.NotEqual(t, merged[0].Path, sidecar.Rules[0].Spellings[0])
+		})
+	}
+}
+
+func TestNormalizeForPersistenceRejectsRetargetedRetainedSpellingActionably(t *testing.T) {
+	root := t.TempDir()
+	original := filepath.Join(root, "original")
+	current := filepath.Join(root, "current")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(original, 0o755))
+	require.NoError(t, os.Mkdir(current, 0o755))
+	require.NoError(t, os.Symlink(original, alias))
+
+	authored, _, err := NormalizeForAuthoring(Profile{
+		Name: "drifted",
+		Filesystem: []FilesystemGrant{{
+			Path: alias, Access: AccessRead,
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(alias))
+	require.NoError(t, os.Symlink(current, alias))
+
+	_, _, err = NormalizeForPersistence(authored)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `sandbox profile "drifted"`)
+	assert.ErrorContains(t, err, `retained spelling "`+alias+`"`)
+	assert.ErrorContains(t, err, `originally resolved to "`+original+`"`)
+	assert.ErrorContains(t, err, `now resolves to "`+current+`"`)
+	assert.ErrorContains(t, err, "re-save the profile to adopt the new target")
+	assert.ErrorContains(t, err, "remove the retained spelling")
+}
+
 func TestNormalizeNetworkAccess(t *testing.T) {
 	for _, access := range []NetworkAccess{NetworkAccessInherit, NetworkAccessInternet, NetworkAccessNone} {
 		got, err := Normalize(Profile{Name: "p", NetworkAccess: access})

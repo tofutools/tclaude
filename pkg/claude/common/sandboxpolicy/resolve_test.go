@@ -238,6 +238,35 @@ func TestResolveCarriesObservableMountAliases(t *testing.T) {
 	}
 }
 
+func TestResolveCarriesPersistedFilesystemSpellingsIntoMountPlan(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(root, "real")
+	link := filepath.Join(root, "alias")
+	spelled := filepath.Join(link, "nested")
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "nested"), 0o755))
+	require.NoError(t, os.Symlink(target, link))
+
+	persisted, _, err := NormalizeForAuthoring(Profile{
+		Name: "persisted-alias",
+		Filesystem: []FilesystemGrant{{
+			Path: spelled, Access: AccessRead,
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, persisted.FilesystemSpellings)
+
+	effective, err := Resolve(Scopes{Explicit: &persisted})
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{{
+		Path: filepath.Join(target, "nested"), Access: AccessRead,
+	}}, effective.Filesystem)
+	assert.Equal(t, []MountAlias{{Link: link, Target: target}}, effective.MountAliases)
+	plan, err := RenderMountPlan(effective)
+	require.NoError(t, err)
+	assert.Equal(t, effective.MountAliases, plan.Aliases)
+}
+
 func TestResolveEnforcesAggregateEnvironmentLimits(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	entries := func(prefix string, count int) []EnvironmentEntry {

@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ type wireSandboxProfile struct {
 		Path   string `json:"path"`
 		Access string `json:"access"`
 	} `json:"filesystem"`
+	FilesystemSpellings *struct {
+		Version int `json:"version"`
+		Rules   []struct {
+			ResolvedPath string   `json:"resolved_path"`
+			Spellings    []string `json:"spellings"`
+		} `json:"rules"`
+	} `json:"filesystem_spellings"`
 	Environment []struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
@@ -229,6 +237,65 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	}
 }
 
+func TestSandboxProfilePreviewAndSaveRejectRetargetedRetainedSpelling(t *testing.T) {
+	f := newFlow(t)
+	root := filepath.Join(os.Getenv("HOME"), "retarget-preview")
+	original := filepath.Join(root, "original")
+	current := filepath.Join(root, "current")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.MkdirAll(original, 0o755))
+	require.NoError(t, os.MkdirAll(current, 0o755))
+	require.NoError(t, os.Symlink(original, alias))
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "retargeted",
+		"filesystem": []map[string]any{{
+			"path": alias, "access": "read",
+		}},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/retargeted", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "get body=%s", rec.Body.String())
+	var saved map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &saved))
+	require.NotNil(t, saved["filesystem_spellings"])
+
+	require.NoError(t, os.Remove(alias))
+	require.NoError(t, os.Symlink(current, alias))
+	for _, suffix := range []string{"?dry_run=1", ""} {
+		rec = profileReq(t, f, http.MethodPatch,
+			"/v1/sandbox-profiles/retargeted"+suffix, saved)
+		require.Equalf(t, http.StatusBadRequest, rec.Code,
+			"retargeted spelling must fail at preview and save: body=%s", rec.Body.String())
+		assert.Contains(t, rec.Body.String(), `retargeted`)
+		assert.Contains(t, rec.Body.String(), alias)
+		assert.Contains(t, rec.Body.String(), original)
+		assert.Contains(t, rec.Body.String(), current)
+		assert.Contains(t, rec.Body.String(), "re-save the profile to adopt the new target")
+		assert.Contains(t, rec.Body.String(), "remove the retained spelling")
+	}
+
+	// Omitting the old sidecar and submitting the spelling again is the
+	// explicit re-authoring remedy: preview adopts the current target and
+	// returns a new sidecar for the CAS-protected save.
+	delete(saved, "filesystem_spellings")
+	saved["filesystem"] = []map[string]any{{"path": alias, "access": "read"}}
+	rec = profileReq(t, f, http.MethodPatch,
+		"/v1/sandbox-profiles/retargeted?dry_run=1", saved)
+	require.Equalf(t, http.StatusOK, rec.Code, "re-author preview body=%s", rec.Body.String())
+	var preview struct {
+		After wireSandboxProfile `json:"after"`
+	}
+	testharness.DecodeJSON(t, rec, &preview)
+	canonicalCurrent, err := filepath.EvalSymlinks(current)
+	require.NoError(t, err)
+	require.Len(t, preview.After.Filesystem, 1)
+	assert.Equal(t, canonicalCurrent, preview.After.Filesystem[0].Path)
+	require.NotNil(t, preview.After.FilesystemSpellings)
+	require.Len(t, preview.After.FilesystemSpellings.Rules, 1)
+	assert.Equal(t, []string{alias}, preview.After.FilesystemSpellings.Rules[0].Spellings)
+}
+
 func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	cache := filepath.Join(os.Getenv("HOME"), "cache")
@@ -254,11 +321,12 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
 	// v5 removed read_baseline/read_baseline_exclusions (TCL-623), v6
-	// removed break_glass_filesystem (TCL-791), and v7 adds independent
-	// network and Unix-socket axes. Exporting only the newest
+	// removed break_glass_filesystem (TCL-791), v7 adds independent
+	// network and Unix-socket axes, and v8 retains filesystem spellings.
+	// Exporting only the newest
 	// version keeps an older importer from silently dropping a
-	// security-significant field as an unknown key; v1–v6 stay importable.
-	assert.Equal(t, float64(7), bundle["format_version"])
+	// security-significant field as an unknown key; older versions stay importable.
+	assert.Equal(t, float64(8), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)

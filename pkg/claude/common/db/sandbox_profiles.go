@@ -47,15 +47,16 @@ type SandboxProfile struct {
 	// them, which strictly narrows; operator-supplied input is refused loudly
 	// at the daemon boundary instead, so nothing is imported that differs from
 	// what the file says.
-	Filesystem       []SandboxFilesystemGrant       `json:"filesystem"`
-	Environment      []SandboxEnvironmentEntry      `json:"environment"`
-	AgentDirectories []string                       `json:"agent_directories"`
-	NetworkAccess    sandboxpolicy.NetworkAccess    `json:"network_access,omitempty"`
-	Network          *sandboxpolicy.NetworkRules    `json:"network,omitempty"`
-	UnixSockets      *sandboxpolicy.UnixSocketRules `json:"unix_sockets,omitempty"`
-	Includes         []string                       `json:"includes"`
-	CreatedAt        time.Time                      `json:"created_at"`
-	UpdatedAt        time.Time                      `json:"updated_at"`
+	Filesystem          []SandboxFilesystemGrant           `json:"filesystem"`
+	FilesystemSpellings *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings,omitempty"`
+	Environment         []SandboxEnvironmentEntry          `json:"environment"`
+	AgentDirectories    []string                           `json:"agent_directories"`
+	NetworkAccess       sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
+	Network             *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
+	UnixSockets         *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	Includes            []string                           `json:"includes"`
+	CreatedAt           time.Time                          `json:"created_at"`
+	UpdatedAt           time.Time                          `json:"updated_at"`
 }
 
 type SandboxProfileAssignments struct {
@@ -116,8 +117,8 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(`INSERT INTO sandbox_profiles
-		(name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+		(name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
 		p.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -178,8 +179,8 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 		return err
 	}
 	now := time.Now().Format(time.RFC3339Nano)
-	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
-	args := []any{p.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, filesystem_spellings_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
 		p.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, p.ID}
 	if revision != "" {
 		query += ` AND updated_at = ?`
@@ -395,12 +396,13 @@ func validateIncludeGraphMap(graph map[string][]string) error {
 }
 
 type sandboxProfilePayloadJSON struct {
-	filesystem       string
-	environment      string
-	agentDirectories string
-	network          string
-	unixSockets      string
-	includes         string
+	filesystem          string
+	filesystemSpellings string
+	environment         string
+	agentDirectories    string
+	network             string
+	unixSockets         string
+	includes            string
 }
 
 func marshalSandboxProfilePayload(p *SandboxProfile) (sandboxProfilePayloadJSON, error) {
@@ -423,6 +425,15 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (sandboxProfilePayloadJSON,
 	filesystemJSON, err := json.Marshal(filesystem)
 	if err != nil {
 		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile filesystem: %w", err)
+	}
+	filesystemSpellingsJSON := []byte{}
+	if p.FilesystemSpellings != nil {
+		filesystemSpellingsJSON, err = json.Marshal(p.FilesystemSpellings)
+		if err != nil {
+			return sandboxProfilePayloadJSON{}, fmt.Errorf(
+				"marshal sandbox profile filesystem spellings: %w", err,
+			)
+		}
 	}
 	environmentJSON, err := json.Marshal(environment)
 	if err != nil {
@@ -451,12 +462,13 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (sandboxProfilePayloadJSON,
 		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile includes: %w", err)
 	}
 	return sandboxProfilePayloadJSON{
-		filesystem:       string(filesystemJSON),
-		environment:      string(environmentJSON),
-		agentDirectories: string(agentDirectoriesJSON),
-		network:          string(networkJSON),
-		unixSockets:      string(unixSocketsJSON),
-		includes:         string(includesJSON),
+		filesystem:          string(filesystemJSON),
+		filesystemSpellings: string(filesystemSpellingsJSON),
+		environment:         string(environmentJSON),
+		agentDirectories:    string(agentDirectoriesJSON),
+		network:             string(networkJSON),
+		unixSockets:         string(unixSocketsJSON),
+		includes:            string(includesJSON),
 	}, nil
 }
 
@@ -471,17 +483,25 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	if p == nil {
 		return nil, errors.New("sandbox profile is nil")
 	}
-	normalized, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: p.Name, Filesystem: p.Filesystem,
+	input := sandboxpolicy.Profile{
+		Name: p.Name, Filesystem: p.Filesystem, FilesystemSpellings: p.FilesystemSpellings,
 		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
 		Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
-	})
+	}
+	var normalized sandboxpolicy.Profile
+	var err error
+	if p.FilesystemSpellings == nil {
+		normalized, _, err = sandboxpolicy.NormalizeForAuthoring(input)
+	} else {
+		normalized, _, err = sandboxpolicy.NormalizeForPersistence(input)
+	}
 	if err != nil {
 		return nil, err
 	}
 	out := *p
 	out.Name = normalized.Name
 	out.Filesystem = normalized.Filesystem
+	out.FilesystemSpellings = normalized.FilesystemSpellings
 	out.Environment = normalized.Environment
 	out.AgentDirectories = normalized.AgentDirectories
 	out.NetworkAccess = normalized.NetworkAccess
@@ -507,13 +527,13 @@ func GetSandboxProfileByID(id int64) (*SandboxProfile, error) {
 	return scanSandboxProfile(d.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
 }
 
-const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at FROM sandbox_profiles`
+const sandboxProfileSelect = `SELECT id, name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at FROM sandbox_profiles`
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, includesJSON, createdAt, updatedAt string
+	var filesystemJSON, filesystemSpellingsJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, includesJSON, createdAt, updatedAt string
 	if err := row.Scan(
-		&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &agentDirectoriesJSON,
+		&p.ID, &p.Name, &filesystemJSON, &filesystemSpellingsJSON, &environmentJSON, &agentDirectoriesJSON,
 		&p.NetworkAccess, &networkJSON, &unixSocketsJSON, &includesJSON, &createdAt, &updatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -522,6 +542,15 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	}
 	if err := json.Unmarshal([]byte(filesystemJSON), &p.Filesystem); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q filesystem: %w", p.Name, err)
+	}
+	if filesystemSpellingsJSON != "" {
+		if err := json.Unmarshal(
+			[]byte(filesystemSpellingsJSON), &p.FilesystemSpellings,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"decode sandbox profile %q filesystem spellings: %w", p.Name, err,
+			)
+		}
 	}
 	if err := json.Unmarshal([]byte(environmentJSON), &p.Environment); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q environment: %w", p.Name, err)
@@ -619,7 +648,8 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		}
 		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 			Name: profile.Name, Filesystem: profile.Filesystem,
-			Environment: profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess,
+			FilesystemSpellings: profile.FilesystemSpellings,
+			Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess,
 			Network: profile.Network, UnixSockets: profile.UnixSockets, Includes: profile.Includes,
 		})
 		if err != nil {
@@ -628,6 +658,7 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		normalizedProfile := *profile
 		normalizedProfile.Name = p.Name
 		normalizedProfile.Filesystem = p.Filesystem
+		normalizedProfile.FilesystemSpellings = p.FilesystemSpellings
 		normalizedProfile.Environment = p.Environment
 		normalizedProfile.AgentDirectories = p.AgentDirectories
 		normalizedProfile.NetworkAccess = p.NetworkAccess
@@ -695,14 +726,14 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 			return result, err
 		}
 		if item.existingID != 0 {
-			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
-				payload.filesystem, payload.environment, payload.agentDirectories, item.profile.NetworkAccess,
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, filesystem_spellings_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
+				payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories, item.profile.NetworkAccess,
 				payload.network, payload.unixSockets, payload.includes, now, item.existingID); err != nil {
 				return result, err
 			}
 		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
-			(name, filesystem_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			item.profile.Name, payload.filesystem, payload.environment, payload.agentDirectories,
+			(name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, network_access, network_json, unix_sockets_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.profile.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
 			item.profile.NetworkAccess, payload.network, payload.unixSockets, payload.includes, now, now); err != nil {
 			if isUniqueViolation(err) {
 				return result, ErrSandboxProfileNameTaken
@@ -790,8 +821,9 @@ func flattenSandboxProfileInRegistry(
 	toPolicy := func(p *SandboxProfile) sandboxpolicy.Profile {
 		return sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
-			Environment:      p.Environment,
-			AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
+			FilesystemSpellings: p.FilesystemSpellings,
+			Environment:         p.Environment,
+			AgentDirectories:    p.AgentDirectories, NetworkAccess: p.NetworkAccess,
 			Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 		}
 	}
@@ -1112,7 +1144,8 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		}
 		return &sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
-			Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
+			FilesystemSpellings: p.FilesystemSpellings,
+			Environment:         p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
 			Network: p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 		}
 	}

@@ -26,6 +26,10 @@ const (
 	// and launch-time flattening enforce the same unit and bound, so a policy
 	// that persists is always resolvable.
 	MaxIncludeDepth = 16
+	// FilesystemSpellingsVersion is the authoring-metadata format stored
+	// beside the canonical filesystem authority. A nil document means a
+	// legacy row whose save-time spellings were not retained.
+	FilesystemSpellingsVersion = 1
 	// OfflineModelTransportEnv is the one operator-authored TCLAUDE_ control
 	// admitted through sandbox-profile environment validation. The
 	// tclaude-layer consumes it as an explicit whole-process isolation
@@ -44,6 +48,22 @@ const (
 type FilesystemGrant struct {
 	Path   string `json:"path"`
 	Access Access `json:"access"`
+}
+
+// FilesystemSpellingRule associates non-authoritative operator spellings with
+// one canonical, access-bearing Filesystem rule. Spellings never grant access:
+// they are revalidated against ResolvedPath and only feed MountPlan aliases.
+type FilesystemSpellingRule struct {
+	ResolvedPath string   `json:"resolved_path"`
+	Spellings    []string `json:"spellings"`
+}
+
+// FilesystemSpellings is versioned independently from the profile export
+// envelope so the DB sidecar can evolve without changing filesystem_json.
+// A non-nil empty Rules slice marks a profile authored through this seam.
+type FilesystemSpellings struct {
+	Version int                      `json:"version"`
+	Rules   []FilesystemSpellingRule `json:"rules"`
 }
 
 type EnvironmentEntry struct {
@@ -74,14 +94,15 @@ const (
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name             string             `json:"name"`
-	Filesystem       []FilesystemGrant  `json:"filesystem,omitempty"`
-	Environment      []EnvironmentEntry `json:"environment,omitempty"`
-	AgentDirectories []string           `json:"agent_directories,omitempty"`
-	NetworkAccess    NetworkAccess      `json:"network_access,omitempty"`
-	Network          *NetworkRules      `json:"network,omitempty"`
-	UnixSockets      *UnixSocketRules   `json:"unix_sockets,omitempty"`
-	Includes         []string           `json:"includes,omitempty"`
+	Name                string               `json:"name"`
+	Filesystem          []FilesystemGrant    `json:"filesystem,omitempty"`
+	FilesystemSpellings *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
+	Environment         []EnvironmentEntry   `json:"environment,omitempty"`
+	AgentDirectories    []string             `json:"agent_directories,omitempty"`
+	NetworkAccess       NetworkAccess        `json:"network_access,omitempty"`
+	Network             *NetworkRules        `json:"network,omitempty"`
+	UnixSockets         *UnixSocketRules     `json:"unix_sockets,omitempty"`
+	Includes            []string             `json:"includes,omitempty"`
 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -109,7 +130,7 @@ var reservedProfileNames = map[string]struct{}{
 // with the same value fold; conflicting values fail rather than depending on
 // input order.
 func Normalize(in Profile) (Profile, error) {
-	profile, _, err := normalize(in, false)
+	profile, _, err := normalize(in, false, false)
 	return profile, err
 }
 
@@ -121,7 +142,15 @@ func Normalize(in Profile) (Profile, error) {
 // this variant so a missing rule can survive resolution and become active on a
 // later launch after the directory exists and is revalidated.
 func NormalizeForPersistence(in Profile) (Profile, []string, error) {
-	return normalize(in, true)
+	return normalize(in, true, false)
+}
+
+// NormalizeForAuthoring is the create/update boundary. It captures cleaned
+// operator spellings before canonicalization, performs identity-confirmed
+// case/NFC coalescing, and returns a non-nil versioned spelling document even
+// when no alternate spellings remain.
+func NormalizeForAuthoring(in Profile) (Profile, []string, error) {
+	return normalize(in, true, true)
 }
 
 // NormalizeForImport is kept as the portable-transfer spelling for callers
@@ -130,14 +159,31 @@ func NormalizeForImport(in Profile) (Profile, []string, error) {
 	return NormalizeForPersistence(in)
 }
 
-func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
+func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, error) {
 	name, err := normalizeName(in.Name)
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	filesystem, missing, err := normalizeFilesystem(in.Filesystem, allowMissing)
-	if err != nil {
-		return Profile{}, nil, err
+	var filesystem []FilesystemGrant
+	var filesystemSpellings *FilesystemSpellings
+	var missing []string
+	if authoring {
+		filesystem, filesystemSpellings, missing, err =
+			normalizeFilesystemForAuthoring(in.Filesystem, allowMissing)
+		if err != nil {
+			return Profile{}, nil, err
+		}
+	} else {
+		filesystem, missing, err = normalizeFilesystem(in.Filesystem, allowMissing)
+		if err != nil {
+			return Profile{}, nil, err
+		}
+		filesystemSpellings, err = normalizeFilesystemSpellings(
+			name, in.Filesystem, filesystem, in.FilesystemSpellings, allowMissing,
+		)
+		if err != nil {
+			return Profile{}, nil, err
+		}
 	}
 	environment, err := normalizeEnvironment(in.Environment)
 	if err != nil {
@@ -171,7 +217,7 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	missing = append(missing, socketMissing...)
 	sort.Strings(missing)
 	return Profile{
-		Name: name, Filesystem: filesystem,
+		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess,
 		Network: network, UnixSockets: unixSockets, Includes: includes,
 	}, missing, nil
@@ -312,6 +358,299 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	}
 	sort.Strings(missing)
 	return out, missing, nil
+}
+
+type authoredFilesystemCandidate struct {
+	resolved string
+	spelling string
+	access   Access
+	missing  bool
+	info     os.FileInfo
+}
+
+type authoredFilesystemGroup struct {
+	resolved  string
+	access    Access
+	missing   bool
+	info      os.FileInfo
+	spellings map[string]struct{}
+}
+
+func normalizeFilesystemForAuthoring(
+	in []FilesystemGrant,
+	allowMissing bool,
+) ([]FilesystemGrant, *FilesystemSpellings, []string, error) {
+	return normalizeFilesystemForAuthoringWithIdentity(in, allowMissing, os.SameFile)
+}
+
+func normalizeFilesystemForAuthoringWithIdentity(
+	in []FilesystemGrant,
+	allowMissing bool,
+	sameFile func(os.FileInfo, os.FileInfo) bool,
+) ([]FilesystemGrant, *FilesystemSpellings, []string, error) {
+	protected, err := protectedPaths()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	candidates := make([]authoredFilesystemCandidate, 0, len(in))
+	for i, grant := range in {
+		if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
+			return nil, nil, nil, fmt.Errorf(
+				"filesystem[%d].access %q is invalid (want read, write, or deny)",
+				i, grant.Access,
+			)
+		}
+		spelling, err := cleanDirectoryPath(grant.Path)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
+		}
+		resolved, missing, err := canonicalDirectory(spelling, allowMissing)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("filesystem[%d].path: %w", i, err)
+		}
+		if grant.Access != AccessDeny {
+			for _, denied := range protected {
+				if pathsIntersect(resolved, denied) {
+					return nil, nil, nil, fmt.Errorf(
+						"filesystem[%d].path %q intersects protected directory %q",
+						i, resolved, denied,
+					)
+				}
+			}
+		}
+		var info os.FileInfo
+		if !missing {
+			info, err = os.Stat(resolved)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf(
+					"filesystem[%d].path: stat %q for authoring identity: %w",
+					i, resolved, err,
+				)
+			}
+		}
+		candidates = append(candidates, authoredFilesystemCandidate{
+			resolved: resolved, spelling: spelling, access: grant.Access,
+			missing: missing, info: info,
+		})
+	}
+	// The representative must not depend on request row order. Folding only
+	// nominates identity candidates; os.SameFile below is the authority.
+	sort.Slice(candidates, func(i, j int) bool {
+		leftKey, rightKey := mountOrderKey(candidates[i].resolved), mountOrderKey(candidates[j].resolved)
+		if leftKey != rightKey {
+			return leftKey < rightKey
+		}
+		if candidates[i].resolved != candidates[j].resolved {
+			return candidates[i].resolved < candidates[j].resolved
+		}
+		if candidates[i].spelling != candidates[j].spelling {
+			return candidates[i].spelling < candidates[j].spelling
+		}
+		return accessRank(candidates[i].access) > accessRank(candidates[j].access)
+	})
+
+	groups := make([]authoredFilesystemGroup, 0, len(candidates))
+	for _, candidate := range candidates {
+		groupIndex := -1
+		for i := range groups {
+			group := &groups[i]
+			if group.resolved == candidate.resolved ||
+				(group.info != nil && candidate.info != nil &&
+					mountOrderKey(group.resolved) == mountOrderKey(candidate.resolved) &&
+					sameFile(group.info, candidate.info)) {
+				groupIndex = i
+				break
+			}
+		}
+		if groupIndex < 0 {
+			groups = append(groups, authoredFilesystemGroup{
+				resolved: candidate.resolved, access: candidate.access,
+				missing: candidate.missing, info: candidate.info,
+				spellings: map[string]struct{}{},
+			})
+			groupIndex = len(groups) - 1
+		}
+		group := &groups[groupIndex]
+		if accessRank(candidate.access) > accessRank(group.access) {
+			group.access = candidate.access
+		}
+		group.missing = group.missing || candidate.missing
+		if candidate.spelling != group.resolved {
+			group.spellings[candidate.spelling] = struct{}{}
+		}
+	}
+
+	filesystem := make([]FilesystemGrant, 0, len(groups))
+	missingSet := map[string]struct{}{}
+	spellingRules := make([]FilesystemSpellingRule, 0, len(groups))
+	for _, group := range groups {
+		filesystem = append(filesystem, FilesystemGrant{
+			Path: group.resolved, Access: group.access,
+		})
+		if group.missing {
+			missingSet[group.resolved] = struct{}{}
+		}
+		if len(group.spellings) == 0 {
+			continue
+		}
+		spellings := make([]string, 0, len(group.spellings))
+		for spelling := range group.spellings {
+			spellings = append(spellings, spelling)
+		}
+		sort.Strings(spellings)
+		spellingRules = append(spellingRules, FilesystemSpellingRule{
+			ResolvedPath: group.resolved,
+			Spellings:    spellings,
+		})
+	}
+	sort.Slice(filesystem, func(i, j int) bool { return filesystem[i].Path < filesystem[j].Path })
+	sort.Slice(spellingRules, func(i, j int) bool {
+		return spellingRules[i].ResolvedPath < spellingRules[j].ResolvedPath
+	})
+	missing := make([]string, 0, len(missingSet))
+	for path := range missingSet {
+		missing = append(missing, path)
+	}
+	sort.Strings(missing)
+	return filesystem, &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules:   spellingRules,
+	}, missing, nil
+}
+
+func normalizeFilesystemSpellings(
+	profileName string,
+	authoritativeIn, normalized []FilesystemGrant,
+	in *FilesystemSpellings,
+	allowMissing bool,
+) (*FilesystemSpellings, error) {
+	if in == nil {
+		return nil, nil
+	}
+	if in.Version != FilesystemSpellingsVersion {
+		return nil, fmt.Errorf(
+			"filesystem_spellings version %d is unsupported (want %d)",
+			in.Version, FilesystemSpellingsVersion,
+		)
+	}
+	original := make(map[string]struct{}, len(authoritativeIn))
+	for _, grant := range authoritativeIn {
+		path, err := cleanDirectoryPath(grant.Path)
+		if err != nil {
+			return nil, fmt.Errorf("filesystem spelling authority %q: %w", grant.Path, err)
+		}
+		original[path] = struct{}{}
+	}
+	active := make(map[string]struct{}, len(normalized))
+	for _, grant := range normalized {
+		active[grant.Path] = struct{}{}
+	}
+	byResolved := map[string]map[string]struct{}{}
+	for i, rule := range in.Rules {
+		resolved, err := cleanDirectoryPath(rule.ResolvedPath)
+		if err != nil {
+			return nil, fmt.Errorf("filesystem_spellings.rules[%d].resolved_path: %w", i, err)
+		}
+		if resolved != rule.ResolvedPath {
+			return nil, fmt.Errorf(
+				"filesystem_spellings.rules[%d].resolved_path %q is not canonical lexical form %q",
+				i, rule.ResolvedPath, resolved,
+			)
+		}
+		if _, ok := original[resolved]; !ok {
+			return nil, fmt.Errorf(
+				"filesystem_spellings.rules[%d].resolved_path %q has no authoritative filesystem rule",
+				i, resolved,
+			)
+		}
+		if _, ok := active[resolved]; !ok {
+			return nil, fmt.Errorf(
+				"sandbox profile %q authoritative filesystem target %q changed before spelling validation",
+				profileName, resolved,
+			)
+		}
+		spellings := byResolved[resolved]
+		if spellings == nil {
+			spellings = map[string]struct{}{}
+			byResolved[resolved] = spellings
+		}
+		for j, raw := range rule.Spellings {
+			spelling, err := cleanDirectoryPath(raw)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"filesystem_spellings.rules[%d].spellings[%d]: %w", i, j, err,
+				)
+			}
+			if spelling == resolved {
+				continue
+			}
+			current, _, err := canonicalDirectory(spelling, allowMissing)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"sandbox profile %q retained spelling %q originally resolved to %q but its current target is unavailable (%v); re-save the profile to adopt the new target, or remove the retained spelling",
+					profileName, spelling, resolved, err,
+				)
+			}
+			if !sameDirectoryTarget(resolved, current) {
+				return nil, fmt.Errorf(
+					"sandbox profile %q retained spelling %q originally resolved to %q but now resolves to %q; re-save the profile to adopt the new target, or remove the retained spelling",
+					profileName, spelling, resolved, current,
+				)
+			}
+			spellings[spelling] = struct{}{}
+		}
+	}
+	out := &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules:   []FilesystemSpellingRule{},
+	}
+	for resolved, set := range byResolved {
+		if len(set) == 0 {
+			continue
+		}
+		spellings := make([]string, 0, len(set))
+		for spelling := range set {
+			spellings = append(spellings, spelling)
+		}
+		sort.Strings(spellings)
+		out.Rules = append(out.Rules, FilesystemSpellingRule{
+			ResolvedPath: resolved,
+			Spellings:    spellings,
+		})
+	}
+	sort.Slice(out.Rules, func(i, j int) bool {
+		return out.Rules[i].ResolvedPath < out.Rules[j].ResolvedPath
+	})
+	return out, nil
+}
+
+func sameDirectoryTarget(left, right string) bool {
+	if left == right {
+		return true
+	}
+	if mountOrderKey(left) != mountOrderKey(right) {
+		return false
+	}
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
+}
+
+func cloneFilesystemSpellings(in *FilesystemSpellings) *FilesystemSpellings {
+	if in == nil {
+		return nil
+	}
+	out := &FilesystemSpellings{
+		Version: in.Version,
+		Rules:   make([]FilesystemSpellingRule, len(in.Rules)),
+	}
+	for i, rule := range in.Rules {
+		out.Rules[i] = FilesystemSpellingRule{
+			ResolvedPath: rule.ResolvedPath,
+			Spellings:    append([]string(nil), rule.Spellings...),
+		}
+	}
+	return out
 }
 
 func accessRank(access Access) int {

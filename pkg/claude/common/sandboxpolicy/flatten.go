@@ -87,6 +87,12 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		AgentDirectories: make([]string, 0, len(parts.agentDirectories)),
 		NetworkAccess:    parts.networkAccess,
 	}
+	if parts.hasFilesystemSpellings {
+		out.FilesystemSpellings = &FilesystemSpellings{
+			Version: FilesystemSpellingsVersion,
+			Rules:   []FilesystemSpellingRule{},
+		}
+	}
 	if parts.hasNewNetwork {
 		network := cloneNetworkRules(parts.network)
 		out.Network = &network
@@ -99,6 +105,22 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	}
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
+		if out.FilesystemSpellings == nil {
+			continue
+		}
+		set := parts.filesystemSpellings[grant.Path]
+		if len(set) == 0 {
+			continue
+		}
+		spellings := make([]string, 0, len(set))
+		for spelling := range set {
+			spellings = append(spellings, spelling)
+		}
+		sort.Strings(spellings)
+		out.FilesystemSpellings.Rules = append(
+			out.FilesystemSpellings.Rules,
+			FilesystemSpellingRule{ResolvedPath: grant.Path, Spellings: spellings},
+		)
 	}
 	for _, entry := range parts.environment {
 		out.Environment = append(out.Environment, entry)
@@ -114,6 +136,8 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 
 type flattenedParts struct {
 	filesystem              map[string]FilesystemGrant
+	filesystemSpellings     map[string]map[string]struct{}
+	hasFilesystemSpellings  bool
 	environment             map[string]EnvironmentEntry
 	agentDirectories        map[string]struct{}
 	networkAccess           NetworkAccess
@@ -188,9 +212,10 @@ func (f *flattener) chainDepth(name string) (int, error) {
 // the graph acyclic and depth-bounded, so this is a pure memoized merge.
 func (f *flattener) compose(p Profile) *flattenedParts {
 	out := &flattenedParts{
-		filesystem:       map[string]FilesystemGrant{},
-		environment:      map[string]EnvironmentEntry{},
-		agentDirectories: map[string]struct{}{},
+		filesystem:          map[string]FilesystemGrant{},
+		filesystemSpellings: map[string]map[string]struct{}{},
+		environment:         map[string]EnvironmentEntry{},
+		agentDirectories:    map[string]struct{}{},
 	}
 	for _, name := range p.Includes {
 		parts, done := f.memo[name]
@@ -199,6 +224,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			f.memo[name] = parts
 		}
 		maps.Copy(out.filesystem, parts.filesystem)
+		mergeFlattenedFilesystemSpellings(out.filesystemSpellings, parts.filesystemSpellings)
+		out.hasFilesystemSpellings =
+			out.hasFilesystemSpellings || parts.hasFilesystemSpellings
 		for name, entry := range parts.environment {
 			delete(out.agentDirectories, name)
 			out.environment[name] = entry
@@ -222,6 +250,19 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	for _, grant := range p.Filesystem {
 		out.filesystem[grant.Path] = grant
 	}
+	if p.FilesystemSpellings != nil {
+		out.hasFilesystemSpellings = true
+		for _, rule := range p.FilesystemSpellings.Rules {
+			set := out.filesystemSpellings[rule.ResolvedPath]
+			if set == nil {
+				set = map[string]struct{}{}
+				out.filesystemSpellings[rule.ResolvedPath] = set
+			}
+			for _, spelling := range rule.Spellings {
+				set[spelling] = struct{}{}
+			}
+		}
+	}
 	for _, entry := range p.Environment {
 		delete(out.agentDirectories, entry.Name)
 		out.environment[entry.Name] = entry
@@ -243,6 +284,21 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	out.socketListContributors = appendUniqueStrings(
 		out.socketListContributors, own.socketListContributors...)
 	return out
+}
+
+func mergeFlattenedFilesystemSpellings(
+	dst, src map[string]map[string]struct{},
+) {
+	for resolved, spellings := range src {
+		set := dst[resolved]
+		if set == nil {
+			set = map[string]struct{}{}
+			dst[resolved] = set
+		}
+		for spelling := range spellings {
+			set[spelling] = struct{}{}
+		}
+	}
 }
 
 func composeProfileAccessAxes(p Profile) *flattenedParts {

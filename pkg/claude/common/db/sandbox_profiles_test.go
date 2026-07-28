@@ -343,6 +343,46 @@ func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testin
 	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}}, effective.Filesystem)
 }
 
+func TestSandboxProfileCreateRetainsAliasSpellingThroughRegistryResolution(t *testing.T) {
+	setupTestDB(t)
+	root := filepath.Join(os.Getenv("HOME"), "alias-profile")
+	target := filepath.Join(root, "real")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.MkdirAll(target, 0o755))
+	require.NoError(t, os.Symlink(target, alias))
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name: "persisted-alias",
+		Filesystem: []SandboxFilesystemGrant{{
+			Path: alias, Access: sandboxpolicy.AccessRead,
+		}},
+	})
+	require.NoError(t, err)
+
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	canonical, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, []SandboxFilesystemGrant{{
+		Path: canonical, Access: sandboxpolicy.AccessRead,
+	}}, stored.Filesystem)
+	assert.Equal(t, &sandboxpolicy.FilesystemSpellings{
+		Version: sandboxpolicy.FilesystemSpellingsVersion,
+		Rules: []sandboxpolicy.FilesystemSpellingRule{{
+			ResolvedPath: canonical,
+			Spellings:    []string{alias},
+		}},
+	}, stored.FilesystemSpellings)
+
+	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "persisted-alias")
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.MountAlias{{
+		Link: alias, Target: canonical,
+	}}, snapshot.Effective.MountAliases)
+	plan, err := sandboxpolicy.RenderMountPlan(snapshot.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.MountAliases, plan.Aliases)
+}
+
 func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	setupTestDB(t)
 	profileID, err := CreateSandboxProfile(&SandboxProfile{Name: "original"})

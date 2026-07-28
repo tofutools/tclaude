@@ -474,14 +474,52 @@ function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
   </${Overlay}>`;
 }
 
+function sandboxFilesystemEditorRows(filesystem, spellings) {
+  const retained = new Map((spellings?.rules || []).map((rule) => [rule.resolved_path, rule.spellings || []]));
+  return (filesystem || []).map((row) => {
+    const aliases = retained.get(row.path) || [];
+    if (!aliases.length) return clone(row);
+    return {
+      ...clone(row),
+      path: aliases[0],
+      _resolved_path: row.path,
+      _spellings: clone(aliases),
+    };
+  });
+}
+
+function sandboxFilesystemWire(draft, baseline) {
+  const pathsUnchanged = JSON.stringify((draft.filesystem || []).map((row) => row.path))
+    === JSON.stringify((baseline.filesystem || []).map((row) => row.path));
+  const retained = draft.filesystem_spellings;
+  if (pathsUnchanged && retained?.version === 1) {
+    return {
+      filesystem: (draft.filesystem || []).map((row) => ({
+        path: row._resolved_path || row.path,
+        access: row.access,
+      })),
+      filesystem_spellings: clone(retained),
+    };
+  }
+  // A path add/remove/edit is an explicit re-authoring operation. The daemon
+  // canonicalizes the visible spellings and writes a fresh sidecar; it never
+  // infers new launch authority from an old retained spelling.
+  return {
+    filesystem: (draft.filesystem || []).map((row) => ({ path: row.path, access: row.access })),
+    filesystem_spellings: null,
+  };
+}
+
 function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
   const baseline = useMemo(() => {
     const axes = sandboxAccessAxes(seed || {});
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network: axes.network, unix_sockets: axes.unix_sockets };
+    const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network: axes.network, unix_sockets: axes.unix_sockets };
   }, [descriptor]);
-  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2));
+  const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
+  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2));
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
   const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
@@ -534,11 +572,11 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (!network || Array.isArray(network) || !unix_sockets || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); return { filesystem, environment, includes, agent_directories, network, unix_sockets }; };
-  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
-  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { setRawFS(JSON.stringify(draft.filesystem, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || Array.isArray(network) || !unix_sockets || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network, unix_sockets }; };
+  const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
+  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
-    let value = draft;
+    let value = { ...draft, ...sandboxFilesystemWire(draft, baseline) };
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
     await actions.saveSandbox({ draft: value, original: seed, options });
   };
@@ -550,7 +588,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     wasSaving.current = saving;
   }, [saving]);
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
-  let predictionDraft = draft;
+  let predictionDraft = { ...draft, ...sandboxFilesystemWire(draft, baseline) };
   let predictionDraftError = '';
   if (advanced) {
     try { predictionDraft = { ...draft, ...parseRaw() }; }
@@ -578,8 +616,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return () => { active = false; clearTimeout(timer); };
   }, [predictionSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
-  const configureWithAgent = () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } const editExisting = options.editExisting ?? !!seed; const targetName = editExisting ? options.targetName || seed?.name || '' : ''; state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate }); };
-  const rawDirty = advanced && [rawFS !== JSON.stringify(draft.filesystem, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2)].some(Boolean);
+  const configureWithAgent = () => { let value = { ...draft, ...sandboxFilesystemWire(draft, baseline) }; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } const editExisting = options.editExisting ?? !!seed; const targetName = editExisting ? options.targetName || seed?.name || '' : ''; state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate }); };
+  const structuredFilesystemWire = sandboxFilesystemWire(draft, baseline);
+  const rawDirty = advanced && [rawFS !== JSON.stringify(structuredFilesystemWire.filesystem, null, 2), rawSpellings !== JSON.stringify(structuredFilesystemWire.filesystem_spellings, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawNetwork !== JSON.stringify(draft.network, null, 2), rawSockets !== JSON.stringify(draft.unix_sockets, null, 2)].some(Boolean);
   // A preset inserts ordinary deny rows and then forgets it ever existed: no
   // stored ID, no hidden state. Paths already present in the table are left
   // exactly as authored rather than silently re-denied, and the notice says so.
@@ -620,7 +659,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes
@@ -677,7 +716,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     </fieldset>
     ${!advanced && accessErrors.map((error, index) => html`<div key=${index} class="sbx-access-validation" role="alert">⚠ ${error}</div>`)}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
-    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Network JSON"><textarea id="sandbox-profile-editor-network" rows="6" value=${rawNetwork} onInput=${(event) => setRawNetwork(event.currentTarget.value)}/></${Row}><${Row} label="Unix sockets JSON"><textarea id="sandbox-profile-editor-unix-sockets" rows="6" value=${rawSockets} onInput=${(event) => setRawSockets(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
+    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Filesystem spellings JSON"><textarea id="sandbox-profile-editor-filesystem-spellings" rows="6" value=${rawSpellings} onInput=${(event) => setRawSpellings(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Network JSON"><textarea id="sandbox-profile-editor-network" rows="6" value=${rawNetwork} onInput=${(event) => setRawNetwork(event.currentTarget.value)}/></${Row}><${Row} label="Unix sockets JSON"><textarea id="sandbox-profile-editor-unix-sockets" rows="6" value=${rawSockets} onInput=${(event) => setRawSockets(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
     <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${submitBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
@@ -719,7 +758,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {

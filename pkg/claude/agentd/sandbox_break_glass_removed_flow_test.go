@@ -271,8 +271,8 @@ func TestExportBumpsFormatAndEveryOlderBundleStillImports(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var envelope map[string]any
 	testharness.DecodeJSON(t, rec, &envelope)
-	assert.EqualValues(t, 7, envelope["format_version"],
-		"adding independently-authored access axes is a format change")
+	assert.EqualValues(t, 8, envelope["format_version"],
+		"retaining non-authoritative filesystem spellings is a format change")
 	assert.NotContains(t, rec.Body.String(), "break_glass")
 
 	// The exported bundle must import back into itself.
@@ -280,7 +280,7 @@ func TestExportBumpsFormatAndEveryOlderBundleStillImports(t *testing.T) {
 	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", envelope)
 	require.Equalf(t, http.StatusOK, rec.Code, "self round-trip body=%s", rec.Body.String())
 
-	for _, version := range []int{1, 2, 3, 4, 5, 6, 7} {
+	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
 			"format":         "tclaude-sandbox-profiles",
 			"format_version": version,
