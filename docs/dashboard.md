@@ -123,16 +123,17 @@ The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects
 what actually confined the launch, not which mode was requested, so a Claude
 agent sandboxed through your own `settings.json` is badged even though it was
-spawned under the default `inherit`. Hovering it also names the tclaude sandbox
-profile that supplied the agent's rules, and says whether those rules are in
-force given the sandbox state. See
+spawned under the default `inherit`. Hovering it shows the compact recorded
+summary: `Status`, `Implementation`, `Profile`, and a click action when the
+badge supports a temporary disable or restore. It does not show mode/settings
+provenance or infer the effects of a named profile. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
 
 A successfully live-probed Linux `stacked` launch uses the distinct `🔒²`
-glyph. Its tooltip starts with **Stacked sandbox: on**, names the tclaude outer
-posture and the actual Claude SRT or Codex bwrap mechanism, and keeps
-host-open/namespace caveats visible. Unknown implementation strings remain
-warning badges and never inherit either lock.
+glyph. Its compact tooltip reports `Status: ON` and identifies the implementation
+as `CC+TClaude` or `Codex+TClaude`. Unknown implementation strings report
+`Status: UNKNOWN` and `Implementation: Unknown`; they remain warning badges and
+never inherit either lock.
 
 The same line can carry a **refused-telemetry badge** — `🚫`, shown when agentd
 has been refusing this agent's brokered hook/status-line callbacks. It matters

@@ -210,11 +210,12 @@ host/harness is incapable, and never clears an explicit stacked selection
 during a harness switch. Its short-lived availability result is disclosure
 only; the live launch probe is authoritative.
 
-A successful stack shows `🔒²`. Its tooltip begins `Stacked sandbox: on` and
-names both mechanisms plus the outer posture. Linux host-open retains the
-ambient-host-Unix-socket caveat; isolated names its constructed root and
-network/PID isolation. Known namespace gaps are warned about, never repaired by
-silently widening the outer policy.
+A successful stack shows `🔒²`. Its compact tooltip reports `Status: ON` and
+identifies the implementation as `CC+TClaude` or `Codex+TClaude`; the detailed
+mechanism, posture, and caveats remain in this guide rather than the row hover.
+Linux host-open retains the ambient-host-Unix-socket caveat; isolated uses its
+constructed root and network/PID isolation. Known namespace gaps are warned
+about, never repaired by silently widening the outer policy.
 
 Claude Code and Codex are supported on Linux and macOS. OpenCode is supported
 on both platforms in the host-open posture: agentd wraps its server rather
@@ -472,9 +473,9 @@ case-sensitive APFS volume keeps distinct objects distinct. Persisted registry
 profiles may already have discarded their operator spelling; that separate
 limitation remains tracked by TCL-762.
 
-The launch badge deliberately reports the Darwin-specific partial boundary in
-its own `⚠ Partial fidelity:` sentence rather than as an unverified posture:
-Seatbelt filesystem policy is active and paths remain enumerable.
+The launch disclosure records the Darwin-specific partial boundary rather than
+treating it as an unverified posture: Seatbelt filesystem policy is active and
+paths remain enumerable. The compact row tooltip does not repeat that caveat.
 Host-open retains the host network and ambient Unix sockets; isolated blocks
 network operations except the agentd socket but still has no PID isolation or
 constructed root. `sandbox-exec` is deprecated but still functional and is the
@@ -490,8 +491,8 @@ wraps the whole harness process, not only its tool executions:
   preserves the walking skeleton: the host network namespace and read-only
   host root remain visible, including host localhost services and ambient
   filesystem Unix sockets. `internet` therefore means more here than a
-  tool-only Internet switch; the launch badge says `host network` rather than
-  repeating the profile word.
+  tool-only Internet switch; the launch record calls this `host network` rather
+  than repeating the profile word.
 - `none` requests **isolated-with-agentd**. Bubblewrap creates a fresh network
   namespace (with loopback up), a fresh PID namespace, and a constructed
   filesystem root. Bubblewrap remains PID 1 so orphaned harness subprocesses
@@ -556,8 +557,9 @@ The remaining limitation in the host-open posture is explicit:
 
 - Ambient host Unix sockets remain connectable through the read-only root.
   Privileged daemon sockets such as `docker.sock` or containerd-class sockets
-  are host-root-equivalent escapes when present. The launch badge records this
-  partial fidelity instead of presenting a verified padlock. The open posture
+  are host-root-equivalent escapes when present. The launch records this as
+  partial fidelity even though the established outer implementation earns the
+  row's `🔒`; the compact tooltip does not restate the caveat. The open posture
   deliberately does not maintain a misleading dangerous-socket blocklist.
 
 ## Hook and status-line callbacks under the layer

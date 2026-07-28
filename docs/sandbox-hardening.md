@@ -419,9 +419,8 @@ Two ways to make the warning go away, both of which are the actual fix:
 
 Each agent row in the dashboard's Groups tab carries a sandbox badge — a single
 glyph at the end of the harness/model line, next to the 📱 remote indicator —
-and it describes what actually confines the agent, not which mode was requested.
-The glyph is the whole on-screen surface; hovering it gives the full verdict,
-including which mode was requested and which settings file decided.
+and it summarizes the recorded launch posture rather than merely repeating the
+requested mode.
 
 That distinction matters because the mode usually cannot answer the question.
 `inherit`, the Claude Code default, means "whatever `settings.json` says", so a
@@ -429,41 +428,41 @@ badge driven off the mode alone would look identical for an agent locked down by
 your global hardening and one running completely unconfined.
 
 So tclaude resolves the verdict once, at launch, using the same precedence chain
-as the warning above, and records it on the session row. The badge then reads:
+as the warning above, and records it on the session row. The badge then reduces
+that verdict to a compact status:
 
-| Badge | Tooltip says | Meaning |
+| Badge | `Status` | Meaning |
 | --- | --- | --- |
-| `🔒` | `Sandbox: on` | The OS sandbox confined this agent. The tooltip says whether it was forced on for this launch, inherited from your settings, or forced on by managed policy over an explicit `off` — and which file decided it. |
-| *(none)* | — | Nothing confines the agent, and nothing was asked for — the plain `inherit` launch with no sandbox configured. This is the posture the unsandboxed-autonomy warning is about. |
-| `⚠` | `Sandbox: off` | The sandbox was forced **off** for this launch; the agent's Bash runs unconfined. The tooltip names who chose it (see below) — it is not necessarily a human's explicit opt-in. |
-| `⚠` | `Sandbox: off — this launch asked for the OS sandbox to be ON, but …` | The launch asked for the sandbox to be **on** and did not get it — only managed policy settings can do this. The agent is unconfined despite what was requested. |
-| `⚠` | `Sandbox: on (unverified)` | The sandbox looks active, but a settings file **outranking** the one that decided could not be read or parsed, so a policy tclaude never saw may say otherwise. Treat it as unproven and fix the unreadable file. |
+| `🔒` | `ON` | The recorded posture is on and its implementation earns the ordinary lock. |
+| `🔒²` | `ON` | The recorded posture uses the stacked implementation. |
+| `⚠` | `OFF` | The recorded posture is off, or a mode directly reports no sandbox. |
+| `⚠` | `UNKNOWN` | The row records an on verdict, but an unverified harness-builtin verdict or unknown implementation fails closed instead of earning a lock. |
+| *(none)* | — | The plain `inherit` launch has no configured verdict to report. This is the posture the unsandboxed-autonomy warning is about. |
 
-Experimental `tclaude-layer` verdicts are a different case and say so
-differently. Their boundary is established — the launch probes the exact frozen
-outer spec before committing the pane — so their tooltip reads `Sandbox: on`,
-claims `Bash is confined.`, and then names the known limits of that boundary in
-a `⚠ Partial fidelity:` sentence. The Linux host-open tooltip says filesystem
-mounts are enforced while ambient host Unix sockets remain connectable. The
-macOS tooltip is deliberately different: Seatbelt enforces filesystem
-operations, but there is no mount namespace, hidden paths remain enumerable,
-and the host network plus ambient Unix sockets remain reachable. Neither is the
-`(unverified)` case above — that word is reserved for a posture tclaude could
-not establish, and partial fidelity is a boundary it did.
+Hovering the glyph shows only the compact summary:
 
-For OpenCode on macOS, the partial disclosure also names the XDG-config
-remainder: mutable per-agent privacy covers data/cache/state, while the config
-base is not redirected. OpenCode's global config directory is read-only, but a
-non-OpenCode config write from inside the wall targets the real host config
-base and is controlled only by the filesystem policy.
+- `Status`: `ON`, `OFF`, or `UNKNOWN`; an active temporary-off override reports
+  `TEMP OFF` when the resulting posture is off.
+- `Implementation`: the active implementation label (`CC`, `Codex`, `TClaude`,
+  or the stacked `CC+TClaude` / `Codex+TClaude`), `None` for an off posture, or
+  `Unknown` for an unrecognized implementation.
+- `Profile`: the applied tclaude sandbox-profile names in resolution order,
+  `None` when the launch recorded an empty profile chain, or `Not recorded` for
+  an older row.
+- A click action when one is available: `Click to temporarily disable` for a
+  live lock, or `Click to restore normal sandbox` for a temporary override.
 
-Every warning shares the one ⚠ glyph, so a row tells you at a glance that
-something is off; hover for which of the three it is. The one exception to
-purely informational warnings is an active temporary sandbox override: its
-badge is clickable and restores the agent's preserved normal sandbox
-configuration. That badge is normally ⚠, but remains 🔒 if higher-precedence
-policy keeps the sandbox on. Ordinary unconfined and unverified warnings do not
-dispatch that action.
+The compact tooltip does not repeat the requested mode, name the settings file
+or profile tier that selected it, restate implementation caveats, or infer which
+rules a named profile contributed. Those details are deliberately not part of
+the Groups-row hover surface.
+
+For OpenCode on macOS, the launch disclosure and this guide also name the
+XDG-config remainder: mutable per-agent privacy covers data/cache/state, while
+the config base is not redirected. OpenCode's global config directory is
+read-only, but a non-OpenCode config write from inside the wall targets the real
+host config base and is controlled only by the filesystem policy. That detail
+is not repeated in the compact badge tooltip.
 
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's
@@ -474,13 +473,14 @@ re-resolves the OS-sandbox verdict and picks up the new posture. For a running
 agent, the member ⚙ menu's ordinary **↻ restart** performs that resume in place;
 it also re-resolves the agent's assigned tclaude sandbox profiles.
 
-Agents older than this feature, and Codex agents, record no verdict: a Codex
-launch's `--sandbox` mode *is* its posture, so its badge reports the mode
-directly (`🔒` for a confining mode, `⚠` for `danger-full-access`, with the mode
-named in the tooltip). One caveat: that holds for agents tclaude spawns, where
-the daemon applies its managed-profile default. A bare `tclaude session new --harness codex`
-with no `--sandbox` records no mode at all and gets no badge — its real posture
-comes from `~/.codex/config.toml`, which tclaude does not read.
+Agents older than the recorded-verdict feature, and harness-builtin Codex
+agents, record no separate verdict: a Codex launch's `--sandbox` mode *is* its
+posture, so its badge reports the mode directly (`🔒` for a confining mode,
+`⚠` for `danger-full-access`). One caveat: that holds for agents tclaude spawns,
+where the daemon applies its managed-profile default. A bare
+`tclaude session new --harness codex` with no `--sandbox` records no mode at all
+and gets no badge — its real posture comes from `~/.codex/config.toml`, which
+tclaude does not read.
 
 ### Temporary sandbox-off restart
 
@@ -503,59 +503,6 @@ commands remain. Claude Code's customizable statusline leads with a red
 `⚠ SB-OFF` while the override is active. Codex has no corresponding
 customizable statusline surface, so use the dashboard's sandbox warning and
 restore menu state there.
-
-### Who chose the sandbox, and which profile shaped it
-
-Two questions the verdict alone cannot answer ride in the same tooltip.
-
-**Who chose the mode.** `sandbox: on` reaches a launch either because someone
-passed it or because a spawn profile carried it — a named `--profile`, the
-group's default, or the global default. The resolved verdict is identical, so
-the badge used to call both "forced ON for this launch", crediting the operator
-with a decision a default profile made. It now names the tier:
-
-| Chosen by | Tooltip |
-| --- | --- |
-| an explicit `--sandbox on` / the spawn dialog | ``forced ON by this launch (sandbox `on`)`` |
-| a default or named spawn profile | ``forced ON by global default profile "agents" (sandbox `on`)`` |
-| a profile that chose `off` | ``forced OFF by group default profile "loose" (sandbox `off`)`` |
-
-An `off` is attributed the same way an `on` is, and for a stronger reason: a
-default profile can opt an agent *out* of containment as silently as it can opt
-one in, and that is the claim an operator is least likely to question.
-
-The attribution is recorded at launch (`sessions.sandbox_mode_source`) and
-replayed by the durable relaunch posture — on a CLI resume, and on every daemon
-relaunch (crash recovery, reincarnation, clone) — so it survives a restart
-rather than going anonymous. Only a LAUNCH-decided verdict is
-attributed: where a settings file decided, who chose the mode did not affect the
-outcome, and naming a profile there would be a fresh false attribution.
-
-A harness whose mode *is* its posture (Codex) records no verdict to fold the
-tier into, so its badge appends the attribution as its own sentence —
-``Chosen by global default profile "wide-open".`` — from the same column.
-
-**Which profile shaped it.** The glyph reports the sandbox *state*. A tclaude
-**sandbox profile** is orthogonal to that: it never decides whether the agent is
-sandboxed, it supplies the *rules*. For a Claude agent the profile's filesystem
-grants are compiled into Claude Code's own `sandbox.filesystem.*` through
-`--settings`, so they take effect only while the sandbox is enabled — and are
-not emitted at all for a launch that requested `off` — while the profile's
-environment entries are plain environment variables that apply either way.
-
-| Situation | Tooltip adds |
-| --- | --- |
-| profile applied, rules in force | `Customized by tclaude sandbox profile “x” (global default).` — one clause per applied tier, in `global` → `group` → `explicit` order |
-| profile applied, rules withheld | the same clause continued: `Customized by tclaude sandbox profile “x” (global default) — its filesystem rules are not in force (…); any environment entries it defines still apply.` The reason is either that the sandbox is off, or that the launch requested `off` so the rules were never emitted — including when managed policy then forced the sandbox back on |
-| unverified verdict | the profile is named, with no claim either way: the hedge above already says the posture is unproven |
-| launch resolved to no profile | `No tclaude sandbox profile applied.` |
-| the caller omitted the profiles (spawn dialog "none", `--omit-sandbox-profiles`) | `No tclaude sandbox profile — this launch omitted them.` |
-| the launch mode cannot carry them (Codex `danger-full-access`) | `tclaude sandbox profiles do not apply under this launch mode.` |
-| agent older than the recorded policy | *(nothing — an absence tclaude never observed is not reported as one)* |
-
-The clause says "customized by", not "rules from": the dashboard receives
-profile *names* only, so it cannot know whether a given profile contributes
-filesystem rules, environment entries, or both.
 
 ## Verifying
 
