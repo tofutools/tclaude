@@ -85,6 +85,11 @@ func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, 
 	family := "ip6"
 	if ipv4 {
 		family = "ip"
+	} else {
+		// Neighbor Unreachability Detection can probe an on-link neighbor by
+		// unicast after initial multicast discovery. Keep that IPv6 control
+		// traffic within the authored destination, independent of port.
+		body.WriteString("    ip6 daddr " + destination + " ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept\n")
 	}
 	for _, protocol := range []string{"tcp", "udp"} {
 		body.WriteString("    " + family + " daddr " + destination + " " + protocol)

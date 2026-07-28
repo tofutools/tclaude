@@ -331,7 +331,7 @@ jobs:
             token="filtered-fixture-$protocol"
             reply=$(
               printf '%s' "$token" |
-                timeout 5 socat -T 2 - "$protocol:[fd00:823::10]:41001"
+                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001"
             )
             if [[ "$reply" != "$token" ]]; then
               echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"

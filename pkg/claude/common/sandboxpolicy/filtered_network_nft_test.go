@@ -26,10 +26,19 @@ func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing
 	)
 	assert.Contains(t, got, "ip daddr 192.0.2.0/24 tcp dport { 443, 8443 } accept")
 	assert.Contains(t, got, "ip daddr 192.0.2.0/24 udp dport { 443, 8443 } accept")
+	assert.NotContains(t, got, "ip daddr 192.0.2.0/24 icmp")
+	assert.Contains(t, got,
+		"ip6 daddr 2001:db8::/32 ip6 hoplimit 255 "+
+			"icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept",
+	)
 	assert.Contains(t, got, "ip6 daddr 2001:db8::/32 tcp accept")
 	assert.NotContains(t, got, "icmp type echo-request")
 	assert.NotContains(t, got, "icmpv6 type echo-request")
 	assert.Contains(t, got, "ip daddr "+FilteredNetworkLoopbackIPv4+"/32 tcp dport { 3000 } accept")
+	assert.Contains(t, got,
+		"ip6 daddr "+FilteredNetworkLoopbackIPv6+"/128 ip6 hoplimit 255 "+
+			"icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept",
+	)
 	assert.Contains(t, got, "ip6 daddr "+FilteredNetworkLoopbackIPv6+"/128 udp dport { 3000 } accept")
 }
 
