@@ -29,7 +29,7 @@ async function openBulk(t, descriptor, options = {}) {
   const actions = {
     close: state.close,
     retireGroupPreview: async () => ({}),
-    retireUngroupedPreview: async () => ({}),
+    retireAgentsPreview: async () => ({}),
     finishBulkRetire: async (result) => {
       state.handoff();
       state.finish(result);
@@ -90,17 +90,29 @@ test('bulk retire launchers conv-dedupe and freeze candidates at the controller 
 
   const ungrouped = controller.openUngroupedRetirePreviewDialog([
     candidates[1], { ...candidates[1] }, candidates[0],
-  ]);
+  ], 'offline');
   assert.equal(state.dialog.value.descriptor.kind, 'retire-ungrouped-preview');
+  assert.equal(state.dialog.value.descriptor.status, 'offline');
   assert.deepEqual(state.dialog.value.descriptor.candidates.map((candidate) => candidate.conv_id), [
     candidates[1].conv_id, candidates[0].conv_id,
   ]);
   state.close();
   await ungrouped;
+
+  const all = controller.openAllRetirePreviewDialog('idle', [
+    candidates[0], { ...candidates[0] }, candidates[1],
+  ]);
+  assert.equal(state.dialog.value.descriptor.kind, 'retire-all-preview');
+  assert.equal(state.dialog.value.descriptor.status, 'idle');
+  assert.deepEqual(state.dialog.value.descriptor.candidates.map((candidate) => candidate.conv_id), [
+    candidates[0].conv_id, candidates[1].conv_id,
+  ]);
+  state.close();
+  await all;
   unregister();
 });
 
-test('bulk retire actions preserve the exact group and ungrouped wire contracts', async (t) => {
+test('bulk retire actions preserve the exact group and cleanup-backed wire contracts', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
     harness.importDashboardModule('js/transaction-dialog-state.js'),
@@ -135,7 +147,7 @@ test('bulk retire actions preserve the exact group and ungrouped wire contracts'
   const looseRequest = Object.freeze({
     agents: ['agt_alpha', 'agt_beta'], shutdown: true, deleteWorktrees: true,
   });
-  assert.deepEqual(await actions.retireUngroupedPreview(looseRequest), { ok: true });
+  assert.deepEqual(await actions.retireAgentsPreview(looseRequest), { ok: true });
   assert.equal(requests[1][0], '/api/cleanup/agents');
   assert.deepEqual(JSON.parse(requests[1][1].body), {
     agents: looseRequest.agents,
@@ -295,7 +307,7 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
     kind: 'retire-ungrouped-preview', candidates,
   }, {
     actions: {
-      retireUngroupedPreview: async (request) => { submitted = request; return response; },
+      retireAgentsPreview: async (request) => { submitted = request; return response; },
     },
   });
   const { harness, host } = mounted;
@@ -326,5 +338,34 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   await mounted.pending;
+  await mounted.mounted.unmount();
+});
+
+test('global retire preview identifies every-group scope including Ungrouped and Unbound', async (t) => {
+  let submitted = null;
+  const mounted = await openBulk(t, {
+    kind: 'retire-all-preview', status: 'offline', candidates,
+  }, {
+    actions: {
+      retireAgentsPreview: async (request) => {
+        submitted = request;
+        return { retired: 2, skipped: 0, failed: 0, outcomes: [] };
+      },
+    },
+  });
+  const { harness, host } = mounted;
+  assert.equal(host.querySelector('#retire-preview-title .theme-copy-regular').textContent,
+    'Retire offline agents across all groups');
+  assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
+    'Banish offline familiars across all parties');
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
+    /span every group, including Ungrouped/);
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    /span every party, including the Unbound/);
+  host.querySelector('#retire-preview-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(submitted, {
+    agents: ['agt_alpha', 'agt_beta'], shutdown: true, deleteWorktrees: true,
+  });
   await mounted.mounted.unmount();
 });
