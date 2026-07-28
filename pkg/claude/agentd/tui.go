@@ -446,6 +446,9 @@ type tuiModel struct {
 	// one that can strand a stale "refresh failed" over a live listing.
 	notice     string
 	refreshErr string
+	// profilesErr is the spawn-profile listing's last failure, shown in the
+	// spawn form rather than over the agent list — it costs one picker.
+	profilesErr string
 	// identityWarning is fixed for the console's lifetime: it says the
 	// daemon will not treat this console as the operator, and why.
 	identityWarning string
@@ -510,6 +513,9 @@ type (
 		groups   []tuiGroupRow
 		profiles []tuiProfileRow
 		err      error
+		// profilesErr is the profile listing's own failure, kept apart from
+		// err: it costs the spawn form one picker, not the whole console.
+		profilesErr error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -621,14 +627,16 @@ func (m tuiModel) refreshCmd() tea.Cmd {
 		if err := api.get("/v1/groups", &groups); err != nil {
 			return tuiDataMsg{err: err}
 		}
+		// The profile list feeds one field of a form that is usually closed,
+		// so its failure travels beside the listing rather than instead of it:
+		// a console whose agents are all live and visible must not go blank
+		// because a profile read hit the DB at a bad moment.
 		var profiles []tuiProfileRow
-		if err := api.get("/v1/spawn-profiles", &profiles); err != nil {
-			return tuiDataMsg{err: err}
-		}
+		profilesErr := api.get("/v1/spawn-profiles", &profiles)
 		sortTUIAgents(agents)
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 		sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
-		return tuiDataMsg{agents: agents, groups: groups, profiles: profiles}
+		return tuiDataMsg{agents: agents, groups: groups, profiles: profiles, profilesErr: profilesErr}
 	}
 }
 
@@ -699,7 +707,14 @@ func newTUITextInput(prompt string) textinput.Model {
 }
 
 // openSpawnForm builds a fresh "new agent" prompt over the current group and
-// profile lists, defaulting the harness to the daemon's default harness.
+// profile lists.
+//
+// Both cycled launch fields start on "(default)", which is the only setting
+// under which the daemon's resolution chain can do its job. The harness picker
+// used to open on the default harness by name instead, which reads the same
+// but is an explicit pin on the wire — and an explicit harness outranks every
+// profile tier, so a profile that selects Codex would have been overruled by a
+// field the operator never touched.
 func (m tuiModel) openSpawnForm() tuiModel {
 	form := tuiSpawnForm{
 		harnessNames: tuiHarnessOptions(),
@@ -710,12 +725,6 @@ func (m tuiModel) openSpawnForm() tuiModel {
 	}
 	for _, g := range m.groups {
 		form.groupNames = append(form.groupNames, g.Name)
-	}
-	for i, name := range form.harnessNames {
-		if name == harness.DefaultName {
-			form.harnessIdx = i
-			break
-		}
 	}
 	m.form = form
 	m.mode = tuiModeSpawn
@@ -1001,7 +1010,15 @@ func tuiRetireSummary(msg tuiRetiredMsg) string {
 	case "soft_stopped":
 		out += "; its session was asked to exit"
 	default:
+		// Anything else is a shutdown that did not go to plan — "error" above
+		// all, which carries its reason in Detail. This console has no browser
+		// to go and read that in, so the reason travels with the verdict or it
+		// is lost: the operator would otherwise be told only that something
+		// went wrong with a pane that is, in that case, still running.
 		out += "; session: " + msg.res.Shutdown.Action
+		if detail := strings.TrimSpace(msg.res.Shutdown.Detail); detail != "" {
+			out += " (" + detail + ")"
+		}
 	}
 	return out + "."
 }
@@ -1030,7 +1047,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshErr = ""
 		m.agents = msg.agents
 		m.groups = msg.groups
-		m.profiles = msg.profiles
+		// A failed profile read keeps the last list it managed to fetch: a
+		// stale picker is worth more than an empty one, and the form says so.
+		if msg.profilesErr != nil {
+			m.profilesErr = msg.profilesErr.Error()
+		} else {
+			m.profilesErr = ""
+			m.profiles = msg.profiles
+		}
 		m.lastRefresh = time.Now()
 		visible := m.visibleAgents()
 		if m.cursor >= len(visible) {
@@ -1405,11 +1429,60 @@ func (m tuiModel) confirmPrompt() string {
 	case tuiModeConfirmQuit:
 		return "Quit and shut down agentd? [y / any other key = cancel]"
 	case tuiModeConfirmRetire:
-		return "Retire " + m.retireTarget.name() +
-			" and stop its session? [y / any other key = cancel]"
+		const prefix = "Retire "
+		const suffix = " and stop its session? [y / any other key = cancel]"
+		return prefix +
+			tuiTruncate(m.retireTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
+			suffix
 	default:
 		return ""
 	}
+}
+
+// promptNameBudget is how many columns the retire prompt may spend on the
+// agent's name: what the terminal leaves after the indent and the fixed text,
+// capped at the AGENT column's own width so a name that fits the listing reads
+// identically here.
+//
+// The name is a conversation title — harness- or operator-authored, routinely
+// long — and the prompt is budgeted as exactly one line, so an uncapped title
+// is the one thing that could push the list view past the terminal's last row.
+// On a terminal too narrow for even the fixed text the floor wins and the line
+// wraps; that is the quit prompt's existing behaviour, not a new failure.
+func (m tuiModel) promptNameBudget(fixed int) int {
+	if m.width <= 0 {
+		// No WindowSizeMsg yet: fall back to the listing's own cap.
+		return tuiPromptNameWidth
+	}
+	const indent = 2
+	return max(min(m.width-indent-fixed, tuiPromptNameWidth), tuiPromptNameFloor)
+}
+
+const (
+	// tuiPromptNameWidth matches the AGENT column's MaxWidth.
+	tuiPromptNameWidth = 28
+	// tuiPromptNameFloor is the shortest name worth showing: below this the
+	// prompt would name an agent the operator cannot recognise.
+	tuiPromptNameFloor = 8
+)
+
+// tuiTruncate shortens s to at most width columns, marking a cut with "…".
+func tuiTruncate(s string, width int) string {
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	for len(runes) > 0 {
+		candidate := string(runes) + "…"
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return ""
 }
 
 // keyHintLine names enter only when it can do something — an agent-class
@@ -1503,7 +1576,10 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
 	}
-	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice, "", m.form.field == tuiFieldHarness))
+	b.WriteString(tuiChoiceLine("  Harness:   ", harnessChoice,
+		tuiHint(harnessChoice == tuiHarnessDefault,
+			"  (the profile chain decides — "+harness.DefaultName+" if nothing pins one)"),
+		m.form.field == tuiFieldHarness))
 	b.WriteString(m.form.brief.View() + tuiHint(m.form.brief.Value() == "", "  (blank = no startup brief)"))
 	b.WriteString("\n")
 
@@ -1536,12 +1612,24 @@ func (m tuiModel) profileChoice() string {
 // profileChoiceHint says what the picker's state means. "(default)" is the
 // easy one to misread — it looks like "no profile", when what it actually
 // does is leave the group's and the global default profile in force.
+//
+// An empty picker is the other misreadable state, and it has three causes
+// that ask different things of the operator: the list has not arrived, the
+// list could not be read, or there really are no profiles. Only the last one
+// is worth pointing at `profiles create`.
 func (m tuiModel) profileChoiceHint() string {
 	if m.profileChoice() != tuiProfileDefault {
 		return ""
 	}
 	if len(m.form.profileNames) <= 1 {
-		return "  (none saved — `tclaude agent profiles create`)"
+		switch {
+		case m.profilesErr != "":
+			return "  (profile list unavailable — press r to retry)"
+		case m.lastRefresh.IsZero():
+			return "  (profile list has not loaded yet — press r)"
+		default:
+			return "  (none saved — `tclaude agent profiles create`)"
+		}
 	}
 	return "  (the group's or global default profile still applies)"
 }

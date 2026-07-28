@@ -96,6 +96,11 @@ chain, so the group's default profile and then the global one still apply.
 Disabled profiles are left out of the picker — a spawn that names one is
 refused, and nothing here can re-enable it.
 
+The **Harness** field opens on `(default)` for the same reason, and leaving it
+there is what lets a profile choose the harness: an explicit harness outranks
+every profile tier, so a pinned one would quietly overrule the Codex or
+opencode profile you just picked.
+
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.
 Everything it shows or does goes through the daemon's own API, so a spawn

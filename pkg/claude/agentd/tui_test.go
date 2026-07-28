@@ -344,13 +344,73 @@ func TestTUISpawnDefaultProfileIsLeftUnpinned(t *testing.T) {
 	assert.Contains(t, view, "default profile still applies")
 }
 
-// A daemon with no saved profiles offers only the sentinel, and says where
-// profiles come from rather than showing an empty picker.
-func TestTUISpawnProfilePickerWithoutAnyProfiles(t *testing.T) {
-	m := newTUIModel(nil)
-	m = m.openSpawnForm()
-	assert.Equal(t, []string{tuiProfileDefault}, m.form.profileNames)
-	assert.Contains(t, m.renderSpawnForm(), "profiles create")
+// An empty picker has three causes and they ask different things of the
+// operator, so the form must not answer all of them with "create one".
+func TestTUISpawnProfilePickerExplainsAnEmptyList(t *testing.T) {
+	t.Run("the listing landed and there really are none", func(t *testing.T) {
+		m := newTUIModel(nil)
+		m.lastRefresh = time.Now()
+		m = m.openSpawnForm()
+		assert.Equal(t, []string{tuiProfileDefault}, m.form.profileNames)
+		assert.Contains(t, m.renderSpawnForm(), "profiles create")
+	})
+
+	t.Run("nothing has loaded yet", func(t *testing.T) {
+		m := newTUIModel(nil).openSpawnForm()
+		view := m.renderSpawnForm()
+		assert.Contains(t, view, "has not loaded yet")
+		assert.NotContains(t, view, "profiles create")
+	})
+
+	t.Run("the profile listing failed", func(t *testing.T) {
+		m := newTUIModel(nil)
+		m.lastRefresh = time.Now()
+		m.profilesErr = "database is locked"
+		m = m.openSpawnForm()
+		view := m.renderSpawnForm()
+		assert.Contains(t, view, "profile list unavailable")
+		assert.NotContains(t, view, "profiles create")
+	})
+}
+
+// A profile read that fails costs the spawn form its picker, not the console
+// its listing: the agents were fetched successfully and must stay on screen.
+func TestTUIProfileListFailureDoesNotBlankTheListing(t *testing.T) {
+	failProfiles := false
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/peers":
+			writeJSON(w, http.StatusOK, []tuiAgentRow{{ConvID: "c1", Title: "amy", Online: true}})
+		case "/v1/groups":
+			writeJSON(w, http.StatusOK, []tuiGroupRow{{Name: "dev"}})
+		default:
+			if failProfiles {
+				writeError(w, http.StatusInternalServerError, "io", "database is locked")
+				return
+			}
+			writeJSON(w, http.StatusOK, []tuiProfileRow{{Name: "reviewer-kit"}})
+		}
+	})
+
+	m := newTUIModel(api)
+	m.width = 120
+	updated, _ := m.Update(m.refreshCmd()())
+	got := updated.(tuiModel)
+	require.Len(t, got.profiles, 1)
+
+	failProfiles = true
+	updated, _ = got.Update(got.refreshCmd()())
+	got = updated.(tuiModel)
+	assert.Empty(t, got.refreshErr, "the agent listing succeeded and must not be reported as failed")
+	assert.Len(t, got.agents, 1)
+	assert.Contains(t, got.renderList(), "amy")
+	assert.Contains(t, got.profilesErr, "database is locked")
+	assert.Len(t, got.profiles, 1, "the last good picker is kept rather than emptied")
+
+	// And it clears once the read works again.
+	failProfiles = false
+	updated, _ = got.Update(got.refreshCmd()())
+	assert.Empty(t, updated.(tuiModel).profilesErr)
 }
 
 // A disabled profile is refused at spawn and cannot be enabled from here, so
@@ -366,14 +426,36 @@ func TestTUISpawnProfilePickerSkipsDisabledProfiles(t *testing.T) {
 }
 
 // A blank harness must stay blank on the wire: that is what lets the
-// daemon's own profile chain pick the harness.
+// daemon's own profile chain pick the harness. The form opens that way, so a
+// profile that selects a harness is not overruled by a field the operator
+// never touched.
 func TestTUISpawnDefaultHarnessIsLeftUnpinned(t *testing.T) {
-	m := newTUIModel(nil)
+	var gotReq agent.SpawnRequest
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+	m := newTUIModel(api)
 	m.groups = []tuiGroupRow{{Name: "dev"}}
+	m.profiles = []tuiProfileRow{{Name: "codex-kit"}}
 	m = m.openSpawnForm()
-	m.form.harnessNames = []string{tuiHarnessDefault}
-	m.form.harnessIdx = 0
+
+	require.Equal(t, tuiHarnessDefault, m.form.harnessNames[m.form.harnessIdx],
+		"the harness picker opens on the sentinel, not on the default harness by name")
 	assert.Empty(t, m.selectedHarness())
+	assert.Contains(t, m.renderSpawnForm(), "the profile chain decides")
+
+	// Pick a profile and leave the harness alone: the request must carry the
+	// profile and no harness, or the profile's own harness would be overruled.
+	m = m.moveSpawnField(1)
+	m = m.cycleChoice(1)
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "codex-kit", gotReq.Profile)
+	assert.Empty(t, gotReq.Harness, "an untouched harness field must not pin one")
 }
 
 func TestTUISpawnWithoutAGroupExplainsHowToMakeOne(t *testing.T) {
@@ -507,6 +589,57 @@ func TestTUIRetireActsOnTheAgentTheOperatorConfirmed(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "worker", msg.agent)
 	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
+}
+
+// The prompt is budgeted as exactly one line, and the only variable part of
+// it is a conversation title — which is routinely long. It has to be capped,
+// or the list view runs past the terminal's last row.
+func TestTUIRetirePromptStaysOnOneLine(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 80
+	m.height = 24
+	m.agents = []tuiAgentRow{{
+		ConvID: "c1",
+		Title:  "review the whole authentication subsystem and write it up in detail",
+		Online: true,
+	}}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+
+	for _, width := range []int{80, 100, 120} {
+		got.width = width
+		prompt := got.confirmPrompt()
+		assert.LessOrEqual(t, lipgloss.Width(prompt)+2, width, "width=%d prompt=%q", width, prompt)
+		assert.Contains(t, prompt, "review the", "the operator can still tell which agent it is")
+		assert.Contains(t, prompt, "stop its session", "and what retiring will do to it")
+		assert.Contains(t, got.renderList(), prompt)
+	}
+
+	got.width = 80
+	for _, height := range []int{24, 30, 60} {
+		got.height = height
+		assert.LessOrEqual(t, strings.Count(got.renderList(), "\n"), height, "height=%d", height)
+	}
+}
+
+func TestTUITruncate(t *testing.T) {
+	assert.Equal(t, "worker", tuiTruncate("worker", 10))
+	assert.Equal(t, "worker", tuiTruncate("worker", 6))
+	assert.Equal(t, "work…", tuiTruncate("worker", 5))
+	assert.Equal(t, "", tuiTruncate("worker", 0))
+}
+
+// A shutdown that fails says why. On this console there is no browser to go
+// and look it up in, and the agent's pane is still running.
+func TestTUIRetireReportsWhyAShutdownFailed(t *testing.T) {
+	msg := tuiRetiredMsg{agent: "worker"}
+	msg.res.Shutdown = memberOpResult{Action: "error", Detail: "tmux send-keys: no server running"}
+	summary := tuiRetireSummary(msg)
+	assert.Contains(t, summary, "Retired worker")
+	assert.Contains(t, summary, "error")
+	assert.Contains(t, summary, "no server running")
 }
 
 func TestTUIRetireFailureIsReported(t *testing.T) {

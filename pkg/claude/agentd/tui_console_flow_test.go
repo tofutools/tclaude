@@ -202,6 +202,46 @@ func TestTUIConsoleSpawnsWithTheChosenProfile(t *testing.T) {
 	assert.Equal(t, "haiku", model, "the chosen profile's model must reach the launch")
 }
 
+// A profile that selects a harness must not be overruled by a harness field
+// the operator never touched — the form opens on "(default)", which is the
+// only setting that leaves the daemon's chain free to apply the profile.
+func TestTUIConsoleProfileHarnessSurvivesTheUntouchedHarnessField(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	rec := createProfile(t, f, map[string]any{"name": "other-harness-kit", "harness": "codex"})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	// A directory name with nothing harness-shaped in it: the listing shows
+	// the working directory, and a "codex" in the path would make the
+	// assertion below pass for the wrong reason.
+	cwd := f.TestCwd("tui-profile-harness")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	c.Press(t, "n")
+	c.Press(t, "tab") // group → profile
+	c.Press(t, "right")
+	require.Contains(t, c.View(), "< other-harness-kit >")
+	require.Contains(t, c.View(), "Harness:   < (default) >",
+		"the harness field must not pin one on the operator's behalf")
+	c.Press(t, "tab")
+	c.Type(t, "reviewer")
+	c.Press(t, "tab")
+	c.Type(t, cwd)
+	c.Press(t, "enter")
+
+	require.Contains(t, c.View(), "Spawned", "the console reports the outcome")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	sessions, err := db.FindSessionsByConvID(members[0].ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, "codex", sessions[0].Harness,
+		"the profile's harness must reach the launch, not the form's default")
+}
+
 // x retires the selected agent through the daemon's own retire verb: the
 // demotion, the group exit and the pane shutdown are the daemon's, so this
 // asserts on enrollment state and tmux liveness rather than on the console.
