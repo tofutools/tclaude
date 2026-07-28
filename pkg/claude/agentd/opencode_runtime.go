@@ -1122,7 +1122,7 @@ func refuseOpenCodeFilteredActiveAccount(stateRoot string) error {
 			"OpenCode filtered cannot inspect persistent account authority: %w; sign out of OpenCode or use network open",
 			err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	var activeAccount, activeOrg sql.NullString
 	err = store.QueryRow(
 		`SELECT active_account_id, active_org_id FROM account_state WHERE id = 1`,
