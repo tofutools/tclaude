@@ -43,6 +43,7 @@ func TestDashboardBulkRetireScopeExpansion(t *testing.T) {
 		"function retireCandidatesByStatus(rows, status = '')",
 		"return retireCandidatesByStatus((lastSnapshot || {}).agents, status);",
 		"return retireCandidatesByStatus((lastSnapshot || {}).ungrouped, status);",
+		"groups: [...new Set((Array.isArray(a.groups) ? a.groups : [])",
 		"export function openRetireAllPreview(status)",
 		"openAllRetirePreviewDialog(status, candidates)",
 	} {
@@ -64,6 +65,9 @@ func TestDashboardBulkRetireScopeExpansion(t *testing.T) {
 		"`Banish ${descriptor.status} familiars across all parties`",
 		"including Ungrouped",
 		"including the Unbound",
+		"descriptor.kind === 'retire-all-preview' ? html",
+		"candidate.groups?.length ? `in: ${candidate.groups.join(', ')}` : 'in: Ungrouped'",
+		"candidate.groups?.length ? `in party: ${candidate.groups.join(', ')}` : 'in: Unbound'",
 		"await actions.retireAgentsPreview(request)",
 	} {
 		if !strings.Contains(island, required) {
