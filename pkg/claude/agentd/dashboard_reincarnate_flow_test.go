@@ -200,6 +200,33 @@ func TestDashboardReincarnate_SelfMode_OfflineTargetReturnsError(t *testing.T) {
 	assert.Empty(t, rows, "an offline reincarnate request must not queue an instruction")
 }
 
+// The CLI's cross-agent command uses the direct /v1 route rather than the
+// dashboard's graceful self mode. Pin that it receives the same actionable
+// offline error from the daemon instead of a low-level cwd/tmux explanation.
+func TestReincarnateAPI_OfflineTargetReturnsActionableError(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "reij-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(conv, "worker-offline-api")
+	f.HaveEnrolledAgent(conv)
+	// Deliberately no HaveAliveSession — the target has no live pane.
+
+	req := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/agent/"+conv+"/reincarnate",
+		map[string]any{"follow_up": "continue from the handoff"}))
+	rec := testharness.Serve(f.Mux, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"no_tmux"`)
+	assert.Contains(t, rec.Body.String(), "agent is offline")
+	assert.Contains(t, rec.Body.String(), "only run on a live agent")
+	assert.Contains(t, rec.Body.String(), "tclaude agent resume reij-aaa")
+	assert.Equal(t, conv, db.ResolveLatestConv(conv), "a rejected request records no succession")
+	rows, err := db.ListAgentMessagesForConv(conv, 100)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "an offline API request must not queue a handoff")
+}
+
 // Scenario: a focus hint carrying a control character is rejected with
 // 400 before any row is written — the composed instruction rides the
 // inbox and must clear the same charset rule as any agent message.
