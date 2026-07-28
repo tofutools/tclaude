@@ -68,7 +68,9 @@ function GroupAttachment({ group, actions, placement }) {
   const visibleLabel = fixed && rawURL
     ? html`<span class="group-attachment-label">${label}</span>`
     : null;
-  const visibleIcon = fixed && rawURL ? null : '📎';
+  const visibleIcon = fixed && rawURL
+    ? null
+    : (fixed ? html`<span class="group-attachment-icon">📎</span>` : '📎');
   const placementClass = fixed ? 'group-attachment-fixed' : 'group-attachment-float';
   if (!rawURL) {
     return html`<button

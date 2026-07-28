@@ -1142,10 +1142,14 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment-fixed.group-attachment-empty {
   width: auto; height: auto; box-sizing: border-box; justify-content: center;
   padding: 0 4px; border: 1px solid transparent; border-radius: 4px;
-  opacity: 0.4;
 }
 .group-attachment-fixed.group-attachment-empty:hover {
-  color: #58a6ff; border-color: #58a6ff; opacity: 1;
+  color: #58a6ff; border-color: #58a6ff;
+}
+.group-attachment-fixed.group-attachment-empty .group-attachment-icon { opacity: 0.4; }
+.group-attachment-fixed.group-attachment-empty:hover .group-attachment-icon { opacity: 1; }
+.group-attachment-fixed.group-attachment-empty:focus-visible {
+  outline: 1px solid #58a6ff; outline-offset: 1px;
 }
 .group-attachment-fixed > a,
 .group-attachment-fixed > button {

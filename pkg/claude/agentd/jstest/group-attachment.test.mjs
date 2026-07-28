@@ -163,6 +163,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(fixedEmpty?.tagName, 'BUTTON');
   assert.equal(fixedEmpty.textContent, '📎',
     'an unset fixed attachment stays paperclip-only');
+  assert.equal(fixedEmpty.querySelector('.group-attachment-icon')?.textContent, '📎',
+    'the empty paperclip has its own dimmable glyph without dimming the button');
   assert.equal(fixedEmpty.querySelector('.group-attachment-label'), null);
   fixedEmpty.focus();
   fixedEmpty.click();
