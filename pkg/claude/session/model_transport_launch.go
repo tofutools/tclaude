@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -47,11 +48,143 @@ func ResolveTclaudeLayerModelTransport(
 		return resolveClaudeModelTransport(h, context, environment)
 	case harness.CodexName:
 		return resolveCodexModelTransport(h, context, environment)
+	case harness.OpenCodeName:
+		return resolveOpenCodeModelTransport(h, context, environment)
 	default:
 		return harness.ResolvedModelTransport{
 			Model: context.Model,
 		}, nil
 	}
+}
+
+const openCodeFilteredProviderNPM = "@ai-sdk/openai-compatible"
+
+var openCodeManagedConfigPaths = func() []string {
+	return []string{
+		"/etc/opencode/opencode.json",
+		"/etc/opencode/opencode.jsonc",
+	}
+}
+
+type openCodeFilteredConfig struct {
+	EnabledProviders []string                            `json:"enabled_providers"`
+	Provider         map[string]openCodeFilteredProvider `json:"provider"`
+}
+
+type openCodeFilteredProvider struct {
+	NPM       string                     `json:"npm"`
+	Whitelist []string                   `json:"whitelist"`
+	Models    map[string]json.RawMessage `json:"models"`
+	Options   struct {
+		BaseURL json.RawMessage `json:"baseURL"`
+		APIKey  json.RawMessage `json:"apiKey"`
+	} `json:"options"`
+}
+
+// resolveOpenCodeModelTransport accepts only the pinned OpenCode loader's
+// explicit-provider shape. The executing server separately forces the loader's
+// own isolation affordances, making this inline, frozen profile value the
+// provider authority instead of guessing a built-in or remotely mutable
+// default.
+func resolveOpenCodeModelTransport(
+	h *harness.Harness,
+	context ModelTransportLaunchContext,
+	environment map[string]string,
+) (harness.ResolvedModelTransport, error) {
+	provider, modelID, ok := strings.Cut(strings.TrimSpace(context.Model), "/")
+	if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(modelID) == "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"OpenCode filtered networking requires an explicit provider/model launch model and inline explicit-provider config; choose one or use network open")
+	}
+	provider = strings.TrimSpace(provider)
+	modelID = strings.TrimSpace(modelID)
+
+	for _, path := range openCodeManagedConfigPaths() {
+		if _, err := os.Stat(path); err == nil {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+				fmt.Sprintf("OpenCode managed config %s loads after inline config and can change provider routing; remove the managed provider config or use network open", path))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+				fmt.Sprintf("cannot inspect OpenCode managed config %s: %v; fix its visibility or use network open", path, err))
+		}
+	}
+
+	content := ""
+	for _, entry := range context.Environment {
+		if entry.Name == "OPENCODE_CONFIG_CONTENT" {
+			content = entry.Value
+		}
+	}
+	if strings.TrimSpace(content) == "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"OpenCode filtered networking supports explicit-provider configs only: set frozen profile environment OPENCODE_CONFIG_CONTENT with the launch provider/model and concrete options.baseURL, or use network open")
+	}
+	var config openCodeFilteredConfig
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"cannot inspect OPENCODE_CONFIG_CONTENT as the strict filtered-provider shape: "+err.Error()+"; fix the inline config or use network open")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"OPENCODE_CONFIG_CONTENT contains trailing data; fix the inline config or use network open")
+	}
+	if len(config.EnabledProviders) != 1 ||
+		strings.TrimSpace(config.EnabledProviders[0]) != provider {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered config must set enabled_providers to exactly [%q] so the executing server cannot switch provider routes; fix OPENCODE_CONFIG_CONTENT or use network open", provider))
+	}
+	if len(config.Provider) != 1 {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"OpenCode filtered config must define exactly one explicit provider; fix OPENCODE_CONFIG_CONTENT or use network open")
+	}
+	configured, found := config.Provider[provider]
+	if !found {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered config does not define launch provider %q; fix OPENCODE_CONFIG_CONTENT or use network open", provider))
+	}
+	if strings.TrimSpace(configured.NPM) != openCodeFilteredProviderNPM {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q must use the inspected %s adapter; other provider loaders remain opaque, so choose that adapter or use network open",
+				provider, openCodeFilteredProviderNPM))
+	}
+	if len(configured.Whitelist) != 1 ||
+		strings.TrimSpace(configured.Whitelist[0]) != modelID {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q must whitelist exactly launch model %q; fix OPENCODE_CONFIG_CONTENT or use network open",
+				provider, modelID))
+	}
+	if len(configured.Models) != 1 {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q must define exactly one model; fix OPENCODE_CONFIG_CONTENT or use network open", provider))
+	}
+	if _, found := configured.Models[modelID]; !found {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q does not define launch model %q; fix OPENCODE_CONFIG_CONTENT or use network open",
+				provider, modelID))
+	}
+	var baseURL string
+	if len(configured.Options.BaseURL) == 0 ||
+		json.Unmarshal(configured.Options.BaseURL, &baseURL) != nil ||
+		strings.TrimSpace(baseURL) == "" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q requires a concrete string options.baseURL; fix OPENCODE_CONFIG_CONTENT or use network open", provider))
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if strings.Contains(baseURL, "{env:") || strings.Contains(baseURL, "{file:") ||
+		strings.Contains(baseURL, "${") {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			fmt.Sprintf("OpenCode filtered provider %q options.baseURL may not use environment, file, or runtime substitution; put the concrete endpoint inline or use network open", provider))
+	}
+	_ = environment // proxy inspection is shared above; content must be frozen.
+	return harness.ResolvedModelTransport{
+		Model:            context.Model,
+		Provider:         provider,
+		BaseURL:          baseURL,
+		ProviderResolved: true,
+	}, nil
 }
 
 func resolveClaudeModelTransport(

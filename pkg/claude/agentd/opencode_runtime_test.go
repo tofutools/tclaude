@@ -830,6 +830,43 @@ func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(env, "PATH"))
 }
 
+func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{
+		Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Loopback: true, Ports: []int{9443},
+				}},
+			},
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "OPENCODE_CONFIG_CONTENT", Value: `{"provider":"frozen"}`},
+				{Name: "OPENCODE_PURE", Value: "0"},
+				{Name: "OPENCODE_AUTH_CONTENT", Value: `{"ambient":"profile"}`},
+			},
+		},
+	}
+	env := openCodeServerEnvironment([]string{
+		"OPENCODE_CONFIG=/tmp/ambient.json",
+		"OPENCODE_CONFIG_DIR=/tmp/ambient-config",
+		"OPENCODE_DISABLE_PROJECT_CONFIG=0",
+		"OPENCODE_PURE=0",
+		"OPENCODE_DISABLE_MODELS_FETCH=0",
+		"OPENCODE_AUTH_CONTENT={\"ambient\":true}",
+	}, spec)
+
+	assert.Equal(t, `{"provider":"frozen"}`,
+		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_CONTENT"))
+	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG"))
+	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_DIR"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+		env, "OPENCODE_DISABLE_PROJECT_CONFIG"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(env, "OPENCODE_PURE"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+		env, "OPENCODE_DISABLE_MODELS_FETCH"))
+	assert.Equal(t, "{}", lastOpenCodeEnvironmentValue(env, "OPENCODE_AUTH_CONTENT"))
+}
+
 func lastOpenCodeEnvironmentValue(environment []string, name string) string {
 	prefix := name + "="
 	var value string

@@ -34,6 +34,7 @@ type stackedRelayBindingOptions struct {
 	Consume        bool
 	ReadyPath      string
 	FilteredPolicy string
+	PreserveFDs    int
 }
 
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
@@ -90,6 +91,12 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 		"",
 		"compiled filtered-network relay policy (internal)",
 	)
+	cmd.Flags().IntVar(
+		&binding.PreserveFDs,
+		"preserve-fds",
+		0,
+		"consecutive inherited descriptors starting at fd 3 (internal)",
+	)
 	return cmd
 }
 
@@ -111,6 +118,11 @@ func runTclaudeLayerWinchRelay(
 		strings.TrimSpace(binding.ManifestPath) != "" {
 		return 125, fmt.Errorf("stacked and filtered relay bindings cannot be combined")
 	}
+	if binding.PreserveFDs != 0 &&
+		(binding.PreserveFDs != 2 || strings.TrimSpace(binding.FilteredPolicy) == "") {
+		return 125, fmt.Errorf(
+			"inherited descriptor preservation requires the filtered OpenCode two-fd contract")
+	}
 	bindingArgs, bindingFiles, err := prepareStackedRelayBinding(binding)
 	if err != nil {
 		return 125, err
@@ -125,6 +137,23 @@ func runTclaudeLayerWinchRelay(
 		return 125, err
 	}
 	defer filtered.Close()
+	preservedFiles := make([]*os.File, 0, binding.PreserveFDs)
+	for index := 0; index < binding.PreserveFDs; index++ {
+		fd := 3 + index
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
+			for _, file := range preservedFiles {
+				_ = file.Close()
+			}
+			return 125, fmt.Errorf("preserve inherited fd %d: %w", fd, err)
+		}
+		preservedFiles = append(preservedFiles,
+			os.NewFile(uintptr(fd), fmt.Sprintf("tclaude-preserved-fd-%d", fd)))
+	}
+	defer func() {
+		for _, file := range preservedFiles {
+			_ = file.Close()
+		}
+	}()
 
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
@@ -166,6 +195,7 @@ func runTclaudeLayerWinchRelay(
 	// supported 0.9.x series.
 	child.ExtraFiles = append([]*os.File{statusW}, bindingFiles...)
 	child.ExtraFiles = append(child.ExtraFiles, filtered.Files...)
+	child.ExtraFiles = append(child.ExtraFiles, preservedFiles...)
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
 		return 125, fmt.Errorf("start bubblewrap: %w", err)

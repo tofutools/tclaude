@@ -257,6 +257,13 @@ func tclaudeLayerServerCommand(
 	)
 }
 
+func tclaudeLayerUnixRelayServerCommandArgs(
+	_ TclaudeLayerLaunchSpec,
+	bwrapArgv []string,
+) ([]string, error) {
+	return bwrapArgv, nil
+}
+
 func darwinSeatbeltReadOnlyPaths(
 	binds []TclaudeLayerReadOnlyBind,
 ) ([]string, error) {

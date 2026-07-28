@@ -447,12 +447,13 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("revalidate OpenCode tclaude-layer launch spec: %w", err)
 	}
 	spec.Effective = revalidated.Effective
-	posture, err := sandboxpolicy.NetworkPostureForAccess(spec.Effective.NetworkAccess)
+	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
 	if err != nil {
 		return nil, err
 	}
 	if spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
-		if posture != sandboxpolicy.NetworkIsolatedWithAgentd ||
+		if (posture != sandboxpolicy.NetworkIsolatedWithAgentd &&
+			posture != sandboxpolicy.NetworkFiltered) ||
 			runtime.Transport != db.OpenCodeTransportUnixRelay ||
 			spec.Contract.OpenCodeControl == nil ||
 			runtime.ControlSocketPath != spec.Contract.OpenCodeControl.SocketPath {
@@ -632,8 +633,11 @@ func openCodeServeProcessExec(
 		return "", nil, nil, nil, noCleanup,
 			fmt.Errorf("resolve tclaude relay executable: %w", err)
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkIsolatedWithAgentd)
+	posture, err := session.TclaudeLayerNetworkPosture(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -641,9 +645,15 @@ func openCodeServeProcessExec(
 		"serve", "--hostname", "127.0.0.1",
 		"--port", port, "--log-level", "ERROR",
 	}
+	listenerFD, relayExecutableFD, err :=
+		session.TclaudeLayerUnixRelayServerFDs(*sandboxSpec)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
 	relayArgv := []string{
-		"/proc/self/fd/4", opencodeapi.InheritedUnixRelayMode,
-		"3", "127.0.0.1:" + port, "--", executable,
+		"/proc/self/fd/" + strconv.Itoa(relayExecutableFD),
+		opencodeapi.InheritedUnixRelayMode,
+		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--", executable,
 	}
 	relayArgv = append(relayArgv, serveArgs...)
 	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
@@ -708,10 +718,13 @@ func openCodeServerEnvironment(
 		return append([]string(nil), ambient...)
 	}
 	privateState := len(sandboxSpec.Contract.Environment) > 0
+	filtered := openCodeFilteredNetworkSpec(sandboxSpec)
 	out := make([]string, 0, len(ambient)+len(sandboxSpec.Effective.Environment)+
-		len(sandboxSpec.Contract.Environment))
+		len(sandboxSpec.Contract.Environment)+6)
 	for _, entry := range ambient {
-		if privateState && openCodePrivateEnvironmentName(strings.SplitN(entry, "=", 2)[0]) {
+		name := strings.SplitN(entry, "=", 2)[0]
+		if (privateState && openCodePrivateEnvironmentName(name)) ||
+			(filtered && openCodeFilteredControlledEnvironmentName(name)) {
 			continue
 		}
 		out = append(out, entry)
@@ -720,12 +733,51 @@ func openCodeServerEnvironment(
 		if privateState && openCodePrivateEnvironmentName(entry.Name) {
 			continue
 		}
+		if filtered && openCodeFilteredControlledEnvironmentName(entry.Name) {
+			continue
+		}
 		out = append(out, entry.Name+"="+entry.Value)
 	}
 	for _, entry := range sandboxSpec.Contract.Environment {
 		out = append(out, entry.Name+"="+entry.Value)
 	}
+	if filtered {
+		// These are OpenCode 1.18.6's own subprocess-test isolation inputs.
+		// They make the frozen inline provider content the only dynamic provider
+		// source consumed by the authoritative server.
+		out = append(out,
+			"OPENCODE_CONFIG=",
+			"OPENCODE_CONFIG_DIR=",
+			"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+			"OPENCODE_PURE=1",
+			"OPENCODE_DISABLE_MODELS_FETCH=1",
+			"OPENCODE_DISABLE_AUTOUPDATE=1",
+			"OPENCODE_AUTH_CONTENT={}",
+		)
+	}
 	return out
+}
+
+func openCodeFilteredNetworkSpec(
+	spec *session.TclaudeLayerLaunchSpec,
+) bool {
+	if spec == nil {
+		return false
+	}
+	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
+	return err == nil && posture == sandboxpolicy.NetworkFiltered
+}
+
+func openCodeFilteredControlledEnvironmentName(name string) bool {
+	switch name {
+	case "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR",
+		"OPENCODE_DISABLE_PROJECT_CONFIG", "OPENCODE_PURE",
+		"OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_AUTOUPDATE",
+		"OPENCODE_AUTH_CONTENT":
+		return true
+	default:
+		return false
+	}
 }
 
 func openCodePrivateEnvironmentName(name string) bool {
@@ -877,11 +929,11 @@ func openCodeTclaudeLayerLaunchSpec(
 	if normalized != sandboxpolicy.ImplementationTclaudeLayer {
 		return nil, nil
 	}
-	network := sandboxpolicy.NetworkAccessInherit
+	effective := sandboxpolicy.EffectiveProfile{}
 	if snapshot != nil {
-		network = snapshot.Effective.NetworkAccess
+		effective = snapshot.Effective
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(network)
+	posture, err := session.TclaudeLayerNetworkPosture(effective)
 	if err != nil {
 		return nil, err
 	}
@@ -891,15 +943,15 @@ func openCodeTclaudeLayerLaunchSpec(
 			if filteredErr != nil {
 				return nil, filteredErr
 			}
-			return nil, fmt.Errorf("network posture %s is reserved", posture)
+			if runtime.GOOS != "linux" {
+				return nil, fmt.Errorf("OpenCode filtered Unix relay is Linux-only")
+			}
+			return buildOpenCodeTclaudeLayerLaunchSpec(
+				cwd, gitWriteDirs, snapshot, agentID, true, privateSessionIDs...)
 		}
 		openCodeHarness, resolveErr := harness.Resolve(harness.OpenCodeName)
 		if resolveErr != nil {
 			return nil, resolveErr
-		}
-		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: network}
-		if snapshot != nil {
-			effective = snapshot.Effective
 		}
 		if _, err := session.ValidateTclaudeLayerNetwork(
 			openCodeHarness,
@@ -914,11 +966,9 @@ func openCodeTclaudeLayerLaunchSpec(
 		cwd, gitWriteDirs, snapshot, agentID, false, privateSessionIDs...)
 }
 
-// openCodeUnixRelayLaunchSpec builds the exercised v4 control-plane boundary.
-// The public spawn path deliberately does not call it yet: OpenCode's hosted
-// model traffic still fails ValidateTclaudeLayerNetwork under the isolated
-// posture. Keeping this seam separate makes that non-enforcement boundary
-// explicit while allowing CI to run the real engine.
+// openCodeUnixRelayLaunchSpec builds the isolated v4 control-plane smoke
+// boundary. Public filtered launches use the same builder through
+// openCodeTclaudeLayerLaunchSpec after provider and endpoint preflight.
 func openCodeUnixRelayLaunchSpec(
 	implementation, cwd string,
 	gitWriteDirs []string,
@@ -939,7 +989,7 @@ func openCodeUnixRelayLaunchSpec(
 	if snapshot == nil {
 		return nil, fmt.Errorf("OpenCode Unix relay requires an isolated effective profile")
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(snapshot.Effective.NetworkAccess)
+	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
 		return nil, err
 	}

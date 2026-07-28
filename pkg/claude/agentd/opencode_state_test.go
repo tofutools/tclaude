@@ -23,7 +23,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T) {
+func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *testing.T) {
 	setupTestDB(t)
 	shortHome := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", shortHome)
@@ -148,6 +148,45 @@ func TestOpenCodeUnixRelayBuildsV4WithoutChangingPublicPostureGate(t *testing.T)
 			"the server mount plan must not rely on a namespace-created bind source")
 		assert.NotContains(t, serverJoined, "--ro-bind "+controlPath+" "+controlPath)
 		assert.NotContains(t, serverJoined, "--bind "+controlPath+" "+controlPath)
+
+		filteredSnapshot := sandboxpolicy.EmptySnapshot()
+		filteredSnapshot.Effective.Network = &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true, Ports: []int{43210},
+			}},
+		}
+		filteredSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+			Name:  "OPENCODE_CONFIG_CONTENT",
+			Value: `{"enabled_providers":["test"],"provider":{"test":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"http://tclaude-host:43210","apiKey":"test"}}}}`,
+		}}
+		filteredSpec, filteredErr := openCodeTclaudeLayerLaunchSpec(
+			string(sandboxpolicy.ImplementationTclaudeLayer),
+			cwd, nil, &filteredSnapshot, agentID)
+		require.NoError(t, filteredErr)
+		require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, filteredSpec.Version)
+		listenerFD, executableFD, fdErr :=
+			session.TclaudeLayerUnixRelayServerFDs(*filteredSpec)
+		require.NoError(t, fdErr)
+		assert.Equal(t, 8, listenerFD)
+		assert.Equal(t, 9, executableFD)
+
+		filteredCommand, filteredArgs, filteredExtraFiles, filteredHandshake,
+			filteredCleanup, filteredRenderErr := openCodeServeProcessExec(
+			"/usr/bin/opencode", "43210", &v4Runtime, filteredSpec)
+		require.NoError(t, filteredRenderErr)
+		require.NotEmpty(t, filteredCommand)
+		require.Len(t, filteredExtraFiles, 2)
+		require.NotNil(t, filteredHandshake)
+		t.Cleanup(filteredCleanup)
+		filteredJoined := strings.Join(filteredArgs, " ")
+		assert.Contains(t, filteredJoined,
+			"-- /proc/self/fd/4 session tclaude-layer-winch-relay")
+		assert.Contains(t, filteredJoined, "--preserve-fds 2")
+		assert.Contains(t, filteredJoined, "--filtered-network-policy")
+		assert.Contains(t, filteredJoined,
+			"/proc/self/fd/9 "+opencodeapi.InheritedUnixRelayMode+" 8 ",
+			"the filtered supervisor must remap both inherited authorities after its sealed gateway fds")
 	}
 
 	missing := *spec
