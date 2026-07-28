@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -204,6 +205,9 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		return
 	}
 	response.Contexts = contexts
+	if len(response.Contexts) > 10 {
+		response.Contexts = response.Contexts[:10]
+	}
 	response.RemainingContexts = remaining
 	for _, requested := range targets {
 		raw := strings.Join([]string{
@@ -271,40 +275,53 @@ func flattenDraftSandboxProfileForPrediction(draft *db.SandboxProfile) (sandboxp
 }
 
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
-	var profile *db.SpawnProfile
-	resolvedBy := ""
+	var groupProfile *db.SpawnProfile
 	if strings.TrimSpace(groupName) != "" {
 		group, err := db.GetAgentGroupByName(strings.TrimSpace(groupName))
 		if err != nil {
 			return sandboxProfileEnforcementTargetRequest{}, "", err
 		}
-		profile = groupDefaultProfile(group)
-		if profile != nil {
-			resolvedBy = fmt.Sprintf("group default spawn profile %q", profile.Name)
-		}
+		groupProfile = groupDefaultProfile(group)
 	}
-	if profile == nil {
-		profile = globalDefaultProfile()
-		if profile != nil {
-			resolvedBy = fmt.Sprintf("dashboard default spawn profile %q", profile.Name)
-		}
+	globalProfile := globalDefaultProfile()
+	tiers := []launchProfileTier{
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
 	}
+
 	harnessName := harness.DefaultName
-	implementation := string(sandboxpolicy.ImplementationHarnessBuiltin)
-	requestedSandbox := ""
-	if profile != nil {
-		if strings.TrimSpace(profile.Harness) != "" {
-			harnessName = strings.TrimSpace(profile.Harness)
+	harnessSource := agent.ProvHarnessDefault
+	for _, tier := range tiers {
+		if tier.profile != nil {
+			harnessName = harnessOrDefault(tier.profile.Harness)
+			harnessSource = tier.source
+			break
 		}
-		if strings.TrimSpace(profile.SandboxImplementation) != "" {
-			implementation = strings.TrimSpace(profile.SandboxImplementation)
-		}
-		requestedSandbox = strings.TrimSpace(profile.Sandbox)
-	}
-	if resolvedBy == "" {
-		resolvedBy = "harness default"
 	}
 	resolvedHarness, err := harness.Resolve(harnessName)
+	if err != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", err
+	}
+
+	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
+		"sandbox", "", resolvedHarness.Name, tiers,
+		func(profile *db.SpawnProfile) string { return profile.Sandbox },
+		func(raw string) (string, error) { return harness.ValidateSandboxMode(resolvedHarness, raw) },
+	)
+	if fail != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
+	}
+	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
+		sandboxImplementationField, "", resolvedHarness.Name, tiers,
+		func(profile *db.SpawnProfile) string { return profile.SandboxImplementation },
+		func(raw string) (string, error) {
+			return validateSandboxImplementationForHarness(resolvedHarness, raw)
+		},
+	)
+	if fail != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(requestedImplementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
@@ -312,11 +329,29 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
-	if implementation == string(sandboxpolicy.ImplementationStacked) {
+	if implementation == sandboxpolicy.ImplementationStacked {
 		sandboxMode = predictedBuiltinMode(harnessName)
 	}
+
+	sources := []string{}
+	for _, source := range []string{harnessSource, sandboxSource, implementationSource} {
+		if source == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range sources {
+			if existing == source {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			sources = append(sources, source)
+		}
+	}
+	resolvedBy := strings.Join(sources, "; ")
 	return sandboxProfileEnforcementTargetRequest{
-		Implementation: implementation,
+		Implementation: string(implementation),
 		Harness:        harnessName,
 		Platform:       runtime.GOOS,
 		Sandbox:        sandboxMode,
@@ -390,7 +425,6 @@ func effectiveDraftSandboxProfileContexts(
 	remaining := 0
 	if len(roles) > 10 {
 		remaining = len(roles) - 10
-		roles = roles[:10]
 	}
 	out := make([]sandboxProfileEffectiveContext, 0, len(roles))
 	for _, item := range roles {

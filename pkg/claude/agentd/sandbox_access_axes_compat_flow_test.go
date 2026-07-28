@@ -359,12 +359,20 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 	assert.Contains(t, got.Targets[0].ResolvedBy, "claude-off")
 	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
 
-	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+	globalID, err = db.CreateSpawnProfile(&db.SpawnProfile{
 		Name: "codex-workspace", Harness: harness.CodexName,
 		Sandbox: harness.SandboxWorkspaceWrite,
 	})
 	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "codex-workspace").Code)
+	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "codex-workspace"))
+	require.NoError(t, db.SetDashboardPref(
+		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
+	))
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-group-harness", Harness: harness.CodexName,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "codex-group-harness").Code)
 	body["context"] = map[string]any{"group": "crew"}
 	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
@@ -372,8 +380,75 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 	require.Len(t, got.Targets, 1)
 	assert.Equal(t, harness.CodexName, got.Targets[0].Target.Harness)
 	assert.Equal(t, harness.SandboxWorkspaceWrite, got.Targets[0].Target.Sandbox)
+	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-group-harness")
 	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-workspace")
 	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+}
+
+func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *testing.T) {
+	f := newFlow(t)
+	for i := range 11 {
+		_, err := db.CreateAgentGroup(fmt.Sprintf("crew-%02d", i), "")
+		require.NoError(t, err)
+	}
+	parent := t.TempDir()
+	child := filepath.Join(parent, "workspace")
+	require.NoError(t, os.Mkdir(child, 0o755))
+	for _, body := range []map[string]any{
+		{
+			"name":        "global-deny",
+			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment": []any{},
+		},
+		{
+			"name":        "last-group-reopen",
+			"filesystem":  []any{map[string]any{"path": child, "access": "write"}},
+			"environment": []any{},
+		},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-deny"))
+	_, err := db.SetAgentGroupSandboxProfile("crew-10", "last-group-reopen")
+	require.NoError(t, err)
+	globalProfile, err := db.GetSandboxProfile("global-deny")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":           globalProfile.ID,
+			"name":         globalProfile.Name,
+			"filesystem":   []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment":  []any{},
+			"network":      map[string]any{},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin", "harness": "codex", "platform": "darwin",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string `json:"context"`
+		} `json:"contexts"`
+		RemainingContexts int `json:"remaining_contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome,
+		"the omitted eleventh display context must still participate in aggregate prediction")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, child)
+	assert.Len(t, got.Contexts, 10)
+	assert.Equal(t, 1, got.RemainingContexts)
+	for _, context := range got.Contexts {
+		assert.NotEqual(t, "crew-10", context.Context["group_name"])
+	}
 }
 
 func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContexts(t *testing.T) {
