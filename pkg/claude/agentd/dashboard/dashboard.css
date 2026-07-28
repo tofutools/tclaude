@@ -2960,6 +2960,9 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    also shows it at full brightness when a profile is actually selected. */
 .group-default-profile-icon {
   display: inline-block;
+  /* Pin monochrome/text emoji fallbacks so the parent chip's hover color
+     cannot brighten the glyph from its label or padding. */
+  color: #d4d4d4;
   opacity: 0.35;
   transition: opacity 0.15s ease;
 }
