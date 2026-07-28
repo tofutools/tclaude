@@ -40,6 +40,19 @@ func filteredNetworkHelperEnv() []string {
 	}
 }
 
+func filteredNetworkNFTCommand(nftPath string) *exec.Cmd {
+	cmd := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
+	cmd.Env = filteredNetworkHelperEnv()
+	// bubblewrap grants CAP_NET_ADMIN to this bootstrap, but the bootstrap
+	// runs as the caller's nonzero uid inside the user namespace. Carry the
+	// capability across exactly the nft child exec; the later harness exec
+	// follows an explicit all-set capability drop.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		AmbientCaps: []uintptr{unix.CAP_NET_ADMIN},
+	}
+	return cmd
+}
+
 type preparedFilteredNetworkRelay struct {
 	SetupArgs    []string
 	Command      []string
@@ -341,8 +354,7 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 	if !filepath.IsAbs(nftPath) || len(command) == 0 {
 		return fmt.Errorf("filtered-network bootstrap contract is invalid")
 	}
-	nft := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
-	nft.Env = filteredNetworkHelperEnv()
+	nft := filteredNetworkNFTCommand(nftPath)
 	nft.Stdin = nil
 	nft.Stdout = os.Stderr
 	nft.Stderr = os.Stderr
