@@ -15,11 +15,11 @@
    ~/.claude/settings.json) are knowable at edit time, which is exactly what the
    daemon reads when dir is empty.
 
-   A failed probe resolves to no warnings rather than rejecting: this is an
-   advisory line beside the controls, and turning a transient fetch error into a
-   blocked or alarming dialog would be worse than saying nothing. The Go side is
-   the authority that still runs the check at spawn time, and its warning rides
-   the spawn response either way. */
+   A failed probe resolves to no messages rather than rejecting: these are
+   advisory lines beside the controls, and turning a transient fetch error into
+   a blocked or alarming dialog would be worse than saying nothing. The Go side
+   is the authority that still runs the check at spawn time, and its messages
+   ride the spawn response either way. */
 export async function fetchUnsandboxedAutonomy(fetchImpl, {
   harness = '', sandbox = '', sandboxImplementation = '', approval = '', dir = '',
 } = {}) {
@@ -31,6 +31,7 @@ export async function fetchUnsandboxedAutonomy(fetchImpl, {
     if (!response.ok) return emptyAutonomy();
     const payload = await response.json().catch(() => ({}));
     return {
+      info: Array.isArray(payload.info) ? payload.info : [],
       warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
       sandboxState: String(payload.sandbox_state || ''),
       sandboxSource: String(payload.sandbox_source || ''),
@@ -41,5 +42,5 @@ export async function fetchUnsandboxedAutonomy(fetchImpl, {
 }
 
 function emptyAutonomy() {
-  return { warnings: [], sandboxState: '', sandboxSource: '' };
+  return { info: [], warnings: [], sandboxState: '', sandboxSource: '' };
 }

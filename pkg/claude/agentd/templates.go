@@ -1176,6 +1176,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	// look-like-a-sandbox access-control mode. A template deploy has no per-agent
 	// Warnings channel, so the line rides Notes — which the deploy result and the
 	// dashboard already surface per agent.
+	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
 	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd)...)
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile

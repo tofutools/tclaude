@@ -146,6 +146,19 @@ func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) [
 	}
 }
 
+// SpawnSandboxInfo returns non-warning disclosures about the effective sandbox
+// boundary. These messages describe a launch that is confined but whose
+// boundary is useful to understand; callers must not render them as warnings.
+func SpawnSandboxInfo(h *Harness, sandboxMode string) []string {
+	if h == nil {
+		return nil
+	}
+	if normalizeLineageHarness(h.Name) == OpenCodeName {
+		return openCodeSandboxInfo(sandboxMode)
+	}
+	return nil
+}
+
 // LaunchOSSandbox is the OS-sandbox verdict a launch boundary RECORDS on its
 // session row (sessions.os_sandbox_state / os_sandbox_source), so a later read
 // surface — the dashboard's per-agent badge — can say whether the agent is

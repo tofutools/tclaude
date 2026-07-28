@@ -9,7 +9,7 @@ import (
 
 func TestOpenCodeTclaudeLayerWarnsAboutDarwinConfigBasePrivacy(t *testing.T) {
 	warnings := openCodeSandboxWarnings(OpenCodeSandboxTclaudeLayer)
-	if len(warnings) < 2 {
+	if len(warnings) != 1 {
 		t.Fatalf("Darwin tclaude-layer warnings = %v, want config-base privacy disclosure", warnings)
 	}
 	joined := strings.Join(warnings, "\n")

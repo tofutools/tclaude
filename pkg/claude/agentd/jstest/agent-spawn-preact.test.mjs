@@ -466,7 +466,7 @@ async function mountSpawn(t, overrides = {}) {
       worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
     }),
     loadSandboxPolicy: async (_group, selected) => ({ profiles: [], selected, preview: 'no profiles applied' }),
-    loadUnsandboxedAutonomy: async () => ({ warnings: [], sandboxState: '', sandboxSource: '' }),
+    loadUnsandboxedAutonomy: async () => ({ info: [], warnings: [], sandboxState: '', sandboxSource: '' }),
     resolveWorktree: async () => ({ path: '', branch: '' }),
     uploadAttachments: async () => [],
     spawn: async () => ({ conv_id: 'abcdef1234' }),
@@ -948,6 +948,34 @@ test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clear
     await flush(harness);
     assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer',
       'changing the implementation re-probes with the new selection');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+test('Preact agent-spawn renders sandbox boundary disclosures as info, not warnings', async (t) => {
+  const mounted = await mountSpawn(t, {
+    loadUnsandboxedAutonomy: async () => ({
+      info: ["OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox."],
+      warnings: [],
+      sandboxState: '',
+      sandboxSource: '',
+    }),
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush(harness);
+
+    const notice = host.querySelector('#agent-spawn-sandbox-info');
+    assert.ok(notice);
+    assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
+    assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
+      /tclaude's built-in OS sandbox/);
+    assert.equal(notice.querySelector('.spawn-field-hint.warn'), null);
+    assert.equal(host.querySelector('#agent-spawn-autonomy-warning'), null);
   } finally {
     mounted.cleanup();
   }

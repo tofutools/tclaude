@@ -164,7 +164,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
       options: [
         { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
         { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
-        { value: 'tclaude-layer', label: 'tclaude layer (experimental)', experimental: true },
+        { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)', experimental: true },
       ],
       default: 'harness-builtin',
       host_available: true,
@@ -187,7 +187,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
       'Unset (inherit at spawn)',
       'Claude Code built-in',
       'Stacked: tclaude + Claude Code (experimental)',
-      'tclaude layer (experimental)',
+      'tclaude built-in OS sandbox (experimental)',
     ],
   );
 
@@ -201,7 +201,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [
       'Unset (inherit at spawn)',
       'Stacked: tclaude + OpenCode (experimental)',
-      'tclaude layer (experimental)',
+      'tclaude built-in OS sandbox (experimental)',
     ],
   );
   assert.match(host.textContent, /harness-builtin is invalid for OpenCode/);
@@ -288,7 +288,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
     options: {},
     catalog: openCodeCatalog,
     sandboxImpl: {
-      options: [{ value: 'tclaude-layer', label: 'tclaude layer (experimental)' }],
+      options: [{ value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' }],
       default: 'harness-builtin',
       host_available: true,
     },
@@ -304,8 +304,11 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
       async loadUnsandboxedAutonomy(input) {
         probes.push(input);
         return {
+          info: input.sandboxImplementation === 'tclaude-layer'
+            ? ["OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox."]
+            : [],
           warnings: input.sandboxImplementation === 'tclaude-layer'
-            ? ['ℹ OpenCode tool-executing server runs inside tclaude-layer.']
+            ? []
             : ['⚠ OpenCode has no built-in OS sandbox.'],
         };
       },
@@ -318,9 +321,13 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
 
   assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
-  const notice = host.querySelector('#profile-editor-autonomy-warning');
+  const notice = host.querySelector('#profile-editor-sandbox-info');
   assert.ok(notice, 'the tclaude-layer boundary notice remains visible');
-  assert.match(notice.textContent, /tool-executing server runs inside tclaude-layer/);
+  assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
+  assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
+    /tool-executing server runs inside tclaude's built-in OS sandbox/);
+  assert.equal(notice.querySelector('.spawn-field-hint.warn'), null);
+  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null);
   assert.doesNotMatch(notice.textContent, /no built-in OS sandbox/,
     'the profile editor does not show the access-control warning for tclaude-layer');
   cleanups.reverse().forEach((fn) => fn());

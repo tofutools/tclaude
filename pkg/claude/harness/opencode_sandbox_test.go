@@ -16,9 +16,6 @@ func TestOpenCodeSandboxWarnings(t *testing.T) {
 		name: "access-control looks like a sandbox but is not, so it warns",
 		mode: OpenCodeSandboxAccessControl, wantWarning: true,
 	}, {
-		name: "tclaude-layer reports its split executor boundary",
-		mode: OpenCodeSandboxTclaudeLayer, wantWarning: true,
-	}, {
 		// A blank spawn resolves to access-control (the DefaultMode), which is
 		// exactly the posture the warning must reach — the mode a user gets
 		// without choosing one.
@@ -42,20 +39,37 @@ func TestOpenCodeSandboxWarnings(t *testing.T) {
 				return
 			}
 			line := got[0]
-			if tc.mode == OpenCodeSandboxTclaudeLayer {
-				for _, want := range []string{"tool-executing server", "attach pane", "loopback control plane"} {
-					if !strings.Contains(line, want) {
-						t.Fatalf("boundary notice %q missing %q", line, want)
-					}
-				}
-				return
-			}
 			for _, want := range []string{"⚠", "no built-in OS sandbox", "access-control", "unsandboxed"} {
 				if !strings.Contains(line, want) {
 					t.Fatalf("warning %q missing %q", line, want)
 				}
 			}
 		})
+	}
+}
+
+func TestOpenCodeSandboxInfo(t *testing.T) {
+	got := openCodeSandboxInfo(OpenCodeSandboxTclaudeLayer)
+	if len(got) != 1 {
+		t.Fatalf("got %v, want one informational boundary disclosure", got)
+	}
+	for _, want := range []string{
+		"tool-executing server",
+		"tclaude's built-in OS sandbox",
+		"attach pane",
+		"authenticated local control connection",
+	} {
+		if !strings.Contains(got[0], want) {
+			t.Fatalf("info %q missing %q", got[0], want)
+		}
+	}
+	if strings.Contains(got[0], "tclaude-layer") {
+		t.Fatalf("info %q leaks the internal implementation token", got[0])
+	}
+	for _, mode := range []string{OpenCodeSandboxAccessControl, OpenCodeSandboxOff, ""} {
+		if got := openCodeSandboxInfo(mode); got != nil {
+			t.Fatalf("mode %q: got info %v, want nil", mode, got)
+		}
 	}
 }
 
@@ -89,9 +103,12 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 	if got := SpawnSandboxWarnings(opencode, "", OpenCodeSandboxOff, ""); got != nil {
 		t.Fatalf("opencode off: got %v, want nil", got)
 	}
-	got = SpawnSandboxWarnings(opencode, "", OpenCodeSandboxTclaudeLayer, "")
-	if len(got) == 0 || !strings.Contains(got[0], "tool-executing server") {
-		t.Fatalf("opencode tclaude-layer: got %v, want the executor-boundary notice", got)
+	info := SpawnSandboxInfo(opencode, OpenCodeSandboxTclaudeLayer)
+	if len(info) != 1 || !strings.Contains(info[0], "built-in OS sandbox") {
+		t.Fatalf("opencode tclaude-layer info: got %v, want the executor-boundary disclosure", info)
+	}
+	if got := SpawnSandboxInfo(claude, ClaudeSandboxInherit); got != nil {
+		t.Fatalf("claude info: got %v, want nil", got)
 	}
 
 	// Claude still reaches its own TCL-586 check (the auto + inherit default with

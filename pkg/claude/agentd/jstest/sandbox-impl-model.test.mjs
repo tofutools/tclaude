@@ -13,7 +13,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
-    { value: 'tclaude-layer', label: 'tclaude layer (experimental)', experimental: true, descr: 'Linux only' },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)', experimental: true, descr: 'Linux only' },
     { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
   ],
   default: 'harness-builtin',
@@ -127,7 +127,7 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   // Options without the placeholder are passed through untouched.
   assert.equal(
     claude.sandboxImplOptions.find((o) => o.value === 'tclaude-layer').label,
-    'tclaude layer (experimental)',
+    'tclaude built-in OS sandbox (experimental)',
   );
 
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
@@ -164,7 +164,7 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
     { sandboxImpl: 'harness-builtin' }, openCodeView,
   );
   assert.match(pinnedOpenCode.text, /harness-builtin is invalid for OpenCode/);
-  assert.match(pinnedOpenCode.text, /use tclaude-layer or spawn with the sandbox off/);
+  assert.match(pinnedOpenCode.text, /use tclaude's built-in OS sandbox or spawn with the sandbox off/);
 
   // Selecting the layer on a capable host explains what it DOES — never what it
   // guarantees (epic requirement 12).

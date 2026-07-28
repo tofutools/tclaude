@@ -4446,12 +4446,14 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
    name field, whose hint is validation feedback rather than static docs. The
-   "warn" variant flags a caveat the operator should notice. A HelpField's ⚠
+   "warn" variant flags a caveat the operator should notice; "info" marks a
+   useful, non-actionable disclosure. A HelpField's ⚠
    caveat takes both classes and needs no styling of its own; it carries a bare
    .spawn-field-caveat marker so tests can tell it from the name hint. */
 .spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
 .spawn-field-hint:empty { display: none; }
 .spawn-field-hint.warn { color: #f0883e; }
+.spawn-field-hint.info { color: #58a6ff; }
 .spawn-field-hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px; background: #161b22; padding: 1px 4px; border-radius: 3px;
@@ -7317,6 +7319,7 @@ body.wizard #agent-spawn-modal .spawn-attachments-hint { color: #b39ddb; }
 /* The wizard hint colour above outranks .spawn-field-hint.warn on specificity,
    which would repaint a ⚠ caveat as ordinary help. Warnings keep warning. */
 body.wizard #agent-spawn-modal .spawn-field-hint.warn { color: #f0883e; }
+body.wizard #agent-spawn-modal .spawn-field-hint.info { color: #58a6ff; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
 body.wizard #agent-spawn-modal .cron-create-row input[type=url],
 body.wizard #agent-spawn-modal .cron-create-row select,

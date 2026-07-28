@@ -3016,6 +3016,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// call also surfaces OpenCode's toothless access-control "sandbox".
 	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
 		harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd)...)
+	resolvedLaunch.Info = append(resolvedLaunch.Info,
+		harness.SpawnSandboxInfo(h, sandboxMode)...)
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
 	if arErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())

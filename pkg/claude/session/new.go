@@ -1038,6 +1038,9 @@ func runNew(params *NewParams) error {
 	// echoes which postures the resume carried. It stays a warning on stderr,
 	// never a refusal: the human is the trust root here.
 	if !outerLayer || h.Name == harness.OpenCodeName {
+		for _, info := range harness.SpawnSandboxInfo(h, sandboxMode) {
+			fmt.Fprintf(os.Stderr, "ℹ %s\n", info)
+		}
 		for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 			fmt.Fprintf(os.Stderr, "%s\n", warning)
 		}
