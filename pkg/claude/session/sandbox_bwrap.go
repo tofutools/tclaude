@@ -319,6 +319,63 @@ func TclaudeLayerServerHostAvailability() error {
 	return err
 }
 
+// FilteredNetworkPrerequisite is the live control-plane result for the future
+// Linux filtered gateway. Detected does not mean NetworkList is enforced or
+// the gateway is ready; M2a deliberately records the probe while the capability
+// matrix remains None.
+type FilteredNetworkPrerequisite struct {
+	Detected bool   `json:"detected"`
+	Detail   string `json:"detail"`
+}
+
+// ProbeFilteredNetworkPrerequisite checks the exact host building blocks named
+// by the filtered-network design. It is uncached so a resolved launch cannot
+// carry a stale answer after the operator installs or removes a prerequisite.
+func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
+	return probeFilteredNetworkPrerequisite()
+}
+
+// LaunchWhy is persisted in the resolved snapshot and therefore reaches both
+// launch notes/warnings and the dashboard badge. A positive result says only
+// what M2a actually proves: bubblewrap ran the namespace probe, while the pasta
+// and nft executables were discovered. End-to-end gateway readiness belongs to
+// the smoke-gated data-plane slice.
+func (p FilteredNetworkPrerequisite) LaunchWhy() string {
+	if p.Detected {
+		return "filtered-network prerequisite probe: detected (" + p.Detail +
+			"); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open"
+	}
+	return "filtered-network prerequisite probe: unavailable (" + p.Detail +
+		"); the network allow list remains unenforced and outbound remains open"
+}
+
+// FilteredNetworkPrerequisiteNotice turns one exact live probe result into the
+// durable disclosure shared by agentd's resolved-launch response and the
+// session boundary's final persisted snapshot.
+func FilteredNetworkPrerequisiteNotice(
+	probe FilteredNetworkPrerequisite,
+) sandboxpolicy.AccessNotice {
+	return sandboxpolicy.AccessNotice{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonFilteredPrerequisite,
+		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Detail: probe.LaunchWhy(),
+	}
+}
+
+func appendFilteredNetworkPrerequisiteNotice(
+	notices []sandboxpolicy.AccessNotice,
+	outerLayer bool,
+	network sandboxpolicy.NetworkRules,
+	probe func() FilteredNetworkPrerequisite,
+) []sandboxpolicy.AccessNotice {
+	if !outerLayer || network.Mode != sandboxpolicy.AccessModeList {
+		return notices
+	}
+	return append(notices, FilteredNetworkPrerequisiteNotice(probe()))
+}
+
 // TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
 // Partial host-open implementations stay visibly unverified; a constructed
 // isolated root can report the stronger boundary it actually enforces.

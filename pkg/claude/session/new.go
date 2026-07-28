@@ -1107,6 +1107,10 @@ func runNew(params *NewParams) error {
 		if planErr != nil {
 			return planErr
 		}
+		notices = appendFilteredNetworkPrerequisiteNotice(
+			notices, outerLayer, axes.Network,
+			ProbeFilteredNetworkPrerequisite,
+		)
 		materialization := launchSandbox.UnixSocketMaterialization
 		if materialization == nil || rendered.UnixSockets.Mode != sandboxpolicy.AccessModeList {
 			var materializationErr error

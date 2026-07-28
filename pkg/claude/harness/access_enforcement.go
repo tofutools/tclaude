@@ -30,8 +30,8 @@ const (
 type AccessEnforcement struct {
 	networkClosed           EnforcementLevel
 	networkList             EnforcementLevel
-	networkSelectors        []string
-	networkPorts            bool
+	networkSelectors        []NetworkSelectorCapability
+	networkPorts            EnforcementLevel
 	socketOpen              EnforcementLevel
 	socketClosed            EnforcementLevel
 	socketList              EnforcementLevel
@@ -51,8 +51,8 @@ type AccessEnforcement struct {
 type PredictedAccessEnforcement struct {
 	NetworkClosed           EnforcementLevel
 	NetworkList             EnforcementLevel
-	NetworkSelectors        []string
-	NetworkPorts            bool
+	NetworkSelectors        []NetworkSelectorCapability
+	NetworkPorts            EnforcementLevel
 	SocketOpen              EnforcementLevel
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
@@ -89,8 +89,8 @@ type PredictedAccessAxes struct {
 type accessEnforcementTableRow struct {
 	NetworkClosed           EnforcementLevel
 	NetworkList             EnforcementLevel
-	NetworkSelectors        []string
-	NetworkPorts            bool
+	NetworkSelectors        []NetworkSelectorCapability
+	NetworkPorts            EnforcementLevel
 	SocketOpen              EnforcementLevel
 	SocketClosed            EnforcementLevel
 	SocketList              EnforcementLevel
@@ -101,6 +101,15 @@ type accessEnforcementTableRow struct {
 	Scope                   string
 	Mechanism               string
 	MCPBypass               bool
+}
+
+// NetworkSelectorCapability is a mechanism's honest rating for one selector
+// class. The stable Detail becomes the persisted per-entry disclosure whenever
+// an adapter rates a class Partial. An omitted class is EnforceNone.
+type NetworkSelectorCapability struct {
+	Selector string           `json:"selector"`
+	Level    EnforcementLevel `json:"level"`
+	Detail   string           `json:"detail,omitempty"`
 }
 
 // BuiltinLaunchOSSandboxForValidatedMode mirrors the existing truth model for
@@ -320,7 +329,7 @@ func accessEnforcementTable(
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {
 	return AccessEnforcement{
 		networkClosed: row.NetworkClosed, networkList: row.NetworkList,
-		networkSelectors: append([]string(nil), row.NetworkSelectors...),
+		networkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		networkPorts:     row.NetworkPorts, socketOpen: row.SocketOpen,
 		socketClosed: row.SocketClosed, socketList: row.SocketList,
 		socketOpenRefusal:       row.SocketOpenRefusal,
@@ -334,7 +343,7 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) PredictedAccessEnforcement {
 	return PredictedAccessEnforcement{
 		NetworkClosed: row.NetworkClosed, NetworkList: row.NetworkList,
-		NetworkSelectors: append([]string(nil), row.NetworkSelectors...),
+		NetworkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
 		SocketClosed: row.SocketClosed, SocketList: row.SocketList,
 		SocketOpenRefusal:       row.SocketOpenRefusal,
@@ -389,7 +398,9 @@ func predictNetworkAxis(
 				Detail: fmt.Sprintf("%s cannot express one or more destination selectors; all outbound connections are permitted",
 					caps.Mechanism)}
 		}
-		if caps.NetworkList == EnforcePartial || (!caps.NetworkPorts && networkRulesHavePorts(rules)) ||
+		partialEntries, _ := networkPartialEntries(rules.Allow, caps.NetworkSelectors)
+		if caps.NetworkList == EnforcePartial || len(partialEntries) > 0 ||
+			(caps.NetworkPorts != EnforceFull && networkRulesHavePorts(rules)) ||
 			caps.Scope == "tools-only" {
 			return predictedPartial(tier, caps.Mechanism,
 				"the allow list is enforced with wider destination, port, or process scope")
@@ -596,19 +607,38 @@ func PlanAccessEnforcement(
 					caps, "the network allow list contains selectors this mechanism cannot express; outbound network access remains open",
 					unsupported,
 				))
-			} else if !caps.networkPorts {
+			} else {
+				partialEntries, partialDetail := networkPartialEntries(
+					axes.Network.Allow, caps.networkSelectors)
+				if len(partialEntries) > 0 {
+					notices = append(notices, degradationNotice(
+						"network", "selector_partial",
+						sandboxpolicy.AccessNoticeEffectEnforcedWider,
+						caps, partialDetail, partialEntries,
+					))
+				}
+			}
+			if len(unsupported) == 0 && caps.networkPorts != EnforceFull {
 				affected := []int{}
 				for i := range rendered.Network.Allow {
 					if len(rendered.Network.Allow[i].Ports) == 0 {
 						continue
 					}
-					rendered.Network.Allow[i].Ports = nil
+					if caps.networkPorts == EnforceNone {
+						rendered.Network.Allow[i].Ports = nil
+					}
 					affected = append(affected, i)
 				}
 				if len(affected) > 0 {
+					detail := "destination selectors are enforced, but port constraints are not; matching destinations are reachable on every port"
+					reason := "ports_unsupported"
+					if caps.networkPorts == EnforcePartial {
+						detail = "destination port constraints are partially enforced; the mechanism leaves the disclosed port scope reachable"
+						reason = "ports_partial"
+					}
 					notices = append(notices, degradationNotice(
-						"network", "ports_unsupported", sandboxpolicy.AccessNoticeEffectEnforcedWider,
-						caps, "destination selectors are enforced, but port constraints are not; matching destinations are reachable on every port",
+						"network", reason, sandboxpolicy.AccessNoticeEffectEnforcedWider,
+						caps, detail,
 						affected,
 					))
 				}
@@ -680,24 +710,72 @@ func degradationNotice(
 
 func networkUnsupportedEntries(
 	entries []sandboxpolicy.NetworkAllowEntry,
-	selectors []string,
+	selectors []NetworkSelectorCapability,
 ) []int {
 	out := []int{}
 	for i, entry := range entries {
-		selector := "loopback"
-		switch {
-		case entry.Host != "":
-			selector = "host"
-		case entry.Domain != "":
-			selector = "domain"
-		case entry.CIDR != "":
-			selector = "cidr"
-		}
-		if !slices.Contains(selectors, selector) {
+		capability, ok := networkSelectorCapability(
+			selectors, networkSelectorForEntry(entry))
+		if !ok || capability.Level == EnforceNone {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+func networkPartialEntries(
+	entries []sandboxpolicy.NetworkAllowEntry,
+	selectors []NetworkSelectorCapability,
+) ([]int, string) {
+	out := []int{}
+	details := []string{}
+	for i, entry := range entries {
+		capability, ok := networkSelectorCapability(
+			selectors, networkSelectorForEntry(entry))
+		if !ok || capability.Level != EnforcePartial {
+			continue
+		}
+		out = append(out, i)
+		if capability.Detail != "" && !slices.Contains(details, capability.Detail) {
+			details = append(details, capability.Detail)
+		}
+	}
+	detail := "one or more destination selectors are partially enforced"
+	if len(details) > 0 {
+		detail = strings.Join(details, " ")
+	}
+	return out, detail
+}
+
+func networkSelectorForEntry(entry sandboxpolicy.NetworkAllowEntry) string {
+	switch {
+	case entry.Host != "":
+		return string(sandboxpolicy.NetworkSelectorHost)
+	case entry.Domain != "":
+		return string(sandboxpolicy.NetworkSelectorDomain)
+	case entry.CIDR != "":
+		return string(sandboxpolicy.NetworkSelectorCIDR)
+	default:
+		return string(sandboxpolicy.NetworkSelectorLoopback)
+	}
+}
+
+func networkSelectorCapability(
+	capabilities []NetworkSelectorCapability,
+	selector string,
+) (NetworkSelectorCapability, bool) {
+	for _, capability := range capabilities {
+		if capability.Selector == selector {
+			return capability, true
+		}
+	}
+	return NetworkSelectorCapability{}, false
+}
+
+func cloneNetworkSelectorCapabilities(
+	in []NetworkSelectorCapability,
+) []NetworkSelectorCapability {
+	return append([]NetworkSelectorCapability(nil), in...)
 }
 
 func cloneResolvedAxes(in sandboxpolicy.ResolvedAxes) sandboxpolicy.ResolvedAxes {

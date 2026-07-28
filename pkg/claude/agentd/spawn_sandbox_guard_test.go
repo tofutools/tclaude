@@ -11,6 +11,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing.T) {
@@ -59,6 +60,56 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 			"launch notice must name unmaterialized selector %q: %s",
 			selector, notice.Detail)
 	}
+}
+
+func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapability(t *testing.T) {
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	resolveTclaudeLayerAccessVerdict = func(
+		string, sandboxpolicy.NetworkPosture,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{State: "on", Source: "test bwrap"}, nil
+	}
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace execution passed; pasta and nft executables found; gateway not verified",
+		}
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}}
+
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.DefaultName,
+		harness.ClaudeSandboxOff,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	)
+	require.Nil(t, failure)
+	require.Len(t, notices, 2)
+	require.Equal(t, "no_mechanism", notices[0].Reason,
+		"M2a must retain the widening authority")
+	require.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, notices[1].Reason)
+	require.Contains(t, notices[1].Detail, "prerequisite probe: detected")
+	require.Contains(t, notices[1].Detail, "not enabled yet")
+	require.Contains(t, notices[1].Detail, "outbound remains open")
+	require.Contains(t, snapshot.Effective.AccessNotices, notices[0])
+	require.Contains(t, snapshot.Effective.AccessNotices, notices[1])
+
+	planned, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	require.NoError(t, err)
+	require.Equal(t, sandboxpolicy.AccessModeOpen, planned.Network.Mode,
+		"a ready probe must not activate filtered enforcement")
 }
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {

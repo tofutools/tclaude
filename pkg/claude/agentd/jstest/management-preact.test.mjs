@@ -1493,6 +1493,9 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   const networkHelp = host.querySelector('#sandbox-profile-editor-network-help-hint');
   assert.match(networkHelp.textContent, /Host matches one exact DNS name/);
   assert.match(networkHelp.textContent, /blank allows all ports/);
+  assert.match(networkHelp.textContent, /ordinary IPv4\/IPv6 TCP and UDP/);
+  assert.match(networkHelp.textContent, /QUIC is UDP/);
+  assert.match(networkHelp.textContent, /Raw and packet sockets are not an authored class/);
   assert.match(networkHelp.textContent, /compose by intersection/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 

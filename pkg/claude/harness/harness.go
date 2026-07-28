@@ -81,6 +81,11 @@ type Harness struct {
 	OneShotReplay OneShotReplayStrategy
 	// Models validates/normalizes model + effort for this harness.
 	Models ModelCatalog
+	// ModelTransport resolves the minimum network destinations required by a
+	// concrete launch after harness/model/provider selection. Filtered network
+	// preflight never invents a bypass: a nil or unresolved contract is a loud
+	// refusal once filtered enforcement is activated.
+	ModelTransport ModelTransportResolver
 	// Life names the lifecycle slash commands this harness understands
 	// (or reports them unsupported). Every slash injection must be gated
 	// on these so no pane is typed a command it can't parse.

@@ -10,6 +10,7 @@ func init() {
 		Spawn:               openCodeSpawner{},
 		Ask:                 openCodeAsker{},
 		Models:              openCodeModels{},
+		ModelTransport:      unresolvedOpenCodeModelTransport{},
 		Sandbox:             openCodeSandbox{},
 		TclaudeLayerMode:    OpenCodeSandboxTclaudeLayer,
 		Approval:            openCodeApproval{},
