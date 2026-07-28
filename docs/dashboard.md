@@ -397,7 +397,7 @@ A group may also carry one persistent http(s) attachment, exposed as a compact
 quick-item chip. It stays outside the inline control sequence, so it never
 pushes neighboring controls sideways; a reserved edge keeps it clear of long
 group names on narrow screens. It appears while the header is hovered or
-keyboard-focused and remains visible on touch devices.
+keyboard-focused and remains visible on touch and hybrid-pointer devices.
 An existing attachment's paperclip opens it; hover or focus reveals the pencil
 to edit or clear it. The editor accepts an optional display name and otherwise
 derives a short Linear issue key, GitHub number, or hostname.

@@ -1067,14 +1067,16 @@ details[open] > summary::before { content: "▼ "; }
    perform. Non-group <details> (permissions, advanced config) carry no
    data-group-key and keep the generic whole-summary marker + pointer above. */
 details[data-group-key] > summary {
-  cursor: default; position: relative; padding-inline-end: 48px;
+  cursor: default; position: relative; padding-inline-end: 60px;
 }
 details[data-group-key] > summary::before { content: none; }
-details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
+details[data-group-key] > summary .group-name {
+  cursor: pointer; user-select: none; overflow-wrap: anywhere;
+}
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
-  position: absolute; z-index: 4; inset-block-start: 3px; inset-inline-end: 4px;
+  position: absolute; z-index: 4; inset-block-start: 0; inset-inline-end: 4px;
   display: inline-flex; align-items: center; gap: 1px; margin: 0;
   padding: 2px; border: 1px solid #30363d; border-radius: 5px;
   background: #161b22; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
@@ -1083,12 +1085,12 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 }
 .group-attachment a {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; color: #8b949e; text-decoration: none;
+  width: 24px; height: 24px; color: #8b949e; text-decoration: none;
 }
 .group-attachment a:hover { color: #58a6ff; text-decoration: none; }
 .group-attachment button {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; border: 0; background: none;
+  width: 24px; height: 24px; border: 0; background: none;
   color: #6e7681; padding: 0; font: inherit; font-size: 12px;
   line-height: 1; cursor: pointer;
   border-radius: 3px;
@@ -1097,7 +1099,8 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment a:focus-visible,
 .group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .group-attachment-empty {
-  opacity: 0.8;
+  box-sizing: border-box; justify-content: center;
+  width: 30px; height: 30px; opacity: 0.8;
 }
 .group-attachment-edit {
   font-size: 10px; opacity: 0.65; transition: opacity 0.1s ease;
@@ -1116,6 +1119,12 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
   .group-attachment-set:hover .group-attachment-edit,
   .group-attachment-set:focus-within .group-attachment-edit,
   .group-attachment-edit:focus { opacity: 1; pointer-events: auto; }
+}
+/* A hybrid laptop can report a fine primary pointer while also accepting
+   touch. any-pointer keeps the control visible to that coarse input too. */
+@media (any-pointer: coarse) {
+  .group-attachment { opacity: 0.8; pointer-events: auto; }
+  .group-attachment-edit { opacity: 0.65; pointer-events: auto; }
 }
 body.wizard .group-attachment a,
 body.wizard .group-attachment button { color: #b39ddb; }

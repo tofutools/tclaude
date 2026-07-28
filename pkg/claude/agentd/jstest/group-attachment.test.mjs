@@ -18,6 +18,10 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     attachment_label: 'Legacy bad row',
   }, {
     name: 'empty', members: [], online: 0,
+  }, {
+    name: 'hostless', members: [], online: 0,
+    attachment_url: 'https://',
+    attachment_label: 'No host',
   }];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsInteractionProvider}>
@@ -55,5 +59,9 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(empty?.tagName, 'BUTTON');
   assert.equal(empty?.textContent, '📎');
   assertTabReachable(empty);
+
+  const hostless = attachment('hostless');
+  assert.equal(hostless.querySelector('a'), null, 'http(s) without a host must remain inert');
+  assertTabReachable(hostless.querySelector('.group-attachment-invalid'));
   await mounted.unmount();
 });
