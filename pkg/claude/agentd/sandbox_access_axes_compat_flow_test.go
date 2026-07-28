@@ -307,6 +307,38 @@ func TestSandboxProfileDraftEnforcementDetectsCrossScopeFilesystemCarveOut(t *te
 	assert.Equal(t, []string{"POLICY_OWNER"}, got.Contexts[0].Environment)
 	assert.Equal(t, []string{"GOCACHE"}, got.Contexts[0].AgentDirectories)
 
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":                groupProfile.ID,
+			"name":              groupProfile.Name,
+			"filesystem":        []any{map[string]any{"path": child, "access": "write"}},
+			"environment":       []any{map[string]any{"name": "POLICY_OWNER", "value": "crew"}},
+			"agent_directories": []any{"GOCACHE"},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "opencode", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var openCode struct {
+		Targets []struct {
+			Target struct {
+				Implementation string `json:"implementation"`
+				Harness        string `json:"harness"`
+				Sandbox        string `json:"sandbox"`
+			} `json:"target"`
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &openCode)
+	require.Len(t, openCode.Targets, 1)
+	assert.Equal(t, "tclaude-layer", openCode.Targets[0].Target.Implementation)
+	assert.Equal(t, harness.OpenCodeName, openCode.Targets[0].Target.Harness)
+	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, openCode.Targets[0].Target.Sandbox,
+		"OpenCode access-control is not a sandbox and must never label this prediction")
+	assert.Equal(t, harness.AccessPredictionEnforced, openCode.Targets[0].Axes.Filesystem.Outcome,
+		"the tclaude layer preserves the narrower write carve-out under the denied parent")
+
 	globalProfile, err := db.GetSandboxProfile("deny-parent")
 	require.NoError(t, err)
 	require.NotNil(t, globalProfile)
@@ -399,6 +431,23 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-group-harness")
 	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-workspace")
 	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "opencode-layered", Harness: harness.OpenCodeName,
+		Sandbox:               harness.OpenCodeSandboxAccessControl,
+		SandboxImplementation: "tclaude-layer",
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "opencode-layered").Code)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.OpenCodeName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, got.Targets[0].Target.Sandbox,
+		"the resolved target must name the real OpenCode OS boundary, not its soft command filter")
+	assert.Contains(t, got.Targets[0].ResolvedBy, "opencode-layered")
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Filesystem.Outcome)
 }
 
 func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *testing.T) {

@@ -197,9 +197,13 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err
 	}
+	mode, err := resolveSandboxProfilePredictionMode(target, requested.Sandbox)
+	if err != nil {
+		return sandboxProfilePlanResponse{}, err
+	}
 	prediction, err := harness.PredictAccessEnforcement(
 		target.harness, target.implementation, axes,
-		predictedBuiltinMode(target.harness.Name), target.platform)
+		mode, target.platform)
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err
 	}
@@ -212,7 +216,7 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 		UnixSockets:      snapshot.Effective.UnixSockets,
 	}
 	described := describePredictedSandboxProfile(
-		policy, target, predictedBuiltinMode(target.harness.Name),
+		policy, target, mode,
 		harness.DescribePredictedAccess(axes, prediction),
 	)
 	planReason := ""

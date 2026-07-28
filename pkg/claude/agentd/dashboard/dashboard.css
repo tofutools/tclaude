@@ -4172,10 +4172,26 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: flex; flex-direction: column; gap: 6px;
 }
 
-.sbx-access-axis > select,
-.sbx-effective-preview > label > select {
+.sbx-access-axis > select {
   margin: .25rem 0 .5rem;
   min-width: 13rem;
+}
+.sbx-evaluation-target-controls {
+  display: grid;
+  gap: .5rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  margin: .25rem 0 .5rem;
+}
+.sbx-evaluation-target-controls > label {
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: .82rem;
+  gap: .2rem;
+  min-width: 0;
+}
+.sbx-evaluation-target-controls select {
+  width: 100%;
 }
 .sbx-row.sbx-access-row {
   display: grid;
