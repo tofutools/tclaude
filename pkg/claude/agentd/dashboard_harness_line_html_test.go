@@ -24,13 +24,13 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	}
 
 	// The native components are defined and read state.model.
-	must("function HarnessLine({ member })", "HarnessLine component is defined")
+	must("function HarnessLine({ member, snapshot })", "HarnessLine component is defined")
 	must("function AgentStatusDot({ member })", "status-dot component is defined")
 	must("state.model", "the line reads the model off the agent's state")
 
 	// MemberCell wires it into the member control cell — same column as the
 	// dot/actions, NOT a new <td>.
-	must("<${HarnessLine} member=${member} /></td>", "HarnessLine renders in the agent-ctl cell")
+	must("<${HarnessLine} member=${member} snapshot=${snapshot} /></td>", "HarnessLine renders in the agent-ctl cell")
 
 	// The always-visible label is shortModel()-compressed; the FULL name
 	// stays in the tooltip (the title attr / the status-dot tip).
@@ -103,7 +103,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.
-	must("export function SandboxBadge({ member })", "SandboxBadge component is defined")
+	must("export function SandboxBadge({ member, showDetails = false })", "SandboxBadge component is defined")
 	must("function sandboxIndicator(member)", "the sandbox posture decision is separable from its rendering")
 	must("member.state?.sandbox_mode", "the sandbox indicator reads the launch sandbox off the agent's state")
 	must("danger-full-access", "the full-access (sandbox-off) mode is special-cased")
@@ -141,7 +141,9 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// The sandbox indicator rides INSIDE the harness line, trailing the effort
 	// token next to the 📱 remote indicator, rather than owning a second line
 	// under the control cell.
-	must("const sandbox = html`<${SandboxBadge} member=${member} />`;",
+	must("showDetails=${!!snapshot?.recorded_sandbox_details_enabled}",
+		"the snapshot feature flag gates the optional recorded-details action")
+	must("const sandbox = html`<${SandboxBadge} member=${member}",
 		"HarnessLine builds the sandbox indicator alongside the remote one")
 	must("</span>${sandbox}${remote}", "both indicators trail the harness metadata text, tightly packed")
 

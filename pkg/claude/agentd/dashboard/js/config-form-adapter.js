@@ -443,10 +443,10 @@ function populateConfigForm(cfg) {
   // lives in the slop block.
   $('#cfg-slop-hide-lever').checked = !!(cfg.slop && cfg.slop.hide_pull_lever);
 
-  // Feature switches (config features.*). Processes and the terminal command
-  // palette shortcut default off; group attachments has off/float/fixed
-  // presentation modes; mounting the shared agent-directory parent defaults
-  // on and only an explicit false unchecks it.
+  // Feature switches (config features.*). Processes, the terminal command
+  // palette shortcut, and recorded sandbox details default off; group
+  // attachments has off/float/fixed presentation modes; mounting the shared
+  // agent-directory parent defaults on and only an explicit false unchecks it.
   $('#cfg-feature-processes').checked = !!(cfg.features && cfg.features.processes);
   setSelectValue(
     $('#cfg-feature-group-attachments'),
@@ -454,6 +454,8 @@ function populateConfigForm(cfg) {
   );
   $('#cfg-feature-terminal-command-palette-shortcut').checked =
     !!(cfg.features && cfg.features.terminal_command_palette_shortcut);
+  $('#cfg-feature-recorded-sandbox-details').checked =
+    !!(cfg.features && cfg.features.recorded_sandbox_details);
   $('#cfg-feature-agent-dirs-mount-parent').checked = cfg.features?.agent_dirs_mount_parent !== false;
 
   // Activity bots — per-mode style of the deduped robot indicator.
@@ -710,10 +712,10 @@ function assembleConfig() {
 
   // features is an optional block for in-development feature switches. Clone
   // the existing one so a future flag with no widget round-trips. Processes
-  // and terminal_command_palette_shortcut default off; group_attachments omits
-  // its "off" default; agent_dirs_mount_parent defaults on. Drop the block
-  // when it is empty so an all-default config does not marshal a spurious
-  // "features": {} diff.
+  // terminal_command_palette_shortcut, and recorded_sandbox_details default
+  // off; group_attachments omits its "off" default; agent_dirs_mount_parent
+  // defaults on. Drop the block when it is empty so an all-default config does
+  // not marshal a spurious "features": {} diff.
   const feats = (cfg.features && typeof cfg.features === 'object') ? cfg.features : {};
   if ($('#cfg-feature-processes').checked) feats.processes = true; else delete feats.processes;
   const groupAttachments = controlValue($('#cfg-feature-group-attachments'));
@@ -724,6 +726,11 @@ function assembleConfig() {
     feats.terminal_command_palette_shortcut = true;
   } else {
     delete feats.terminal_command_palette_shortcut;
+  }
+  if ($('#cfg-feature-recorded-sandbox-details').checked) {
+    feats.recorded_sandbox_details = true;
+  } else {
+    delete feats.recorded_sandbox_details;
   }
   if ($('#cfg-feature-agent-dirs-mount-parent').checked) delete feats.agent_dirs_mount_parent; else feats.agent_dirs_mount_parent = false;
   if (Object.keys(feats).length) cfg.features = feats; else delete cfg.features;

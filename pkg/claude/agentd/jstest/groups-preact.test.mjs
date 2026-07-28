@@ -895,6 +895,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   };
   const fullSnapshot = {
     ...snapshot([{ name: 'alpha', members: [rich, fixed, background] }]),
+    recorded_sandbox_details_enabled: true,
     harnesses: [
       { name: 'claude', can_rename: true, can_remote_control: true },
       { name: 'codex', can_rename: false, can_remote_control: false },
@@ -931,9 +932,9 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(dot.dataset.conv, 'conv-rich');
   assert.match(dot.title, /Claude Code · Opus 4\.8/);
   const harnessLine = richRow.querySelector('.agent-harness');
-  // The sandbox group and remote indicator are the tail of this one line —
-  // glyph, adjacent details chevron, then remote — not a second line under
-  // the control cell.
+  // With the recorded-details opt-in, the sandbox group and remote indicator
+  // are the tail of this one line — glyph, adjacent details chevron, then
+  // remote — not a second line under the control cell.
   assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42🔒›📱/);
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
   const sandboxGlyph = harnessLine.querySelector('.sandbox-badge');

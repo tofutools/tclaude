@@ -900,12 +900,16 @@ func TestDashboardAssets_FeatureFlagsWired(t *testing.T) {
 			`id="cfg-feature-group-attachments"`, `features.group_attachments`,
 			`id="cfg-feature-terminal-command-palette-shortcut"`,
 			`features.terminal_command_palette_shortcut`,
+			`id="cfg-feature-recorded-sandbox-details"`,
+			`features.recorded_sandbox_details`,
 		},
 		"js/config-form-adapter.js": {
 			"#cfg-feature-processes", "feats.processes = true",
 			"#cfg-feature-group-attachments", "feats.group_attachments = groupAttachments",
 			"#cfg-feature-terminal-command-palette-shortcut",
 			"feats.terminal_command_palette_shortcut = true",
+			"#cfg-feature-recorded-sandbox-details",
+			"feats.recorded_sandbox_details = true",
 		},
 	}
 	for name, needles := range owners {
