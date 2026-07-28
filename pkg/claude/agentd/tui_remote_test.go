@@ -1,11 +1,13 @@
 package agentd
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -96,6 +98,45 @@ func TestRemoteTUIAPIRemainsReusableAfterAnOutage(t *testing.T) {
 	assert.Equal(t, "back", rows[0].Title)
 }
 
+func TestRemoteTUIAPIRetriesALostMutationResponseWithTheSameIdentity(t *testing.T) {
+	var committed atomic.Int32
+	var keys, digests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get(agent.IdempotencyKeyHeader))
+		digests = append(digests, r.Header.Get(agent.RequestDigestHeader))
+		if committed.CompareAndSwap(0, 1) {
+			// Model "the spawn committed, then agentd restarted before the
+			// response reached the client." The retried idempotency key would
+			// retrieve the recorded response from production middleware.
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack committed response: %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte(`{"group":"dev","agent_id":"agt_once"}`))
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	api.mutationRetryBackoff = []time.Duration{0}
+	var resp agent.SpawnResponse
+	require.NoError(t, api.post("/v1/groups/dev/spawn",
+		agent.SpawnRequest{Name: "once"}, &resp))
+
+	assert.Equal(t, int32(1), committed.Load())
+	assert.Equal(t, "agt_once", resp.AgentID)
+	require.Len(t, keys, 2)
+	assert.NotEmpty(t, keys[0])
+	assert.Equal(t, keys[0], keys[1])
+	require.Len(t, digests, 2)
+	assert.NotEmpty(t, digests[0])
+	assert.Equal(t, digests[0], digests[1])
+}
+
 func TestTUIInitialRefreshDoesNotOverlapTheFirstTick(t *testing.T) {
 	api, err := newRemoteTUIAPI("agent-host:8321", "tclo_remote-test")
 	require.NoError(t, err)
@@ -125,6 +166,24 @@ func TestRemoteTUIModelDoesNotClaimHostLocalCapabilities(t *testing.T) {
 	assert.NotContains(t, remote.confirmPrompt(), "shut down agentd")
 	assert.Contains(t, remote.renderHelp(), "agentd keeps running")
 	assert.Contains(t, remote.renderHelp(), "reconnects when agentd returns")
+}
+
+func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
+	m := newTUIModel(nil)
+	m.spawning = true
+	updated, cmd := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		err: &tuiAmbiguousMutationError{
+			err:      io.ErrUnexpectedEOF,
+			attempts: 2,
+		},
+	})
+	got := updated.(tuiModel)
+	assert.False(t, got.spawning)
+	assert.True(t, got.refreshing)
+	assert.Contains(t, got.notice, "outcome unknown")
+	assert.Contains(t, got.notice, "refreshing")
+	assert.NotNil(t, cmd)
 }
 
 func TestRemoteTUIAPINamesUnsupportedServers(t *testing.T) {

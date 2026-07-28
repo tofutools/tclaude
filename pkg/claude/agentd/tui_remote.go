@@ -68,10 +68,11 @@ func runRemoteTUIDashboard(target string) error {
 // is made on every poll, so a refused/reset connection is transient; the model
 // keeps polling and repopulates once the endpoint returns.
 type remoteTUIAPI struct {
-	baseURL string
-	origin  string
-	token   string
-	client  *http.Client
+	baseURL              string
+	origin               string
+	token                string
+	client               *http.Client
+	mutationRetryBackoff []time.Duration
 }
 
 func newRemoteTUIAPI(target, token string) (*remoteTUIAPI, error) {
@@ -101,6 +102,13 @@ func newRemoteTUIAPI(target, token string) (*remoteTUIAPI, error) {
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
+		},
+		mutationRetryBackoff: []time.Duration{
+			time.Second,
+			2 * time.Second,
+			4 * time.Second,
+			8 * time.Second,
+			16 * time.Second,
 		},
 	}, nil
 }
@@ -174,8 +182,11 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 	// caller-supplied independently.
 	req.Header.Set(agent.HumanTokenHeader, a.token)
 	req.Header.Set("Origin", a.origin)
+	if err := agent.PrepareIdempotentRequest(req); err != nil {
+		return fmt.Errorf("prepare %s %s for retry: %w", method, path, err)
+	}
 
-	resp, err := a.client.Do(req)
+	resp, err := a.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
@@ -207,4 +218,59 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 		return fmt.Errorf("decode %s response: %w", path, err)
 	}
 	return nil
+}
+
+// tuiAmbiguousMutationError means every safe retry of one idempotency key
+// failed before a response arrived. The daemon may have committed it; callers
+// must reconcile the listing before offering the operator another mutation.
+type tuiAmbiguousMutationError struct {
+	err      error
+	attempts int
+}
+
+func (e *tuiAmbiguousMutationError) Error() string {
+	return fmt.Sprintf("outcome unknown after %d attempts: %v", e.attempts, e.err)
+}
+
+func (e *tuiAmbiguousMutationError) Unwrap() error { return e.err }
+
+func (a *remoteTUIAPI) doRequest(req *http.Request) (*http.Response, error) {
+	mutating := req.Method == http.MethodPost
+	attempts := 0
+	for {
+		attempts++
+		attempt, err := cloneTUIRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := a.client.Do(attempt)
+		if err == nil {
+			return resp, nil
+		}
+		retry := attempts - 1
+		if !mutating || retry >= len(a.mutationRetryBackoff) {
+			if mutating {
+				return nil, &tuiAmbiguousMutationError{err: err, attempts: attempts}
+			}
+			return nil, err
+		}
+		timer := time.NewTimer(a.mutationRetryBackoff[retry])
+		<-timer.C
+	}
+}
+
+func cloneTUIRequest(req *http.Request) (*http.Request, error) {
+	attempt := req.Clone(req.Context())
+	if req.Body == nil {
+		return attempt, nil
+	}
+	if req.GetBody == nil {
+		return nil, fmt.Errorf("request body cannot be replayed")
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, fmt.Errorf("replay request body: %w", err)
+	}
+	attempt.Body = body
+	return attempt, nil
 }

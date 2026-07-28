@@ -689,6 +689,17 @@ func attachIdempotencyKey(req *http.Request) error {
 	return nil
 }
 
+// PrepareIdempotentRequest attaches the daemon's stable mutation identity to
+// req. Alternate transports that reach the same /v1 handlers (the remote
+// terminal dashboard, for example) use this before retrying a logical request
+// so a committed mutation with a lost response cannot execute twice.
+//
+// The request body must be replayable (http.NewRequest provides GetBody for
+// bytes.Reader/Buffer and strings.Reader). Read-only requests are unchanged.
+func PrepareIdempotentRequest(req *http.Request) error {
+	return attachIdempotencyKey(req)
+}
+
 func replayableRequest(req *http.Request) (*http.Request, error) {
 	attempt := req.Clone(req.Context())
 	if req.Body == nil {

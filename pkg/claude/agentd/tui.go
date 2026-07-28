@@ -1336,6 +1336,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spawning = false
 		if msg.err != nil {
 			m.notice = "Spawn failed: " + msg.err.Error()
+			if tuiMutationOutcomeUnknown(msg.err) {
+				m.notice = "Spawn outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.refreshing = true
+				return m, m.refreshCmd()
+			}
 			return m, nil
 		}
 		m.notice = tuiSpawnSummary(msg)
@@ -1351,6 +1356,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.retiring = false
 		if msg.err != nil {
 			m.notice = "Retire failed: " + msg.err.Error()
+			if tuiMutationOutcomeUnknown(msg.err) {
+				m.notice = "Retire outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.refreshing = true
+				return m, m.refreshCmd()
+			}
 			return m, nil
 		}
 		m.notice = tuiRetireSummary(msg)
@@ -1363,6 +1373,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resuming = false
 		if msg.err != nil {
 			m.notice = "Start failed: " + msg.err.Error()
+			if tuiMutationOutcomeUnknown(msg.err) {
+				m.notice = "Start outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.refreshing = true
+				return m, m.refreshCmd()
+			}
 			return m, nil
 		}
 		m.notice = tuiResumeSummary(msg)
@@ -1393,6 +1408,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+func tuiMutationOutcomeUnknown(err error) bool {
+	var ambiguous *tuiAmbiguousMutationError
+	return errors.As(err, &ambiguous)
 }
 
 // focusSpawned goes straight to a freshly spawned agent's pane — what the
