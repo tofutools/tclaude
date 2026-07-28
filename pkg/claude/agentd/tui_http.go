@@ -52,5 +52,24 @@ func authenticateTUIHTTPRequest(w http.ResponseWriter, r *http.Request) bool {
 		setDashboardSessionCookie(w)
 		return true
 	}
-	return checkDashboardAuth(w, r)
+	// The standalone client may address a loopback listener by localhost
+	// while popupBaseURL names 127.0.0.1 (or sit behind a host-rewriting
+	// reverse proxy). Pinning to popupBaseURL would reject the grace cookie
+	// precisely after a restart rotates the operator token. The client always
+	// sends Origin derived from its target, so require host-relative
+	// same-origin here, as the non-loopback dashboard path does.
+	present, valid, refresh := dashboardRequestSessionMatch(r)
+	if !present || !valid {
+		w.Header().Set("X-Tclaude-Login-Required", "1")
+		http.Error(w, "missing or invalid dashboard cookie", http.StatusForbidden)
+		return false
+	}
+	if !dashboardHostRelativeOrigin(r) {
+		http.Error(w, "Origin/Referer host mismatch", http.StatusForbidden)
+		return false
+	}
+	if refresh {
+		setDashboardSessionCookie(w)
+	}
+	return true
 }

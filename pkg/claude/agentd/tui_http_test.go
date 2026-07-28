@@ -62,6 +62,25 @@ func TestTUIHTTPAuthRejectsAnInvalidOperatorToken(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+func TestTUIHTTPAuthAcceptsDashboardCookieByRequestHost(t *testing.T) {
+	withOperatorToken(t, "tclo_new-after-restart")
+	withDashboardSessionForTUITest(t, "dashboard-session")
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8321/v1/peers", nil)
+	req.Header.Set("Origin", "http://localhost:8321")
+	req.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: "dashboard-session"})
+	rec := httptest.NewRecorder()
+	assert.True(t, authenticateTUIHTTPRequest(rec, req))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "http://localhost:8321/v1/peers", nil)
+	req.Header.Set("Origin", "http://other-host:8321")
+	req.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: "dashboard-session"})
+	rec = httptest.NewRecorder()
+	assert.False(t, authenticateTUIHTTPRequest(rec, req))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 func TestTUIHTTPHandlerExposesOnlyTheTerminalDashboardSurface(t *testing.T) {
 	withOperatorToken(t, "tclo_http-test")
 	withDashboardSessionForTUITest(t, "dashboard-session")
