@@ -21,7 +21,7 @@ func groupAttachmentCmd() *cobra.Command {
 		Short: "Manage a group's persistent reference link",
 		Long: "Set, clear, or show the persistent http(s) reference attached to a group — " +
 			"for example a Linear project, GitHub board, or design document. The dashboard " +
-			"renders it as a compact pin beside the group name. Writes require `groups.rename` " +
+			"renders it as a compact pin beside the group name. Writes require `groups.attachment` " +
 			"or ownership of the group.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{

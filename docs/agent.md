@@ -443,7 +443,7 @@ Each group can carry one persistent http(s) attachment — typically a Linear
 project, GitHub board, or shared design document. A blank `--label` derives a
 compact display name using the same Linear/GitHub/hostname rules as agent task
 links. The reference is stored on the group, survives daemon restarts and
-renames, and is copied by `groups clone`. Writes require `groups.rename` or
+renames, and is copied by `groups clone`. Writes require `groups.attachment` or
 ownership of the group.
 
 **Inter-group links** are directed edges that let one group's members

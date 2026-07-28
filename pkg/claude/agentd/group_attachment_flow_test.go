@@ -97,7 +97,22 @@ func TestGroupAttachment_OwnerMayWriteButUnrelatedAgentMayNot(t *testing.T) {
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
 		t, http.MethodPost, "/v1/groups/alpha/attachment",
 		map[string]any{"url": "https://example.com/other"}), stranger))
-	assert.Equal(t, http.StatusForbidden, rec.Code, "unrelated agent must need groups.rename")
+	assert.Equal(t, http.StatusForbidden, rec.Code, "unrelated agent must need groups.attachment")
+
+	require.NoError(t,
+		db.SetAgentPermissionOverride(stranger, agentd.PermGroupsRename, db.PermEffectGrant, "test"))
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups/alpha/attachment",
+		map[string]any{"url": "https://example.com/still-forbidden"}), stranger))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"legacy groups.rename grants must not silently widen into attachment writes")
+
+	require.NoError(t,
+		db.SetAgentPermissionOverride(stranger, agentd.PermGroupsAttachment, db.PermEffectGrant, "test"))
+	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups/alpha/attachment",
+		map[string]any{"url": "https://example.com/allowed"}), stranger))
+	assert.Equal(t, http.StatusOK, rec.Code, "dedicated groups.attachment grant should allow the write")
 
 	rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
 		t, http.MethodGet, "/v1/groups/alpha/attachment", nil), stranger))

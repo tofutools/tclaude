@@ -34,8 +34,8 @@ func groupAttachmentViewFor(g *db.AgentGroup) groupAttachmentView {
 //	GET  /v1/groups/{name}/attachment  → current URL + effective label
 //	POST /v1/groups/{name}/attachment  → set ({url,label}) or clear ({clear:true})
 //
-// Reads are open like GET /v1/groups. Writes use the existing groups.rename
-// configuration slug with the standard owner-of-this-group bypass.
+// Reads are open like GET /v1/groups. Writes use the dedicated
+// groups.attachment capability with the standard owner-of-this-group bypass.
 func handleGroupAttachment(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	switch r.Method {
 	case http.MethodGet:
@@ -46,7 +46,7 @@ func handleGroupAttachment(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST only")
 		return
 	}
-	if _, ok := requireGroupPermission(w, r, PermGroupsRename, g); !ok {
+	if _, ok := requireGroupPermission(w, r, PermGroupsAttachment, g); !ok {
 		return
 	}
 	if !requireGroupActive(w, g) {
