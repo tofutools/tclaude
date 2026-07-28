@@ -1046,6 +1046,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = tuiSpawnSummary(msg)
+		if focused, cmd := m.focusSpawned(msg); cmd != nil {
+			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
+			return focused, cmd
+		}
 		// Pull the new agent in now rather than waiting out the tick.
 		m.refreshing = true
 		return m, m.refreshCmd()
@@ -1084,6 +1088,37 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// focusSpawned goes straight to a freshly spawned agent's pane — what the
+// operator would do next anyway, and the reason they started it. It is enter
+// on the new row, taken automatically: the same handover, the same gate.
+//
+// It stays out of the way in the two cases where that gate says no. A console
+// the daemon does not classify as the human cannot attach at all (see
+// attachSelected), and a spawn that has not produced a tmux session yet —
+// a Codex agent held behind a startup gate — has no pane to go to. Both fall
+// back to the ordinary "spawned, here it is in the listing" path.
+func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
+	session := msg.resp.TmuxSession
+	if !m.operator || session == "" {
+		return m, nil
+	}
+	name := msg.resp.AgentID
+	if name == "" {
+		name = msg.resp.ConvID
+	}
+	if name == "" {
+		// Nothing has an identity yet; the pane's own name is what the
+		// operator has to go on.
+		name = session
+	}
+	if insideTmux() {
+		m.notice += " — switching to " + session + "…"
+	} else {
+		m.notice += " — attaching; detach (ctrl-b d) to come back."
+	}
+	return m, tuiAttachToPane(name, session, insideTmux())
 }
 
 // tuiSpawnSummary describes a landed spawn in one line. A Codex agent held
@@ -1481,7 +1516,11 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.operator {
 		completeHint = "tab complete dir • "
 	}
-	b.WriteString("\n  enter spawn • ↑/↓/tab next field • " + completeHint +
+	spawnHint := "enter spawn"
+	if m.operator {
+		spawnHint = "enter spawn + go to its pane"
+	}
+	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
 		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
 }
@@ -1580,7 +1619,10 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
-	b.WriteString("    enter      Spawn\n")
+	b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
+	b.WriteString("               the same move enter makes on its row. Operator\n")
+	b.WriteString("               consoles only; an agent still starting up (no pane\n")
+	b.WriteString("               yet) just lands in the list.\n")
 	b.WriteString("    esc        Cancel\n\n")
 	if m.dashboardURL != "" {
 		b.WriteString("  The web dashboard is running alongside this console:\n")

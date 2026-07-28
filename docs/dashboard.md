@@ -82,6 +82,12 @@ keys bring you back; outside tmux it attaches, and the console repaints when
 you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
 an operator console can do this (see the identity note below).
 
+A spawn that lands goes straight to the new agent's pane — the same handover
+**enter** performs on its row, so starting an agent leaves you in front of it.
+Only an operator console does this, and an agent that has no pane yet (a Codex
+spawn held behind a startup gate) simply appears in the list instead; detaching
+brings you back to the console with the listing refreshed.
+
 **n** opens the spawn form. Its **Profile** picker lists the daemon's saved
 [spawn profiles](agent.md) (`tclaude agent profiles ls`) and sends the one you
 land on as the spawn's `--profile`. `(default)` names no profile, which is not

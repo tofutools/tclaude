@@ -222,6 +222,81 @@ func TestTUISpawnFormPostsWhatTheOperatorTyped(t *testing.T) {
 	assert.NotNil(t, refresh)
 }
 
+// Starting an agent is how you get to it: a landed spawn goes straight to the
+// new agent's pane, the same handover enter makes on its row.
+func TestTUISpawnGoesToTheNewAgentsPane(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		resp:  agent.SpawnResponse{AgentID: "agt_1", TmuxSession: "cc-dev-1"},
+	})
+	got := updated.(tuiModel)
+	require.NotNil(t, cmd)
+	require.True(t, rec.called)
+	assert.Equal(t, "cc-dev-1", rec.session)
+	assert.Equal(t, "agt_1", rec.agent)
+	assert.Contains(t, got.notice, "Spawned agt_1")
+	assert.False(t, got.spawning)
+
+	// Coming back off the pane is the ordinary return path, which refreshes.
+	back, refresh := got.Update(cmd())
+	assert.NotNil(t, refresh)
+	assert.True(t, back.(tuiModel).refreshing)
+}
+
+// An agent that has no pane yet — a Codex spawn held behind a startup gate —
+// has nothing to go to, so the spawn just lands in the listing.
+func TestTUISpawnWithoutAPaneJustRefreshes(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.api = stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []tuiAgentRow{})
+	})
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", resp: agent.SpawnResponse{AgentID: "agt_1"}})
+	got := updated.(tuiModel)
+	assert.False(t, rec.called)
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd)
+	assert.NotContains(t, got.notice, "attaching")
+}
+
+// Going to a pane is an operator move wherever it is triggered from: a
+// console the daemon classifies as an agent may spawn, but the terminal
+// handover stays closed to it.
+func TestTUISpawnDoesNotFocusForANonOperatorConsole(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.api = stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, []tuiAgentRow{})
+	})
+	m.operator = false
+
+	updated, _ := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		resp:  agent.SpawnResponse{AgentID: "agt_1", TmuxSession: "cc-dev-1"},
+	})
+	assert.False(t, rec.called)
+	assert.True(t, updated.(tuiModel).refreshing)
+	assert.NotContains(t, updated.(tuiModel).renderSpawnForm(), "go to its pane")
+}
+
+// A failed spawn has no pane and must not claim otherwise.
+func TestTUIFailedSpawnDoesNotFocusAnything(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", err: errors.New("group is archived")})
+	assert.False(t, rec.called)
+	assert.Nil(t, cmd)
+	assert.Contains(t, updated.(tuiModel).notice, "Spawn failed")
+}
+
 // The profile picker is the console's way of saying "one of these kinds of
 // agent" — the name has to reach the request the daemon resolves against.
 func TestTUISpawnFormPostsTheChosenProfile(t *testing.T) {

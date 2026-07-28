@@ -45,11 +45,35 @@ func openTUISpawnForm(t *testing.T, c *agentd.TUIConsole, name, dir string) {
 	c.Type(t, dir)
 }
 
+// tuiAttachLog records where the console asked to send this terminal.
+type tuiAttachLog struct {
+	called  bool
+	agent   string
+	session string
+	inTmux  bool
+}
+
+// stubTUIAttach swaps the console's terminal handover for a recorder: a flow
+// test has no terminal to give away, but the target the console picks is real
+// and worth asserting on. The returned command feeds the ordinary
+// came-back-from-the-pane message in, so the console finishes the move.
+func stubTUIAttach(t *testing.T) *tuiAttachLog {
+	t.Helper()
+	log := &tuiAttachLog{}
+	t.Cleanup(agentd.SetTUIAttachForTest(func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
+		log.called = true
+		log.agent, log.session, log.inTmux = agentName, tmuxSession, inTmux
+		return nil
+	}))
+	return log
+}
+
 func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("dev")
 	cwd := f.TestCwd("tui-spawn")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	attach := stubTUIAttach(t)
 
 	c := newTUIConsole(t)
 	c.Refresh()
@@ -61,9 +85,19 @@ func TestTUIConsoleSpawnsAnAgentIntoAGroup(t *testing.T) {
 
 	view := c.View()
 	assert.Contains(t, view, "Spawned", "the console reports the outcome")
-	assert.Contains(t, view, "1 agents (1 online)", "and lists the new agent")
 	assert.Contains(t, view, "dev", "under the group it was spawned into")
 	assert.False(t, c.Quit)
+
+	// Starting an agent goes straight to its pane — the same handover enter
+	// makes on its row, aimed at the session the daemon just created.
+	require.Len(t, f.ListGroupMembers("dev"), 1)
+	require.True(t, attach.called, "a landed spawn goes to the new agent's pane")
+	assert.NotEmpty(t, attach.agent)
+	assert.True(t, f.World.Tmux.IsAlive(attach.session),
+		"and it is the live session the daemon just created: %q", attach.session)
+
+	c.Refresh()
+	assert.Contains(t, c.View(), "1 agents (1 online)", "and lists the new agent")
 }
 
 func TestTUIConsoleReportsASpawnTheDaemonRefuses(t *testing.T) {
@@ -112,31 +146,25 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 	f.HaveGroup("dev")
 	sp := f.Spawn("dev", "worker")
 
-	var gotAgent, gotSession string
-	var gotInTmux, called bool
-	t.Cleanup(agentd.SetTUIAttachForTest(func(agentName, tmuxSession string, inTmux bool) tea.Cmd {
-		called = true
-		gotAgent, gotSession, gotInTmux = agentName, tmuxSession, inTmux
-		return nil
-	}))
+	attach := stubTUIAttach(t)
 
 	c := newTUIConsole(t)
 	c.Refresh()
 	c.Press(t, "enter")
 
-	require.True(t, called, "enter on an online agent asks for its pane")
-	assert.Equal(t, sp.TmuxSession, gotSession)
-	assert.NotEmpty(t, gotAgent)
-	assert.Equal(t, os.Getenv("TMUX") != "", gotInTmux,
+	require.True(t, attach.called, "enter on an online agent asks for its pane")
+	assert.Equal(t, sp.TmuxSession, attach.session)
+	assert.NotEmpty(t, attach.agent)
+	assert.Equal(t, os.Getenv("TMUX") != "", attach.inTmux,
 		"switch-client inside tmux, attach outside it")
 
 	// An agent whose pane is gone has nothing to go to, and the console says
 	// so instead of handing the terminal to a dead session.
-	called = false
+	attach.called = false
 	f.MarkOffline(sp.TmuxSession)
 	c.Refresh()
 	c.Press(t, "enter")
-	assert.False(t, called)
+	assert.False(t, attach.called)
 	assert.Contains(t, c.View(), "no live tmux session")
 }
 
@@ -150,6 +178,7 @@ func TestTUIConsoleSpawnsWithTheChosenProfile(t *testing.T) {
 	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
 	cwd := f.TestCwd("tui-profile")
 	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	stubTUIAttach(t)
 
 	c := newTUIConsole(t)
 	c.Refresh()
