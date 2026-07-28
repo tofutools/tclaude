@@ -952,7 +952,7 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	actor, err := db.GetAgentByConv("conv-start")
 	require.NoError(t, err)
 	require.NotNil(t, actor)
-	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "20260728-121733-"), actor.PendingName)
 	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
@@ -980,7 +980,7 @@ func TestRunHookCallback_SessionStartNamesActorPreEnrolledByReconcile(t *testing
 
 	actor, err := db.GetAgent(agentID)
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "20260728-121733-"), actor.PendingName)
 	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
