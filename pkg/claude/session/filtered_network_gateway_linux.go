@@ -215,9 +215,7 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		"--ro-bind-data", strconv.Itoa(filteredNetworkHostsFD),
 		"/etc/hosts",
 	}
-	for _, dir := range resolvDirs {
-		setupArgs = append(setupArgs, "--dir", dir)
-	}
+	setupArgs = appendFilteredNetworkResolvDirs(setupArgs, resolvDirs)
 	setupArgs = append(setupArgs,
 		"--perms", "0444",
 		"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
@@ -289,6 +287,21 @@ func filteredNetworkResolvMount(
 		}
 	}
 	return destination, createDirs, nil
+}
+
+func appendFilteredNetworkResolvDirs(
+	args []string,
+	dirs []string,
+) []string {
+	for index, dir := range dirs {
+		if index == 0 {
+			// The main bubblewrap plan already created this private runtime
+			// filesystem before any authored Unix-socket binds beneath it.
+			continue
+		}
+		args = append(args, "--dir", dir)
+	}
+	return args
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

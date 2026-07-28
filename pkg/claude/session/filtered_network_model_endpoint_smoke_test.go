@@ -74,12 +74,14 @@ func TestPinnedFilteredModelEndpointEvidence(t *testing.T) {
 	t.Run("codex-chatgpt", func(t *testing.T) {
 		t.Parallel()
 		runFilteredCodexChatGPTEndpointEvidence(
-			t, codex, time.Now().Add(time.Hour), "chatgpt.com:443")
+			t, codex, time.Now().Add(time.Hour),
+			[]string{"chatgpt.com:443"})
 	})
 	t.Run("codex-token-refresh", func(t *testing.T) {
 		t.Parallel()
 		runFilteredCodexChatGPTEndpointEvidence(
-			t, codex, time.Now().Add(-time.Hour), "auth.openai.com:443")
+			t, codex, time.Now().Add(-time.Hour),
+			[]string{"auth.openai.com:443", "chatgpt.com:443"})
 	})
 }
 
@@ -137,7 +139,7 @@ func runFilteredCodexChatGPTEndpointEvidence(
 	t *testing.T,
 	codex string,
 	accessExpiry time.Time,
-	expected string,
+	expected []string,
 ) {
 	t.Helper()
 	home := t.TempDir()
@@ -157,7 +159,7 @@ func runFilteredCodexChatGPTEndpointEvidence(
 			// preserve only this fixture's explicit Codex authority.
 			"CODEX_HOME": codexHome,
 		},
-		expected: []string{expected},
+		expected: expected,
 	})
 }
 

@@ -1168,6 +1168,12 @@ func bwrapArgsWithDaemonFinal(
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	)
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		// Keep /run ambient-free while creating its private filesystem before
+		// any explicitly authorized Unix sockets beneath it are rebound. The
+		// filtered relay may later add only the resolver symlink target.
+		args = append(args, "--tmpfs", "/run")
+	}
 	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
 		var err error
 		args, err = appendTclaudeLayerAliases(args, plan.Aliases)

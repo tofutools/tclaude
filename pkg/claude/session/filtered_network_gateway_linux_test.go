@@ -76,6 +76,10 @@ func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T
 		filepath.Join(runtimeRoot, "systemd"),
 		filepath.Join(runtimeRoot, "systemd", "resolve"),
 	}, dirs)
+	assert.Equal(t, []string{
+		"--dir", filepath.Join(runtimeRoot, "systemd"),
+		"--dir", filepath.Join(runtimeRoot, "systemd", "resolve"),
+	}, appendFilteredNetworkResolvDirs(nil, dirs))
 
 	outside := filepath.Join(root, "home", "resolver")
 	require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o700))
