@@ -431,7 +431,7 @@ func openCodeRuntimeSandboxSpec(
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
 	for _, path := range spec.Contract.WriteDirs {
-		if canonicalOpenCodeRuntimePath(path) == cwd {
+		if openCodeRuntimePathsEquivalent(path, cwd) {
 			hasCwd = true
 			break
 		}
@@ -821,8 +821,11 @@ func openCodeRuntimePathsEquivalent(left, right string) bool {
 	if left == right {
 		return true
 	}
-	resolved, err := filepath.EvalSymlinks(right)
-	return err == nil && left == canonicalOpenCodeRuntimePath(resolved)
+	resolvedLeft, leftErr := filepath.EvalSymlinks(left)
+	resolvedRight, rightErr := filepath.EvalSymlinks(right)
+	return leftErr == nil && rightErr == nil &&
+		canonicalOpenCodeRuntimePath(resolvedLeft) ==
+			canonicalOpenCodeRuntimePath(resolvedRight)
 }
 
 func openCodeServeExec(

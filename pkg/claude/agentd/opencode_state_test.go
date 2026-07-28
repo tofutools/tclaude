@@ -505,6 +505,13 @@ func TestOpenCodeRuntimePathsEquivalentAcceptsStableLeafSymlink(t *testing.T) {
 		target, filepath.Join(configBase, "opencode")))
 	assert.False(t, openCodeRuntimePathsEquivalent(
 		filepath.Join(base, "other"), filepath.Join(configBase, "opencode")))
+
+	aliasBase := filepath.Join(t.TempDir(), "base-alias")
+	require.NoError(t, os.Symlink(base, aliasBase))
+	assert.True(t, openCodeRuntimePathsEquivalent(
+		filepath.Join(aliasBase, "dotfiles", "opencode-global"),
+		filepath.Join(configBase, "opencode")),
+		"both sides may carry a stable parent alias, as /var does on macOS")
 }
 
 func environmentNames(entries []sandboxpolicy.EnvironmentEntry) string {
