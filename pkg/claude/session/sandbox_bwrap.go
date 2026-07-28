@@ -454,7 +454,10 @@ func ValidateTclaudeLayerNetwork(
 		}
 		detail := harness.DescribeModelTransportRequirement(requirement)
 		if requirement.Template != "" {
-			detail += " Hosted endpoint coverage is declared but not empirically validated; it remains provisional until the pinned M2c harness smoke."
+			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
+		}
+		if h.Name == harness.DefaultName {
+			detail += " If Claude's provider route changes after preflight, an unauthored destination is denied fail-closed for new flows at the packet floor; dynamic provider-resolution follow-up is tracked in TCL-826."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
@@ -1145,9 +1148,10 @@ func bwrapArgsWithDaemonFinal(
 	case sandboxpolicy.NetworkFiltered:
 		// Rootless bubblewrap maps the invoking host user to namespace root.
 		// That identity is required only so the sealed bootstrap can receive
-		// CAP_NET_ADMIN and install the namespace-local nft policy. Host file
-		// ownership remains the invoking user's, and the bootstrap zeroes and
-		// verifies every capability set before the harness exec.
+		// CAP_NET_ADMIN for the namespace-local nft policy and
+		// CAP_NET_BIND_SERVICE for its private DNS listener. Host file ownership
+		// remains the invoking user's, and the bootstrap zeroes and verifies
+		// every capability set before the harness exec.
 		args = append(args,
 			"--unshare-user",
 			"--uid", "0",
@@ -1165,6 +1169,12 @@ func bwrapArgsWithDaemonFinal(
 		// Never share the host's scratch directory by default.
 		"--tmpfs", "/tmp",
 	)
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		// Keep /run ambient-free while creating its private filesystem before
+		// any explicitly authorized Unix sockets beneath it are rebound. The
+		// filtered relay may later add only the resolver symlink target.
+		args = append(args, "--tmpfs", "/run")
+	}
 	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
 		var err error
 		args, err = appendTclaudeLayerAliases(args, plan.Aliases)

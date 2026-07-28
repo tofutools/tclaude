@@ -37,6 +37,7 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 		harness.SandboxManagedProfile,
 		snapshot,
 		string(sandboxpolicy.ImplementationHarnessBuiltin),
+		session.ModelTransportLaunchContext{},
 	)
 	require.Nil(t, failure)
 	var notice *sandboxpolicy.AccessNotice
@@ -94,6 +95,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		harness.ClaudeSandboxOff,
 		snapshot,
 		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{},
 	)
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
@@ -146,6 +148,7 @@ func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.
 		harness.OpenCodeSandboxTclaudeLayer,
 		newSnapshot(),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{},
 	)
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
@@ -163,10 +166,70 @@ func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.
 		harness.OpenCodeSandboxTclaudeLayer,
 		newSnapshot(),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{},
 	)
 	require.NotNil(t, failure)
 	require.Equal(t, harness.SandboxCapabilityNetworkAllowlist, failure.Kind)
 	require.Contains(t, failure.Msg, "real-OpenCode M3 smoke")
+}
+
+func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("filtered gateway capability is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace, pasta, and nft detected",
+		}
+	}
+	resolveTclaudeLayerAccessVerdict = func(
+		string, sandboxpolicy.NetworkPosture,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{
+			State: "on", Source: "test filtered bwrap", FilteredNetwork: true,
+		}, nil
+	}
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Environment: []sandboxpolicy.EnvironmentEntry{{
+			Name: "CODEX_HOME", Value: codexHome,
+		}},
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.openai.com", Ports: []int{443}},
+			},
+		},
+	}}
+
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.CodexName,
+		harness.SandboxDangerFull,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{
+			Model: "gpt-5.4", Cwd: t.TempDir(),
+		},
+	)
+	require.Nil(t, failure)
+	var found bool
+	for _, notice := range notices {
+		if notice.Reason == sandboxpolicy.AccessNoticeReasonFilteredModelTraffic {
+			found = true
+			require.Contains(t, notice.Detail, "api.openai.com:443")
+			require.Contains(t, notice.Detail, "empirically audited")
+		}
+	}
+	require.True(t, found, "resolved launch must persist the model-transport why-clause")
 }
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {

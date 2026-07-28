@@ -17,3 +17,13 @@ func tclaudeLayerFilteredBootstrapCmd() *cobra.Command {
 		},
 	}
 }
+
+func tclaudeLayerFilteredNFTCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "tclaude-layer-filtered-nft",
+		Hidden: true,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("the filtered-network nft helper is Linux-only")
+		},
+	}
+}

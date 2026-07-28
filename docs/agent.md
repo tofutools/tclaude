@@ -518,15 +518,30 @@ access, are not part of this connection class. Host/domain rules name DNS
 destinations, not TLS SNI, HTTP hosts, certificates, tenants, repositories, or
 API operations.
 
-The M2b Linux `tclaude-layer` gateway enforces CIDR destinations, TCP/UDP
-destination ports, and the synthetic `host.tclaude.internal` host-loopback
-identity for Claude Code and Codex. Host/domain selectors require the M2c DNS
-broker and are shown as refused per-entry; they are never dropped from a mixed
-list. The editor's Linux Full preview is prerequisite-conditional: the exact
-launch must pass live bubblewrap namespace plus trusted root-owned `pasta` and
-`nft` probes. Pasta must expose every forwarding, synthetic-address mapping,
-and splice control used by the gateway; an older binary is unavailable rather
-than accepted with weaker arguments. A missing prerequisite keeps the list
+The Linux `tclaude-layer` gateway enforces CIDR destinations, exact hosts,
+label-bound domains with optional subdomains, TCP/UDP destination ports, and
+the synthetic `host.tclaude.internal` host-loopback identity for Claude Code
+and Codex. Host/domain rows are Partial because their enforcement is DNS-to-IP,
+not SNI/application identity: a shared resolved IP can be reused until its DNS
+lease expires. Only a fresh DNS answer refreshes the lease; there is no fixed
+grace window. Established flows may continue after expiry, while new flows
+require fresh resolution. CIDR rows authorize direct IP packet destinations,
+not arbitrary DNS names whose answers land inside the CIDR. OpenCode filtered
+launches remain refused until the pinned M3 smoke. Codex filtered launches also
+refuse ChatGPT or opaque
+authentication because those routes can load provider overrides after
+preflight; use inspectable file-backed API-key authentication or network open
+until TCL-826 adds dynamic resolution. Claude continues from its inspected
+first-party launch route, with any later unauthored reroute denied fail-closed
+for new flows at the packet floor. Both harnesses refuse filtered launch when
+HTTP(S)/ALL proxy environment variables change the actual model-transport
+boundary; remove the proxy or use network open until TCL-826.
+
+The editor's Linux preview is prerequisite-conditional: the exact launch must
+pass live bubblewrap namespace plus trusted root-owned `pasta` and `nft`
+probes. Pasta must expose every forwarding, synthetic-address mapping, and
+splice control used by the gateway; an older binary is unavailable rather than
+accepted with weaker arguments. A missing prerequisite keeps the list
 unenforced and widens to host-open with a launch warning.
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the

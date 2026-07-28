@@ -1238,7 +1238,12 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
-		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation); fail != nil {
+		harnessName, relaunchSandbox, effectiveSandbox, relaunchSandboxImplementation,
+		session.ModelTransportLaunchContext{
+			Model: launchConfig.Model,
+			Cwd:   cwd,
+		},
+	); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
 		return res
@@ -3097,7 +3102,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
-		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
+		h.Name, sandboxMode, &effectiveSandbox, body.SandboxImplementation,
+		session.ModelTransportLaunchContext{
+			Model: body.Model,
+			Cwd:   cwd,
+		},
+	); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -4342,7 +4352,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return nil, fail
 	}
 	if _, fail := planSandboxProfileAccessForLaunch(
-		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation); fail != nil {
+		p.Harness, p.SandboxMode, p.EffectiveSandbox, p.SandboxImplementation,
+		session.ModelTransportLaunchContext{
+			Model: p.Model,
+			Cwd:   p.Cwd,
+		},
+	); fail != nil {
 		return nil, fail
 	}
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {

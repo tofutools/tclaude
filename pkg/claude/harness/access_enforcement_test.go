@@ -415,7 +415,7 @@ func TestM2bOpenCodeFilteredPredictionAndReadyPlanRefuseUntilM3(t *testing.T) {
 	assert.Equal(t, "no_mechanism", notices[0].Reason)
 }
 
-func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
+func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeList,
@@ -432,9 +432,8 @@ func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
 	)
 	require.NoError(t, err)
 	preview := DescribePredictedAccess(axes, prediction).Network
-	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
-	assert.Contains(t, preview.Detail, "M2c DNS broker")
-	assert.Contains(t, preview.Detail, "entries: 1, 2")
+	assert.Equal(t, AccessPredictionEnforcedPartial, preview.Outcome)
+	assert.Contains(t, preview.Detail, "wider destination")
 
 	launch, err := ResolveAccessEnforcement(
 		Default(),
@@ -450,9 +449,12 @@ func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
 	require.NoError(t, err)
 	rendered, notices, err := PlanAccessEnforcement(axes, launch)
 	if runtime.GOOS == "linux" {
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "M2c DNS broker")
-		assert.Contains(t, err.Error(), "entries: 1, 2")
+		require.NoError(t, err)
+		assert.Equal(t, axes, rendered)
+		require.Len(t, notices, 1)
+		assert.Equal(t, "selector_partial", notices[0].Reason)
+		assert.Equal(t, []int{1, 2}, notices[0].Entries)
+		assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
 		return
 	}
 	require.NoError(t, err)
@@ -474,7 +476,7 @@ func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	caps := AccessEnforcement{
 		networkList: EnforceFull,
 		networkSelectors: []NetworkSelectorCapability{
-			{Selector: "host", Level: EnforcePartial, Detail: FilteredNetworkDNSIdentityCaveat},
+			{Selector: "host", Level: EnforcePartial, Detail: filteredNetworkDNSCaveat()},
 			{Selector: "cidr", Level: EnforceFull},
 		},
 		networkPorts: EnforceFull,

@@ -37,8 +37,6 @@ func init() {
 			baseURLHost: "api.openai.com",
 			destinations: []sandboxpolicy.NetworkAllowEntry{
 				{Domain: "api.openai.com", Ports: []int{443}},
-				{Domain: "chatgpt.com", Ports: []int{443}},
-				{Domain: "auth.openai.com", Ports: []int{443}},
 			},
 		},
 		Convs:            codexConvStore{},

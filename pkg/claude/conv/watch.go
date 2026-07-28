@@ -2375,13 +2375,6 @@ func resumeLaunchCmdWithStackedProof(
 		// the recorded profile environment so a stale or hostile profile
 		// cannot unset the marker on resume.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
-		if _, err := session.ValidateTclaudeLayerNetwork(
-			h,
-			effectiveProfile,
-			harness.ResolvedModelTransport{},
-		); err != nil {
-			return "", "", nil, err
-		}
 		posture, err := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
 		if err != nil {
 			return "", "", nil, err
@@ -2429,6 +2422,32 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	if outerLayer {
+		resolvedModel := harness.ResolvedModelTransport{}
+		plannedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
+			effectiveProfile)
+		if axesErr != nil {
+			return "", "", nil, axesErr
+		}
+		if plannedAxes.Network.Mode == sandboxpolicy.AccessModeList {
+			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
+				h,
+				session.ModelTransportLaunchContext{
+					Cwd:         resumeCwd,
+					Environment: effectiveProfile.Environment,
+					ExtraArgs:   extraArgs,
+				},
+			)
+			if err != nil {
+				return "", "", nil, err
+			}
+		}
+		if _, err := session.ValidateTclaudeLayerNetwork(
+			h, effectiveProfile, resolvedModel,
+		); err != nil {
+			return "", "", nil, err
+		}
+	}
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err

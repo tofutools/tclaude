@@ -4,6 +4,8 @@ package agentd_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,14 +17,23 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
-func TestFilteredNetworkSpawnRefusesUnresolvedModelTransport(t *testing.T) {
+func TestFilteredNetworkSpawnRefusesIncompleteModelTransportCoverage(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		harnessName string
 		sandboxMode string
+		endpoint    string
 	}{
-		{name: "claude", harnessName: harness.DefaultName, sandboxMode: harness.ClaudeSandboxOff},
-		{name: "codex", harnessName: harness.CodexName, sandboxMode: harness.SandboxReadOnly},
+		{
+			name: "claude", harnessName: harness.DefaultName,
+			sandboxMode: harness.ClaudeSandboxOff,
+			endpoint:    "api.anthropic.com:443",
+		},
+		{
+			name: "codex", harnessName: harness.CodexName,
+			sandboxMode: harness.SandboxReadOnly,
+			endpoint:    "api.openai.com:443",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFlow(t)
@@ -45,7 +56,7 @@ func TestFilteredNetworkSpawnRefusesUnresolvedModelTransport(t *testing.T) {
 					}, nil
 				},
 			))
-			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+			profile := &db.SandboxProfile{
 				Name: "filtered",
 				Network: &sandboxpolicy.NetworkRules{
 					Mode: sandboxpolicy.AccessModeList,
@@ -53,7 +64,16 @@ func TestFilteredNetworkSpawnRefusesUnresolvedModelTransport(t *testing.T) {
 						CIDR: "192.0.2.0/24", Ports: []int{443},
 					}},
 				},
-			})
+			}
+			if tc.harnessName == harness.CodexName {
+				codexHome := t.TempDir()
+				require.NoError(t, os.WriteFile(
+					filepath.Join(codexHome, "auth.json"),
+					[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+					0o600))
+				t.Setenv("CODEX_HOME", codexHome)
+			}
+			_, err := db.CreateSandboxProfile(profile)
 			require.NoError(t, err)
 
 			resp := f.AsHuman().SpawnWith("crew", map[string]any{
@@ -67,7 +87,8 @@ func TestFilteredNetworkSpawnRefusesUnresolvedModelTransport(t *testing.T) {
 				"spawn body=%s", resp.Raw)
 			failure := decodeFailure(t, resp.Raw)
 			assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
-			assert.Contains(t, failure.Error, "model provider configuration was not resolved")
+			assert.Contains(t, failure.Error, tc.endpoint)
+			assert.Contains(t, failure.Error, "no hidden model-traffic bypass")
 			assert.Contains(t, failure.Error, "use network open")
 			assert.Empty(t, resp.ConvID, "refusal must occur before spawning")
 		})

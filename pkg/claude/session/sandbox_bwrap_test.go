@@ -812,8 +812,33 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	require.NoError(t, err)
 	require.Len(t, notices, 1)
 	assert.Contains(t, notices[0].Detail, "no hidden model-traffic bypass")
-	assert.Contains(t, notices[0].Detail, "declared but not empirically validated")
+	assert.Contains(t, notices[0].Detail, "empirically audited")
+	assert.Contains(t, notices[0].Detail, "Claude Code 2.1.220")
+	assert.Contains(t, notices[0].Detail, "Codex CLI 0.145.0")
 	assert.Contains(t, notices[0].Detail, "M2c")
+	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
+	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
+	assert.Contains(t, notices[0].Detail, "TCL-826")
+
+	custom := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "gateway.example", Ports: []int{443},
+			}},
+		},
+	}
+	notices, err = ValidateTclaudeLayerNetwork(
+		claude, custom, harness.ResolvedModelTransport{
+			Model:            "claude-sonnet",
+			Provider:         "anthropic",
+			BaseURL:          "https://gateway.example/v1",
+			ProviderResolved: true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
+	assert.Contains(t, notices[0].Detail, "TCL-826")
 }
 
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
@@ -1016,6 +1041,11 @@ func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
+	policySocket := filepath.Join(home, "runtime", "build.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(policySocket), 0o700))
+	policyListener, err := net.Listen("unix", policySocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = policyListener.Close() })
 	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
@@ -1024,13 +1054,36 @@ func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	args, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
-		NetworkPosture:  sandboxpolicy.NetworkFiltered,
-		FilteredNetwork: &ir,
-	})
+	socketPaths := append([]string{}, sandboxpolicy.AgentdSocketFloor()...)
+	socketPaths = append(socketPaths, policySocket)
+	args, err := bwrapArgsWithDaemonFinal(
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture:  sandboxpolicy.NetworkFiltered,
+			FilteredNetwork: &ir,
+		},
+		nil,
+		nil,
+		nil,
+		socketPaths,
+		"",
+		nil,
+	)
 	require.NoError(t, err)
 	assert.Contains(t, strings.Join(args, " "),
 		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+	runMount := indexOfBwrapTriplet(args, "--tmpfs", "/run")
+	socketBind := indexOfBwrapTriplet(args, "--ro-bind", policySocket)
+	rootRemount := indexOfBwrapTriplet(args, "--remount-ro", "/")
+	require.NotEqual(t, -1, runMount)
+	require.NotEqual(t, -1, socketBind)
+	require.NotEqual(t, -1, rootRemount)
+	assert.Less(t, runMount, socketBind,
+		"the private runtime filesystem must predate authored Unix-socket binds")
+	assert.Less(t, runMount, rootRemount,
+		"the private resolver runtime filesystem must predate root sealing")
+	assert.Equal(t, -1, indexOfBwrapTriplet(args, "--ro-bind", "/run"),
+		"filtered root must never expose ambient host runtime state")
 }
 
 // TCLAUDE_IGNORE_HOOKS is the blanket soft-disable used by callers that

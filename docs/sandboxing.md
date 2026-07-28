@@ -552,14 +552,14 @@ report socket fidelity. Opt into its adjacent details chevron with
 `features.recorded_sandbox_details` for recorded launch fidelity, or use
 `sandbox-profiles plan` for a dry-run of explicit inputs.
 
-The Linux `filtered` posture enforces the M2b packet subset for exact
+The Linux `filtered` posture enforces the packet and DNS subset for exact
 `tclaude-layer` Claude Code and Codex launches: IPv4/IPv6 CIDR destinations,
-TCP/UDP destination ports (including QUIC as UDP), and synthetic host loopback.
-Raw and packet sockets, including authored ICMP access, are not part of the
-network-list contract. Host/domain rules require the M2c DNS broker. The editor
-rates those entries `None` and the launch refuses a mixed list rather than
-silently dropping them. OpenCode waits for its pinned real-harness M3 smoke;
-`stacked` does not claim this cell.
+exact DNS hosts, label-bound domains with optional subdomains, TCP/UDP
+destination ports (including QUIC as UDP), and synthetic host loopback. Raw and
+packet sockets, including authored ICMP access, are not part of the network-list
+contract. Host/domain selectors are `Partial`, because they enforce DNS-derived
+addresses rather than application identity. OpenCode waits for its pinned
+real-harness M3 smoke; `stacked` does not claim this cell.
 
 Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
 `nft` through root-owned, non-group/world-writable paths. The pasta probe also
@@ -573,34 +573,83 @@ verdict can mint enforcement.
 On a positive launch, bubblewrap creates the constructed network/PID namespace
 without connectivity. Rootless bubblewrap maps the invoking host user to
 namespace UID/GID 0 so the sealed bootstrap can receive namespace-local
-`CAP_NET_ADMIN`; host file ownership remains mapped to the invoking user. The
-final harness also runs as namespace UID/GID 0 after the verified capability
-drop. This is a one-ID rootless mapping, not host root: the invoking user's
-files appear owned by namespace root inside the wall, and files the harness
-creates map back to the invoking host UID/GID. The bootstrap installs the
-complete default-drop nftables output policy as one atomic `nft -f` transaction and
-signals the outer supervisor. Only then does the supervisor start foreground
-rootless `pasta` with inbound forwarding, namespace forwarding, gateway
-mapping, and splice shortcuts disabled. Harness exec stays gated until pasta's
-PID readiness is verified. The bootstrap drops every capability, clears
-ambient capabilities, and sets no-new-privileges before exec. If pasta exits,
-the supervisor kills the sandbox through a pinned pidfd; if the supervisor
-dies, bubblewrap and pasta die with it.
+`CAP_NET_ADMIN` for the atomic nft policy and `CAP_NET_BIND_SERVICE` for the
+private port-53 DNS listener; host file ownership remains mapped to the
+invoking user. The final harness also runs as namespace UID/GID 0 after the
+verified capability drop. This is a one-ID rootless mapping, not host root: the
+invoking user's files appear owned by namespace root inside the wall, and
+files the harness creates map back to the invoking host UID/GID. The bootstrap
+installs the complete default-drop nftables output policy as one atomic
+`nft -f` transaction and signals the outer supervisor. Only then does the
+supervisor start foreground rootless `pasta` with inbound forwarding,
+namespace forwarding, gateway mapping, and splice shortcuts disabled. Harness
+exec stays gated until pasta's PID readiness is verified. The bootstrap drops
+every capability, clears ambient capabilities, and sets no-new-privileges
+before exec. Only `CAP_NET_ADMIN` is deliberately carried across the trusted
+nft child exec; the harness receives neither capability. If pasta exits, the
+supervisor kills the sandbox through a pinned pidfd; if the supervisor dies,
+bubblewrap and pasta die with it.
 
 Host loopback uses `host.tclaude.internal`, mapped to fixed synthetic IPv4 and
 IPv6 addresses and filtered by the authored ports. Hard-coded `127.0.0.1` and
-`::1` remain sandbox-private.
+`::1` remain sandbox-private. The sandbox's `/etc/resolv.conf` and `/etc/hosts`
+both route through the external DNS broker, so a hosts-file mapping cannot
+bypass the same selector and port checks. A DNS answer containing loopback is
+refused unless the matching rule also authors loopback; when it does, the
+broker rewrites the answer to the same synthetic host-loopback addresses.
+
+Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved
+shared IP can be reused until its lease expires. The broker follows a bounded
+CNAME chain, filters returned A/AAAA records for the matching authored
+host/domain selector, and adds each admitted address to the matching per-rule
+nft set for no longer than the observed DNS TTL. CIDR rows are IP-literal
+packet authority only; they do not authorize arbitrary DNS queries whose
+answers happen to fall inside the CIDR. Only a fresh DNS answer refreshes the
+lease. There is no timer-driven self-refresh and no fixed grace window.
+
+Expiry has two deliberately different directions. A new TCP or UDP flow needs
+a current lease, so an agent that performs no fresh lookup after expiry cannot
+open another connection. An already-established conntrack flow may continue
+after the DNS lease expires; this keeps a long streaming response or connected
+UDP operation alive, but it is also a named residual rather than an
+application-identity guarantee. Re-resolving before a later connection obtains
+a fresh answer and refreshes the lease.
 
 Filtered model traffic has no hidden bypass. The operator-authored list must
 already cover every endpoint from genuinely resolved provider/model context;
-tclaude never fabricates provider resolution or appends endpoints. The current
-Claude/Codex session and agentd launch seam does not yet expose that honest
-provider context, so ordinary filtered launches refuse with a named
-model-transport remedy even after gateway prerequisites pass. M2c owns that
-wiring and the pinned real-harness endpoint evidence. When a static declared
-endpoint template does pass preflight, the resolved-launch note says the hosted
-coverage is declared but not empirically validated and remains provisional
-until that M2c smoke.
+tclaude never fabricates provider resolution or appends endpoints. At the
+executing launch seam, Claude's direct Anthropic default and concrete
+`ANTHROPIC_BASE_URL` are resolved from the launch environment; third-party
+provider modes and provider-changing live settings refuse with a named remedy.
+If Claude's provider route changes after that preflight, any unauthored
+destination is denied fail-closed for new flows at the packet floor; complete
+dynamic provider resolution is tracked in TCL-826.
+
+Codex resolves its selected provider and concrete base URL from the effective
+`config.toml`; provider-changing pass-through overrides and incomplete custom
+providers likewise refuse. Codex ChatGPT authentication can load and refresh
+remote provider overrides that the launch seam cannot inspect. Filtered mode
+therefore requires inspectable file-backed API-key authentication (or an
+explicit custom provider that does not require OpenAI auth); ChatGPT, external
+token, and opaque keyring routes refuse with the named remedies of signing in
+with an API key or using network open. Complete dynamic provider resolution is
+tracked in TCL-826. OpenCode remains unresolved and refused until M3.
+For both supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
+`ALL_PROXY` (including lowercase variants) changes the actual transport
+boundary and therefore refuses filtered launch until TCL-826 adds proxy-aware
+resolution; remove the proxy variable or use network open.
+
+The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
+named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
+active minimal evidence set is `api.anthropic.com:443` for Claude and
+`api.openai.com:443` for API-key Codex. The same audit separately records
+ChatGPT model and refresh traffic at `chatgpt.com:443` and
+`auth.openai.com:443` for TCL-826, but those destinations are not included in
+the active preset while ChatGPT-auth filtered launches are refused. Any
+undeclared mandatory origin fails the audit.
+Codex's optional plugin-marketplace synchronization is not model transport; it
+may be unavailable unless the authored profile separately admits its
+destinations.
 
 Host-loopback isolation also severs editor integrations that connect over a
 localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture

@@ -8,10 +8,15 @@ import (
 )
 
 const (
-	FilteredNetworkDNSIdentityCaveat = "Host/domain selectors are not enforced in M2b; they require the M2c DNS broker."
+	FilteredNetworkDNSIdentityCaveat = "Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved shared IP can be reused until its lease expires."
+	FilteredNetworkDNSLeaseCaveat    = "Only fresh DNS answers refresh the lease; there is no fixed grace window. Already-established flows may continue after lease expiry, while new flows require fresh resolution."
 	FilteredNetworkLoopbackCaveat    = "Host loopback uses host.tclaude.internal; 127.0.0.1 and ::1 remain sandbox-private."
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
+
+func filteredNetworkDNSCaveat() string {
+	return FilteredNetworkDNSIdentityCaveat + " " + FilteredNetworkDNSLeaseCaveat
+}
 
 // FilteredNetworkRuleAssessment describes the honest target rating for one IR
 // entry. It is control-plane data, not a capability flip: NetworkList remains
@@ -27,8 +32,9 @@ type FilteredNetworkRuleAssessment struct {
 }
 
 // AssessFilteredNetworkRules gives future launch adapters one stable source for
-// per-selector capability details. Host/domain identity remains None until the
-// M2c DNS broker; synthetic host-loopback remains Partial.
+// per-selector capability details. Host/domain identity is Partial because the
+// DNS broker leases destination IPs rather than asserting application identity;
+// synthetic host-loopback remains Partial.
 func AssessFilteredNetworkRules(
 	rules sandboxpolicy.FilteredNetworkRuleSet,
 ) ([]FilteredNetworkRuleAssessment, EnforcementLevel, error) {
@@ -46,8 +52,8 @@ func AssessFilteredNetworkRules(
 		}
 		switch rule.Selector {
 		case sandboxpolicy.NetworkSelectorHost, sandboxpolicy.NetworkSelectorDomain:
-			assessment.DestinationLevel = EnforceNone
-			assessment.DestinationDetail = FilteredNetworkDNSIdentityCaveat
+			assessment.DestinationLevel = EnforcePartial
+			assessment.DestinationDetail = filteredNetworkDNSCaveat()
 		case sandboxpolicy.NetworkSelectorCIDR:
 			assessment.DestinationLevel = EnforceFull
 			assessment.DestinationDetail =

@@ -110,10 +110,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID, catalog.NetworkTemplates[4].ID})
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
 		{Domain: "api.openai.com", Ports: []int{443}},
-		{Domain: "chatgpt.com", Ports: []int{443}},
-		{Domain: "auth.openai.com", Ports: []int{443}},
 	}, catalog.NetworkTemplates[1].Entries)
-	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "custom model providers")
+	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "ChatGPT-auth Codex is refused")
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Domain: "api.anthropic.com", Ports: []int{443},
+	}}, catalog.NetworkTemplates[2].Entries)
 	assert.NotContains(t, rec.Body.String(), "net-pypi")
 	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
 		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})

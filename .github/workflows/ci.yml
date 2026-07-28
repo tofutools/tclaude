@@ -255,6 +255,8 @@ jobs:
           namespace=tclaude-filtered-target
           host_link=tclflt0
           peer_link=tclflt1
+          hosts_backup="$RUNNER_TEMP/tclaude-filtered-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
           server_pids=()
           cleanup() {
             for pid in "${server_pids[@]}"; do
@@ -262,6 +264,7 @@ jobs:
             done
             sudo ip netns del "$namespace" 2>/dev/null || true
             sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
           }
           trap cleanup EXIT
 
@@ -281,6 +284,10 @@ jobs:
           sudo ip netns exec "$namespace" ip -6 address add fe80::823:2/64 dev "$peer_link" nodad
           sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link" nodad
           sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link" nodad
+          {
+            echo "198.18.0.200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+            echo "fd00:823::200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+          } | sudo tee -a /etc/hosts >/dev/null
 
           sudo ip -6 address show dev "$host_link"
           sudo ip -6 route show dev "$host_link"
@@ -341,8 +348,8 @@ jobs:
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
           go test ./pkg/claude/session \
-            -run '^TestTclaudeLayerFilteredNetworkSmoke$' \
-            -count=1 -v -timeout=120s |
+            -run '^TestTclaudeLayerFilteredNetwork(DNS)?Smoke$' \
+            -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
             {
@@ -353,6 +360,38 @@ jobs:
               echo "The smoke must execute IPv4/IPv6 CIDR+port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network DNS boundary smoke did not complete"
+              echo
+              echo "The named M2c boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute exact host/domain/subdomain and suffix-deny cases, shared-IP reuse, TTL expiry, fresh-answer refresh, and established-flow continuation for both Claude and Codex tclaude-layer launches."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDNSSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned filtered model endpoint evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedFilteredModelEndpointEvidence$' \
+            -count=1 -v -timeout=60s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned filtered model endpoint evidence did not complete"
+              echo
+              echo "The named real Claude/Codex origin audit did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must execute Claude 2.1.220 API-key traffic and Codex 0.145.0 API-key, ChatGPT, and token-refresh traffic, refusing every undeclared origin."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedFilteredModelEndpointEvidence did not report an explicit pass"
             exit 1
           fi
 

@@ -262,13 +262,13 @@ func accessEnforcementTable(
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforceNone,
-					Detail:   "host selectors require the M2c DNS broker",
+					Level:    EnforcePartial,
+					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforceNone,
-					Detail:   "domain selectors require the M2c DNS broker",
+					Level:    EnforcePartial,
+					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
@@ -281,11 +281,9 @@ func accessEnforcementTable(
 				},
 			}
 			caps.NetworkPorts = EnforceFull
-			caps.NetworkSelectorRefusal =
-				"the M2b filtered gateway cannot enforce host/domain selectors; remove those entries, author CIDR/host-loopback entries, wait for the M2c DNS broker, or use network open"
 			caps.NetworkListCondition =
 				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
-			caps.Mechanism = "tclaude-layer bubblewrap + supervised pasta/nftables gateway"
+			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "linux" && filteredNetworkReady &&

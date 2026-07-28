@@ -24,15 +24,45 @@ func TestFilteredNetworkHelperEnvExcludesAmbientInjectionVariables(t *testing.T)
 	}, filteredNetworkHelperEnv())
 }
 
-func TestFilteredNetworkNFTCommandCarriesOnlyBootstrapCapability(t *testing.T) {
+func TestFilteredNetworkBootstrapCapabilitiesAreMinimal(t *testing.T) {
+	assert.Equal(t, []string{
+		"--cap-add", "CAP_NET_ADMIN",
+		"--cap-add", "CAP_NET_BIND_SERVICE",
+	}, filteredNetworkBootstrapCapabilityArgs())
+}
+
+func TestFilteredNetworkNFTCommandCarriesOnlyRequiredAmbientCapability(t *testing.T) {
 	cmd := filteredNetworkNFTCommand("/usr/sbin/nft")
 	assert.Equal(t, []string{
-		"/usr/sbin/nft",
-		"-f",
-		sandboxpolicy.FilteredNetworkNFTPolicyPath,
+		sandboxpolicy.FilteredNetworkBootstrapPath,
+		"session",
+		tclaudeLayerFilteredNFTCommand,
+		"--nft", "/usr/sbin/nft",
 	}, cmd.Args)
 	assert.Equal(t, []uintptr{unix.CAP_NET_ADMIN}, cmd.SysProcAttr.AmbientCaps)
 	assert.Equal(t, filteredNetworkHelperEnv(), cmd.Env)
+}
+
+func TestParseFilteredNetworkCapabilityStateRequiresEverySet(t *testing.T) {
+	got, err := parseFilteredNetworkCapabilityState([]byte(
+		"Name:\ttclaude\n" +
+			"CapInh:\t0000000000001000\n" +
+			"CapPrm:\t0000000000001000\n" +
+			"CapEff:\t0000000000001000\n" +
+			"CapAmb:\t0000000000001000\n",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, filteredNetworkCapabilityState{
+		Effective: 0x1000, Permitted: 0x1000,
+		Inheritable: 0x1000, Ambient: 0x1000,
+	}, got)
+
+	_, err = parseFilteredNetworkCapabilityState([]byte(
+		"CapInh:\t0000000000001000\n" +
+			"CapPrm:\t0000000000001000\n" +
+			"CapEff:\t0000000000001000\n",
+	))
+	require.ErrorContains(t, err, "CapAmb")
 }
 
 func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
@@ -53,6 +83,41 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 		"--pid", "/tmp/pasta.pid",
 		"123",
 	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+}
+
+func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	configRoot := filepath.Join(root, "etc")
+	runtimeRoot := filepath.Join(root, "run")
+	target := filepath.Join(runtimeRoot, "systemd", "resolve", "stub-resolv.conf")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o700))
+	require.NoError(t, os.MkdirAll(configRoot, 0o700))
+	require.NoError(t, os.WriteFile(target, []byte("host resolver"), 0o600))
+	resolv := filepath.Join(configRoot, "resolv.conf")
+	require.NoError(t, os.Symlink(
+		filepath.Join("..", "run", "systemd", "resolve", "stub-resolv.conf"),
+		resolv))
+
+	destination, dirs, err := filteredNetworkResolvMount(resolv, runtimeRoot)
+	require.NoError(t, err)
+	assert.Equal(t, target, destination)
+	assert.Equal(t, []string{
+		runtimeRoot,
+		filepath.Join(runtimeRoot, "systemd"),
+		filepath.Join(runtimeRoot, "systemd", "resolve"),
+	}, dirs)
+	assert.Equal(t, []string{
+		"--dir", filepath.Join(runtimeRoot, "systemd"),
+		"--dir", filepath.Join(runtimeRoot, "systemd", "resolve"),
+	}, appendFilteredNetworkResolvDirs(nil, dirs))
+
+	outside := filepath.Join(root, "home", "resolver")
+	require.NoError(t, os.MkdirAll(filepath.Dir(outside), 0o700))
+	require.NoError(t, os.WriteFile(outside, []byte("outside"), 0o600))
+	require.NoError(t, os.Remove(resolv))
+	require.NoError(t, os.Symlink(outside, resolv))
+	_, _, err = filteredNetworkResolvMount(resolv, runtimeRoot)
+	require.ErrorContains(t, err, "outside supported")
 }
 
 func TestFilteredNetworkPastaReadinessRetriesPartialPIDFile(t *testing.T) {

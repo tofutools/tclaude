@@ -21,10 +21,10 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	assessments, aggregate, err := AssessFilteredNetworkRules(ir)
 	require.NoError(t, err)
 	require.Len(t, assessments, 3)
-	assert.Equal(t, EnforceNone, aggregate)
+	assert.Equal(t, EnforcePartial, aggregate)
 	assert.Equal(t, EnforceFull, assessments[0].DestinationLevel)
-	assert.Equal(t, EnforceNone, assessments[1].DestinationLevel)
-	assert.Equal(t, FilteredNetworkDNSIdentityCaveat, assessments[1].DestinationDetail)
+	assert.Equal(t, EnforcePartial, assessments[1].DestinationLevel)
+	assert.Equal(t, filteredNetworkDNSCaveat(), assessments[1].DestinationDetail)
 	assert.Equal(t, EnforcePartial, assessments[2].DestinationLevel)
 	assert.Equal(t, FilteredNetworkLoopbackCaveat, assessments[2].DestinationDetail)
 	for _, assessment := range assessments {
@@ -34,7 +34,7 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	}
 }
 
-func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2bCapabilityCells(t *testing.T) {
+func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2cCapabilityCells(t *testing.T) {
 	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
@@ -59,7 +59,7 @@ func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2bCapabilityCells(t *te
 			want = EnforceNone
 		}
 		assert.Equal(t, want, caps.NetworkList,
-			"M2b flips only Claude/Codex tclaude-layer; OpenCode waits for M3")
+			"M2c serves Claude/Codex tclaude-layer; OpenCode waits for M3")
 	}
 }
 

@@ -1154,10 +1154,31 @@ func runNew(params *NewParams) error {
 			plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 				plannedEffective.AccessNotices, notices...,
 			)
+			resolvedModel := harness.ResolvedModelTransport{Model: model}
+			plannedAxes, plannedAxesErr := sandboxpolicy.PlannedEffectiveAccessAxes(
+				plannedEffective)
+			if plannedAxesErr != nil {
+				return plannedAxesErr
+			}
+			if plannedAxes.Network.Mode == sandboxpolicy.AccessModeList {
+				var resolveModelErr error
+				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
+					h,
+					ModelTransportLaunchContext{
+						Model:       model,
+						Cwd:         cwd,
+						Environment: plannedEffective.Environment,
+						ExtraArgs:   extraArgs,
+					},
+				)
+				if resolveModelErr != nil {
+					return resolveModelErr
+				}
+			}
 			modelNotices, modelErr := ValidateTclaudeLayerNetwork(
 				h,
 				plannedEffective,
-				harness.ResolvedModelTransport{Model: model},
+				resolvedModel,
 			)
 			if modelErr != nil {
 				return modelErr
