@@ -102,9 +102,10 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.NetworkAccess = sandboxpolicy.NetworkAccessInherit
-	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{{
-		Path: outside, Access: sandboxpolicy.AccessDeny,
-	}}
+	snapshot.Effective.Filesystem = []sandboxpolicy.FilesystemGrant{
+		{Path: root, Access: sandboxpolicy.AccessWrite},
+		{Path: outside, Access: sandboxpolicy.AccessDeny},
+	}
 	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
 		Name: "TCLAUDE_OPENCODE_EXECUTOR_SMOKE", Value: "darwin-frozen-profile-value",
 	}}
