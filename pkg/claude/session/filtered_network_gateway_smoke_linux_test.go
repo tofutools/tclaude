@@ -431,7 +431,10 @@ func filteredSmokeUDPDenied(t *testing.T, network, address string) {
 	defer func() { _ = connection.Close() }()
 	require.NoError(t, connection.SetDeadline(time.Now().Add(filteredGatewayConnectionTimeout)))
 	_, err = connection.Write([]byte("must-time-out"))
-	require.NoError(t, err)
+	if err != nil {
+		require.ErrorIsf(t, err, syscall.EPERM, "%s deny %s", network, address)
+		return
+	}
 	buffer := make([]byte, 64)
 	_, err = connection.Read(buffer)
 	require.Errorf(t, err, "%s deny %s", network, address)
