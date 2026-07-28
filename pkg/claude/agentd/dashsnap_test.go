@@ -2178,6 +2178,7 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   if (sub.textContent.indexOf('+1') < 0) throw new Error('activity-badges: sub-agent badge reads ' + sub.textContent);
   if (shells.textContent.indexOf('+2') < 0) throw new Error('activity-badges: shell badge reads ' + shells.textContent);
   if (!/background shell command/.test(shells.title)) throw new Error('activity-badges: shell badge tooltip missing');
+  var pillWrap = row.querySelector('.state-pill-wrap');
   // The pill must read busy, not idle: an agent waiting on background
   // work is exactly what TCL-613 stops rendering as plain idle.
   var pill = row.querySelector('.state-pill');
@@ -2188,8 +2189,8 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   if (pill.textContent.trim() !== 'idle + work') {
     throw new Error('activity-badges: expected compact idle + work pill, got "' + pill.textContent + '"');
   }
-  if (!/background shell/.test(pill.title)) {
-    throw new Error('activity-badges: compact pill lost its full-detail tooltip: ' + pill.title);
+  if (!pillWrap || !/background shell/.test(pillWrap.title)) {
+    throw new Error('activity-badges: compact pill lost its full-detail tooltip: ' + (pillWrap && pillWrap.title));
   }
 })();`,
 		},

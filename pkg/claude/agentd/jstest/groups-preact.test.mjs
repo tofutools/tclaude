@@ -955,12 +955,17 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(richRow.querySelector('.badge-subagents').textContent, '🤖+2');
 
   const backgroundPill = backgroundRow.querySelector('.state-pill');
+  const backgroundPillWrap = backgroundRow.querySelector('.state-pill-wrap');
   assert.equal(backgroundPill.textContent, 'idle + work');
   assert.equal(backgroundPill.classList.contains('state-working'), true,
     'idle + work keeps the busy treatment while background work is running');
-  assert.match(backgroundPill.title, /1 subagent, 2 background shells running/,
+  assert.equal(backgroundPillWrap.getAttribute('tabindex'), '0',
+    'the state wrapper is focusable so keyboard and touch users can reveal its full value');
+  assert.match(backgroundPillWrap.title, /1 subagent, 2 background shells running/,
     'the compact pill retains the full activity detail on hover');
-  assert.match(backgroundPill.getAttribute('aria-label'), /idle; background work is still running/);
+  assert.match(backgroundPillWrap.getAttribute('aria-label'), /idle; background work is still running/);
+  assert.equal(backgroundPillWrap.dataset.fullStatus, backgroundPillWrap.title,
+    'the focus/touch tooltip carries the same complete value as the native hover tooltip');
   assert.equal(backgroundRow.querySelector('.badge-subagents').textContent, '🤖+1');
   assert.match(backgroundRow.querySelector('.badge-subagents').getAttribute('aria-label'), /1 sub-agent still running/);
   assert.equal(backgroundRow.querySelector('.badge-bg-shells').textContent, '⚙+2');
@@ -997,8 +1002,9 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(fixedRow.querySelector('[data-act="rename-name"]'), null);
   assert.equal(fixedRow.querySelector('[data-act="toggle-remote-control"]'), null);
   assert.equal(fixedRow.querySelector('.state-pill').classList.contains('state-crashed'), true);
-  assert.equal(fixedRow.querySelector('.slop-machine').title, 'crashed: stale detail');
-  assert.equal(fixedRow.querySelector('.wizard-pill').title, 'crashed: stale detail');
+  assert.match(fixedRow.querySelector('.state-pill-wrap').title, /process ended without a clean exit/);
+  assert.equal(fixedRow.querySelector('.slop-machine').getAttribute('aria-hidden'), 'true');
+  assert.equal(fixedRow.querySelector('.wizard-pill').getAttribute('aria-hidden'), 'true');
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(

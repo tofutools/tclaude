@@ -72,9 +72,10 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	must("toggleWizard();", "the +W hotkey flips wizard mode")
 
 	// The native wizard state pill replaces the plain pill in wizard mode and
-	// remains mounted beside the slop machine in the keyed state cell.
+	// remains mounted beside the slop machine in the keyed state wrapper.
 	must("function WizardPill({ state, online, conv })", "the native wizard pill component exists")
-	must("<${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} /><${WizardPill}", "the state cell emits both preserved theme surfaces")
+	must("<${SlopMachine} state=${state} online=${online} conv=${conv} />", "the state wrapper emits the preserved slop surface")
+	must("<${WizardPill} state=${state} online=${online} conv=${conv} />", "the state wrapper emits the preserved wizard surface")
 
 	// The activity-bot row gets a wizard re-skin too: a third wrapper
 	// (.ga-wizard) with fantasy glyphs by default (or opt-in pixel sprites),
@@ -1294,7 +1295,7 @@ func TestDashboardCSS_WizardCommandPaletteScoped(t *testing.T) {
 // `body.wizard .state-pill { display: none }` would blank the Audit Outcome
 // and Plugins pills too.
 func TestDashboardCSS_WizardPillHideScopedToStateCell(t *testing.T) {
-	if !strings.Contains(dashboardAssets, "body.wizard .state-cell .state-pill") {
+	if !strings.Contains(dashboardAssets, "body.wizard .state-cell .state-pill-wrap > .state-pill") {
 		t.Error("wizard-mode pill hide is not scoped to .state-cell — would blank other tabs' pills")
 	}
 	// And the plain pill must NOT be hidden unscoped in wizard mode.
