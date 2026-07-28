@@ -637,11 +637,17 @@ protected-root, reserved-variable, containment, and harness capability checks.
 The editor has separate **Network** and **Unix sockets** fieldsets with
 unset/open/closed/list modes, editable list rows, inherited harness-global
 context, and audited insert-only presets. Its **Effective policy preview**
-shows the real global/group/explicit intersection and asks the daemon to
-predict the selected implementation/harness/platform. Empty list intersections
-are loud warnings, never save blockers. Capability warnings use the daemon's
-exact resolver detail; the editor does not guess support from the selected
-mode. The raw JSON view includes both `network` and `unix_sockets`.
+shows the real global/group/explicit intersection for directory access,
+environment names, agent-owned directories, network, and Unix sockets, then
+asks the daemon to predict the selected implementation/harness/platform.
+Filesystem prediction evaluates the effective assignment contexts, so a
+narrower read/write carve-out beneath a denied parent is visible even when the
+two rows come from different profile scopes. It distinguishes the tclaude
+layer's process wall from Claude Code's built-in-tool carve-out gap and Codex's
+macOS denied-parent refusal. Empty list intersections are loud warnings, never
+save blockers. Capability warnings use the daemon's exact resolver detail; the
+editor does not guess support from the selected mode. The raw JSON view
+includes both `network` and `unix_sockets`.
 
 The selector's **none** choice explicitly omits every tclaude sandbox-profile
 tier for that launch, including global/group environment values and agent-owned

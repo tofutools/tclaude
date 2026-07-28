@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -138,6 +141,335 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "has no built-in OS sandbox",
 		"OpenCode's TCL-793 refusal must happen before any prediction is returned")
+
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/socket-wall/enforcement?for=stacked%2Fclaude%2Fdarwin", nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "stacked sandbox prediction is supported only on linux")
+}
+
+func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectories(t *testing.T) {
+	f := newFlow(t)
+	parent := t.TempDir()
+	child := filepath.Join(parent, "workspace")
+	require.NoError(t, os.Mkdir(child, 0o755))
+	var err error
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "split-policy",
+		"filesystem": []any{
+			map[string]any{"path": parent, "access": "deny"},
+			map[string]any{"path": child, "access": "write"},
+		},
+		"environment":       []any{map[string]any{"name": "POLICY_OWNER", "value": "preview"}},
+		"agent_directories": []any{"GOCACHE"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/split-policy/enforcement?"+
+			"for=harness-builtin%2Fcodex%2Fdarwin&"+
+			"for=harness-builtin%2Fclaude%2Flinux&"+
+			"for=tclaude-layer%2Fclaude%2Flinux", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 3)
+
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, "denied parent mask dominates")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, child)
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Environment.Outcome)
+	assert.Contains(t, got.Targets[0].Axes.Environment.Detail, "shell_environment_policy")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.AgentDirectories.Outcome,
+		"a launch-wide filesystem refusal also refuses its generated writable directories")
+
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial, got.Targets[1].Axes.Filesystem.Outcome)
+	assert.Contains(t, got.Targets[1].Axes.Filesystem.Detail, "Read/Write/Edit")
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[1].Axes.AgentDirectories.Outcome)
+
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[2].Axes.Filesystem.Outcome)
+	assert.Contains(t, got.Targets[2].Axes.Filesystem.Detail, "process scope")
+	assert.Contains(t, got.Targets[2].Axes.Filesystem.Detail, "narrower read/write carve-out")
+}
+
+func TestSandboxProfileEnforcementIncludesGeneratedAgentDirectoryCarveOut(t *testing.T) {
+	f := newFlow(t)
+	realCacheHome := t.TempDir()
+	cacheLink := filepath.Join(t.TempDir(), "cache-link")
+	require.NoError(t, os.Symlink(realCacheHome, cacheLink))
+	t.Setenv("XDG_CACHE_HOME", cacheLink)
+	cache := tclcommon.CacheDir()
+	require.NoError(t, os.MkdirAll(cache, 0o755))
+	var err error
+	cache, err = filepath.EvalSymlinks(cache)
+	require.NoError(t, err)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":              "private-cache-under-deny",
+		"filesystem":        []any{map[string]any{"path": cache, "access": "deny"}},
+		"environment":       []any{},
+		"agent_directories": []any{"GOCACHE"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/private-cache-under-deny/enforcement?"+
+			"for=harness-builtin%2Fcodex%2Fdarwin", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail,
+		filepath.Join(cache, "agent-dirs", "predicted-agent", "GOCACHE"),
+		"the evaluator models the launch-generated writable path, not only authored rows")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.AgentDirectories.Outcome)
+}
+
+func TestSandboxProfileDraftEnforcementDetectsCrossScopeFilesystemCarveOut(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	parent := t.TempDir()
+	child := filepath.Join(parent, "workspace")
+	require.NoError(t, os.Mkdir(child, 0o755))
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
+	for _, body := range []map[string]any{
+		{
+			"name":        "deny-parent",
+			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment": []any{},
+		},
+		{
+			"name":              "group-reopen",
+			"filesystem":        []any{map[string]any{"path": child, "access": "write"}},
+			"environment":       []any{map[string]any{"name": "POLICY_OWNER", "value": "crew"}},
+			"agent_directories": []any{"GOCACHE"},
+		},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("deny-parent"))
+	_, err = db.SetAgentGroupSandboxProfile("crew", "group-reopen")
+	require.NoError(t, err)
+	groupProfile, err := db.GetSandboxProfile("group-reopen")
+	require.NoError(t, err)
+	require.NotNil(t, groupProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":                groupProfile.ID,
+			"name":              groupProfile.Name,
+			"filesystem":        []any{map[string]any{"path": child, "access": "write"}},
+			"environment":       []any{map[string]any{"name": "POLICY_OWNER", "value": "crew"}},
+			"agent_directories": []any{"GOCACHE"},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin", "harness": "codex", "platform": "darwin",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+		Contexts []struct {
+			Filesystem       []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+			Environment      []string                        `json:"environment"`
+			AgentDirectories []string                        `json:"agent_directories"`
+		} `json:"contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome,
+		"the evaluator must see the denied parent and narrower grant even though they come from different scopes")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, child)
+	require.Len(t, got.Contexts, 1)
+	assert.ElementsMatch(t, []sandboxpolicy.FilesystemGrant{
+		{Path: parent, Access: sandboxpolicy.AccessDeny},
+		{Path: child, Access: sandboxpolicy.AccessWrite},
+	}, got.Contexts[0].Filesystem)
+	assert.Equal(t, []string{"POLICY_OWNER"}, got.Contexts[0].Environment)
+	assert.Equal(t, []string{"GOCACHE"}, got.Contexts[0].AgentDirectories)
+
+	globalProfile, err := db.GetSandboxProfile("deny-parent")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":           globalProfile.ID,
+			"name":         globalProfile.Name,
+			"filesystem":   []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment":  []any{},
+			"network":      map[string]any{},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin", "harness": "codex", "platform": "darwin",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome,
+		"editing the global half must still evaluate each group's narrower directory rules")
+	require.Len(t, got.Contexts, 1)
+	assert.ElementsMatch(t, []sandboxpolicy.FilesystemGrant{
+		{Path: parent, Access: sandboxpolicy.AccessDeny},
+		{Path: child, Access: sandboxpolicy.AccessWrite},
+	}, got.Contexts[0].Filesystem)
+}
+
+func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	globalID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "claude-off", Harness: harness.DefaultName,
+		Sandbox: harness.ClaudeSandboxOff,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "claude-off"))
+	require.NoError(t, db.SetDashboardPref(
+		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
+	))
+	parent := t.TempDir()
+	body := map[string]any{
+		"draft": map[string]any{
+			"name":        "resolved-mode",
+			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment": []any{},
+		},
+	}
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Target struct {
+				Harness string `json:"harness"`
+				Sandbox string `json:"sandbox"`
+			} `json:"target"`
+			ResolvedBy string                      `json:"resolved_by"`
+			Axes       harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.DefaultName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.ClaudeSandboxOff, got.Targets[0].Target.Sandbox)
+	assert.Contains(t, got.Targets[0].ResolvedBy, "claude-off")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+
+	globalID, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-workspace", Harness: harness.CodexName,
+		Sandbox: harness.SandboxWorkspaceWrite,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "codex-workspace"))
+	require.NoError(t, db.SetDashboardPref(
+		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
+	))
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "codex-group-harness", Harness: harness.CodexName,
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "codex-group-harness").Code)
+	body["context"] = map[string]any{"group": "crew"}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.CodexName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.SandboxWorkspaceWrite, got.Targets[0].Target.Sandbox)
+	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-group-harness")
+	assert.Contains(t, got.Targets[0].ResolvedBy, "codex-workspace")
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome)
+}
+
+func TestSandboxProfileDraftEnforcementPredictsAllGlobalAssignmentContexts(t *testing.T) {
+	f := newFlow(t)
+	for i := range 11 {
+		_, err := db.CreateAgentGroup(fmt.Sprintf("crew-%02d", i), "")
+		require.NoError(t, err)
+	}
+	parent := t.TempDir()
+	child := filepath.Join(parent, "workspace")
+	require.NoError(t, os.Mkdir(child, 0o755))
+	var err error
+	parent, err = filepath.EvalSymlinks(parent)
+	require.NoError(t, err)
+	child, err = filepath.EvalSymlinks(child)
+	require.NoError(t, err)
+	for _, body := range []map[string]any{
+		{
+			"name":        "global-deny",
+			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment": []any{},
+		},
+		{
+			"name":        "last-group-reopen",
+			"filesystem":  []any{map[string]any{"path": child, "access": "write"}},
+			"environment": []any{},
+		},
+	} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", body)
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("global-deny"))
+	_, err = db.SetAgentGroupSandboxProfile("crew-10", "last-group-reopen")
+	require.NoError(t, err)
+	globalProfile, err := db.GetSandboxProfile("global-deny")
+	require.NoError(t, err)
+	require.NotNil(t, globalProfile)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"id":           globalProfile.ID,
+			"name":         globalProfile.Name,
+			"filesystem":   []any{map[string]any{"path": parent, "access": "deny"}},
+			"environment":  []any{},
+			"network":      map[string]any{},
+			"unix_sockets": map[string]any{},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin", "harness": "codex", "platform": "darwin",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes harness.PredictedAccessAxes `json:"axes"`
+		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string `json:"context"`
+		} `json:"contexts"`
+		RemainingContexts int `json:"remaining_contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionRefused, got.Targets[0].Axes.Filesystem.Outcome,
+		"the omitted eleventh display context must still participate in aggregate prediction")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, child)
+	assert.Len(t, got.Contexts, 10)
+	assert.Equal(t, 1, got.RemainingContexts)
+	for _, context := range got.Contexts {
+		assert.NotEqual(t, "crew-10", context.Context["group_name"])
+	}
 }
 
 func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContexts(t *testing.T) {

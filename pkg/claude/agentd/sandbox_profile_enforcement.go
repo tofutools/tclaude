@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -30,6 +31,7 @@ type sandboxProfileEnforcementTargetRequest struct {
 	Implementation string `json:"implementation"`
 	Harness        string `json:"harness"`
 	Platform       string `json:"platform"`
+	Sandbox        string `json:"sandbox,omitempty"`
 }
 
 type sandboxProfileDraftEnforcementRequest struct {
@@ -51,11 +53,15 @@ type sandboxProfileDraftEnforcementTarget struct {
 }
 
 type sandboxProfileEffectiveContext struct {
-	Context      map[string]string             `json:"context"`
-	Network      sandboxpolicy.NetworkRules    `json:"network"`
-	UnixSockets  sandboxpolicy.UnixSocketRules `json:"unix_sockets"`
-	AgentdSocket string                        `json:"agentd_socket"`
-	Notices      []sandboxpolicy.AccessNotice  `json:"notices"`
+	Context          map[string]string               `json:"context"`
+	Filesystem       []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	Environment      []string                        `json:"environment"`
+	AgentDirectories []string                        `json:"agent_directories"`
+	Network          sandboxpolicy.NetworkRules      `json:"network"`
+	UnixSockets      sandboxpolicy.UnixSocketRules   `json:"unix_sockets"`
+	AgentdSocket     string                          `json:"agentd_socket"`
+	Notices          []sandboxpolicy.AccessNotice    `json:"notices"`
+	policy           sandboxpolicy.Profile
 }
 
 type sandboxProfileDraftEnforcementResponse struct {
@@ -128,7 +134,10 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 			Harness:        target.harness.Name,
 			Platform:       target.platform,
 			Predicted:      true,
-			Axes:           harness.DescribePredictedAccess(axes, prediction),
+			Axes: describePredictedSandboxProfile(
+				flattened, target, mode,
+				harness.DescribePredictedAccess(axes, prediction),
+			),
 		}
 		if target.platform != runtime.GOOS {
 			item.Caveat = "(prediction for a non-host platform; host capability probes did not run)"
@@ -190,6 +199,16 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		Targets:  []sandboxProfileDraftEnforcementTarget{},
 		Contexts: []sandboxProfileEffectiveContext{},
 	}
+	contexts, remaining, err := effectiveDraftSandboxProfileContexts(draft, body.Context.Group)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
+	response.Contexts = contexts
+	if len(response.Contexts) > 10 {
+		response.Contexts = response.Contexts[:10]
+	}
+	response.RemainingContexts = remaining
 	for _, requested := range targets {
 		raw := strings.Join([]string{
 			strings.TrimSpace(requested.Implementation),
@@ -201,33 +220,38 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
 			return
 		}
+		mode := predictedBuiltinMode(target.harness.Name)
+		if strings.TrimSpace(requested.Sandbox) != "" {
+			mode, parseErr = harness.ResolveSandboxMode(target.harness, requested.Sandbox)
+			if parseErr != nil {
+				writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
+				return
+			}
+		}
 		predicted, predictErr := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
-			predictedBuiltinMode(target.harness.Name), target.platform,
+			mode, target.platform,
 		)
 		if predictErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
-		described := harness.DescribePredictedAccess(axes, predicted)
+		described := describePredictedDraftSandboxProfile(
+			flattened, contexts, target, mode,
+			harness.DescribePredictedAccess(axes, predicted),
+		)
 		response.Targets = append(response.Targets, sandboxProfileDraftEnforcementTarget{
 			Target: sandboxProfileEnforcementTargetRequest{
 				Implementation: string(target.implementation),
 				Harness:        target.harness.Name,
 				Platform:       target.platform,
+				Sandbox:        mode,
 			},
 			ResolvedBy: resolvedBy,
 			Predicted:  true,
 			Axes:       described,
 		})
 	}
-	contexts, remaining, err := effectiveDraftSandboxProfileContexts(draft, body.Context.Group)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
-		return
-	}
-	response.Contexts = contexts
-	response.RemainingContexts = remaining
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -251,38 +275,86 @@ func flattenDraftSandboxProfileForPrediction(draft *db.SandboxProfile) (sandboxp
 }
 
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
-	profile := globalDefaultProfile()
-	resolvedBy := ""
-	if profile != nil {
-		resolvedBy = fmt.Sprintf("dashboard default spawn profile %q", profile.Name)
-	}
-	if profile == nil && strings.TrimSpace(groupName) != "" {
+	var groupProfile *db.SpawnProfile
+	if strings.TrimSpace(groupName) != "" {
 		group, err := db.GetAgentGroupByName(strings.TrimSpace(groupName))
 		if err != nil {
 			return sandboxProfileEnforcementTargetRequest{}, "", err
 		}
-		profile = groupDefaultProfile(group)
-		if profile != nil {
-			resolvedBy = fmt.Sprintf("group default spawn profile %q", profile.Name)
-		}
+		groupProfile = groupDefaultProfile(group)
 	}
+	globalProfile := globalDefaultProfile()
+	tiers := []launchProfileTier{
+		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
+		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
+	}
+
 	harnessName := harness.DefaultName
-	implementation := string(sandboxpolicy.ImplementationHarnessBuiltin)
-	if profile != nil {
-		if strings.TrimSpace(profile.Harness) != "" {
-			harnessName = strings.TrimSpace(profile.Harness)
-		}
-		if strings.TrimSpace(profile.SandboxImplementation) != "" {
-			implementation = strings.TrimSpace(profile.SandboxImplementation)
+	harnessSource := agent.ProvHarnessDefault
+	for _, tier := range tiers {
+		if tier.profile != nil {
+			harnessName = harnessOrDefault(tier.profile.Harness)
+			harnessSource = tier.source
+			break
 		}
 	}
-	if resolvedBy == "" {
-		resolvedBy = "harness default"
+	resolvedHarness, err := harness.Resolve(harnessName)
+	if err != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
+
+	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
+		"sandbox", "", resolvedHarness.Name, tiers,
+		func(profile *db.SpawnProfile) string { return profile.Sandbox },
+		func(raw string) (string, error) { return harness.ValidateSandboxMode(resolvedHarness, raw) },
+	)
+	if fail != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
+	}
+	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
+		sandboxImplementationField, "", resolvedHarness.Name, tiers,
+		func(profile *db.SpawnProfile) string { return profile.SandboxImplementation },
+		func(raw string) (string, error) {
+			return validateSandboxImplementationForHarness(resolvedHarness, raw)
+		},
+	)
+	if fail != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(requestedImplementation)
+	if err != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", err
+	}
+	sandboxMode, err := harness.ResolveSandboxMode(resolvedHarness, requestedSandbox)
+	if err != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", err
+	}
+	if implementation == sandboxpolicy.ImplementationStacked {
+		sandboxMode = predictedBuiltinMode(harnessName)
+	}
+
+	sources := []string{}
+	for _, source := range []string{harnessSource, sandboxSource, implementationSource} {
+		if source == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range sources {
+			if existing == source {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			sources = append(sources, source)
+		}
+	}
+	resolvedBy := strings.Join(sources, "; ")
 	return sandboxProfileEnforcementTargetRequest{
-		Implementation: implementation,
+		Implementation: string(implementation),
 		Harness:        harnessName,
 		Platform:       runtime.GOOS,
+		Sandbox:        sandboxMode,
 	}, resolvedBy, nil
 }
 
@@ -320,12 +392,21 @@ func effectiveDraftSandboxProfileContexts(
 		groupName               string
 	}
 	roles := []role{}
-	if draft.ID > 0 && global != nil && global.ID == draft.ID {
-		roles = append(roles, role{global: draft})
-	}
-	for _, group := range groups {
-		if draft.ID > 0 && group.SandboxProfileID == draft.ID {
-			roles = append(roles, role{global: global, group: draft, groupName: group.Name})
+	draftIsGlobal := draft.ID > 0 && global != nil && global.ID == draft.ID
+	if draftIsGlobal {
+		for _, group := range groups {
+			roles = append(roles, role{
+				global: draft, group: byID[group.SandboxProfileID], groupName: group.Name,
+			})
+		}
+		if len(groups) == 0 {
+			roles = append(roles, role{global: draft})
+		}
+	} else {
+		for _, group := range groups {
+			if draft.ID > 0 && group.SandboxProfileID == draft.ID {
+				roles = append(roles, role{global: global, group: draft, groupName: group.Name})
+			}
 		}
 	}
 	if len(roles) == 0 {
@@ -344,7 +425,6 @@ func effectiveDraftSandboxProfileContexts(
 	remaining := 0
 	if len(roles) > 10 {
 		remaining = len(roles) - 10
-		roles = roles[:10]
 	}
 	out := make([]sandboxProfileEffectiveContext, 0, len(roles))
 	for _, item := range roles {
@@ -408,12 +488,28 @@ func effectiveDraftSandboxProfileContexts(
 		if item.explicit != nil {
 			context["explicit"] = item.explicit.Name
 		}
+		environment := make([]string, 0, len(effective.Environment))
+		for _, entry := range effective.Environment {
+			environment = append(environment, entry.Name)
+		}
+		policy := sandboxpolicy.Profile{
+			Filesystem:       append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
+			Environment:      append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
+			AgentDirectories: append([]string(nil), effective.AgentDirectories...),
+			NetworkAccess:    effective.NetworkAccess,
+			Network:          effective.Network,
+			UnixSockets:      effective.UnixSockets,
+		}
 		out = append(out, sandboxProfileEffectiveContext{
-			Context:      context,
-			Network:      axes.Network,
-			UnixSockets:  axes.UnixSockets,
-			AgentdSocket: "always reachable",
-			Notices:      notices,
+			Context:          context,
+			Filesystem:       policy.Filesystem,
+			Environment:      environment,
+			AgentDirectories: policy.AgentDirectories,
+			Network:          axes.Network,
+			UnixSockets:      axes.UnixSockets,
+			AgentdSocket:     "always reachable",
+			Notices:          notices,
+			policy:           policy,
 		})
 	}
 	return out, remaining, nil
@@ -602,6 +698,12 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 	}
 	if platform != "linux" && platform != "darwin" {
 		return parsedSandboxProfileEnforcementTarget{}, invalidSandboxProfileTarget(raw)
+	}
+	if implementation == sandboxpolicy.ImplementationStacked && platform != "linux" {
+		return parsedSandboxProfileEnforcementTarget{}, fmt.Errorf(
+			`invalid --for target %q: stacked sandbox prediction is supported only on linux`,
+			raw,
+		)
 	}
 	return parsedSandboxProfileEnforcementTarget{
 		implementation: implementation, harness: h, platform: platform, raw: raw,

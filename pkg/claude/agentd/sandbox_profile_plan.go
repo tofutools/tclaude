@@ -203,7 +203,18 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err
 	}
-	described := harness.DescribePredictedAccess(axes, prediction)
+	policy := sandboxpolicy.Profile{
+		Filesystem:       append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
+		Environment:      append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.Effective.Environment...),
+		AgentDirectories: append([]string(nil), snapshot.Effective.AgentDirectories...),
+		NetworkAccess:    snapshot.Effective.NetworkAccess,
+		Network:          snapshot.Effective.Network,
+		UnixSockets:      snapshot.Effective.UnixSockets,
+	}
+	described := describePredictedSandboxProfile(
+		policy, target, predictedBuiltinMode(target.harness.Name),
+		harness.DescribePredictedAccess(axes, prediction),
+	)
 	planReason := ""
 	if !target.implementation.UsesTclaudeLayer() {
 		planReason = "harness-builtin has no outer mount plan"

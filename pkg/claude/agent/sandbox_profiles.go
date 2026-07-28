@@ -329,6 +329,9 @@ func printSandboxProfileEnforcement(w io.Writer, result sandboxProfileEnforcemen
 	for _, target := range result.Targets {
 		fmt.Fprintf(w, "  enforcement for %s/%s/%s:\n",
 			target.Implementation, target.Harness, target.Platform)
+		printPredictedAccessAxis(w, "directories", target.Axes.Filesystem)
+		printPredictedAccessAxis(w, "environment", target.Axes.Environment)
+		printPredictedAccessAxis(w, "agent dirs", target.Axes.AgentDirectories)
 		printPredictedAccessAxis(w, "network", target.Axes.Network)
 		printPredictedAccessAxis(w, "Unix sockets", target.Axes.UnixSockets)
 		if target.Caveat != "" {
