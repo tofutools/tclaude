@@ -57,18 +57,21 @@ function GroupAttachment({ group, actions }) {
       aria-label=${`Attach a persistent link to ${group.name}`}
       title="Attach a persistent Linear project, GitHub board, or other reference"
       onClick=${openEditor}
-    >📌</button>`;
+    >📎</button>`;
   }
   const display = url
     ? html`<a
         href=${url} target="_blank" rel="noopener noreferrer" draggable=${false}
+        aria-label=${`Open ${label}, the persistent link for ${group.name}`}
         title=${`Open ${label} — ${url}`}
         onClick=${(event) => event.stopPropagation()}
-      >📌 ${label}</a>`
-    : html`<span
-        class="group-attachment-invalid muted"
+      >📎</a>`
+    : html`<button
+        type="button" class="group-attachment-invalid"
+        aria-label=${`Edit the unsafe stored attachment for ${group.name}`}
         title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
-      >📌 ${label}</span>`;
+        onClick=${openEditor}
+      >📎</button>`;
   return html`<span class="group-attachment group-attachment-set">
     ${display}
     <button
