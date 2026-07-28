@@ -1066,7 +1066,9 @@ details[open] > summary::before { content: "▼ "; }
    space) drops the pointer cursor so it doesn't advertise a fold it won't
    perform. Non-group <details> (permissions, advanced config) carry no
    data-group-key and keep the generic whole-summary marker + pointer above. */
-details[data-group-key] > summary { cursor: default; position: relative; }
+details[data-group-key] > summary {
+  cursor: default; position: relative; overflow: visible;
+}
 details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name {
   cursor: pointer; user-select: none;
@@ -1074,7 +1076,10 @@ details[data-group-key] > summary .group-name {
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
-  position: absolute; z-index: 4; inset-block-start: -8px; inset-inline-start: 0;
+  /* Use the existing 4px inter-group margin for the upward float. The
+     negative inline offset keeps the glyph left of the disclosure/title text
+     without reserving or changing any header space. */
+  position: absolute; z-index: 4; inset-block-start: -4px; inset-inline-start: -12px;
   display: inline-flex; align-items: center; gap: 1px; margin: 0;
   padding: 0; border: 0; background: transparent; box-shadow: none;
   vertical-align: middle; font: inherit; font-size: 12px; line-height: 1;
