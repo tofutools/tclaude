@@ -21,7 +21,8 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `class="group-attachment-label"`},
 		{"js/groups-list.js", `tabindex=${fixed ? '-1' : undefined}`},
 		{"js/groups-list.js", `group-attachment-empty`},
-		{"js/groups-list.js", `>📎${visibleLabel}</a>`},
+		{"js/groups-list.js", `const visibleIcon = fixed && rawURL ? null : '📎';`},
+		{"js/groups-list.js", `>${visibleIcon}${visibleLabel}</a>`},
 		{"js/groups-list.js", `class="group-attachment-invalid"`},
 		{"js/groups-list.js", `/^https?:\/\/[^/\\?#\s]/i.test(raw)`},
 		{"js/groups-list.js", `parsed.protocol === 'http:' || parsed.protocol === 'https:'`},
@@ -53,6 +54,9 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 }`},
 		{"dashboard.css", `.group-attachment-fixed > button:hover {
   color: #58a6ff; background: transparent; text-decoration: none;
+}`},
+		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:hover {
+  color: #58a6ff; border-color: #58a6ff; opacity: 1;
 }`},
 		{"dashboard.css", `.group-attachment-label {`},
 		{"dashboard.css", `.group-attachment-fixed:hover .group-attachment-edit`},

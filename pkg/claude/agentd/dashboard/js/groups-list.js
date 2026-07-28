@@ -68,6 +68,7 @@ function GroupAttachment({ group, actions, placement }) {
   const visibleLabel = fixed && rawURL
     ? html`<span class="group-attachment-label">${label}</span>`
     : null;
+  const visibleIcon = fixed && rawURL ? null : '📎';
   const placementClass = fixed ? 'group-attachment-fixed' : 'group-attachment-float';
   if (!rawURL) {
     return html`<button
@@ -75,7 +76,7 @@ function GroupAttachment({ group, actions, placement }) {
       aria-label=${`Attach a persistent link to ${group.name}`}
       title="Attach a persistent Linear project, GitHub board, or other reference"
       onClick=${openEditor}
-    >📎${visibleLabel}</button>`;
+    >${visibleIcon}${visibleLabel}</button>`;
   }
   const display = url
     ? html`<a
@@ -83,13 +84,13 @@ function GroupAttachment({ group, actions, placement }) {
         aria-label=${`Open ${label}, the persistent link for ${group.name}`}
         title=${`Open ${label} — ${url}`}
         onClick=${(event) => event.stopPropagation()}
-      >📎${visibleLabel}</a>`
+      >${visibleIcon}${visibleLabel}</a>`
     : html`<button
         type="button" class="group-attachment-invalid"
         aria-label=${`Edit the unsafe stored attachment for ${group.name}`}
         title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
         onClick=${openEditor}
-      >📎${visibleLabel}</button>`;
+      >${visibleIcon}${visibleLabel}</button>`;
   return html`<span class=${`group-attachment ${placementClass} group-attachment-set`}>
     ${display}
     <button

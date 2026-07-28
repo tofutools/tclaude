@@ -149,6 +149,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   const fixedSafe = attachment('safe');
   assert.ok(fixedSafe.classList.contains('group-attachment-fixed'));
   assert.equal(fixedSafe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
+  assert.equal(fixedSafe.querySelector('a')?.textContent, 'Safe project',
+    'a set fixed attachment shows link text without a paperclip');
   assert.equal(fixedSafe.querySelector('.group-attachment-label')?.textContent, 'Safe project',
     'fixed mode keeps the link/ticket label in the DOM');
   assert.equal(fixedSafe.querySelector('.qo-text'), null,
@@ -174,6 +176,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   const fixedHostless = attachment('hostless');
   assert.equal(fixedHostless.querySelector('a'), null,
     'http(s) without a host must remain inert in fixed mode');
+  assert.equal(fixedHostless.querySelector('.group-attachment-invalid')?.textContent, 'No host',
+    'a set but unsafe fixed attachment also shows its text without a paperclip');
   assertTabReachable(fixedHostless.querySelector('.group-attachment-invalid'));
   await mounted.unmount();
 });
