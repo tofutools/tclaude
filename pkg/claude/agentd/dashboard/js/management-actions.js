@@ -975,8 +975,12 @@ export function createManagementActions({
   // only the machine-global settings tiers are knowable at edit time — which is
   // exactly what the daemon reads when dir is empty. (The spawn dialog passes a
   // real CWD; both share fetchUnsandboxedAutonomy.)
-  function loadUnsandboxedAutonomy({ harness = '', sandbox: sandboxMode = '', approval = '' } = {}) {
-    return fetchUnsandboxedAutonomy(fetch, { harness, sandbox: sandboxMode, approval, dir: '' });
+  function loadUnsandboxedAutonomy({
+    harness = '', sandbox: sandboxMode = '', sandboxImplementation = '', approval = '',
+  } = {}) {
+    return fetchUnsandboxedAutonomy(fetch, {
+      harness, sandbox: sandboxMode, sandboxImplementation, approval, dir: '',
+    });
   }
 
   return Object.freeze({

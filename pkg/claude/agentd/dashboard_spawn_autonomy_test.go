@@ -119,6 +119,29 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeAccessControl(t *testing.T) {
 	}
 }
 
+func TestDashboardSpawnEffectiveSandboxOpenCodeTclaudeLayerDoesNotWarnThatItIsUnsandboxed(t *testing.T) {
+	withDashboardAuth(t)
+
+	status, payload := spawnEffectiveSandbox(t,
+		"harness=opencode&sandbox=access-control&sandbox_implementation=tclaude-layer")
+	if status != http.StatusOK {
+		t.Fatalf("got status %d, want 200", status)
+	}
+	if payload.SandboxMode != "tclaude-layer" {
+		t.Fatalf("got sandbox_mode %q, want the implementation-resolved tclaude-layer mode",
+			payload.SandboxMode)
+	}
+	joined := strings.Join(payload.Warnings, "\n")
+	if strings.Contains(joined, "OpenCode has no built-in OS sandbox") ||
+		strings.Contains(joined, "effectively unsandboxed") {
+		t.Fatalf("got warnings %v; tclaude-layer must not show the access-control warning",
+			payload.Warnings)
+	}
+	if !strings.Contains(joined, "tool-executing server") {
+		t.Fatalf("got warnings %v, want the tclaude-layer boundary notice", payload.Warnings)
+	}
+}
+
 func httpBodyOf(t *testing.T, query string) string {
 	t.Helper()
 	recorder := httptest.NewRecorder()
@@ -153,6 +176,7 @@ func TestDashboardSpawnEffectiveSandboxRejectsBadInput(t *testing.T) {
 	for _, tc := range []struct{ name, query string }{
 		{"unknown harness", "harness=nope"},
 		{"invalid sandbox", "harness=claude&sandbox=sideways"},
+		{"invalid sandbox implementation", "harness=opencode&sandbox_implementation=sideways"},
 		{"invalid approval", "harness=claude&approval=whenever"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

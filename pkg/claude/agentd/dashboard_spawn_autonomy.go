@@ -36,8 +36,8 @@ type spawnEffectiveSandboxJSON struct {
 }
 
 // handleDashboardSpawnEffectiveSandbox serves
-// GET /api/spawn/effective-sandbox?harness=&sandbox=&approval=&dir= — the probe
-// behind the spawn dialog's unsandboxed-autonomy warning (TCL-586).
+// GET /api/spawn/effective-sandbox?harness=&sandbox=&sandbox_implementation=&approval=&dir=
+// — the probe behind the spawn dialog's unsandboxed-autonomy warning (TCL-586).
 //
 // The loopback popup server has no global auth middleware — each handler
 // pins itself on the dashboard cookie + Origin, exactly like its neighbours
@@ -70,6 +70,19 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	sandboxMode, err := harness.ResolveSandboxMode(h, query.Get("sandbox"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", err.Error())
+		return
+	}
+	sandboxImplementation, err := validateSandboxImplementationForHarness(
+		h, query.Get(sandboxImplementationField))
+	if err != nil {
+		writeError(w, sandboxImplementationValidationStatus(err),
+			"invalid_"+sandboxImplementationField, err.Error())
+		return
+	}
+	sandboxMode, fail := resolveOpenCodeSandboxImplementationMode(
+		h, sandboxMode, sandboxImplementation)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	approval, err := harness.ResolveApprovalPolicy(h, query.Get("approval"))

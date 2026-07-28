@@ -924,6 +924,8 @@ test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clear
     assert.equal(alert.querySelector('[role="alert"]').getAttribute('role'), 'alert');
     assert.match(alert.textContent, /run commands unattended/);
     assert.ok(probes.length >= 1, 'the dialog probed the daemon for the effective sandbox');
+    assert.equal(probes.at(-1).sandboxImplementation, '',
+      'the preview probe includes the currently selected sandbox implementation');
 
     // Submit is NOT blocked by the warning: it is advisory only.
     assert.equal(host.querySelector('#agent-spawn-submit').disabled, false);
@@ -938,6 +940,14 @@ test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clear
     await flush(harness);
     assert.equal(host.querySelector('#agent-spawn-autonomy-warning'), null,
       'a clean re-probe clears the warning');
+
+    const sandboxImpl = host.querySelector('#agent-spawn-sandbox-impl');
+    setValue(sandboxImpl, 'tclaude-layer');
+    await harness.act(() => harness.fireEvent(sandboxImpl, 'change'));
+    await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush(harness);
+    assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer',
+      'changing the implementation re-probes with the new selection');
   } finally {
     mounted.cleanup();
   }

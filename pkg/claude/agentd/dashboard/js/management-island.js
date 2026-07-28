@@ -305,14 +305,16 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     // collapses a rapid harness→mode retap; it is imperceptible otherwise.
     const timer = setTimeout(() => {
       Promise.resolve(actions.loadUnsandboxedAutonomy({
-        harness: draft.harness, sandbox: draft.sandbox, approval: draft.approval,
+        harness: draft.harness, sandbox: draft.sandbox,
+        sandboxImplementation: profile ? draft.sandbox_implementation : '',
+        approval: draft.approval,
       })).then((result) => {
         if (request !== autonomyRequest.current) return;
         setAutonomyWarnings(result?.warnings || []);
       });
     }, 200);
     return () => clearTimeout(timer);
-  }, [draft.harness, draft.sandbox, draft.approval]);
+  }, [draft.harness, draft.sandbox, draft.sandbox_implementation, draft.approval, profile]);
   const updateHarness = (harness) => {
     const h = harnessByName(catalog, harness);
     const defaults = harnessDefaults(h);

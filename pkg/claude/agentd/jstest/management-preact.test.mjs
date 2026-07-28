@@ -261,6 +261,56 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('OpenCode profile editor probes warnings with its tclaude-layer implementation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'profile-editor',
+    seed: {
+      name: 'contained-opencode', harness: 'opencode', sandbox: 'off',
+      sandbox_implementation: 'tclaude-layer',
+    },
+    options: {},
+    catalog,
+    sandboxImpl: {
+      options: [{ value: 'tclaude-layer', label: 'tclaude layer (experimental)' }],
+      default: 'harness-builtin',
+      host_available: true,
+    },
+  });
+  const probes = [];
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: {
+      async saveProfile() {},
+      async loadUnsandboxedAutonomy(input) {
+        probes.push(input);
+        return {
+          warnings: input.sandboxImplementation === 'tclaude-layer'
+            ? []
+            : ['⚠ OpenCode has no built-in OS sandbox.'],
+        };
+      },
+    },
+    confirmDiscard: async () => true,
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+
+  assert.equal(probes.at(-1).sandboxImplementation, 'tclaude-layer');
+  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null,
+    'the profile editor does not show the built-in-sandbox warning for tclaude-layer');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 // The role editor shares HarnessFields, so it must show the same warning under
 // its own element id — asserted here, not just by comment.
 test('role editor shows the unsandboxed-autonomy warning', async (t) => {

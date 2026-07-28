@@ -20,8 +20,12 @@
    blocked or alarming dialog would be worse than saying nothing. The Go side is
    the authority that still runs the check at spawn time, and its warning rides
    the spawn response either way. */
-export async function fetchUnsandboxedAutonomy(fetchImpl, { harness = '', sandbox = '', approval = '', dir = '' } = {}) {
-  const query = new URLSearchParams({ harness, sandbox, approval, dir });
+export async function fetchUnsandboxedAutonomy(fetchImpl, {
+  harness = '', sandbox = '', sandboxImplementation = '', approval = '', dir = '',
+} = {}) {
+  const query = new URLSearchParams({
+    harness, sandbox, sandbox_implementation: sandboxImplementation, approval, dir,
+  });
   try {
     const response = await fetchImpl(`/api/spawn/effective-sandbox?${query}`, { credentials: 'same-origin' });
     if (!response.ok) return emptyAutonomy();
