@@ -165,6 +165,16 @@ func sandboxNetworkTemplates() []sandboxAccessTemplateJSON {
 			Warning: "GitHub documents additional domains for Actions, releases, LFS, packages, and artifacts; add only the services this profile actually needs.",
 		},
 		{
+			ID: "net-openai-codex", Label: "OpenAI models (Codex CLI)", Mode: "list",
+			Entries: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Domain: "chatgpt.com", Ports: []int{443}},
+				{Domain: "auth.openai.com", Ports: []int{443}},
+			},
+			Note:    "Codex uses api.openai.com for API-key model traffic, chatgpt.com for ChatGPT model traffic, and auth.openai.com for ChatGPT authentication and token refresh: https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps",
+			Warning: "This preset covers direct OpenAI model transport and authentication only; custom model providers, web search, plugins, MCP servers, and commands run by the agent need their own destinations.",
+		},
+		{
 			ID: "net-anthropic", Label: "Anthropic API", Mode: "list",
 			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "api.anthropic.com"}},
 			Note:    "Anthropic documents the direct Claude API at https://api.anthropic.com: https://platform.claude.com/docs/en/api/overview",

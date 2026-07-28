@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -85,7 +86,9 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		GlobalNetwork    []map[string]any `json:"global_network"`
 		GlobalSockets    []map[string]any `json:"global_unix_sockets"`
 		NetworkTemplates []struct {
-			ID string `json:"id"`
+			ID      string                            `json:"id"`
+			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
+			Warning string                            `json:"warning"`
 		} `json:"network_templates"`
 		SocketTemplates []struct {
 			ID string `json:"id"`
@@ -103,8 +106,14 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)
-	assert.Equal(t, []string{"net-github", "net-anthropic", "net-go-modules", "net-npm"},
-		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID})
+	assert.Equal(t, []string{"net-github", "net-openai-codex", "net-anthropic", "net-go-modules", "net-npm"},
+		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID, catalog.NetworkTemplates[4].ID})
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "api.openai.com", Ports: []int{443}},
+		{Domain: "chatgpt.com", Ports: []int{443}},
+		{Domain: "auth.openai.com", Ports: []int{443}},
+	}, catalog.NetworkTemplates[1].Entries)
+	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "custom model providers")
 	assert.NotContains(t, rec.Body.String(), "net-pypi")
 	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
 		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})
