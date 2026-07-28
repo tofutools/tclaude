@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // Flow coverage for the `tclaude agentd serve --tui` console. It drives the
@@ -136,6 +137,41 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 	c.Press(t, "enter")
 	assert.False(t, called)
 	assert.Contains(t, c.View(), "no live tmux session")
+}
+
+// x retires the selected agent through the daemon's own retire verb: the
+// demotion, the group exit and the pane shutdown are the daemon's, so this
+// asserts on enrollment state and tmux liveness rather than on the console.
+func TestTUIConsoleRetiresAnAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+
+	c := newTUIConsole(t)
+	c.Refresh()
+	require.Contains(t, c.View(), "1 agents (1 online)")
+
+	// The prompt names the agent, and anything but "y" leaves it alone.
+	c.Press(t, "x")
+	require.Contains(t, c.View(), "and stop its session?")
+	c.Press(t, "n")
+	c.Refresh()
+	state, err := db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	require.Equal(t, db.AgentStateActive, state, "a cancelled prompt retires nothing")
+	require.True(t, f.World.Tmux.IsAlive(sp.TmuxSession))
+
+	c.Press(t, "x", "y")
+
+	view := c.View()
+	assert.Contains(t, view, "Retired worker", "the console reports the outcome")
+	assert.Contains(t, view, "left dev", "including the groups the agent gave up")
+	assert.Contains(t, view, "No agents yet", "and the roster drops it right away")
+
+	state, err = db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateRetired, state)
+	assert.False(t, flowGroupHasMember(f, "dev", sp.ConvID), "a retired agent leaves its groups")
 }
 
 // Quitting is confirmed first, because it shuts the daemon down.

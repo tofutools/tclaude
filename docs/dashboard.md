@@ -53,15 +53,26 @@ use it immediately.
 
 `tclaude agentd serve --tui` runs a small text UI in the daemon's own terminal.
 It covers the moves the dashboard is most often opened for — see which agents
-exist, start a new one, go look at one — and nothing else:
+exist, start a new one, go look at one, retire one that is done — and nothing
+else:
 
 ```
 enter  go to the selected agent's tmux session
 n      start a new agent (group, name, directory, harness, startup brief)
+x      retire the selected agent (it asks first)
+f      filter the list down to the active agents (toggle)
 r      refresh now (the list also polls every 2s)
 ?      key help
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
+
+**x** is the console's `tclaude agent retire`: the agent leaves its groups,
+loses its permission and sudo grants, and its session is asked to exit. The
+conversation stays on disk and any worktree is left alone — the console never
+deletes an operator's work, so a worktree you no longer want goes through the
+CLI or the dashboard, which probe it first. Retiring is confirmed before
+anything happens, and the confirmation acts on the agent it names even if the
+listing re-sorted under the cursor in the meantime.
 
 **enter** does what it does in `tclaude session watch` — it puts you on the
 selected agent's pane. When agentd itself runs inside tmux it uses

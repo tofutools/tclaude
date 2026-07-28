@@ -282,6 +282,118 @@ func TestTUIQuitAsksBeforeShuttingTheDaemonDown(t *testing.T) {
 	assert.IsType(t, tea.QuitMsg{}, cmd())
 }
 
+// Retiring stops an agent and revokes its authority, so the console asks
+// first — and then goes through the daemon's own retire verb.
+func TestTUIRetireAsksThenPostsToTheDaemon(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		writeJSON(w, http.StatusOK, map[string]any{
+			"conv_id":  "c1",
+			"outcome":  retireConvOutcome{GroupsLeft: []string{"dev"}, Retired: true},
+			"shutdown": memberOpResult{ConvID: "c1", Action: "soft_stopped"},
+		})
+	})
+	m := newTUIModel(api)
+	m.width = 120
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+
+	asked, cmd := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+	assert.Nil(t, cmd, "nothing is retired until it is confirmed")
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+	assert.Contains(t, got.renderList(), "Retire worker and stop its session?")
+
+	// Anything but "y" cancels.
+	declined, cmd := got.handleKey(tuiKey("n"))
+	assert.Nil(t, cmd)
+	assert.Equal(t, tuiModeList, declined.(tuiModel).mode)
+
+	confirmed, cmd := got.handleKey(tuiKey("y"))
+	retiring := confirmed.(tuiModel)
+	require.NotNil(t, cmd)
+	assert.Equal(t, tuiModeList, retiring.mode)
+	assert.True(t, retiring.retiring)
+
+	msg, ok := cmd().(tuiRetiredMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
+	assert.Empty(t, gotQuery, "the console keeps the endpoint's own defaults: stop the pane, keep the worktree")
+
+	updated, refresh := retiring.Update(msg)
+	done := updated.(tuiModel)
+	assert.False(t, done.retiring)
+	assert.Contains(t, done.notice, "Retired worker")
+	assert.Contains(t, done.notice, "left dev")
+	assert.Contains(t, done.notice, "asked to exit")
+	assert.NotNil(t, refresh, "the retired agent leaves the listing right away")
+}
+
+// The prompt names one agent and must retire that one: the listing re-sorts
+// under the cursor every couple of seconds.
+func TestTUIRetireActsOnTheAgentTheOperatorConfirmed(t *testing.T) {
+	var gotPath string
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": "c1"})
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{
+		{ConvID: "c1", Title: "worker", Online: true},
+		{ConvID: "c2", Title: "other", Online: true},
+	}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	got := asked.(tuiModel)
+
+	// A refresh lands under the prompt and reverses the listing.
+	shuffled, _ := got.Update(tuiDataMsg{agents: []tuiAgentRow{
+		{ConvID: "c2", Title: "other", Online: true},
+		{ConvID: "c1", Title: "worker", Online: true},
+	}})
+	got = shuffled.(tuiModel)
+	require.Equal(t, tuiModeConfirmRetire, got.mode)
+
+	_, cmd := got.handleKey(tuiKey("y"))
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiRetiredMsg)
+	require.True(t, ok)
+	assert.Equal(t, "worker", msg.agent)
+	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
+}
+
+func TestTUIRetireFailureIsReported(t *testing.T) {
+	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "forbidden", "agent.retire is not granted")
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+
+	asked, _ := m.handleKey(tuiKey("x"))
+	confirmed, cmd := asked.(tuiModel).handleKey(tuiKey("y"))
+	require.NotNil(t, cmd)
+
+	updated, _ := confirmed.(tuiModel).Update(cmd())
+	got := updated.(tuiModel)
+	assert.False(t, got.retiring, "a refused retire releases the in-flight guard")
+	assert.Contains(t, got.notice, "agent.retire is not granted")
+}
+
+// An empty list has nothing to retire, and the key line does not offer it.
+func TestTUIRetireOnAnEmptyListDoesNothing(t *testing.T) {
+	m := newTUIModel(nil)
+	updated, cmd := m.handleKey(tuiKey("x"))
+	got := updated.(tuiModel)
+	assert.Nil(t, cmd)
+	assert.Equal(t, tuiModeList, got.mode)
+	assert.NotContains(t, got.keyHintLine(), "x retire")
+
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
+	assert.Contains(t, m.keyHintLine(), "x retire")
+}
+
 func TestTUIListRendersTheAgentsItWasGiven(t *testing.T) {
 	m := newTUIModel(nil)
 	m.width = 120

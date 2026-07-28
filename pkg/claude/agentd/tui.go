@@ -2,7 +2,8 @@ package agentd
 
 // Terminal UI for `tclaude agentd serve --tui` — a deliberately small
 // in-terminal stand-in for the web dashboard's most-used moves: see which
-// agents exist, start a new one, and go to one's tmux session. On its own it
+// agents exist, start a new one, go to one's tmux session, and retire one that
+// is done. On its own it
 // is the whole operator surface (runServe starts no dashboard listener); it
 // also runs happily beside the web dashboard when the operator asks for both.
 // Either way it is plain text with no color scheme, no theming and no
@@ -373,6 +374,13 @@ type tuiGroupRow struct {
 	Name string `json:"name"`
 }
 
+// tuiRetireResult is the subset of the retire response the console reports:
+// what the demotion actually revoked, and what became of the agent's session.
+type tuiRetireResult struct {
+	Outcome  retireConvOutcome `json:"outcome"`
+	Shutdown memberOpResult    `json:"shutdown"`
+}
+
 // ---- model -----------------------------------------------------------------
 
 type tuiMode int
@@ -382,6 +390,7 @@ const (
 	tuiModeSpawn
 	tuiModeHelp
 	tuiModeConfirmQuit
+	tuiModeConfirmRetire
 )
 
 // Spawn-form fields, in tab order.
@@ -433,11 +442,17 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
-	// refreshing / spawning keep the periodic tick from stacking requests
-	// and the operator from firing two spawns at once.
+	// refreshing / spawning / retiring keep the periodic tick from stacking
+	// requests and the operator from firing two of the same action at once.
 	refreshing  bool
 	spawning    bool
+	retiring    bool
 	lastRefresh time.Time
+	// retireTarget is the agent the retire confirmation is about, captured
+	// when the prompt opens rather than re-read when it is answered: the
+	// listing re-sorts under the cursor every two seconds, so resolving the
+	// target on "y" could retire an agent the operator never saw named.
+	retireTarget tuiAgentRow
 
 	filterActive bool
 
@@ -484,6 +499,12 @@ type (
 		agent   string
 		session string
 		err     error
+	}
+	// tuiRetiredMsg carries the outcome of one retire request.
+	tuiRetiredMsg struct {
+		agent string
+		res   tuiRetireResult
+		err   error
 	}
 )
 
@@ -534,7 +555,7 @@ func (m tuiModel) viewportHeight() int {
 	if m.notice != "" {
 		chrome += lipgloss.Height(m.renderWrapped(m.notice))
 	}
-	if m.mode == tuiModeConfirmQuit {
+	if m.confirmPrompt() != "" {
 		chrome += 2
 	}
 	return max(m.height-chrome, 1)
@@ -599,6 +620,19 @@ func tuiSpawnCmd(api *tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 		var resp agent.SpawnResponse
 		err := api.post("/v1/groups/"+url.PathEscape(group)+"/spawn", req, &resp)
 		return tuiSpawnedMsg{group: group, resp: resp, err: err}
+	}
+}
+
+// tuiRetireCmd retires one agent through the daemon's own verb. It sends no
+// query parameters, which is the documented default pair for that endpoint:
+// the pane is asked to exit (?shutdown), and the worktree is left alone
+// (?delete_worktree) — the console never deletes an operator's work, and has
+// no probe of the kind the dashboard runs before offering to.
+func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var res tuiRetireResult
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
+		return tuiRetiredMsg{agent: name, res: res, err: err}
 	}
 }
 
@@ -844,6 +878,61 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	return m, tuiAttachToPane(row.name(), sess.TmuxSession, insideTmux())
 }
 
+// confirmRetireSelected opens the retire confirmation over the selected row.
+// Retiring is not undoable from here (reinstating is a CLI/dashboard move) and
+// it stops the agent's pane, so it always asks first — the same rule quitting
+// follows.
+func (m tuiModel) confirmRetireSelected() tuiModel {
+	visible := m.visibleAgents()
+	if m.cursor < 0 || m.cursor >= len(visible) {
+		return m
+	}
+	if m.retiring {
+		m.notice = "A retire is already in flight."
+		return m
+	}
+	m.retireTarget = visible[m.cursor]
+	m.mode = tuiModeConfirmRetire
+	return m
+}
+
+// retireConfirmed fires the retire the operator just confirmed. Permission is
+// the daemon's call, not the console's: the endpoint gates every caller class
+// itself, so an agent-class console gets the same refusal here it would get
+// over the socket rather than a second, divergent rule.
+func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
+	row := m.retireTarget
+	m.retireTarget = tuiAgentRow{}
+	m.mode = tuiModeList
+	if row.ConvID == "" {
+		return m, nil
+	}
+	m.retiring = true
+	m.notice = "Retiring " + row.name() + "…"
+	return m, tuiRetireCmd(m.api, row.ConvID, row.name())
+}
+
+// tuiRetireSummary describes a landed retire in one line: what the demotion
+// gave up, and what happened to the pane.
+func tuiRetireSummary(msg tuiRetiredMsg) string {
+	out := "Retired " + msg.agent
+	if groups := msg.res.Outcome.GroupsLeft; len(groups) > 0 {
+		out += " — left " + strings.Join(groups, ", ")
+	}
+	switch msg.res.Shutdown.Action {
+	case "":
+		// No shutdown block at all: an older daemon, or a response shape
+		// that did not carry one. Say nothing rather than guess.
+	case "skipped:already_offline":
+		out += "; it had no live session"
+	case "soft_stopped":
+		out += "; its session was asked to exit"
+	default:
+		out += "; session: " + msg.res.Shutdown.Action
+	}
+	return out + "."
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -884,6 +973,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.notice = tuiSpawnSummary(msg)
 		// Pull the new agent in now rather than waiting out the tick.
+		m.refreshing = true
+		return m, m.refreshCmd()
+
+	case tuiRetiredMsg:
+		m.retiring = false
+		if msg.err != nil {
+			m.notice = "Retire failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.notice = tuiRetireSummary(msg)
+		// The row is gone (or offline) now — show that rather than leaving a
+		// retired agent listed until the next tick.
 		m.refreshing = true
 		return m, m.refreshCmd()
 
@@ -948,6 +1049,20 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tuiModeConfirmRetire:
+		// Same contract as the quit prompt: only "y" goes through, and the
+		// prompt says so. Ctrl-C is a cancel here rather than a second
+		// confirmation — it means "get me out of this", and the destructive
+		// reading of it belongs to the prompt that offers it.
+		switch msg.String() {
+		case "y", "Y":
+			return m.retireConfirmed()
+		default:
+			m.mode = tuiModeList
+			m.retireTarget = tuiAgentRow{}
+		}
+		return m, nil
+
 	case tuiModeSpawn:
 		return m.handleSpawnKey(msg)
 	}
@@ -992,6 +1107,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
+	case "x", "X":
+		m.notice = ""
+		return m.confirmRetireSelected(), nil
 	case "r":
 		if !m.refreshing {
 			m.refreshing = true
@@ -1163,10 +1281,26 @@ func (m tuiModel) renderList() string {
 	}
 	b.WriteString("\n  " + m.keyHintLine() + "\n")
 
-	if m.mode == tuiModeConfirmQuit {
-		b.WriteString("\n  Quit and shut down agentd? [y / any other key = cancel]\n")
+	if prompt := m.confirmPrompt(); prompt != "" {
+		b.WriteString("\n  " + prompt + "\n")
 	}
 	return b.String()
+}
+
+// confirmPrompt is the question the list view is waiting on, empty when it is
+// waiting on none. Both prompts are one line by contract — viewportHeight pays
+// for exactly two (the blank line and the question), so a second line would
+// overflow the terminal.
+func (m tuiModel) confirmPrompt() string {
+	switch m.mode {
+	case tuiModeConfirmQuit:
+		return "Quit and shut down agentd? [y / any other key = cancel]"
+	case tuiModeConfirmRetire:
+		return "Retire " + m.retireTarget.name() +
+			" and stop its session? [y / any other key = cancel]"
+	default:
+		return ""
+	}
 }
 
 // keyHintLine names enter only when it can do something — an agent-class
@@ -1177,6 +1311,12 @@ func (m tuiModel) keyHintLine() string {
 		filterLabel = "f show all"
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
+	if len(m.visibleAgents()) > 0 {
+		// Unlike enter, retire is not statically an operator-only move: an
+		// agent-class console can hold agent.retire over its own group's
+		// members, so the daemon decides and the key stays advertised.
+		hints = "x retire • " + hints
+	}
 	if m.operator && len(m.visibleAgents()) > 0 {
 		verb := "attach"
 		if insideTmux() {
@@ -1328,6 +1468,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
 	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
 	b.WriteString("    n          Start a new agent\n")
+	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
+	b.WriteString("               groups, loses its grants and its session is asked to\n")
+	b.WriteString("               exit. The conversation and any worktree are kept.\n")
 	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
