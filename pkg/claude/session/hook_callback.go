@@ -446,7 +446,11 @@ func runHookCallback() error {
 		return brokerHookEvent(input, os.Stdout)
 	}
 
-	return DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout)
+	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
+		return err
+	}
+	MaybeRequestAutoName(input)
+	return nil
 }
 
 // DispatchHookEvent applies one parsed hook event: the PreCompact gate
@@ -1258,9 +1262,19 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
 	// here because agentd's sweeper owns their group/name/briefing intent.
 	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {
-		if _, _, err := db.EnsureAgentForConv(state.ConvID, "session-start"); err != nil {
+		agentID, created, err := db.EnsureAgentForConv(state.ConvID, "session-start")
+		if err != nil {
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+		} else if created {
+			createdAt := state.Created
+			if createdAt.IsZero() {
+				createdAt = state.LastHook
+			}
+			if err := db.SetAgentPendingName(agentID, FreeFloatingAgentName(createdAt, agentID)); err != nil {
+				slog.Warn("failed to assign launched session fallback name",
+					"conv_id", state.ConvID, "agent_id", agentID, "error", err, "module", "hooks")
+			}
 		}
 	}
 

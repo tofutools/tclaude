@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -924,9 +925,10 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	db.ResetForTest()
 
 	require.NoError(t, SaveSessionState(&SessionState{
-		ID:     "start-sess",
-		ConvID: "conv-start",
-		Status: StatusIdle,
+		ID:      "start-sess",
+		ConvID:  "conv-start",
+		Status:  StatusIdle,
+		Created: time.Date(2026, time.July, 28, 12, 17, 33, 0, time.UTC),
 	}))
 
 	pre, err := db.AgentState("conv-start")
@@ -944,6 +946,11 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.AgentStateActive, post,
 		"a SessionStart from a tclaude-launched session must instant-enroll the conv as an agent")
+	actor, err := db.GetAgentByConv("conv-start")
+	require.NoError(t, err)
+	require.NotNil(t, actor)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
 // Instant enrollment must be retirement-safe: a conv the human

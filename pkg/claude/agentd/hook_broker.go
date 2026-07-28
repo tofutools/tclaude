@@ -200,6 +200,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to apply hook event")
 		return
 	}
+	if req.Input.HookEventName == "UserPromptSubmit" {
+		scheduleAutoName(req.Input.ConvID, row.Harness, row.Cwd, req.Input.Prompt)
+	}
 	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{Stdout: stdout.String()})
 }
 
