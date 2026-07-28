@@ -23,6 +23,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `group-attachment-empty`},
 		{"js/groups-list.js", `>📎${visibleLabel}</a>`},
 		{"js/groups-list.js", `class="group-attachment-invalid"`},
+		{"js/groups-list.js", `/^https?:\/\/[^/\\?#\s]/i.test(raw)`},
 		{"js/groups-list.js", `parsed.protocol === 'http:' || parsed.protocol === 'https:'`},
 		{"js/groups-actions.js", `openGroupAttachmentDialog({`},
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},

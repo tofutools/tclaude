@@ -5,7 +5,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 test('group attachments enforce http(s) again at the render boundary', async (t) => {
   const harness = await createPreactHarness(t);
   const [
-    { GroupsNativeList },
+    { GroupsNativeList, safeGroupAttachmentURL },
     { GroupsInteractionProvider },
     { createActionDialogState },
     { ActionDialogApp },
@@ -24,6 +24,15 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     close: state.close,
     setGroupAttachment: async () => {},
   };
+  const normalizedHostCases = [
+    ['one-slash', 'https:/evil.example'],
+    ['three-slashes', 'https:///evil.example'],
+    ['no-slashes', 'https:evil.example'],
+  ];
+  for (const [, malformedURL] of normalizedHostCases) {
+    assert.equal(safeGroupAttachmentURL(malformedURL), '',
+      'browser URL normalization must not repair a malformed authority');
+  }
   const groups = [{
     name: 'safe', members: [], online: 0,
     attachment_url: 'https://example.com/project',

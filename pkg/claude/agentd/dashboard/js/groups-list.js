@@ -31,9 +31,12 @@ function GroupActivity({ members, snapshot }) {
   return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
-function safeGroupAttachmentURL(value) {
+export function safeGroupAttachmentURL(value) {
   const raw = String(value || '').trim();
-  if (!raw) return '';
+  // WHATWG URL parsing repairs malformed authority separators such as
+  // "https:/example.com" into a hosted URL. Stored rows still cross a trust
+  // boundary here, so require the literal http(s):// form before parsing.
+  if (!/^https?:\/\/[^/\\?#\s]/i.test(raw)) return '';
   try {
     const parsed = new URL(raw);
     return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host ? raw : '';
