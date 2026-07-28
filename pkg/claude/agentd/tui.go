@@ -1473,6 +1473,16 @@ func tuiSpawnSummary(msg tuiSpawnedMsg) string {
 }
 
 func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.reconcilingMutation && tuiReconciliationBlocksMutation(m.mode, msg.String()) {
+		// A second modal can have opened while the original request was still
+		// in flight. Once that request becomes ambiguous, cancel the stale
+		// modal as well as blocking list-mode mutation shortcuts.
+		m.mode = tuiModeList
+		m.retireTarget = tuiAgentRow{}
+		m.notice = "Waiting for a successful refresh to reconcile the previous action before another mutation."
+		return m, nil
+	}
+
 	switch m.mode {
 	case tuiModeHelp:
 		m.mode = tuiModeList
@@ -1511,13 +1521,6 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// List mode.
 	visible := m.visibleAgents()
-	if m.reconcilingMutation {
-		switch msg.String() {
-		case "enter", "n", "x":
-			m.notice = "Waiting for a successful refresh to reconcile the previous action before another mutation."
-			return m, nil
-		}
-	}
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		// The embedded console owns the daemon lifetime; a standalone remote
@@ -1571,6 +1574,19 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = tuiModeHelp
 	}
 	return m, nil
+}
+
+func tuiReconciliationBlocksMutation(mode tuiMode, key string) bool {
+	switch mode {
+	case tuiModeList:
+		return key == "enter" || strings.EqualFold(key, "n") || strings.EqualFold(key, "x")
+	case tuiModeSpawn:
+		return key == "enter"
+	case tuiModeConfirmRetire:
+		return strings.EqualFold(key, "y")
+	default:
+		return false
+	}
 }
 
 func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
