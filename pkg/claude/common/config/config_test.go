@@ -743,6 +743,31 @@ func TestSpawnNameNormalizeEnabled(t *testing.T) {
 	assert.False(t, loaded.SpawnNameNormalizeEnabled(), "explicit false survives round-trip")
 }
 
+// TestSpawnLabelFromNameEnabled covers the default-OFF resolver behind the
+// name-derived session label: nil config, an absent agent block, and an absent
+// key all mean OFF (a spawn keeps its random "spwn-XXXXXX" label); only an
+// explicit true opts in. The JSON shape is asserted too so a default config
+// stays clean while an explicit-on round-trips.
+func TestSpawnLabelFromNameEnabled(t *testing.T) {
+	assert.False(t, (*Config)(nil).SpawnLabelFromNameEnabled(), "nil config → off")
+	assert.False(t, (&Config{}).SpawnLabelFromNameEnabled(), "no agent block → off")
+	assert.False(t, (&Config{Agent: &AgentConfig{}}).SpawnLabelFromNameEnabled(), "absent key → off")
+	assert.True(t, (&Config{Agent: &AgentConfig{SpawnLabelFromName: true}}).SpawnLabelFromNameEnabled(),
+		"explicit true → on")
+
+	// A default config omits the key (omitempty + zero value).
+	clean, err := json.Marshal(&Config{Agent: &AgentConfig{}})
+	require.NoError(t, err)
+	assert.NotContains(t, string(clean), "spawn_label_from_name")
+
+	// An explicit opt-in round-trips through Save/Load and stays on.
+	t.Setenv("HOME", t.TempDir())
+	require.NoError(t, Save(&Config{Agent: &AgentConfig{SpawnLabelFromName: true}}))
+	loaded, err := Load()
+	require.NoError(t, err)
+	assert.True(t, loaded.SpawnLabelFromNameEnabled(), "explicit true survives round-trip")
+}
+
 // TestShowVegasInRegularMode covers the default-OFF *bool resolver behind
 // the opt-in that surfaces the Vegas music features outside slop mode: nil
 // config, an absent slop block, and an absent key all mean OFF; only an

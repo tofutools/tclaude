@@ -913,6 +913,49 @@ previews the normalized name as you type). Set
 behaviour, where an out-of-charset name is rejected. An empty name is always
 valid — the agent gets an auto-generated label.
 
+**Naming the tmux session after the agent (opt-in).** A spawn's *label* is its
+tclaude session id: the `sessions` primary key, and — because it is handed to
+`session new --label` — the tmux session name you attach to. By default it is
+an opaque random token (`spwn-a3f9c1`). Set
+`agent.spawn_label_from_name: true` in `~/.tclaude/data/config.json` (or tick
+*Name the tmux session* on the dashboard's Config tab) to derive it from the
+agent's name instead, so an agent named `code-reviewer` is reachable as
+`tclaude session attach code-reviewer` and appears under that name in
+`tmux ls` and the tmux status line.
+
+The name is the *base candidate*, not necessarily the final label. It is put
+through the same normalization described above (so `--name "café"` labels the
+session `caf`), and trimmed to 57 characters — 64 minus the 7 the longest
+disambiguating suffix needs — so even a disambiguated label stays inside the
+same 64-character cap the name itself passed.
+
+A name is not unique either, so a taken base is disambiguated with the same
+`-2`, `-3`, … suffix `tclaude session new` uses for a taken tmux name. "Taken"
+is deliberately stricter here than for a plain `session new`: any existing
+session row blocks its label, **including an exited one**, because a session id
+owns durable per-session history (costs, telemetry checkpoints, notify state)
+that must never be conflated between two different agents. A live tmux session
+of that name, a reserved pending spawn, and a spawn still in flight in this
+daemon all block it too. So spawning `worker` repeatedly climbs `worker`,
+`worker-2`, `worker-3`, … for as long as the older namesakes' rows survive —
+they are reaped with the rest of the old exited sessions, which is what stops
+the suffixes climbing forever. If you would rather have short, stable, opaque
+labels, leave the flag off.
+
+The numeric ladder stops at `-99`. Past that the name is kept but the suffix
+becomes random hex (`worker-a3f9c1`), and if even those collide the label falls
+back entirely to a plain random `spwn-XXXXXX` token — so a spawn never fails
+over its cosmetic label. A spawn with no name, or whose name normalizes to
+nothing, takes that random token straight away. Cloning is unaffected — a clone
+keeps the random label.
+
+The name-derived label belongs to the session that was *spawned*, not to the
+conversation. A resume — restart, reincarnate, power-on — relaunches with
+`session new -r`, which keys the new session row on the conversation's own
+UUID, so the restarted pane goes back to being named after that id. The agent's
+name, group membership, and history are unaffected; only the tmux handle
+changes.
+
 For a **Codex** spawn the daemon can't preset the conv-id (Codex generates
 it at its first turn), but Codex must self-submit *some* first-turn prompt
 for that id — and its on-disk history — to materialise at all. So that

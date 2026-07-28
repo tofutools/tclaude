@@ -4395,7 +4395,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// Generate a label that's unlikely to collide with existing
 	// session IDs: crypto-random hex (like GenerateSessionID()), with
 	// a "spwn-" prefix so these rows are easy to spot in
-	// `tclaude session ls`.
+	// `tclaude session ls`. With config agent.spawn_label_from_name on it is
+	// derived from p.Name instead, disambiguated against taken labels — see
+	// spawnLabelSequence.
 	//
 	// The deferred server-authoritative continuation arrives with its label
 	// already reserved (it keys the pending_spawns row the response returned),
@@ -4404,9 +4406,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		string(sandboxpolicy.ImplementationTclaudeLayer)
 	label := p.pendingSpawnLabel
 	if label == "" && layeredLaunch {
+		nextLabel := spawnLabelSequence(p.Name)
 		var reserveErr error
 		label, privateAttachmentCleanup, reserveErr =
-			reserveUniqueSpawnPrivateAttachmentRoot()
+			reserveUniqueSpawnPrivateAttachmentRootWith(nextLabel)
 		if reserveErr != nil {
 			return nil, &spawnFailure{
 				http.StatusInternalServerError,
@@ -4415,7 +4418,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 		}
 	} else if label == "" {
-		label = generateSpawnLabel()
+		label = spawnLabelSequence(p.Name)()
 	} else if layeredLaunch {
 		_, privateRootCreated, prepareErr :=
 			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
@@ -4943,7 +4946,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 					"label", label, "conv", preConvID, "error", err)
 			}
 		}
-		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode,
+		// The tmux name is the label ONLY until `session new` has to
+		// disambiguate it (UniqueTmuxSessionName appends "-N" when the base is
+		// already alive). That is unreachable for a random label but reachable
+		// for a name-derived one racing a tmux session created after the label
+		// was minted, so prefer the name the child actually recorded on the
+		// session row; the label is the fallback for a row that has not landed
+		// yet, which is what this branch is written for.
+		outcomeTmux := tmuxSession
+		if outcomeTmux == "" {
+			outcomeTmux = label
+		}
+		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: outcomeTmux, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
@@ -5088,16 +5102,24 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 			"unsupported_sandbox_profile_network", err.Error()}
 	}
 
-	label := generateSpawnLabel()
+	// The sequence is consumed at most once per spawn: either the layered
+	// reservation walks it until it creates a private root exclusively, or the
+	// plain path takes its first free candidate. Calling it here as well would
+	// burn a candidate and push a name-derived label to its "-2" form for no
+	// reason.
+	nextLabel := spawnLabelSequence(p.Name)
+	var label string
 	privateRootCleanup := func() {}
 	if p.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
 		var reserveErr error
 		label, privateRootCleanup, reserveErr =
-			reserveUniqueSpawnPrivateAttachmentRoot()
+			reserveUniqueSpawnPrivateAttachmentRootWith(nextLabel)
 		if reserveErr != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"could not reserve private attachment root: " + reserveErr.Error()}
 		}
+	} else {
+		label = nextLabel()
 	}
 	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
 		privateRootCleanup()
@@ -6262,19 +6284,23 @@ func liveConvForActor(convSnapshot, agentID string) string {
 // chars from crypto/rand gives ~16M values — collisions in the
 // session table are vanishingly rare in practice.
 func generateSpawnLabel() string {
+	return "spwn-" + randomLabelToken()
+}
+
+// randomLabelToken is generateSpawnLabel's 6-hex-char body, shared with the
+// name-derived label sequence's last-resort disambiguation suffix.
+func randomLabelToken() string {
 	var b [3]byte
 	_, _ = rand.Read(b[:])
-	return "spwn-" + hex.EncodeToString(b[:])
+	return hex.EncodeToString(b[:])
 }
 
-// reserveUniqueSpawnPrivateAttachmentRoot couples the short human-facing
+// reserveUniqueSpawnPrivateAttachmentRootWith couples the short human-facing
 // spawn label to a newly-created private root before any upload is promoted.
 // A stale/live label collision is reminted rather than reusing another
-// generation's inode and briefly exposing its batches.
-func reserveUniqueSpawnPrivateAttachmentRoot() (string, func(), error) {
-	return reserveUniqueSpawnPrivateAttachmentRootWith(generateSpawnLabel)
-}
-
+// generation's inode and briefly exposing its batches — so nextLabel must
+// yield a FRESH candidate per call (both generateSpawnLabel and
+// spawnLabelSequence do).
 func reserveUniqueSpawnPrivateAttachmentRootWith(
 	nextLabel func() string,
 ) (string, func(), error) {

@@ -1628,6 +1628,34 @@ type AgentConfig struct {
 	// Config.SpawnNameNormalizeEnabled.
 	SpawnNameNormalize *bool `json:"spawn_name_normalize,omitempty"`
 
+	// SpawnLabelFromName derives a spawned agent's session label — the
+	// sessions-table PK, and therefore the tmux session name `session new`
+	// renders from it — from the agent's --name instead of the historical
+	// random "spwn-XXXXXX" token. So an agent named "code-reviewer" attaches
+	// as `tclaude session attach code-reviewer` and shows up under that name
+	// in `tmux ls` / the status line.
+	//
+	// The name is the BASE CANDIDATE, not necessarily the final label. It is
+	// run through agent.NormalizeSpawnName ("café" → "caf") and trimmed to
+	// agent.MaxSpawnNameLen minus the longest suffix the disambiguation tiers
+	// can append, so a disambiguated label still clears the same 64-char cap
+	// the name itself passed.
+	//
+	// Default OFF (absent / false) keeps the random token: a name-derived
+	// label is not globally unique, so a taken base is disambiguated with a
+	// `-2`, `-3`, … suffix (the same shape `session new` uses for a taken tmux
+	// name) — and those suffixes climb for as long as the older namesake's
+	// session row survives, because a session id owns durable per-session
+	// history (costs, telemetry, notify state) that must never be reused.
+	// Operators who prefer stable-but-opaque labels should leave this off.
+	//
+	// The numeric ladder is bounded; past it the base keeps a random hex
+	// suffix ("worker-a3f9c1"), and past THAT the label degrades to a plain
+	// random token so a spawn never fails over its cosmetic label. A spawn
+	// with no name, or whose name normalizes to nothing, takes that random
+	// token straight away. See agentd.spawnLabelSequence for the exact tiers.
+	SpawnLabelFromName bool `json:"spawn_label_from_name,omitempty"`
+
 	// SpawnInlineMaxChars bounds the "inline the briefing into the first turn"
 	// optimisation. When a freshly-spawned agent's startup briefing (group
 	// context + task brief) fits within this many runes, the whole briefing is
@@ -2063,6 +2091,18 @@ func (c *Config) SpawnNameNormalizeEnabled() bool {
 		return true
 	}
 	return *c.Agent.SpawnNameNormalize
+}
+
+// SpawnLabelFromNameEnabled reports whether a spawned agent's session label
+// should be derived from its name rather than minted as a random token
+// (agent.spawn_label_from_name). Default OFF — nil config / absent agent
+// block / absent key all keep the historical "spwn-XXXXXX" label. Nil-safe
+// so callers need no guard.
+func (c *Config) SpawnLabelFromNameEnabled() bool {
+	if c == nil || c.Agent == nil {
+		return false
+	}
+	return c.Agent.SpawnLabelFromName
 }
 
 // NotificationConfig holds settings for OS notifications.
