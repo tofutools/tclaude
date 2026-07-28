@@ -558,6 +558,9 @@ function populateConfigForm(cfg) {
   // Same default-on *bool shape: nil / true = normalize names, only an
   // explicit false rejects invalid names.
   $('#cfg-agent-spawnnormalize').checked = a.spawn_name_normalize !== false;
+  // Default-off plain bool: only an explicit true derives the session label
+  // from the agent's name.
+  $('#cfg-agent-spawnlabelname').checked = a.spawn_label_from_name === true;
   const smph = a.spawn_max_per_hour;
   $('#cfg-agent-spawnmax-enabled').checked = smph != null;
   $('#cfg-agent-spawnmax').value = smph != null ? smph : '';
@@ -925,6 +928,10 @@ function assembleConfig() {
   } else {
     a.spawn_name_normalize = false;
   }
+  // Default-off: persist only the explicit `true`, drop the key otherwise
+  // (`omitempty` on the Go side would drop a written `false` anyway).
+  if ($('#cfg-agent-spawnlabelname').checked) a.spawn_label_from_name = true;
+  else delete a.spawn_label_from_name;
   if ($('#cfg-agent-spawnmax-enabled').checked) a.spawn_max_per_hour = cfgInt('cfg-agent-spawnmax', 10);
   else delete a.spawn_max_per_hour;
   // Clone the existing context_nudge block so a future sub-field with

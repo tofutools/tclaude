@@ -32,6 +32,11 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// snapshot. Handled history lives in the per-test DB.
 	agentd.ResetApprovalsForTest()
 
+	// Same for the name-derived spawn-label reservations: a process-wide set
+	// that outlives the per-scenario DB, so without this a second scenario
+	// spawning the same agent name would see it already claimed.
+	agentd.ResetSpawnLabelsForTest()
+
 	// The shared LiveTmuxSessions cache (TCL-370) is a daemon-wide global.
 	// Set its TTL to 0 for the scenario so every handler re-probes and sees
 	// live sim state — a test that flips tmux liveness mid-scenario must not

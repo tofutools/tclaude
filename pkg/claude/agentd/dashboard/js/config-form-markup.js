@@ -390,6 +390,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">On (default): a name like <code>code reviewer!</code> becomes <code>code-reviewer</code> at spawn. Off: a name outside <code>[A-Za-z0-9_-]</code> is rejected. Applies to the spawn dialog, <code>tclaude agent spawn</code>, and the daemon.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Name the tmux session</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-spawnlabelname" /> derive a spawned agent's session label from its name</label>
+        <span class="cfg-hint">Off (default): a random <code>spwn-XXXXXX</code> label. On: an agent named <code>code-reviewer</code> attaches as <code>tclaude session attach code-reviewer</code> and appears under that name in <code>tmux ls</code>. A name already taken by another session gets a <code>-2</code>, <code>-3</code>, … suffix, and those climb while the older namesake's session row survives. Unnamed spawns keep the random label.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Spawn rate limit</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-spawnmax-enabled" /> cap</label>
         <${ConfigInput} type="number" id="cfg-agent-spawnmax" min="0" placeholder="10" aria-label="Spawn rate limit per hour" />
