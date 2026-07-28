@@ -119,6 +119,12 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 		rules = appendOpenCodeOffRules(rules, approval, network)
 		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
 	}
+	if sandboxMode == OpenCodeSandboxTclaudeLayer {
+		rules = appendOpenCodeTclaudeLayerRules(
+			rules, approval, toolGovernance, network,
+		)
+		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
+	}
 
 	ordinary := map[string]openCodePathAccess{cwd: openCodePathWrite}
 	if err := mergeOpenCodeRoots(ordinary, spec.ReadDirs, openCodePathRead); err != nil {
@@ -176,13 +182,43 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	// tools available despite that soft-sandbox limitation by default; the
 	// independent tool-governance axis can instead make the whole block ask or
 	// deny. Explicit rules are required after the leading catch-all deny.
-	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
-		rules = append(rules, OpenCodePermissionRule{
-			Permission: permission, Pattern: "*", Action: toolGovernance,
-		})
-	}
+	rules = appendOpenCodeToolRules(rules, toolGovernance)
 	rules = appendOpenCodeWebRules(rules, approval, network)
 	return rules, nil
+}
+
+func appendOpenCodeTclaudeLayerRules(
+	rules []OpenCodePermissionRule,
+	approval, toolGovernance string,
+	network sandboxpolicy.NetworkAccess,
+) []OpenCodePermissionRule {
+	// The OS wall is authoritative in this mode, so do not compile the sandbox
+	// profile's path grants into OpenCode's bypassable command filter. Keep the
+	// rule set allowlist-shaped: explicitly enable the audited permission keys
+	// while the leading catch-all continues to deny an unknown future tool.
+	rules = append(rules,
+		OpenCodePermissionRule{Permission: "read", Pattern: "*", Action: openCodeActionAllow},
+		OpenCodePermissionRule{
+			Permission: "edit", Pattern: "*", Action: openCodeApprovalAction(approval),
+		},
+		OpenCodePermissionRule{
+			Permission: "external_directory", Pattern: "*", Action: openCodeApprovalAction(approval),
+		},
+	)
+	rules = appendOpenCodeToolRules(rules, toolGovernance)
+	return appendOpenCodeWebRules(rules, approval, network)
+}
+
+func appendOpenCodeToolRules(
+	rules []OpenCodePermissionRule,
+	action string,
+) []OpenCodePermissionRule {
+	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+		rules = append(rules, OpenCodePermissionRule{
+			Permission: permission, Pattern: "*", Action: action,
+		})
+	}
+	return rules
 }
 
 func appendOpenCodeOffRules(rules []OpenCodePermissionRule, approval string, network sandboxpolicy.NetworkAccess) []OpenCodePermissionRule {

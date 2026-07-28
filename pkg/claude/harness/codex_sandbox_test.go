@@ -33,6 +33,38 @@ func TestSandboxOffModeUsesHarnessNativeUnconfinedPosture(t *testing.T) {
 	}
 }
 
+func TestTclaudeLayerSandboxModeUsesHarnessCapability(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{DefaultName, ClaudeSandboxOff},
+		{CodexName, SandboxDangerFull},
+		{OpenCodeName, OpenCodeSandboxTclaudeLayer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := Resolve(tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := TclaudeLayerSandboxMode(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("TclaudeLayerSandboxMode(%s) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+
+	_, err := TclaudeLayerSandboxMode(&Harness{Name: "future"})
+	if err == nil ||
+		!strings.Contains(err.Error(), "single-wall launch-mode capability") ||
+		!strings.Contains(err.Error(), "--sandbox-impl harness-builtin") {
+		t.Fatalf("missing capability error = %v; want capability and named remedy", err)
+	}
+}
+
 // TestCodexSandbox_DefaultMode pins the secure default: a tclaude-spawned
 // Codex agent runs under the managed tclaude-agent profile (SandboxManagedProfile)
 // — workspace-write containment (writes confined to cwd+/tmp+$TMPDIR, $HOME

@@ -17,8 +17,8 @@ const (
 	OpenCodeSandboxAccessControl = "access-control"
 
 	// OpenCodeSandboxTclaudeLayer records that the agentd-owned, tool-executing
-	// OpenCode server runs inside tclaude's OS boundary. OpenCode's ordered
-	// permission rules remain active as defense in depth.
+	// OpenCode server runs inside tclaude's OS boundary. Its inner access profile
+	// is permissive while approval and tool-governance choices remain active.
 	OpenCodeSandboxTclaudeLayer = "tclaude-layer"
 
 	// OpenCodeSandboxOff disables directory scoping. Approval policy still
@@ -43,7 +43,7 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 	case OpenCodeSandboxAccessControl:
 		return "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules."
 	case OpenCodeSandboxTclaudeLayer:
-		return "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude's built-in OS sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. Ordered OpenCode permission rules stay active as defense in depth."
+		return "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude's built-in OS sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active."
 	case OpenCodeSandboxOff:
 		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 	default:

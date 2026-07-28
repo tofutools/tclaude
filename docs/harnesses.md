@@ -96,14 +96,16 @@ control plane, host network, and ambient host Unix sockets remain reachable,
 so this remains a partial boundary even though the established outer
 implementation earns the dashboard row's `🔒`. The compact tooltip reports
 `Status: ON` and `Implementation: TClaude`; it does not restate these caveats.
-The ordered OpenCode permission rules remain active as defense in depth. Linux
-uses bubblewrap; macOS uses Seatbelt through `sandbox-exec`. On macOS, per-agent
-mutable XDG privacy covers OpenCode data, cache, and state. When an ambient
-global OpenCode config directory exists, the config base is not redirected
-because Seatbelt cannot project it onto a private path: that directory is
-daemon-final read-only, but non-OpenCode config writes inside the wall target
-the real host config base and remain governed by the filesystem policy. With no
-ambient global config, the empty private config base remains in use.
+The inner OpenCode access profile permits all paths and does not compile the
+sandbox profile's path scoping; the selected approval policy and independent
+tool-governance setting remain active. Linux uses bubblewrap; macOS uses
+Seatbelt through `sandbox-exec`. On macOS, per-agent mutable XDG privacy covers
+OpenCode data, cache, and state. When an ambient global OpenCode config
+directory exists, the config base is not redirected because Seatbelt cannot
+project it onto a private path: that directory is daemon-final read-only, but
+non-OpenCode config writes inside the wall target the real host config base and
+remain governed by the filesystem policy. With no ambient global config, the
+empty private config base remains in use.
 
 The Linux executor also has a versioned, tclaude-owned Unix relay for carrying
 its authenticated control plane across an isolated network namespace. The

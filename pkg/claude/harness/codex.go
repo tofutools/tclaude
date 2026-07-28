@@ -34,6 +34,7 @@ func init() {
 		Hooks:            codexHookInstaller{},
 		Life:             codexLifecycle{},
 		Sandbox:          codexSandbox{},
+		TclaudeLayerMode: SandboxDangerFull,
 		BuiltinOSSandbox: true,
 		NestedSandbox:    codexNestedSandbox{},
 		Approval:         codexApproval{},

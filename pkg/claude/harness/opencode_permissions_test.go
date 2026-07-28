@@ -265,22 +265,53 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 	}
 }
 
-func TestBuildOpenCodePermissionRulesTclaudeLayerKeepsDefenseInDepth(t *testing.T) {
-	spec := OpenCodePermissionSpec{
+func TestBuildOpenCodePermissionRulesTclaudeLayerIsPermissiveInsideWall(t *testing.T) {
+	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
 		Cwd:            "/repo/service",
 		Worktree:       "/repo",
-		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
+		SandboxMode:    OpenCodeSandboxTclaudeLayer,
+		ApprovalPolicy: OpenCodeApprovalAllowTools,
+		ToolGovernance: OpenCodeToolsAsk,
+		ReadDirs:       []string{"/outside/read"},
+		WriteDirs:      []string{"/outside/write"},
 		DenyDirs:       []string{"/repo/service/secret"},
-		NetworkAccess:  sandboxpolicy.NetworkAccessNone,
+		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, OpenCodePermissionRule{
+		Permission: "*", Pattern: "*", Action: "deny",
+	}, rules[0], "unknown future tools remain denied until audited")
+	for _, permission := range []string{"read", "edit", "external_directory"} {
+		assert.Equal(t, "allow", lastExactOpenCodeAction(rules, permission, "*"), permission)
 	}
-	softRules, err := BuildOpenCodePermissionRules(spec)
+	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+		assert.Equal(t, "ask", lastExactOpenCodeAction(rules, permission, "*"), permission)
+	}
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(
+		rules, "read", "service/secret/private.txt"),
+		"profile path denies must not be compiled inside the authoritative OS wall")
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(
+		rules, "external_directory", "/outside/write/private.txt"),
+		"profile path grants must not affect the permissive inner rule shape")
+}
+
+func TestBuildOpenCodePermissionRulesTclaudeLayerHonorsApproval(t *testing.T) {
+	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+		Cwd:            "/repo",
+		Worktree:       "/repo",
+		SandboxMode:    OpenCodeSandboxTclaudeLayer,
+		ApprovalPolicy: OpenCodeApprovalAsk,
+		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
+	})
 	require.NoError(t, err)
-	spec.SandboxMode = OpenCodeSandboxTclaudeLayer
-	layerRules, err := BuildOpenCodePermissionRules(spec)
-	require.NoError(t, err)
-	assert.Equal(t, softRules, layerRules,
-		"the OS wall supplements rather than replaces OpenCode's ordered permissions")
+
+	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "read", "*"))
+	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "edit", "*"))
+	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "external_directory", "*"))
+	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "bash", "*"),
+		"blank tool governance keeps its independent allow default")
+	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "webfetch", "*"))
 }
 
 func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {

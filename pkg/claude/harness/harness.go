@@ -99,6 +99,11 @@ type Harness struct {
 	// which case the spawn path passes no sandbox flag and rejects an
 	// explicit mode. See JOH-192.
 	Sandbox SandboxCatalog
+	// TclaudeLayerMode is the harness-native launch posture used when
+	// tclaude-layer is the single OS wall. Keeping this on the descriptor makes
+	// the mapping a capability contract shared by spawn and resume instead of
+	// duplicated harness-name switches.
+	TclaudeLayerMode string
 	// BuiltinOSSandbox reports that the harness really owns an OS-enforced
 	// sandbox behind its Sandbox catalog. It is deliberately separate from
 	// Sandbox itself: OpenCode has a useful access-control/tclaude-layer/off
