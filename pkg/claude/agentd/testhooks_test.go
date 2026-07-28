@@ -862,10 +862,10 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 // SetRecentlyMergedPRsResolverForTest swaps the single bulk GitHub-search
 // boundary behind the daemon-wide presented-PR poller. The fake receives the
 // deduped repository list and returns merged PR URLs.
-func SetRecentlyMergedPRsResolverForTest(fn func(repos []string) ([]string, bool)) func() {
+func SetRecentlyMergedPRsResolverForTest(fn func(repos []string, resultLimit int) ([]string, bool)) func() {
 	prev := recentlyMergedPRsResolver
-	recentlyMergedPRsResolver = func(repos []string) ([]presentedPRInfo, bool) {
-		urls, ok := fn(repos)
+	recentlyMergedPRsResolver = func(repos []string, resultLimit int) ([]presentedPRInfo, bool) {
+		urls, ok := fn(repos, resultLimit)
 		if !ok {
 			return nil, false
 		}
@@ -881,7 +881,7 @@ func SetRecentlyMergedPRsResolverForTest(fn func(repos []string) ([]string, bool
 // PollRecentlyMergedPRsForTest runs one synchronous daemon-wide merged-PR
 // poll, avoiding the production ticker in flow tests.
 func PollRecentlyMergedPRsForTest() {
-	pollRecentlyMergedPRs()
+	_, _ = pollRecentlyMergedPRs()
 }
 
 // SetAsyncSpawnInlineGraceForTest shrinks the non-blocking spawn's

@@ -17,16 +17,25 @@ import (
 )
 
 const (
-	maxAgentPRURLLen                  = 2048
-	maxAgentPRSummaryLen              = 200
-	recentlyMergedPRPollInterval      = 10 * time.Second
-	recentlyMergedPRSearchResultLimit = 20
+	maxAgentPRURLLen                         = 2048
+	maxAgentPRSummaryLen                     = 200
+	recentlyMergedPRPollInterval             = 10 * time.Second
+	recentlyMergedPRMaxBackoff               = 5 * time.Minute
+	defaultRecentlyMergedPRSearchResultLimit = 20
+	maxRecentlyMergedPRSearchResultLimit     = 100
+	maxRecentlyMergedPRSearchQueryChars      = 200
 )
 
 var (
 	presentedPRInflight       sync.Map
 	presentedPRInfoResolver   = livePresentedPRInfoResolver
 	recentlyMergedPRsResolver = liveRecentlyMergedPRsResolver
+	recentlyMergedPRSearch    = liveRecentlyMergedPRSearch
+	githubLoginResolver       = liveGitHubLoginResolver
+	githubLoginCache          struct {
+		sync.Mutex
+		login string
+	}
 )
 
 // presentedPRView is the dashboard wire shape for explicitly presented PRs.
@@ -200,23 +209,59 @@ func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Tim
 }
 
 // startRecentlyMergedPRPoller runs one daemon-wide GitHub search immediately,
-// then once per interval. The search input comes from all unhandled presented
-// PR rows in one DB read, so its cadence and subprocess count never scale with
-// the number of agents or groups.
+// then once per interval. Consecutive failures exponentially back off to five
+// minutes; warnings are emitted only while that delay grows, then one recovery
+// message closes the incident. The search input comes from all unhandled
+// presented PR rows in one DB read, so its cadence and subprocess count never
+// scale with the number of agents or groups.
 func startRecentlyMergedPRPoller(stop <-chan struct{}) {
 	go func() {
-		pollRecentlyMergedPRs()
-		ticker := time.NewTicker(recentlyMergedPRPollInterval)
-		defer ticker.Stop()
+		timer := time.NewTimer(0)
+		defer timer.Stop()
+		failures := 0
 		for {
 			select {
 			case <-stop:
 				return
-			case <-ticker.C:
-				pollRecentlyMergedPRs()
+			case <-timer.C:
+				attempted, err := pollRecentlyMergedPRs()
+				delay := recentlyMergedPRPollInterval
+				if err != nil {
+					failures++
+					delay = recentlyMergedPRRetryDelay(failures)
+					previousDelay := recentlyMergedPRRetryDelay(failures - 1)
+					if failures == 1 || delay > previousDelay {
+						slog.Warn("presented-pr: recently merged search failed; backing off",
+							"error", err, "consecutive_failures", failures,
+							"retry_in", delay, "module", "agentd")
+					}
+				} else if attempted {
+					if failures > 0 {
+						slog.Info("presented-pr: recently merged search recovered",
+							"previous_failures", failures, "module", "agentd")
+					}
+					failures = 0
+				} else {
+					// Nothing currently needs the bulk search. Clear any old
+					// failure streak without claiming a GitHub recovery; a
+					// newly presented PR gets the normal ten-second cadence.
+					failures = 0
+				}
+				timer.Reset(delay)
 			}
 		}
 	}()
+}
+
+func recentlyMergedPRRetryDelay(failures int) time.Duration {
+	if failures <= 0 {
+		return recentlyMergedPRPollInterval
+	}
+	delay := recentlyMergedPRPollInterval
+	for range min(failures, 5) {
+		delay *= 2
+	}
+	return min(delay, recentlyMergedPRMaxBackoff)
 }
 
 type githubPRRef struct {
@@ -231,14 +276,13 @@ func (r githubPRRef) key() string {
 // pollRecentlyMergedPRs complements the individual gh-pr-view refresh path.
 // One bulk search catches the common case (a recently merged PR authored by
 // the authenticated gh user) within about ten seconds. Anything it cannot see
-// — another author's PR, an unmerged close, a result outside the newest 20, or
-// a failed search — remains covered by the existing per-PR resolver.
-func pollRecentlyMergedPRs() {
+// — another author's PR, an unmerged close, a result outside the bounded
+// 20–100 result page, or a failed search — remains covered by the existing
+// per-PR resolver.
+func pollRecentlyMergedPRs() (bool, error) {
 	all, err := db.ListUnhandledAgentPRs()
 	if err != nil {
-		slog.Warn("presented-pr: failed to list PRs for merged search",
-			"error", err, "module", "agentd")
-		return
+		return false, fmt.Errorf("list presented PRs: %w", err)
 	}
 
 	targets := make(map[string][]db.AgentPR)
@@ -257,7 +301,7 @@ func pollRecentlyMergedPRs() {
 		}
 	}
 	if len(targets) == 0 {
-		return
+		return false, nil
 	}
 
 	repos := make([]string, 0, len(reposByKey))
@@ -266,9 +310,10 @@ func pollRecentlyMergedPRs() {
 	}
 	sort.Strings(repos)
 
-	merged, ok := recentlyMergedPRsResolver(repos)
+	resultLimit := recentlyMergedPRResultLimit(len(targets))
+	merged, ok := recentlyMergedPRsResolver(repos, resultLimit)
 	if !ok {
-		return
+		return true, fmt.Errorf("gh recently merged PR search unavailable")
 	}
 	now := time.Now()
 	cached := make(map[string]bool)
@@ -294,40 +339,104 @@ func pollRecentlyMergedPRs() {
 			}
 		}
 	}
+	return true, nil
 }
 
-func liveRecentlyMergedPRsResolver(repos []string) ([]presentedPRInfo, bool) {
+func recentlyMergedPRResultLimit(targetCount int) int {
+	return min(max(defaultRecentlyMergedPRSearchResultLimit, targetCount), maxRecentlyMergedPRSearchResultLimit)
+}
+
+func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presentedPRInfo, bool) {
+	login, ok := cachedGitHubLogin()
+	if !ok {
+		return nil, false
+	}
 	args := []string{
-		"search", "prs",
-		"--author=@me",
-		"--merged",
-		"--sort", "updated",
-		"--limit", strconv.Itoa(recentlyMergedPRSearchResultLimit),
-		"--json", "repository,number,title,closedAt,url",
+		"api", "--method", "GET", "search/issues",
+		"-F", "advanced_search=true",
+		"-f", "q=" + recentlyMergedPRSearchQuery(login, repos),
+		"-f", "sort=updated",
+		"-f", "order=desc",
+		"-F", "per_page=" + strconv.Itoa(resultLimit),
 	}
-	for _, repo := range repos {
-		args = append(args, "--repo", repo)
-	}
-	out := runInDir("", "gh", args...)
+	out := recentlyMergedPRSearch(args...)
 	if out == "" {
+		invalidateCachedGitHubLogin()
 		return nil, false
 	}
-	var prs []struct {
-		Number int    `json:"number"`
-		URL    string `json:"url"`
+	var search struct {
+		Items []struct {
+			Number  int    `json:"number"`
+			HTMLURL string `json:"html_url"`
+		} `json:"items"`
 	}
-	if json.Unmarshal([]byte(out), &prs) != nil {
+	if json.Unmarshal([]byte(out), &search) != nil {
+		invalidateCachedGitHubLogin()
 		return nil, false
 	}
-	result := make([]presentedPRInfo, 0, len(prs))
-	for _, pr := range prs {
+	result := make([]presentedPRInfo, 0, len(search.Items))
+	for _, pr := range search.Items {
 		result = append(result, presentedPRInfo{
 			Number: pr.Number,
-			URL:    strings.TrimSpace(pr.URL),
+			URL:    strings.TrimSpace(pr.HTMLURL),
 			State:  "merged",
 		})
 	}
 	return result, true
+}
+
+func recentlyMergedPRSearchQuery(login string, repos []string) string {
+	queryParts := []string{"author:" + login, "is:merged", "type:pr"}
+	for _, repo := range boundedRecentlyMergedPRSearchRepos(login, repos) {
+		queryParts = append(queryParts, "repo:"+repo)
+	}
+	return strings.Join(queryParts, " ")
+}
+
+func liveRecentlyMergedPRSearch(args ...string) string {
+	return runInDir("", "gh", args...)
+}
+
+// boundedRecentlyMergedPRSearchRepos keeps the generated GitHub search query
+// below its documented query-length ceiling. If the deduped repo qualifiers
+// would make the query too long, dropping all repo filters is safer than
+// polling only a subset: the global authored-by-login result can still match
+// every referenced PR, and remains one Search request.
+func boundedRecentlyMergedPRSearchRepos(login string, repos []string) []string {
+	queryLen := len("author:") + len(login) + len(" is:merged type:pr")
+	for _, repo := range repos {
+		queryLen += len(" repo:") + len(repo)
+		if queryLen > maxRecentlyMergedPRSearchQueryChars {
+			return nil
+		}
+	}
+	return repos
+}
+
+func cachedGitHubLogin() (string, bool) {
+	githubLoginCache.Lock()
+	defer githubLoginCache.Unlock()
+	if githubLoginCache.login != "" {
+		return githubLoginCache.login, true
+	}
+	login, ok := githubLoginResolver()
+	login = strings.TrimSpace(login)
+	if !ok || login == "" {
+		return "", false
+	}
+	githubLoginCache.login = login
+	return login, true
+}
+
+func invalidateCachedGitHubLogin() {
+	githubLoginCache.Lock()
+	githubLoginCache.login = ""
+	githubLoginCache.Unlock()
+}
+
+func liveGitHubLoginResolver() (string, bool) {
+	login := runInDir("", "gh", "api", "user", "--jq", ".login")
+	return login, login != ""
 }
 
 func presentedPRCacheKey(rawURL string) string {

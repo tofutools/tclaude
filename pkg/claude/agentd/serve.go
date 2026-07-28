@@ -566,9 +566,9 @@ func runServe(p *serveParams) error {
 	startPluginChecker(cronStop)
 
 	// Recently merged presented PR poller. One global, repo-deduped
-	// `gh search prs` catches the common authored-by-me merge case within
-	// about ten seconds; the existing individual PR refresh remains the
-	// best-effort fallback for everything else. Shares the daemon stop
+	// GitHub Search API call catches the common authored-by-me merge case
+	// within about ten seconds; the existing individual PR refresh remains
+	// the best-effort fallback for everything else. Shares the daemon stop
 	// channel and never scales its poll count with agents or groups.
 	startRecentlyMergedPRPoller(cronStop)
 

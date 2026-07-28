@@ -180,10 +180,12 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 
 	var calls int
 	var gotRepos []string
+	var gotResultLimit int
 	t.Cleanup(agentd.SetRecentlyMergedPRsResolverForTest(
-		func(repos []string) ([]string, bool) {
+		func(repos []string, resultLimit int) ([]string, bool) {
 			calls++
 			gotRepos = append([]string(nil), repos...)
+			gotResultLimit = resultLimit
 			return []string{merged}, true
 		}))
 
@@ -192,6 +194,7 @@ func TestPresentPR_RecentlyMergedPollIsGlobalAndRepoDeduped(t *testing.T) {
 	assert.Equal(t, 1, calls, "one bulk GitHub search covers every agent and group")
 	assert.Equal(t, []string{"tofutools/other", "tofutools/tclaude"}, gotRepos)
 	assert.True(t, slices.IsSorted(gotRepos), "repository arguments are deterministic")
+	assert.Equal(t, 20, gotResultLimit, "small sets retain the useful recent-results floor")
 
 	rowA, err := db.GetAgentPR(agentA, merged)
 	require.NoError(t, err)
