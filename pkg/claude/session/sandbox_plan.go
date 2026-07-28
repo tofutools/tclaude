@@ -35,6 +35,7 @@ type SandboxPlanEntry struct {
 // access-enforcement plan token.
 type SandboxPlanDescription struct {
 	Applicable     bool                       `json:"applicable"`
+	Reason         string                     `json:"reason,omitempty"`
 	NetworkPosture string                     `json:"network_posture,omitempty"`
 	Entries        []SandboxPlanEntry         `json:"entries"`
 	Aliases        []sandboxpolicy.MountAlias `json:"aliases"`

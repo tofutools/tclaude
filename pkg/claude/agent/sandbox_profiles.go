@@ -83,15 +83,17 @@ type sandboxProfilePlanTargetJSON struct {
 }
 
 type sandboxProfilePlanJSON struct {
-	Source        string                         `json:"source"`
-	Agent         string                         `json:"agent,omitempty"`
-	Cwd           string                         `json:"cwd"`
-	Target        sandboxProfilePlanTargetJSON   `json:"target"`
-	Profiles      []sandboxpolicy.AppliedProfile `json:"profiles"`
-	RecordedAxes  *sandboxpolicy.ResolvedAxes    `json:"recorded_axes,omitempty"`
-	Notices       []sandboxpolicy.AccessNotice   `json:"notices"`
-	PredictedAxes *harness.PredictedAccessAxes   `json:"predicted_axes,omitempty"`
-	Plan          session.SandboxPlanDescription `json:"plan"`
+	Source          string                         `json:"source"`
+	Agent           string                         `json:"agent,omitempty"`
+	Cwd             string                         `json:"cwd"`
+	Target          sandboxProfilePlanTargetJSON   `json:"target"`
+	Profiles        []sandboxpolicy.AppliedProfile `json:"profiles"`
+	PolicyRecorded  bool                           `json:"policy_recorded"`
+	ProfilesOmitted bool                           `json:"profiles_omitted,omitempty"`
+	RecordedAxes    *sandboxpolicy.ResolvedAxes    `json:"recorded_axes,omitempty"`
+	Notices         []sandboxpolicy.AccessNotice   `json:"notices"`
+	PredictedAxes   *harness.PredictedAccessAxes   `json:"predicted_axes,omitempty"`
+	Plan            session.SandboxPlanDescription `json:"plan"`
 }
 
 func sandboxProfilesPlanCmd() *cobra.Command {
@@ -155,7 +157,11 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 		fmt.Fprintf(w, "  resolved by: %s\n", result.Target.ResolvedBy)
 	}
 	fmt.Fprintf(w, "  cwd: %s\n", result.Cwd)
-	if len(result.Profiles) == 0 {
+	if !result.PolicyRecorded {
+		fmt.Fprintln(w, "  profiles: (not recorded)")
+	} else if result.ProfilesOmitted {
+		fmt.Fprintln(w, "  profiles: (omitted at launch)")
+	} else if len(result.Profiles) == 0 {
 		fmt.Fprintln(w, "  profiles: (none)")
 	} else {
 		fmt.Fprintln(w, "  profiles:")
@@ -163,8 +169,21 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 			fmt.Fprintf(w, "    %s: %s\n", profile.Scope, profile.Name)
 		}
 	}
+	if result.PredictedAxes != nil {
+		fmt.Fprintln(w, "  predicted access:")
+		printPredictedAccessAxis(w, "network", result.PredictedAxes.Network)
+		printPredictedAccessAxis(w, "Unix sockets", result.PredictedAxes.UnixSockets)
+	}
+	if result.RecordedAxes != nil {
+		fmt.Fprintln(w, "  recorded access:")
+		fmt.Fprintf(w, "    network: %s\n", result.RecordedAxes.Network.Mode)
+		fmt.Fprintf(w, "    Unix sockets: %s\n", result.RecordedAxes.UnixSockets.Mode)
+	}
+	for _, notice := range result.Notices {
+		fmt.Fprintf(w, "  notice: %s\n", notice.Detail)
+	}
 	if !result.Plan.Applicable {
-		fmt.Fprintln(w, "  mount plan: not applicable (harness-builtin)")
+		fmt.Fprintf(w, "  mount plan: not applicable (%s)\n", result.Plan.Reason)
 		return
 	}
 	fmt.Fprintf(w, "  network posture: %s\n", result.Plan.NetworkPosture)

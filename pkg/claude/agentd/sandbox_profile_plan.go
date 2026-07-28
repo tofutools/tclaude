@@ -33,15 +33,17 @@ type sandboxProfilePlanTarget struct {
 }
 
 type sandboxProfilePlanResponse struct {
-	Source        string                         `json:"source"`
-	Agent         string                         `json:"agent,omitempty"`
-	Cwd           string                         `json:"cwd"`
-	Target        sandboxProfilePlanTarget       `json:"target"`
-	Profiles      []sandboxpolicy.AppliedProfile `json:"profiles"`
-	RecordedAxes  *sandboxpolicy.ResolvedAxes    `json:"recorded_axes,omitempty"`
-	Notices       []sandboxpolicy.AccessNotice   `json:"notices"`
-	PredictedAxes *harness.PredictedAccessAxes   `json:"predicted_axes,omitempty"`
-	Plan          session.SandboxPlanDescription `json:"plan"`
+	Source          string                         `json:"source"`
+	Agent           string                         `json:"agent,omitempty"`
+	Cwd             string                         `json:"cwd"`
+	Target          sandboxProfilePlanTarget       `json:"target"`
+	Profiles        []sandboxpolicy.AppliedProfile `json:"profiles"`
+	PolicyRecorded  bool                           `json:"policy_recorded"`
+	ProfilesOmitted bool                           `json:"profiles_omitted,omitempty"`
+	RecordedAxes    *sandboxpolicy.ResolvedAxes    `json:"recorded_axes,omitempty"`
+	Notices         []sandboxpolicy.AccessNotice   `json:"notices"`
+	PredictedAxes   *harness.PredictedAccessAxes   `json:"predicted_axes,omitempty"`
+	Plan            session.SandboxPlanDescription `json:"plan"`
 }
 
 // handleSandboxProfilePlan is read-only inspection. The hypothetical branch
@@ -88,7 +90,9 @@ func writeSandboxProfilePlanResult(w http.ResponseWriter, response sandboxProfil
 }
 
 func recordedSandboxProfilePlan(selector string) (sandboxProfilePlanResponse, error) {
-	resolved, _, err := agent.ResolveSelector(selector)
+	// Inspection must not trigger ResolveSelector's miss-time project rescan
+	// and index writes. Known agents/session rows are already SQLite-backed.
+	resolved, _, err := agent.ResolveSelectorCached(selector)
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err
 	}
@@ -119,14 +123,20 @@ func recordedSandboxProfilePlan(selector string) (sandboxProfilePlanResponse, er
 		Profiles: []sandboxpolicy.AppliedProfile{},
 		Notices:  []sandboxpolicy.AccessNotice{},
 		Plan: session.SandboxPlanDescription{
-			Applicable: implementation.UsesTclaudeLayer(),
+			Applicable: false,
+			Reason:     "harness-builtin has no outer mount plan",
 			Entries:    []session.SandboxPlanEntry{},
 			Aliases:    []sandboxpolicy.MountAlias{},
 		},
 	}
+	if implementation.UsesTclaudeLayer() {
+		response.Plan.Reason = "effective sandbox snapshot was not recorded"
+	}
 	if row.EffectiveSandbox == nil {
 		return response, nil
 	}
+	response.PolicyRecorded = true
+	response.ProfilesOmitted = row.EffectiveSandbox.ProfilesOmitted
 	response.Profiles = append(response.Profiles, row.EffectiveSandbox.Applied...)
 	response.Notices = append(response.Notices, row.EffectiveSandbox.Effective.AccessNotices...)
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(row.EffectiveSandbox.Effective)
@@ -214,6 +224,10 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 		return sandboxProfilePlanResponse{}, err
 	}
 	described := harness.DescribePredictedAccess(axes, prediction)
+	planReason := ""
+	if !target.implementation.UsesTclaudeLayer() {
+		planReason = "harness-builtin has no outer mount plan"
+	}
 	response := sandboxProfilePlanResponse{
 		Source: "hypothetical",
 		Cwd:    strings.TrimSpace(body.Cwd),
@@ -223,11 +237,14 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 			Platform:       target.platform,
 			ResolvedBy:     resolvedBy,
 		},
-		Profiles:      append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
-		Notices:       []sandboxpolicy.AccessNotice{},
+		Profiles:       append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
+		PolicyRecorded: true,
+		Notices: append([]sandboxpolicy.AccessNotice(nil),
+			snapshot.Effective.AccessNotices...),
 		PredictedAxes: &described,
 		Plan: session.SandboxPlanDescription{
 			Applicable: target.implementation.UsesTclaudeLayer(),
+			Reason:     planReason,
 			Entries:    []session.SandboxPlanEntry{},
 			Aliases:    []sandboxpolicy.MountAlias{},
 		},
