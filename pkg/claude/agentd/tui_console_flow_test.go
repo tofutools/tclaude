@@ -158,14 +158,44 @@ func TestTUIConsoleEnterGoesToTheAgentsTmuxSession(t *testing.T) {
 	assert.Equal(t, os.Getenv("TMUX") != "", attach.inTmux,
 		"switch-client inside tmux, attach outside it")
 
-	// An agent whose pane is gone has nothing to go to, and the console says
-	// so instead of handing the terminal to a dead session.
+	// An agent whose pane is gone has nothing to go to. Enter turns it back
+	// on instead — through the daemon's own resume verb, so the agent really
+	// is running again afterwards.
 	attach.called = false
 	f.MarkOffline(sp.TmuxSession)
 	c.Refresh()
+	require.Contains(t, c.View(), "offline")
 	c.Press(t, "enter")
-	assert.False(t, attach.called)
-	assert.Contains(t, c.View(), "no live tmux session")
+	assert.False(t, attach.called, "an offline agent is started, not attached to")
+	assert.Contains(t, c.View(), "Started")
+	assert.Contains(t, c.View(), "1 agents (1 online)", "and the listing shows it running again")
+}
+
+// Enter on an offline agent is the console's "turn this back on": it goes
+// through the daemon's resume verb, in the directory and conversation the
+// agent was last running.
+func TestTUIConsoleEnterStartsAnOfflineAgent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	sp := f.Spawn("dev", "worker")
+	f.MarkOffline(sp.TmuxSession)
+
+	attach := stubTUIAttach(t)
+	c := newTUIConsole(t)
+	c.Refresh()
+	require.Contains(t, c.View(), "offline")
+
+	c.Press(t, "enter")
+
+	assert.False(t, attach.called, "starting an agent does not take over this terminal")
+	assert.Contains(t, c.View(), "Started worker")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1, "resuming does not create a second member")
+
+	// A second enter now has a live pane to go to.
+	c.Press(t, "enter")
+	assert.True(t, attach.called, "once it is running, enter goes to its pane")
+	assert.True(t, f.World.Tmux.IsAlive(attach.session), "and the session is live: %q", attach.session)
 }
 
 // The spawn form's profile picker offers the daemon's saved profiles, and the

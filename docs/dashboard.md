@@ -57,7 +57,8 @@ exist, start a new one, go look at one, retire one that is done — and nothing
 else:
 
 ```
-enter  go to the selected agent's tmux session
+enter  go to the selected agent's tmux session — or, on an offline agent,
+       turn it back on
 n      start a new agent (group, spawn profile, name, directory, harness,
        startup brief)
 x      retire the selected agent (it asks first)
@@ -75,12 +76,23 @@ CLI or the dashboard, which probe it first. Retiring is confirmed before
 anything happens, and the confirmation acts on the agent it names even if the
 listing re-sorted under the cursor in the meantime.
 
-**enter** does what it does in `tclaude session watch` — it puts you on the
-selected agent's pane. When agentd itself runs inside tmux it uses
+**enter** on a live agent does what it does in `tclaude session watch` — it
+puts you on that agent's pane. When agentd itself runs inside tmux it uses
 `switch-client`, so the console stays live in its own window and tmux's own
 keys bring you back; outside tmux it attaches, and the console repaints when
-you detach with `ctrl-b d`. An agent with no live pane says so instead. Only
-an operator console can do this (see the identity note below).
+you detach with `ctrl-b d`. Only an operator console can do this (see the
+identity note below).
+
+**enter** on an *offline* agent turns it back on instead — the console's
+`tclaude agent resume`, and the same move the dashboard's grey status dot
+makes. It relaunches the agent in the directory and conversation it was last
+running, so it asks nothing first; the listing shows it online again and a
+second **enter** goes to its new pane. Unlike attaching, this is not
+statically operator-only: it goes through the daemon's resume verb, which
+gates the caller itself. What the console never does is recreate a launch
+directory that has been deleted since — that comes back as
+`error:missing_cwd` naming the path, and recovering it is a CLI or dashboard
+move (`tclaude agent resume --recreate-dir`).
 
 A spawn that lands goes straight to the new agent's pane — the same handover
 **enter** performs on its row, so starting an agent leaves you in front of it.

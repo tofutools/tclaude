@@ -392,6 +392,14 @@ type tuiRetireResult struct {
 	Shutdown memberOpResult    `json:"shutdown"`
 }
 
+// tuiResumeResult is the subset of the resume response the console reports:
+// what the daemon did, and — for everything that is not a plain "resumed" —
+// why.
+type tuiResumeResult struct {
+	Action string `json:"action"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // ---- model -----------------------------------------------------------------
 
 type tuiMode int
@@ -465,11 +473,13 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
-	// refreshing / spawning / retiring keep the periodic tick from stacking
-	// requests and the operator from firing two of the same action at once.
+	// refreshing / spawning / retiring / resuming keep the periodic tick from
+	// stacking requests and the operator from firing two of the same action at
+	// once.
 	refreshing  bool
 	spawning    bool
 	retiring    bool
+	resuming    bool
 	lastRefresh time.Time
 	// retireTarget is the agent the retire confirmation is about, captured
 	// when the prompt opens rather than re-read when it is answered: the
@@ -534,6 +544,13 @@ type (
 	tuiRetiredMsg struct {
 		agent string
 		res   tuiRetireResult
+		err   error
+	}
+	// tuiResumedMsg carries the outcome of one resume request — turning an
+	// offline agent back on.
+	tuiResumedMsg struct {
+		agent string
+		res   tuiResumeResult
 		err   error
 	}
 )
@@ -670,6 +687,19 @@ func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
 		var res tuiRetireResult
 		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
 		return tuiRetiredMsg{agent: name, res: res, err: err}
+	}
+}
+
+// tuiResumeCmd turns one offline agent back on through the daemon's own
+// resume verb. Like the retire above it sends no query parameters, which
+// leaves ?recreate=1 off: re-creating a launch directory the operator has
+// since deleted is a decision the console has no way to put to them, so a
+// vanished directory comes back as an error they can act on instead.
+func tuiResumeCmd(api *tuiAPI, convID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var res tuiResumeResult
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/resume", nil, &res)
+		return tuiResumedMsg{agent: name, res: res, err: err}
 	}
 }
 
@@ -928,6 +958,77 @@ func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
 // insideTmux reports whether this process is itself a tmux client.
 func insideTmux() bool { return os.Getenv("TMUX") != "" }
 
+// selectedAgent is the row the cursor is on, and whether there is one — the
+// listing can be empty, and it re-sorts under the cursor every two seconds.
+func (m tuiModel) selectedAgent() (tuiAgentRow, bool) {
+	visible := m.visibleAgents()
+	if m.cursor < 0 || m.cursor >= len(visible) {
+		return tuiAgentRow{}, false
+	}
+	return visible[m.cursor], true
+}
+
+// enterSelected is what enter does on a row, which depends on whether the
+// agent is up: an offline one is turned back on, a live one gets this
+// terminal handed to its pane. Both are the move the operator wants next
+// after picking that row, and an offline agent has no pane to attach to
+// anyway — enter on it used to be a dead key that only said so.
+func (m tuiModel) enterSelected() (tuiModel, tea.Cmd) {
+	row, ok := m.selectedAgent()
+	if !ok {
+		return m, nil
+	}
+	if !row.Online {
+		return m.resumeSelected(row)
+	}
+	return m.attachSelected()
+}
+
+// resumeSelected starts the selected agent's session again through the
+// daemon's resume verb. It asks nothing first: resume is not destructive (it
+// relaunches the agent in its recorded directory and conversation) and it is
+// what the grey status dot does on the web dashboard.
+//
+// Permission is the daemon's call, not the console's — same as retire. An
+// agent-class console holding agent.resume over its own group's members may
+// use this; one that does not gets the endpoint's own refusal.
+func (m tuiModel) resumeSelected(row tuiAgentRow) (tuiModel, tea.Cmd) {
+	if m.resuming {
+		m.notice = "A resume is already in flight."
+		return m, nil
+	}
+	if row.ConvID == "" {
+		// A member that has never had a conversation (a placeholder row) has
+		// nothing to resume, and the daemon's own answer would be a 404 on a
+		// path built from an empty selector.
+		m.notice = row.name() + " has no conversation to start."
+		return m, nil
+	}
+	m.resuming = true
+	m.notice = "Starting " + row.name() + "…"
+	return m, tuiResumeCmd(m.api, row.ConvID, row.name())
+}
+
+// tuiResumeSummary describes a landed resume in one line. Anything that is
+// not a plain "resumed" carries its reason in Detail — a launch directory
+// that no longer exists, provenance the daemon will not trust unattended —
+// and this console has no browser to go and read that in, so the reason
+// travels with the verdict or it is lost.
+func tuiResumeSummary(msg tuiResumedMsg) string {
+	switch msg.res.Action {
+	case "resumed", "":
+		return "Started " + msg.agent + "."
+	case "skipped:already_online":
+		return msg.agent + " was already running."
+	default:
+		out := "Could not start " + msg.agent + ": " + msg.res.Action
+		if detail := strings.TrimSpace(msg.res.Detail); detail != "" {
+			out += " (" + detail + ")"
+		}
+		return out + "."
+	}
+}
+
 // attachSelected puts the operator on the selected agent's tmux session — the
 // console's answer to "let me actually go look at what this agent is doing".
 //
@@ -938,11 +1039,10 @@ func insideTmux() bool { return os.Getenv("TMUX") != "" }
 // so a console that the daemon classifies as an agent cannot use it to reach a
 // peer's pane and drive it.
 func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
-	visible := m.visibleAgents()
-	if len(visible) == 0 || m.cursor >= len(visible) {
+	row, ok := m.selectedAgent()
+	if !ok {
 		return m, nil
 	}
-	row := visible[m.cursor]
 	if !m.operator {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
@@ -965,15 +1065,15 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 // it stops the agent's pane, so it always asks first — the same rule quitting
 // follows.
 func (m tuiModel) confirmRetireSelected() tuiModel {
-	visible := m.visibleAgents()
-	if m.cursor < 0 || m.cursor >= len(visible) {
+	row, ok := m.selectedAgent()
+	if !ok {
 		return m
 	}
 	if m.retiring {
 		m.notice = "A retire is already in flight."
 		return m
 	}
-	m.retireTarget = visible[m.cursor]
+	m.retireTarget = row
 	m.mode = tuiModeConfirmRetire
 	return m
 }
@@ -1087,6 +1187,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = tuiRetireSummary(msg)
 		// The row is gone (or offline) now — show that rather than leaving a
 		// retired agent listed until the next tick.
+		m.refreshing = true
+		return m, m.refreshCmd()
+
+	case tuiResumedMsg:
+		m.resuming = false
+		if msg.err != nil {
+			m.notice = "Start failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.notice = tuiResumeSummary(msg)
+		// The row is online now — show that rather than leaving it reading
+		// "offline" until the next tick.
 		m.refreshing = true
 		return m, m.refreshCmd()
 
@@ -1236,7 +1348,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		m.notice = ""
-		return m.attachSelected()
+		return m.enterSelected()
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
@@ -1485,8 +1597,28 @@ func tuiTruncate(s string, width int) string {
 	return ""
 }
 
-// keyHintLine names enter only when it can do something — an agent-class
-// console cannot attach, and an empty list has nothing to attach to.
+// enterHint names what enter does on the row the cursor is on, empty when
+// it would do nothing: an empty list has no row, and only an operator console
+// can attach to a live agent's pane. Starting an offline one is advertised to
+// every console — like retire, it goes through the daemon's own verb, and the
+// daemon decides whether this caller may.
+func (m tuiModel) enterHint() string {
+	row, ok := m.selectedAgent()
+	switch {
+	case !ok:
+		return ""
+	case !row.Online:
+		return "enter start"
+	case !m.operator:
+		return ""
+	case insideTmux():
+		return "enter switch to"
+	default:
+		return "enter attach"
+	}
+}
+
+// keyHintLine names enter only when it can do something — see enterHint.
 func (m tuiModel) keyHintLine() string {
 	filterLabel := "f filter active"
 	if m.filterActive {
@@ -1494,17 +1626,13 @@ func (m tuiModel) keyHintLine() string {
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
 	if len(m.visibleAgents()) > 0 {
-		// Unlike enter, retire is not statically an operator-only move: an
+		// Unlike attaching, retire is not statically an operator-only move: an
 		// agent-class console can hold agent.retire over its own group's
 		// members, so the daemon decides and the key stays advertised.
 		hints = "x retire • " + hints
 	}
-	if m.operator && len(m.visibleAgents()) > 0 {
-		verb := "attach"
-		if insideTmux() {
-			verb = "switch to"
-		}
-		hints = "enter " + verb + " • " + hints
+	if enter := m.enterHint(); enter != "" {
+		hints = enter + " • " + hints
 	}
 	return hints
 }
@@ -1534,6 +1662,9 @@ func (m tuiModel) summaryLine() string {
 	}
 	if m.spawning {
 		line += " • spawning…"
+	}
+	if m.resuming {
+		line += " • starting…"
 	}
 	return line
 }
@@ -1688,9 +1819,12 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n  tclaude agentd terminal UI — keys\n\n")
 	b.WriteString("  List\n")
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
-	b.WriteString("    enter      Go to the selected agent's tmux session — switch-client\n")
-	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
-	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
+	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
+	b.WriteString("               conversation it was last running. On a live one: go to its\n")
+	b.WriteString("               tmux session — switch-client when agentd runs inside tmux,\n")
+	b.WriteString("               otherwise attach until you detach with ctrl-b d. Going to a\n")
+	b.WriteString("               pane is operator consoles only; starting one is whatever\n")
+	b.WriteString("               the daemon grants this console.\n")
 	b.WriteString("    n          Start a new agent\n")
 	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
 	b.WriteString("               groups, loses its grants and its session is asked to\n")

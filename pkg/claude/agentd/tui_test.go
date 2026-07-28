@@ -713,6 +713,10 @@ func tuiKey(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
+// tuiEnterKey is enter, which tuiKey cannot spell: it is a named key rather
+// than a character.
+func tuiEnterKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
+
 func TestTUIHelpMentionsTheMissingDashboard(t *testing.T) {
 	m := newTUIModel(nil)
 	updated, _ := m.handleKey(tuiKey("?"))
@@ -1078,19 +1082,123 @@ func TestTUIAttachFailureIsReported(t *testing.T) {
 	assert.Nil(t, cmd)
 }
 
-// The key line only advertises enter when it will actually do something.
+// The key line only advertises enter when it will actually do something, and
+// names the move the selected row will get.
 func TestTUIKeyHintAdvertisesEnterOnlyWhenItWorks(t *testing.T) {
 	m := newTUIModel(nil)
 	m.operator = true
-	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
 	assert.Contains(t, m.keyHintLine(), "enter")
 
 	m.agents = nil
 	assert.NotContains(t, m.keyHintLine(), "enter")
 
-	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+	// A live agent's pane is an operator-only handover, so an agent-class
+	// console is not offered it.
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: true}}
 	m.operator = false
 	assert.NotContains(t, m.keyHintLine(), "enter")
+
+	// Starting an offline one goes through the daemon's own verb, which gates
+	// the caller itself — so the key stays advertised whatever this console is.
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: false}}
+	assert.Contains(t, m.keyHintLine(), "enter start")
+	m.operator = true
+	assert.Contains(t, m.keyHintLine(), "enter start")
+}
+
+// Enter on an offline agent turns it back on: an offline row has no pane to
+// attach to, and starting it is what the operator picked that row for.
+func TestTUIEnterOnAnOfflineAgentResumesIt(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		writeJSON(w, http.StatusOK, map[string]any{"conv_id": "c1", "action": "resumed"})
+	})
+	rec := stubAttach(t)
+	m := newTUIModel(api)
+	m.operator = true
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker", Online: false}}
+
+	started, cmd := m.handleKey(tuiEnterKey())
+	resuming := started.(tuiModel)
+	require.NotNil(t, cmd)
+	assert.True(t, resuming.resuming)
+	assert.Contains(t, resuming.notice, "Starting worker")
+	assert.False(t, rec.called, "an offline agent is started, not attached to")
+
+	msg, ok := cmd().(tuiResumedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/v1/agent/c1/resume", gotPath)
+	assert.Empty(t, gotQuery, "the console never asks the daemon to recreate a deleted launch directory")
+
+	updated, refresh := resuming.Update(msg)
+	done := updated.(tuiModel)
+	assert.False(t, done.resuming)
+	assert.Contains(t, done.notice, "Started worker")
+	assert.NotNil(t, refresh, "the agent is online now — show that rather than waiting out the tick")
+}
+
+// A resume the daemon would not do says why: the reason travels with the
+// verdict, since this console has no browser to go and read it in.
+func TestTUIResumeReportsWhyItDidNotStart(t *testing.T) {
+	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"conv_id": "c1", "action": "error:missing_cwd", "detail": "/gone/worktree",
+		})
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+
+	_, cmd := m.handleKey(tuiEnterKey())
+	require.NotNil(t, cmd)
+	updated, _ := m.Update(cmd())
+	got := updated.(tuiModel)
+	assert.Contains(t, got.notice, "Could not start worker")
+	assert.Contains(t, got.notice, "error:missing_cwd")
+	assert.Contains(t, got.notice, "/gone/worktree")
+
+	// An agent the daemon found already running is not an error.
+	assert.Contains(t,
+		tuiResumeSummary(tuiResumedMsg{agent: "worker", res: tuiResumeResult{Action: "skipped:already_online"}}),
+		"was already running")
+}
+
+// A refused resume releases the in-flight guard and reports the refusal —
+// permission is the daemon's call, not the console's.
+func TestTUIResumeFailureIsReported(t *testing.T) {
+	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "forbidden", "agent.resume is not granted")
+	})
+	m := newTUIModel(api)
+	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "worker"}}
+
+	started, cmd := m.handleKey(tuiEnterKey())
+	require.NotNil(t, cmd)
+	updated, _ := started.(tuiModel).Update(cmd())
+	got := updated.(tuiModel)
+	assert.False(t, got.resuming)
+	assert.Contains(t, got.notice, "agent.resume is not granted")
+
+	// A second enter while one is in flight does not stack a request.
+	inflight := started.(tuiModel)
+	_, cmd = inflight.handleKey(tuiEnterKey())
+	assert.Nil(t, cmd)
+}
+
+// A placeholder member has no conversation to resume, and a path built from
+// an empty selector would only earn a confusing 404.
+func TestTUIResumeWithoutAConvSaysSo(t *testing.T) {
+	m := newTUIModel(nil)
+	m.agents = []tuiAgentRow{{AgentID: "agt_1", Online: false}}
+
+	updated, cmd := m.handleKey(tuiEnterKey())
+	got := updated.(tuiModel)
+	assert.Nil(t, cmd)
+	assert.False(t, got.resuming)
+	assert.Contains(t, got.notice, "no conversation to start")
 }
 
 // The console says which surfaces are live: on its own it is the only one,
