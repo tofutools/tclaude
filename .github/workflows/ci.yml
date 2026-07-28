@@ -76,15 +76,16 @@ jobs:
           # production executable trust walk. A pasta-only prefix also avoids
           # shadowing the Actions-managed Go toolchain with /usr/bin/go.
           sudo install -d -o root -g root -m 0755 \
-            /opt/tclaude-filtered/bin
+            /usr/lib/tclaude-filtered \
+            /usr/lib/tclaude-filtered/bin
           sudo install -o root -g root -m 0755 \
-            "$RUNNER_TEMP/passt/passt" /opt/tclaude-filtered/bin/pasta
+            "$RUNNER_TEMP/passt/passt" /usr/lib/tclaude-filtered/bin/pasta
           # The hosted image also carries an older /usr/local/bin/pasta.
           # Prepend the secure dedicated path for this and all later steps, and
           # assert the same resolution the production prerequisite will use.
-          echo "/opt/tclaude-filtered/bin" >> "$GITHUB_PATH"
-          export PATH="/opt/tclaude-filtered/bin:$PATH"
-          test "$(command -v pasta)" = "/opt/tclaude-filtered/bin/pasta"
+          echo "/usr/lib/tclaude-filtered/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/tclaude-filtered/bin:$PATH"
+          test "$(command -v pasta)" = "/usr/lib/tclaude-filtered/bin/pasta"
           pasta --version
 
       - name: Install pinned OpenCode smoke binary
