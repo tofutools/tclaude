@@ -192,6 +192,11 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 	for _, unavailable := range result.Plan.Unavailable {
 		fmt.Fprintf(w, "  unavailable: %s\n", unavailable)
 	}
+	for _, entry := range result.Plan.UnavailableEntries {
+		fmt.Fprintf(w, "  %d %-18s %-4s %-24s %s [unavailable: %s]\n",
+			entry.Class, entry.ClassName, entry.Mode, entry.Origin,
+			entry.Target, entry.Reason)
+	}
 	fmt.Fprintf(w, "  network posture: %s\n", result.Plan.NetworkPosture)
 	for _, entry := range result.Plan.Entries {
 		source := ""

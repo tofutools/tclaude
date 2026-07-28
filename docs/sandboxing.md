@@ -951,8 +951,12 @@ refused.
    row-carried effective profile, access axes, profiles, and notices. It marks
    the launch-contract and daemon-final classes
    `not recorded at launch — unavailable` and points to hypothetical mode; it
-   never reconstructs those facts from mutable current state. Hypothetical mode
-   is the complete composed view for explicit current inputs.
+   never reconstructs those facts from mutable current state. Positive
+   filesystem rows remain visible as recorded policy, but their launch-time
+   `present` / `missing-would-skip` disposition is also marked unavailable:
+   older rows did not persist path presence, and recorded mode never `stat`s
+   them now. Hypothetical mode is the complete composed view for explicit
+   current inputs.
 
    Harness-builtin targets report that an outer mount plan is not applicable.
    A non-host `--for` target still returns its access prediction, but mount-plan

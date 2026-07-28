@@ -71,15 +71,27 @@ func TestDescribeTclaudeLayerPlanReportsFourClassesWithoutMaterializing(t *testi
 func TestDescribeRecordedEffectivePlanMarksUnpersistedContractUnavailable(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", root)
-	got, err := DescribeRecordedEffectivePlan(sandboxpolicy.EffectiveProfile{})
+	presentNow := filepath.Join(root, "present-now")
+	require.NoError(t, os.MkdirAll(presentNow, 0o755))
+	got, err := DescribeRecordedEffectivePlan(sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: presentNow, Access: sandboxpolicy.AccessWrite},
+		},
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "recorded-effective-only", got.Coverage)
-	require.Len(t, got.Unavailable, 2)
+	require.Len(t, got.Unavailable, 3)
 	assert.Contains(t, got.Unavailable[0], "not recorded at launch — unavailable")
 	assert.Contains(t, got.Unavailable[0], "hypothetical mode")
+	require.Len(t, got.UnavailableEntries, 1)
+	assert.Equal(t, presentNow, got.UnavailableEntries[0].Target)
+	assert.Contains(t, got.UnavailableEntries[0].Reason,
+		"launch-time presence was not recorded")
 	for _, entry := range got.Entries {
 		assert.NotEqual(t, 1, entry.Class,
 			"recorded mode must not reconstruct launch-contract rows")
 		assert.NotContains(t, entry.Origin, "daemon-final")
+		assert.NotEqual(t, presentNow, entry.Target,
+			"current path presence must not become a recorded disposition")
 	}
 }

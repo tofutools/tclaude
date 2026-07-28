@@ -30,17 +30,31 @@ type SandboxPlanEntry struct {
 	Disposition SandboxPlanDisposition `json:"disposition"`
 }
 
+// SandboxPlanUnavailableEntry preserves a recorded policy row whose
+// launch-time disposition was not persisted. It deliberately has no
+// Disposition field: inventing a fourth disposition or observing the path now
+// would blur recorded facts with current prediction.
+type SandboxPlanUnavailableEntry struct {
+	Class     int    `json:"class"`
+	ClassName string `json:"class_name"`
+	Origin    string `json:"origin"`
+	Mode      string `json:"mode"`
+	Target    string `json:"target"`
+	Reason    string `json:"reason"`
+}
+
 // SandboxPlanDescription is the stable, renderer-neutral dry-run surface.
 // It intentionally contains no executable, argv, probe result, or opaque
 // access-enforcement plan token.
 type SandboxPlanDescription struct {
-	Applicable     bool                       `json:"applicable"`
-	Reason         string                     `json:"reason,omitempty"`
-	Coverage       string                     `json:"coverage,omitempty"`
-	Unavailable    []string                   `json:"unavailable,omitempty"`
-	NetworkPosture string                     `json:"network_posture,omitempty"`
-	Entries        []SandboxPlanEntry         `json:"entries"`
-	Aliases        []sandboxpolicy.MountAlias `json:"aliases"`
+	Applicable         bool                          `json:"applicable"`
+	Reason             string                        `json:"reason,omitempty"`
+	Coverage           string                        `json:"coverage,omitempty"`
+	Unavailable        []string                      `json:"unavailable,omitempty"`
+	UnavailableEntries []SandboxPlanUnavailableEntry `json:"unavailable_entries,omitempty"`
+	NetworkPosture     string                        `json:"network_posture,omitempty"`
+	Entries            []SandboxPlanEntry            `json:"entries"`
+	Aliases            []sandboxpolicy.MountAlias    `json:"aliases"`
 }
 
 // DescribeTclaudeLayerPlan describes the already-composed launch contract.
@@ -157,6 +171,7 @@ func DescribeRecordedEffectivePlan(
 		Unavailable: []string{
 			"launch-contract: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
 			"daemon-final: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
+			"positive profile dispositions: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
 		},
 		NetworkPosture: networkPostureLabel(plan.NetworkPosture),
 		Entries:        []SandboxPlanEntry{},
@@ -178,8 +193,19 @@ func DescribeRecordedEffectivePlan(
 		})
 	}
 	for _, entry := range plan.Entries {
+		mode := mountModeLabel(entry.Mode)
+		if entry.Mode != sandboxpolicy.MountHide {
+			out.UnavailableEntries = append(out.UnavailableEntries,
+				SandboxPlanUnavailableEntry{
+					Class: 2, ClassName: "profile-plan",
+					Origin: "recorded-effective-filesystem",
+					Mode:   mode, Target: entry.Path,
+					Reason: "launch-time presence was not recorded — disposition unavailable; use hypothetical mode",
+				})
+			continue
+		}
 		add(2, "profile-plan", "recorded-effective-filesystem",
-			mountModeLabel(entry.Mode), entry.Path, entry.Path)
+			mode, entry.Path, entry.Path)
 	}
 	protected, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
