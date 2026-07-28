@@ -137,3 +137,25 @@ func TestRemoteTUIAPINamesUnsupportedServers(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "without remote TUI support"), err)
 }
+
+func TestRemoteTUIAPINeverForwardsTheOperatorTokenThroughARedirect(t *testing.T) {
+	var redirected atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected.Store(true)
+		assert.Empty(t, r.Header.Get(agent.HumanTokenHeader))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", target.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	api, err := newRemoteTUIAPI(source.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	err = api.get("/v1/peers", &[]tuiAgentRow{})
+	require.Error(t, err)
+	assert.False(t, redirected.Load(), "the client must not visit a redirect target at all")
+	assert.Contains(t, err.Error(), "Temporary Redirect")
+}

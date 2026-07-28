@@ -94,6 +94,13 @@ func newRemoteTUIAPI(target, token string) (*remoteTUIAPI, error) {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Jar:     jar,
+			// These JSON endpoints never redirect. In particular, do not let
+			// net/http copy the custom operator-token header to a redirect
+			// target (its automatic cross-host stripping covers Authorization
+			// and Cookie, not arbitrary bearer headers).
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}, nil
 }
@@ -177,7 +184,7 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 	if err != nil {
 		return fmt.Errorf("read %s response: %w", path, err)
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		msg := strings.TrimSpace(string(raw))
 		var payload struct {
 			Error string `json:"error"`
