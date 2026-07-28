@@ -438,6 +438,8 @@ type tuiModel struct {
 	spawning    bool
 	lastRefresh time.Time
 
+	filterActive bool
+
 	form tuiSpawnForm
 }
 
@@ -488,6 +490,19 @@ func newTUIModel(api *tuiAPI) tuiModel {
 		m.operator = api.callerClass() == classHuman
 	}
 	return m
+}
+
+func (m tuiModel) visibleAgents() []tuiAgentRow {
+	if !m.filterActive {
+		return m.agents
+	}
+	var out []tuiAgentRow
+	for _, a := range m.agents {
+		if a.Online {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // tuiListChrome is what renderList spends on everything that is not a table
@@ -759,10 +774,11 @@ func insideTmux() bool { return os.Getenv("TMUX") != "" }
 // so a console that the daemon classifies as an agent cannot use it to reach a
 // peer's pane and drive it.
 func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
-	if len(m.agents) == 0 || m.cursor >= len(m.agents) {
+	visible := m.visibleAgents()
+	if len(visible) == 0 || m.cursor >= len(visible) {
 		return m, nil
 	}
-	row := m.agents[m.cursor]
+	row := visible[m.cursor]
 	if !m.operator {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
@@ -805,8 +821,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agents = msg.agents
 		m.groups = msg.groups
 		m.lastRefresh = time.Now()
-		if m.cursor >= len(m.agents) {
-			m.cursor = max(len(m.agents)-1, 0)
+		visible := m.visibleAgents()
+		if m.cursor >= len(visible) {
+			m.cursor = max(len(visible)-1, 0)
 		}
 		m.ensureCursorVisible()
 		return m, nil
@@ -888,6 +905,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// List mode.
+	visible := m.visibleAgents()
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		// Quitting stops the daemon, so it always asks first.
@@ -898,10 +916,28 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible()
 		}
 	case "down", "j":
-		if m.cursor < len(m.agents)-1 {
+		if m.cursor < len(visible)-1 {
 			m.cursor++
 			m.ensureCursorVisible()
 		}
+	case "f":
+		var selectedID string
+		if m.cursor >= 0 && m.cursor < len(visible) {
+			selectedID = visible[m.cursor].ConvID
+		}
+		m.filterActive = !m.filterActive
+		visible = m.visibleAgents()
+		m.cursor = 0
+		if selectedID != "" {
+			for i, a := range visible {
+				if a.ConvID == selectedID {
+					m.cursor = i
+					break
+				}
+			}
+		}
+		m.ensureCursorVisible()
+		return m, nil
 	case "enter":
 		m.notice = ""
 		return m.attachSelected()
@@ -1027,15 +1063,20 @@ func (m tuiModel) renderList() string {
 		b.WriteString("  " + m.identityWarning + "\n\n")
 	}
 
-	if len(m.agents) == 0 {
-		b.WriteString("  No agents yet.\n")
+	visible := m.visibleAgents()
+	if len(visible) == 0 {
+		if m.filterActive && len(m.agents) > 0 {
+			b.WriteString("  No active agents.\n")
+		} else {
+			b.WriteString("  No agents yet.\n")
+		}
 	} else {
 		tbl := table.New(m.columns()...)
 		tbl.SetTerminalWidth(max(m.width-4, 60))
 		tbl.SelectedIndex = m.cursor
 		tbl.ViewportOffset = m.viewportOffset
 		tbl.ViewportHeight = m.viewportHeight()
-		for _, a := range m.agents {
+		for _, a := range visible {
 			tbl.AddRow(table.Row{Cells: []string{
 				a.name(),
 				strings.Join(a.Groups, ","),
@@ -1068,8 +1109,12 @@ func (m tuiModel) renderList() string {
 // keyHintLine names enter only when it can do something — an agent-class
 // console cannot attach, and an empty list has nothing to attach to.
 func (m tuiModel) keyHintLine() string {
-	hints := "n new agent • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
-	if m.operator && len(m.agents) > 0 {
+	filterLabel := "f filter active"
+	if m.filterActive {
+		filterLabel = "f show all"
+	}
+	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
+	if m.operator && len(m.visibleAgents()) > 0 {
 		verb := "attach"
 		if insideTmux() {
 			verb = "switch to"
@@ -1086,8 +1131,14 @@ func (m tuiModel) summaryLine() string {
 			online++
 		}
 	}
-	shown := len(m.agents)
-	line := fmt.Sprintf("%d agents (%d online) • %d groups", shown, online, len(m.groups))
+	visible := m.visibleAgents()
+	shown := len(visible)
+	var line string
+	if m.filterActive {
+		line = fmt.Sprintf("%d active agents • %d groups", shown, len(m.groups))
+	} else {
+		line = fmt.Sprintf("%d agents (%d online) • %d groups", shown, online, len(m.groups))
+	}
 	if !m.lastRefresh.IsZero() {
 		line += " • updated " + tuiAgo(time.Since(m.lastRefresh))
 	}
@@ -1173,6 +1224,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
 	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
 	b.WriteString("    n          Start a new agent\n")
+	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
 	b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")

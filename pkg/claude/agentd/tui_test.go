@@ -396,6 +396,70 @@ func TestTUIListFitsTheTerminalWithEveryOptionalLineShowing(t *testing.T) {
 	}
 }
 
+func TestTUIFilterActive(t *testing.T) {
+	m := newTUIModel(nil)
+	m.agents = []tuiAgentRow{
+		{ConvID: "c1", Title: "online-1", Online: true},
+		{ConvID: "c2", Title: "offline-1", Online: false},
+		{ConvID: "c3", Title: "online-2", Online: true},
+	}
+	assert.Len(t, m.visibleAgents(), 3)
+
+	// Toggle filter on.
+	updated, _ := m.handleKey(tuiKey("f"))
+	m = updated.(tuiModel)
+	assert.True(t, m.filterActive)
+	visible := m.visibleAgents()
+	assert.Len(t, visible, 2)
+	assert.Equal(t, "online-1", visible[0].name())
+	assert.Equal(t, "online-2", visible[1].name())
+
+	// Toggle filter off.
+	updated, _ = m.handleKey(tuiKey("f"))
+	m = updated.(tuiModel)
+	assert.False(t, m.filterActive)
+	assert.Len(t, m.visibleAgents(), 3)
+}
+
+func TestTUIFilterPreservesCursor(t *testing.T) {
+	m := newTUIModel(nil)
+	m.agents = []tuiAgentRow{
+		{ConvID: "c1", Title: "a", Online: true},
+		{ConvID: "c2", Title: "b", Online: true},
+		{ConvID: "c3", Title: "c", Online: false},
+	}
+	m.cursor = 1 // on "b"
+
+	// Filter active (only a and b show).
+	updated, _ := m.handleKey(tuiKey("f"))
+	m = updated.(tuiModel)
+	assert.Equal(t, 1, m.cursor, "cursor stays on 'b'")
+
+	// Move to 'a' and toggle off.
+	m.cursor = 0
+	updated, _ = m.handleKey(tuiKey("f"))
+	m = updated.(tuiModel)
+	assert.Equal(t, 0, m.cursor, "cursor stays on 'a'")
+}
+
+func TestTUIUpdateClampsCursorAgainstVisibleAgents(t *testing.T) {
+	m := newTUIModel(nil)
+	m.filterActive = true
+	m.cursor = 10
+
+	// Refresh returns only 2 online agents. Cursor must be clamped.
+	msg := tuiDataMsg{
+		agents: []tuiAgentRow{
+			{ConvID: "c1", Online: true},
+			{ConvID: "c2", Online: true},
+			{ConvID: "c3", Online: false},
+		},
+	}
+	updated, _ := m.Update(msg)
+	got := updated.(tuiModel)
+	assert.Equal(t, 1, got.cursor)
+}
+
 // The spawn form must not tell an operator to create a group when the group
 // list simply has not arrived yet.
 func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
