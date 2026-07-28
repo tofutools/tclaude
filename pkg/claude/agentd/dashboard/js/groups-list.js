@@ -31,9 +31,12 @@ function GroupActivity({ members, snapshot }) {
   return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
-function safeGroupAttachmentURL(value) {
+export function safeGroupAttachmentURL(value) {
   const raw = String(value || '').trim();
-  if (!raw) return '';
+  // WHATWG URL parsing repairs malformed authority separators such as
+  // "https:/example.com" into a hosted URL. Stored rows still cross a trust
+  // boundary here, so require the literal http(s):// form before parsing.
+  if (!/^https?:\/\/[^/\\?#\s]/i.test(raw)) return '';
   try {
     const parsed = new URL(raw);
     return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host ? raw : '';
@@ -42,29 +45,40 @@ function safeGroupAttachmentURL(value) {
   }
 }
 
-function GroupAttachment({ group, actions }) {
+function GroupAttachment({ group, actions, placement }) {
+  const fixed = placement === 'fixed';
   const rawURL = String(group.attachment_url || '').trim();
   const url = safeGroupAttachmentURL(rawURL);
   const label = group.attachment_label || rawURL;
   const openEditor = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    // The shared dialog restores focus to whatever launched it. Move that
-    // return point off the hover-only overlay and onto the native group
-    // disclosure, otherwise Escape gives the paperclip :focus-visible and
-    // pins it open. The summary remains a visible, keyboard-operable target.
-    const summary = event.currentTarget.closest('summary');
-    if (summary) summary.focus({ preventScroll: true });
-    else event.currentTarget.blur();
+    if (!fixed) {
+      // The shared dialog restores focus to whatever launched it. Move that
+      // return point off the hover-only overlay and onto the native group
+      // disclosure, otherwise Escape gives the paperclip :focus-visible and
+      // pins it open. The fixed quick item is not hover-hidden, so it keeps
+      // native focus restoration instead.
+      const summary = event.currentTarget.closest('summary');
+      if (summary) summary.focus({ preventScroll: true });
+      else event.currentTarget.blur();
+    }
     actions.openGroupAttachment(group);
   };
+  const visibleLabel = fixed && rawURL
+    ? html`<span class="group-attachment-label">${label}</span>`
+    : null;
+  const visibleIcon = fixed && rawURL
+    ? null
+    : (fixed ? html`<span class="group-attachment-icon">📎</span>` : '📎');
+  const placementClass = fixed ? 'group-attachment-fixed' : 'group-attachment-float';
   if (!rawURL) {
     return html`<button
-      type="button" class="group-attachment group-attachment-empty"
+      type="button" class=${`group-attachment ${placementClass} group-attachment-empty`}
       aria-label=${`Attach a persistent link to ${group.name}`}
       title="Attach a persistent Linear project, GitHub board, or other reference"
       onClick=${openEditor}
-    >📎</button>`;
+    >${visibleIcon}${visibleLabel}</button>`;
   }
   const display = url
     ? html`<a
@@ -72,17 +86,18 @@ function GroupAttachment({ group, actions }) {
         aria-label=${`Open ${label}, the persistent link for ${group.name}`}
         title=${`Open ${label} — ${url}`}
         onClick=${(event) => event.stopPropagation()}
-      >📎</a>`
+      >${visibleIcon}${visibleLabel}</a>`
     : html`<button
         type="button" class="group-attachment-invalid"
         aria-label=${`Edit the unsafe stored attachment for ${group.name}`}
         title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
         onClick=${openEditor}
-      >📎</button>`;
-  return html`<span class="group-attachment group-attachment-set">
+      >${visibleIcon}${visibleLabel}</button>`;
+  return html`<span class=${`group-attachment ${placementClass} group-attachment-set`}>
     ${display}
     <button
       type="button" class="group-attachment-edit"
+      tabindex=${fixed ? '-1' : undefined}
       aria-label=${`Edit the persistent link for ${group.name}`}
       title="Edit or clear this group attachment"
       onClick=${openEditor}
@@ -376,8 +391,8 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
     >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.name}</strong>`}
-    ${snapshot?.group_attachments_enabled
-      ? html`<${GroupAttachment} group=${group} actions=${actions} />`
+    ${snapshot?.group_attachments_mode === 'float'
+      ? html`<${GroupAttachment} group=${group} actions=${actions} placement="float" />`
       : null}
     <${GroupActivity} members=${activity} snapshot=${snapshot} />
     <${ProcessChip} group=${group} />
@@ -415,6 +430,9 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     <${GroupLinkChips} group=${group} snapshot=${snapshot} />
+    ${snapshot?.group_attachments_mode === 'fixed'
+      ? html`<${GroupAttachment} group=${group} actions=${actions} placement="fixed" />`
+      : null}
   </summary>`;
 }
 

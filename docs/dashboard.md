@@ -192,6 +192,50 @@ an operator token, so an agent cannot promote itself with an inherited
 `TCLAUDE_HUMAN_TOKEN`). The UI says so in a note under its header; start the
 daemon from a plain shell to get an operator console.
 
+### Standalone / remote terminal dashboard
+
+The same terminal UI can run as a separate HTTP client:
+
+```bash
+# On the agentd host: give the dashboard a stable network endpoint.
+tclaude agentd serve --dashboard-port 8321 --dashboard-bind 0.0.0.0
+
+# On this or another machine: use the operator token from agentd's banner.
+export TCLAUDE_HUMAN_TOKEN=tclo_...
+tclaude agent tui-dashboard --connect-to=agent-host:8321
+
+# A full URL is also accepted (including an HTTPS reverse-proxy prefix).
+tclaude agent tui-dashboard --connect-to=https://agents.example.com/tclaude
+```
+
+A bare `host[:port]` means HTTP; a URL may use HTTP or HTTPS. The operator
+token is a bearer credential with full human authority, so do not send it over
+an untrusted network. Prefer HTTPS or a trusted VPN/tunnel when the listener is
+not confined to the local machine.
+
+The terminal model talks through a small Go API interface with separate
+in-process and HTTP implementations. Listing, spawning, starting offline
+agents, and retiring are identical on both transports and reach the same
+versioned daemon handlers. Host-local operations are intentionally not faked:
+a remote console cannot attach its terminal to the daemon host's tmux server
+or tab-complete the daemon host's filesystem. Quitting a remote console exits
+only that client; agentd and its agents keep running.
+
+The remote client polls every two seconds and treats connection failures as
+transient. It keeps the current listing visible while agentd is down and
+automatically repopulates it when the same address returns. The first request
+authenticates with `TCLAUDE_HUMAN_TOKEN` (or the same persisted-token fallback
+ordinary human CLI commands use) and receives the dashboard session cookie.
+That cookie uses the web dashboard's clean-restart grace/rotation path, so a
+normal agentd restart reconnects without asking for a new token. Persist the
+operator token (`agent.persist_operator_token` or
+`--persist-operator-token`) as well if reconnecting after an unclean stop must
+work, because an ungraceful exit cannot save the previous dashboard session.
+
+The server exposes only the six versioned operations this TUI uses under
+`/api/tui/`; it does not publish agentd's entire Unix-socket API on the
+dashboard listener.
+
 ## Fixed loopback port
 
 By default the dashboard (and the approval popup it shares a listener with)
@@ -272,14 +316,16 @@ sandbox-access `Warning` lines, and a click action when the badge supports a
 temporary disable or restore. It does not show mode/settings provenance or
 infer the effects of a named profile. See
 [Reading an agent's sandbox badge](sandbox-hardening.md#reading-an-agents-sandbox-badge).
-The adjacent **›** is a separate, non-mutating details action. It expands only
-facts frozen on that launch row: recorded mode and provenance, applied profile
-names, persisted access notices, and a known partial-fidelity sentence when the
-recorded implementation/source pair exactly matches a ruled producer literal.
-An unknown unverified pair gets a generic recorded-as-unverified sentence; the
-dashboard does not guess from source substrings or predict current capability.
-The padlock/warning itself keeps the compact tooltip and temporary
-disable/restore action described above.
+The optional adjacent **›** is a separate, non-mutating details action. It is
+hidden by default; enable `features.recorded_sandbox_details` in the config file
+or **Config → Experimental features → Recorded sandbox details** to show it.
+It expands only facts frozen on that launch row: recorded mode and provenance,
+applied profile names, persisted access notices, and a known partial-fidelity
+sentence when the recorded implementation/source pair exactly matches a ruled
+producer literal. An unknown unverified pair gets a generic
+recorded-as-unverified sentence; the dashboard does not guess from source
+substrings or predict current capability. The padlock/warning itself keeps the
+compact tooltip and temporary disable/restore action described above.
 
 A successfully live-probed Linux `stacked` launch uses the distinct `🔒²`
 glyph. Its compact tooltip reports `Status: ON` and identifies the implementation
@@ -454,21 +500,30 @@ hovering does.
 
 A group may also carry one persistent http(s) attachment. This experimental
 surface is **off by default**; opt in with
-`features.group_attachments: true` in tclaude's config file or the
-**Config → Experimental features → Group attachments** checkbox. Enabling it
-exposes a compact **📎 paperclip** overlaid just above the first letter of each
-group title rather than as another quick-item chip. Turning the flag off hides
-the controls without deleting stored attachments.
+`features.group_attachments: "float"` or `"fixed"` in tclaude's config file, or
+choose the corresponding mode in the
+**Config → Experimental features → Group attachments** selector. Enabling it
+in **float** mode exposes a compact **📎 paperclip** overlaid just above the
+first letter of each group title. It is absolutely positioned with no frame or
+reserved header space, so it never moves or resizes neighboring controls. Fine
+pointers show it only while the group header is hovered; keyboard focus reveals
+the attachment control itself, while non-hover touch devices keep it visible.
 
-The paperclip is absolutely positioned with no frame or reserved header space,
-so it never moves or resizes neighboring controls. Fine pointers show it only
-while the group header is hovered; keyboard focus reveals the attachment
-control itself, while non-hover touch devices keep it visible. An existing
-attachment's paperclip opens it; hovering the paperclip reveals the pencil to
-edit or clear it. The editor accepts an optional display name and otherwise
-derives a short Linear issue key, GitHub number, or hostname. Closing the editor
-returns focus to the group's native disclosure summary so the hover overlay does
-not remain visible after Escape.
+In **fixed** mode, the attachment control is a normal in-flow quick item at the
+far right of the group header, after the sandbox-profile control and any
+link-status chip. When unset, its paperclip stays dim until hovered and gains
+the standard quick-control frame on hover. Once set, only the link/ticket label
+is shown; it remains visible even when the other quick-item labels auto-fold,
+dims and brightens with the other group quick controls, and underlines on hover.
+Only the edit pencil appears on hover.
+
+In float mode, an existing attachment's paperclip opens it; in fixed mode, its
+label does. The pencil edits or clears it. The editor accepts an optional
+display name and otherwise derives a short Linear issue key, GitHub number, or
+hostname. Closing a floating editor returns focus to the group's native
+disclosure summary so the hover overlay does not remain visible after Escape.
+Turning the setting off hides both presentations without deleting stored
+attachments.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an

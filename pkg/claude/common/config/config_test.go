@@ -1135,14 +1135,21 @@ func TestProcessesEnabled(t *testing.T) {
 	assert.True(t, (&Config{Features: &FeaturesConfig{Processes: true}}).ProcessesEnabled(), "explicit true → true")
 }
 
-func TestGroupAttachmentsEnabled(t *testing.T) {
+func TestGroupAttachmentsMode(t *testing.T) {
 	var nilCfg *Config
-	assert.False(t, nilCfg.GroupAttachmentsEnabled(), "nil config → false")
-	assert.False(t, (&Config{}).GroupAttachmentsEnabled(), "no features block → false")
-	assert.False(t, (&Config{Features: &FeaturesConfig{}}).GroupAttachmentsEnabled(),
-		"features block, flag unset → false")
-	assert.True(t, (&Config{Features: &FeaturesConfig{GroupAttachments: true}}).
-		GroupAttachmentsEnabled(), "explicit true → true")
+	assert.Equal(t, GroupAttachmentsOff, nilCfg.GroupAttachmentsMode(), "nil config → off")
+	assert.Equal(t, GroupAttachmentsOff, (&Config{}).GroupAttachmentsMode(), "no features block → off")
+	assert.Equal(t, GroupAttachmentsOff,
+		(&Config{Features: &FeaturesConfig{}}).GroupAttachmentsMode(), "unset → off")
+	assert.Equal(t, GroupAttachmentsOff,
+		(&Config{Features: &FeaturesConfig{GroupAttachments: "wat"}}).GroupAttachmentsMode(),
+		"unknown → off")
+	assert.Equal(t, GroupAttachmentsFloat,
+		(&Config{Features: &FeaturesConfig{GroupAttachments: GroupAttachmentsFloat}}).
+			GroupAttachmentsMode(), "float → float")
+	assert.Equal(t, GroupAttachmentsFixed,
+		(&Config{Features: &FeaturesConfig{GroupAttachments: GroupAttachmentsFixed}}).
+			GroupAttachmentsMode(), "fixed → fixed")
 }
 
 func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
@@ -1155,29 +1162,52 @@ func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
 		TerminalCommandPaletteShortcutEnabled(), "explicit true → true")
 }
 
+func TestRecordedSandboxDetailsEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.RecordedSandboxDetailsEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).RecordedSandboxDetailsEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).RecordedSandboxDetailsEnabled(),
+		"features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{RecordedSandboxDetails: true}}).
+		RecordedSandboxDetailsEnabled(), "explicit true → true")
+}
+
 // The default-off feature flags round-trip through the config file, and an
 // absent block stays absent (omitempty) so it never shows as a spurious diff.
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
 	in := &Config{Features: &FeaturesConfig{
 		Processes:                      true,
-		GroupAttachments:               true,
+		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
+		RecordedSandboxDetails:         true,
 	}}
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"processes":true,"group_attachments":true,"terminal_command_palette_shortcut":true}`)
+		`"features":{"processes":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
-	assert.True(t, out.GroupAttachmentsEnabled())
+	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
+	assert.True(t, out.RecordedSandboxDetailsEnabled())
 
 	// A default config marshals without a features key at all.
 	none, err := json.Marshal(&Config{})
 	require.NoError(t, err)
 	assert.NotContains(t, string(none), "features")
+}
+
+func TestValidate_GroupAttachmentsMode(t *testing.T) {
+	for _, mode := range []GroupAttachmentsMode{
+		"", GroupAttachmentsOff, GroupAttachmentsFloat, GroupAttachmentsFixed,
+	} {
+		cfg := &Config{Features: &FeaturesConfig{GroupAttachments: mode}}
+		assert.Emptyf(t, Validate(cfg), "mode %q should validate", mode)
+	}
+	errs := Validate(&Config{Features: &FeaturesConfig{GroupAttachments: "wat"}})
+	assert.Contains(t, strings.Join(errs, "\n"), "features.group_attachments")
 }
 
 // AgentDirsMountParentEnabled defaults on while preserving explicit true and

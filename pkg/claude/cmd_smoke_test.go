@@ -35,6 +35,29 @@ func TestCommandTreeConstructs(t *testing.T) {
 	}
 }
 
+func TestTUIDashboardLivesBesideBrowserDashboard(t *testing.T) {
+	root := Cmd()
+	agentCmd, _, err := root.Find([]string{"agent"})
+	if err != nil {
+		t.Fatalf("find agent command: %v", err)
+	}
+	tuiCmd, _, err := agentCmd.Find([]string{"tui-dashboard"})
+	if err != nil {
+		t.Fatalf("find agent tui-dashboard command: %v", err)
+	}
+	if tuiCmd.Name() != "tui-dashboard" {
+		t.Fatalf("resolved command = %q, want tui-dashboard", tuiCmd.Name())
+	}
+	if tuiCmd.Parent() != agentCmd {
+		t.Fatalf("tui-dashboard parent = %v, want agent", tuiCmd.Parent())
+	}
+	for _, child := range root.Commands() {
+		if child.Name() == "tui-dashboard" {
+			t.Fatal("tui-dashboard must not also be a root command")
+		}
+	}
+}
+
 // TestCommandTreeHelpDoesNotPanic walks the entire cobra command/subcommand
 // tree and runs `--help` at every node, asserting that none panics.
 //

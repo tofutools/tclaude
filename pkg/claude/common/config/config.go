@@ -154,17 +154,21 @@ type FeaturesConfig struct {
 	// routes) as they land.
 	Processes bool `json:"processes,omitempty"`
 
-	// GroupAttachments enables the in-development persistent http(s)
-	// attachment control overlaid on each group title. It defaults off while
-	// the interaction design is being refined. Disabling it hides the
-	// dashboard surface without deleting attachments already stored for
-	// groups.
-	GroupAttachments bool `json:"group_attachments,omitempty"`
+	// GroupAttachments selects how the in-development persistent http(s)
+	// attachment control appears on group titles. It defaults off while the
+	// interaction design is being refined. Disabling it hides the dashboard
+	// surface without deleting attachments already stored for groups.
+	GroupAttachments GroupAttachmentsMode `json:"group_attachments,omitempty"`
 
 	// TerminalCommandPaletteShortcut lets Ctrl/Cmd+K open the dashboard command
 	// palette while focus is inside a web terminal. It defaults off because the
 	// harnesses use that chord to clear the current input line.
 	TerminalCommandPaletteShortcut bool `json:"terminal_command_palette_shortcut,omitempty"`
+
+	// RecordedSandboxDetails shows the details chevron beside each agent's
+	// sandbox badge. It defaults off because the badge tooltip already exposes
+	// the common status and action; the chevron is an opt-in diagnostic surface.
+	RecordedSandboxDetails bool `json:"recorded_sandbox_details,omitempty"`
 
 	// AgentDirsMountParent switches how agent-owned directories are granted to
 	// the sandbox. On (the default): the shared parent root
@@ -174,6 +178,20 @@ type FeaturesConfig struct {
 	// delete the directory itself because its parent is not writable.
 	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
 }
+
+// GroupAttachmentsMode values — config features.group_attachments.
+//
+//	"off"   — hide the dashboard surface (also the absent/default mode).
+//	"float" — show the hover-revealed paperclip overlay above the group title.
+//	"fixed" — show an always-visible quick item at the right of the group
+//	            header; only its edit pencil is hover-revealed.
+type GroupAttachmentsMode string
+
+const (
+	GroupAttachmentsOff   GroupAttachmentsMode = "off"
+	GroupAttachmentsFloat GroupAttachmentsMode = "float"
+	GroupAttachmentsFixed GroupAttachmentsMode = "fixed"
+)
 
 // ProcessesDisabledMessage is the stable operator-facing text surfaced when
 // the experimental Processes feature flag is off. The daemon is the sole
@@ -190,11 +208,18 @@ func (c *Config) ProcessesEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.Processes
 }
 
-// GroupAttachmentsEnabled reports whether the dashboard should expose the
-// experimental per-group persistent attachment control. It defaults off and is
-// nil-safe; stored attachments are independent of this presentation flag.
-func (c *Config) GroupAttachmentsEnabled() bool {
-	return c != nil && c.Features != nil && c.Features.GroupAttachments
+// GroupAttachmentsMode reports how the dashboard should expose the
+// experimental per-group persistent attachment control. It defaults off for a
+// nil config, absent value, or unknown hand-edited value. Stored attachments
+// are independent of this presentation setting.
+func (c *Config) GroupAttachmentsMode() GroupAttachmentsMode {
+	if c != nil && c.Features != nil {
+		switch c.Features.GroupAttachments {
+		case GroupAttachmentsFloat, GroupAttachmentsFixed:
+			return c.Features.GroupAttachments
+		}
+	}
+	return GroupAttachmentsOff
 }
 
 // TerminalCommandPaletteShortcutEnabled reports whether Ctrl/Cmd+K should be
@@ -203,6 +228,13 @@ func (c *Config) GroupAttachmentsEnabled() bool {
 // operator explicitly opts in.
 func (c *Config) TerminalCommandPaletteShortcutEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.TerminalCommandPaletteShortcut
+}
+
+// RecordedSandboxDetailsEnabled reports whether the dashboard should show the
+// recorded-launch details chevron beside sandbox badges. It defaults off and
+// is nil-safe so the extra row chrome appears only after an explicit opt-in.
+func (c *Config) RecordedSandboxDetailsEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.RecordedSandboxDetails
 }
 
 // AgentDirsMountParentEnabled reports whether agent-owned directories should be
@@ -2702,6 +2734,16 @@ func Validate(c *Config) []string {
 	if t := c.TUI; t != nil && t.ColorScheme != "" && normalizeTUIColorScheme(t.ColorScheme) == "" {
 		errs = append(errs, fmt.Sprintf("tui.color_scheme %q is not one of %s, %s",
 			t.ColorScheme, TUIColorSchemeDefault, TUIColorSchemeHighContrast))
+	}
+
+	if f := c.Features; f != nil {
+		switch f.GroupAttachments {
+		case "", GroupAttachmentsOff, GroupAttachmentsFloat, GroupAttachmentsFixed:
+		default:
+			errs = append(errs, fmt.Sprintf(
+				"features.group_attachments %q is not one of %s, %s, %s",
+				f.GroupAttachments, GroupAttachmentsOff, GroupAttachmentsFloat, GroupAttachmentsFixed))
+		}
 	}
 
 	return errs

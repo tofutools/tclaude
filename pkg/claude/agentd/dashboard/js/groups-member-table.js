@@ -110,7 +110,7 @@ function BrokerRefusalBadge({ member }) {
   return html`<span class="broker-refusal-badge" role="note" aria-label=${title} title=${title}>🚫</span>`;
 }
 
-export function HarnessLine({ member }) {
+export function HarnessLine({ member, snapshot }) {
   const state = member.state || {};
   const offline = !member.online;
   const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
@@ -120,7 +120,8 @@ export function HarnessLine({ member }) {
   // Both indicators trail the metadata text as bare glyphs, tightly packed:
   // "CC · O4.8 1M high 🔒 📱". The sandbox one used to own a framed chip on its
   // own line below, which cost a whole row of height to say what a padlock says.
-  const sandbox = html`<${SandboxBadge} member=${member} />`;
+  const sandbox = html`<${SandboxBadge} member=${member}
+    showDetails=${!!snapshot?.recorded_sandbox_details_enabled} />`;
   const remote = html`<${RemoteBadge} member=${member} />`;
   const refused = html`<${BrokerRefusalBadge} member=${member} />`;
   if (!model) {
@@ -310,7 +311,7 @@ function sandboxRecordedDetails(member) {
   return lines.join('\n');
 }
 
-export function SandboxBadge({ member }) {
+export function SandboxBadge({ member, showDetails = false }) {
   const badge = sandboxIndicator(member);
   if (!badge) return null;
   const unlocked = !!member.state?.temporary_sandbox_mode;
@@ -329,10 +330,10 @@ export function SandboxBadge({ member }) {
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span><button
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span>${showDetails ? html`<button
     type="button" class="sandbox-details-chevron" data-act="sandbox-details"
     data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
-    title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button></span>`;
+    title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;
 }
 
 function statusInfo(state, online) {
@@ -767,7 +768,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
   switch (column.key) {
     // HarnessLine carries the sandbox/remote indicators itself — they trail its
     // metadata text instead of claiming a line of their own under the cell.
-    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} /></td>`;
+    case 'ctl': return html`<td><div class="agent-ctl"><${AgentStatusDot} member=${member} /><${MemberActions} member=${member} group=${group} snapshot=${snapshot} actions=${actions} ungrouped=${ungrouped} menuKey=${menuKey} /></div><${HarnessLine} member=${member} snapshot=${snapshot} /></td>`;
     case 'id': return html`<td class="id" title=${idTooltip(member.agent_id, member.conv_id)}>${shortAgentId(member.agent_id, member.conv_id)}</td>`;
     case 'title': return html`<td class="name-cell"><${MemberName} member=${member} snapshot=${snapshot} actions=${actions} grants=${grants} editorKey=${editorKey} /></td>`;
     case 'state': return html`<${StateCell} member=${member} />`;

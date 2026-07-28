@@ -571,13 +571,22 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Group attachments</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-group-attachments" /> show persistent <strong>group attachment</strong> paperclips</label>
-        <span class="cfg-hint">Off by default while this interaction is refined. When enabled, a paperclip overlaid above each group title can hold one persistent http(s) reference. Turning the flag off only hides the controls; existing stored attachments remain intact. Takes effect on the next dashboard refresh. Stored as <code>features.group_attachments</code>.</span>
+        <${ConfigSelect} id="cfg-feature-group-attachments" aria-label="Group attachment presentation">
+          <option value="off">Off</option>
+          <option value="float">Float above group title</option>
+          <option value="fixed">Fixed group quick item</option>
+        </${ConfigSelect}>
+        <span class="cfg-hint">Off by default while this interaction is refined. <strong>Float</strong> shows the paperclip overlay only while the title is hovered. <strong>Fixed</strong> keeps the paperclip and link/ticket label visible as the last group quick item; only its edit pencil appears on hover. Turning the feature off only hides the controls—existing stored attachments remain intact. Takes effect on the next dashboard refresh. Stored as <code>features.group_attachments</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Command palette in terminals</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-terminal-command-palette-shortcut" /> let <strong>Ctrl/Cmd+K</strong> open the command palette while a web terminal has focus</label>
         <span class="cfg-hint">Off by default because Ctrl/Cmd+K clears the current input line in the supported harnesses. When enabled, the dashboard claims that chord inside web terminals instead. Takes effect on the next dashboard refresh. Stored as <code>features.terminal_command_palette_shortcut</code>.</span>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Recorded sandbox details</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-recorded-sandbox-details" /> show the details arrow beside each agent's sandbox lock or warning icon</label>
+        <span class="cfg-hint">Off by default to keep the harness line compact. The lock or warning and its summary tooltip remain visible; enabling this adds the adjacent <strong>›</strong> action for the full recorded launch details. Takes effect on the next dashboard refresh. Stored as <code>features.recorded_sandbox_details</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Agent dirs: mount parent</span>

@@ -263,6 +263,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", handleDashboardRoot)
 	mux.HandleFunc("/terminals", handleDashboardTerminals)
 	mux.HandleFunc("/dashboard/login", handleDashboardLogin)
+	mux.Handle("/api/tui/", http.StripPrefix(tuiHTTPPrefix, buildTUIHTTPHandler()))
 	mux.HandleFunc("/api/auth/session", handleDashboardAuthSession)
 	mux.HandleFunc("/api/instance", handleDashboardInstance)
 	mux.HandleFunc("/api/snapshot", withGzip(withPerfTiming("/api/snapshot", handleDashboardSnapshot)))
@@ -992,17 +993,22 @@ type snapshotPayload struct {
 	// surface. It is re-read on every snapshot so changing config takes effect
 	// without restarting agentd, matching processRoute.
 	ProcessesEnabled bool `json:"processes_enabled"`
-	// GroupAttachmentsEnabled gates the experimental paperclip overlaid on
-	// group titles. The attachment data and API remain available while this
-	// presentation flag is off, so existing references are not destroyed.
-	// Re-read on every snapshot so a Config-tab change takes effect without
-	// restarting agentd.
-	GroupAttachmentsEnabled bool `json:"group_attachments_enabled"`
+	// GroupAttachmentsMode selects the experimental paperclip presentation on
+	// group titles: off, float, or fixed. The attachment data and API remain
+	// available while the mode is off, so existing references are not
+	// destroyed. Re-read on every snapshot so a Config-tab change takes effect
+	// without restarting agentd.
+	GroupAttachmentsMode config.GroupAttachmentsMode `json:"group_attachments_mode"`
 	// TerminalPaletteShortcut mirrors the opt-in feature switch. The palette
 	// island uses it only for requests originating inside xterm; Ctrl/Cmd+K
 	// elsewhere remains the normal dashboard shortcut. Re-read on every
 	// snapshot so a Config-tab change takes effect without restarting agentd.
 	TerminalPaletteShortcut bool `json:"terminal_command_palette_shortcut_enabled"`
+	// RecordedSandboxDetails gates the optional details chevron beside each
+	// sandbox badge. The compact badge and tooltip remain visible either way.
+	// Re-read on every snapshot so a Config-tab change takes effect without
+	// restarting agentd.
+	RecordedSandboxDetails bool `json:"recorded_sandbox_details_enabled"`
 	// UserDefaultModel is the "model" key from the user-level
 	// ~/.claude/settings.json — what every claude launched without
 	// --model falls back to. "" = unset (claude's built-in default).
@@ -2676,8 +2682,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
-		GroupAttachmentsEnabled:  cfg.GroupAttachmentsEnabled(),
+		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
+		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,

@@ -30,6 +30,10 @@ import (
 // Cmd returns the claude subcommand for use in other binaries.
 func Cmd() *cobra.Command {
 	var logLevel string
+	agentCmd := agent.Cmd()
+	// The terminal dashboard implementation lives with agentd's TUI model,
+	// but its operator-facing command belongs beside `agent dashboard`.
+	agentCmd.AddCommand(agentd.TUIDashboardCmd())
 	cmd := boa.CmdT[session.NewParams]{
 		Use:         "claude",
 		Short:       "Coding-agent utilities",
@@ -45,7 +49,7 @@ func Cmd() *cobra.Command {
 			statusbar.Cmd(),
 			selftest.Cmd(),
 			task.Cmd(),
-			agent.Cmd(),
+			agentCmd,
 			agentd.Cmd(),
 			memoryfiles.Cmd(),
 			processcmd.Cmd(),

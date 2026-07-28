@@ -1320,7 +1320,7 @@ type TUIConsole struct {
 
 // NewTUIConsoleForTest builds the console over the daemon's own /v1 mux.
 func NewTUIConsoleForTest() *TUIConsole {
-	return &TUIConsole{m: newTUIModel(newTUIAPI())}
+	return &TUIConsole{m: newTUIModel(newInProcessTUIAPI())}
 }
 
 // Resize gives the console a terminal size, as the runtime does on startup.
