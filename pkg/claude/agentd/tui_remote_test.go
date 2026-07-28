@@ -1,21 +1,97 @@
 package agentd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 )
+
+func TestResolveTUIOperatorTokenOverridesLocalDetection(t *testing.T) {
+	t.Setenv(agent.HumanTokenEnvVar, "local-token")
+
+	direct, err := resolveTUIOperatorToken(
+		&tuiDashboardParams{OperatorToken: " explicit-token "},
+		true,
+		false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit-token", direct)
+
+	fallback, err := resolveTUIOperatorToken(&tuiDashboardParams{}, false, false)
+	require.NoError(t, err)
+	assert.Equal(t, "local-token", fallback)
+
+	_, err = resolveTUIOperatorToken(
+		&tuiDashboardParams{OperatorToken: "a", RemoteOperatorToken: "host:/token"},
+		true,
+		true,
+	)
+	assert.ErrorContains(t, err, "mutually exclusive")
+
+	_, err = resolveTUIOperatorToken(&tuiDashboardParams{}, true, false)
+	assert.ErrorContains(t, err, "--operator-token is empty")
+}
+
+func TestResolveTUIOperatorTokenReadsExplicitSSHSource(t *testing.T) {
+	previous := runTUIOperatorTokenSSH
+	t.Cleanup(func() { runTUIOperatorTokenSSH = previous })
+	var destination, path string
+	runTUIOperatorTokenSSH = func(gotDestination, gotPath string) ([]byte, error) {
+		destination, path = gotDestination, gotPath
+		return []byte(" remote-token\n"), nil
+	}
+
+	token, err := resolveTUIOperatorToken(
+		&tuiDashboardParams{RemoteOperatorToken: "operator@agent-host:/srv/tclaude/operator_token"},
+		false,
+		true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "remote-token", token)
+	assert.Equal(t, "operator@agent-host", destination)
+	assert.Equal(t, "/srv/tclaude/operator_token", path)
+}
+
+func TestParseRemoteTUIOperatorTokenSource(t *testing.T) {
+	for _, tc := range []struct {
+		source      string
+		destination string
+		path        string
+	}{
+		{"operator@host:/var/lib/tclaude/token", "operator@host", "/var/lib/tclaude/token"},
+		{"operator@host/home/operator/.tclaude/operator_token", "operator@host", "/home/operator/.tclaude/operator_token"},
+	} {
+		destination, path, err := parseRemoteTUIOperatorTokenSource(tc.source)
+		require.NoError(t, err)
+		assert.Equal(t, tc.destination, destination)
+		assert.Equal(t, tc.path, path)
+	}
+
+	for _, source := range []string{
+		"",
+		"host",
+		"-oProxyCommand=bad:/token",
+		"host:relative",
+		"host:/token\nnext",
+	} {
+		_, _, err := parseRemoteTUIOperatorTokenSource(source)
+		assert.Error(t, err, source)
+	}
+}
 
 func TestNormalizeTUIConnectURL(t *testing.T) {
 	t.Run("host and port default to HTTP", func(t *testing.T) {
@@ -72,6 +148,68 @@ func TestRemoteTUIAPIUsesOperatorTokenThenRetainsSessionCookie(t *testing.T) {
 	require.NoError(t, api.get("/v1/peers", &rows))
 	require.NoError(t, api.get("/v1/peers", &rows))
 	assert.Equal(t, int32(2), calls.Load())
+}
+
+func TestRemoteTUIAttachStreamsTheDashboardTerminalWebSocket(t *testing.T) {
+	var attached atomic.Bool
+	var gotInput atomic.Bool
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/tui/v1/peers":
+			assert.Equal(t, "tclo_remote-test", r.Header.Get(agent.HumanTokenHeader))
+			http.SetCookie(w, &http.Cookie{Name: "dash", Value: "session", Path: "/"})
+			_, _ = w.Write([]byte(`[]`))
+		case r.URL.Path == "/api/tui/attach-ws/c1":
+			attached.Store(true)
+			assert.Equal(t, srvOrigin(r), r.Header.Get("Origin"))
+			cookie, err := r.Cookie("dash")
+			require.NoError(t, err)
+			assert.Equal(t, "session", cookie.Value)
+			assert.Empty(t, r.Header.Get(agent.HumanTokenHeader),
+				"the operator token must not be copied into the terminal upgrade")
+			conn, err := upgrader.Upgrade(w, r, nil)
+			require.NoError(t, err)
+			defer func() { _ = conn.Close() }()
+			require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("REMOTE\r\n")))
+			messageType, data, err := conn.ReadMessage()
+			require.NoError(t, err)
+			assert.Equal(t, websocket.BinaryMessage, messageType)
+			assert.Equal(t, []byte("hello"), data)
+			gotInput.Store(true)
+			require.NoError(t, conn.WriteMessage(websocket.BinaryMessage, []byte("DONE\r\n")))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	require.NoError(t, api.get("/v1/peers", &[]tuiAgentRow{}),
+		"the ordinary dashboard poll bootstraps the session cookie used by the websocket")
+
+	stdin, inputWriter, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = stdin.Close() }()
+	defer func() { _ = inputWriter.Close() }()
+	var stdout bytes.Buffer
+	command := &remoteTUIAttachCommand{
+		api:       api,
+		agentName: "alice",
+		convID:    "c1",
+		stdin:     stdin,
+		stdout:    &stdout,
+	}
+	go func() {
+		_, _ = inputWriter.Write([]byte("hello"))
+	}()
+	require.NoError(t, command.Run())
+	assert.True(t, attached.Load())
+	assert.True(t, gotInput.Load())
+	assert.Equal(t, "REMOTE\r\nDONE\r\n", stdout.String())
 }
 
 func srvOrigin(r *http.Request) string {
@@ -215,16 +353,17 @@ func TestTUIInitialRefreshDoesNotOverlapTheFirstTick(t *testing.T) {
 	assert.NotNil(t, cmd, "the tick must reschedule itself without replacing the in-flight refresh")
 }
 
-func TestRemoteTUIModelDoesNotClaimHostLocalCapabilities(t *testing.T) {
+func TestRemoteTUIModelStreamsAttachButDoesNotClaimOtherHostLocalCapabilities(t *testing.T) {
 	api, err := newRemoteTUIAPI("agent-host:8321", "tclo_remote-test")
 	require.NoError(t, err)
 	m := newTUIModel(api)
 	m.agents = []tuiAgentRow{{ConvID: "c1", Title: "live", Online: true}}
 
 	assert.True(t, m.operator)
-	assert.Empty(t, m.enterHint(), "a remote terminal cannot attach to the daemon host's tmux")
-	assert.NotContains(t, m.renderSpawnForm(), "go to its pane")
+	assert.Equal(t, "enter remote attach", m.enterHint())
+	assert.Contains(t, m.renderSpawnForm(), "go to its pane")
 	assert.NotContains(t, m.renderSpawnForm(), "tab complete dir")
+	assert.Contains(t, m.renderHelp(), "authenticated terminal WebSocket")
 
 	updated, _ := m.handleKey(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	remote := updated.(tuiModel)

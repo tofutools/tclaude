@@ -206,6 +206,15 @@ tclaude agent tui-dashboard --connect-to=agent-host:8321
 
 # A full URL is also accepted (including an HTTPS reverse-proxy prefix).
 tclaude agent tui-dashboard --connect-to=https://agents.example.com/tclaude
+
+# When this machine's automatically detected token belongs to a different,
+# local agentd, override it explicitly:
+tclaude agent tui-dashboard --connect-to=agent-host:8321 \
+  --operator-token=tclo_...
+
+# Or read the remote daemon's persisted token through your existing SSH setup:
+tclaude agent tui-dashboard --connect-to=agent-host:8321 \
+  --remote-operator-token=operator@agent-host:/home/operator/.tclaude/data/operator_token
 ```
 
 A bare `host[:port]` means HTTP; a URL may use HTTP or HTTPS. The operator
@@ -215,11 +224,23 @@ not confined to the local machine.
 
 The terminal model talks through a small Go API interface with separate
 in-process and HTTP implementations. Listing, spawning, starting offline
-agents, and retiring are identical on both transports and reach the same
-versioned daemon handlers. Host-local operations are intentionally not faked:
-a remote console cannot attach its terminal to the daemon host's tmux server
-or tab-complete the daemon host's filesystem. Quitting a remote console exits
-only that client; agentd and its agents keep running.
+agents, retiring, and attaching are available on both transports. **Enter** on
+a live remote agent temporarily gives the local terminal to the same
+authenticated PTY/WebSocket bridge used by the web dashboard; **Ctrl-B D**
+detaches and returns to the terminal dashboard. The remote tmux client does not
+displace an operator already viewing that session elsewhere. Daemon-host path
+completion remains unavailable because paths must be completed on the machine
+where the terminal UI is running. Quitting a remote console exits only that
+client; agentd and its agents keep running.
+
+Token resolution is explicit-first: `--operator-token` (literal value), then
+`--remote-operator-token` (an SSH source in
+`user@host:/absolute/path` or `user@host/absolute/path` form), then
+`TCLAUDE_HUMAN_TOKEN` / the normal local persisted-token lookup. The two flags
+are mutually exclusive. A literal command-line token may be retained in shell
+history or exposed in a process listing, so prefer the environment or the SSH
+source when that matters. The SSH form runs the local `ssh` client and therefore
+uses the operator's normal SSH config, agent, and host verification.
 
 The remote client polls every two seconds and treats connection failures as
 transient. It keeps the current listing visible while agentd is down and
@@ -232,9 +253,9 @@ operator token (`agent.persist_operator_token` or
 `--persist-operator-token`) as well if reconnecting after an unclean stop must
 work, because an ungraceful exit cannot save the previous dashboard session.
 
-The server exposes only the six versioned operations this TUI uses under
-`/api/tui/`; it does not publish agentd's entire Unix-socket API on the
-dashboard listener.
+The server exposes only the six versioned JSON operations and one terminal
+WebSocket this TUI uses under `/api/tui/`; it does not publish agentd's entire
+Unix-socket API on the dashboard listener.
 
 ## Fixed loopback port
 

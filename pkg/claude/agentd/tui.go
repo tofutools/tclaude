@@ -125,6 +125,7 @@ func tuiEndedNormally(err error) bool {
 // daemon host and process lifetime. API-backed operations (list, spawn, retire,
 // resume) need no capability bit: both implementations support them.
 type tuiCapabilities struct {
+	attachAgent      bool
 	attachLocalPane  bool
 	completeLocalDir bool
 	shutdownOnQuit   bool
@@ -138,6 +139,7 @@ type tuiCapabilities struct {
 type tuiAPI interface {
 	get(path string, out any) error
 	post(path string, in, out any) error
+	attach(agentName, convID, tmuxSession string) tea.Cmd
 	isOperator() bool
 	identityWarning() string
 	connectionLabel() string
@@ -231,10 +233,28 @@ func (a *inProcessTUIAPI) connectionLabel() string {
 
 func (a *inProcessTUIAPI) capabilities() tuiCapabilities {
 	return tuiCapabilities{
+		attachAgent:      true,
 		attachLocalPane:  true,
 		completeLocalDir: true,
 		shutdownOnQuit:   true,
 	}
+}
+
+func (a *inProcessTUIAPI) attach(agentName, convID, tmuxSession string) tea.Cmd {
+	if tmuxSession == "" {
+		if sess := pickAliveSession(convID); sess != nil {
+			tmuxSession = sess.TmuxSession
+		}
+	}
+	if tmuxSession == "" {
+		return func() tea.Msg {
+			return tuiAttachedMsg{
+				agent: agentName,
+				err:   fmt.Errorf("%s has no live tmux session to attach to", agentName),
+			}
+		}
+	}
+	return tuiAttachToPane(agentName, tmuxSession, insideTmux())
 }
 
 func (a *inProcessTUIAPI) get(path string, out any) error {
@@ -633,6 +653,7 @@ func newTUIModel(api tuiAPI) tuiModel {
 		refreshing:        true, // Init immediately starts the first refresh.
 		refreshGeneration: 1,
 		capabilities: tuiCapabilities{
+			attachAgent:      true,
 			attachLocalPane:  true,
 			completeLocalDir: true,
 			shutdownOnQuit:   true,
@@ -1078,6 +1099,13 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 // tmux server. inTmux reports whether agentd itself is running inside tmux.
 var tuiAttachToPane = realTUIAttachToPane
 
+func (m tuiModel) attachCmd(agentName, convID, tmuxSession string) tea.Cmd {
+	if m.api != nil {
+		return m.api.attach(agentName, convID, tmuxSession)
+	}
+	return tuiAttachToPane(agentName, tmuxSession, insideTmux())
+}
+
 // realTUIAttachToPane is the production handover, and it has two shapes
 // because agentd's own terminal may already be a tmux client:
 //
@@ -1215,12 +1243,11 @@ func tuiTrimmedLines(in []string) []string {
 // attachSelected puts the operator on the selected agent's tmux session — the
 // console's answer to "let me actually go look at what this agent is doing".
 //
-// The target is resolved from the daemon's own session rows rather than over
-// the API: which tmux session an agent is on is local process state, and the
-// action itself is a takeover of THIS terminal, which no HTTP shape can
-// express. Both halves are therefore gated on the console being the operator,
-// so a console that the daemon classifies as an agent cannot use it to reach a
-// peer's pane and drive it.
+// Both transports hand THIS terminal to the agent: the embedded API resolves
+// the daemon-host tmux session directly, while the remote API streams the web
+// dashboard's authenticated terminal WebSocket. The operator gate applies to
+// both, so an agent-class console cannot use either path to reach a peer's pane
+// and drive it.
 func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	row, ok := m.selectedAgent()
 	if !ok {
@@ -1230,21 +1257,25 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
 	}
-	if !m.capabilities.attachLocalPane {
-		m.notice = "This console is remote; attach to the agent from the daemon host."
+	if !m.capabilities.attachAgent {
+		m.notice = "This console cannot attach to an agent's terminal."
 		return m, nil
 	}
-	sess := pickAliveSession(row.ConvID)
-	if sess == nil || sess.TmuxSession == "" {
-		m.notice = row.name() + " has no live tmux session to attach to."
-		return m, nil
-	}
-	if insideTmux() {
+	if m.capabilities.attachLocalPane && insideTmux() {
+		sess := pickAliveSession(row.ConvID)
+		if sess == nil || sess.TmuxSession == "" {
+			m.notice = row.name() + " has no live tmux session to attach to."
+			return m, nil
+		}
 		m.notice = "Switching to " + sess.TmuxSession + "…"
-	} else {
-		m.notice = "Attached to " + sess.TmuxSession + " — detach (ctrl-b d) to come back."
+		return m, m.attachCmd(row.name(), row.ConvID, sess.TmuxSession)
 	}
-	return m, tuiAttachToPane(row.name(), sess.TmuxSession, insideTmux())
+	if m.capabilities.attachLocalPane {
+		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
+	} else {
+		m.notice = "Opening remote terminal for " + row.name() + " — detach (ctrl-b d) to come back."
+	}
+	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
 
 // confirmRetireSelected opens the retire confirmation over the selected row.
@@ -1468,7 +1499,10 @@ func tuiMutationOutcomeUnknown(err error) bool {
 // back to the ordinary "spawned, here it is in the listing" path.
 func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 	session := msg.resp.TmuxSession
-	if !m.operator || !m.capabilities.attachLocalPane || session == "" {
+	convID := msg.resp.ConvID
+	if !m.operator || !m.capabilities.attachAgent ||
+		(m.capabilities.attachLocalPane && session == "") ||
+		(!m.capabilities.attachLocalPane && convID == "") {
 		return m, nil
 	}
 	name := msg.resp.AgentID
@@ -1480,12 +1514,16 @@ func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 		// operator has to go on.
 		name = session
 	}
-	if insideTmux() {
+	if m.capabilities.attachLocalPane && insideTmux() {
 		m.notice += " — switching to " + session + "…"
-	} else {
-		m.notice += " — attaching; detach (ctrl-b d) to come back."
+		return m, m.attachCmd(name, convID, session)
 	}
-	return m, tuiAttachToPane(name, session, insideTmux())
+	if m.capabilities.attachLocalPane {
+		m.notice += " — attaching; detach (ctrl-b d) to come back."
+	} else {
+		m.notice += " — opening its remote terminal; detach (ctrl-b d) to come back."
+	}
+	return m, m.attachCmd(name, convID, session)
 }
 
 // tuiSpawnSummary describes a landed spawn in one line. A Codex agent held
@@ -1895,10 +1933,12 @@ func (m tuiModel) enterHint() string {
 		return ""
 	case !row.Online:
 		return "enter start"
-	case !m.operator || !m.capabilities.attachLocalPane:
+	case !m.operator || !m.capabilities.attachAgent:
 		return ""
-	case insideTmux():
+	case m.capabilities.attachLocalPane && insideTmux():
 		return "enter switch to"
+	case !m.capabilities.attachLocalPane:
+		return "enter remote attach"
 	default:
 		return "enter attach"
 	}
@@ -2017,7 +2057,7 @@ func (m tuiModel) renderSpawnForm() string {
 		completeHint = "tab complete dir • "
 	}
 	spawnHint := "enter spawn"
-	if m.operator && m.capabilities.attachLocalPane {
+	if m.operator && m.capabilities.attachAgent {
 		spawnHint = "enter spawn + go to its pane"
 	}
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
@@ -2130,13 +2170,16 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
 	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
 	b.WriteString("               conversation it was last running.\n")
-	if m.capabilities.attachLocalPane {
-		b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
-		b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
-		b.WriteString("               with ctrl-b d. Going to a pane is operator consoles only;\n")
+	if m.capabilities.attachAgent {
+		if m.capabilities.attachLocalPane {
+			b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
+			b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
+		} else {
+			b.WriteString("               On a live one: stream its daemon-host tmux session through\n")
+			b.WriteString("               the dashboard's authenticated terminal WebSocket until\n")
+		}
+		b.WriteString("               you detach with ctrl-b d. Going to a pane is operator consoles only;\n")
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")
-	} else {
-		b.WriteString("               A remote console cannot attach to a live daemon-host pane.\n")
 	}
 	b.WriteString("    n          Start a new agent\n")
 	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
@@ -2164,7 +2207,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               Directory starts on the group's own default directory\n")
 	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
 	b.WriteString("               group picker until you type a path of your own.\n")
-	if m.capabilities.attachLocalPane {
+	if m.capabilities.attachAgent {
 		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 		b.WriteString("               the same move enter makes on its row. Operator\n")
 		b.WriteString("               consoles only; an agent still starting up (no pane\n")
