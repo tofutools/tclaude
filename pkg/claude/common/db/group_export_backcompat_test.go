@@ -134,6 +134,35 @@ func TestGroupExport_GroupPermissionsRoundTrip(t *testing.T) {
 	assert.Equal(t, exp.Group.Permissions[0].GrantedBy, grantedBy, "attribution preserved")
 }
 
+func TestGroupExport_AttachmentRoundTrip(t *testing.T) {
+	setupTestDB(t)
+
+	_, err := CreateAgentGroup("src", "")
+	require.NoError(t, err)
+	const (
+		attachmentURL   = "https://linear.app/acme/project/platform"
+		attachmentLabel = "Platform project"
+	)
+	n, err := SetAgentGroupAttachment("src", attachmentURL, attachmentLabel)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n)
+
+	exp, err := CollectGroupExport("src")
+	require.NoError(t, err)
+	assert.Equal(t, attachmentURL, exp.Group.AttachmentURL)
+	assert.Equal(t, attachmentLabel, exp.Group.AttachmentLabel)
+
+	_, err = ImportGroup(GroupImportPlan{
+		Export: exp, TargetName: "dst", TargetCwd: "/tmp/import-target", ConvRemap: map[string]string{},
+	})
+	require.NoError(t, err)
+	dst, err := GetAgentGroupByName("dst")
+	require.NoError(t, err)
+	require.NotNil(t, dst)
+	assert.Equal(t, attachmentURL, dst.AttachmentURL)
+	assert.Equal(t, attachmentLabel, dst.AttachmentLabel)
+}
+
 // TestGroupExport_GroupTargetCronJob_RoundTrips covers the JOH-26 PR3a fix to
 // the cron export/import path: a group fan-out job (target_kind='group') must
 // round-trip as one. Before the fix the export dropped target_kind, so the

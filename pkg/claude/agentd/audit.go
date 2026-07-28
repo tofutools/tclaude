@@ -179,6 +179,9 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "stand-down"}, verb: "group.stand-down"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "stop"}, verb: "group.stop"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "resume"}, verb: "group.resume"},
+	// Record set/clear outcomes without a describer so the URL-bearing body
+	// is neither buffered nor copied into the audit row.
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "attachment"}, verb: "group.attachment"},
 
 	// Membership + ownership.
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "members"}, verb: "member.add", describe: describeMemberTarget},

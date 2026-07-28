@@ -75,9 +75,11 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
 	// stays "" and is left out of the manifest (omitempty).
 	if err := d.QueryRow(`
-		SELECT descr, default_context, max_members, created_at, archived_at
+		SELECT descr, default_context, attachment_url, attachment_label,
+		       max_members, created_at, archived_at
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
+		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
 		&exp.Group.MaxMembers, &exp.Group.CreatedAt, &exp.Group.ArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
 	}
@@ -768,10 +770,11 @@ func (c *importCtx) group() error {
 	// profile from it rather than resurrecting the column.
 	res, err := c.tx.Exec(`
 		INSERT INTO agent_groups
-			(name, descr, default_cwd, default_context, max_members, created_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			(name, descr, default_cwd, default_context, attachment_url,
+			 attachment_label, max_members, created_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.plan.TargetName, g.Descr, c.plan.TargetCwd, g.DefaultContext,
-		g.MaxMembers, g.CreatedAt, g.ArchivedAt)
+		g.AttachmentURL, g.AttachmentLabel, g.MaxMembers, g.CreatedAt, g.ArchivedAt)
 	if err != nil {
 		return fmt.Errorf("import: create group: %w", err)
 	}
