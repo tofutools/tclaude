@@ -264,6 +264,8 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(status), "\nCapEff:\t0000000000000000\n")
 	assert.Contains(t, string(status), "\nCapPrm:\t0000000000000000\n")
+	assert.Contains(t, string(status), "\nCapInh:\t0000000000000000\n")
+	assert.Contains(t, string(status), "\nCapAmb:\t0000000000000000\n")
 	assert.Contains(t, string(status), "\nNoNewPrivs:\t1\n")
 
 	hosts, err := os.ReadFile("/etc/hosts")

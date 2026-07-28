@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +27,7 @@ import (
 
 const (
 	tclaudeLayerFilteredBootstrapCommand = "tclaude-layer-filtered-bootstrap"
+	tclaudeLayerFilteredNFTCommand       = "tclaude-layer-filtered-nft"
 	filteredNetworkPolicyEncodingLimit   = 64 << 10
 	filteredNetworkBootstrapBinaryFD     = 4
 	filteredNetworkPolicyFD              = 5
@@ -52,10 +54,16 @@ func filteredNetworkBootstrapCapabilityArgs() []string {
 }
 
 func filteredNetworkNFTCommand(nftPath string) *exec.Cmd {
-	cmd := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
+	cmd := exec.Command(
+		sandboxpolicy.FilteredNetworkBootstrapPath,
+		"session",
+		tclaudeLayerFilteredNFTCommand,
+		"--nft", nftPath,
+	)
 	cmd.Env = filteredNetworkHelperEnv()
-	// Carry the bootstrap's namespace-local authority across exactly the nft
-	// child exec; the later harness exec follows an explicit all-set drop.
+	// The parent narrows every capability set before this additive ambient
+	// request. The internal child verifies the resulting exact sets before it
+	// execs nft; the later harness exec follows an explicit all-set drop.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		AmbientCaps: []uintptr{unix.CAP_NET_ADMIN},
 	}
@@ -631,17 +639,25 @@ func tclaudeLayerFilteredBootstrapCmd() *cobra.Command {
 	return cmd
 }
 
+func tclaudeLayerFilteredNFTCmd() *cobra.Command {
+	var nftPath string
+	cmd := &cobra.Command{
+		Use:    tclaudeLayerFilteredNFTCommand,
+		Short:  "Verify filtered-network nft authority and install policy (internal)",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return runTclaudeLayerFilteredNFT(nftPath)
+		},
+	}
+	cmd.Flags().StringVar(&nftPath, "nft", "", "resolved nft executable (internal)")
+	return cmd
+}
+
 func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 	nftPath = filepath.Clean(strings.TrimSpace(nftPath))
 	if !filepath.IsAbs(nftPath) || len(command) == 0 {
 		return fmt.Errorf("filtered-network bootstrap contract is invalid")
-	}
-	nft := filteredNetworkNFTCommand(nftPath)
-	nft.Stdin = nil
-	nft.Stdout = os.Stderr
-	nft.Stderr = os.Stderr
-	if err := nft.Run(); err != nil {
-		return fmt.Errorf("install atomic filtered-network nft policy: %w", err)
 	}
 	dnsFiles, err := openFilteredNetworkDNSDescriptors()
 	if err != nil {
@@ -652,6 +668,16 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 			_ = file.Close()
 		}
 	}()
+	if err := narrowFilteredNetworkBootstrapForNFT(); err != nil {
+		return err
+	}
+	nft := filteredNetworkNFTCommand(nftPath)
+	nft.Stdin = nil
+	nft.Stdout = os.Stderr
+	nft.Stderr = os.Stderr
+	if err := nft.Run(); err != nil {
+		return fmt.Errorf("install atomic filtered-network nft policy: %w", err)
+	}
 	sync, err := net.DialUnix(
 		"unixpacket",
 		nil,
@@ -695,6 +721,136 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 		}
 	}
 	return unix.Exec(executable, command, os.Environ())
+}
+
+type filteredNetworkCapabilityState struct {
+	Effective   uint64
+	Permitted   uint64
+	Inheritable uint64
+	Ambient     uint64
+}
+
+func narrowFilteredNetworkBootstrapForNFT() error {
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return fmt.Errorf("set no-new-privileges before filtered nft exec: %w", err)
+	}
+	if err := unix.Prctl(
+		unix.PR_CAP_AMBIENT,
+		unix.PR_CAP_AMBIENT_CLEAR_ALL,
+		0, 0, 0,
+	); err != nil {
+		return fmt.Errorf("clear ambient capabilities before filtered nft exec: %w", err)
+	}
+	mask := uint32(1) << unix.CAP_NET_ADMIN
+	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	data := [2]unix.CapUserData{{
+		Effective: mask, Permitted: mask, Inheritable: mask,
+	}}
+	if err := unix.Capset(&header, &data[0]); err != nil {
+		return fmt.Errorf("narrow filtered nft capability sets: %w", err)
+	}
+	expected := filteredNetworkCapabilityState{
+		Effective: uint64(mask), Permitted: uint64(mask),
+		Inheritable: uint64(mask),
+	}
+	if err := requireFilteredNetworkCapabilityState(expected); err != nil {
+		return fmt.Errorf("verify filtered nft parent capability sets: %w", err)
+	}
+	return nil
+}
+
+func runTclaudeLayerFilteredNFT(nftPath string) error {
+	nftPath = filepath.Clean(strings.TrimSpace(nftPath))
+	if !filepath.IsAbs(nftPath) {
+		return fmt.Errorf("filtered-network nft child contract is invalid")
+	}
+	mask := uint64(1) << unix.CAP_NET_ADMIN
+	expected := filteredNetworkCapabilityState{
+		Effective: mask, Permitted: mask, Inheritable: mask, Ambient: mask,
+	}
+	if err := requireFilteredNetworkCapabilityState(expected); err != nil {
+		return fmt.Errorf("verify filtered nft child capability sets: %w", err)
+	}
+	noNewPrivileges, _, errno := unix.Syscall6(
+		unix.SYS_PRCTL,
+		uintptr(unix.PR_GET_NO_NEW_PRIVS),
+		0, 0, 0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("inspect filtered nft no-new-privileges: %w", errno)
+	}
+	if noNewPrivileges != 1 {
+		return fmt.Errorf("filtered nft child has no-new-privileges disabled")
+	}
+	return unix.Exec(
+		nftPath,
+		[]string{nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath},
+		filteredNetworkHelperEnv(),
+	)
+}
+
+func requireFilteredNetworkCapabilityState(
+	expected filteredNetworkCapabilityState,
+) error {
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return fmt.Errorf("read filtered-network capability state: %w", err)
+	}
+	actual, err := parseFilteredNetworkCapabilityState(status)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return fmt.Errorf(
+			"capability state is effective=%016x permitted=%016x inheritable=%016x ambient=%016x; want effective=%016x permitted=%016x inheritable=%016x ambient=%016x",
+			actual.Effective,
+			actual.Permitted,
+			actual.Inheritable,
+			actual.Ambient,
+			expected.Effective,
+			expected.Permitted,
+			expected.Inheritable,
+			expected.Ambient,
+		)
+	}
+	return nil
+}
+
+func parseFilteredNetworkCapabilityState(
+	status []byte,
+) (filteredNetworkCapabilityState, error) {
+	values := map[string]*uint64{}
+	var state filteredNetworkCapabilityState
+	values["CapEff"] = &state.Effective
+	values["CapPrm"] = &state.Permitted
+	values["CapInh"] = &state.Inheritable
+	values["CapAmb"] = &state.Ambient
+	for _, line := range strings.Split(string(status), "\n") {
+		name, value, found := strings.Cut(line, ":")
+		target, wanted := values[name]
+		if !found || !wanted {
+			continue
+		}
+		parsed, parseErr := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
+		if parseErr != nil {
+			return filteredNetworkCapabilityState{}, fmt.Errorf(
+				"parse filtered-network %s: %w", name, parseErr)
+		}
+		*target = parsed
+		delete(values, name)
+	}
+	if len(values) != 0 {
+		missing := make([]string, 0, len(values))
+		for name := range values {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return filteredNetworkCapabilityState{}, fmt.Errorf(
+			"filtered-network capability state is missing %s",
+			strings.Join(missing, ", "),
+		)
+	}
+	return state, nil
 }
 
 func openFilteredNetworkDNSDescriptors() ([]*os.File, error) {

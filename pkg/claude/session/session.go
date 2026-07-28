@@ -183,6 +183,7 @@ func Cmd() *cobra.Command {
 			exitCallbackCmd(),
 			tclaudeLayerWinchRelayCmd(),
 			tclaudeLayerFilteredBootstrapCmd(),
+			tclaudeLayerFilteredNFTCmd(),
 		},
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
 			// Default to interactive watch mode

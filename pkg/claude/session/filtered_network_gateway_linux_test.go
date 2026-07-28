@@ -34,12 +34,35 @@ func TestFilteredNetworkBootstrapCapabilitiesAreMinimal(t *testing.T) {
 func TestFilteredNetworkNFTCommandCarriesOnlyRequiredAmbientCapability(t *testing.T) {
 	cmd := filteredNetworkNFTCommand("/usr/sbin/nft")
 	assert.Equal(t, []string{
-		"/usr/sbin/nft",
-		"-f",
-		sandboxpolicy.FilteredNetworkNFTPolicyPath,
+		sandboxpolicy.FilteredNetworkBootstrapPath,
+		"session",
+		tclaudeLayerFilteredNFTCommand,
+		"--nft", "/usr/sbin/nft",
 	}, cmd.Args)
 	assert.Equal(t, []uintptr{unix.CAP_NET_ADMIN}, cmd.SysProcAttr.AmbientCaps)
 	assert.Equal(t, filteredNetworkHelperEnv(), cmd.Env)
+}
+
+func TestParseFilteredNetworkCapabilityStateRequiresEverySet(t *testing.T) {
+	got, err := parseFilteredNetworkCapabilityState([]byte(
+		"Name:\ttclaude\n" +
+			"CapInh:\t0000000000001000\n" +
+			"CapPrm:\t0000000000001000\n" +
+			"CapEff:\t0000000000001000\n" +
+			"CapAmb:\t0000000000001000\n",
+	))
+	require.NoError(t, err)
+	assert.Equal(t, filteredNetworkCapabilityState{
+		Effective: 0x1000, Permitted: 0x1000,
+		Inheritable: 0x1000, Ambient: 0x1000,
+	}, got)
+
+	_, err = parseFilteredNetworkCapabilityState([]byte(
+		"CapInh:\t0000000000001000\n" +
+			"CapPrm:\t0000000000001000\n" +
+			"CapEff:\t0000000000001000\n",
+	))
+	require.ErrorContains(t, err, "CapAmb")
 }
 
 func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
