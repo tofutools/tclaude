@@ -87,13 +87,32 @@ func inspectAgentWorktreeWithRegistry(
 	convID string,
 	registered map[string]registeredSweepWorktree,
 ) agentWorktreeView {
-	dir := agent.ResolveLocation(convID).CurrentDir
-	if dir == "" {
-		return agentWorktreeView{Kind: "none"}
+	loc := agent.ResolveLocation(convID)
+	dirs := []string{loc.CurrentDir, loc.StartupDir}
+	if sess, err := db.FindSessionByConvID(convID); err == nil && sess != nil {
+		if physical, err := recordedStartupDir(sess); err == nil {
+			dirs = append(dirs, physical)
+		}
 	}
-	st := inspectWorktreeFn(dir)
-	if st.Kind == "none" {
-		if reg, ok := registered[dir]; ok {
+	return inspectWorktreeDirs(dirs, registered)
+}
+
+func inspectWorktreeDirs(
+	dirs []string,
+	registered map[string]registeredSweepWorktree,
+) agentWorktreeView {
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		dir = cleanClaimDir(dir)
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		st := inspectWorktreeFn(dir)
+		if st.Kind != "none" {
+			return agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+		}
+		if reg, ok := registeredWorktreeForDir(registered, dir); ok {
 			kind := "linked"
 			if reg.Info.IsMain {
 				kind = "main"
@@ -106,7 +125,7 @@ func inspectAgentWorktreeWithRegistry(
 			}
 		}
 	}
-	return agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+	return agentWorktreeView{Kind: "none"}
 }
 
 // agentWorktreeClaimSnapshot is one operation's stable view of worktree
@@ -218,6 +237,12 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			addExtraDir(s.ConvID, physical)
 		}
 	}
+	for convID, sessions := range latestSessions {
+		for _, sess := range sessions {
+			physical, _ := recordedStartupDir(sess)
+			addExtraDir(convID, physical)
+		}
+	}
 
 	// Cache the full view per directory: agents commonly co-share a cwd, and
 	// InspectWorktree shells out to git.
@@ -231,25 +256,11 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		if dir != "" {
 			view, cached := dirViews[dir]
 			if !cached {
-				st := inspectWorktreeFn(dir)
-				if st.Kind == "none" {
-					if reg, ok := registered[dir]; ok {
-						kind := "linked"
-						if reg.Info.IsMain {
-							kind = "main"
-						}
-						view = agentWorktreeView{
-							Path:     reg.Info.Path,
-							Branch:   reg.Info.Branch,
-							Kind:     kind,
-							RepoRoot: reg.RepoRoot,
-						}
-					} else {
-						view = agentWorktreeView{Kind: "none"}
-					}
-				} else {
-					view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+				dirs := []string{loc.CurrentDir, loc.StartupDir}
+				for extra := range extraDirs[convID] {
+					dirs = append(dirs, extra)
 				}
+				view = inspectWorktreeDirs(dirs, registered)
 				dirViews[dir] = view
 			}
 			snap.views[convID] = view

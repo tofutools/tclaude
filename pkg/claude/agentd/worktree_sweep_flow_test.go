@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -81,11 +82,9 @@ type fakeSweep struct {
 	roots     map[string]string                  // candidate dir -> repo root
 	statuses  map[string]worktree.WorktreeStatus // dir -> inspect result
 	dirty     map[string]bool                    // worktree path -> dirty
-	mainRepo  string                             // resolved main repo for any worktree
 
 	mu      sync.Mutex
 	removed []string
-	pruned  []string
 }
 
 func (f *fakeSweep) list(string) ([]worktree.WorktreeInfo, error) {
@@ -109,15 +108,6 @@ func (f *fakeSweep) inspect(dir string) worktree.WorktreeStatus {
 }
 
 func (f *fakeSweep) dirtyFn(dir string) bool { return f.dirty[dir] }
-
-func (f *fakeSweep) main(string) string { return f.mainRepo }
-
-func (f *fakeSweep) prune(dir string) error {
-	f.mu.Lock()
-	f.pruned = append(f.pruned, dir)
-	f.mu.Unlock()
-	return nil
-}
 
 func (f *fakeSweep) remove(root string, _ bool) (bool, error) {
 	f.mu.Lock()
@@ -160,17 +150,6 @@ func (f *fakeSweep) wasRemoved(root string) bool {
 	return false
 }
 
-func (f *fakeSweep) wasPruned(dir string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, p := range f.pruned {
-		if p == dir {
-			return true
-		}
-	}
-	return false
-}
-
 func assertNotRepo(path string) error { return &notRepoErr{path} }
 
 type notRepoErr struct{ path string }
@@ -186,7 +165,7 @@ func installFakeSweep(t *testing.T, f *fakeSweep) {
 	t.Cleanup(agentd.SetWorktreeFnsForTest(f.inspect, f.remove))
 	t.Cleanup(agentd.SetRetireWorktreeFnForTest(f.removeBranch))
 	t.Cleanup(agentd.SetRegisteredWorktreeFnForTest(f.removeRegistered))
-	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(f.list, f.repoRoot, f.dirtyFn, f.main, f.prune))
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(f.list, f.repoRoot, f.dirtyFn))
 }
 
 // repoFixture builds the canonical one-repo / five-worktree fixture and
@@ -270,8 +249,7 @@ func repoFixture(t *testing.T, f *testharness.Flow) *fakeSweep {
 			wtRetD: {Root: wtRetD, Branch: "retired-dirty", Kind: "linked"},
 			wtMix:  {Root: wtMix, Branch: "mixed", Kind: "linked"},
 		},
-		dirty:    map[string]bool{wtDrt: true, wtRetD: true},
-		mainRepo: repo,
+		dirty: map[string]bool{wtDrt: true, wtRetD: true},
 	}
 	installFakeSweep(t, fs)
 	return fs
@@ -436,7 +414,6 @@ func TestWorktreeSweep_GlobalProtectsLiveAgentStartupRootAfterMove(t *testing.T)
 			startup: {Root: startup, Branch: "startup", Kind: "linked"},
 			scratch: {Kind: "none"},
 		},
-		mainRepo: repo,
 	}
 	installFakeSweep(t, fs)
 
@@ -511,7 +488,6 @@ func TestWorktreeSweep_ActiveActorKeepsPredecessorStartupRoot(t *testing.T) {
 			startup:     {Root: startup, Branch: "original", Kind: "linked"},
 			replacement: {Kind: "none"},
 		},
-		mainRepo: repo,
 	}
 	installFakeSweep(t, fs)
 
@@ -576,7 +552,6 @@ func TestWorktreeSweep_ProtectsEveryLiveSessionStartupForOneConv(t *testing.T) {
 			first:  {Root: first, Branch: "first", Kind: "linked"},
 			second: {Root: second, Branch: "second", Kind: "linked"},
 		},
-		mainRepo: repo,
 	}
 	installFakeSweep(t, fs)
 
@@ -632,7 +607,6 @@ func TestWorktreeSweep_CleanupRemovesAndProtects(t *testing.T) {
 	assert.True(t, fs.wasRemoved("/repo-wt-dirty"))
 	assert.False(t, fs.wasRemoved("/repo-wt-live"), "live-agent worktree must be kept")
 	assert.False(t, fs.wasRemoved("/repo"), "main repo must be kept")
-	assert.True(t, fs.wasPruned("/repo"), "the repo is pruned after the sweep")
 
 	// Per-path reasons surfaced to the modal.
 	reasons := map[string]string{}
@@ -684,7 +658,8 @@ func TestWorktreeSweep_CleanupRemovesMissingRegisteredWorktrees(t *testing.T) {
 	)
 	const liveConv = "wmsl-1111-2222-3333-4444"
 	f.HaveConvWithTitle(liveConv, "missing-live-worker")
-	f.HaveAliveSession(liveConv, "spwn-wmsl", "tmux-wmsl", liveMissing)
+	f.HaveAliveSession(liveConv, "spwn-wmsl", "tmux-wmsl",
+		filepath.Join(liveMissing, "nested"))
 	f.HaveEnrolledAgent(liveConv)
 	fs := &fakeSweep{
 		worktrees: []worktree.WorktreeInfo{
@@ -698,7 +673,6 @@ func TestWorktreeSweep_CleanupRemovesMissingRegisteredWorktrees(t *testing.T) {
 			repo: {Root: repo, Branch: "main", Kind: "main"},
 			// Missing paths intentionally inspect as Kind "none".
 		},
-		mainRepo: repo,
 	}
 	installFakeSweep(t, fs)
 
@@ -728,7 +702,6 @@ func TestWorktreeSweep_CleanupRemovesMissingRegisteredWorktrees(t *testing.T) {
 	assert.True(t, fs.wasRemoved(attached))
 	assert.True(t, fs.wasRemoved(detached))
 	assert.False(t, fs.wasRemoved(liveMissing))
-	assert.True(t, fs.wasPruned(repo))
 
 	results := map[string]string{}
 	for _, outcome := range out.Outcomes {

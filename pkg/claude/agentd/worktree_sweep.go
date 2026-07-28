@@ -53,8 +53,6 @@ var (
 	listWorktreesInFn = worktree.ListWorktreesIn
 	repoRootForPathFn = worktree.RepoRootForPath
 	worktreeDirtyFn   = worktree.IsDirtyIn
-	mainRepoForPathFn = worktree.MainRepoForPath
-	pruneWorktreesFn  = worktree.PruneWorktreesIn
 )
 
 // sweepAgent is an agent bound to a worktree — either its immutable startup
@@ -344,6 +342,27 @@ func scanSweepWorktrees(dirs []string) ([]string, map[string]registeredSweepWork
 	return roots, registered
 }
 
+// registeredWorktreeForDir resolves dir against Git's registered worktree
+// roots without requiring dir to exist. Stored agent locations can name a
+// subdirectory of the registered root, so exact string equality is
+// insufficient once filesystem/Git inspection is unavailable.
+func registeredWorktreeForDir(
+	registered map[string]registeredSweepWorktree,
+	dir string,
+) (registeredSweepWorktree, bool) {
+	dir = cleanClaimDir(dir)
+	var best registeredSweepWorktree
+	bestLen := -1
+	for _, reg := range registered {
+		root := cleanClaimDir(reg.Info.Path)
+		if !dirContains(root, dir) || len(root) <= bestLen {
+			continue
+		}
+		best, bestLen = reg, len(root)
+	}
+	return best, bestLen >= 0
+}
+
 // worktreeRootConvs maps each git worktree root to the conv-ids of agents
 // bound there, across ALL sessions. Both the immutable startup directory and
 // the tracked current directory are claims: an edit in another repo must not
@@ -369,7 +388,7 @@ func worktreeRootConvs(registered map[string]registeredSweepWorktree) map[string
 		if !cached {
 			root = inspectWorktreeFn(dir).Root
 			if root == "" {
-				if reg, ok := registered[cleanClaimDir(dir)]; ok {
+				if reg, ok := registeredWorktreeForDir(registered, dir); ok {
 					root = reg.Info.Path
 				}
 			}
@@ -487,6 +506,19 @@ func liveAgentWorktreeRoots() map[string]bool {
 		}
 	}
 	return roots
+}
+
+// worktreeClaimedByAny reports whether any live root/directory claim falls
+// inside path. Claims include both successfully inspected worktree roots and
+// lexical startup/current dirs, so a missing worktree remains protected when
+// the recorded CWD names one of its subdirectories.
+func worktreeClaimedByAny(path string, claims map[string]bool) bool {
+	for claim := range claims {
+		if dirContains(path, claim) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSweepAgent resolves a conversation-generation claim through the
@@ -627,12 +659,6 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 	liveRoots := liveAgentWorktreeRoots()
 	resp := worktreeCleanupResponse{Outcomes: []worktreeCleanupOutcome{}}
 	seen := map[string]bool{}
-	// Main repos of the worktrees we touch — pruned once at the end to
-	// clear any DANGLING worktree links (entries whose dir was deleted
-	// out-of-band). Resolved BEFORE removal, while the worktree dir still
-	// exists to anchor the git call. `git worktree remove` already cleans
-	// the link for the worktrees it removes; this mops up the rest.
-	pruneRepos := map[string]bool{}
 	for _, raw := range body.Paths {
 		path := strings.TrimSpace(raw)
 		if path == "" || seen[path] {
@@ -652,7 +678,7 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 				out.Branch = reg.Info.Branch
 				out.Result, out.Detail = "skipped", "main repo — never removed"
 				resp.Skipped++
-			case liveRoots[path] || liveRoots[cleanClaimDir(path)]:
+			case worktreeClaimedByAny(path, liveRoots):
 				out.Branch = reg.Info.Branch
 				out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 				resp.Skipped++
@@ -671,20 +697,16 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 				default:
 					resp.Failed++
 				}
-				pruneRepos[reg.RepoRoot] = true
 			}
 		case st.Kind == "main":
 			out.Result, out.Detail = "skipped", "main repo — never removed"
 			resp.Skipped++
-		case liveRoots[path] || (st.Root != "" && liveRoots[st.Root]):
+		case worktreeClaimedByAny(st.Root, liveRoots):
 			// Re-check against live state: an agent may have started here
 			// between discovery and submit. Never yank a running agent's cwd.
 			out.Result, out.Detail = "skipped", "in use by a running agent — stop it first"
 			resp.Skipped++
 		default:
-			if main := mainRepoForPathFn(path); main != "" {
-				pruneRepos[main] = true
-			}
 			out = removeOneWorktree(path, st.Branch, body.DeleteBranches)
 			switch out.Result {
 			case "removed":
@@ -699,12 +721,6 @@ func handleDashboardWorktreeCleanup(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp.Outcomes = append(resp.Outcomes, out)
-	}
-	// Finishing tidy-up: prune dangling worktree registrations in every
-	// repo we touched. Best-effort — a prune failure never affects the
-	// per-path outcomes already reported.
-	for repo := range pruneRepos {
-		_ = pruneWorktreesFn(repo)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

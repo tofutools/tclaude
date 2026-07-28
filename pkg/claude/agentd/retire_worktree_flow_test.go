@@ -128,8 +128,6 @@ func TestRetire_RemovesMissingDetachedRegisteredWorktree(t *testing.T) {
 			return "", assertNotRepo(path)
 		},
 		func(string) bool { return false },
-		func(string) string { return repo },
-		func(string) error { return nil },
 	))
 
 	mux := agentd.BuildDashboardHandlerForTest()

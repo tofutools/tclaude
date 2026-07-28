@@ -389,7 +389,8 @@ func TestCleanup_Agents_DeleteRemovesMissingRegisteredWorktree(t *testing.T) {
 	repo := f.TestCwd("wt-registered-main")
 	missing := filepath.Join(filepath.Dir(repo), "wt-registered-missing")
 	f.HaveConvWithTitle(conv, "missing-worktree-worker")
-	f.HaveAliveSession(conv, "spwn-wmrg", "tmux-wmrg", missing)
+	f.HaveAliveSession(conv, "spwn-wmrg", "tmux-wmrg",
+		filepath.Join(missing, "nested"))
 	f.MarkOffline("tmux-wmrg")
 	f.HaveGroup("squad")
 	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
@@ -413,8 +414,6 @@ func TestCleanup_Agents_DeleteRemovesMissingRegisteredWorktree(t *testing.T) {
 			return "", assertNotRepo(path)
 		},
 		func(string) bool { return false },
-		func(string) string { return repo },
-		func(string) error { return nil },
 	))
 
 	mux := agentd.BuildDashboardHandlerForTest()
