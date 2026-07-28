@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,13 +17,16 @@ import (
 )
 
 const (
-	maxAgentPRURLLen     = 2048
-	maxAgentPRSummaryLen = 200
+	maxAgentPRURLLen                  = 2048
+	maxAgentPRSummaryLen              = 200
+	recentlyMergedPRPollInterval      = 10 * time.Second
+	recentlyMergedPRSearchResultLimit = 20
 )
 
 var (
-	presentedPRInflight     sync.Map
-	presentedPRInfoResolver = livePresentedPRInfoResolver
+	presentedPRInflight       sync.Map
+	presentedPRInfoResolver   = livePresentedPRInfoResolver
+	recentlyMergedPRsResolver = liveRecentlyMergedPRsResolver
 )
 
 // presentedPRView is the dashboard wire shape for explicitly presented PRs.
@@ -155,13 +159,7 @@ func refreshPresentedPR(agentID, rawURL, key string) {
 	}
 	info.State = strings.ToLower(strings.TrimSpace(info.State))
 	info.FetchedAt = now
-	data, err := json.Marshal(info)
-	if err == nil {
-		if err := db.SaveGitCache(key, data, now); err != nil {
-			slog.Warn("presented-pr: failed to cache PR refresh",
-				"error", err, "url", rawURL, "module", "agentd")
-		}
-	}
+	savePresentedPRCache(key, rawURL, info, now)
 	if !ok || info.State == "" {
 		return
 	}
@@ -188,6 +186,148 @@ func livePresentedPRInfoResolver(rawURL string) (presentedPRInfo, bool) {
 		pr.URL = strings.TrimSpace(rawURL)
 	}
 	return presentedPRInfo{Number: pr.Number, URL: pr.URL, State: strings.ToLower(pr.State)}, true
+}
+
+func savePresentedPRCache(key, rawURL string, info presentedPRInfo, now time.Time) {
+	data, err := json.Marshal(info)
+	if err != nil {
+		return
+	}
+	if err := db.SaveGitCache(key, data, now); err != nil {
+		slog.Warn("presented-pr: failed to cache PR refresh",
+			"error", err, "url", rawURL, "module", "agentd")
+	}
+}
+
+// startRecentlyMergedPRPoller runs one daemon-wide GitHub search immediately,
+// then once per interval. The search input comes from all unhandled presented
+// PR rows in one DB read, so its cadence and subprocess count never scale with
+// the number of agents or groups.
+func startRecentlyMergedPRPoller(stop <-chan struct{}) {
+	go func() {
+		pollRecentlyMergedPRs()
+		ticker := time.NewTicker(recentlyMergedPRPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				pollRecentlyMergedPRs()
+			}
+		}
+	}()
+}
+
+type githubPRRef struct {
+	repo   string
+	number int
+}
+
+func (r githubPRRef) key() string {
+	return strings.ToLower(r.repo) + "#" + strconv.Itoa(r.number)
+}
+
+// pollRecentlyMergedPRs complements the individual gh-pr-view refresh path.
+// One bulk search catches the common case (a recently merged PR authored by
+// the authenticated gh user) within about ten seconds. Anything it cannot see
+// — another author's PR, an unmerged close, a result outside the newest 20, or
+// a failed search — remains covered by the existing per-PR resolver.
+func pollRecentlyMergedPRs() {
+	all, err := db.ListUnhandledAgentPRs()
+	if err != nil {
+		slog.Warn("presented-pr: failed to list PRs for merged search",
+			"error", err, "module", "agentd")
+		return
+	}
+
+	targets := make(map[string][]db.AgentPR)
+	reposByKey := make(map[string]string)
+	for _, rows := range all {
+		for _, row := range rows {
+			if isTerminalPresentedPRState(row.State) {
+				continue
+			}
+			ref, ok := githubPRRefFromURL(row.PRURL)
+			if !ok {
+				continue
+			}
+			targets[ref.key()] = append(targets[ref.key()], row)
+			reposByKey[strings.ToLower(ref.repo)] = ref.repo
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	repos := make([]string, 0, len(reposByKey))
+	for _, repo := range reposByKey {
+		repos = append(repos, repo)
+	}
+	sort.Strings(repos)
+
+	merged, ok := recentlyMergedPRsResolver(repos)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	cached := make(map[string]bool)
+	for _, info := range merged {
+		ref, valid := githubPRRefFromURL(info.URL)
+		if !valid {
+			continue
+		}
+		rows := targets[ref.key()]
+		if len(rows) == 0 {
+			continue
+		}
+		info.State = "merged"
+		info.FetchedAt = now
+		for _, row := range rows {
+			if _, err := db.UpdateAgentPRState(row.AgentID, row.PRURL, info.State); err != nil {
+				slog.Warn("presented-pr: failed to apply merged search result",
+					"error", err, "agent_id", row.AgentID, "url", row.PRURL, "module", "agentd")
+			}
+			if !cached[row.PRURL] {
+				savePresentedPRCache(presentedPRCacheKey(row.PRURL), row.PRURL, info, now)
+				cached[row.PRURL] = true
+			}
+		}
+	}
+}
+
+func liveRecentlyMergedPRsResolver(repos []string) ([]presentedPRInfo, bool) {
+	args := []string{
+		"search", "prs",
+		"--author=@me",
+		"--merged",
+		"--sort", "updated",
+		"--limit", strconv.Itoa(recentlyMergedPRSearchResultLimit),
+		"--json", "repository,number,title,closedAt,url",
+	}
+	for _, repo := range repos {
+		args = append(args, "--repo", repo)
+	}
+	out := runInDir("", "gh", args...)
+	if out == "" {
+		return nil, false
+	}
+	var prs []struct {
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+	}
+	if json.Unmarshal([]byte(out), &prs) != nil {
+		return nil, false
+	}
+	result := make([]presentedPRInfo, 0, len(prs))
+	for _, pr := range prs {
+		result = append(result, presentedPRInfo{
+			Number: pr.Number,
+			URL:    strings.TrimSpace(pr.URL),
+			State:  "merged",
+		})
+	}
+	return result, true
 }
 
 func presentedPRCacheKey(rawURL string) string {
@@ -239,16 +379,26 @@ func isGitHubPresentedPRURL(rawURL string) bool {
 }
 
 func deriveGitHubPRNumber(rawURL string) int {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
 		return 0
 	}
-	segs := pathSegments(u.Path)
-	for i, s := range segs {
-		if s == "pull" && i+1 < len(segs) && isAllDigits(segs[i+1]) {
-			n, _ := strconv.Atoi(segs[i+1])
-			return n
-		}
+	return ref.number
+}
+
+func githubPRRefFromURL(rawURL string) (githubPRRef, bool) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return githubPRRef{}, false
 	}
-	return 0
+	segs := pathSegments(u.Path)
+	if len(segs) < 4 || segs[0] == "" || segs[1] == "" ||
+		segs[2] != "pull" || !isAllDigits(segs[3]) {
+		return githubPRRef{}, false
+	}
+	n, _ := strconv.Atoi(segs[3])
+	if n <= 0 {
+		return githubPRRef{}, false
+	}
+	return githubPRRef{repo: segs[0] + "/" + segs[1], number: n}, true
 }

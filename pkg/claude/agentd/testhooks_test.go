@@ -859,6 +859,31 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 	return func() { presentedPRInfoResolver = prev }
 }
 
+// SetRecentlyMergedPRsResolverForTest swaps the single bulk GitHub-search
+// boundary behind the daemon-wide presented-PR poller. The fake receives the
+// deduped repository list and returns merged PR URLs.
+func SetRecentlyMergedPRsResolverForTest(fn func(repos []string) ([]string, bool)) func() {
+	prev := recentlyMergedPRsResolver
+	recentlyMergedPRsResolver = func(repos []string) ([]presentedPRInfo, bool) {
+		urls, ok := fn(repos)
+		if !ok {
+			return nil, false
+		}
+		out := make([]presentedPRInfo, 0, len(urls))
+		for _, u := range urls {
+			out = append(out, presentedPRInfo{URL: u, State: "merged"})
+		}
+		return out, true
+	}
+	return func() { recentlyMergedPRsResolver = prev }
+}
+
+// PollRecentlyMergedPRsForTest runs one synchronous daemon-wide merged-PR
+// poll, avoiding the production ticker in flow tests.
+func PollRecentlyMergedPRsForTest() {
+	pollRecentlyMergedPRs()
+}
+
 // SetAsyncSpawnInlineGraceForTest shrinks the non-blocking spawn's
 // conv-id inline grace so a flow test can drive the JOH-205 inc2 pending
 // path — a spawn whose conv-id never materialises returns PENDING and
