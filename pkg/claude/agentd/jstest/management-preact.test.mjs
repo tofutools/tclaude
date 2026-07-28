@@ -1240,6 +1240,43 @@ test('sandbox network selector retains empty domain and CIDR kinds through save 
   falseLoopback.host.remove();
 });
 
+test('sandbox access rows expose aligned grid cells for network and Unix sockets', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'aligned-access', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: {
+      mode: 'list',
+      allow: [{ domain: 'example.com', include_subdomains: true }, { loopback: true }],
+    },
+    unix_sockets: { mode: 'list', allow: [{ path: '/tmp/example.sock' }] },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const networkRows = [...host.querySelectorAll('.sbx-network-row')];
+  assert.equal(networkRows.length, 2);
+  assert.ok(networkRows.every((row) => row.classList.contains('sbx-access-row')));
+  assert.ok(networkRows.every((row) => row.querySelector('.sbx-network-modifier')),
+    'every network kind reserves the modifier column');
+  assert.ok(networkRows[0].querySelector('.sbx-network-modifier .sbx-inline-check'));
+  assert.equal(networkRows[1].querySelector('.sbx-network-modifier').textContent, '');
+  const loopbackValue = networkRows[1].querySelector('span.sbx-network-value.sbx-network-value-readonly');
+  assert.equal(loopbackValue.textContent, '—');
+  assert.equal(loopbackValue.getAttribute('aria-hidden'), 'true');
+  const networkHelp = host.querySelector('#sandbox-profile-editor-network-help-hint');
+  assert.match(networkHelp.textContent, /Host matches one exact DNS name/);
+  assert.match(networkHelp.textContent, /blank allows all ports/);
+  assert.match(networkHelp.textContent, /compose by intersection/);
+  assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
+
+  unmount();
+  host.remove();
+});
+
 test('raw access JSON can repair a structured access validation error', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
