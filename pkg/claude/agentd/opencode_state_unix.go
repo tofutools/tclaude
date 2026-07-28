@@ -497,10 +497,6 @@ func ensureOpenCodeInstallGitignore(installDir string) error {
 	return err
 }
 
-func ensureOpenCodeConfigGitignore(configDir string) (bool, error) {
-	return ensureOpenCodeBootstrapGitignore(configDir, "config")
-}
-
 func ensureOpenCodeBootstrapGitignore(dir, surface string) (bool, error) {
 	path := filepath.Join(dir, openCodeInstallBootstrapFile)
 	fd, err := unix.Open(path,

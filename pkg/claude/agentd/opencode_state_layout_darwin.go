@@ -88,7 +88,7 @@ func prepareOpenCodeReadOnlyConfigForPlatform(
 	if !readOnly {
 		return nil
 	}
-	created, err := ensureOpenCodeConfigGitignore(configDir)
+	created, err := ensureOpenCodeBootstrapGitignore(configDir, "config")
 	if err != nil {
 		return fmt.Errorf(
 			"opencode_read_only_config_bootstrap: refuse Darwin OpenCode launch because the read-only config prerequisite could not be established: %w",
