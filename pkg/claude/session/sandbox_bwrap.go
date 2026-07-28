@@ -170,27 +170,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
 		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-			if filepath.IsAbs(socket) {
+			socket = canonicalGeneratedSandboxPath(socket)
+			if socket != "" {
 				launchReadDirs = append(launchReadDirs, socket)
 			}
 		}
 	}
 	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
 		launchReadDirs, launchWriteDirs, launchDenyDirs)
-	// The launch contract adds daemon-owned paths after the operator snapshot
-	// was normalized. Freeze those generated rows too, including through
-	// stable parent aliases such as macOS /var -> /private/var, so a persisted
-	// spec revalidates to the exact bytes it was launched with.
-	normalizedLaunch, _, err := sandboxpolicy.NormalizeForPersistence(
-		sandboxpolicy.Profile{
-			Name:       "tclaude-layer-launch",
-			Filesystem: effective.Filesystem,
-		})
-	if err != nil {
-		return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-			"normalize tclaude-layer generated filesystem: %w", err)
-	}
-	effective.Filesystem = normalizedLaunch.Filesystem
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
@@ -236,6 +223,39 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		Effective: effective,
 		Contract:  contract,
 	}, nil
+}
+
+// canonicalGeneratedSandboxPath freezes a daemon-owned path even when its leaf
+// does not exist yet. Generated paths bypass the authored-profile protected
+// root check because the daemon-final contract deliberately re-closes those
+// roots; they still need the same stable parent identity on replay.
+func canonicalGeneratedSandboxPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	ancestor := path
+	var suffix []string
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(ancestor)
+			if resolveErr != nil {
+				return path
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved)
+		} else if !os.IsNotExist(err) {
+			return path
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return path
+		}
+		suffix = append(suffix, filepath.Base(ancestor))
+		ancestor = parent
+	}
 }
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
