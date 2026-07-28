@@ -212,14 +212,14 @@ function bucketKey(outcome) {
 }
 
 // Turns the evaluator's axis-oriented response into the operator's read model:
-// concrete effective rules grouped only by whether this target applies them.
+// concrete effective rules grouped only by whether this target supports them.
 // `axes` should be the selected assignment's context_axes entry when present;
 // callers fall back to the target-wide worst-case axes for older daemons.
 export function sandboxRuleBuckets(axes = {}, context = {}) {
   const buckets = {
-    applied: { key: 'applied', label: 'Rules fully applied', rules: [], reasons: [] },
-    partial: { key: 'partial', label: 'Rules partially applied', rules: [], reasons: [] },
-    notApplied: { key: 'not-applied', label: 'Rules not applied', rules: [], reasons: [] },
+    applied: { key: 'applied', label: 'Fully supported rules', rules: [], reasons: [] },
+    partial: { key: 'partial', label: 'Partially supported rules', rules: [], reasons: [] },
+    notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], reasons: [] },
   };
   const seenReasons = new Set();
   let launchRefused = false;
@@ -243,6 +243,34 @@ export function sandboxRuleBuckets(axes = {}, context = {}) {
     }
   }
   return { ...buckets, launchRefused };
+}
+
+const outcomeRank = {
+  enforced: 0,
+  enforced_partial: 1,
+  not_enforced: 2,
+  refused: 3,
+};
+
+// The selectable assignment uses context_axes, but the aggregate axes still
+// guard every assignment, including contexts omitted from the selector.
+export function sandboxOtherAssignmentWarnings(overallAxes = {}, selectedAxes = {}) {
+  const labels = {
+    filesystem: 'Directory rules',
+    environment: 'Environment rules',
+    agent_directories: 'Private-directory rules',
+    network: 'Network rules',
+    unix_sockets: 'Unix-socket rules',
+  };
+  return Object.entries(labels).flatMap(([axis, label]) => {
+    const overall = overallAxes?.[axis];
+    const selected = selectedAxes?.[axis];
+    if (!overall || !selected || overall.outcome === 'enforced'
+        || (outcomeRank[overall.outcome] ?? 2) <= (outcomeRank[selected.outcome] ?? 2)) {
+      return [];
+    }
+    return [{ axis, label, outcome: overall.outcome, detail: overall.detail }];
+  });
 }
 
 export function sandboxTargetLabel(value = {}) {

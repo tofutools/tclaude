@@ -8,6 +8,7 @@ import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
+  sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
   sandboxRuleBuckets,
   sandboxTargetLabel,
@@ -71,10 +72,23 @@ function SandboxOutcomeBucket({ bucket, open }) {
 function SandboxPolicyResult({ target, context, contextIndex }) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
   const buckets = sandboxRuleBuckets(axes, context);
+  const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
+  const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
   const hasProblems = buckets.partial.rules.length > 0 || buckets.notApplied.rules.length > 0;
+  const partialCount = buckets.partial.rules.length;
+  const unsupportedCount = buckets.notApplied.rules.length;
+  const a11ySummary = buckets.launchRefused
+    ? 'This target refuses the launch.'
+    : `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
   return html`<div class="sbx-policy-result">
     <strong class="sbx-policy-target">${sandboxTargetLabel(target)}</strong>
-    ${buckets.launchRefused && html`<div class="sbx-launch-blocked">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
+    <div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">${a11ySummary}</div>
+    ${otherWarnings.length > 0 && html`<div class=${`sbx-other-assignments${otherLaunchRefused ? ' refused' : ''}`} role=${otherLaunchRefused ? 'alert' : 'status'}>
+      <strong>Other assignments need attention.</strong>
+      <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
+      <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
+    </div>`}
+    ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
     <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${!hasProblems}/>
     <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}/>
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}/>
@@ -775,6 +789,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${(prediction?.contexts?.length || 0) > 1 && html`<label>Rules for <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
       ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}
+      ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
       ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
         <div><strong>Profile layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
         ${(selectedEffective.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}

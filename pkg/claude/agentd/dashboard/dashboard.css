@@ -4252,6 +4252,33 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-size: .82rem;
   margin-top: .45rem;
 }
+.sbx-a11y-status {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+.sbx-other-assignments {
+  background: rgba(210, 153, 34, .08);
+  border-left: 3px solid #d29922;
+  border-radius: .25rem;
+  color: #e6c07b;
+  font-size: .85rem;
+  margin: .45rem 0;
+  padding: .45rem .6rem;
+}
+.sbx-other-assignments.refused {
+  background: rgba(248, 81, 73, .1);
+  border-left-color: #f85149;
+  color: #ff7b72;
+}
+.sbx-other-assignments ul {
+  margin: .35rem 0 0;
+  padding-left: 1.25rem;
+}
 .sbx-launch-blocked {
   background: rgba(248, 81, 73, .1);
   border-left: 3px solid #f85149;

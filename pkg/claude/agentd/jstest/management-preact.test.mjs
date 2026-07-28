@@ -898,6 +898,21 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.deepEqual(buckets.notApplied.reasons, [
     { label: 'Launch blocked', detail: 'network detail from resolver' },
   ]);
+  assert.equal(buckets.applied.label, 'Fully supported rules');
+  assert.equal(buckets.partial.label, 'Partially supported rules');
+  assert.equal(buckets.notApplied.label, 'Unsupported rules');
+  assert.deepEqual(model.sandboxOtherAssignmentWarnings({
+    filesystem: { outcome: 'refused', detail: 'another assignment refuses its carve-out' },
+    network: { outcome: 'not_enforced', detail: 'same network outcome' },
+  }, {
+    filesystem: { outcome: 'enforced', detail: 'selected assignment is safe' },
+    network: { outcome: 'not_enforced', detail: 'same network outcome' },
+  }), [{
+    axis: 'filesystem',
+    label: 'Directory rules',
+    outcome: 'refused',
+    detail: 'another assignment refuses its carve-out',
+  }]);
   assert.equal(model.sandboxTargetLabel({
     implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
   }), 'Codex on macOS · built-in sandbox');
@@ -1235,13 +1250,22 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   const partial = host.querySelector('.sbx-rule-bucket-partial');
   assert.equal(partial.hasAttribute('open'), true);
   assert.match(partial.textContent,
-    /Block: \/home\/operator.*Read\/write: \/home\/operator\/work.*built-in tools cannot preserve this carve-out/s);
+    /Partially supported rules.*Block: \/home\/operator.*Read\/write: \/home\/operator\/work.*built-in tools cannot preserve this carve-out/s);
   assert.doesNotMatch(partial.textContent, /another assignment refuses/,
     'the selected assignment uses its own verdict instead of the aggregate worst case');
   const notApplied = host.querySelector('.sbx-rule-bucket-not-applied');
   assert.equal(notApplied.hasAttribute('open'), true);
   assert.match(notApplied.textContent,
     /Block outbound network \(allow list is empty\).*resolver-owned network detail/s);
+  const otherAssignments = host.querySelector('.sbx-other-assignments');
+  assert.equal(otherAssignments.getAttribute('role'), 'alert');
+  assert.match(otherAssignments.textContent,
+    /Other assignments need attention.*including any omitted.*Directory rules:.*another assignment refuses its carve-out/s);
+  const announcements = [...host.querySelectorAll('.sbx-a11y-status')];
+  assert.equal(announcements[0].getAttribute('role'), 'status');
+  assert.match(announcements[0].textContent, /2 partially supported rules and 1 unsupported rule/);
+  assert.match(announcements[1].textContent,
+    /Policy composition warning:.*leaves no network destinations/);
   const composition = host.querySelector('.sbx-composition-details');
   assert.equal(composition.hasAttribute('open'), false);
   assert.match(composition.textContent, /How these rules were combined.*leaves no network destinations/s);

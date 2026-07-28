@@ -637,15 +637,17 @@ protected-root, reserved-variable, containment, and harness capability checks.
 The editor has separate **Network** and **Unix sockets** fieldsets with
 unset/open/closed/list modes, editable list rows, inherited harness-global
 context, and audited insert-only presets. Its **Effective policy preview**
-shows concrete effective rules grouped as **Rules fully applied**, **Rules
-partially applied**, and **Rules not applied** for the selected
-implementation/harness/platform. Partial and unapplied groups open
+shows concrete effective rules grouped as **Fully supported rules**,
+**Partially supported rules**, and **Unsupported rules** for the selected
+implementation/harness/platform. Partial and unsupported groups open
 automatically; successful rules stay folded when another group needs
 attention. Unset axes are omitted, and profile-layer composition details stay
 behind a secondary disclosure.
 
 Each assignment context has its own verdict, while the daemon also evaluates
-every context for the aggregate safety result. A narrower read/write carve-out
+every context for the aggregate safety result. If another assignment has a
+worse result, a concise warning remains visible even when that context is
+omitted from the selector. A narrower read/write carve-out
 beneath a denied parent is therefore visible even when the two rows come from
 different profile scopes, without making an unaffected selected group inherit
 another group's warning. The prediction distinguishes the tclaude layer's
