@@ -4172,7 +4172,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: flex; flex-direction: column; gap: 6px;
 }
 
-.sbx-access-axis > select {
+.sbx-access-axis > select,
+.sbx-effective-preview > label > select {
   margin: .25rem 0 .5rem;
   min-width: 13rem;
 }
