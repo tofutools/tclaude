@@ -4402,9 +4402,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// so that label is authoritative and must not be re-minted.
 	layeredLaunch := p.SandboxImplementation ==
 		string(sandboxpolicy.ImplementationTclaudeLayer)
-	nextLabel := spawnLabelSequence(p.Name)
 	label := p.pendingSpawnLabel
 	if label == "" && layeredLaunch {
+		nextLabel := spawnLabelSequence(p.Name)
 		var reserveErr error
 		label, privateAttachmentCleanup, reserveErr =
 			reserveUniqueSpawnPrivateAttachmentRootWith(nextLabel)
@@ -4416,7 +4416,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 		}
 	} else if label == "" {
-		label = nextLabel()
+		label = spawnLabelSequence(p.Name)()
 	} else if layeredLaunch {
 		_, privateRootCreated, prepareErr :=
 			tclcommon.PrepareSpawnAttachmentsPrivateDir(label)
