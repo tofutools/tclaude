@@ -64,3 +64,40 @@ func TestUpdateAgentPRState_DoesNotResurrectHandled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "open", row.State)
 }
+
+// A merged PR is terminal on GitHub. This also pins the race between the
+// daemon-wide recently-merged search and an older per-PR refresh: the bulk
+// search may write merged while the slower refresh is still in flight, and
+// that late open result must not undo the terminal observation.
+func TestUpdateAgentPRState_DoesNotRegressMerged(t *testing.T) {
+	setupTestDB(t)
+	const url = "https://github.com/tofutools/tclaude/pull/126"
+
+	agent, _, err := EnsureAgentForConv("prst-aaaa-bbbb-cccc-000000000003", "test")
+	require.NoError(t, err)
+	merged, err := UpsertAgentPR(agent, url, "ready", "merged")
+	require.NoError(t, err)
+
+	time.Sleep(time.Millisecond)
+	n, err := UpdateAgentPRState(agent, url, "open")
+	require.NoError(t, err)
+	assert.Zero(t, n, "late open observation must not regress merged")
+
+	afterOpen, err := GetAgentPR(agent, url)
+	require.NoError(t, err)
+	assert.Equal(t, "merged", afterOpen.State)
+	assert.Equal(t, merged.UpdatedAt, afterOpen.UpdatedAt,
+		"rejected observation must not acquire a newer freshness timestamp")
+
+	n, err = UpdateAgentPRState(agent, url, "closed")
+	require.NoError(t, err)
+	assert.Zero(t, n, "late closed observation must not regress merged")
+
+	time.Sleep(time.Millisecond)
+	n, err = UpdateAgentPRState(agent, url, "merged")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "same-state merged refresh remains valid")
+	refreshed, err := GetAgentPR(agent, url)
+	require.NoError(t, err)
+	assert.True(t, refreshed.UpdatedAt.After(merged.UpdatedAt))
+}

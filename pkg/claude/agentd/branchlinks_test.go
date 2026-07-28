@@ -34,27 +34,28 @@ func TestRepoLinksViewUsesFreshestPRStateAcrossSources(t *testing.T) {
 	links = repoLinksView{
 		BranchPRURL:     prURL,
 		BranchPRState:   "merged",
-		branchPRUpdated: now,
+		branchPRUpdated: now.Add(-time.Minute),
 	}.withPresentedPRs([]presentedPRView{{
 		URL:       prURL,
 		State:     "open",
-		updatedAt: now.Add(-time.Minute),
+		updatedAt: now,
 	}})
 
 	assert.Equal(t, "merged", links.BranchPRState,
-		"an older presented result cannot regress a fresher branch result")
+		"a newer open observation cannot regress a merged branch result")
 
 	index := make(prStateIndex)
-	index.add(prURL, "merged", now)
+	index.add(prURL, "merged", now.Add(-time.Minute))
+	index.add(prURL, "open", now)
 	links = repoLinksView{
 		PresentedPRs: []presentedPRView{{
 			URL:       prURL,
 			State:     "open",
-			updatedAt: now.Add(-time.Minute),
+			updatedAt: now,
 		}},
 	}.withFreshestPRStates(index)
 	assert.Equal(t, "merged", links.PresentedPRs[0].State,
-		"a presented-only badge uses a fresher observation from another row")
+		"a newer open observation cannot displace merged in the cross-row index")
 }
 
 func TestBranchLinksForPartsUsesFreshestWorkspaceOrBranchState(t *testing.T) {
