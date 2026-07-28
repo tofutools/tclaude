@@ -177,6 +177,20 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	}
 	effective.Filesystem = sandboxpolicy.GrantsFromDirs(
 		launchReadDirs, launchWriteDirs, launchDenyDirs)
+	// The launch contract adds daemon-owned paths after the operator snapshot
+	// was normalized. Freeze those generated rows too, including through
+	// stable parent aliases such as macOS /var -> /private/var, so a persisted
+	// spec revalidates to the exact bytes it was launched with.
+	normalizedLaunch, _, err := sandboxpolicy.NormalizeForPersistence(
+		sandboxpolicy.Profile{
+			Name:       "tclaude-layer-launch",
+			Filesystem: effective.Filesystem,
+		})
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+			"normalize tclaude-layer generated filesystem: %w", err)
+	}
+	effective.Filesystem = normalizedLaunch.Filesystem
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
