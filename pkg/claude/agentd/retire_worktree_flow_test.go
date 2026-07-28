@@ -92,6 +92,62 @@ func TestRetire_DeleteWorktreeRemovesWorktreeAndBranch(t *testing.T) {
 	require.NotNil(t, retiredRow(snap, conv), "the retired agent must appear in retired[]")
 }
 
+// A detached worktree whose directory vanished still has a Git registration.
+// Retire exposes and removes that registration through the surviving main
+// checkout, without inventing a branch deletion for detached HEAD.
+func TestRetire_RemovesMissingDetachedRegisteredWorktree(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "rwmd-1111-2222-3333-4444"
+	repo := f.TestCwd("rw-missing-detached-main")
+	missing := filepath.Join(filepath.Dir(repo), "rw-missing-detached")
+	f.HaveConvWithTitle(conv, "missing-detached-worker")
+	f.HaveAliveSession(conv, "spwn-rwmd", "tmux-rwmd", missing)
+	f.MarkOffline("tmux-rwmd")
+	f.HaveEnrolledAgent(conv)
+	f.HaveGroup("squad")
+	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
+	require.NoError(t, err)
+
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		repo: {Root: repo, Branch: "main", Kind: "main"},
+	})
+	fw.setRegisteredBranch(missing, "")
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			return []worktree.WorktreeInfo{
+				{Path: repo, Branch: "main", IsMain: true},
+				{Path: missing},
+			}, nil
+		},
+		func(path string) (string, error) {
+			if path == repo {
+				return repo, nil
+			}
+			return "", assertNotRepo(path)
+		},
+		func(string) bool { return false },
+		func(string) string { return repo },
+		func(string) error { return nil },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	probe := testharness.Serve(mux,
+		testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+	require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+	assert.Contains(t, probe.Body.String(), `"kind":"linked"`)
+	assert.Contains(t, probe.Body.String(), `"removable":true`)
+
+	code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "removed", resp.Worktree.Action)
+	assert.Equal(t, "worktree removed", resp.Worktree.Detail)
+	assert.True(t, fw.wasRemoved(missing))
+	assert.NotContains(t, fw.branchesRemoved(), "main")
+}
+
 // Scenario: delete_worktree WITHOUT shutdown keeps the worktree — we
 // never yank a worktree out from under a still-running agent. The
 // response says the worktree was kept and the seam is never hit.

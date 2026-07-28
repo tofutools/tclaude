@@ -134,6 +134,21 @@ func (f *fakeSweep) removeBranch(root, branch string, _ bool) (bool, bool, error
 	return true, deleted, nil
 }
 
+func (f *fakeSweep) removeRegistered(_ string, root string, deleteBranch, _ bool) (bool, bool, string, error) {
+	f.mu.Lock()
+	f.removed = append(f.removed, root)
+	f.mu.Unlock()
+	for _, wt := range f.worktrees {
+		if wt.Path == root {
+			deleted := deleteBranch && wt.Branch != "" &&
+				strings.ToLower(wt.Branch) != "main" &&
+				strings.ToLower(wt.Branch) != "master"
+			return true, deleted, wt.Branch, nil
+		}
+	}
+	return false, false, "", nil
+}
+
 func (f *fakeSweep) wasRemoved(root string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -170,6 +185,7 @@ func installFakeSweep(t *testing.T, f *fakeSweep) {
 	t.Helper()
 	t.Cleanup(agentd.SetWorktreeFnsForTest(f.inspect, f.remove))
 	t.Cleanup(agentd.SetRetireWorktreeFnForTest(f.removeBranch))
+	t.Cleanup(agentd.SetRegisteredWorktreeFnForTest(f.removeRegistered))
 	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(f.list, f.repoRoot, f.dirtyFn, f.main, f.prune))
 }
 
@@ -648,4 +664,76 @@ func TestWorktreeSweep_CleanupKeepsBranchWhenOff(t *testing.T) {
 	assert.Equal(t, 1, out.Removed)
 	assert.Equal(t, 0, out.Branches, "branch kept when delete_branches is off")
 	assert.True(t, fs.wasRemoved("/repo-wt-orphan"))
+}
+
+// Regression: Git remains the authority after a worktree directory is deleted
+// out-of-band. Both branch-backed and detached registrations still appear in
+// discovery and must be removable through the surviving main checkout.
+func TestWorktreeSweep_CleanupRemovesMissingRegisteredWorktrees(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	_, err := db.SetAgentGroupDefaultCwd("squad", "/repo")
+	require.NoError(t, err)
+
+	const (
+		repo        = "/repo"
+		attached    = "/repo-wt-missing-attached"
+		detached    = "/repo-wt-missing-detached"
+		liveMissing = "/repo-wt-missing-live"
+	)
+	const liveConv = "wmsl-1111-2222-3333-4444"
+	f.HaveConvWithTitle(liveConv, "missing-live-worker")
+	f.HaveAliveSession(liveConv, "spwn-wmsl", "tmux-wmsl", liveMissing)
+	f.HaveEnrolledAgent(liveConv)
+	fs := &fakeSweep{
+		worktrees: []worktree.WorktreeInfo{
+			{Path: repo, Branch: "main", IsMain: true},
+			{Path: attached, Branch: "feature-stale"},
+			{Path: detached},
+			{Path: liveMissing, Branch: "feature-live"},
+		},
+		roots: map[string]string{repo: repo},
+		statuses: map[string]worktree.WorktreeStatus{
+			repo: {Root: repo, Branch: "main", Kind: "main"},
+			// Missing paths intentionally inspect as Kind "none".
+		},
+		mainRepo: repo,
+	}
+	installFakeSweep(t, fs)
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	discovered := byPath(discoverWorktrees(t, mux, "squad").Worktrees)
+	assert.Contains(t, discovered, attached)
+	assert.Contains(t, discovered, detached)
+	assert.Contains(t, discovered, liveMissing)
+	assert.Equal(t, "feature-stale", discovered[attached].Branch)
+	assert.Empty(t, discovered[detached].Branch, "detached registration has no branch")
+	assert.Equal(t, "live", discovered[liveMissing].Category,
+		"a live agent's missing startup path remains protected")
+
+	body := `{"paths":["` + attached + `","` + detached + `","` + liveMissing + `"],"delete_branches":true}`
+	r, err := http.NewRequest(http.MethodPost, "/api/worktrees/cleanup", strings.NewReader(body))
+	require.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	rec := testharness.Serve(mux, r)
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var out sweepCleanupWire
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, 2, out.Removed)
+	assert.Equal(t, 1, out.Branches, "only the attached worktree has a branch to delete")
+	assert.Equal(t, 1, out.Skipped, "the live agent's missing worktree remains protected")
+	assert.Zero(t, out.Failed)
+	assert.True(t, fs.wasRemoved(attached))
+	assert.True(t, fs.wasRemoved(detached))
+	assert.False(t, fs.wasRemoved(liveMissing))
+	assert.True(t, fs.wasPruned(repo))
+
+	results := map[string]string{}
+	for _, outcome := range out.Outcomes {
+		results[outcome.Path] = outcome.Result
+	}
+	assert.Equal(t, "removed_with_branch", results[attached])
+	assert.Equal(t, "removed", results[detached])
 }

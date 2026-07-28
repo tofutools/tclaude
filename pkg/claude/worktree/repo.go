@@ -139,7 +139,10 @@ func PruneWorktreesIn(dir string) error {
 	if strings.TrimSpace(dir) == "" {
 		return nil
 	}
-	_, err := gitIn(dir, "worktree", "prune")
+	// The dashboard invokes this immediately after an explicit cleanup.
+	// Override Git's configurable expiry window so a just-deleted directory
+	// is forgotten now rather than remaining registered until a later gc.
+	_, err := gitIn(dir, "worktree", "prune", "--expire", "now")
 	return err
 }
 

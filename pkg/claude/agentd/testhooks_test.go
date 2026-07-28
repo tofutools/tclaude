@@ -1112,6 +1112,16 @@ func SetRetireWorktreeFnForTest(
 	return func() { removeWorktreeBranchFn = prev }
 }
 
+// SetRegisteredWorktreeFnForTest swaps the repo-anchored removal seam used
+// when Git still lists a worktree whose directory is already missing.
+func SetRegisteredWorktreeFnForTest(
+	remove func(repoPath, root string, deleteBranch, force bool) (bool, bool, string, error),
+) func() {
+	prev := removeRegisteredWorktreeFn
+	removeRegisteredWorktreeFn = remove
+	return func() { removeRegisteredWorktreeFn = prev }
+}
+
 // SetSweepWorktreeFnsForTest swaps the repo-wide worktree-janitor seams
 // — repo listing, repo-root resolution, dirty detection, main-repo
 // resolution and prune — so the worktree-sweep discovery/cleanup flow

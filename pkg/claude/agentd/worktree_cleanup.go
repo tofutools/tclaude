@@ -33,7 +33,8 @@ var retireWorktreeExitGrace = 60 * time.Second
 //     actual checkout).
 //   - A worktree another, surviving agent is still working in is never
 //     removed (it's "shared").
-//   - A worktree whose directory is already gone is a silent no-op.
+//   - A worktree whose directory is already gone is removed when a surviving
+//     checkout still exposes its Git registration.
 //
 // inspectWorktreeFn / removeWorktreeFn are the git seam — production
 // shells out via the worktree package; flow tests swap fakes with
@@ -46,6 +47,10 @@ var (
 	// Delete keeps the branch (removeWorktreeFn); retire cleans up the
 	// agent's whole git footprint.
 	removeWorktreeBranchFn = worktree.RemoveLinkedWorktreeAndBranch
+	// removeRegisteredWorktreeFn anchors removal at a surviving checkout,
+	// so repo-wide cleanup can remove a Git registration even after its
+	// worktree directory has disappeared.
+	removeRegisteredWorktreeFn = worktree.RemoveLinkedWorktreeFrom
 )
 
 // agentWorktreeView is the cleanup-oriented view of the git worktree
@@ -55,6 +60,10 @@ type agentWorktreeView struct {
 	Branch string `json:"branch,omitempty"` // branch checked out there
 	Kind   string `json:"kind"`             // "none" | "main" | "linked"
 	Shared bool   `json:"shared"`           // a surviving agent also works here
+	// RepoRoot is the surviving main checkout that supplied a Git
+	// registration for Path. It is set when Path itself could not be
+	// inspected (normally because its directory is already gone).
+	RepoRoot string `json:"-"`
 }
 
 // Removable reports whether cleanup may delete this worktree: it must
@@ -71,11 +80,32 @@ func (v agentWorktreeView) Removable() bool {
 // callers fill it via otherAgentWorktreeRoots with the right
 // exclusion set.
 func inspectAgentWorktree(convID string) agentWorktreeView {
+	return inspectAgentWorktreeWithRegistry(convID, registeredWorktreesForCleanup())
+}
+
+func inspectAgentWorktreeWithRegistry(
+	convID string,
+	registered map[string]registeredSweepWorktree,
+) agentWorktreeView {
 	dir := agent.ResolveLocation(convID).CurrentDir
 	if dir == "" {
 		return agentWorktreeView{Kind: "none"}
 	}
 	st := inspectWorktreeFn(dir)
+	if st.Kind == "none" {
+		if reg, ok := registered[dir]; ok {
+			kind := "linked"
+			if reg.Info.IsMain {
+				kind = "main"
+			}
+			return agentWorktreeView{
+				Path:     reg.Info.Path,
+				Branch:   reg.Info.Branch,
+				Kind:     kind,
+				RepoRoot: reg.RepoRoot,
+			}
+		}
+	}
 	return agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
 }
 
@@ -125,6 +155,7 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	if err != nil {
 		return snap
 	}
+	registered := registeredWorktreesForCleanup()
 
 	// Resolve one location per claimant. Active agents claim their immutable
 	// startup root even while offline, plus their tracked current directory.
@@ -201,7 +232,24 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			view, cached := dirViews[dir]
 			if !cached {
 				st := inspectWorktreeFn(dir)
-				view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+				if st.Kind == "none" {
+					if reg, ok := registered[dir]; ok {
+						kind := "linked"
+						if reg.Info.IsMain {
+							kind = "main"
+						}
+						view = agentWorktreeView{
+							Path:     reg.Info.Path,
+							Branch:   reg.Info.Branch,
+							Kind:     kind,
+							RepoRoot: reg.RepoRoot,
+						}
+					} else {
+						view = agentWorktreeView{Kind: "none"}
+					}
+				} else {
+					view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+				}
 				dirViews[dir] = view
 			}
 			snap.views[convID] = view
@@ -357,7 +405,15 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 			return "worktree kept (shared with another agent)"
 		}
 	}
-	removed, err := removeWorktreeFn(wt.Path, true)
+	var removed bool
+	var err error
+	if wt.RepoRoot != "" {
+		removed, _, _, err = removeRegisteredWorktreeFn(
+			wt.RepoRoot, wt.Path, false, true,
+		)
+	} else {
+		removed, err = removeWorktreeFn(wt.Path, true)
+	}
 	switch {
 	case err != nil:
 		return "worktree removal failed: " + err.Error()
@@ -398,7 +454,15 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	case wt.Shared:
 		return "worktree kept (shared with another agent)", true
 	}
-	removed, branchDeleted, err := removeWorktreeBranchFn(wt.Path, wt.Branch, true)
+	var removed, branchDeleted bool
+	var err error
+	if wt.RepoRoot != "" {
+		removed, branchDeleted, wt.Branch, err = removeRegisteredWorktreeFn(
+			wt.RepoRoot, wt.Path, true, true,
+		)
+	} else {
+		removed, branchDeleted, err = removeWorktreeBranchFn(wt.Path, wt.Branch, true)
+	}
 	switch {
 	case err != nil:
 		return "worktree removal failed: " + err.Error(), false
@@ -438,6 +502,22 @@ func retireBranchLabel(branch string) string {
 // snapshot we could not complete — fails closed and keeps the worktree.
 func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
 	st := inspectWorktreeFn(wt.Path)
+	if st.Kind == "none" && wt.RepoRoot != "" {
+		if wts, err := listWorktreesInFn(wt.RepoRoot); err == nil {
+			for _, registered := range wts {
+				if registered.Path == wt.Path {
+					kind := "linked"
+					if registered.IsMain {
+						kind = "main"
+					}
+					st = worktree.WorktreeStatus{
+						Root: registered.Path, Branch: registered.Branch, Kind: kind,
+					}
+					break
+				}
+			}
+		}
+	}
 	switch {
 	case st.Root != wt.Path || st.Kind != "linked":
 		return "worktree kept — " + wt.Path +
