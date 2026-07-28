@@ -48,7 +48,12 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"dashboard.css", `.group-attachment-fixed {`},
 		{"dashboard.css", `position: static; z-index: auto;`},
 		{"dashboard.css", `margin: 0 0 0 8px; padding: 1px 0;`},
-		{"dashboard.css", `text-decoration: underline;`},
+		{"dashboard.css", `.group-attachment-fixed > a:hover {
+  color: #58a6ff; background: transparent; text-decoration: underline;
+}`},
+		{"dashboard.css", `.group-attachment-fixed > button:hover {
+  color: #58a6ff; background: transparent; text-decoration: none;
+}`},
 		{"dashboard.css", `.group-attachment-label {`},
 		{"dashboard.css", `.group-attachment-fixed:hover .group-attachment-edit`},
 		{"dashboard.css", `summary:hover .group-attachment-fixed`},
