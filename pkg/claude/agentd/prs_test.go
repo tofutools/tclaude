@@ -151,13 +151,16 @@ func TestBoundedRecentlyMergedPRSearchRepos(t *testing.T) {
 func TestCachedGitHubLogin(t *testing.T) {
 	prevResolver := githubLoginResolver
 	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
 	invalidateCachedGitHubLogin()
 	t.Cleanup(func() {
 		githubLoginResolver = prevResolver
 		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
 		invalidateCachedGitHubLogin()
 	})
 	githubConfiguredLoginResolver = func() (string, bool) { return "", false }
+	githubEnvironmentTokenPresent = func() bool { return false }
 
 	calls := 0
 	githubLoginResolver = func() (string, bool) {
@@ -182,12 +185,15 @@ func TestCachedGitHubLogin(t *testing.T) {
 func TestCachedGitHubLoginFollowsAuthSwitch(t *testing.T) {
 	prevResolver := githubLoginResolver
 	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
 	invalidateCachedGitHubLogin()
 	t.Cleanup(func() {
 		githubLoginResolver = prevResolver
 		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
 		invalidateCachedGitHubLogin()
 	})
+	githubEnvironmentTokenPresent = func() bool { return false }
 	githubLoginResolver = func() (string, bool) {
 		t.Fatal("network login fallback should not run with a configured account")
 		return "", false
@@ -205,18 +211,75 @@ func TestCachedGitHubLoginFollowsAuthSwitch(t *testing.T) {
 	assert.Equal(t, "hubot", login, "local gh auth switch is observed on the next poll")
 }
 
+func TestCachedGitHubLoginUsesEnvironmentTokenIdentity(t *testing.T) {
+	prevResolver := githubLoginResolver
+	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
+	invalidateCachedGitHubLogin()
+	t.Cleanup(func() {
+		githubLoginResolver = prevResolver
+		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
+		invalidateCachedGitHubLogin()
+	})
+	githubEnvironmentTokenPresent = func() bool { return true }
+	githubConfiguredLoginResolver = func() (string, bool) {
+		t.Fatal("stored login must not be used when an environment token takes precedence")
+		return "", false
+	}
+	calls := 0
+	githubLoginResolver = func() (string, bool) {
+		calls++
+		return "token-user", true
+	}
+
+	login, ok := cachedGitHubLogin()
+	require.True(t, ok)
+	assert.Equal(t, "token-user", login)
+	login, ok = cachedGitHubLogin()
+	require.True(t, ok)
+	assert.Equal(t, "token-user", login)
+	assert.Equal(t, 1, calls, "the environment token identity is resolved once")
+}
+
+func TestCachedGitHubLoginRejectsInvalidLogin(t *testing.T) {
+	prevResolver := githubLoginResolver
+	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
+	invalidateCachedGitHubLogin()
+	t.Cleanup(func() {
+		githubLoginResolver = prevResolver
+		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
+		invalidateCachedGitHubLogin()
+	})
+	githubEnvironmentTokenPresent = func() bool { return false }
+	githubConfiguredLoginResolver = func() (string, bool) {
+		return "octocat OR is:open", true
+	}
+	githubLoginResolver = func() (string, bool) {
+		return "still invalid!", true
+	}
+
+	_, ok := cachedGitHubLogin()
+	assert.False(t, ok)
+}
+
 func TestLiveRecentlyMergedPRsResolverBuildsQueryAndParsesSearchIssues(t *testing.T) {
 	prevLoginResolver := githubLoginResolver
 	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
 	prevSearch := recentlyMergedPRSearch
 	invalidateCachedGitHubLogin()
 	t.Cleanup(func() {
 		githubLoginResolver = prevLoginResolver
 		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
 		recentlyMergedPRSearch = prevSearch
 		invalidateCachedGitHubLogin()
 	})
 	githubConfiguredLoginResolver = func() (string, bool) { return "", false }
+	githubEnvironmentTokenPresent = func() bool { return false }
 	githubLoginResolver = func() (string, bool) { return "octocat", true }
 
 	var gotArgs []string
@@ -232,7 +295,7 @@ func TestLiveRecentlyMergedPRsResolverBuildsQueryAndParsesSearchIssues(t *testin
 	assert.Equal(t, "https://github.com/acme/widgets/pull/42", prs[0].URL)
 	assert.Equal(t, "merged", prs[0].State)
 	assert.Equal(t, []string{
-		"api", "--method", "GET", "search/issues",
+		"api", "--hostname", "github.com", "--method", "GET", "search/issues",
 		"-F", "advanced_search=true",
 		"-f", "q=author:octocat is:merged type:pr (repo:acme/gadgets OR repo:acme/widgets)",
 		"-f", "sort=updated",
@@ -243,14 +306,17 @@ func TestLiveRecentlyMergedPRsResolverBuildsQueryAndParsesSearchIssues(t *testin
 
 func TestLiveRecentlyMergedPRsResolverUsesFullPageAfterRepoFallback(t *testing.T) {
 	prevConfiguredResolver := githubConfiguredLoginResolver
+	prevEnvironmentTokenPresent := githubEnvironmentTokenPresent
 	prevSearch := recentlyMergedPRSearch
 	invalidateCachedGitHubLogin()
 	t.Cleanup(func() {
 		githubConfiguredLoginResolver = prevConfiguredResolver
+		githubEnvironmentTokenPresent = prevEnvironmentTokenPresent
 		recentlyMergedPRSearch = prevSearch
 		invalidateCachedGitHubLogin()
 	})
 	githubConfiguredLoginResolver = func() (string, bool) { return "octocat", true }
+	githubEnvironmentTokenPresent = func() bool { return false }
 
 	repos := make([]string, 15)
 	for i := range repos {

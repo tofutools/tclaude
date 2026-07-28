@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,9 +35,11 @@ var (
 	recentlyMergedPRSearch        = liveRecentlyMergedPRSearch
 	githubLoginResolver           = liveGitHubLoginResolver
 	githubConfiguredLoginResolver = liveConfiguredGitHubLoginResolver
+	githubEnvironmentTokenPresent = liveGitHubEnvironmentTokenPresent
 	githubLoginCache              struct {
 		sync.Mutex
-		login string
+		login            string
+		environmentToken bool
 	}
 )
 
@@ -370,7 +373,7 @@ func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presented
 		resultLimit = maxRecentlyMergedPRSearchResultLimit
 	}
 	args := []string{
-		"api", "--method", "GET", "search/issues",
+		"api", "--hostname", "github.com", "--method", "GET", "search/issues",
 		"-F", "advanced_search=true",
 		"-f", "q=" + recentlyMergedPRSearchQueryForRepos(login, searchRepos),
 		"-f", "sort=updated",
@@ -441,43 +444,67 @@ func boundedRecentlyMergedPRSearchRepos(login string, repos []string) []string {
 }
 
 func cachedGitHubLogin() (string, bool) {
-	configuredLogin, configuredOK := githubConfiguredLoginResolver()
-	configuredLogin = strings.TrimSpace(configuredLogin)
+	environmentToken := githubEnvironmentTokenPresent()
 	githubLoginCache.Lock()
 	defer githubLoginCache.Unlock()
-	if configuredOK && configuredLogin != "" {
+	if environmentToken {
+		// GH_TOKEN/GITHUB_TOKEN take precedence over stored gh credentials.
+		// Resolve that token's identity once instead of trusting a potentially
+		// different configured user whose author query would silently miss.
+		if githubLoginCache.environmentToken && githubLoginCache.login != "" {
+			return githubLoginCache.login, true
+		}
+		return resolveAndCacheGitHubLogin(true)
+	}
+
+	configuredLogin, configuredOK := githubConfiguredLoginResolver()
+	configuredLogin = strings.TrimSpace(configuredLogin)
+	if configuredOK && isGitHubOwnerSlug(configuredLogin) {
 		// `gh auth switch` updates the host's configured active user. Checking
 		// this local value on each poll follows switches immediately without an
 		// API request; the network search remains one request per attempt.
 		githubLoginCache.login = configuredLogin
+		githubLoginCache.environmentToken = false
 		return configuredLogin, true
 	}
-	if githubLoginCache.login != "" {
+	if !githubLoginCache.environmentToken && githubLoginCache.login != "" {
 		return githubLoginCache.login, true
 	}
+	return resolveAndCacheGitHubLogin(false)
+}
+
+// resolveAndCacheGitHubLogin is called with githubLoginCache locked.
+func resolveAndCacheGitHubLogin(environmentToken bool) (string, bool) {
 	login, ok := githubLoginResolver()
 	login = strings.TrimSpace(login)
-	if !ok || login == "" {
+	if !ok || !isGitHubOwnerSlug(login) {
 		return "", false
 	}
 	githubLoginCache.login = login
+	githubLoginCache.environmentToken = environmentToken
 	return login, true
 }
 
 func invalidateCachedGitHubLogin() {
 	githubLoginCache.Lock()
 	githubLoginCache.login = ""
+	githubLoginCache.environmentToken = false
 	githubLoginCache.Unlock()
 }
 
 func liveGitHubLoginResolver() (string, bool) {
-	login := runInDir("", "gh", "api", "user", "--jq", ".login")
+	login := runInDir("", "gh", "api", "--hostname", "github.com", "user", "--jq", ".login")
 	return login, login != ""
 }
 
 func liveConfiguredGitHubLoginResolver() (string, bool) {
 	login := runInDir("", "gh", "config", "get", "user", "--host", "github.com")
 	return login, login != ""
+}
+
+func liveGitHubEnvironmentTokenPresent() bool {
+	return strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
+		strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != ""
 }
 
 func presentedPRCacheKey(rawURL string) string {
