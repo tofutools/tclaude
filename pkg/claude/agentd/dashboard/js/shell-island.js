@@ -184,11 +184,11 @@ function Confirm({ feedback }) {
     <div class=${`modal-overlay${model ? ' show' : ''}`} id="confirm-modal" onClick=${dismissBackdrop}>
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h3 id="confirm-title">${model?.title || ''}</h3>
-        <p id="confirm-body">${model?.body || ''}</p>
+        <p id="confirm-body" class=${model?.preformatted ? 'confirm-body-preformatted' : ''}>${model?.body || ''}</p>
         <div class="modal-meta" id="confirm-meta" style=${`display:${model?.meta ? 'block' : 'none'}`}>${model?.meta || ''}</div>
         <div class="modal-buttons">
-          <button id="confirm-cancel" onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>
-          <button ref=${okRef} id="confirm-ok" class="confirm-danger" onClick=${() => feedback.resolveConfirmation(true)}>${model?.okLabel || 'Confirm'}</button>
+          ${model?.informational ? null : html`<button id="confirm-cancel" onClick=${() => feedback.resolveConfirmation(false)}>${model?.cancelLabel || 'Cancel'}</button>`}
+          <button ref=${okRef} id="confirm-ok" class=${model?.informational ? '' : 'confirm-danger'} onClick=${() => feedback.resolveConfirmation(true)}>${model?.okLabel || 'Confirm'}</button>
         </div>
       </div>
     </div>

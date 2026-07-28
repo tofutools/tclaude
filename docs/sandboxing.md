@@ -946,8 +946,18 @@ refused.
    explicit), predicts access enforcement, and describes the four outer-layer
    mount precedence classes. The `--agent` form instead reads only the latest
    frozen launch row: it does not re-resolve registry profiles or mix in a
-   prediction of current host capability. Harness-builtin targets report that
-   an outer mount plan is not applicable. `--json` exposes the same stable
+   prediction of current host capability. Because older rows did not persist
+   the complete per-session launch contract, recorded mode renders only the
+   row-carried effective profile, access axes, profiles, and notices. It marks
+   the launch-contract and daemon-final classes
+   `not recorded at launch — unavailable` and points to hypothetical mode; it
+   never reconstructs those facts from mutable current state. Hypothetical mode
+   is the complete composed view for explicit current inputs.
+
+   Harness-builtin targets report that an outer mount plan is not applicable.
+   A non-host `--for` target still returns its access prediction, but mount-plan
+   inspection is marked unavailable rather than labeling host paths and
+   presence observations as another platform. `--json` exposes the same stable
    structure. Missing positive binds are reported as
    `missing-would-skip`; inspection never creates them.
 

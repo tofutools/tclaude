@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,24 +17,41 @@ func TestDescribeTclaudeLayerPlanReportsFourClassesWithoutMaterializing(t *testi
 	tmuxBase := filepath.Join(root, "tmux")
 	require.NoError(t, os.MkdirAll(tmuxBase, 0o755))
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	workspace := filepath.Join(root, "workspace")
+	stateRoot := filepath.Join(root, "state")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	require.NoError(t, os.MkdirAll(stateRoot, 0o755))
 	missing := filepath.Join(root, "missing")
-	spec := TclaudeLayerLaunchSpec{
-		Version: TclaudeLayerLaunchSpecVersion,
-		Effective: sandboxpolicy.EffectiveProfile{
+	snapshot := sandboxpolicy.NewSnapshot(
+		sandboxpolicy.EffectiveProfile{
 			Filesystem: []sandboxpolicy.FilesystemGrant{
-				{Path: root, Access: sandboxpolicy.AccessRead},
+				{Path: workspace, Access: sandboxpolicy.AccessRead},
 				{Path: missing, Access: sandboxpolicy.AccessWrite},
 			},
 		},
-		Contract: TclaudeLayerLaunchContract{
-			HarnessName: harness.DefaultName,
-			StateRoot:   root,
-			WriteDirs:   []string{missing},
-		},
-	}
-	got, err := DescribeTclaudeLayerPlan(spec)
+		nil,
+	)
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName,
+		Cwd:         workspace,
+		StateRoot:   stateRoot,
+		Snapshot:    &snapshot,
+	})
 	require.NoError(t, err)
+	before, err := json.Marshal(spec)
+	require.NoError(t, err)
+	assert.NotContains(t, spec.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: missing, Access: sandboxpolicy.AccessWrite},
+		"the production launch spec keeps filtering missing positive binds")
+
+	got, err := DescribeTclaudeLayerPlan(spec, snapshot.Effective)
+	require.NoError(t, err)
+	after, err := json.Marshal(spec)
+	require.NoError(t, err)
+	assert.Equal(t, string(before), string(after),
+		"inspection must not mutate the byte-identical production launch spec")
 	assert.True(t, got.Applicable)
+	assert.Equal(t, "composed", got.Coverage)
 	assert.Equal(t, "host-open", got.NetworkPosture)
 	assert.NotEmpty(t, got.Entries)
 	classes := map[int]bool{}
@@ -48,4 +66,20 @@ func TestDescribeTclaudeLayerPlanReportsFourClassesWithoutMaterializing(t *testi
 	}
 	assert.Equal(t, map[int]bool{1: true, 2: true, 3: true, 4: true}, classes)
 	assert.NoFileExists(t, missing, "inspection must not create a missing grant")
+}
+
+func TestDescribeRecordedEffectivePlanMarksUnpersistedContractUnavailable(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", root)
+	got, err := DescribeRecordedEffectivePlan(sandboxpolicy.EffectiveProfile{})
+	require.NoError(t, err)
+	assert.Equal(t, "recorded-effective-only", got.Coverage)
+	require.Len(t, got.Unavailable, 2)
+	assert.Contains(t, got.Unavailable[0], "not recorded at launch — unavailable")
+	assert.Contains(t, got.Unavailable[0], "hypothetical mode")
+	for _, entry := range got.Entries {
+		assert.NotEqual(t, 1, entry.Class,
+			"recorded mode must not reconstruct launch-contract rows")
+		assert.NotContains(t, entry.Origin, "daemon-final")
+	}
 }

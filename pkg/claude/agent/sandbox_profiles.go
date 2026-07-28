@@ -186,6 +186,12 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 		fmt.Fprintf(w, "  mount plan: not applicable (%s)\n", result.Plan.Reason)
 		return
 	}
+	if result.Plan.Coverage != "" {
+		fmt.Fprintf(w, "  plan coverage: %s\n", result.Plan.Coverage)
+	}
+	for _, unavailable := range result.Plan.Unavailable {
+		fmt.Fprintf(w, "  unavailable: %s\n", unavailable)
+	}
 	fmt.Fprintf(w, "  network posture: %s\n", result.Plan.NetworkPosture)
 	for _, entry := range result.Plan.Entries {
 		source := ""

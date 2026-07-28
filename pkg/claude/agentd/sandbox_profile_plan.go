@@ -13,7 +13,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
-	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -147,28 +146,9 @@ func recordedSandboxProfilePlan(selector string) (sandboxProfilePlanResponse, er
 	if !implementation.UsesTclaudeLayer() {
 		return response, nil
 	}
-	gitWriteDirs := recordedGitWriteDirs(row.ResumeProvenance)
-	spec, err := session.BuildTclaudeLayerLaunchSpec(session.TclaudeLayerLaunchInput{
-		HarnessName:  harnessName,
-		Cwd:          row.Cwd,
-		GitWriteDirs: gitWriteDirs,
-		Snapshot:     row.EffectiveSandbox,
-	})
-	if err != nil {
-		return sandboxProfilePlanResponse{}, err
-	}
-	response.Plan, err = session.DescribeTclaudeLayerPlan(spec)
+	response.Plan, err = session.DescribeRecordedEffectivePlan(
+		row.EffectiveSandbox.Effective)
 	return response, err
-}
-
-func recordedGitWriteDirs(raw string) []string {
-	provenance, err := resumeprovenance.Decode(raw)
-	if err != nil || provenance.RepositoryState != resumeprovenance.RepositoryGit {
-		return nil
-	}
-	home, _ := os.UserHomeDir()
-	return harness.GitWorktreeWriteDirsForIdentity(
-		provenance.Repository.CommonDir.Path, provenance.Repository.Dir.Path, home)
 }
 
 func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProfilePlanResponse, error) {
@@ -252,6 +232,13 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	if !target.implementation.UsesTclaudeLayer() {
 		return response, nil
 	}
+	if target.platform != runtime.GOOS {
+		response.Plan.Applicable = false
+		response.Plan.Reason = fmt.Sprintf(
+			"mount plan inspection requires daemon host platform %s; access prediction for %s is shown above",
+			runtime.GOOS, target.platform)
+		return response, nil
+	}
 	cwd := strings.TrimSpace(body.Cwd)
 	if cwd == "" {
 		return sandboxProfilePlanResponse{}, errors.New("--cwd is required for a hypothetical plan")
@@ -275,6 +262,7 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	if err != nil {
 		return sandboxProfilePlanResponse{}, err
 	}
-	response.Plan, err = session.DescribeTclaudeLayerPlan(spec)
+	response.Plan, err = session.DescribeTclaudeLayerPlan(
+		spec, snapshot.Effective)
 	return response, err
 }

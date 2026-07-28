@@ -57,4 +57,26 @@ func TestSandboxProfilePlanHypotheticalFlowsThroughMuxWithoutLaunchAuthority(t *
 		Class       int    `json:"class"`
 		Disposition string `json:"disposition"`
 	}{Class: 2, Disposition: "present"})
+
+	otherPlatform := "darwin"
+	if runtime.GOOS == "darwin" {
+		otherPlatform = "linux"
+	}
+	req = testharness.JSONRequest(t, http.MethodPost, "/v1/sandbox-profile-plan", map[string]any{
+		"cwd": "/path/that/exists/only/on/the/requested/host",
+		"for": "tclaude-layer/claude/" + otherPlatform,
+	})
+	rec = testharness.Serve(f.Mux, agentd.AsHumanPeer(req))
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var crossPlatform struct {
+		PredictedAxes any `json:"predicted_axes"`
+		Plan          struct {
+			Applicable bool   `json:"applicable"`
+			Reason     string `json:"reason"`
+		} `json:"plan"`
+	}
+	testharness.DecodeJSON(t, rec, &crossPlatform)
+	assert.NotNil(t, crossPlatform.PredictedAxes)
+	assert.False(t, crossPlatform.Plan.Applicable)
+	assert.Contains(t, crossPlatform.Plan.Reason, "requires daemon host platform")
 }

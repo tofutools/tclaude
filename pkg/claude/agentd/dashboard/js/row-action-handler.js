@@ -263,6 +263,8 @@ export async function handleRowAction(action) {
           title: `Recorded sandbox details — ${label}`,
           body: data.details || 'No sandbox launch details were recorded.',
           okLabel: 'Close',
+          informational: true,
+          preformatted: true,
         });
         return;
       }

@@ -36,6 +36,8 @@ type SandboxPlanEntry struct {
 type SandboxPlanDescription struct {
 	Applicable     bool                       `json:"applicable"`
 	Reason         string                     `json:"reason,omitempty"`
+	Coverage       string                     `json:"coverage,omitempty"`
+	Unavailable    []string                   `json:"unavailable,omitempty"`
 	NetworkPosture string                     `json:"network_posture,omitempty"`
 	Entries        []SandboxPlanEntry         `json:"entries"`
 	Aliases        []sandboxpolicy.MountAlias `json:"aliases"`
@@ -44,13 +46,26 @@ type SandboxPlanDescription struct {
 // DescribeTclaudeLayerPlan describes the already-composed launch contract.
 // This is an inspection seam only: it never calls a platform wrapper, renders
 // argv, creates directories, or materializes Unix-socket selectors.
-func DescribeTclaudeLayerPlan(spec TclaudeLayerLaunchSpec) (SandboxPlanDescription, error) {
-	plan, err := sandboxpolicy.RenderMountPlan(spec.Effective)
+//
+// profileEffective is the unfiltered resolved profile value. The launch
+// builder deliberately drops missing positive binds before applying them;
+// inspection retains those rows so it can report missing-would-skip.
+func DescribeTclaudeLayerPlan(
+	spec TclaudeLayerLaunchSpec,
+	profileEffective sandboxpolicy.EffectiveProfile,
+) (SandboxPlanDescription, error) {
+	plan, err := sandboxpolicy.RenderMountPlan(profileEffective)
 	if err != nil {
 		return SandboxPlanDescription{}, err
 	}
+	composed, err := sandboxpolicy.RenderMountPlan(spec.Effective)
+	if err != nil {
+		return SandboxPlanDescription{}, err
+	}
+	plan.NetworkPosture = composed.NetworkPosture
 	out := SandboxPlanDescription{
 		Applicable:     true,
+		Coverage:       "composed",
 		NetworkPosture: networkPostureLabel(plan.NetworkPosture),
 		Entries:        []SandboxPlanEntry{},
 		Aliases:        append([]sandboxpolicy.MountAlias(nil), plan.Aliases...),
@@ -116,6 +131,67 @@ func DescribeTclaudeLayerPlan(spec TclaudeLayerLaunchSpec) (SandboxPlanDescripti
 	tmuxDir, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil {
 		return SandboxPlanDescription{}, fmt.Errorf("describe tmux host-control path: %w", err)
+	}
+	add(4, "host-control", "tmux-socket-directory", "hide", "", tmuxDir)
+	if observationErr != nil {
+		return SandboxPlanDescription{}, observationErr
+	}
+	return out, nil
+}
+
+// DescribeRecordedEffectivePlan reports only authority actually frozen in an
+// older session row. tclaude did not persist the full outer launch contract,
+// so reconstructing per-session attachment/OpenCode/Git rows would invent
+// audit facts from mutable current state. The unavailable classes are explicit
+// until a future launch format records that contract.
+func DescribeRecordedEffectivePlan(
+	effective sandboxpolicy.EffectiveProfile,
+) (SandboxPlanDescription, error) {
+	plan, err := sandboxpolicy.RenderMountPlan(effective)
+	if err != nil {
+		return SandboxPlanDescription{}, err
+	}
+	out := SandboxPlanDescription{
+		Applicable: true,
+		Coverage:   "recorded-effective-only",
+		Unavailable: []string{
+			"launch-contract: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
+			"daemon-final: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
+		},
+		NetworkPosture: networkPostureLabel(plan.NetworkPosture),
+		Entries:        []SandboxPlanEntry{},
+		Aliases:        append([]sandboxpolicy.MountAlias(nil), plan.Aliases...),
+	}
+	var observationErr error
+	add := func(class int, className, origin, mode, source, target string) {
+		disposition, dispositionErr := sandboxPlanDisposition(mode, source)
+		if dispositionErr != nil {
+			if observationErr == nil {
+				observationErr = fmt.Errorf(
+					"inspect %s source %q: %w", origin, source, dispositionErr)
+			}
+			return
+		}
+		out.Entries = append(out.Entries, SandboxPlanEntry{
+			Class: class, ClassName: className, Origin: origin, Mode: mode,
+			Source: source, Target: target, Disposition: disposition,
+		})
+	}
+	for _, entry := range plan.Entries {
+		add(2, "profile-plan", "recorded-effective-filesystem",
+			mountModeLabel(entry.Mode), entry.Path, entry.Path)
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return SandboxPlanDescription{}, err
+	}
+	for _, path := range protected {
+		add(3, "protected-baseline", "protected-root", "hide", "", path)
+	}
+	tmuxDir, err := clcommon.TclaudeTmuxSocketDir()
+	if err != nil {
+		return SandboxPlanDescription{}, fmt.Errorf(
+			"describe tmux host-control path: %w", err)
 	}
 	add(4, "host-control", "tmux-socket-directory", "hide", "", tmuxDir)
 	if observationErr != nil {
