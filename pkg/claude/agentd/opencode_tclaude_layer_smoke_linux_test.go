@@ -421,7 +421,8 @@ func newOpenCodeFilteredSmokeFixture(
 	fixture.modelPort, err = strconv.Atoi(modelURL.Port())
 	require.NoError(t, err)
 	fixture.modelBaseURL = fmt.Sprintf(
-		"http://tclaude-host:%d/v1", fixture.modelPort)
+		"http://%s:%d/v1",
+		sandboxpolicy.FilteredNetworkHostLoopbackName, fixture.modelPort)
 
 	config := map[string]any{
 		"enabled_providers": []string{"test"},
@@ -451,15 +452,16 @@ func newOpenCodeFilteredSmokeFixture(
 	fixture.environment = []sandboxpolicy.EnvironmentEntry{
 		{Name: "OPENCODE_CONFIG_CONTENT", Value: string(configJSON)},
 		{
-			Name:  "OPENCODE_MODELS_URL",
-			Value: fmt.Sprintf("http://tclaude-host:%d/models.json", fixture.modelPort),
+			Name: "OPENCODE_MODELS_URL",
+			Value: fmt.Sprintf("http://%s:%d/models.json",
+				sandboxpolicy.FilteredNetworkHostLoopbackName, fixture.modelPort),
 		},
 	}
 
 	helperJSON, err := json.Marshal(openCodeFilteredToolHelperConfig{
-		Allowed: net.JoinHostPort("tclaude-host",
+		Allowed: net.JoinHostPort(sandboxpolicy.FilteredNetworkHostLoopbackName,
 			strconv.Itoa(fixture.allowedPort)),
-		Denied: net.JoinHostPort("tclaude-host",
+		Denied: net.JoinHostPort(sandboxpolicy.FilteredNetworkHostLoopbackName,
 			strconv.Itoa(fixture.deniedPort)),
 	})
 	require.NoError(t, err)
@@ -498,7 +500,9 @@ func newOpenCodeFilteredSmokeFixture(
 
 	ambientData := filepath.Join(os.Getenv("XDG_DATA_HOME"), "opencode")
 	authJSON, err := json.Marshal(map[string]any{
-		fmt.Sprintf("http://tclaude-host:%d", fixture.modelPort): map[string]string{
+		fmt.Sprintf("http://%s:%d",
+			sandboxpolicy.FilteredNetworkHostLoopbackName,
+			fixture.modelPort): map[string]string{
 			"type":  "wellknown",
 			"key":   "TEST_TOKEN",
 			"token": "stored-token-must-not-load",
