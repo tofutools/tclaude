@@ -369,9 +369,14 @@ func (a tuiAgentRow) status() string {
 }
 
 // tuiGroupRow is the subset of /v1/groups the console needs: the name is
-// what the spawn form picks from and posts to.
+// what the spawn form picks from and posts to, and the default directory is
+// what it starts that group's spawn in.
 type tuiGroupRow struct {
 	Name string `json:"name"`
+	// DefaultCwd is the group's configured spawn directory, "" when it has
+	// none — and always "" for a console the daemon does not treat as the
+	// human, which is not served the path at all.
+	DefaultCwd string `json:"default_cwd,omitempty"`
 }
 
 // tuiProfileRow is the subset of /v1/spawn-profiles the spawn form picks
@@ -390,6 +395,19 @@ func (p tuiProfileRow) disabled() bool { return p.Disabled != nil && *p.Disabled
 type tuiRetireResult struct {
 	Outcome  retireConvOutcome `json:"outcome"`
 	Shutdown memberOpResult    `json:"shutdown"`
+}
+
+// tuiResumeResult is the subset of the resume response the console reports:
+// what the daemon did, and — for everything that is not a plain "resumed" —
+// why.
+type tuiResumeResult struct {
+	Action string `json:"action"`
+	Detail string `json:"detail,omitempty"`
+	// Warnings are the notes a resume that DID land still wants read: an
+	// agent that came back with reduced sandbox access, say. They are the one
+	// thing a bare "Started X." would otherwise swallow, and this console has
+	// no browser to go and find them in.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ---- model -----------------------------------------------------------------
@@ -465,11 +483,13 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
-	// refreshing / spawning / retiring keep the periodic tick from stacking
-	// requests and the operator from firing two of the same action at once.
+	// refreshing / spawning / retiring / resuming keep the periodic tick from
+	// stacking requests and the operator from firing two of the same action at
+	// once.
 	refreshing  bool
 	spawning    bool
 	retiring    bool
+	resuming    bool
 	lastRefresh time.Time
 	// retireTarget is the agent the retire confirmation is about, captured
 	// when the prompt opens rather than re-read when it is answered: the
@@ -499,6 +519,11 @@ type tuiSpawnForm struct {
 	name  textinput.Model
 	dir   textinput.Model
 	brief textinput.Model
+	// dirPrefill is the value prefillDir last wrote into dir — the selected
+	// group's default directory. It is what tells an untouched field from one
+	// the operator has typed in, so changing the group can follow the first
+	// and must leave the second alone.
+	dirPrefill string
 	// dirSuggestions holds the ambiguous Tab-completion candidates for dir,
 	// listed under the field until the next keystroke.
 	dirSuggestions []string
@@ -534,6 +559,13 @@ type (
 	tuiRetiredMsg struct {
 		agent string
 		res   tuiRetireResult
+		err   error
+	}
+	// tuiResumedMsg carries the outcome of one resume request — turning an
+	// offline agent back on.
+	tuiResumedMsg struct {
+		agent string
+		res   tuiResumeResult
 		err   error
 	}
 )
@@ -673,6 +705,19 @@ func tuiRetireCmd(api *tuiAPI, convID, name string) tea.Cmd {
 	}
 }
 
+// tuiResumeCmd turns one offline agent back on through the daemon's own
+// resume verb. Like the retire above it sends no query parameters, which
+// leaves ?recreate=1 off: re-creating a launch directory the operator has
+// since deleted is a decision the console has no way to put to them, so a
+// vanished directory comes back as an error they can act on instead.
+func tuiResumeCmd(api *tuiAPI, convID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var res tuiResumeResult
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/resume", nil, &res)
+		return tuiResumedMsg{agent: name, res: res, err: err}
+	}
+}
+
 // tuiHarnessOptions lists the harnesses a spawn may name, led by the
 // "(default)" sentinel that pins nothing.
 func tuiHarnessOptions() []string {
@@ -728,6 +773,48 @@ func (m tuiModel) openSpawnForm() tuiModel {
 	}
 	m.form = form
 	m.mode = tuiModeSpawn
+	return m.prefillDir()
+}
+
+// groupDefaultDir is the group's configured default working directory, ending
+// in a separator, or "" when it has none (or when the daemon does not serve
+// this console the path — see tuiGroupRow).
+//
+// The trailing separator is the point of the prefill: it makes the group's
+// directory a starting point rather than an answer, so the operator types the
+// subdirectory they want straight onto it and Tab lists what is in there.
+func (m tuiModel) groupDefaultDir(name string) string {
+	for _, g := range m.groups {
+		if g.Name != name {
+			continue
+		}
+		if dir := strings.TrimSpace(g.DefaultCwd); dir != "" {
+			return strings.TrimSuffix(dir, "/") + "/"
+		}
+		return ""
+	}
+	return ""
+}
+
+// prefillDir points the directory field at the selected group's default
+// directory, which is where that group's agents are launched anyway — so the
+// common "somewhere under the group's directory" spawn is a subdirectory name
+// away instead of a full path retyped.
+//
+// It only ever writes a field the operator has not touched. Once they have
+// typed their own path, cycling the group picker leaves it exactly as it is:
+// the alternative silently discards a path they may have Tab-completed their
+// way to.
+func (m tuiModel) prefillDir() tuiModel {
+	// A cleared field counts as untouched: blank already means "the group's
+	// default directory", so filling in the new group's own is the same
+	// launch either way — and it puts the path back where it can be extended.
+	if v := m.form.dir.Value(); v != "" && v != m.form.dirPrefill {
+		return m
+	}
+	m.form.dirPrefill = m.groupDefaultDir(m.selectedGroup())
+	m.form.dir.SetValue(m.form.dirPrefill)
+	m.form.dir.CursorEnd()
 	return m
 }
 
@@ -786,6 +873,9 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 	case tuiFieldGroup:
 		if n := len(m.form.groupNames); n > 0 {
 			m.form.groupIdx = ((m.form.groupIdx+delta)%n + n) % n
+			// The directory follows the group it belongs to, until the
+			// operator types one of their own.
+			m = m.prefillDir()
 		}
 	case tuiFieldProfile:
 		if n := len(m.form.profileNames); n > 0 {
@@ -824,7 +914,18 @@ func tuiIsChoiceField(field int) bool {
 // could not have guessed is a different thing, so the console does not
 // offer it to a caller the daemon would not treat as the human.
 func (m tuiModel) completingDir() bool {
-	return m.operator && m.form.field == tuiFieldDir && m.form.dir.Value() != ""
+	if !m.operator || m.form.field != tuiFieldDir {
+		return false
+	}
+	// Only a path the operator has typed into is completed. An untouched
+	// field — blank, or the group's own directory as the form filled it in —
+	// keeps Tab's ordinary next-field job, which is the only way to tab past
+	// Directory at all. It would not be a harmless completion either:
+	// CompleteDirPath resolves a directory with exactly one child straight
+	// into that child, so a Tab meant as "next field" would silently spawn
+	// the agent somewhere the operator never chose.
+	value := m.form.dir.Value()
+	return value != "" && value != m.form.dirPrefill
 }
 
 // completeDir runs one round of bash-like directory completion on the
@@ -928,6 +1029,104 @@ func realTUIAttachToPane(agentName, tmuxSession string, inTmux bool) tea.Cmd {
 // insideTmux reports whether this process is itself a tmux client.
 func insideTmux() bool { return os.Getenv("TMUX") != "" }
 
+// selectedAgent is the row the cursor is on, and whether there is one — the
+// listing can be empty, and it re-sorts under the cursor every two seconds.
+func (m tuiModel) selectedAgent() (tuiAgentRow, bool) {
+	visible := m.visibleAgents()
+	if m.cursor < 0 || m.cursor >= len(visible) {
+		return tuiAgentRow{}, false
+	}
+	return visible[m.cursor], true
+}
+
+// enterSelected is what enter does on a row, which depends on whether the
+// agent is up: an offline one is turned back on, a live one gets this
+// terminal handed to its pane. Both are the move the operator wants next
+// after picking that row, and an offline agent has no pane to attach to
+// anyway — enter on it used to be a dead key that only said so.
+func (m tuiModel) enterSelected() (tuiModel, tea.Cmd) {
+	row, ok := m.selectedAgent()
+	if !ok {
+		return m, nil
+	}
+	if !row.Online {
+		return m.resumeSelected(row)
+	}
+	return m.attachSelected()
+}
+
+// resumeSelected starts the selected agent's session again through the
+// daemon's resume verb. It asks nothing first: resume is not destructive (it
+// relaunches the agent in its recorded directory and conversation) and it is
+// what the grey status dot does on the web dashboard.
+//
+// Permission is the daemon's call, not the console's — same as retire. An
+// agent-class console holding agent.resume over its own group's members may
+// use this; one that does not gets the endpoint's own refusal.
+func (m tuiModel) resumeSelected(row tuiAgentRow) (tuiModel, tea.Cmd) {
+	if m.resuming {
+		m.notice = "A resume is already in flight."
+		return m, nil
+	}
+	if row.ConvID == "" {
+		// A member that has never had a conversation (a placeholder row) has
+		// nothing to resume, and the daemon's own answer would be a 404 on a
+		// path built from an empty selector.
+		m.notice = row.name() + " has no conversation to start."
+		return m, nil
+	}
+	m.resuming = true
+	m.notice = "Starting " + row.name() + "…"
+	return m, tuiResumeCmd(m.api, row.ConvID, row.name())
+}
+
+// tuiResumeSummary describes a landed resume in one line. Anything that is
+// not a plain "resumed" carries its reason in Detail — a launch directory
+// that no longer exists, provenance the daemon will not trust unattended —
+// and this console has no browser to go and read that in, so the reason
+// travels with the verdict or it is lost.
+func tuiResumeSummary(msg tuiResumedMsg) string {
+	var out string
+	switch action := msg.res.Action; action {
+	case "resumed":
+		out = "Started " + msg.agent + "."
+	case "":
+		// No action at all: an older daemon, or a response shape that did not
+		// carry one. Claiming a start that may not have happened is the one
+		// reading to avoid — the listing settles it either way.
+		out = "Asked the daemon to start " + msg.agent + "."
+	case "skipped:already_online":
+		out = msg.agent + " was already running."
+	case "skipped:not_active_agent":
+		// The agent was retired out from under the listing. That is not a
+		// failure to report as one, and the raw wire token means nothing to
+		// an operator.
+		out = msg.agent + " has been retired, so it cannot be started from here."
+	default:
+		out = "Could not start " + msg.agent + ": " + action
+		if detail := strings.TrimSpace(msg.res.Detail); detail != "" {
+			out += " (" + detail + ")"
+		}
+		out += "."
+	}
+	if warnings := tuiTrimmedLines(msg.res.Warnings); len(warnings) > 0 {
+		out += " Note: " + strings.Join(warnings, "; ") + "."
+	}
+	return out
+}
+
+// tuiTrimmedLines drops the blank entries from a wire string list and trims
+// the rest, so a stray empty warning cannot render as an empty clause.
+func tuiTrimmedLines(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // attachSelected puts the operator on the selected agent's tmux session — the
 // console's answer to "let me actually go look at what this agent is doing".
 //
@@ -938,11 +1137,10 @@ func insideTmux() bool { return os.Getenv("TMUX") != "" }
 // so a console that the daemon classifies as an agent cannot use it to reach a
 // peer's pane and drive it.
 func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
-	visible := m.visibleAgents()
-	if len(visible) == 0 || m.cursor >= len(visible) {
+	row, ok := m.selectedAgent()
+	if !ok {
 		return m, nil
 	}
-	row := visible[m.cursor]
 	if !m.operator {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
@@ -965,15 +1163,15 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 // it stops the agent's pane, so it always asks first — the same rule quitting
 // follows.
 func (m tuiModel) confirmRetireSelected() tuiModel {
-	visible := m.visibleAgents()
-	if m.cursor < 0 || m.cursor >= len(visible) {
+	row, ok := m.selectedAgent()
+	if !ok {
 		return m
 	}
 	if m.retiring {
 		m.notice = "A retire is already in flight."
 		return m
 	}
-	m.retireTarget = visible[m.cursor]
+	m.retireTarget = row
 	m.mode = tuiModeConfirmRetire
 	return m
 }
@@ -1045,6 +1243,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshErr = ""
+		// Which agent the cursor is on is decided before the listing under it
+		// is replaced — see restoreCursor.
+		selected, hadSelection := m.selectedAgent()
 		m.agents = msg.agents
 		m.groups = msg.groups
 		// A failed profile read keeps the last list it managed to fetch: a
@@ -1056,6 +1257,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.profiles = msg.profiles
 		}
 		m.lastRefresh = time.Now()
+		if hadSelection {
+			m.restoreCursor(selected.ConvID)
+		}
 		visible := m.visibleAgents()
 		if m.cursor >= len(visible) {
 			m.cursor = max(len(visible)-1, 0)
@@ -1087,6 +1291,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = tuiRetireSummary(msg)
 		// The row is gone (or offline) now — show that rather than leaving a
 		// retired agent listed until the next tick.
+		m.refreshing = true
+		return m, m.refreshCmd()
+
+	case tuiResumedMsg:
+		m.resuming = false
+		if msg.err != nil {
+			m.notice = "Start failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.notice = tuiResumeSummary(msg)
+		// The row is online now — show that rather than leaving it reading
+		// "offline" until the next tick.
 		m.refreshing = true
 		return m, m.refreshCmd()
 
@@ -1236,7 +1452,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		m.notice = ""
-		return m.attachSelected()
+		return m.enterSelected()
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
@@ -1274,9 +1490,9 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down":
 		return m.moveSpawnField(1), nil
 	case "tab":
-		// Tab only completes once there is a path to complete; on the empty
-		// field — its default, meaning "the group's directory" — it keeps
-		// its ordinary next-field job so tabbing through the form works.
+		// Tab only completes a directory the operator has typed into; on the
+		// field as the form left it — blank, or the group's own directory —
+		// it keeps its ordinary next-field job (see completingDir).
 		if m.completingDir() {
 			return m.completeDir(), nil
 		}
@@ -1292,6 +1508,29 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	updated, cmd := m.updateFocusedInput(msg)
 	return updated, cmd
+}
+
+// restoreCursor puts the cursor back on the agent it was on, by conv-id,
+// after a refresh has replaced the listing under it. An agent that is no
+// longer listed (retired, or filtered out) leaves the cursor where it was,
+// for the clamp above to bring back into range.
+//
+// The listing re-sorts on every poll — online agents first, then by name — so
+// an index alone does not name an agent for longer than two seconds. That is
+// the same hazard the retire prompt captures its target for, and it bites
+// hardest right after enter starts an offline agent: that agent jumps from
+// the bottom of the listing to the top, and a cursor left at the old index
+// would put the next keystroke on whichever agent slid into its place.
+func (m *tuiModel) restoreCursor(convID string) {
+	if convID == "" {
+		return
+	}
+	for i, a := range m.visibleAgents() {
+		if a.ConvID == convID {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *tuiModel) ensureCursorVisible() {
@@ -1485,8 +1724,28 @@ func tuiTruncate(s string, width int) string {
 	return ""
 }
 
-// keyHintLine names enter only when it can do something — an agent-class
-// console cannot attach, and an empty list has nothing to attach to.
+// enterHint names what enter does on the row the cursor is on, empty when
+// it would do nothing: an empty list has no row, and only an operator console
+// can attach to a live agent's pane. Starting an offline one is advertised to
+// every console — like retire, it goes through the daemon's own verb, and the
+// daemon decides whether this caller may.
+func (m tuiModel) enterHint() string {
+	row, ok := m.selectedAgent()
+	switch {
+	case !ok:
+		return ""
+	case !row.Online:
+		return "enter start"
+	case !m.operator:
+		return ""
+	case insideTmux():
+		return "enter switch to"
+	default:
+		return "enter attach"
+	}
+}
+
+// keyHintLine names enter only when it can do something — see enterHint.
 func (m tuiModel) keyHintLine() string {
 	filterLabel := "f filter active"
 	if m.filterActive {
@@ -1494,17 +1753,13 @@ func (m tuiModel) keyHintLine() string {
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • q quit (shuts down agentd)"
 	if len(m.visibleAgents()) > 0 {
-		// Unlike enter, retire is not statically an operator-only move: an
+		// Unlike attaching, retire is not statically an operator-only move: an
 		// agent-class console can hold agent.retire over its own group's
 		// members, so the daemon decides and the key stays advertised.
 		hints = "x retire • " + hints
 	}
-	if m.operator && len(m.visibleAgents()) > 0 {
-		verb := "attach"
-		if insideTmux() {
-			verb = "switch to"
-		}
-		hints = "enter " + verb + " • " + hints
+	if enter := m.enterHint(); enter != "" {
+		hints = enter + " • " + hints
 	}
 	return hints
 }
@@ -1534,6 +1789,9 @@ func (m tuiModel) summaryLine() string {
 	}
 	if m.spawning {
 		line += " • spawning…"
+	}
+	if m.resuming {
+		line += " • starting…"
 	}
 	return line
 }
@@ -1567,7 +1825,7 @@ func (m tuiModel) renderSpawnForm() string {
 		m.form.field == tuiFieldProfile))
 	b.WriteString(m.form.name.View() + tuiHint(m.form.name.Value() == "", "  (blank = auto-generated)"))
 	b.WriteString("\n")
-	b.WriteString(m.form.dir.View() + tuiHint(m.form.dir.Value() == "", "  (blank = the group's default directory)"))
+	b.WriteString(m.form.dir.View() + m.dirHint())
 	b.WriteString("\n")
 	// Always emit this line, blank or not, so a candidate list appearing and
 	// disappearing doesn't shift the fields below it up and down.
@@ -1599,6 +1857,22 @@ func (m tuiModel) renderSpawnForm() string {
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
 		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
+}
+
+// dirHint explains the directory field's state: a blank field still lands in
+// the group's default directory (the daemon's own fallback), and an untouched
+// prefill says it is that same directory rather than a path someone typed —
+// which is what makes it obvious it can be extended.
+func (m tuiModel) dirHint() string {
+	value := m.form.dir.Value()
+	switch {
+	case value == "":
+		return "  (blank = the group's default directory)"
+	case m.form.dirPrefill != "" && value == m.form.dirPrefill:
+		return "  (the group's directory — add a subdirectory to start below it)"
+	default:
+		return ""
+	}
 }
 
 // profileChoice is the profile picker's current value.
@@ -1688,9 +1962,12 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("\n  tclaude agentd terminal UI — keys\n\n")
 	b.WriteString("  List\n")
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
-	b.WriteString("    enter      Go to the selected agent's tmux session — switch-client\n")
-	b.WriteString("               when agentd runs inside tmux, otherwise attach until you\n")
-	b.WriteString("               detach with ctrl-b d. Operator consoles only.\n")
+	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
+	b.WriteString("               conversation it was last running. On a live one: go to its\n")
+	b.WriteString("               tmux session — switch-client when agentd runs inside tmux,\n")
+	b.WriteString("               otherwise attach until you detach with ctrl-b d. Going to a\n")
+	b.WriteString("               pane is operator consoles only; starting one is whatever\n")
+	b.WriteString("               the daemon grants this console.\n")
 	b.WriteString("    n          Start a new agent\n")
 	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
 	b.WriteString("               groups, loses its grants and its session is asked to\n")
@@ -1701,12 +1978,16 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")
 	b.WriteString("  New agent\n")
 	b.WriteString("    tab/↑/↓    Next / previous field\n")
-	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
-	b.WriteString("               one match completes it, several list below the\n")
-	b.WriteString("               field. Operator consoles only.\n")
+	b.WriteString("    tab        On a Directory you have typed into, complete the path\n")
+	b.WriteString("               instead: one match completes it, several list below\n")
+	b.WriteString("               the field. Operator consoles only. On the field as the\n")
+	b.WriteString("               form left it, tab still moves to the next field.\n")
 	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
+	b.WriteString("               Directory starts on the group's own default directory\n")
+	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
+	b.WriteString("               group picker until you type a path of your own.\n")
 	b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 	b.WriteString("               the same move enter makes on its row. Operator\n")
 	b.WriteString("               consoles only; an agent still starting up (no pane\n")
