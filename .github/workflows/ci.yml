@@ -268,6 +268,8 @@ jobs:
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
           sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
           sudo ip link set "$host_link" up
           sudo ip address add 198.18.0.1/24 dev "$host_link"
           sudo ip -6 address add fe80::823:1/64 dev "$host_link" nodad
@@ -282,6 +284,8 @@ jobs:
 
           sudo ip -6 address show dev "$host_link"
           sudo ip -6 route show dev "$host_link"
+          sudo ip netns exec "$namespace" ip -6 address show dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 route show dev "$peer_link"
 
           for address in 198.18.0.10 198.18.0.200; do
             for port in 41001 41002; do
@@ -317,6 +321,17 @@ jobs:
                 exit 1
               fi
             done
+          done
+          for protocol in TCP6 UDP6; do
+            token="filtered-fixture-$protocol"
+            reply=$(
+              printf '%s' "$token" |
+                timeout 5 socat -T 2 - "$protocol:[fd00:823::10]:41001"
+            )
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"
+              exit 1
+            fi
           done
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
