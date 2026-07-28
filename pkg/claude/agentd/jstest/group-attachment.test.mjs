@@ -4,10 +4,23 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 test('group attachments enforce http(s) again at the render boundary', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ GroupsNativeList }, { GroupsInteractionProvider }] = await Promise.all([
+  const [
+    { GroupsNativeList },
+    { GroupsInteractionProvider },
+    { createActionDialogState },
+    { ActionDialogApp },
+  ] = await Promise.all([
     harness.importDashboardModule('js/groups-list.js'),
     harness.importDashboardModule('js/groups-interactions.js'),
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-island.js'),
   ]);
+  const state = createActionDialogState();
+  const actions = {
+    openGroupAttachment: state.openGroupAttachment,
+    close: state.close,
+    setGroupAttachment: async () => {},
+  };
   const groups = [{
     name: 'safe', members: [], online: 0,
     attachment_url: 'https://example.com/project',
@@ -28,7 +41,12 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     <${GroupsNativeList}
       groups=${groups}
       snapshot=${{ activity_bots: {}, links: [], sudo: [] }}
-      actions=${{ openGroupAttachment: () => {} }}
+      actions=${actions}
+    />
+    <${ActionDialogApp}
+      state=${state}
+      actions=${actions}
+      confirmDiscard=${async () => true}
     />
   <//>`, host);
 
@@ -59,11 +77,20 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(empty?.tagName, 'BUTTON');
   assert.equal(empty?.textContent, '📎');
   assertTabReachable(empty);
+  const emptySummary = host.querySelector('details[data-group-key="empty"] > summary');
   empty.click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.ok(host.querySelector('#task-link-modal'), 'the paperclip opens the real attachment editor');
+  assert.equal(harness.document.activeElement?.id, 'task-link-url');
+  const escape = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(escape, 'key', { value: 'Escape' });
+  harness.document.dispatchEvent(escape);
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#task-link-modal'), null, 'Escape closes the attachment editor');
   assert.equal(
     harness.document.activeElement,
-    host.querySelector('details[data-group-key="empty"] .group-name'),
-    'the editor returns keyboard focus to the title instead of pinning the overlay open',
+    emptySummary,
+    'Escape restores focus to the summary instead of pinning the overlay open',
   );
 
   const hostless = attachment('hostless');

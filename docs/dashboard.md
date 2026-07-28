@@ -432,8 +432,8 @@ attachment control itself, while non-hover touch devices keep it visible. An
 existing attachment's paperclip opens it; hovering the paperclip reveals the
 pencil to edit or clear it. The editor accepts an optional display name and
 otherwise derives a short Linear issue key, GitHub number, or hostname. Closing
-the editor returns focus to the group title so the hover overlay does not remain
-visible after Escape.
+the editor returns focus to the group's native disclosure summary so the hover
+overlay does not remain visible after Escape.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
