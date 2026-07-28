@@ -608,6 +608,42 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	}
 }
 
+// TestDashboardAssets_GroupProfileBrainDimming guards the per-group spawn
+// profile indicator's deliberately narrow brightness states. The glyph needs
+// its own wrapper so a broad summary/chip hover cannot light it; it is bright
+// only under direct pointer hover, or while its group is open and the profile
+// chip is not marked unset.
+func TestDashboardAssets_GroupProfileBrainDimming(t *testing.T) {
+	groups := dashboardAssetFile(t, "js/groups-list.js")
+	css := dashboardAssetFile(t, "dashboard.css")
+	for _, needle := range []string{
+		`<span class="group-default-profile-icon">🧠</span>`,
+		".group-default-profile-icon:hover,",
+		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-default-profile-icon",
+	} {
+		if !strings.Contains(groups+css, needle) {
+			t.Errorf("dashboard assets missing %q — group profile brain dimming regressed", needle)
+		}
+	}
+	iconRule := regexp.MustCompile(`(?s)\.group-default-profile-icon\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if len(iconRule) != 2 {
+		t.Fatal("dashboard CSS is missing the group profile brain's base rule")
+	}
+	for _, declaration := range []string{"color: #d4d4d4;", "opacity: 0.35;"} {
+		if !strings.Contains(iconRule[1], declaration) {
+			t.Errorf("group profile brain base rule missing %q", declaration)
+		}
+	}
+	for _, forbidden := range []string{
+		"summary:hover .group-default-model,",
+		".quick-hover > summary .group-default-model,",
+	} {
+		if strings.Contains(css, forbidden) {
+			t.Errorf("dashboard CSS still contains broad profile-chip opacity selector %q", forbidden)
+		}
+	}
+}
+
 // TestDashboardAssets_QuickChipKeyboardOperability guards the keyboard
 // operability of the quick-option chips (TCL-330), whose pieces span three
 // files that must stay in lockstep — there's no JS render test, so we assert
