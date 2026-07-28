@@ -35,9 +35,10 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	body.WriteString("  chain output {\n")
 	body.WriteString("    type filter hook output priority filter; policy drop;\n")
 	body.WriteString("    oifname \"lo\" accept\n")
-	// IPv6 needs neighbor discovery to reach pasta's tap gateway. These are
-	// link-local control packets, not an application egress carve-out.
-	body.WriteString("    ip6 daddr fe80::/10 icmpv6 type { nd-neighbor-solicit, nd-router-solicit } accept\n")
+	// IPv6 needs router and neighbor discovery to configure and reach pasta's
+	// tap gateway. Limit that control plane to link-local destinations and
+	// link-local multicast with the hop limit required by RFC 4861.
+	body.WriteString("    ip6 daddr { fe80::/10, ff02::/16 } ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n")
 	for i, rule := range rules.Rules {
 		if rule.EntryIndex < 0 {
 			return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
