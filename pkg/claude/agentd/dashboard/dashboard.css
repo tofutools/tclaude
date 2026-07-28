@@ -854,6 +854,14 @@ table tr:hover { background: #161b22; }
   border-radius: 10px; font-family: ui-monospace, monospace; white-space: nowrap;
   border: 1px solid transparent;
 }
+/* Agent hook details can include long tool names. Bound only the Groups
+   table's state pill so those details cannot widen every member column;
+   StatePill's title and aria-label retain the complete status text. Other
+   tabs reuse .state-pill for unrelated values and remain content-sized. */
+.state-cell .state-pill {
+  max-width: 24ch; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: middle;
+}
 .state-working   { background: #0a3622; color: #3fb950; border-color: #1d4d2c; }
 .state-idle      { background: #36280a; color: #d29922; border-color: #4d3a1d; }
 .state-awaiting  { background: #3a1010; color: #ff7b72; border-color: #4d1d1d; }

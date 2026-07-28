@@ -277,6 +277,9 @@ for Codex sessions, the dashboard additionally replays the rollout's
 `sub_agent_activity` events, so an explicitly interrupted child disappears on
 the next refresh instead of waiting for that timeout.
 
+Long state details, such as tool names, are ellipsized in the pill so the state
+column stays compact. Hover the pill to see the complete status and detail.
+
 Alongside it sits a **background-shell badge** — `⚙+N`, shown when the agent
 has *N* background shell commands (`Bash` with `run_in_background: true`)
 still running. It answers the same question for the other kind of work that

@@ -179,6 +179,30 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 	}
 }
 
+// TestDashboardCSS_AgentStatePillTruncates guards the Groups table against
+// hook details containing long tool names. The visual cap belongs only to the
+// agent-row state cell because Audit, Jobs, and Plugins also reuse .state-pill
+// for unrelated values. The component's full-value tooltip remains the escape
+// hatch for clipped text.
+func TestDashboardCSS_AgentStatePillTruncates(t *testing.T) {
+	css := dashboardAssetFile(t, "dashboard.css")
+	js := dashboardAssetFile(t, "js/groups-member-table.js")
+	for _, needle := range []string{
+		".state-cell .state-pill {",
+		"max-width: 24ch; overflow: hidden; text-overflow: ellipsis;",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — long agent statuses may widen the Groups table", needle)
+		}
+	}
+	if strings.Contains(css, ".state-pill {\n  max-width:") {
+		t.Error("state-pill truncation is unscoped — would cap unrelated Audit, Jobs, and Plugins pills")
+	}
+	if !strings.Contains(js, "title=${info.title} aria-label=${ariaLabel}>${label}</span>") {
+		t.Error("agent state pill no longer retains the complete status in its tooltip/accessibility label")
+	}
+}
+
 // TestDashboardJS_SlopPullUsesPreactOwnershipBoundary guards the slop-mode bug
 // where a snapshot publish cancelled a slot machine the user had just pulled.
 // manualPull still tags its ~2.7s phases, but the Groups Preact bridge now treats
