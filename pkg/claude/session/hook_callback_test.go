@@ -953,6 +953,34 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
+func TestRunHookCallback_SessionStartNamesActorPreEnrolledByReconcile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:      "reconciled-start-sess",
+		ConvID:  "conv-reconciled-start",
+		Status:  StatusIdle,
+		Created: time.Date(2026, time.July, 28, 12, 17, 33, 0, time.UTC),
+	}))
+	agentID, created, err := db.EnsureAgentForConv("conv-reconciled-start", "online-reconcile")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	feedHook(t, "reconciled-start-sess", map[string]any{
+		"session_id":      "conv-reconciled-start",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	actor, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
+}
+
 // Instant enrollment must be retirement-safe: a conv the human
 // deliberately retired stays retired even when its session fires a fresh
 // SessionStart (e.g. a /clear or a reattach). EnrollAgent is INSERT OR

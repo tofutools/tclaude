@@ -1266,15 +1266,8 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		if err != nil {
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
-		} else if created {
-			createdAt := state.Created
-			if createdAt.IsZero() {
-				createdAt = state.LastHook
-			}
-			if err := db.SetAgentPendingName(agentID, FreeFloatingAgentName(createdAt, agentID)); err != nil {
-				slog.Warn("failed to assign launched session fallback name",
-					"conv_id", state.ConvID, "agent_id", agentID, "error", err, "module", "hooks")
-			}
+		} else {
+			assignFreeFloatingFallback(state, agentID, created)
 		}
 	}
 
@@ -1370,6 +1363,37 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	}
 
 	return nil
+}
+
+// assignFreeFloatingFallback covers both the normal hook-first enrollment and
+// the daemon-reconcile race where the same plain session was enrolled moments
+// earlier. Managed spawns have another CreatedVia value and are never touched.
+// The empty-name CAS is the final guard against overwriting a name installed
+// concurrently by spawn completion or an explicit operation.
+func assignFreeFloatingFallback(state *SessionState, agentID string, created bool) {
+	actor, err := db.GetAgent(agentID)
+	if err != nil || actor == nil || !actor.Active() || actor.PendingName != "" {
+		return
+	}
+	switch actor.CreatedVia {
+	case "session-start", "online-reconcile", "cli":
+	default:
+		if !created {
+			return
+		}
+	}
+	createdAt := state.Created
+	if createdAt.IsZero() {
+		createdAt = state.LastHook
+	}
+	changed, err := db.ReplaceAgentPendingName(agentID, "", FreeFloatingAgentName(createdAt, agentID))
+	if err != nil {
+		slog.Warn("failed to assign launched session fallback name",
+			"conv_id", state.ConvID, "agent_id", agentID, "error", err, "module", "hooks")
+	} else if !changed {
+		slog.Debug("launched session fallback name lost a concurrent update",
+			"conv_id", state.ConvID, "agent_id", agentID, "module", "hooks")
+	}
 }
 
 func boundedSessionEndReason(reason string) string {
