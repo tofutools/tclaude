@@ -43,6 +43,13 @@ const (
 	filteredGatewayConnectionTimeout = 900 * time.Millisecond
 )
 
+func TestFilteredSmokeExecutableNameMatchesPastaVariantsOnly(t *testing.T) {
+	assert.True(t, filteredSmokeExecutableNameMatches("pasta", "pasta"))
+	assert.True(t, filteredSmokeExecutableNameMatches("pasta.avx2", "pasta"))
+	assert.False(t, filteredSmokeExecutableNameMatches("pasta-helper", "pasta"))
+	assert.False(t, filteredSmokeExecutableNameMatches("passt", "pasta"))
+}
+
 // TestTclaudeLayerFilteredNetworkSmoke is the named executing CI boundary for
 // the M2b Claude/Codex tclaude-layer cells. The runner supplies two live
 // adjacent targets from a separate network namespace, so allowed CIDR+port,
@@ -469,8 +476,7 @@ func waitForFilteredSmokeDescendant(t *testing.T, rootPID int, executable string
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, pid := range filteredSmokeDescendants(rootPID) {
-			resolved, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
-			if err == nil && resolved == executable {
+			if filteredSmokeProcessIsExecutable(pid, executable) {
 				return pid
 			}
 		}
@@ -478,6 +484,30 @@ func waitForFilteredSmokeDescendant(t *testing.T, rootPID int, executable string
 	}
 	t.Fatalf("did not find supervised %s below process %d", executable, rootPID)
 	return 0
+}
+
+func filteredSmokeProcessIsExecutable(pid int, executable string) bool {
+	procDir := filepath.Join("/proc", strconv.Itoa(pid))
+	if resolved, err := os.Readlink(filepath.Join(procDir, "exe")); err == nil {
+		return resolved == executable || resolved == executable+".avx2"
+	}
+	// pasta clears PR_SET_DUMPABLE during self-isolation, after which the
+	// ptrace-gated /proc/<pid>/exe link is deliberately unreadable. The
+	// kernel comm name remains visible. This fallback is still constrained to
+	// descendants of the launched relay; killing it must then make that relay
+	// report the gateway's fail-closed exit 125.
+	comm, err := os.ReadFile(filepath.Join(procDir, "comm"))
+	if err != nil {
+		return false
+	}
+	return filteredSmokeExecutableNameMatches(
+		strings.TrimSpace(string(comm)),
+		filepath.Base(executable),
+	)
+}
+
+func filteredSmokeExecutableNameMatches(name, expected string) bool {
+	return name == expected || name == expected+".avx2"
 }
 
 func filteredSmokeDescendants(rootPID int) []int {
