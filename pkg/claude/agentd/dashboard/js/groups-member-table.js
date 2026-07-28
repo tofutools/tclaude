@@ -362,9 +362,7 @@ function statusInfo(state, online) {
   return { status: status || 'online', detail, title: status && detail ? `${status}: ${detail}` : status || 'online' };
 }
 
-function StatePill({ state, online }) {
-  const shellRef = useRef(null);
-  const pillRef = useRef(null);
+function StatePill({ state, online, conv }) {
   const info = statusInfo(state, online);
   let className = online ? 'state-idle' : 'state-offline';
   if (info.status === 'crashed') className = 'state-crashed';
@@ -385,25 +383,12 @@ function StatePill({ state, online }) {
   const ariaLabel = backgroundActive
     ? `idle; background work is still running${info.detail ? `: ${info.detail}` : ''}`
     : info.title;
-  useLayoutEffect(() => {
-    const shell = shellRef.current;
-    const pill = pillRef.current;
-    if (!shell || !pill) return;
-    const syncClipped = () => {
-      const clipped = pill.scrollWidth > pill.clientWidth;
-      shell.toggleAttribute('data-truncated', clipped);
-      if (clipped) shell.setAttribute('tabindex', '0');
-      else shell.removeAttribute('tabindex');
-    };
-    syncClipped();
-    if (typeof ResizeObserver !== 'function') return;
-    const observer = new ResizeObserver(syncClipped);
-    observer.observe(pill);
-    return () => observer.disconnect();
-  }, [label]);
-  return html`<span ref=${shellRef} class="state-pill-wrap" title=${info.title}
-    aria-label=${ariaLabel} data-full-status=${info.title}><span ref=${pillRef}
-    class=${`state-pill ${className}`} aria-hidden="true">${label}</span></span>`;
+  return html`<span class="state-pill-wrap" tabindex=${'0'} title=${info.title}
+    aria-label=${ariaLabel} data-full-status=${info.title}>
+    <span class=${`state-pill ${className}`} aria-hidden="true">${label}</span>
+    <${SlopMachine} state=${state} online=${online} conv=${conv} />
+    <${WizardPill} state=${state} online=${online} conv=${conv} />
+  </span>`;
 }
 
 const SLOP_STOPPED = {
@@ -433,8 +418,6 @@ export function SlopMachine({ state, online, conv }) {
   const status = online
     ? (state?.status || 'idle')
     : state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
-  const detail = state?.status_detail || '';
-  const title = detail ? `${status}: ${detail}` : status;
   useLayoutEffect(() => {
     const host = hostRef.current;
     // The parent Groups root renders this empty outer host forever and never
@@ -457,7 +440,8 @@ export function SlopMachine({ state, online, conv }) {
       root.remove();
     };
   }, [status, conv]);
-  return html`<span ref=${hostRef} class="slop-machine" data-opaque-host="slop-reels" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}></span>`;
+  return html`<span ref=${hostRef} class="slop-machine" data-opaque-host="slop-reels"
+    data-status=${status} data-conv=${conv || ''} aria-hidden="true"></span>`;
 }
 
 const WIZARD_STATE = {
@@ -470,10 +454,9 @@ function WizardPill({ state, online, conv }) {
   const status = online
     ? (state?.status || 'idle')
     : state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
-  const detail = state?.status_detail || '';
   const [glyph, label] = WIZARD_STATE[status] || ['✨', status];
-  const title = detail ? `${status}: ${detail}` : status;
-  return html`<span class="wizard-pill" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}><span class="wizard-pill-glyph">${glyph}</span> ${label}</span>`;
+  return html`<span class="wizard-pill" data-status=${status} data-conv=${conv || ''}
+    aria-hidden="true"><span class="wizard-pill-glyph">${glyph}</span> ${label}</span>`;
 }
 
 function fmtTokens(value) {
@@ -524,7 +507,9 @@ function ActivityBadges({ state }) {
 
 function StateCell({ member }) {
   const state = member.state || {};
-  return html`<td class="state-cell"><${ContextMeter} state=${state} /><${StatePill} state=${state} online=${member.online} /><${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} /><${WizardPill} state=${state} online=${member.online} conv=${member.conv_id} />${member.online ? html`<${ActivityBadges} state=${state} />` : null}</td>`;
+  return html`<td class="state-cell"><${ContextMeter} state=${state} /><${StatePill}
+    state=${state} online=${member.online} conv=${member.conv_id} />${member.online
+    ? html`<${ActivityBadges} state=${state} />` : null}</td>`;
 }
 
 function EyeIcon({ hidden = false }) {

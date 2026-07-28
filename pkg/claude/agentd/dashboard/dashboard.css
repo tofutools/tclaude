@@ -863,10 +863,10 @@ table tr:hover { background: #161b22; }
   max-width: 24ch; overflow: hidden; text-overflow: ellipsis;
   vertical-align: middle;
 }
-/* Only clipped pills enter the tab order. Pointer users keep the native title
-   tooltip; keyboard and touch focus reveal the same full value immediately. */
-.state-pill-wrap[data-truncated]:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
-.state-pill-wrap[data-truncated]:focus::after {
+/* Pointer users keep the native title tooltip; keyboard and touch focus reveal
+   the same full value immediately in every dashboard theme. */
+.state-pill-wrap:focus { outline: 2px solid #58a6ff; outline-offset: 2px; }
+.state-pill-wrap:focus::after {
   content: attr(data-full-status);
   position: absolute; z-index: 300; left: 0; top: calc(100% + 5px);
   box-sizing: border-box; width: max-content;
@@ -5651,7 +5651,7 @@ body.slop .slop-machine {
    (render.js). Other tabs reuse .state-pill with no slot machine —
    the Audit tab's Outcome column, the Plugins status/step pills — so
    an unscoped rule would blank those cells in slop mode. */
-body.slop .state-cell .state-pill-wrap { display: none; }
+body.slop .state-cell .state-pill-wrap > .state-pill { display: none; }
 
 .slop-reel {
   display: inline-block; width: 1.3em; height: 1.3em;
@@ -7045,7 +7045,7 @@ body.wizard #dnd-trash.dnd-drop-over .dnd-trash-glyph-wizard {
    re-render. Scoped to .state-cell so other tabs' .state-pill (Audit
    Outcome, Plugins) are untouched — same care slop takes. */
 .wizard-pill { display: none; }
-body.wizard .state-cell .state-pill-wrap,
+body.wizard .state-cell .state-pill-wrap > .state-pill,
 body.wizard .state-cell .slop-machine { display: none; }
 body.wizard .wizard-pill {
   display: inline-flex; align-items: center; gap: 5px;

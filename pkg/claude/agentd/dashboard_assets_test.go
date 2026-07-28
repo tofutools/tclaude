@@ -126,7 +126,7 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 	// opaque host explicitly hands ownership back on a status edge.
 	for _, needle := range []string{
 		"function SlopMachine(",
-		"<${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} />",
+		"<${SlopMachine} state=${state} online=${online} conv=${conv} />",
 		`data-opaque-host="slop-reels"`,
 		"host.replaceChildren(root);",
 		"render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, root);",
@@ -144,7 +144,7 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 		".slop-reel",
 		".slop-strip",
 		"@keyframes slop-spin",
-		"body.slop .state-cell .state-pill-wrap { display: none; }",
+		"body.slop .state-cell .state-pill-wrap > .state-pill { display: none; }",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard CSS missing %q — slot machine styling broken", needle)
@@ -167,7 +167,7 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
 	}
 	css := string(cssBytes)
-	if !strings.Contains(css, "body.slop .state-cell .state-pill-wrap { display: none; }") {
+	if !strings.Contains(css, "body.slop .state-cell .state-pill-wrap > .state-pill { display: none; }") {
 		t.Error("dashboard.css missing the .state-cell-scoped slop pill-hide rule — " +
 			"reused .state-pill cells (Audit Outcome, Plugins status) go blank in slop mode")
 	}
@@ -186,38 +186,39 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 // hatch for clipped text.
 func TestDashboardCSS_AgentStatePillTruncates(t *testing.T) {
 	css := dashboardAssetFile(t, "dashboard.css")
-	js := dashboardAssetFile(t, "js/groups-member-table.js")
-	match := regexp.MustCompile(`(?ms)^\.state-cell\s+\.state-pill\s*\{([^}]*)\}`).FindStringSubmatch(css)
-	if len(match) != 2 {
+	var scopedRule string
+	var focusTooltipRule string
+	withoutComments := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(css, "")
+	for _, match := range regexp.MustCompile(`(?s)([^{}]*)\{([^{}]*)\}`).FindAllStringSubmatch(withoutComments, -1) {
+		for branch := range strings.SplitSeq(match[1], ",") {
+			selector := strings.Join(strings.Fields(branch), " ")
+			if selector == ".state-cell .state-pill" {
+				scopedRule = match[2]
+			}
+			if selector == ".state-pill-wrap:focus::after" {
+				focusTooltipRule = match[2]
+			}
+			if selector == ".state-pill" &&
+				regexp.MustCompile(`\bmax-width\s*:`).MatchString(match[2]) {
+				t.Error("state-pill truncation is unscoped — would cap unrelated Audit, Jobs, and Plugins pills")
+			}
+		}
+	}
+	if scopedRule == "" {
 		t.Fatal("dashboard.css is missing the Groups-scoped agent state-pill rule")
 	}
 	for _, declaration := range []string{
 		`max-width:\s*24ch`, `overflow:\s*hidden`, `text-overflow:\s*ellipsis`,
 	} {
-		if !regexp.MustCompile(declaration).MatchString(match[1]) {
+		if !regexp.MustCompile(declaration).MatchString(scopedRule) {
 			t.Errorf("Groups agent state-pill rule is missing %q", declaration)
 		}
 	}
-	if regexp.MustCompile(`(?ms)^\.state-pill\s*\{[^}]*\bmax-width\s*:`).MatchString(css) {
-		t.Error("state-pill truncation is unscoped — would cap unrelated Audit, Jobs, and Plugins pills")
+	if focusTooltipRule == "" {
+		t.Fatal("dashboard.css is missing the focused full-status tooltip rule")
 	}
-	for _, needle := range []string{
-		`class="state-pill-wrap" title=${info.title}`,
-		`aria-label=${ariaLabel} data-full-status=${info.title}`,
-		`const clipped = pill.scrollWidth > pill.clientWidth;`,
-		`if (clipped) shell.setAttribute('tabindex', '0');`,
-		`const observer = new ResizeObserver(syncClipped);`,
-		`return () => observer.disconnect();`,
-		`.state-pill-wrap[data-truncated]:focus::after`,
-		`content: attr(data-full-status);`,
-	} {
-		source := js
-		if strings.HasPrefix(needle, ".") || strings.HasPrefix(needle, "content:") {
-			source = css
-		}
-		if !strings.Contains(source, needle) {
-			t.Errorf("agent state pill is missing %q — clipped text must remain available to pointer, keyboard, and touch users", needle)
-		}
+	if !regexp.MustCompile(`content:\s*attr\(data-full-status\)`).MatchString(focusTooltipRule) {
+		t.Error("focused agent state wrapper no longer reveals its full data-full-status value")
 	}
 }
 
