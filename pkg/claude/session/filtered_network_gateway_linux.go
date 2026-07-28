@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +26,11 @@ import (
 const (
 	tclaudeLayerFilteredBootstrapCommand = "tclaude-layer-filtered-bootstrap"
 	filteredNetworkPolicyEncodingLimit   = 64 << 10
-	filteredNetworkSyncChildFD           = 4
-	filteredNetworkBootstrapBinaryFD     = 5
-	filteredNetworkPolicyFD              = 6
-	filteredNetworkHostsFD               = 7
+	filteredNetworkBootstrapBinaryFD     = 4
+	filteredNetworkPolicyFD              = 5
+	filteredNetworkHostsFD               = 6
 	filteredNetworkPastaReadyTimeout     = 5 * time.Second
+	filteredNetworkBootstrapSyncPath     = "/tmp/.tclaude-filtered-sync.sock"
 )
 
 func filteredNetworkHelperEnv() []string {
@@ -43,10 +44,8 @@ func filteredNetworkHelperEnv() []string {
 func filteredNetworkNFTCommand(nftPath string) *exec.Cmd {
 	cmd := exec.Command(nftPath, "-f", sandboxpolicy.FilteredNetworkNFTPolicyPath)
 	cmd.Env = filteredNetworkHelperEnv()
-	// bubblewrap grants CAP_NET_ADMIN to this bootstrap, but the bootstrap
-	// runs as the caller's nonzero uid inside the user namespace. Carry the
-	// capability across exactly the nft child exec; the later harness exec
-	// follows an explicit all-set capability drop.
+	// Carry the bootstrap's namespace-local authority across exactly the nft
+	// child exec; the later harness exec follows an explicit all-set drop.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		AmbientCaps: []uintptr{unix.CAP_NET_ADMIN},
 	}
@@ -57,7 +56,8 @@ type preparedFilteredNetworkRelay struct {
 	SetupArgs    []string
 	Command      []string
 	Files        []*os.File
-	Sync         *os.File
+	SyncListener *net.UnixListener
+	Sync         *net.UnixConn
 	PastaPath    string
 	PastaPIDFile string
 }
@@ -117,22 +117,37 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
 	}
-	sockets, err := unix.Socketpair(
-		unix.AF_UNIX,
-		unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC,
-		0,
+	pidDir, err := os.MkdirTemp("", "tclaude-filtered-pasta-")
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, fmt.Errorf("create pasta readiness directory: %w", err)
+	}
+	if err := os.Chmod(pidDir, 0o700); err != nil {
+		_ = os.RemoveAll(pidDir)
+		return preparedFilteredNetworkRelay{}, fmt.Errorf("secure pasta readiness directory: %w", err)
+	}
+	syncHostPath := filepath.Join(pidDir, "bootstrap.sock")
+	syncListener, err := net.ListenUnix(
+		"unixpacket",
+		&net.UnixAddr{Name: syncHostPath, Net: "unixpacket"},
 	)
 	if err != nil {
-		return preparedFilteredNetworkRelay{}, fmt.Errorf("create filtered-network readiness channel: %w", err)
+		_ = os.RemoveAll(pidDir)
+		return preparedFilteredNetworkRelay{}, fmt.Errorf(
+			"create filtered-network readiness listener: %w", err)
 	}
-	parentSync := os.NewFile(uintptr(sockets[0]), "filtered-network-parent")
-	childSync := os.NewFile(uintptr(sockets[1]), "filtered-network-child")
-	files := []*os.File{childSync}
+	if err := os.Chmod(syncHostPath, 0o600); err != nil {
+		_ = syncListener.Close()
+		_ = os.RemoveAll(pidDir)
+		return preparedFilteredNetworkRelay{}, fmt.Errorf(
+			"secure filtered-network readiness listener: %w", err)
+	}
+	files := []*os.File{}
 	closePrepared := func() {
-		_ = parentSync.Close()
+		_ = syncListener.Close()
 		for _, file := range files {
 			_ = file.Close()
 		}
+		_ = os.RemoveAll(pidDir)
 	}
 	defer func() {
 		if retErr != nil {
@@ -156,17 +171,9 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		return preparedFilteredNetworkRelay{}, err
 	}
 	files = append(files, hostsFile)
-	pidDir, err := os.MkdirTemp("", "tclaude-filtered-pasta-")
-	if err != nil {
-		return preparedFilteredNetworkRelay{}, fmt.Errorf("create pasta readiness directory: %w", err)
-	}
-	if err := os.Chmod(pidDir, 0o700); err != nil {
-		_ = os.RemoveAll(pidDir)
-		return preparedFilteredNetworkRelay{}, fmt.Errorf("secure pasta readiness directory: %w", err)
-	}
 	return preparedFilteredNetworkRelay{
 		SetupArgs: []string{
-			"--sync-fd", strconv.Itoa(filteredNetworkSyncChildFD),
+			"--ro-bind", syncHostPath, filteredNetworkBootstrapSyncPath,
 			"--perms", "0500",
 			"--file", strconv.Itoa(filteredNetworkBootstrapBinaryFD),
 			sandboxpolicy.FilteredNetworkBootstrapPath,
@@ -186,7 +193,7 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 			"--",
 		},
 		Files:        files,
-		Sync:         parentSync,
+		SyncListener: syncListener,
 		PastaPath:    executables.Pasta,
 		PastaPIDFile: filepath.Join(pidDir, "pasta.pid"),
 	}, nil
@@ -235,6 +242,9 @@ func (p *preparedFilteredNetworkRelay) Close() {
 	if p.Sync != nil {
 		_ = p.Sync.Close()
 	}
+	if p.SyncListener != nil {
+		_ = p.SyncListener.Close()
+	}
 	for _, file := range p.Files {
 		_ = file.Close()
 	}
@@ -243,22 +253,76 @@ func (p *preparedFilteredNetworkRelay) Close() {
 	}
 }
 
-func (p *preparedFilteredNetworkRelay) waitPolicyReady() error {
-	if p == nil || p.Sync == nil {
+func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
+	if p == nil || p.SyncListener == nil {
 		return nil
 	}
-	if err := p.Sync.SetReadDeadline(time.Now().Add(filteredNetworkPastaReadyTimeout)); err != nil {
+	if err := p.SyncListener.SetDeadline(
+		time.Now().Add(filteredNetworkPastaReadyTimeout),
+	); err != nil {
+		return err
+	}
+	sync, err := p.SyncListener.AcceptUnix()
+	if err != nil {
+		return fmt.Errorf("accept filtered-network bootstrap readiness: %w", err)
+	}
+	p.Sync = sync
+	_ = p.SyncListener.Close()
+	p.SyncListener = nil
+	_ = os.Remove(filepath.Join(filepath.Dir(p.PastaPIDFile), "bootstrap.sock"))
+	if err := validateFilteredNetworkSyncPeer(sync, namespacePID); err != nil {
+		return err
+	}
+	if err := sync.SetReadDeadline(time.Now().Add(filteredNetworkPastaReadyTimeout)); err != nil {
 		return err
 	}
 	buffer := make([]byte, 128)
-	n, err := p.Sync.Read(buffer)
+	n, err := sync.Read(buffer)
 	if err != nil {
 		return fmt.Errorf("wait for filtered-network nft policy: %w", err)
 	}
 	if string(buffer[:n]) != sandboxpolicy.FilteredNetworkBootstrapReady {
 		return fmt.Errorf("filtered-network bootstrap returned invalid readiness")
 	}
-	return p.Sync.SetReadDeadline(time.Time{})
+	return sync.SetReadDeadline(time.Time{})
+}
+
+func validateFilteredNetworkSyncPeer(conn *net.UnixConn, namespacePID int) error {
+	if conn == nil || namespacePID <= 0 {
+		return fmt.Errorf("filtered-network readiness peer contract is invalid")
+	}
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("inspect filtered-network readiness peer: %w", err)
+	}
+	var credential *unix.Ucred
+	var socketErr error
+	if err := raw.Control(func(fd uintptr) {
+		credential, socketErr = unix.GetsockoptUcred(
+			int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+	}); err != nil {
+		return fmt.Errorf("inspect filtered-network readiness socket: %w", err)
+	}
+	if socketErr != nil {
+		return fmt.Errorf("authenticate filtered-network readiness peer: %w", socketErr)
+	}
+	if credential == nil || credential.Pid <= 0 {
+		return fmt.Errorf("filtered-network readiness peer has no process identity")
+	}
+	expectedNamespace, err := os.Readlink(
+		filepath.Join("/proc", strconv.Itoa(namespacePID), "ns/net"))
+	if err != nil {
+		return fmt.Errorf("inspect filtered-network namespace identity: %w", err)
+	}
+	peerNamespace, err := os.Readlink(
+		filepath.Join("/proc", strconv.Itoa(int(credential.Pid)), "ns/net"))
+	if err != nil {
+		return fmt.Errorf("inspect filtered-network readiness peer namespace: %w", err)
+	}
+	if peerNamespace != expectedNamespace {
+		return fmt.Errorf("filtered-network readiness peer is outside the sandbox network namespace")
+	}
+	return nil
 }
 
 func (p *preparedFilteredNetworkRelay) releaseHarness() error {
@@ -361,9 +425,13 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 	if err := nft.Run(); err != nil {
 		return fmt.Errorf("install atomic filtered-network nft policy: %w", err)
 	}
-	sync := os.NewFile(uintptr(filteredNetworkSyncChildFD), "filtered-network-sync")
-	if sync == nil {
-		return fmt.Errorf("filtered-network readiness channel is unavailable")
+	sync, err := net.DialUnix(
+		"unixpacket",
+		nil,
+		&net.UnixAddr{Name: filteredNetworkBootstrapSyncPath, Net: "unixpacket"},
+	)
+	if err != nil {
+		return fmt.Errorf("connect filtered-network readiness channel: %w", err)
 	}
 	if _, err := sync.Write([]byte(sandboxpolicy.FilteredNetworkBootstrapReady)); err != nil {
 		_ = sync.Close()

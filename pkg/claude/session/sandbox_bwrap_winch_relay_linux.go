@@ -220,7 +220,7 @@ func runTclaudeLayerWinchRelay(
 	}
 	defer func() { _ = unix.Close(childPidfd) }()
 	if len(filtered.SetupArgs) > 0 {
-		if err := filtered.waitPolicyReady(); err != nil {
+		if err := filtered.waitPolicyReady(status.ChildPID); err != nil {
 			return 125, err
 		}
 	}
