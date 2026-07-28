@@ -2941,9 +2941,14 @@ type groupSummary struct {
 	// blank spawn fields for this group's agents (JOH-210); "" = none. It is
 	// the spawn default's single source — the vestigial per-group
 	// default_model was dropped (JOH-220).
-	DefaultProfile string   `json:"default_profile,omitempty"`
-	Permissions    []string `json:"permissions,omitempty"`
-	Archived       bool     `json:"archived,omitempty"`
+	DefaultProfile string `json:"default_profile,omitempty"`
+	// DefaultCwd is the working directory blank spawns into this group fall
+	// back to (agent_groups.default_cwd); "" = none. It is a path on the
+	// operator's own filesystem and this listing is readable by every local
+	// caller, so it is served only to a human one — see handleGroups.
+	DefaultCwd  string   `json:"default_cwd,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
+	Archived    bool     `json:"archived,omitempty"`
 	// NotifyMuted flags a group whose OS notifications are switched
 	// off (agent_groups.notify_enabled = false). omitempty: only the
 	// exceptional muted state is serialized.
@@ -3027,6 +3032,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		showArchived := isTruthy(r.URL.Query().Get("archived"))
+		// A group's default_cwd is a directory on the human's own filesystem,
+		// outside any agent's sandbox, and this listing is the one /v1 read
+		// that asks nothing of its caller. Serving the path to an agent would
+		// hand it filesystem layout it has no way to guess (the terminal
+		// console gates its Tab-completion for exactly this reason), so it
+		// goes to a human caller only — who configured it and reads it back
+		// in the dashboard and `groups ls` anyway.
+		human := classify(peerFromContext(r.Context())) == classHuman
 		// One tmux ls for the listing — per-member online checks below
 		// are map lookups against this snapshot.
 		aliveSessions, _ := session.LiveTmuxSessions()
@@ -3044,6 +3057,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			attachment := groupAttachmentViewFor(g)
+			defaultCwd := ""
+			if human {
+				defaultCwd = g.DefaultCwd
+			}
 			out = append(out, groupSummary{
 				Name:                    g.Name,
 				Descr:                   g.Descr,
@@ -3054,6 +3071,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				Online:                  online,
 				MaxMembers:              g.MaxMembers,
 				DefaultProfile:          g.DefaultProfile,
+				DefaultCwd:              defaultCwd,
 				Permissions:             groupPermissions,
 				Archived:                g.IsArchived(),
 				NotifyMuted:             !g.NotifyEnabled,

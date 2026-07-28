@@ -369,9 +369,14 @@ func (a tuiAgentRow) status() string {
 }
 
 // tuiGroupRow is the subset of /v1/groups the console needs: the name is
-// what the spawn form picks from and posts to.
+// what the spawn form picks from and posts to, and the default directory is
+// what it starts that group's spawn in.
 type tuiGroupRow struct {
 	Name string `json:"name"`
+	// DefaultCwd is the group's configured spawn directory, "" when it has
+	// none — and always "" for a console the daemon does not treat as the
+	// human, which is not served the path at all.
+	DefaultCwd string `json:"default_cwd,omitempty"`
 }
 
 // tuiProfileRow is the subset of /v1/spawn-profiles the spawn form picks
@@ -509,6 +514,11 @@ type tuiSpawnForm struct {
 	name  textinput.Model
 	dir   textinput.Model
 	brief textinput.Model
+	// dirPrefill is the value prefillDir last wrote into dir — the selected
+	// group's default directory. It is what tells an untouched field from one
+	// the operator has typed in, so changing the group can follow the first
+	// and must leave the second alone.
+	dirPrefill string
 	// dirSuggestions holds the ambiguous Tab-completion candidates for dir,
 	// listed under the field until the next keystroke.
 	dirSuggestions []string
@@ -758,6 +768,48 @@ func (m tuiModel) openSpawnForm() tuiModel {
 	}
 	m.form = form
 	m.mode = tuiModeSpawn
+	return m.prefillDir()
+}
+
+// groupDefaultDir is the group's configured default working directory, ending
+// in a separator, or "" when it has none (or when the daemon does not serve
+// this console the path — see tuiGroupRow).
+//
+// The trailing separator is the point of the prefill: it makes the group's
+// directory a starting point rather than an answer, so the operator types the
+// subdirectory they want straight onto it and Tab lists what is in there.
+func (m tuiModel) groupDefaultDir(name string) string {
+	for _, g := range m.groups {
+		if g.Name != name {
+			continue
+		}
+		if dir := strings.TrimSpace(g.DefaultCwd); dir != "" {
+			return strings.TrimSuffix(dir, "/") + "/"
+		}
+		return ""
+	}
+	return ""
+}
+
+// prefillDir points the directory field at the selected group's default
+// directory, which is where that group's agents are launched anyway — so the
+// common "somewhere under the group's directory" spawn is a subdirectory name
+// away instead of a full path retyped.
+//
+// It only ever writes a field the operator has not touched. Once they have
+// typed their own path, cycling the group picker leaves it exactly as it is:
+// the alternative silently discards a path they may have Tab-completed their
+// way to.
+func (m tuiModel) prefillDir() tuiModel {
+	// A cleared field counts as untouched: blank already means "the group's
+	// default directory", so filling in the new group's own is the same
+	// launch either way — and it puts the path back where it can be extended.
+	if v := m.form.dir.Value(); v != "" && v != m.form.dirPrefill {
+		return m
+	}
+	m.form.dirPrefill = m.groupDefaultDir(m.selectedGroup())
+	m.form.dir.SetValue(m.form.dirPrefill)
+	m.form.dir.CursorEnd()
 	return m
 }
 
@@ -816,6 +868,9 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 	case tuiFieldGroup:
 		if n := len(m.form.groupNames); n > 0 {
 			m.form.groupIdx = ((m.form.groupIdx+delta)%n + n) % n
+			// The directory follows the group it belongs to, until the
+			// operator types one of their own.
+			m = m.prefillDir()
 		}
 	case tuiFieldProfile:
 		if n := len(m.form.profileNames); n > 0 {
@@ -1698,7 +1753,7 @@ func (m tuiModel) renderSpawnForm() string {
 		m.form.field == tuiFieldProfile))
 	b.WriteString(m.form.name.View() + tuiHint(m.form.name.Value() == "", "  (blank = auto-generated)"))
 	b.WriteString("\n")
-	b.WriteString(m.form.dir.View() + tuiHint(m.form.dir.Value() == "", "  (blank = the group's default directory)"))
+	b.WriteString(m.form.dir.View() + m.dirHint())
 	b.WriteString("\n")
 	// Always emit this line, blank or not, so a candidate list appearing and
 	// disappearing doesn't shift the fields below it up and down.
@@ -1730,6 +1785,22 @@ func (m tuiModel) renderSpawnForm() string {
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
 		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
+}
+
+// dirHint explains the directory field's state: a blank field still lands in
+// the group's default directory (the daemon's own fallback), and an untouched
+// prefill says it is that same directory rather than a path someone typed —
+// which is what makes it obvious it can be extended.
+func (m tuiModel) dirHint() string {
+	value := m.form.dir.Value()
+	switch {
+	case value == "":
+		return "  (blank = the group's default directory)"
+	case m.form.dirPrefill != "" && value == m.form.dirPrefill:
+		return "  (the group's directory — add a subdirectory to start below it)"
+	default:
+		return ""
+	}
 }
 
 // profileChoice is the profile picker's current value.
@@ -1841,6 +1912,9 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")
+	b.WriteString("               Directory starts on the group's own default directory\n")
+	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
+	b.WriteString("               group picker until you type a path of your own.\n")
 	b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 	b.WriteString("               the same move enter makes on its row. Operator\n")
 	b.WriteString("               consoles only; an agent still starting up (no pane\n")

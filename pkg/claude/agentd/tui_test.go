@@ -973,6 +973,75 @@ func TestTUISpawnDirTabIsRefusedForANonOperatorConsole(t *testing.T) {
 	assert.NotContains(t, got.renderSpawnForm(), "complete dir")
 }
 
+// The spawn form opens on the selected group's own default directory, so the
+// usual "somewhere under the group's tree" spawn is a subdirectory name away
+// rather than a full path retyped.
+func TestTUISpawnFormPrefillsTheGroupsDirectory(t *testing.T) {
+	m := newTUIModel(nil)
+	m.groups = []tuiGroupRow{
+		{Name: "dev", DefaultCwd: "/work/dev"},
+		{Name: "ops", DefaultCwd: "/srv/ops/"},
+		{Name: "misc"},
+	}
+	m = m.openSpawnForm()
+
+	assert.Equal(t, "/work/dev/", m.form.dir.Value(),
+		"the prefill ends in a separator so a subdirectory can be typed onto it")
+	assert.Contains(t, m.renderSpawnForm(), "the group's directory")
+
+	// Cycling the picker moves the untouched field with it — including over a
+	// default that already carries its own trailing separator.
+	m = m.cycleChoice(1)
+	assert.Equal(t, "/srv/ops/", m.form.dir.Value())
+
+	// A group with no default clears the field, which is the state that means
+	// "let the daemon decide".
+	m = m.cycleChoice(1)
+	assert.Empty(t, m.form.dir.Value())
+	assert.Contains(t, m.renderSpawnForm(), "blank = the group's default directory")
+}
+
+// Once the operator has typed a path, the group picker must leave it alone:
+// they may have Tab-completed their way to it.
+func TestTUISpawnPrefillDoesNotOverwriteATypedDirectory(t *testing.T) {
+	m := newTUIModel(nil)
+	m.groups = []tuiGroupRow{{Name: "dev", DefaultCwd: "/work/dev"}, {Name: "ops", DefaultCwd: "/srv/ops"}}
+	m = m.openSpawnForm()
+	m.form.dir.SetValue("/work/dev/scratch")
+
+	m = m.cycleChoice(1)
+	assert.Equal(t, "/work/dev/scratch", m.form.dir.Value())
+	assert.Equal(t, "ops", m.selectedGroup(), "the group itself still changes")
+	assert.NotContains(t, m.renderSpawnForm(), "the group's directory",
+		"and the hint no longer claims the field is the group's own")
+
+	// Clearing it puts the field back under the prefill's care: an empty
+	// field is the daemon's own fallback either way.
+	m.form.dir.SetValue("")
+	m = m.cycleChoice(1)
+	assert.Equal(t, "/work/dev/", m.form.dir.Value())
+}
+
+// The prefilled path is what the spawn posts — the same directory a blank
+// field would have fallen back to, said out loud.
+func TestTUISpawnPostsThePrefilledDirectory(t *testing.T) {
+	var gotReq agent.SpawnRequest
+	api := stubTUIAPI(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotReq))
+		writeJSON(w, http.StatusOK, agent.SpawnResponse{Group: "dev", AgentID: "agt_1"})
+	})
+	m := newTUIModel(api)
+	m.groups = []tuiGroupRow{{Name: "dev", DefaultCwd: "/work/dev"}}
+	m = m.openSpawnForm()
+
+	_, cmd := m.submitSpawn()
+	require.NotNil(t, cmd)
+	msg, ok := cmd().(tuiSpawnedMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal(t, "/work/dev/", gotReq.Cwd)
+}
+
 // Tab anywhere else in the form is still plain field navigation.
 func TestTUISpawnTabOnAnotherFieldMovesOn(t *testing.T) {
 	m := newTUIModel(nil)

@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // Flow coverage for the `tclaude agentd serve --tui` console. It drives the
@@ -270,6 +272,67 @@ func TestTUIConsoleProfileHarnessSurvivesTheUntouchedHarnessField(t *testing.T) 
 	require.NotEmpty(t, sessions)
 	assert.Equal(t, "codex", sessions[0].Harness,
 		"the profile's harness must reach the launch, not the form's default")
+}
+
+// The spawn form starts on the group's own default directory, read off the
+// real /v1/groups listing, so spawning into a subdirectory of it is a name
+// typed onto the end rather than a whole path.
+func TestTUIConsoleSpawnFormPrefillsTheGroupsDirectory(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	root := f.TestCwd("tui-group-dir")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "service"), 0o755))
+	_, err := db.SetAgentGroupDefaultCwd("dev", root)
+	require.NoError(t, err)
+	stubTUIAttach(t)
+
+	c := newTUIConsole(t)
+	c.Refresh()
+
+	c.Press(t, "n")
+	// The field is narrower than a temp-dir path, so it shows the tail — which
+	// is the end the operator types the subdirectory onto.
+	require.Contains(t, c.View(), filepath.Base(root)+"/",
+		"the directory field opens on the group's own")
+	require.Contains(t, c.View(), "the group's directory")
+
+	// The cursor sits at the end of the prefill, so the subdirectory is just
+	// typed on.
+	c.Press(t, "tab", "tab") // group → profile → name
+	c.Type(t, "reviewer")
+	c.Press(t, "tab") // → directory
+	c.Type(t, "service")
+	c.Press(t, "enter")
+
+	require.Contains(t, c.View(), "Spawned", "the console reports the outcome")
+	members := f.ListGroupMembers("dev")
+	require.Len(t, members, 1)
+	sessions, err := db.FindSessionsByConvID(members[0].ConvID)
+	require.NoError(t, err)
+	require.NotEmpty(t, sessions)
+	assert.Equal(t, filepath.Join(root, "service"), sessions[0].Cwd,
+		"the spawn lands in the subdirectory of the group's directory")
+}
+
+// A group's default directory is a path on the operator's own filesystem, and
+// /v1/groups is the one listing that asks nothing of its caller. An agent
+// reading it gets the group, not the path.
+func TestGroupsListServesTheDefaultDirToHumansOnly(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	_, err := db.SetAgentGroupDefaultCwd("dev", "/work/dev")
+	require.NoError(t, err)
+
+	human := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodGet, "/v1/groups", nil)))
+	require.Equal(t, http.StatusOK, human.Code)
+	assert.Contains(t, human.Body.String(), "/work/dev", "the operator reads back what they configured")
+
+	agentSide := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodGet, "/v1/groups", nil), "peer-1111-2222-3333-444444444444"))
+	require.Equal(t, http.StatusOK, agentSide.Code)
+	assert.Contains(t, agentSide.Body.String(), `"dev"`, "the group itself is still listed")
+	assert.NotContains(t, agentSide.Body.String(), "/work/dev", "but not the operator's directory")
 }
 
 // x retires the selected agent through the daemon's own retire verb: the
