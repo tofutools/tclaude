@@ -90,6 +90,8 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 	} {
 		require.NoError(t, os.WriteFile(path, []byte("marker"), 0o600))
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(ambientConfig, ".gitignore"),
+		[]byte("node_modules\npackage.json\npackage-lock.json\n.gitignore\n"), 0o600))
 
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
