@@ -31,7 +31,7 @@ import {
 // — so the editor discloses instead of refusing.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for agents launched from this '
   + 'profile. harness-builtin is offered only when the selected harness owns a real OS sandbox. '
-  + 'tclaude-layer is EXPERIMENTAL: it runs the '
+  + "tclaude's built-in OS sandbox is EXPERIMENTAL: it runs the "
   + "whole harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — a '
   + 'host without them refuses the launch instead of falling back. '
@@ -290,13 +290,13 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const hasModelList = models.length > 0;
   const [customModel, setCustomModel] = useState(() => hasModelList && !!draft.model && !models.includes(draft.model));
 
-  // TCL-586: warn, before save, when this profile pairs an unattended
-  // command-running permission mode with a sandbox that will not confine it.
-  // The daemon decides — an explicit `off` is unsafe on any machine, while
-  // `inherit` is unsafe only when the host's global settings enable no sandbox,
-  // which the browser cannot know. loadUnsandboxedAutonomy probes with no dir,
-  // so the verdict reflects the portable, machine-global tiers.
+  // Preview warning and informational messages for the effective boundary. The
+  // daemon decides — an explicit `off` is unsafe on any machine, while
+  // `inherit` depends on host settings the browser cannot know, and OpenCode's
+  // split server boundary needs a non-warning disclosure. The profile probe has
+  // no dir, so the verdict reflects the portable, machine-global tiers.
   const [autonomyWarnings, setAutonomyWarnings] = useState([]);
+  const [sandboxInfo, setSandboxInfo] = useState([]);
   const autonomyRequest = useRef(0);
   useEffect(() => {
     if (typeof actions?.loadUnsandboxedAutonomy !== 'function') return undefined;
@@ -310,6 +310,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
         approval: draft.approval,
       })).then((result) => {
         if (request !== autonomyRequest.current) return;
+        setSandboxInfo(result?.info || []);
         setAutonomyWarnings(result?.warnings || []);
       });
     }, 200);
@@ -423,6 +424,13 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       onChange=${(event) => change(setDraft, 'tools', event.currentTarget.value)}
       help=${toolsHelp} open=${helpOpen === toolsID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_tools} />
+    <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
+      id=${`${profile ? 'profile' : 'role'}-editor-sandbox-info`}>
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target" role="status">
+        ${sandboxInfo.map((message) => html`<div class="spawn-field-hint info" key=${message}>ℹ ${message}</div>`)}
+      </div>
+    </div>
     ${autonomyWarnings.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-autonomy-warning`}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="alert">

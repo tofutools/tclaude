@@ -1173,9 +1173,10 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	// Same spawn-posture check the HTTP spawn boundary runs, at the equivalent
 	// point: both axes final. Covers the Claude TCL-586 pairing and OpenCode's
-	// look-like-a-sandbox access-control mode. A template deploy has no per-agent
-	// Warnings channel, so the line rides Notes — which the deploy result and the
-	// dashboard already surface per agent.
+	// look-like-a-sandbox access-control mode. A template deploy has no separate
+	// per-agent info/warnings channels, so both kinds ride Notes — which the
+	// deploy result and dashboard already surface per agent.
+	notes = append(notes, harness.SpawnSandboxInfo(h, sandbox)...)
 	notes = append(notes, harness.SpawnSandboxWarnings(h, approval, sandbox, cwd)...)
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile

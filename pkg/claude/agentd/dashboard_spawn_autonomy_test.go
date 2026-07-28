@@ -70,8 +70,9 @@ func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
 		t.Fatalf("got warnings %v, want none", payload.Warnings)
 	}
 	// An always-present array keeps every consumer free of a null guard.
-	if !strings.Contains(httpBodyOf(t, "harness=claude&approval=auto&dir="+home), `"warnings":[]`) {
-		t.Fatal("empty warnings should serialize as [], not null")
+	body := httpBodyOf(t, "harness=claude&approval=auto&dir="+home)
+	if !strings.Contains(body, `"warnings":[]`) || !strings.Contains(body, `"info":[]`) {
+		t.Fatal("empty warnings and info should serialize as [], not null")
 	}
 }
 
@@ -131,14 +132,19 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeTclaudeLayerDoesNotWarnThatItIsUn
 		t.Fatalf("got sandbox_mode %q, want the implementation-resolved tclaude-layer mode",
 			payload.SandboxMode)
 	}
-	joined := strings.Join(payload.Warnings, "\n")
-	if strings.Contains(joined, "OpenCode has no built-in OS sandbox") ||
-		strings.Contains(joined, "effectively unsandboxed") {
+	warnings := strings.Join(payload.Warnings, "\n")
+	if strings.Contains(warnings, "OpenCode has no built-in OS sandbox") ||
+		strings.Contains(warnings, "effectively unsandboxed") {
 		t.Fatalf("got warnings %v; tclaude-layer must not show the access-control warning",
 			payload.Warnings)
 	}
-	if !strings.Contains(joined, "tool-executing server") {
-		t.Fatalf("got warnings %v, want the tclaude-layer boundary notice", payload.Warnings)
+	info := strings.Join(payload.Info, "\n")
+	if !strings.Contains(info, "tool-executing server") ||
+		!strings.Contains(info, "tclaude's built-in OS sandbox") {
+		t.Fatalf("got info %v, want the built-in OS sandbox boundary disclosure", payload.Info)
+	}
+	if strings.Contains(info, "tclaude-layer") || strings.Contains(info, "loopback control plane") {
+		t.Fatalf("got info %v, want user-facing terminology", payload.Info)
 	}
 }
 

@@ -159,6 +159,18 @@ func TestFormatResolvedField(t *testing.T) {
 		formatResolvedField(ResolvedField{Value: "  ", Source: "explicit"}))
 }
 
+func TestPrintResolvedLaunchSeparatesInfoFromWarnings(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	printResolvedLaunch(stdout, &ResolvedLaunch{
+		Harness:  ResolvedField{Value: "opencode", Source: "explicit"},
+		Info:     []string{"server is confined"},
+		Warnings: []string{"action needed"},
+	})
+	assert.Contains(t, stdout.String(), "Info:    server is confined")
+	assert.Contains(t, stdout.String(), "Warning: action needed")
+	assert.NotContains(t, stdout.String(), "Warning: server is confined")
+}
+
 // A missing --file is rejected before the daemon is even contacted —
 // nothing is spawned.
 func TestRunSpawn_MissingFile(t *testing.T) {
