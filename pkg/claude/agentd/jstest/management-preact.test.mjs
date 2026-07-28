@@ -1158,6 +1158,15 @@ test('raw access JSON can repair a structured access validation error', async (t
     'the stale structured error cannot make raw repair unreachable');
   assert.equal(host.querySelector('.sbx-access-validation'), null);
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  rawNetwork.value = '"open"';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent,
+    /network and unix sockets must be JSON objects/,
+    'primitive raw axes receive the intended validation error');
   rawNetwork.value = '{"mode":"list","allow":[]}';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
