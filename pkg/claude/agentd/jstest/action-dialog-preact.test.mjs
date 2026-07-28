@@ -157,6 +157,29 @@ test('reincarnate dialog gates force mode and preserves plain DOM hooks', async 
   await mounted.cleanup();
 });
 
+test('reincarnate dialog shows an offline-agent error and stays open', async (t) => {
+  const mounted = await mountDialogs(
+    t,
+    'reincarnate-agent',
+    { conv: 'abcdefgh-1234', label: 'worker' },
+    {
+      reincarnateAgent: async () => {
+        throw new Error('cannot reincarnate abcdefgh: the agent is offline. Reincarnation can only run on a live agent; resume it first.');
+      },
+    },
+  );
+  const { harness, host } = mounted;
+
+  host.querySelector('#reincarnate-agent-submit').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.match(host.querySelector('#reincarnate-agent-error').textContent, /agent is offline/);
+  assert.match(host.querySelector('#reincarnate-agent-error').textContent, /resume it first/);
+  assert.ok(host.querySelector('#reincarnate-agent-modal'),
+    'a rejected request stays open so the operator can read the error');
+  await mounted.cleanup();
+});
+
 test('nest dialog uses an explicit parent model and controlled selection', async (t) => {
   const mounted = await mountDialogs(t, 'nest-group', { group: 'child' }, {
     nestModel: () => ({ currentParent: 'alpha', candidates: ['alpha', 'beta'] }),

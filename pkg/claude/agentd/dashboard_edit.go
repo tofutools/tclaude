@@ -1276,9 +1276,10 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // When blank, the agent just writes a general handoff.
 //
 // The request rides the universal inbox and async delivery dispatcher — the
-// same transport reincarnate's own handoff uses. A live target drains promptly;
-// an offline / busy one picks the message up when it becomes deliverable. The
-// target's tmux session is left running — nothing is force-killed.
+// same transport reincarnate's own handoff uses. The target must be live when
+// requested: reincarnation is a live-agent handoff, not a deferred instruction
+// to discover after some later resume. The target's tmux session is left
+// running — nothing is force-killed.
 //
 // Unlike the force path, this does NOT go through requireCrossAgentPermission:
 // self-mode only delivers an inbox message, which is an ungated
@@ -1286,6 +1287,10 @@ func dashboardReincarnateAgent(w http.ResponseWriter, r *http.Request, convSelec
 // /api/message). Self-reincarnation itself is intrinsic to every active agent;
 // cross-agent reincarnation remains gated on agent.reincarnate or ownership.
 func dashboardAskSelfReincarnate(w http.ResponseWriter, target, focusHint string) {
+	if pickAliveSession(target) == nil {
+		writeReincarnateOfflineError(w, target)
+		return
+	}
 	subject, instruction := buildSelfReincarnateInstruction(focusHint)
 	// The instruction rides the inbox like any agent_messages row, so it
 	// must clear the same charset/length rule. A blank focus hint always
