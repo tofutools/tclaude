@@ -39,7 +39,7 @@ type HookCallbackInput struct {
 	NotificationType string          `json:"notification_type,omitempty"`
 	Reason           string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
 	Source           string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
-	Trigger          string          `json:"trigger,omitempty"` // PreCompact: auto | manual
+	Trigger          string          `json:"trigger,omitempty"` // PreCompact/PostCompact: auto | manual
 	Message          string          `json:"message,omitempty"`
 	Prompt           string          `json:"prompt,omitempty"`
 	Model            string          `json:"model,omitempty"`
@@ -938,7 +938,12 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.SubagentCount = len(state.Subagents)
 			return SaveSessionState(state)
 		}
-		// Session started or resumed - update ConvID and set to idle.
+		// Session started or resumed - update ConvID and normally set to
+		// idle. A post-compaction SessionStart is different: it is an
+		// in-process continuation boundary, not evidence that the turn
+		// stopped. PostCompact already selected working (auto/unknown) or
+		// idle (manual), so preserve that status until the next operational
+		// hook determines a new one.
 		// A (re)starting main thread definitionally has NO sub-agents
 		// running yet — this is a known-zero boundary for the ledger, and
 		// the reset is what clears phantoms left by lost SubagentStops
@@ -957,8 +962,10 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		if input.Source == "startup" || input.Source == "" {
 			state.BgShells = nil
 		}
-		state.Status = StatusIdle
-		state.StatusDetail = ""
+		if input.Source != "compact" {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+		}
 		// The conversation is alive again — drop any exit_reason a
 		// previous exit (or the reaper) recorded. Cleared conv-wide, not
 		// just for this row: a conv can own several session rows and the
@@ -1054,6 +1061,18 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
 				slog.Info("post-compact state reset", "session_id", envSessionID, "module", "hooks")
+			}
+		}
+		// Auto-compaction happens inside an active turn, so the eager
+		// compacting-detail clear above intentionally leaves it working.
+		// A manual /compact returns the human to an idle prompt instead.
+		// SessionStart(source=compact), which follows this hook, preserves
+		// whichever status this boundary selected.
+		if input.Trigger == "manual" {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+			if err := SaveSessionState(state); err != nil {
+				return err
 			}
 		}
 		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
