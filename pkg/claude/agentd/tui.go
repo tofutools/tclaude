@@ -38,6 +38,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
@@ -522,18 +523,31 @@ func (m tuiModel) viewportHeight() int {
 		chrome += len(m.tokenLines) + 2
 	}
 	if m.identityWarning != "" {
-		chrome += 2
+		chrome += lipgloss.Height(m.renderWrapped(m.identityWarning)) + 1
 	}
 	if m.refreshErr != "" {
-		chrome++
+		chrome += lipgloss.Height(m.renderWrapped(m.refreshErr))
 	}
 	if m.notice != "" {
-		chrome++
+		chrome += lipgloss.Height(m.renderWrapped(m.notice))
 	}
 	if m.mode == tuiModeConfirmQuit {
 		chrome += 2
 	}
-	return max(m.height-chrome, 3)
+	return max(m.height-chrome, 1)
+}
+
+func (m tuiModel) renderWrapped(s string) string {
+	if s == "" {
+		return ""
+	}
+	indent := 2
+	w := m.width - indent
+	if w <= 0 {
+		indent = 0
+		w = max(m.width, 1)
+	}
+	return lipgloss.NewStyle().Width(w).PaddingLeft(indent).Render(s)
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -1060,7 +1074,7 @@ func (m tuiModel) renderList() string {
 		b.WriteString("  (hidden on your next keystroke — press ? to see it again)\n\n")
 	}
 	if m.identityWarning != "" {
-		b.WriteString("  " + m.identityWarning + "\n\n")
+		b.WriteString(m.renderWrapped(m.identityWarning) + "\n\n")
 	}
 
 	visible := m.visibleAgents()
@@ -1093,10 +1107,10 @@ func (m tuiModel) renderList() string {
 
 	b.WriteString("\n  " + m.summaryLine() + "\n")
 	if m.refreshErr != "" {
-		b.WriteString("  " + m.refreshErr + "\n")
+		b.WriteString(m.renderWrapped(m.refreshErr) + "\n")
 	}
 	if m.notice != "" {
-		b.WriteString("  " + m.notice + "\n")
+		b.WriteString(m.renderWrapped(m.notice) + "\n")
 	}
 	b.WriteString("\n  " + m.keyHintLine() + "\n")
 

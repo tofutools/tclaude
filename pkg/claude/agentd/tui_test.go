@@ -396,6 +396,26 @@ func TestTUIListFitsTheTerminalWithEveryOptionalLineShowing(t *testing.T) {
 	}
 }
 
+func TestTUIListWithNarrowWidthIncludesWrappedTextInBudget(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 40
+	// identityWarning is indented 2 spaces, so it has 38 chars width.
+	// 80+ chars should take 3+ lines.
+	m.identityWarning = "Note: this is a very long identity warning that should definitely wrap when the width is only forty characters."
+	m.refreshErr = "Refresh failed: another long error message that should wrap in a narrow terminal."
+	m.notice = "Spawned agt_1 in group dev with a very long notice message that will also wrap."
+	m.mode = tuiModeConfirmQuit
+	for i := range 50 {
+		m.agents = append(m.agents, tuiAgentRow{ConvID: fmt.Sprintf("c%d", i), Title: fmt.Sprintf("a%d", i)})
+	}
+
+	for _, height := range []int{24, 30, 60} {
+		m.height = height
+		lines := strings.Count(m.renderList(), "\n")
+		assert.LessOrEqual(t, lines, height, "height=%d width=%d", height, m.width)
+	}
+}
+
 func TestTUIFilterActive(t *testing.T) {
 	m := newTUIModel(nil)
 	m.agents = []tuiAgentRow{
