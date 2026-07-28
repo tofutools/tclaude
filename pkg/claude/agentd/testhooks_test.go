@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"sync/atomic"
@@ -864,16 +865,16 @@ func SetPresentedPRInfoResolverForTest(fn func(rawURL string) (number int, resol
 // deduped repository list and returns merged PR URLs.
 func SetRecentlyMergedPRsResolverForTest(fn func(repos []string, resultLimit int) ([]string, bool)) func() {
 	prev := recentlyMergedPRsResolver
-	recentlyMergedPRsResolver = func(repos []string, resultLimit int) ([]presentedPRInfo, bool) {
+	recentlyMergedPRsResolver = func(repos []string, resultLimit int) ([]presentedPRInfo, error) {
 		urls, ok := fn(repos, resultLimit)
 		if !ok {
-			return nil, false
+			return nil, errors.New("test resolver failure")
 		}
 		out := make([]presentedPRInfo, 0, len(urls))
 		for _, u := range urls {
 			out = append(out, presentedPRInfo{URL: u, State: "merged"})
 		}
-		return out, true
+		return out, nil
 	}
 	return func() { recentlyMergedPRsResolver = prev }
 }

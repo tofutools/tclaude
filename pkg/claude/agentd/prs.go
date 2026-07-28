@@ -24,15 +24,17 @@ const (
 	defaultRecentlyMergedPRSearchResultLimit = 20
 	maxRecentlyMergedPRSearchResultLimit     = 100
 	maxRecentlyMergedPRSearchQueryChars      = 200
+	maxRecentlyMergedPRBooleanOperators      = 5
 )
 
 var (
-	presentedPRInflight       sync.Map
-	presentedPRInfoResolver   = livePresentedPRInfoResolver
-	recentlyMergedPRsResolver = liveRecentlyMergedPRsResolver
-	recentlyMergedPRSearch    = liveRecentlyMergedPRSearch
-	githubLoginResolver       = liveGitHubLoginResolver
-	githubLoginCache          struct {
+	presentedPRInflight           sync.Map
+	presentedPRInfoResolver       = livePresentedPRInfoResolver
+	recentlyMergedPRsResolver     = liveRecentlyMergedPRsResolver
+	recentlyMergedPRSearch        = liveRecentlyMergedPRSearch
+	githubLoginResolver           = liveGitHubLoginResolver
+	githubConfiguredLoginResolver = liveConfiguredGitHubLoginResolver
+	githubLoginCache              struct {
 		sync.Mutex
 		login string
 	}
@@ -218,39 +220,48 @@ func startRecentlyMergedPRPoller(stop <-chan struct{}) {
 	go func() {
 		timer := time.NewTimer(0)
 		defer timer.Stop()
-		failures := 0
+		var backoff recentlyMergedPRPollBackoff
 		for {
 			select {
 			case <-stop:
 				return
 			case <-timer.C:
 				attempted, err := pollRecentlyMergedPRs()
-				delay := recentlyMergedPRPollInterval
-				if err != nil {
-					failures++
-					delay = recentlyMergedPRRetryDelay(failures)
-					previousDelay := recentlyMergedPRRetryDelay(failures - 1)
-					if failures == 1 || delay > previousDelay {
-						slog.Warn("presented-pr: recently merged search failed; backing off",
-							"error", err, "consecutive_failures", failures,
-							"retry_in", delay, "module", "agentd")
-					}
-				} else if attempted {
-					if failures > 0 {
-						slog.Info("presented-pr: recently merged search recovered",
-							"previous_failures", failures, "module", "agentd")
-					}
-					failures = 0
-				} else {
-					// Nothing currently needs the bulk search. Clear any old
-					// failure streak without claiming a GitHub recovery; a
-					// newly presented PR gets the normal ten-second cadence.
-					failures = 0
+				delay, warn, recovered, previousFailures := backoff.next(attempted, err)
+				if warn {
+					slog.Warn("presented-pr: recently merged search failed; backing off",
+						"error", err, "consecutive_failures", backoff.failures,
+						"retry_in", delay, "module", "agentd")
+				}
+				if recovered {
+					slog.Info("presented-pr: recently merged search recovered",
+						"previous_failures", previousFailures, "module", "agentd")
 				}
 				timer.Reset(delay)
 			}
 		}
 	}()
+}
+
+type recentlyMergedPRPollBackoff struct {
+	failures int
+}
+
+func (b *recentlyMergedPRPollBackoff) next(attempted bool, err error) (delay time.Duration, warn, recovered bool, previousFailures int) {
+	previousFailures = b.failures
+	if err != nil {
+		b.failures++
+		delay = recentlyMergedPRRetryDelay(b.failures)
+		previousDelay := recentlyMergedPRRetryDelay(b.failures - 1)
+		warn = b.failures == 1 || delay > previousDelay
+		return delay, warn, false, previousFailures
+	}
+	b.failures = 0
+	// A no-target interval clears an old streak but must not claim that GitHub
+	// recovered: no request ran. A successful attempted poll closes the
+	// incident with one recovery message.
+	recovered = attempted && previousFailures > 0
+	return recentlyMergedPRPollInterval, false, recovered, previousFailures
 }
 
 func recentlyMergedPRRetryDelay(failures int) time.Duration {
@@ -311,9 +322,9 @@ func pollRecentlyMergedPRs() (bool, error) {
 	sort.Strings(repos)
 
 	resultLimit := recentlyMergedPRResultLimit(len(targets))
-	merged, ok := recentlyMergedPRsResolver(repos, resultLimit)
-	if !ok {
-		return true, fmt.Errorf("gh recently merged PR search unavailable")
+	merged, err := recentlyMergedPRsResolver(repos, resultLimit)
+	if err != nil {
+		return true, fmt.Errorf("gh recently merged PR search: %w", err)
 	}
 	now := time.Now()
 	cached := make(map[string]bool)
@@ -346,23 +357,29 @@ func recentlyMergedPRResultLimit(targetCount int) int {
 	return min(max(defaultRecentlyMergedPRSearchResultLimit, targetCount), maxRecentlyMergedPRSearchResultLimit)
 }
 
-func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presentedPRInfo, bool) {
+func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presentedPRInfo, error) {
 	login, ok := cachedGitHubLogin()
 	if !ok {
-		return nil, false
+		return nil, fmt.Errorf("resolve active GitHub login")
+	}
+	searchRepos := boundedRecentlyMergedPRSearchRepos(login, repos)
+	if len(repos) > 0 && len(searchRepos) == 0 {
+		// The server-side repo narrowing had to fall away to keep the query
+		// valid. Use the whole one-request page to reduce the chance that an
+		// unrelated recent merge crowds a tracked PR out of the global result.
+		resultLimit = maxRecentlyMergedPRSearchResultLimit
 	}
 	args := []string{
 		"api", "--method", "GET", "search/issues",
 		"-F", "advanced_search=true",
-		"-f", "q=" + recentlyMergedPRSearchQuery(login, repos),
+		"-f", "q=" + recentlyMergedPRSearchQueryForRepos(login, searchRepos),
 		"-f", "sort=updated",
 		"-f", "order=desc",
 		"-F", "per_page=" + strconv.Itoa(resultLimit),
 	}
-	out := recentlyMergedPRSearch(args...)
-	if out == "" {
-		invalidateCachedGitHubLogin()
-		return nil, false
+	out, err := recentlyMergedPRSearch(args...)
+	if err != nil {
+		return nil, err
 	}
 	var search struct {
 		Items []struct {
@@ -370,9 +387,8 @@ func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presented
 			HTMLURL string `json:"html_url"`
 		} `json:"items"`
 	}
-	if json.Unmarshal([]byte(out), &search) != nil {
-		invalidateCachedGitHubLogin()
-		return nil, false
+	if err := json.Unmarshal([]byte(out), &search); err != nil {
+		return nil, fmt.Errorf("decode search response: %w", err)
 	}
 	result := make([]presentedPRInfo, 0, len(search.Items))
 	for _, pr := range search.Items {
@@ -382,19 +398,30 @@ func liveRecentlyMergedPRsResolver(repos []string, resultLimit int) ([]presented
 			State:  "merged",
 		})
 	}
-	return result, true
+	return result, nil
 }
 
 func recentlyMergedPRSearchQuery(login string, repos []string) string {
-	queryParts := []string{"author:" + login, "is:merged", "type:pr"}
-	for _, repo := range boundedRecentlyMergedPRSearchRepos(login, repos) {
-		queryParts = append(queryParts, "repo:"+repo)
-	}
-	return strings.Join(queryParts, " ")
+	return recentlyMergedPRSearchQueryForRepos(login, boundedRecentlyMergedPRSearchRepos(login, repos))
 }
 
-func liveRecentlyMergedPRSearch(args ...string) string {
-	return runInDir("", "gh", args...)
+func recentlyMergedPRSearchQueryForRepos(login string, repos []string) string {
+	query := "author:" + login + " is:merged type:pr"
+	if len(repos) == 0 {
+		return query
+	}
+	repoQueries := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		repoQueries = append(repoQueries, "repo:"+repo)
+	}
+	if len(repoQueries) == 1 {
+		return query + " " + repoQueries[0]
+	}
+	return query + " (" + strings.Join(repoQueries, " OR ") + ")"
+}
+
+func liveRecentlyMergedPRSearch(args ...string) (string, error) {
+	return runInDirWithError("", "gh", args...)
 }
 
 // boundedRecentlyMergedPRSearchRepos keeps the generated GitHub search query
@@ -403,19 +430,28 @@ func liveRecentlyMergedPRSearch(args ...string) string {
 // polling only a subset: the global authored-by-login result can still match
 // every referenced PR, and remains one Search request.
 func boundedRecentlyMergedPRSearchRepos(login string, repos []string) []string {
-	queryLen := len("author:") + len(login) + len(" is:merged type:pr")
-	for _, repo := range repos {
-		queryLen += len(" repo:") + len(repo)
-		if queryLen > maxRecentlyMergedPRSearchQueryChars {
-			return nil
-		}
+	if len(repos)-1 > maxRecentlyMergedPRBooleanOperators {
+		return nil
+	}
+	query := recentlyMergedPRSearchQueryForRepos(login, repos)
+	if len(query) > maxRecentlyMergedPRSearchQueryChars {
+		return nil
 	}
 	return repos
 }
 
 func cachedGitHubLogin() (string, bool) {
+	configuredLogin, configuredOK := githubConfiguredLoginResolver()
+	configuredLogin = strings.TrimSpace(configuredLogin)
 	githubLoginCache.Lock()
 	defer githubLoginCache.Unlock()
+	if configuredOK && configuredLogin != "" {
+		// `gh auth switch` updates the host's configured active user. Checking
+		// this local value on each poll follows switches immediately without an
+		// API request; the network search remains one request per attempt.
+		githubLoginCache.login = configuredLogin
+		return configuredLogin, true
+	}
 	if githubLoginCache.login != "" {
 		return githubLoginCache.login, true
 	}
@@ -436,6 +472,11 @@ func invalidateCachedGitHubLogin() {
 
 func liveGitHubLoginResolver() (string, bool) {
 	login := runInDir("", "gh", "api", "user", "--jq", ".login")
+	return login, login != ""
+}
+
+func liveConfiguredGitHubLoginResolver() (string, bool) {
+	login := runInDir("", "gh", "config", "get", "user", "--host", "github.com")
 	return login, login != ""
 }
 
@@ -502,7 +543,8 @@ func githubPRRefFromURL(rawURL string) (githubPRRef, bool) {
 	}
 	segs := pathSegments(u.Path)
 	if len(segs) < 4 || segs[0] == "" || segs[1] == "" ||
-		segs[2] != "pull" || !isAllDigits(segs[3]) {
+		segs[2] != "pull" || !isAllDigits(segs[3]) ||
+		!isGitHubOwnerSlug(segs[0]) || !isGitHubRepoSlug(segs[1]) {
 		return githubPRRef{}, false
 	}
 	n, _ := strconv.Atoi(segs[3])
@@ -510,4 +552,41 @@ func githubPRRefFromURL(rawURL string) (githubPRRef, bool) {
 		return githubPRRef{}, false
 	}
 	return githubPRRef{repo: segs[0] + "/" + segs[1], number: n}, true
+}
+
+func isGitHubOwnerSlug(s string) bool {
+	if len(s) == 0 || len(s) > 39 || !isASCIIAlphaNumeric(s[0]) ||
+		!isASCIIAlphaNumeric(s[len(s)-1]) {
+		return false
+	}
+	previousHyphen := false
+	for i := range len(s) {
+		c := s[i]
+		if isASCIIAlphaNumeric(c) {
+			previousHyphen = false
+			continue
+		}
+		if c != '-' || previousHyphen {
+			return false
+		}
+		previousHyphen = true
+	}
+	return true
+}
+
+func isGitHubRepoSlug(s string) bool {
+	if len(s) == 0 || len(s) > 100 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if !isASCIIAlphaNumeric(c) && c != '-' && c != '_' && c != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlphaNumeric(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -329,15 +330,36 @@ func liveGitInfoResolver(repoDir, branch string) (repoBranchInfo, bool) {
 // missing). Anchored (cmd.Dir) rather than relying on the daemon's own
 // working directory — it inspects arbitrary agent repos.
 func runInDir(dir, name string, args ...string) string {
+	out, err := runInDirWithError(dir, name, args...)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// runInDirWithError is runInDir's diagnostic form. It retains a short,
+// single-line stderr detail so long-lived background pollers can distinguish
+// missing binaries, authentication failures, and API/rate-limit errors without
+// dumping an unbounded subprocess response into output.log.
+func runInDirWithError(dir, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), branchLinkCmdTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return ""
+		detail := strings.Join(strings.Fields(stderr.String()), " ")
+		if len(detail) > 500 {
+			detail = detail[:500] + "..."
+		}
+		if detail != "" {
+			return "", fmt.Errorf("%s: %w", detail, err)
+		}
+		return "", err
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
 }
 
 // gitInDir runs a git command anchored at dir, returning trimmed
