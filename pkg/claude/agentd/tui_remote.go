@@ -27,7 +27,12 @@ import (
 	"golang.org/x/term"
 )
 
-const tuiHTTPPrefix = "/api/tui"
+const (
+	tuiHTTPPrefix       = "/api/tui"
+	remoteTUIDetachByte = byte(0x1d) // Ctrl-]
+)
+
+var errRemoteTUIDetached = errors.New("remote terminal detached")
 
 type tuiDashboardParams struct {
 	ConnectTo           string `long:"connect-to" required:"true" help:"Dashboard URL or host[:port] to connect to (for example 10.0.0.4:8321 or https://agents.example.com)."`
@@ -261,6 +266,7 @@ func (a *remoteTUIAPI) attach(agentName, convID, _ string) tea.Cmd {
 		return tuiAttachedMsg{
 			agent:   agentName,
 			session: a.baseURL,
+			remote:  true,
 			err:     err,
 		}
 	})
@@ -268,9 +274,10 @@ func (a *remoteTUIAPI) attach(agentName, convID, _ string) tea.Cmd {
 
 // remoteTUIAttachCommand lets bubbletea release its alternate screen and input
 // reader while the dashboard's existing terminal WebSocket owns this terminal.
-// Ctrl-B D is forwarded unchanged to the daemon-host tmux client; when that
-// detaches (or the socket disappears during an agentd restart), Run returns and
-// bubbletea restores the dashboard.
+// Ctrl-] is consumed here as a transport-level detach escape, so it works even
+// when the dashboard itself is running inside another tmux. When that escape,
+// the server-side tmux detach, or an agentd restart closes the socket, Run
+// returns and bubbletea restores the dashboard.
 type remoteTUIAttachCommand struct {
 	api       *remoteTUIAPI
 	agentName string
@@ -360,7 +367,20 @@ func (c *remoteTUIAttachCommand) Run() error {
 		for {
 			n, readErr := cancelInput.Read(buf)
 			if n > 0 {
-				if writeErr := writeMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
+				data := buf[:n]
+				if detachAt := bytes.IndexByte(data, remoteTUIDetachByte); detachAt >= 0 {
+					if detachAt > 0 {
+						if writeErr := writeMessage(websocket.BinaryMessage, data[:detachAt]); writeErr != nil {
+							inputErr <- writeErr
+							_ = conn.Close()
+							return
+						}
+					}
+					inputErr <- errRemoteTUIDetached
+					_ = conn.Close()
+					return
+				}
+				if writeErr := writeMessage(websocket.BinaryMessage, data); writeErr != nil {
 					inputErr <- writeErr
 					_ = conn.Close()
 					return
@@ -398,7 +418,7 @@ func (c *remoteTUIAttachCommand) Run() error {
 	pumps.Wait()
 	select {
 	case err := <-inputErr:
-		if streamErr == nil && !errors.Is(err, io.EOF) {
+		if streamErr == nil && !errors.Is(err, io.EOF) && !errors.Is(err, errRemoteTUIDetached) {
 			streamErr = err
 		}
 	default:

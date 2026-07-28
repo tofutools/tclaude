@@ -212,6 +212,59 @@ func TestRemoteTUIAttachStreamsTheDashboardTerminalWebSocket(t *testing.T) {
 	assert.Equal(t, "REMOTE\r\nDONE\r\n", stdout.String())
 }
 
+func TestRemoteTUIAttachClientEscapeClosesOnlyTheStream(t *testing.T) {
+	received := make(chan []byte, 1)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(_ *http.Request) bool { return true },
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tui/attach-ws/c1" {
+			http.NotFound(w, r)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+		var input bytes.Buffer
+		for {
+			messageType, data, readErr := conn.ReadMessage()
+			if readErr != nil {
+				received <- append([]byte(nil), input.Bytes()...)
+				return
+			}
+			if messageType == websocket.BinaryMessage {
+				_, _ = input.Write(data)
+			}
+		}
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	stdin, inputWriter, err := os.Pipe()
+	require.NoError(t, err)
+	defer func() { _ = stdin.Close() }()
+	defer func() { _ = inputWriter.Close() }()
+	command := &remoteTUIAttachCommand{
+		api:       api,
+		agentName: "alice",
+		convID:    "c1",
+		stdin:     stdin,
+		stdout:    io.Discard,
+	}
+	go func() {
+		_, _ = inputWriter.Write([]byte{'b', 'e', 'f', 'o', 'r', 'e', remoteTUIDetachByte, 'a', 'f', 't', 'e', 'r'})
+	}()
+
+	require.NoError(t, command.Run())
+	select {
+	case input := <-received:
+		assert.Equal(t, []byte("before"), input, "detach escape and later bytes stay local")
+	case <-time.After(time.Second):
+		t.Fatal("remote terminal server did not observe the client detach")
+	}
+}
+
 func srvOrigin(r *http.Request) string {
 	return "http://" + r.Host
 }

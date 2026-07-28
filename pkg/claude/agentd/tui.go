@@ -627,6 +627,7 @@ type (
 	tuiAttachedMsg struct {
 		agent   string
 		session string
+		remote  bool
 		err     error
 	}
 	// tuiRetiredMsg carries the outcome of one retire request.
@@ -1273,7 +1274,7 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	if m.capabilities.attachLocalPane {
 		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
 	} else {
-		m.notice = "Opening remote terminal for " + row.name() + " — detach (ctrl-b d) to come back."
+		m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] to come back."
 	}
 	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
@@ -1462,10 +1463,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiAttachedMsg:
 		if msg.err != nil {
-			m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
+			if msg.remote {
+				m.notice = "Could not reach the remote terminal for " + msg.agent + ": " + msg.err.Error()
+			} else {
+				m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
+			}
 			return m, nil
 		}
-		if insideTmux() {
+		if msg.remote {
+			m.notice = "Back from the remote terminal for " + msg.agent + "."
+		} else if insideTmux() {
 			m.notice = "Switched to " + msg.session + " (" + msg.agent + ")."
 		} else {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
@@ -1521,7 +1528,7 @@ func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 	if m.capabilities.attachLocalPane {
 		m.notice += " — attaching; detach (ctrl-b d) to come back."
 	} else {
-		m.notice += " — opening its remote terminal; detach (ctrl-b d) to come back."
+		m.notice += " — opening its remote terminal; press ctrl-] to come back."
 	}
 	return m, m.attachCmd(name, convID, session)
 }
@@ -2174,11 +2181,13 @@ func (m tuiModel) renderHelp() string {
 		if m.capabilities.attachLocalPane {
 			b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
 			b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
+			b.WriteString("               with ctrl-b d.\n")
 		} else {
 			b.WriteString("               On a live one: stream its daemon-host tmux session through\n")
-			b.WriteString("               the dashboard's authenticated terminal WebSocket until\n")
+			b.WriteString("               the dashboard's authenticated terminal WebSocket. Press\n")
+			b.WriteString("               ctrl-] to close only that stream and return.\n")
 		}
-		b.WriteString("               you detach with ctrl-b d. Going to a pane is operator consoles only;\n")
+		b.WriteString("               Going to a pane is operator consoles only;\n")
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")
 	}
 	b.WriteString("    n          Start a new agent\n")

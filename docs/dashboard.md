@@ -226,12 +226,13 @@ The terminal model talks through a small Go API interface with separate
 in-process and HTTP implementations. Listing, spawning, starting offline
 agents, retiring, and attaching are available on both transports. **Enter** on
 a live remote agent temporarily gives the local terminal to the same
-authenticated PTY/WebSocket bridge used by the web dashboard; **Ctrl-B D**
-detaches and returns to the terminal dashboard. The remote tmux client does not
-displace an operator already viewing that session elsewhere. Daemon-host path
-completion remains unavailable because paths must be completed on the machine
-where the terminal UI is running. Quitting a remote console exits only that
-client; agentd and its agents keep running.
+authenticated PTY/WebSocket bridge used by the web dashboard; **Ctrl-]**
+closes only that remote stream and returns to the terminal dashboard, including
+when the dashboard itself runs inside a local tmux. The remote tmux client does
+not displace an operator already viewing that session elsewhere. Daemon-host
+path completion remains unavailable because paths must be completed on the
+machine where the terminal UI is running. Quitting a remote console exits only
+that client; agentd and its agents keep running.
 
 Token resolution is explicit-first: `--operator-token` (literal value), then
 `--remote-operator-token` (an SSH source in

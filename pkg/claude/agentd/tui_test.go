@@ -1208,6 +1208,24 @@ func TestTUIReturnFromAPaneRefreshes(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+func TestTUIReturnFromRemoteTerminalInsideTmuxIsNotReportedAsASwitch(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/local-tmux")
+	m := newTUIModel(nil)
+	updated, cmd := m.Update(tuiAttachedMsg{
+		agent: "worker", session: "https://agent-host:8321", remote: true,
+	})
+	got := updated.(tuiModel)
+	assert.Contains(t, got.notice, "Back from the remote terminal for worker")
+	assert.NotContains(t, got.notice, "Switched")
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd)
+
+	got.capabilities.attachLocalPane = false
+	help := got.renderHelp()
+	assert.Contains(t, help, "ctrl-]")
+	assert.NotContains(t, help, "ctrl-b d")
+}
+
 func TestTUIAttachFailureIsReported(t *testing.T) {
 	m := newTUIModel(nil)
 	updated, cmd := m.Update(tuiAttachedMsg{
