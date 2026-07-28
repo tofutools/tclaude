@@ -64,3 +64,32 @@ func TestRunAutoNameRejectsMalformedOutputAndPreservesExplicitRename(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, "human-chosen-name", actor.PendingName)
 }
+
+func TestRunAutoNameKeepsUniqueFallbackOnGeneratedNameCollision(t *testing.T) {
+	setupTestDB(t)
+	firstID, _, err := db.EnsureAgentForConv("conv-first", "session-start")
+	require.NoError(t, err)
+	secondID, _, err := db.EnsureAgentForConv("conv-second", "session-start")
+	require.NoError(t, err)
+	firstFallback := session.FreeFloatingAgentName(time.Date(2026, 7, 28, 12, 17, 33, 0, time.UTC), firstID)
+	secondFallback := session.FreeFloatingAgentName(time.Date(2026, 7, 28, 12, 17, 33, 0, time.UTC), secondID)
+	require.NoError(t, db.SetAgentPendingName(firstID, firstFallback))
+	require.NoError(t, db.SetAgentPendingName(secondID, secondFallback))
+
+	oldRunner := runAutoNameHarness
+	t.Cleanup(func() { runAutoNameHarness = oldRunner })
+	runAutoNameHarness = func(_ context.Context, _ SeanceExecPlan) SeanceExecResult {
+		return SeanceExecResult{Stdout: "fix-session-naming", Started: true}
+	}
+
+	runAutoName(firstID, "conv-first", harness.DefaultName, t.TempDir(), firstFallback, "fix naming")
+	runAutoName(secondID, "conv-second", harness.DefaultName, t.TempDir(), secondFallback, "fix naming")
+
+	first, err := db.GetAgent(firstID)
+	require.NoError(t, err)
+	second, err := db.GetAgent(secondID)
+	require.NoError(t, err)
+	assert.Equal(t, "fix-session-naming", first.PendingName)
+	assert.Equal(t, secondFallback, second.PendingName,
+		"a colliding generated title must preserve the actor's unique fallback")
+}

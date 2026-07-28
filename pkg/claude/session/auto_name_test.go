@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -14,4 +15,10 @@ func TestFreeFloatingAgentName(t *testing.T) {
 	assert.Equal(t, "session-20260728-101733-f3e10b1d", got)
 	assert.True(t, IsFreeFloatingAgentName(got))
 	assert.False(t, IsFreeFloatingAgentName("explicit-worker"))
+}
+
+func TestAutoNamePromptExcerptBoundsRunes(t *testing.T) {
+	got := AutoNamePromptExcerpt("  " + strings.Repeat("å", autoNamePromptRunes+10) + "  ")
+	assert.Len(t, []rune(got), autoNamePromptRunes)
+	assert.NotContains(t, got, " ")
 }

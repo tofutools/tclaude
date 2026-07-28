@@ -18,6 +18,7 @@ import (
 )
 
 const autoNameRequestTimeout = 500 * time.Millisecond
+const autoNamePromptRunes = 2048
 
 var freeFloatingAgentNameRe = regexp.MustCompile(`^session-[0-9]{8}-[0-9]{6}-[a-zA-Z0-9]{1,8}$`)
 
@@ -27,6 +28,16 @@ var freeFloatingAgentNameRe = regexp.MustCompile(`^session-[0-9]{8}-[0-9]{6}-[a-
 type AutoNameRequest struct {
 	ConvID string `json:"conv_id"`
 	Prompt string `json:"prompt"`
+}
+
+// AutoNamePromptExcerpt bounds the untrusted prompt before it crosses the
+// small auto-name handoff and before it is embedded in a model question.
+func AutoNamePromptExcerpt(prompt string) string {
+	runes := []rune(strings.TrimSpace(prompt))
+	if len(runes) > autoNamePromptRunes {
+		runes = runes[:autoNamePromptRunes]
+	}
+	return string(runes)
 }
 
 // FreeFloatingAgentName returns the deterministic, cheap display-name fallback
@@ -64,7 +75,10 @@ func MaybeRequestAutoName(input HookCallbackInput) {
 	if err != nil || !cfg.AutoNameFromPromptEnabled() {
 		return
 	}
-	body, err := json.Marshal(AutoNameRequest{ConvID: input.ConvID, Prompt: input.Prompt})
+	body, err := json.Marshal(AutoNameRequest{
+		ConvID: input.ConvID,
+		Prompt: AutoNamePromptExcerpt(input.Prompt),
+	})
 	if err != nil {
 		return
 	}
