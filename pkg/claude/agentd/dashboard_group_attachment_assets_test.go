@@ -28,6 +28,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"dashboard.css", `display: inline-flex; flex-direction: row;`},
 		{"dashboard.css", `border: 0; background: transparent; box-shadow: none;`},
 		{"dashboard.css", `text-decoration: none; cursor: pointer;`},
+		{"dashboard.css", `box-sizing: border-box; justify-content: center; cursor: pointer;`},
 		{"dashboard.css", `@media (hover: hover) and (pointer: fine)`},
 		{"dashboard.css", `.group-attachment { opacity: 0; pointer-events: none; }`},
 		{"dashboard.css", `summary:hover .group-attachment`},

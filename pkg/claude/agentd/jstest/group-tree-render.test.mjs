@@ -100,13 +100,30 @@ test('production disclosure binder persists an intentional fold as zero', async 
   harness.document.body.innerHTML = `
     <div id="groups-list">
       <details data-group-key="pending-root" open>
-        <summary><strong class="group-name">pending-root</strong></summary>
+        <summary>
+          <strong class="group-name">pending-root</strong>
+          <span class="group-attachment">
+            <a href="https://example.com/project">📎</a>
+          </span>
+        </summary>
       </details>
     </div>`;
   const details = harness.document.querySelector('details');
   const title = details.querySelector('.group-name');
+  const attachment = details.querySelector('.group-attachment a');
   const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
   t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
+
+  for (const detail of [0, 1]) {
+    const attachmentClick = harness.fireEvent(attachment, 'click', { detail });
+    assert.equal(attachmentClick.defaultPrevented, false,
+      `${detail === 0 ? 'keyboard' : 'pointer'} attachment navigation remains native`);
+    harness.fireEvent(details, 'toggle');
+    assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), null,
+      'attachment activation must not leave a stale disclosure intent');
+    assert.equal(dashPrefs.getItem('tclaude.dash.spawn.lastGroup'), null,
+      'attachment activation must not become the command palette group target');
+  }
 
   harness.fireEvent(title, 'click', { detail: 1 });
   details.open = false;
