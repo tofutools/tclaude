@@ -23,13 +23,15 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},
 		{"js/action-dialog-actions.js", `/api/groups/${encodeURIComponent(group)}/attachment`},
+		{"dashboard.css", `main { padding: 16px 24px; }`},
 		{"dashboard.css", `position: absolute; z-index: 4;`},
-		{"dashboard.css", `padding-inline-end: 60px;`},
-		{"dashboard.css", `overflow-wrap: anywhere;`},
+		{"dashboard.css", `inset-block-start: -4px; inset-inline-start: -24px;`},
+		{"dashboard.css", `display: inline-flex; flex-direction: column;`},
+		{"dashboard.css", `border: 0; background: transparent; box-shadow: none;`},
 		{"dashboard.css", `@media (hover: hover) and (pointer: fine)`},
-		{"dashboard.css", `@media (any-pointer: coarse)`},
 		{"dashboard.css", `.group-attachment { opacity: 0; pointer-events: none; }`},
 		{"dashboard.css", `summary:hover .group-attachment`},
+		{"dashboard.css", `.group-attachment:has(:focus-visible)`},
 		{"dashboard.css", `.group-attachment a:focus-visible`},
 		{"dashboard.css", `.group-attachment-set:hover .group-attachment-edit`},
 	} {
@@ -37,5 +39,9 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		if !strings.Contains(source, c.needle) {
 			t.Errorf("%s missing %q — group attachment wiring regressed", c.file, c.needle)
 		}
+	}
+	css := dashboardAssetFile(t, "dashboard.css")
+	if strings.Contains(css, `summary:focus-within .group-attachment`) {
+		t.Error("group focus must not pin the attachment overlay open")
 	}
 }

@@ -393,14 +393,14 @@ and focusing a collapsed group's chips reveals their folded labels just like
 hovering does.
 
 A group may also carry one persistent http(s) attachment, exposed as a compact
-**📎 paperclip** floating at the top-right of its header rather than as another
-quick-item chip. It stays outside the inline control sequence, so it never
-pushes neighboring controls sideways; a reserved edge keeps it clear of long
-group names on narrow screens. It appears while the header is hovered or
-keyboard-focused and remains visible on touch and hybrid-pointer devices.
-An existing attachment's paperclip opens it; hover or focus reveals the pencil
-to edit or clear it. The editor accepts an optional display name and otherwise
-derives a short Linear issue key, GitHub number, or hostname.
+**📎 paperclip** overlaid just above the left edge of its title rather than as
+another quick-item chip. It is absolutely positioned with no frame or reserved
+header space, so it never moves or resizes neighboring controls. Fine pointers
+show it only while the group header is hovered; keyboard focus reveals the
+attachment control itself, while non-hover touch devices keep it visible. An
+existing attachment's paperclip opens it; hovering the paperclip reveals the
+pencil to edit or clear it. The editor accepts an optional display name and
+otherwise derives a short Linear issue key, GitHub number, or hostname.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an
