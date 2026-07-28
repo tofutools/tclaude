@@ -1094,6 +1094,7 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
   border-radius: 3px;
 }
 .group-attachment button:hover { color: #58a6ff; background: rgba(88, 166, 255, 0.12); }
+.group-attachment a:focus-visible,
 .group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .group-attachment-empty {
   opacity: 0.8;

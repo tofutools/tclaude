@@ -28,6 +28,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"dashboard.css", `@media (hover: hover) and (pointer: fine)`},
 		{"dashboard.css", `.group-attachment { opacity: 0; pointer-events: none; }`},
 		{"dashboard.css", `summary:hover .group-attachment`},
+		{"dashboard.css", `.group-attachment a:focus-visible`},
 		{"dashboard.css", `.group-attachment-set:hover .group-attachment-edit`},
 	} {
 		source := dashboardAssetFile(t, c.file)
