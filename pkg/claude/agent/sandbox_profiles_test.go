@@ -16,11 +16,54 @@ func TestSandboxProfilesCommandHelpDocumentsNonSecretEnvironment(t *testing.T) {
 	cmd := sandboxProfilesCmd()
 	assert.Equal(t, "sandbox-profiles", cmd.Name())
 	assert.Contains(t, cmd.Long, "non-secret environment values")
-	for _, name := range []string{"ls", "show", "create", "edit", "rm", "default", "group", "export", "import", "draft"} {
+	for _, name := range []string{"ls", "show", "create", "edit", "rm", "default", "group", "export", "import", "draft", "plan"} {
 		child, _, err := cmd.Find([]string{name})
 		require.NoError(t, err)
 		assert.Equal(t, name, child.Name())
 	}
+}
+
+func TestRunSandboxProfilesPlanKeepsRecordedAndHypotheticalModesSeparate(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, func(method, path string) (int, string, string) {
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/sandbox-profile-plan", path)
+		return 200, "", `{
+			"source":"hypothetical","cwd":"/work",
+			"target":{"implementation":"tclaude-layer","harness":"claude","platform":"linux","resolved_by":"harness default"},
+			"profiles":[],"notices":[],
+			"predicted_axes":{
+				"network":{"tier":"closed","outcome":"enforced","detail":"isolated"},
+				"unix_sockets":{"tier":"closed","outcome":"enforced","detail":"agentd only"}
+			},
+			"plan":{"applicable":true,"network_posture":"isolated-with-agentd","entries":[{
+				"class":2,"class_name":"profile-plan","origin":"effective-filesystem",
+				"mode":"rw","source":"/work","target":"/work","disposition":"present"
+			}],"aliases":[]}
+		}`
+	})
+	var stdout, stderr bytes.Buffer
+	rc := runSandboxProfilesPlan(&sandboxProfilesPlanParams{
+		Group: "crew", Cwd: "/work", For: "tclaude-layer/claude/linux",
+	}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), "Sandbox plan (hypothetical)")
+	assert.Contains(t, stdout.String(), "isolated-with-agentd")
+	require.Len(t, calls, 1)
+	body, ok := calls[0].body.(sandboxProfilePlanRequestJSON)
+	require.True(t, ok)
+	assert.Equal(t, "crew", body.Group)
+	assert.Empty(t, body.Agent)
+
+	calls = nil
+	stdout.Reset()
+	stderr.Reset()
+	rc = runSandboxProfilesPlan(&sandboxProfilesPlanParams{
+		Agent: "worker", Group: "crew",
+	}, &stdout, &stderr)
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "--agent cannot be combined")
+	assert.Empty(t, calls, "invalid mixed epistemic modes fail before contacting agentd")
 }
 
 func TestRunSandboxProfilesDraftUsesDraftOnlyHandoff(t *testing.T) {

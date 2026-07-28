@@ -258,6 +258,14 @@ export async function handleRowAction(action) {
         refresh();
         return;
       }
+      case 'sandbox-details': {
+        await confirmModal({
+          title: `Recorded sandbox details — ${label}`,
+          body: data.details || 'No sandbox launch details were recorded.',
+          okLabel: 'Close',
+        });
+        return;
+      }
       case 'restart': {
         const confirmed = await confirmModal({
           title: `Restart ${label}?`,

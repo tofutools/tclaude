@@ -238,6 +238,78 @@ function sandboxTooltip(member, badge, actionable, unlocked) {
   return lines.join('\n');
 }
 
+// Exact producer literals only. Do not replace these keys with substring
+// matching: profile names and operator-controlled provenance can occur in
+// neighbouring recorded strings.
+const OPENCODE_PRIVATE_NOTE = 'OpenCode state isolation: per-agent-private XDG state; auth.json and mcp-auth.json are seeded once from ambient credentials, then refresh independently per agent';
+const OPENCODE_LEGACY_NOTE = 'OpenCode state isolation: legacy shared XDG retained for this existing conversation; start a new agent for per-agent-private state.';
+const SANDBOX_FIDELITY = new Map([
+  // TCL-790 ruling: Linux host-open keeps ambient host networking/sockets.
+  ['tclaude-layer\0tclaude-layer (bubblewrap; host network)',
+    'Known partial boundary: host networking and ambient host Unix sockets remained reachable.'],
+  // TCL-790 ruling: Linux isolated owns a private network/PID/root boundary.
+  ['tclaude-layer\0tclaude-layer (bubblewrap; isolated network; host loopback/IDE bridge unavailable; isolated PIDs; constructed root; agentd socket allowlisted)',
+    'Recorded fidelity: isolated network and PIDs, a constructed root, and only the allowlisted agentd control socket.'],
+  // TCL-790 ruling: the OpenCode server, not its attach pane/control path, is confined.
+  ['tclaude-layer\0tclaude-layer (bubblewrap; OpenCode tool-executing server confined)',
+    'Known partial boundary: the attach pane stayed outside; authenticated loopback control traffic, host networking, and ambient host Unix sockets remained reachable.'],
+  // TCL-781 + TCL-790 rulings: Linux OpenCode with private XDG state.
+  [`tclaude-layer\0tclaude-layer (bubblewrap; OpenCode tool-executing server confined); ${OPENCODE_PRIVATE_NOTE}`,
+    'Known partial boundary: the attach pane stayed outside; authenticated loopback control traffic, host networking, and ambient host Unix sockets remained reachable. Per-agent-private XDG state was recorded.'],
+  // TCL-781 + TCL-790 rulings: Linux OpenCode legacy shared XDG state.
+  [`tclaude-layer\0tclaude-layer (bubblewrap; OpenCode tool-executing server confined); ${OPENCODE_LEGACY_NOTE}`,
+    'Known partial boundary: the attach pane stayed outside; authenticated loopback control traffic, host networking, and ambient host Unix sockets remained reachable. Legacy shared XDG state was recorded.'],
+  // TCL-790 ruling: Darwin host-open has Seatbelt path filtering, not namespaces.
+  ['tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; host network)',
+    'Known partial boundary: no mount namespace; hidden paths remained enumerable; host networking and ambient host Unix sockets remained reachable.'],
+  // TCL-790 ruling: Darwin isolated still has no PID namespace or constructed root.
+  ['tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; isolated network; host loopback/IDE bridge unavailable; agentd socket allowlisted)',
+    'Known partial boundary: no PID isolation or constructed root, and hidden paths remained enumerable.'],
+  // TCL-781 + TCL-790 rulings: Darwin OpenCode keeps config-base writes ambient.
+  ['tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; OpenCode tool-executing server confined; mutable XDG privacy covers data/cache/state only; config-base writes are not redirected)',
+    'Known partial boundary: the attach pane stayed outside; mutable XDG privacy covered data/cache/state only, and config-base writes were not redirected.'],
+  // TCL-781 + TCL-790 rulings: Darwin OpenCode with private XDG state.
+  [`tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; OpenCode tool-executing server confined; mutable XDG privacy covers data/cache/state only; config-base writes are not redirected); ${OPENCODE_PRIVATE_NOTE}`,
+    'Known partial boundary: the attach pane stayed outside; mutable XDG privacy covered data/cache/state only, and config-base writes were not redirected. Per-agent-private XDG state was recorded.'],
+  // TCL-781 + TCL-790 rulings: Darwin OpenCode legacy shared XDG state.
+  [`tclaude-layer\0tclaude-layer (Seatbelt/sandbox-exec; OpenCode tool-executing server confined; mutable XDG privacy covers data/cache/state only; config-base writes are not redirected); ${OPENCODE_LEGACY_NOTE}`,
+    'Known partial boundary: the attach pane stayed outside; mutable XDG privacy covered data/cache/state only, and config-base writes were not redirected. Legacy shared XDG state was recorded.'],
+  // TCL-790 ruling: a host-open stacked outer wall retains ambient host sockets.
+  ['stacked\0Stacked: tclaude bwrap (host-open) + Claude SRT bwrap/seccomp',
+    'Known partial boundary: both recorded walls were active, but the outer wall retained host networking and ambient host Unix sockets.'],
+  // TCL-790 ruling: a host-open stacked outer wall retains ambient host sockets.
+  ['stacked\0Stacked: tclaude bwrap (host-open) + Codex bwrap managed profile',
+    'Known partial boundary: both recorded walls were active, but the outer wall retained host networking and ambient host Unix sockets.'],
+  // TCL-790 ruling: isolated stacked launches record both walls plus namespace fidelity.
+  ['stacked\0Stacked: tclaude bwrap (isolated network/PIDs; constructed root) + Claude SRT bwrap/seccomp',
+    'Recorded fidelity: both walls were active inside an isolated network/PID namespace and constructed root.'],
+  // TCL-790 ruling: isolated stacked launches record both walls plus namespace fidelity.
+  ['stacked\0Stacked: tclaude bwrap (isolated network/PIDs; constructed root) + Codex bwrap managed profile',
+    'Recorded fidelity: both walls were active inside an isolated network/PID namespace and constructed root.'],
+]);
+
+function sandboxRecordedDetails(member) {
+  const state = member.state || {};
+  const implementation = state.sandbox_implementation || 'harness-builtin';
+  const source = state.os_sandbox_source || state.sandbox_mode_source || '';
+  const lines = [
+    `Status: ${state.os_sandbox_state || state.sandbox_mode || 'Not recorded'}`,
+    `Implementation: ${implementation}`,
+    `Mode: ${state.sandbox_mode || 'Not recorded'}`,
+    `Profile: ${sandboxProfileLabel(member)}`,
+    `Source: ${source || 'Not recorded'}`,
+  ];
+  for (const notice of state.sandbox_access_notices || []) {
+    if (notice?.detail) lines.push(`Notice: ${notice.detail}`);
+  }
+  const fidelity = SANDBOX_FIDELITY.get(`${implementation}\0${source}`);
+  if (fidelity) lines.push(`Fidelity: ${fidelity}`);
+  else if (state.os_sandbox_unverified) {
+    lines.push('Fidelity: Recorded as unverified; no further fidelity detail was recorded.');
+  }
+  return lines.join('\n');
+}
+
 export function SandboxBadge({ member }) {
   const badge = sandboxIndicator(member);
   if (!badge) return null;
@@ -252,12 +324,15 @@ export function SandboxBadge({ member }) {
   const className = `sandbox-badge${badge.danger ? ' sandbox-danger' : ''}${badge.offline ? ' runtime-meta-offline' : ''}${actionable ? ' sandbox-action' : ''}`;
   // aria-label carries the same full text as the tooltip: a glyph-only
   // indicator whose whole meaning is the hover would otherwise be pointer-only.
-  return html`<span class=${className} role=${actionable ? 'button' : 'note'}
+  return html`<span class="sandbox-badge-group"><span class=${className} role=${actionable ? 'button' : 'note'}
     tabindex=${actionable ? '0' : null}
     data-act=${actionable ? 'sandbox-restart' : null}
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
-    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span>`;
+    aria-label=${title} title=${title}>${badge.danger ? '⚠' : (badge.glyph || '🔒')}</span><button
+    type="button" class="sandbox-details-chevron" data-act="sandbox-details"
+    data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
+    title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button></span>`;
 }
 
 function statusInfo(state, online) {

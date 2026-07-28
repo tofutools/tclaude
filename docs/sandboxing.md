@@ -535,8 +535,10 @@ from escaping the constructed root through a host process's
 `/proc/<pid>/root`. A filesystem Unix socket is visible only when it was
 explicitly bound, or when an operator-authored filesystem grant re-exposes a
 parent directory under the normal most-specific-wins policy. This is the
-constructed-root posture's socket boundary; the compact badge does not report
-socket fidelity. The reserved `filtered` posture will eventually cover
+constructed-root posture's socket boundary; the compact badge tooltip does not
+report socket fidelity. Use its adjacent details chevron for recorded launch
+fidelity, or `sandbox-profiles plan` for a dry-run of explicit inputs. The
+reserved `filtered` posture will eventually cover
 proxy-backed host/domain and host-loopback allowlists; no proxy is implemented
 today.
 
@@ -934,7 +936,20 @@ refused.
    tclaude agent sandbox-profiles show <name>      # what you authored
    tclaude agent sandbox-profiles default show     # global assignment
    tclaude agent sandbox-profiles group show <g>   # group assignment
+   tclaude agent sandbox-profiles plan --group <g> --sandbox-profile <name>
+   tclaude agent sandbox-profiles plan --agent <selector>
    ```
+
+   `plan` is inspection-only. The first form composes the current global,
+   optional group, and optional explicit tiers for the current directory (use
+   `--cwd` and `--for implementation[/harness[/platform]]` to make those inputs
+   explicit), predicts access enforcement, and describes the four outer-layer
+   mount precedence classes. The `--agent` form instead reads only the latest
+   frozen launch row: it does not re-resolve registry profiles or mix in a
+   prediction of current host capability. Harness-builtin targets report that
+   an outer mount plan is not applicable. `--json` exposes the same stable
+   structure. Missing positive binds are reported as
+   `missing-would-skip`; inspection never creates them.
 
    Reading a profile's payload (`show`) requires `sandbox-profiles.manage`,
    which is human-only by default and deliberately not implied by
