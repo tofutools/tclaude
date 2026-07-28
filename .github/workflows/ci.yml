@@ -268,15 +268,20 @@ jobs:
           sudo ip netns add "$namespace"
           sudo ip link add "$host_link" type veth peer name "$peer_link"
           sudo ip link set "$peer_link" netns "$namespace"
-          sudo ip address add 198.18.0.1/24 dev "$host_link"
-          sudo ip -6 address add fd00:823::1/64 dev "$host_link"
           sudo ip link set "$host_link" up
+          sudo ip address add 198.18.0.1/24 dev "$host_link"
+          sudo ip -6 address add fe80::823:1/64 dev "$host_link" nodad
+          sudo ip -6 address add fd00:823::1/64 dev "$host_link" nodad
           sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
           sudo ip netns exec "$namespace" ip address add 198.18.0.10/24 dev "$peer_link"
           sudo ip netns exec "$namespace" ip address add 198.18.0.200/24 dev "$peer_link"
-          sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link"
-          sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link"
-          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip -6 address add fe80::823:2/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link" nodad
+
+          sudo ip -6 address show dev "$host_link"
+          sudo ip -6 route show dev "$host_link"
 
           for address in 198.18.0.10 198.18.0.200; do
             for port in 41001 41002; do
