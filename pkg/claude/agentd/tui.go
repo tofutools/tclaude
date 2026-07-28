@@ -532,11 +532,15 @@ type tuiModel struct {
 	// refreshing / spawning / retiring / resuming keep the periodic tick from
 	// stacking requests and the operator from firing two of the same action at
 	// once.
-	refreshing  bool
-	spawning    bool
-	retiring    bool
-	resuming    bool
-	lastRefresh time.Time
+	refreshing bool
+	spawning   bool
+	retiring   bool
+	resuming   bool
+	// reconcilingMutation latches after a remote mutation's outcome becomes
+	// ambiguous. It survives failed polls and blocks every mutating key until
+	// one complete refresh establishes canonical daemon state.
+	reconcilingMutation bool
+	lastRefresh         time.Time
 	// retireTarget is the agent the retire confirmation is about, captured
 	// when the prompt opens rather than re-read when it is answered: the
 	// listing re-sorts under the cursor every two seconds, so resolving the
@@ -1308,6 +1312,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshErr = ""
+		m.reconcilingMutation = false
 		// Which agent the cursor is on is decided before the listing under it
 		// is replaced — see restoreCursor.
 		selected, hadSelection := m.selectedAgent()
@@ -1338,6 +1343,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Spawn failed: " + msg.err.Error()
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Spawn outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.reconcilingMutation = true
 				m.refreshing = true
 				return m, m.refreshCmd()
 			}
@@ -1358,6 +1364,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Retire failed: " + msg.err.Error()
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Retire outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.reconcilingMutation = true
 				m.refreshing = true
 				return m, m.refreshCmd()
 			}
@@ -1375,6 +1382,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = "Start failed: " + msg.err.Error()
 			if tuiMutationOutcomeUnknown(msg.err) {
 				m.notice = "Start outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.reconcilingMutation = true
 				m.refreshing = true
 				return m, m.refreshCmd()
 			}
@@ -1503,6 +1511,13 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// List mode.
 	visible := m.visibleAgents()
+	if m.reconcilingMutation {
+		switch msg.String() {
+		case "enter", "n", "x":
+			m.notice = "Waiting for a successful refresh to reconcile the previous action before another mutation."
+			return m, nil
+		}
+	}
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		// The embedded console owns the daemon lifetime; a standalone remote
@@ -1822,6 +1837,9 @@ func tuiTruncate(s string, width int) string {
 // every console — like retire, it goes through the daemon's own verb, and the
 // daemon decides whether this caller may.
 func (m tuiModel) enterHint() string {
+	if m.reconcilingMutation {
+		return ""
+	}
 	row, ok := m.selectedAgent()
 	switch {
 	case !ok:
@@ -1846,6 +1864,9 @@ func (m tuiModel) keyHintLine() string {
 	quitHint := "q quit"
 	if m.capabilities.shutdownOnQuit {
 		quitHint += " (shuts down agentd)"
+	}
+	if m.reconcilingMutation {
+		return "reconciling unknown outcome • r refresh • " + filterLabel + " • ↑/↓ move • ? help • " + quitHint
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
 	if len(m.visibleAgents()) > 0 {

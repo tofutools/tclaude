@@ -247,9 +247,37 @@ func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
 	got := updated.(tuiModel)
 	assert.False(t, got.spawning)
 	assert.True(t, got.refreshing)
+	assert.True(t, got.reconcilingMutation)
 	assert.Contains(t, got.notice, "outcome unknown")
 	assert.Contains(t, got.notice, "refreshing")
 	assert.NotNil(t, cmd)
+
+	got.agents = []tuiAgentRow{{ConvID: "c1", Title: "offline", Online: false}}
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'n', Text: "n"},
+		{Code: 'x', Text: "x"},
+		{Code: tea.KeyEnter},
+	} {
+		blocked, mutationCmd := got.handleKey(key)
+		got = blocked.(tuiModel)
+		assert.Nil(t, mutationCmd)
+		assert.Equal(t, tuiModeList, got.mode)
+		assert.False(t, got.spawning)
+		assert.False(t, got.retiring)
+		assert.False(t, got.resuming)
+		assert.Contains(t, got.notice, "successful refresh")
+	}
+	assert.NotContains(t, got.keyHintLine(), "new agent")
+	assert.NotContains(t, got.keyHintLine(), "retire")
+
+	failed, _ := got.Update(tuiDataMsg{err: errors.New("still down")})
+	got = failed.(tuiModel)
+	assert.True(t, got.reconcilingMutation, "a failed poll cannot settle the mutation")
+
+	settled, _ := got.Update(tuiDataMsg{})
+	got = settled.(tuiModel)
+	assert.False(t, got.reconcilingMutation)
+	assert.Contains(t, got.keyHintLine(), "new agent")
 }
 
 func TestRemoteTUIAPINamesUnsupportedServers(t *testing.T) {
