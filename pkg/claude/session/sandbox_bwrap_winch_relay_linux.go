@@ -277,6 +277,21 @@ func runTclaudeLayerWinchRelay(
 				"filtered-network pasta gateway exited; sandbox terminated fail-closed: %w",
 				pastaErr,
 			)
+		case dnsErr := <-filtered.DNSWait:
+			select {
+			case waitErr := <-waitCh:
+				waited = true
+				return tclaudeLayerRelayExitCode(waitErr)
+			default:
+			}
+			_ = unix.PidfdSendSignal(childPidfd, syscall.SIGKILL, nil, 0)
+			if dnsErr == nil {
+				dnsErr = errors.New("DNS broker exited unexpectedly")
+			}
+			return 125, fmt.Errorf(
+				"filtered-network DNS broker exited; sandbox terminated fail-closed: %w",
+				dnsErr,
+			)
 		}
 	}
 }

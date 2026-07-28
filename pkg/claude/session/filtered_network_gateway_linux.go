@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,10 @@ const (
 	filteredNetworkBootstrapBinaryFD     = 4
 	filteredNetworkPolicyFD              = 5
 	filteredNetworkHostsFD               = 6
+	filteredNetworkResolvFD              = 7
 	filteredNetworkPastaReadyTimeout     = 5 * time.Second
 	filteredNetworkBootstrapSyncPath     = "/tmp/.tclaude-filtered-sync.sock"
+	filteredNetworkDNSDescriptorCount    = 3
 )
 
 func filteredNetworkHelperEnv() []string {
@@ -60,6 +63,11 @@ type preparedFilteredNetworkRelay struct {
 	Sync         *net.UnixConn
 	PastaPath    string
 	PastaPIDFile string
+	Rules        sandboxpolicy.FilteredNetworkRuleSet
+	DNSUpstreams []string
+	DNSHosts     map[string][]netip.Addr
+	DNSBroker    *filteredNetworkDNSBroker
+	DNSWait      <-chan error
 }
 
 func encodeFilteredNetworkRelayPolicy(plan sandboxpolicy.MountPlan) (string, error) {
@@ -109,11 +117,24 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
 	}
-	hosts, err := os.ReadFile("/etc/hosts")
+	hostHosts, err := os.ReadFile("/etc/hosts")
 	if err != nil && !os.IsNotExist(err) {
 		return preparedFilteredNetworkRelay{}, fmt.Errorf("read host /etc/hosts: %w", err)
 	}
-	hosts, err = sandboxpolicy.FilteredNetworkHostsFile(hosts)
+	dnsHosts, err := parseFilteredNetworkHostMappings(hostHosts)
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, err
+	}
+	hosts, err := sandboxpolicy.FilteredNetworkHostsFile(hostHosts)
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, err
+	}
+	resolvConf, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, fmt.Errorf(
+			"read host /etc/resolv.conf: %w", err)
+	}
+	dnsUpstreams, err := parseFilteredNetworkDNSUpstreams(resolvConf)
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
 	}
@@ -171,6 +192,12 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		return preparedFilteredNetworkRelay{}, err
 	}
 	files = append(files, hostsFile)
+	resolvFile, err := sealedFilteredNetworkData(
+		"tclaude-filtered-resolv", sandboxpolicy.FilteredNetworkResolvConf(), 0o444)
+	if err != nil {
+		return preparedFilteredNetworkRelay{}, err
+	}
+	files = append(files, resolvFile)
 	return preparedFilteredNetworkRelay{
 		SetupArgs: []string{
 			"--ro-bind", syncHostPath, filteredNetworkBootstrapSyncPath,
@@ -183,6 +210,9 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 			"--perms", "0444",
 			"--ro-bind-data", strconv.Itoa(filteredNetworkHostsFD),
 			"/etc/hosts",
+			"--perms", "0444",
+			"--ro-bind-data", strconv.Itoa(filteredNetworkResolvFD),
+			"/etc/resolv.conf",
 			"--cap-add", "CAP_NET_ADMIN",
 		},
 		Command: []string{
@@ -196,6 +226,9 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		SyncListener: syncListener,
 		PastaPath:    executables.Pasta,
 		PastaPIDFile: filepath.Join(pidDir, "pasta.pid"),
+		Rules:        ir,
+		DNSUpstreams: dnsUpstreams,
+		DNSHosts:     dnsHosts,
 	}, nil
 }
 
@@ -245,6 +278,9 @@ func (p *preparedFilteredNetworkRelay) Close() {
 	if p.SyncListener != nil {
 		_ = p.SyncListener.Close()
 	}
+	if p.DNSBroker != nil {
+		p.DNSBroker.Close()
+	}
 	for _, file := range p.Files {
 		_ = file.Close()
 	}
@@ -277,14 +313,108 @@ func (p *preparedFilteredNetworkRelay) waitPolicyReady(namespacePID int) error {
 		return err
 	}
 	buffer := make([]byte, 128)
-	n, err := sync.Read(buffer)
+	oob := make([]byte, unix.CmsgSpace(filteredNetworkDNSDescriptorCount*4))
+	n, oobn, flags, _, err := sync.ReadMsgUnix(buffer, oob)
 	if err != nil {
 		return fmt.Errorf("wait for filtered-network nft policy: %w", err)
+	}
+	if flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 {
+		return fmt.Errorf("filtered-network bootstrap readiness was truncated")
 	}
 	if string(buffer[:n]) != sandboxpolicy.FilteredNetworkBootstrapReady {
 		return fmt.Errorf("filtered-network bootstrap returned invalid readiness")
 	}
+	files, err := receiveFilteredNetworkDNSDescriptors(oob[:oobn])
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, file := range files {
+			_ = file.Close()
+		}
+	}()
+	packetConn, err := net.FilePacketConn(files[0])
+	if err != nil {
+		return fmt.Errorf("adopt filtered DNS UDP listener: %w", err)
+	}
+	udp, ok := packetConn.(*net.UDPConn)
+	if !ok {
+		_ = packetConn.Close()
+		return fmt.Errorf("filtered DNS UDP descriptor has the wrong socket type")
+	}
+	listener, err := net.FileListener(files[1])
+	if err != nil {
+		_ = udp.Close()
+		return fmt.Errorf("adopt filtered DNS TCP listener: %w", err)
+	}
+	tcp, ok := listener.(*net.TCPListener)
+	if !ok {
+		_ = udp.Close()
+		_ = listener.Close()
+		return fmt.Errorf("filtered DNS TCP descriptor has the wrong socket type")
+	}
+	nftAuthority, err := duplicateFilteredNetworkFile(files[2], "filtered-dns-nft")
+	if err != nil {
+		_ = udp.Close()
+		_ = tcp.Close()
+		return err
+	}
+	broker, err := newFilteredNetworkDNSBroker(
+		p.Rules, udp, tcp, nftAuthority,
+		hostFilteredDNSExchange(p.DNSUpstreams, p.DNSHosts),
+	)
+	if err != nil {
+		_ = udp.Close()
+		_ = tcp.Close()
+		_ = nftAuthority.Close()
+		return err
+	}
+	p.DNSBroker = broker
+	p.DNSWait = broker.Start()
 	return sync.SetReadDeadline(time.Time{})
+}
+
+func receiveFilteredNetworkDNSDescriptors(oob []byte) ([]*os.File, error) {
+	messages, err := unix.ParseSocketControlMessage(oob)
+	if err != nil {
+		return nil, fmt.Errorf("parse filtered DNS descriptor handoff: %w", err)
+	}
+	var descriptors []int
+	for _, message := range messages {
+		rights, rightsErr := unix.ParseUnixRights(&message)
+		if rightsErr != nil {
+			for _, descriptor := range descriptors {
+				_ = unix.Close(descriptor)
+			}
+			return nil, fmt.Errorf(
+				"parse filtered DNS descriptor rights: %w", rightsErr)
+		}
+		descriptors = append(descriptors, rights...)
+	}
+	if len(descriptors) != filteredNetworkDNSDescriptorCount {
+		for _, descriptor := range descriptors {
+			_ = unix.Close(descriptor)
+		}
+		return nil, fmt.Errorf(
+			"filtered DNS descriptor handoff has %d descriptors (want %d)",
+			len(descriptors), filteredNetworkDNSDescriptorCount,
+		)
+	}
+	files := make([]*os.File, 0, len(descriptors))
+	for index, descriptor := range descriptors {
+		files = append(files, os.NewFile(
+			uintptr(descriptor), fmt.Sprintf("filtered-dns-%d", index)))
+	}
+	return files, nil
+}
+
+func duplicateFilteredNetworkFile(source *os.File, name string) (*os.File, error) {
+	descriptor, err := unix.Dup(int(source.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("duplicate %s descriptor: %w", name, err)
+	}
+	unix.CloseOnExec(descriptor)
+	return os.NewFile(uintptr(descriptor), name), nil
 }
 
 func validateFilteredNetworkSyncPeer(conn *net.UnixConn, namespacePID int) error {
@@ -433,6 +563,15 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 	if err := nft.Run(); err != nil {
 		return fmt.Errorf("install atomic filtered-network nft policy: %w", err)
 	}
+	dnsFiles, err := openFilteredNetworkDNSDescriptors()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for _, file := range dnsFiles {
+			_ = file.Close()
+		}
+	}()
 	sync, err := net.DialUnix(
 		"unixpacket",
 		nil,
@@ -441,7 +580,11 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 	if err != nil {
 		return fmt.Errorf("connect filtered-network readiness channel: %w", err)
 	}
-	if _, err := sync.Write([]byte(sandboxpolicy.FilteredNetworkBootstrapReady)); err != nil {
+	rights := unix.UnixRights(
+		int(dnsFiles[0].Fd()), int(dnsFiles[1].Fd()), int(dnsFiles[2].Fd()))
+	if _, _, err := sync.WriteMsgUnix(
+		[]byte(sandboxpolicy.FilteredNetworkBootstrapReady), rights, nil,
+	); err != nil {
 		_ = sync.Close()
 		return fmt.Errorf("signal filtered-network nft readiness: %w", err)
 	}
@@ -472,6 +615,70 @@ func runTclaudeLayerFilteredBootstrap(nftPath string, command []string) error {
 		}
 	}
 	return unix.Exec(executable, command, os.Environ())
+}
+
+func openFilteredNetworkDNSDescriptors() ([]*os.File, error) {
+	address := net.JoinHostPort(
+		sandboxpolicy.FilteredNetworkDNSIPv4,
+		strconv.Itoa(filteredNetworkDNSPort),
+	)
+	udpAddress, err := net.ResolveUDPAddr("udp4", address)
+	if err != nil {
+		return nil, fmt.Errorf("resolve filtered DNS UDP listener: %w", err)
+	}
+	udp, err := net.ListenUDP("udp4", udpAddress)
+	if err != nil {
+		return nil, fmt.Errorf("bind filtered DNS UDP listener: %w", err)
+	}
+	closeAll := func(files ...*os.File) {
+		_ = udp.Close()
+		for _, file := range files {
+			if file != nil {
+				_ = file.Close()
+			}
+		}
+	}
+	tcpAddress, err := net.ResolveTCPAddr("tcp4", address)
+	if err != nil {
+		closeAll()
+		return nil, fmt.Errorf("resolve filtered DNS TCP listener: %w", err)
+	}
+	tcp, err := net.ListenTCP("tcp4", tcpAddress)
+	if err != nil {
+		closeAll()
+		return nil, fmt.Errorf("bind filtered DNS TCP listener: %w", err)
+	}
+	udpFile, err := udp.File()
+	if err != nil {
+		_ = tcp.Close()
+		closeAll()
+		return nil, fmt.Errorf("export filtered DNS UDP listener: %w", err)
+	}
+	tcpFile, err := tcp.File()
+	_ = udp.Close()
+	_ = tcp.Close()
+	if err != nil {
+		closeAll(udpFile)
+		return nil, fmt.Errorf("export filtered DNS TCP listener: %w", err)
+	}
+	nftFD, err := unix.Socket(
+		unix.AF_NETLINK,
+		unix.SOCK_RAW|unix.SOCK_CLOEXEC,
+		unix.NETLINK_NETFILTER,
+	)
+	if err != nil {
+		closeAll(udpFile, tcpFile)
+		return nil, fmt.Errorf("create filtered DNS nft authority: %w", err)
+	}
+	if err := unix.Bind(nftFD, &unix.SockaddrNetlink{
+		Family: unix.AF_NETLINK,
+	}); err != nil {
+		_ = unix.Close(nftFD)
+		closeAll(udpFile, tcpFile)
+		return nil, fmt.Errorf("bind filtered DNS nft authority: %w", err)
+	}
+	nftFile := os.NewFile(uintptr(nftFD), "filtered-dns-nft")
+	return []*os.File{udpFile, tcpFile, nftFile}, nil
 }
 
 func dropFilteredNetworkBootstrapCapabilities() error {
