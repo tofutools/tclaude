@@ -81,7 +81,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 7
+	sandboxProfileExportVersion = 8
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -90,17 +90,18 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
-	ID               int64                            `json:"id,omitempty"`
-	Name             string                           `json:"name"`
-	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	AgentDirectories []string                         `json:"agent_directories,omitempty"`
-	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
-	Network          *sandboxpolicy.NetworkRules      `json:"network,omitempty"`
-	UnixSockets      *sandboxpolicy.UnixSocketRules   `json:"unix_sockets,omitempty"`
-	Includes         []string                         `json:"includes,omitempty"`
-	CreatedAt        string                           `json:"created_at,omitempty"`
-	UpdatedAt        string                           `json:"updated_at,omitempty"`
+	ID                  int64                              `json:"id,omitempty"`
+	Name                string                             `json:"name"`
+	Filesystem          []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
+	FilesystemSpellings *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Environment         []sandboxpolicy.EnvironmentEntry   `json:"environment"`
+	AgentDirectories    []string                           `json:"agent_directories,omitempty"`
+	NetworkAccess       sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
+	Network             *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
+	UnixSockets         *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
+	Includes            []string                           `json:"includes,omitempty"`
+	CreatedAt           string                             `json:"created_at,omitempty"`
+	UpdatedAt           string                             `json:"updated_at,omitempty"`
 	// Tombstones. TCL-791 removed break-glass; these fields exist ONLY so a
 	// payload still carrying them is refused loudly rather than silently
 	// dropped as an unknown JSON key. Detection is on the RAW JSON, so it works
@@ -139,7 +140,8 @@ type sandboxProfilePreviewJSON struct {
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
 		Name: p.Name, Filesystem: p.Filesystem,
-		Environment: p.Environment, AgentDirectories: p.AgentDirectories,
+		FilesystemSpellings: p.FilesystemSpellings,
+		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		NetworkAccess: sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
 		Network:       p.Network, UnixSockets: p.UnixSockets, Includes: p.Includes,
 	}
@@ -156,17 +158,27 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 }
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
-	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
+	input := sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
-		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		FilesystemSpellings: body.FilesystemSpellings,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
-	})
+	}
+	var normalized sandboxpolicy.Profile
+	var missing []string
+	var err error
+	if body.FilesystemSpellings == nil {
+		normalized, missing, err = sandboxpolicy.NormalizeForAuthoring(input)
+	} else {
+		normalized, missing, err = sandboxpolicy.NormalizeForPersistence(input)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
-		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories,
+		FilesystemSpellings: normalized.FilesystemSpellings,
+		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
 	}, missing, nil
@@ -175,7 +187,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
-		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
+		FilesystemSpellings: body.FilesystemSpellings,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, Includes: body.Includes,
 	})
 	if err != nil {
@@ -183,7 +196,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 	}
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
-		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories,
+		FilesystemSpellings: normalized.FilesystemSpellings,
+		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		NetworkAccess: normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, Includes: normalized.Includes,
 	}, missing, nil
@@ -860,7 +874,9 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // strictness is expressed as ordinary filesystem deny rows plus narrower
 // reopens; version 6 REMOVES break_glass_filesystem (TCL-791).
 // Version 7 adds network and unix_sockets; absent fields mean exactly what
-// their profile meant before those axes existed.
+// their profile meant before those axes existed. Version 8 adds the versioned
+// filesystem_spellings sidecar; null means legacy spelling behavior, while a
+// non-null empty document marks a modern profile with no alternate spellings.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired

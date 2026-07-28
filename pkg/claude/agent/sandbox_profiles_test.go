@@ -130,7 +130,7 @@ func TestRunSandboxProfilesListAndShowStableOutputs(t *testing.T) {
 
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesShow(&sandboxProfilesShowParams{Name: "alpha", JSON: true}, &stdout, &stderr))
-	assert.JSONEq(t, `{"name":"alpha","filesystem":[{"path":"/work","access":"write"}],"environment":[{"name":"CACHE","value":"/cache"}],"created_at":"2026-07-11T00:00:00Z"}`, stdout.String())
+	assert.JSONEq(t, `{"name":"alpha","filesystem":[{"path":"/work","access":"write"}],"filesystem_spellings":null,"environment":[{"name":"CACHE","value":"/cache"}],"created_at":"2026-07-11T00:00:00Z"}`, stdout.String())
 	assert.Equal(t, http.MethodGet, calls[0].method)
 }
 

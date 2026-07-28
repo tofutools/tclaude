@@ -205,7 +205,10 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 		{
 			name: "Profile",
 			typ:  reflect.TypeOf(Profile{}),
-			want: []string{"Name", "Filesystem", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "Includes"},
+			// FilesystemSpellings is non-authority metadata and is accepted
+			// only when its resolved_path names an already-validated
+			// Filesystem row. It cannot create a read/write grant.
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "NetworkAccess", "Network", "UnixSockets", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",

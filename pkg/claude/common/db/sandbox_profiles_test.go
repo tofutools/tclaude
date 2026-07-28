@@ -343,6 +343,127 @@ func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testin
 	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}}, effective.Filesystem)
 }
 
+func TestSandboxProfileCreateRetainsAliasSpellingThroughRegistryResolution(t *testing.T) {
+	setupTestDB(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	root = filepath.Join(root, "alias-profile")
+	target := filepath.Join(root, "real")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.MkdirAll(target, 0o755))
+	require.NoError(t, os.Symlink(target, alias))
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name: "persisted-alias",
+		Filesystem: []SandboxFilesystemGrant{{
+			Path: alias, Access: sandboxpolicy.AccessRead,
+		}},
+	})
+	require.NoError(t, err)
+
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	canonical, err := filepath.EvalSymlinks(target)
+	require.NoError(t, err)
+	assert.Equal(t, []SandboxFilesystemGrant{{
+		Path: canonical, Access: sandboxpolicy.AccessRead,
+	}}, stored.Filesystem)
+	assert.Equal(t, &sandboxpolicy.FilesystemSpellings{
+		Version: sandboxpolicy.FilesystemSpellingsVersion,
+		Rules: []sandboxpolicy.FilesystemSpellingRule{{
+			ResolvedPath: canonical,
+			Spellings:    []string{alias},
+		}},
+	}, stored.FilesystemSpellings)
+
+	snapshot, err := ResolveEffectiveSandboxSnapshot(0, "persisted-alias")
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.MountAlias{{
+		Link: alias, Target: canonical,
+	}}, snapshot.Effective.MountAliases)
+	plan, err := sandboxpolicy.RenderMountPlan(snapshot.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.MountAliases, plan.Aliases)
+}
+
+func TestSandboxProfileFilesystemReplacementReauthorsStaleSidecar(t *testing.T) {
+	setupTestDB(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	root = filepath.Join(root, "alias-replacement")
+	firstTarget := filepath.Join(root, "first-target")
+	secondTarget := filepath.Join(root, "second-target")
+	firstAlias := filepath.Join(root, "first-alias")
+	secondAlias := filepath.Join(root, "second-alias")
+	require.NoError(t, os.MkdirAll(firstTarget, 0o755))
+	require.NoError(t, os.MkdirAll(secondTarget, 0o755))
+	require.NoError(t, os.Symlink(firstTarget, firstAlias))
+	require.NoError(t, os.Symlink(secondTarget, secondAlias))
+
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name:       "replace-spelling",
+		Filesystem: []SandboxFilesystemGrant{{Path: firstAlias, Access: sandboxpolicy.AccessRead}},
+	})
+	require.NoError(t, err)
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.NotNil(t, stored.FilesystemSpellings)
+
+	// Direct registry callers historically replace Filesystem in place. The
+	// stale sidecar marks that as an explicit re-author, rather than either
+	// refusing the replacement or attaching the old spelling to new authority.
+	stored.Filesystem = []SandboxFilesystemGrant{{
+		Path: secondAlias, Access: sandboxpolicy.AccessWrite,
+	}}
+	require.NoError(t, UpdateSandboxProfile(stored))
+	updated, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	secondCanonical, err := filepath.EvalSymlinks(secondTarget)
+	require.NoError(t, err)
+	assert.Equal(t, []SandboxFilesystemGrant{{
+		Path: secondCanonical, Access: sandboxpolicy.AccessWrite,
+	}}, updated.Filesystem)
+	assert.Equal(t, &sandboxpolicy.FilesystemSpellings{
+		Version: sandboxpolicy.FilesystemSpellingsVersion,
+		Rules: []sandboxpolicy.FilesystemSpellingRule{{
+			ResolvedPath: secondCanonical,
+			Spellings:    []string{secondAlias},
+		}},
+	}, updated.FilesystemSpellings)
+}
+
+func TestSandboxProfileUnrelatedUpdateRejectsPinnedTargetDrift(t *testing.T) {
+	setupTestDB(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	original := filepath.Join(root, "original")
+	current := filepath.Join(root, "current")
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Mkdir(original, 0o755))
+	require.NoError(t, os.Mkdir(current, 0o755))
+	require.NoError(t, os.Symlink(original, alias))
+
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name:       "pinned-drift",
+		Filesystem: []SandboxFilesystemGrant{{Path: alias, Access: sandboxpolicy.AccessRead}},
+	})
+	require.NoError(t, err)
+	stored, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	require.NotNil(t, stored.FilesystemSpellings)
+
+	require.NoError(t, os.Remove(original))
+	require.NoError(t, os.Symlink(current, original))
+	stored.Environment = []SandboxEnvironmentEntry{{Name: "CACHE_ROOT", Value: "/cache"}}
+	err = UpdateSandboxProfile(stored)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, `sandbox profile "pinned-drift"`)
+	assert.ErrorContains(t, err, `retained spelling "`+alias+`"`)
+	assert.ErrorContains(t, err, `originally resolved to "`+original+`"`)
+	assert.ErrorContains(t, err, `now resolves to "`+current+`"`)
+	assert.ErrorContains(t, err, "re-save the profile to adopt the new target")
+	assert.ErrorContains(t, err, "remove the retained spelling")
+}
+
 func TestSandboxProfileAssignmentsSurviveRenameAndClearOnDelete(t *testing.T) {
 	setupTestDB(t)
 	profileID, err := CreateSandboxProfile(&SandboxProfile{Name: "original"})

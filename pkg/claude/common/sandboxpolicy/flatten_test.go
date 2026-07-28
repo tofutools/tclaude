@@ -65,6 +65,55 @@ func TestFlattenExpandsIncludesWithLocalOverride(t *testing.T) {
 	}, got.Environment)
 }
 
+func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	targetA := filepath.Join(root, "target-a")
+	targetZ := filepath.Join(root, "target-z")
+	aliasA := filepath.Join(root, "alias-a")
+	aliasZ := filepath.Join(root, "alias-z")
+	require.NoError(t, os.Mkdir(targetA, 0o755))
+	require.NoError(t, os.Mkdir(targetZ, 0o755))
+	require.NoError(t, os.Symlink(targetA, aliasA))
+	require.NoError(t, os.Symlink(targetZ, aliasZ))
+	included, _, err := NormalizeForAuthoring(Profile{
+		Name: "included",
+		Filesystem: []FilesystemGrant{
+			{Path: aliasZ, Access: AccessRead},
+			{Path: aliasA, Access: AccessRead},
+		},
+	})
+	require.NoError(t, err)
+	parent, _, err := NormalizeForAuthoring(Profile{
+		Name: "parent",
+		Filesystem: []FilesystemGrant{{
+			Path: targetZ, Access: AccessWrite,
+		}},
+		Includes: []string{"included"},
+	})
+	require.NoError(t, err)
+
+	got, err := Flatten(parent, registryLookup(map[string]*Profile{
+		"included": &included,
+	}))
+	require.NoError(t, err)
+	canonicalA, err := filepath.EvalSymlinks(targetA)
+	require.NoError(t, err)
+	canonicalZ, err := filepath.EvalSymlinks(targetZ)
+	require.NoError(t, err)
+	assert.Equal(t, []FilesystemGrant{
+		{Path: canonicalA, Access: AccessRead},
+		{Path: canonicalZ, Access: AccessWrite},
+	}, got.Filesystem)
+	assert.Equal(t, &FilesystemSpellings{
+		Version: FilesystemSpellingsVersion,
+		Rules: []FilesystemSpellingRule{
+			{ResolvedPath: canonicalA, Spellings: []string{aliasA}},
+			{ResolvedPath: canonicalZ, Spellings: []string{aliasZ}},
+		},
+	}, got.FilesystemSpellings)
+}
+
 func TestFlattenLaterIncludeOverridesEarlier(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

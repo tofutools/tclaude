@@ -145,27 +145,29 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	helperBinary := filepath.Join(allowed, "claude")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
-	// Spell the profile rule through a symlink. Resolution must bind the real
-	// target, while the base read-only root keeps the alias itself usable.
-	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
-		Explicit: &sandboxpolicy.Profile{
-			Name:          "tclaude-layer-smoke",
-			NetworkAccess: sandboxpolicy.NetworkAccessNone,
-			Filesystem: []sandboxpolicy.FilesystemGrant{
-				// Exercise a legitimate most-specific-wins reopen beneath an
-				// ordinary hide. The applier must create this child bind before
-				// remounting the hidden parent read-only.
-				{Path: root, Access: sandboxpolicy.AccessDeny},
-				{Path: allowed, Access: sandboxpolicy.AccessWrite},
-				{Path: aliasTools, Access: sandboxpolicy.AccessRead},
-				{Path: filepath.Dir(tclaudeBinary), Access: sandboxpolicy.AccessRead},
-				// The applier's final host-control phase must override even an
-				// ordinary write grant on the tmux socket directory's parent.
-				{Path: tmuxBase, Access: sandboxpolicy.AccessWrite},
-			},
+	// Spell the profile rule through a symlink and persist it through the real
+	// registry path. Resolution must bind the canonical target and recover the
+	// retained spelling; a raw in-memory profile would not exercise TCL-762.
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:          "tclaude-layer-smoke",
+		NetworkAccess: sandboxpolicy.NetworkAccessNone,
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			// Exercise a legitimate most-specific-wins reopen beneath an
+			// ordinary hide. The applier must create this child bind before
+			// remounting the hidden parent read-only.
+			{Path: root, Access: sandboxpolicy.AccessDeny},
+			{Path: allowed, Access: sandboxpolicy.AccessWrite},
+			{Path: aliasTools, Access: sandboxpolicy.AccessRead},
+			{Path: filepath.Dir(tclaudeBinary), Access: sandboxpolicy.AccessRead},
+			// The applier's final host-control phase must override even an
+			// ordinary write grant on the tmux socket directory's parent.
+			{Path: tmuxBase, Access: sandboxpolicy.AccessWrite},
 		},
 	})
 	require.NoError(t, err)
+	snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, "tclaude-layer-smoke")
+	require.NoError(t, err)
+	effective := snapshot.Effective
 	plan, err := sandboxpolicy.RenderMountPlan(effective)
 	require.NoError(t, err)
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{Path: realTools, Mode: sandboxpolicy.MountRO})

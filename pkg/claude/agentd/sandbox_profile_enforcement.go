@@ -561,7 +561,8 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 	}
 	return &sandboxpolicy.Profile{
 		Name: profile.Name, Filesystem: profile.Filesystem,
-		Environment: profile.Environment, AgentDirectories: profile.AgentDirectories,
+		FilesystemSpellings: profile.FilesystemSpellings,
+		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
 		NetworkAccess: profile.NetworkAccess, Network: profile.Network,
 		UnixSockets: profile.UnixSockets, Includes: profile.Includes,
 	}

@@ -4148,6 +4148,14 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 /* Agent-owned directory rows are a single variable-name input plus the ✕. */
 .sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sbx-path-binding {
+  display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px;
+}
+.sbx-path-binding .sbx-path { flex: 1; min-width: 0; box-sizing: border-box; }
+.sbx-binding-target {
+  overflow: hidden; color: #8b949e; font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 /* Global harness rules explain the layer beneath the named profile. They look
    like rows so the combined filesystem policy is scannable, but use immutable
    text/badges and never participate in the editor draft. */

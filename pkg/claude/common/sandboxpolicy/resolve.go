@@ -57,9 +57,9 @@ type ResolutionProvenance struct {
 type EffectiveProfile struct {
 	Filesystem []FilesystemGrant `json:"filesystem"`
 	// MountAliases is derived at resolution time from profile spellings that
-	// still contain symlinks. Registry persistence currently canonicalizes
-	// those spellings before resolution (TCL-762); omitempty keeps snapshots
-	// that have no observable aliases byte-compatible.
+	// still contain symlinks. Modern registry profiles retain those spellings
+	// in non-authoritative metadata; legacy profiles may have already lost
+	// them. Omitempty keeps snapshots with no observable aliases byte-compatible.
 	MountAliases     []MountAlias         `json:"mount_aliases,omitempty"`
 	Environment      []EnvironmentEntry   `json:"environment"`
 	AgentDirectories []string             `json:"agent_directories"`
@@ -73,6 +73,12 @@ type EffectiveProfile struct {
 type resolvedFilesystemGrant struct {
 	access  Access
 	sources []ProfileSource
+}
+
+type observableFilesystemSpelling struct {
+	profile  string
+	resolved string
+	spelling string
 }
 
 // Resolve composes global, group, then explicit profiles. Filesystem grants
@@ -107,7 +113,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	hasNewUnixSockets := false
 	networkListContributors := []string{}
 	socketListContributors := []string{}
-	observableFilesystemSpellings := []string{}
+	observableFilesystemSpellings := []observableFilesystemSpelling{}
 	for _, tier := range []struct {
 		scope   Scope
 		profile *Profile
@@ -128,8 +134,41 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if len(normalized.Includes) > 0 {
 			return EffectiveProfile{}, fmt.Errorf("%s sandbox profile %q still has unresolved includes at resolution time; flatten it first", tier.scope, normalized.Name)
 		}
-		for _, grant := range tier.profile.Filesystem {
-			observableFilesystemSpellings = append(observableFilesystemSpellings, grant.Path)
+		if normalized.FilesystemSpellings != nil {
+			for _, rule := range normalized.FilesystemSpellings.Rules {
+				for _, spelling := range rule.Spellings {
+					observableFilesystemSpellings = append(
+						observableFilesystemSpellings,
+						observableFilesystemSpelling{
+							profile:  normalized.Name,
+							resolved: rule.ResolvedPath,
+							spelling: spelling,
+						},
+					)
+				}
+			}
+		} else {
+			// Raw, non-registry profiles keep TCL-759's pre-existing behavior:
+			// their as-passed spellings are still observable. Persisted legacy
+			// profiles contain only canonical paths here and therefore derive
+			// no aliases.
+			for _, grant := range tier.profile.Filesystem {
+				canonical, _, canonicalErr := canonicalDirectory(grant.Path, true)
+				if canonicalErr != nil {
+					return EffectiveProfile{}, fmt.Errorf(
+						"discover canonical target for %s sandbox profile %q spelling %q: %w",
+						tier.scope, tier.profile.Name, grant.Path, canonicalErr,
+					)
+				}
+				observableFilesystemSpellings = append(
+					observableFilesystemSpellings,
+					observableFilesystemSpelling{
+						profile:  normalized.Name,
+						resolved: canonical,
+						spelling: grant.Path,
+					},
+				)
+			}
 		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
@@ -229,17 +268,25 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		activeCanonicalPaths[grant.Path] = true
 	}
 	aliasesByLink := map[string]MountAlias{}
-	for _, spelling := range observableFilesystemSpellings {
-		canonical, _, err := canonicalDirectory(spelling, true)
-		if err != nil {
-			return EffectiveProfile{}, fmt.Errorf("discover mount aliases for effective filesystem path %q: %w", spelling, err)
-		}
-		if !activeCanonicalPaths[canonical] {
+	for _, observable := range observableFilesystemSpellings {
+		if !activeCanonicalPaths[observable.resolved] {
 			continue
 		}
-		aliases, err := mountAliasesForPath(spelling)
+		aliases, discoveredTarget, err := mountAliasesForPath(observable.spelling)
 		if err != nil {
-			return EffectiveProfile{}, fmt.Errorf("discover mount aliases for effective filesystem path %q: %w", spelling, err)
+			return EffectiveProfile{}, fmt.Errorf(
+				"discover mount aliases for effective filesystem path %q: %w",
+				observable.spelling, err,
+			)
+		}
+		// Alias discovery returns the final target from the same component walk
+		// that captured alias targets. Comparing that value—not a second walk—
+		// prevents a swap-and-restore race from publishing stale routing.
+		if err := validateDiscoveredFilesystemSpellingTarget(
+			observable.profile, observable.spelling, observable.resolved,
+			discoveredTarget,
+		); err != nil {
+			return EffectiveProfile{}, err
 		}
 		for _, alias := range aliases {
 			if previous, exists := aliasesByLink[alias.Link]; exists && previous.Target != alias.Target {
@@ -301,27 +348,30 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 // for one spelling to resolve like the host. Each link points at its fully
 // resolved target prefix. Continuing the walk from that target finds a second
 // alias when a later path component is itself a symlink.
-func mountAliasesForPath(path string) ([]MountAlias, error) {
+func mountAliasesForPath(path string) ([]MountAlias, string, error) {
 	clean, err := cleanDirectoryPath(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	volume := filepath.VolumeName(clean)
 	root := volume + string(filepath.Separator)
 	remaining := strings.TrimPrefix(clean, root)
 	if remaining == "" {
-		return nil, nil
+		return nil, root, nil
 	}
 	current := root
 	aliases := []MountAlias{}
-	for _, component := range strings.Split(remaining, string(filepath.Separator)) {
+	components := strings.Split(remaining, string(filepath.Separator))
+	for index, component := range components {
 		candidate := filepath.Join(current, component)
 		info, err := os.Lstat(candidate)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return aliases, nil
+				return aliases, filepath.Join(
+					append([]string{current}, components[index:]...)...,
+				), nil
 			}
-			return nil, err
+			return nil, "", err
 		}
 		if info.Mode()&os.ModeSymlink == 0 {
 			current = candidate
@@ -329,7 +379,7 @@ func mountAliasesForPath(path string) ([]MountAlias, error) {
 		}
 		target, err := filepath.EvalSymlinks(candidate)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		target = filepath.Clean(target)
 		aliases = append(aliases, MountAlias{
@@ -338,7 +388,7 @@ func mountAliasesForPath(path string) ([]MountAlias, error) {
 		})
 		current = target
 	}
-	return aliases, nil
+	return aliases, current, nil
 }
 
 func canonicalSources(in []ProfileSource) []ProfileSource {

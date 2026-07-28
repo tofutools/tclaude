@@ -34,7 +34,7 @@ func TestLegacyEnvelopeVersionsRenderByteIdenticallyAcrossBothNetworkPostures(t 
 		expectedBytes, err := json.Marshal(expectedPlan)
 		require.NoError(t, err)
 
-		for version := 1; version <= 7; version++ {
+		for version := 1; version <= 8; version++ {
 			rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
 				"format":         "tclaude-sandbox-profiles",
 				"format_version": version,

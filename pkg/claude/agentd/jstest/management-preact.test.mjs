@@ -923,6 +923,62 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor renders one authored-spelling row and keeps authority pinned through preview', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'spelled',
+      filesystem: [{ path: '/canonical/work', access: 'read' }],
+      filesystem_spellings: {
+        version: 1,
+        rules: [{ resolved_path: '/canonical/work', spellings: ['/workspace', '/Volumes/Work'] }],
+      },
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const saves = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const rows = [...host.querySelectorAll('.sbx-section .sbx-row')]
+    .filter((row) => row.querySelector('.sbx-path') && !row.classList.contains('sbx-global-row'));
+  assert.equal(rows.length, 1, 'retained spellings never become duplicate authority rows');
+  assert.equal(rows[0].querySelector('.sbx-path').value, '/workspace');
+  assert.match(rows[0].querySelector('.sbx-binding-target').textContent,
+    /binds → \/canonical\/work · also retained: \/Volumes\/Work/);
+
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saves[0].draft.filesystem, [{ path: '/canonical/work', access: 'read' }]);
+  assert.deepEqual(saves[0].draft.filesystem_spellings.rules[0].spellings,
+    ['/workspace', '/Volumes/Work'], 'ordinary preview revalidates the pinned spelling sidecar');
+
+  const input = rows[0].querySelector('.sbx-path');
+  input.value = '/new-spelling';
+  input.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saves[1].draft.filesystem, [{ path: '/new-spelling', access: 'read' }]);
+  assert.equal(saves[1].draft.filesystem_spellings, null,
+    'editing a path explicitly reauthors it instead of recomputing old authority');
+
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-filesystem').value, /new-spelling/);
+  assert.equal(host.querySelector('#sandbox-profile-editor-filesystem-spellings').value, 'null',
+    'raw JSON exposes the complete authority/sidecar pair');
+  unmount();
+});
+
 test('sandbox editor renders both access axes, authoritative prediction, and non-blocking composition warnings', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
