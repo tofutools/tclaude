@@ -1128,6 +1128,10 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
             <span class="id">${candidate.conv_id.slice(0, 8)}</span>
             <span class="cleanup-badge">${candidate.status}</span>
             ${candidate.role ? html`<span class="cleanup-badge">${candidate.role}</span>` : null}
+            ${descriptor.kind === 'retire-all-preview' ? html`<span class="meta retire-preview-groups"><${Words}
+              plain=${candidate.groups?.length ? `in: ${candidate.groups.join(', ')}` : 'in: Ungrouped'}
+              wizard=${candidate.groups?.length ? `parties: ${candidate.groups.join(', ')}` : 'in: Unbound'}
+            /></span>` : null}
           </label></div>
         `) : html`<div class="cleanup-empty">no agents match the filter</div>`}
       </div>

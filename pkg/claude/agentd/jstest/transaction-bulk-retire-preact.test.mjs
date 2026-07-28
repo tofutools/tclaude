@@ -54,10 +54,11 @@ const candidates = [
   {
     agent_id: 'agt_alpha', conv_id: 'alpha-1111-2222-3333-444444444444',
     title: 'Alpha worker', status: 'idle', role: 'builder',
+    groups: ['alpha', 'research-and-development-with-an-intentionally-long-name', 'shared'],
   },
   {
     agent_id: 'agt_beta', conv_id: 'beta-1111-2222-3333-444444444444',
-    title: 'Beta worker', status: 'idle', role: 'reviewer',
+    title: 'Beta worker', status: 'idle', role: 'reviewer', groups: [],
   },
 ];
 
@@ -367,6 +368,15 @@ test('global retire preview identifies every-group scope including Ungrouped and
     'Retire 2 agents');
   assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent,
     'Banish 2 familiars');
+  const rows = host.querySelectorAll('#retire-preview-list .cleanup-row');
+  assert.equal(rows[0].querySelector('.retire-preview-groups .theme-copy-regular').textContent,
+    'in: alpha, research-and-development-with-an-intentionally-long-name, shared');
+  assert.equal(rows[0].querySelector('.retire-preview-groups .theme-copy-wizard').textContent,
+    'parties: alpha, research-and-development-with-an-intentionally-long-name, shared');
+  assert.equal(rows[1].querySelector('.retire-preview-groups .theme-copy-regular').textContent,
+    'in: Ungrouped');
+  assert.equal(rows[1].querySelector('.retire-preview-groups .theme-copy-wizard').textContent,
+    'in: Unbound');
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(submitted, {

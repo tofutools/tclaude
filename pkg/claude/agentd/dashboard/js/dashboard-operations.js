@@ -254,6 +254,9 @@ function retireCandidatesByStatus(rows, status = '') {
       conv_id: a.conv_id,
       title: a.title || '',
       status: a.online ? ((a.state && a.state.status) || 'online') : 'offline',
+      groups: [...new Set((Array.isArray(a.groups) ? a.groups : [])
+        .map(group => String(group || '').trim())
+        .filter(Boolean))].sort(),
     });
   }
   return out;

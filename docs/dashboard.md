@@ -1593,6 +1593,8 @@ The idle/offline status is captured when the preview opens. The checked roster
 is then exact: a checked agent remains selected if it resumes or starts working
 before submit, and is retired only if it remains checked. This intentionally
 differs from the rich cleanup modal's default online-session guard below.
+The global preview also shows every selected agent's current group memberships;
+agents with none are labelled **Ungrouped** (or **Unbound** in wizard mode).
 
 The modal lists the affected agents as an editable include/exclude checklist,
 with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is
