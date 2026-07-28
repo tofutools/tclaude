@@ -11,6 +11,7 @@ func init() {
 		Ask:                 openCodeAsker{},
 		Models:              openCodeModels{},
 		Sandbox:             openCodeSandbox{},
+		TclaudeLayerMode:    OpenCodeSandboxTclaudeLayer,
 		Approval:            openCodeApproval{},
 		ToolGovernance:      openCodeToolGovernance{},
 		ApprovalsReviewer:   false,

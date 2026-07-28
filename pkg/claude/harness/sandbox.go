@@ -112,6 +112,25 @@ func SandboxOffMode(h *Harness) (string, error) {
 	return ValidateSandboxMode(h, mode)
 }
 
+// TclaudeLayerSandboxMode returns the reviewed harness-native posture used
+// when tclaude-layer is the single OS wall. The descriptor capability keeps
+// spawn and resume on one mapping and lets a newly registered harness fail
+// closed until it declares how that topology must be launched.
+func TclaudeLayerSandboxMode(h *Harness) (string, error) {
+	if h == nil {
+		return "", fmt.Errorf("tclaude-layer requires a harness with a single-wall launch-mode capability; got nil harness")
+	}
+	mode := strings.TrimSpace(h.TclaudeLayerMode)
+	if mode == "" {
+		return "", fmt.Errorf(
+			"harness %q has no tclaude-layer single-wall launch-mode capability; "+
+				"use a harness that supports tclaude-layer or select --sandbox-impl harness-builtin",
+			h.Name,
+		)
+	}
+	return ValidateSandboxMode(h, mode)
+}
+
 // SpawnSandboxWarnings is the single harness-neutral entry point every spawn
 // surface uses to describe a launch posture whose sandboxing is weaker than it
 // looks — the HTTP effective-sandbox probe behind the spawn dialog and the

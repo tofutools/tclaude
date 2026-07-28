@@ -2448,22 +2448,11 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
-	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
-		switch h.Name {
-		case harness.DefaultName:
-			sandboxMode = harness.ClaudeSandboxOff
-		case harness.CodexName:
-			sandboxMode = harness.SandboxDangerFull
-		default:
-			return "", "", nil, fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
-		}
-	} else if stacked {
-		switch h.Name {
-		case harness.DefaultName:
-			sandboxMode = harness.ClaudeSandboxOn
-		case harness.CodexName:
-			sandboxMode = harness.SandboxManagedProfile
-		}
+	sandboxMode, err = resumeSandboxModeForImplementation(
+		h, sandboxMode, implementation, stacked,
+	)
+	if err != nil {
+		return "", "", nil, err
 	}
 	// A deny covering the workspace narrows the Git grants the same way the
 	// spawn path does: the historical repository container would reopen every
@@ -2660,6 +2649,26 @@ func resumeLaunchCmdWithStackedProof(
 		*effectiveSandboxOut = effectiveSandbox
 	}
 	return cmd, cleanupPath, h, nil
+}
+
+func resumeSandboxModeForImplementation(
+	h *harness.Harness,
+	recordedMode string,
+	implementation sandboxpolicy.Implementation,
+	stacked bool,
+) (string, error) {
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer {
+		return harness.TclaudeLayerSandboxMode(h)
+	}
+	if stacked {
+		switch h.Name {
+		case harness.DefaultName:
+			return harness.ClaudeSandboxOn, nil
+		case harness.CodexName:
+			return harness.SandboxManagedProfile, nil
+		}
+	}
+	return recordedMode, nil
 }
 
 // canonicalResumeWorkspace mirrors the spawn path's minimal-workspace grant.

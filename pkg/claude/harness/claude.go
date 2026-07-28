@@ -37,6 +37,7 @@ func init() {
 		// spawner translates to a per-session `--settings` override (the
 		// default, inherit, adds nothing — see claude_sandbox.go).
 		Sandbox:          claudeSandbox{},
+		TclaudeLayerMode: ClaudeSandboxOff,
 		BuiltinOSSandbox: true,
 		NestedSandbox:    claudeNestedSandbox{},
 		// Claude Code's approval posture IS its permission mode; claudeApproval

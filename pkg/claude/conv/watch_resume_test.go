@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -113,6 +114,20 @@ func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
 	assert.Nil(t, h)
 	assert.Empty(t, cmd)
 	assert.Contains(t, err.Error(), resumeConvCodex, "the error names the conv that couldn't be resumed")
+}
+
+func TestResumeSandboxModeForImplementationMapsOpenCodeTclaudeLayer(t *testing.T) {
+	opencode, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
+
+	got, err := resumeSandboxModeForImplementation(
+		opencode,
+		harness.OpenCodeSandboxAccessControl,
+		sandboxpolicy.ImplementationTclaudeLayer,
+		false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, harness.OpenCodeSandboxTclaudeLayer, got)
 }
 
 // Passthrough args (everything after `--`) ride SpawnSpec.ExtraArgs so the

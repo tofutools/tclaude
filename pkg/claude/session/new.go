@@ -604,18 +604,14 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// The single-wall tclaude-layer implementation deliberately disables the
-	// harness-native sandbox. Stacked has already forced the reviewed nested
-	// contract on above and must not pass through this disable switch.
+	// The single-wall tclaude-layer implementation selects the harness-native
+	// posture declared for that outer-wall contract. Stacked has already forced
+	// the reviewed nested contract on above and must not pass through here.
 	if tclaudeLayerOnly {
 		params.PermissionProfile = ""
-		switch h.Name {
-		case harness.DefaultName:
-			sandboxMode = harness.ClaudeSandboxOff
-		case harness.CodexName:
-			sandboxMode = harness.SandboxDangerFull
-		default:
-			return fmt.Errorf("tclaude-layer does not know how to disable the inner sandbox for harness %q", h.Name)
+		sandboxMode, err = harness.TclaudeLayerSandboxMode(h)
+		if err != nil {
+			return err
 		}
 		params.Sandbox = sandboxMode
 	}
