@@ -65,8 +65,8 @@ function GroupAttachment({ group, actions, placement }) {
     }
     actions.openGroupAttachment(group);
   };
-  const visibleLabel = fixed
-    ? html`<span class="group-attachment-label">${rawURL ? label : 'attach'}</span>`
+  const visibleLabel = fixed && rawURL
+    ? html`<span class="group-attachment-label">${label}</span>`
     : null;
   const placementClass = fixed ? 'group-attachment-fixed' : 'group-attachment-float';
   if (!rawURL) {
