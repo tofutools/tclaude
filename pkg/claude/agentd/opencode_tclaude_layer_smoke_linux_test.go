@@ -413,6 +413,9 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 				sandboxpolicy.FilteredNetworkHostLoopbackName,
 				filteredFixture.modelPort),
 		)
+		_, replayErr := openCodeRuntimeSandboxSpec(*runtime)
+		require.ErrorContains(t, replayErr, "active persistent account/org",
+			"persisted replay preflight must name the hostile account authority")
 		stopOpenCodeProcess(*runtime, nil)
 		require.Eventually(t, func() bool {
 			return !session.IsProcessAlive(runtime.PID)

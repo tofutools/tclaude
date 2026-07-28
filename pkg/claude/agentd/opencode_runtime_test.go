@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -972,6 +974,12 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	shortHome := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", shortHome)
 	t.Setenv("XDG_DATA_HOME", shortHome)
+	agentSocket := filepath.Join(shortHome, "api", "agentd.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(agentSocket), 0o700))
+	t.Setenv(agentipc.SocketEnv, agentSocket)
+	agentListener, err := net.Listen("unix", agentSocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = agentListener.Close() })
 	cwd := filepath.Join(shortHome, "work")
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	previousResolver := resolveOpenCodeTclaudeLayer
@@ -1039,11 +1047,6 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	_, err = openCodeRuntimeSandboxSpec(runtime)
 	require.NoError(t, err)
 
-	plantOpenCodeFilteredActiveAccount(
-		t, allocation.StateRoot, "http://host.tclaude.internal:43210")
-	_, err = openCodeRuntimeSandboxSpec(runtime)
-	require.ErrorContains(t, err, "active persistent account/org")
-
 	previousRestart := restartOpenCodeProcess
 	t.Cleanup(func() { restartOpenCodeProcess = previousRestart })
 	restartAttempted := false
@@ -1052,8 +1055,18 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 		_ *session.TclaudeLayerLaunchSpec,
 	) (*openCodeProcess, error) {
 		restartAttempted = true
-		return nil, errors.New("filtered replay reached restart")
+		return nil, errors.New("stop after observing filtered replay")
 	}
+	assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID))
+	assert.True(t, restartAttempted,
+		"a clean persisted spec with a live agentd socket must reach restart")
+
+	plantOpenCodeFilteredActiveAccount(
+		t, allocation.StateRoot, "http://host.tclaude.internal:43210")
+	_, err = openCodeRuntimeSandboxSpec(runtime)
+	require.ErrorContains(t, err, "active persistent account/org")
+
+	restartAttempted = false
 	assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID))
 	assert.False(t, restartAttempted,
 		"persistent account authority must refuse before replay exec")

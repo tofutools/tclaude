@@ -429,6 +429,10 @@ func openCodeRuntimeSandboxSpec(
 			return nil, err
 		}
 	}
+	if err := validateOpenCodeFilteredProviderAuthority(&spec); err != nil {
+		return nil, fmt.Errorf(
+			"revalidate OpenCode filtered provider authority: %w", err)
+	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
 	for _, path := range spec.Contract.WriteDirs {
@@ -442,12 +446,11 @@ func openCodeRuntimeSandboxSpec(
 			"OpenCode tclaude-layer launch spec does not preserve runtime cwd %q as a writable contract path",
 			runtime.Cwd)
 	}
-	snapshot := sandboxpolicy.NewSnapshot(spec.Effective, nil)
-	revalidated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
+	effective, err := revalidateOpenCodeRuntimeEffective(spec.Effective)
 	if err != nil {
-		return nil, fmt.Errorf("revalidate OpenCode tclaude-layer launch spec: %w", err)
+		return nil, err
 	}
-	spec.Effective = revalidated.Effective
+	spec.Effective = effective
 	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
 	if err != nil {
 		return nil, err
@@ -475,11 +478,46 @@ func openCodeRuntimeSandboxSpec(
 	if err := session.ValidateTclaudeLayerLaunchSpec(spec); err != nil {
 		return nil, fmt.Errorf("validate OpenCode tclaude-layer renderer contract: %w", err)
 	}
-	if err := validateOpenCodeFilteredProviderAuthority(&spec); err != nil {
-		return nil, fmt.Errorf(
-			"revalidate OpenCode filtered provider authority: %w", err)
-	}
 	return &spec, nil
+}
+
+// revalidateOpenCodeRuntimeEffective omits the generated agentd AF_UNIX socket
+// floor while re-running directory normalization. A live socket is not a
+// directory and therefore cannot pass profile filesystem normalization, but
+// the floor is not operator-authored filesystem authority: the launch contract
+// binds and revalidates it separately as a Unix socket. Restore the exact
+// frozen rows only after every other effective field revalidates unchanged.
+func revalidateOpenCodeRuntimeEffective(
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.EffectiveProfile, error) {
+	socketFloor := make(map[string]bool)
+	for _, path := range sandboxpolicy.AgentdSocketFloor() {
+		socketFloor[filepath.Clean(path)] = true
+	}
+	withoutSocketFloor := effective
+	withoutSocketFloor.Filesystem = make(
+		[]sandboxpolicy.FilesystemGrant, 0, len(effective.Filesystem))
+	for _, grant := range effective.Filesystem {
+		if socketFloor[filepath.Clean(grant.Path)] {
+			if grant.Access != sandboxpolicy.AccessRead {
+				return sandboxpolicy.EffectiveProfile{}, fmt.Errorf(
+					"revalidate OpenCode tclaude-layer launch spec: generated agentd socket floor %q has unexpected %s access",
+					grant.Path, grant.Access)
+			}
+			continue
+		}
+		withoutSocketFloor.Filesystem = append(
+			withoutSocketFloor.Filesystem, grant)
+	}
+	snapshot := sandboxpolicy.NewSnapshot(withoutSocketFloor, nil)
+	revalidated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
+	if err != nil {
+		return sandboxpolicy.EffectiveProfile{}, fmt.Errorf(
+			"revalidate OpenCode tclaude-layer launch spec: %w", err)
+	}
+	revalidated.Effective.Filesystem =
+		append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
+	return revalidated.Effective, nil
 }
 
 func canonicalOpenCodeRuntimePath(path string) string {
