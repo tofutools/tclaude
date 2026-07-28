@@ -1215,7 +1215,11 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     id: 41, name: 'access', filesystem: [], environment: [], includes: [], agent_directories: [],
     network: { mode: 'list', allow: [{ domain: 'api.anthropic.com', ports: [443] }] },
     unix_sockets: { mode: 'closed' },
-  }, options: { group: 'crew' } });
+  }, options: { group: 'crew' }, catalog: [
+    { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+    { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+    { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true, can_stacked: false },
+  ] });
   const predictions = [];
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async predictSandbox(draft, targets, context) {
