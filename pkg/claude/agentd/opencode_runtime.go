@@ -492,6 +492,9 @@ func startOpenCodeProcess(
 		if err := session.PrepareTclaudeLayerHarnessState(*sandboxSpec); err != nil {
 			return nil, fmt.Errorf("prepare OpenCode tclaude-layer state: %w", err)
 		}
+		if err := prepareOpenCodeReadOnlyConfigForPlatform(sandboxSpec); err != nil {
+			return nil, err
+		}
 	}
 	executable, err := harness.OpenCodeExecutable()
 	if err != nil {
@@ -763,8 +766,7 @@ func validateOpenCodeV3LaunchContract(
 				i, entry.Name, name)
 		}
 		wantStateDir := filepath.Join(entry.Value, "opencode")
-		if canonicalOpenCodeRuntimePath(contract.StateDirs[i]) !=
-			canonicalOpenCodeRuntimePath(wantStateDir) {
+		if !openCodeRuntimePathsEquivalent(contract.StateDirs[i], wantStateDir) {
 			return fmt.Errorf("private OpenCode v3 %s does not target state directory %q",
 				name, contract.StateDirs[i])
 		}
@@ -799,6 +801,19 @@ func validateOpenCodeV3LaunchContract(
 		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
 	}
 	return nil
+}
+
+func openCodeRuntimePathsEquivalent(left, right string) bool {
+	left = canonicalOpenCodeRuntimePath(left)
+	right = canonicalOpenCodeRuntimePath(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(right)
+	return err == nil && left == canonicalOpenCodeRuntimePath(resolved)
 }
 
 func openCodeServeExec(

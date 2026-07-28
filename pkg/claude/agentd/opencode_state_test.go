@@ -493,6 +493,20 @@ func TestOpenCodeServerEnvironmentPinsPrivateXDGAfterProfile(t *testing.T) {
 	assert.Empty(t, lastOpenCodeEnvironmentValue(attach, "OPENCODE_CONFIG_DIR"))
 }
 
+func TestOpenCodeRuntimePathsEquivalentAcceptsStableLeafSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "dotfiles", "opencode-global")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	configBase := filepath.Join(base, "config")
+	require.NoError(t, os.MkdirAll(configBase, 0o700))
+	require.NoError(t, os.Symlink(target, filepath.Join(configBase, "opencode")))
+
+	assert.True(t, openCodeRuntimePathsEquivalent(
+		target, filepath.Join(configBase, "opencode")))
+	assert.False(t, openCodeRuntimePathsEquivalent(
+		filepath.Join(base, "other"), filepath.Join(configBase, "opencode")))
+}
+
 func environmentNames(entries []sandboxpolicy.EnvironmentEntry) string {
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {

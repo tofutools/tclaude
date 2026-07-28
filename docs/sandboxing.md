@@ -263,6 +263,13 @@ and mode `0600`. An existing regular file is left byte-for-byte untouched;
 symlinks and other file types refuse the launch. Agents still receive the
 entire install tree read-only.
 
+On macOS the same 1.18.6 bootstrap also runs for the exact global config app
+directory selected by the launch contract before Seatbelt makes it read-only.
+It creates only the missing `.gitignore`, never overwrites an existing entry,
+and refuses the launch if that prerequisite cannot be established. When this
+one-time compatibility write touches the real ambient host config, agentd logs
+the path explicitly.
+
 On first allocation, regular ambient `auth.json` and `mcp-auth.json` files are
 copied once into the private data root with mode `0600`. Symlinks are refused
 and an existing private credential is never overwritten. This avoids an
