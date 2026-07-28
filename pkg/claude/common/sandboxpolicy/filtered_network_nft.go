@@ -1,0 +1,141 @@
+package sandboxpolicy
+
+import (
+	"fmt"
+	"net/netip"
+	"strconv"
+	"strings"
+)
+
+const (
+	FilteredNetworkNFTTable       = "tclaude_filter"
+	FilteredNetworkLoopbackIPv4   = "169.254.2.2"
+	FilteredNetworkLoopbackIPv6   = "fd00::2"
+	FilteredNetworkGatewayIPv6    = "fe80::1"
+	FilteredNetworkBootstrapPath  = "/tmp/.tclaude-filtered-bootstrap"
+	FilteredNetworkNFTPolicyPath  = "/tmp/.tclaude-filtered-policy.nft"
+	FilteredNetworkBootstrapReady = "filtered-network-policy-ready"
+)
+
+// RenderFilteredNetworkNFT renders the M2b packet-filter subset. Host and
+// domain entries deliberately refuse here: DNS-to-IP leases belong to M2c,
+// and dropping those entries would narrow the authored policy.
+//
+// The batch starts from a fresh private namespace and is applied with nft -f,
+// which commits the complete ruleset atomically. The output base chain is
+// default-drop. Sandbox-private loopback remains available; the only path to
+// host loopback is the fixed pasta mapping guarded by an authored loopback
+// rule.
+func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
+	if rules.ProtocolContract != FilteredNetworkProtocolContract {
+		return "", fmt.Errorf("filtered network protocol contract is invalid")
+	}
+	var body strings.Builder
+	body.WriteString("flush ruleset\n")
+	body.WriteString("table inet " + FilteredNetworkNFTTable + " {\n")
+	body.WriteString("  chain output {\n")
+	body.WriteString("    type filter hook output priority filter; policy drop;\n")
+	body.WriteString("    oifname \"lo\" accept\n")
+	// IPv6 needs router and neighbor discovery to configure and reach pasta's
+	// tap gateway. Limit that control plane to link-local destinations and
+	// link-local multicast with the hop limit required by RFC 4861.
+	body.WriteString("    ip6 daddr { fe80::/10, ff02::/16 } ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n")
+	for i, rule := range rules.Rules {
+		if rule.EntryIndex < 0 {
+			return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
+		}
+		for portIndex, port := range rule.Ports {
+			if port < 1 || port > 65535 {
+				return "", fmt.Errorf("filtered network rule %d has invalid port %d", i, port)
+			}
+			if portIndex > 0 && rule.Ports[portIndex-1] >= port {
+				return "", fmt.Errorf("filtered network rule %d ports are not canonical", i)
+			}
+		}
+		switch rule.Selector {
+		case NetworkSelectorCIDR:
+			prefix, err := netip.ParsePrefix(rule.Value)
+			if err != nil {
+				return "", fmt.Errorf("filtered network rule %d CIDR: %w", i, err)
+			}
+			if prefix.String() != rule.Value {
+				return "", fmt.Errorf("filtered network rule %d CIDR is not canonical", i)
+			}
+			writeFilteredNFTRule(&body, prefix.Addr().Is4(), rule.Value, rule.Ports)
+		case NetworkSelectorLoopback:
+			if rule.Value != FilteredNetworkHostLoopbackName {
+				return "", fmt.Errorf("filtered network rule %d has invalid loopback identity", i)
+			}
+			writeFilteredNFTRule(&body, true, FilteredNetworkLoopbackIPv4+"/32", rule.Ports)
+			writeFilteredNFTRule(&body, false, FilteredNetworkLoopbackIPv6+"/128", rule.Ports)
+		case NetworkSelectorHost, NetworkSelectorDomain:
+			return "", fmt.Errorf(
+				"filtered network rule %d selector %q requires the M2c DNS broker",
+				i, rule.Selector,
+			)
+		default:
+			return "", fmt.Errorf("filtered network rule %d has unknown selector %q", i, rule.Selector)
+		}
+	}
+	body.WriteString("  }\n")
+	body.WriteString("}\n")
+	return body.String(), nil
+}
+
+func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, ports []int) {
+	family := "ip6"
+	if ipv4 {
+		family = "ip"
+	} else {
+		// Neighbor Unreachability Detection can probe an on-link neighbor by
+		// unicast after initial multicast discovery. Keep that IPv6 control
+		// traffic within the authored destination, independent of port.
+		body.WriteString("    ip6 daddr " + destination + " ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept\n")
+	}
+	for _, protocol := range []string{"tcp", "udp"} {
+		body.WriteString("    " + family + " daddr " + destination + " " + protocol)
+		if len(ports) > 0 {
+			body.WriteString(" dport { ")
+			for i, port := range ports {
+				if i > 0 {
+					body.WriteString(", ")
+				}
+				body.WriteString(strconv.Itoa(port))
+			}
+			body.WriteString(" }")
+		}
+		body.WriteString(" accept\n")
+	}
+}
+
+// FilteredNetworkHostsFile overlays only the synthetic host-loopback mapping.
+// The caller supplies the host file captured at the trusted outer boundary so
+// normal localhost and operator mappings survive.
+func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
+	if len(hostHosts) > 1<<20 {
+		return nil, fmt.Errorf("host /etc/hosts exceeds the filtered-network limit")
+	}
+	for _, line := range strings.Split(string(hostHosts), "\n") {
+		fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
+		if len(fields) < 2 {
+			continue
+		}
+		for _, alias := range fields[1:] {
+			if strings.EqualFold(alias, FilteredNetworkHostLoopbackName) {
+				return nil, fmt.Errorf(
+					"host /etc/hosts already defines reserved filtered-network name %s; remove that host mapping before launch",
+					FilteredNetworkHostLoopbackName,
+				)
+			}
+		}
+	}
+	out := append([]byte(nil), hostHosts...)
+	if len(out) > 0 && out[len(out)-1] != '\n' {
+		out = append(out, '\n')
+	}
+	out = append(out, []byte(
+		FilteredNetworkLoopbackIPv4+" "+FilteredNetworkHostLoopbackName+"\n"+
+			FilteredNetworkLoopbackIPv6+" "+FilteredNetworkHostLoopbackName+"\n",
+	)...)
+	return out, nil
+}

@@ -223,8 +223,8 @@ than its attach pane. Its Linux control-plane engine can cross an isolated names
 through an owned Unix relay, without exposing the socket path inside the server
 wall or routing agentd through host TCP. That engine does not enable a posture:
 OpenCode isolated profiles still refuse because OpenCode requires hosted model
-traffic, filtered remains reserved because no proxy-backed applier exists, and
-the Unix relay remains Linux-only. Linux uses `bwrap` from `PATH` and requires
+traffic. Filtered OpenCode remains refused until the pinned real-OpenCode M3
+smoke, and the Unix relay remains Linux-only. Linux uses `bwrap` from `PATH` and requires
 working unprivileged user namespaces. macOS uses
 `/usr/bin/sandbox-exec` for filesystem confinement and for the
 isolated-with-agentd network boundary. If any required capability is missing,
@@ -550,26 +550,57 @@ parent directory under the normal most-specific-wins policy. This is the
 constructed-root posture's socket boundary; the compact badge tooltip does not
 report socket fidelity. Opt into its adjacent details chevron with
 `features.recorded_sandbox_details` for recorded launch fidelity, or use
-`sandbox-profiles plan` for a dry-run of explicit inputs. The
-reserved `filtered` posture will eventually cover
-host/domain, CIDR, host-loopback, and destination-port allowlists. Its authored
-contract is ordinary IPv4/IPv6 TCP and UDP traffic (QUIC is UDP); ICMP echo is
-best-effort for portless entries, and raw/packet sockets are not an authored
-class. No filtered applier is enabled today, so the capability matrix remains
-`None`: list policy widens to host-open with a warning. On Linux, resolved
-launches also record the live prerequisite result for bubblewrap user/network
-namespaces, rootless `pasta`, and nftables. A detected prerequisite is
-preparation, not an enforcement claim. In M2a, “detected” means the bubblewrap
-namespace execution passed and the `pasta`/`nft` executables were found;
-end-to-end gateway readiness is not claimed until the data-plane smoke. The
-warning still says that outbound remains open.
+`sandbox-profiles plan` for a dry-run of explicit inputs.
 
-The planned Linux gateway uses DNS-to-IP leases for host/domain rules, not SNI
-or application identity. A resolved shared IP can therefore be reused until
-its lease expires, which keeps those selectors Partial. Host loopback uses the
-synthetic `host.tclaude.internal` endpoint; hard-coded `127.0.0.1` and `::1`
-remain sandbox-private. CIDR and TCP/UDP port matching may become Full only in
-the PR whose named CI smoke actually executes.
+The Linux `filtered` posture enforces the M2b packet subset for exact
+`tclaude-layer` Claude Code and Codex launches: IPv4/IPv6 CIDR destinations,
+TCP/UDP destination ports (including QUIC as UDP), and synthetic host loopback.
+Raw and packet sockets, including authored ICMP access, are not part of the
+network-list contract. Host/domain rules require the M2c DNS broker. The editor
+rates those entries `None` and the launch refuses a mixed list rather than
+silently dropping them. OpenCode waits for its pinned real-harness M3 smoke;
+`stacked` does not claim this cell.
+
+Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
+`nft` through root-owned, non-group/world-writable paths. The pasta probe also
+requires the exact forwarding, synthetic-address mapping, and splice controls
+used by the gateway; older pasta releases that lack those controls are an
+unavailable prerequisite, not a weakened fallback. A missing prerequisite
+widens the list to host-open with a persisted warning. Consequently, an editor
+Full preview is explicitly prerequisite-conditional; only the resolved launch
+verdict can mint enforcement.
+
+On a positive launch, bubblewrap creates the constructed network/PID namespace
+without connectivity. Rootless bubblewrap maps the invoking host user to
+namespace UID/GID 0 so the sealed bootstrap can receive namespace-local
+`CAP_NET_ADMIN`; host file ownership remains mapped to the invoking user. The
+final harness also runs as namespace UID/GID 0 after the verified capability
+drop. This is a one-ID rootless mapping, not host root: the invoking user's
+files appear owned by namespace root inside the wall, and files the harness
+creates map back to the invoking host UID/GID. The bootstrap installs the
+complete default-drop nftables output policy as one atomic `nft -f` transaction and
+signals the outer supervisor. Only then does the supervisor start foreground
+rootless `pasta` with inbound forwarding, namespace forwarding, gateway
+mapping, and splice shortcuts disabled. Harness exec stays gated until pasta's
+PID readiness is verified. The bootstrap drops every capability, clears
+ambient capabilities, and sets no-new-privileges before exec. If pasta exits,
+the supervisor kills the sandbox through a pinned pidfd; if the supervisor
+dies, bubblewrap and pasta die with it.
+
+Host loopback uses `host.tclaude.internal`, mapped to fixed synthetic IPv4 and
+IPv6 addresses and filtered by the authored ports. Hard-coded `127.0.0.1` and
+`::1` remain sandbox-private.
+
+Filtered model traffic has no hidden bypass. The operator-authored list must
+already cover every endpoint from genuinely resolved provider/model context;
+tclaude never fabricates provider resolution or appends endpoints. The current
+Claude/Codex session and agentd launch seam does not yet expose that honest
+provider context, so ordinary filtered launches refuse with a named
+model-transport remedy even after gateway prerequisites pass. M2c owns that
+wiring and the pinned real-harness endpoint evidence. When a static declared
+endpoint template does pass preflight, the resolved-launch note says the hosted
+coverage is declared but not empirically validated and remains provisional
+until that M2c smoke.
 
 Host-loopback isolation also severs editor integrations that connect over a
 localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture

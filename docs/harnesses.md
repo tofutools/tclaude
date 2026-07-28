@@ -113,7 +113,8 @@ server receives only an inherited listener fd; agentd dials the recorded Unix
 socket directly, and `opencode attach` runs behind a pre-bound local shim. This
 is control-plane foundation, not a new supported posture: OpenCode still
 refuses isolated profiles because its hosted model traffic cannot cross that
-boundary, and filtered remains reserved. The relay itself remains Linux-only.
+boundary. Filtered OpenCode remains refused until the pinned real-OpenCode M3
+smoke. The relay itself remains Linux-only.
 OpenCode deliberately has no `stacked` contract: profile apply and launch
 refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval

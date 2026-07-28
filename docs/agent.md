@@ -513,10 +513,21 @@ by intersection; an empty intersection is saved and launched as authored but
 is disclosed as a composition warning.
 
 The network-list protocol contract is ordinary IPv4/IPv6 **TCP and UDP**
-connections. QUIC is UDP. A portless entry may also permit ICMP echo on a
-best-effort basis, but raw and packet sockets are not an authored connection
-class. Host/domain rules name DNS destinations, not TLS SNI, HTTP hosts,
-certificates, tenants, repositories, or API operations.
+connections. QUIC is UDP. Raw and packet sockets, including authored ICMP
+access, are not part of this connection class. Host/domain rules name DNS
+destinations, not TLS SNI, HTTP hosts, certificates, tenants, repositories, or
+API operations.
+
+The M2b Linux `tclaude-layer` gateway enforces CIDR destinations, TCP/UDP
+destination ports, and the synthetic `host.tclaude.internal` host-loopback
+identity for Claude Code and Codex. Host/domain selectors require the M2c DNS
+broker and are shown as refused per-entry; they are never dropped from a mixed
+list. The editor's Linux Full preview is prerequisite-conditional: the exact
+launch must pass live bubblewrap namespace plus trusted root-owned `pasta` and
+`nft` probes. Pasta must expose every forwarding, synthetic-address mapping,
+and splice control used by the gateway; an older binary is unavailable rather
+than accepted with weaker arguments. A missing prerequisite keeps the list
+unenforced and widens to host-open with a launch warning.
 
 `network_access` accepts `internet`, `none`, or may be omitted to inherit the
 harness's existing behavior. On the Codex managed `tclaude-agent` sandbox, both

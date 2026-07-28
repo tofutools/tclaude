@@ -62,7 +62,7 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 	}
 }
 
-func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapability(t *testing.T) {
+func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *testing.T) {
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -98,10 +98,10 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
 	require.Equal(t, "no_mechanism", notices[0].Reason,
-		"M2a must retain the widening authority")
+		"a non-filtered launch verdict must retain the widening authority")
 	require.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, notices[1].Reason)
 	require.Contains(t, notices[1].Detail, "prerequisite probe: detected")
-	require.Contains(t, notices[1].Detail, "not enabled yet")
+	require.Contains(t, notices[1].Detail, "launch cannot consume")
 	require.Contains(t, notices[1].Detail, "outbound remains open")
 	require.Contains(t, snapshot.Effective.AccessNotices, notices[0])
 	require.Contains(t, snapshot.Effective.AccessNotices, notices[1])
@@ -109,7 +109,64 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	planned, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
 	require.NoError(t, err)
 	require.Equal(t, sandboxpolicy.AccessModeOpen, planned.Network.Mode,
-		"a ready probe must not activate filtered enforcement")
+		"a ready probe without a filtered launch verdict must not activate enforcement")
+}
+
+func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.T) {
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	resolveTclaudeLayerAccessVerdict = func(
+		string, sandboxpolicy.NetworkPosture,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{State: "on", Source: "test bwrap"}, nil
+	}
+	newSnapshot := func() *sandboxpolicy.Snapshot {
+		return &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					CIDR: "192.0.2.0/24", Ports: []int{443},
+				}},
+			},
+		}}
+	}
+
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: false,
+			Detail:   "pasta unavailable",
+		}
+	}
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		newSnapshot(),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	)
+	require.Nil(t, failure)
+	require.Len(t, notices, 2)
+	require.Equal(t, "no_mechanism", notices[0].Reason)
+	require.Contains(t, notices[1].Detail, "prerequisite probe: unavailable")
+
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace, pasta, and nft detected",
+		}
+	}
+	_, failure = planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		newSnapshot(),
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+	)
+	require.NotNil(t, failure)
+	require.Equal(t, harness.SandboxCapabilityNetworkAllowlist, failure.Kind)
+	require.Contains(t, failure.Msg, "real-OpenCode M3 smoke")
 }
 
 func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {

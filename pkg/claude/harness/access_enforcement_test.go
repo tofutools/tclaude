@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -267,7 +268,8 @@ func accessEnforcementForTargetForTest(
 	axes sandboxpolicy.ResolvedAxes,
 	validatedBuiltinMode, goos string,
 ) (AccessEnforcement, error) {
-	row, err := accessEnforcementTable(h, implementation, axes, validatedBuiltinMode, goos)
+	row, err := accessEnforcementTable(
+		h, implementation, axes, validatedBuiltinMode, goos, false)
 	if err != nil {
 		return AccessEnforcement{}, err
 	}
@@ -303,7 +305,7 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 	assert.Equal(t, "tools_only_scope", notices[1].Reason)
 }
 
-func TestM2aNetworkListCapabilityMatrixRemainsNone(t *testing.T) {
+func TestM2bNetworkListCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
 	}
@@ -327,13 +329,136 @@ func TestM2aNetworkListCapabilityMatrixRemainsNone(t *testing.T) {
 				row, err := accessEnforcementTable(
 					target.harness, target.implementation, axes,
 					target.mode, platform,
+					true,
 				)
 				require.NoError(t, err)
-				assert.Equal(t, EnforceNone, row.NetworkList,
-					"M2a is control-plane only; a cell may flip only with its executing CI smoke")
+				want := EnforceNone
+				if platform == "linux" &&
+					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+					(target.harness.Name == DefaultName || target.harness.Name == CodexName) {
+					want = EnforceFull
+				}
+				assert.Equal(t, want, row.NetworkList,
+					"only the M2b Linux Claude/Codex tclaude-layer cells have an executing CI smoke")
 			})
 		}
 	}
+
+	row, err := accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer, axes,
+		ClaudeSandboxOff, "linux", false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, row.NetworkList,
+		"a host-open verdict must not mint filtered enforcement")
+}
+
+func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}
+	caps, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	predicted := DescribePredictedAccess(axes, caps).Network
+	assert.Equal(t, AccessPredictionEnforced, predicted.Outcome)
+	assert.Contains(t, predicted.Detail, "Prerequisite-conditional prediction")
+	assert.Contains(t, predicted.Detail, "pasta")
+	assert.Contains(t, predicted.Detail, "nft")
+	assert.Contains(t, predicted.Detail, "outbound remains open")
+}
+
+func TestM2bOpenCodeFilteredPredictionAndReadyPlanRefuseUntilM3(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}
+	openCode := MustGet(OpenCodeName)
+	prediction, err := PredictAccessEnforcement(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		axes, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	preview := DescribePredictedAccess(axes, prediction).Network
+	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+	assert.Contains(t, preview.Detail, "real-OpenCode M3 smoke")
+
+	row, err := accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	_, _, err = PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
+	require.ErrorContains(t, err, "real-OpenCode M3 smoke")
+
+	row, err = accessEnforcementTable(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
+		OpenCodeSandboxTclaudeLayer, "linux", false,
+	)
+	require.NoError(t, err)
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
+}
+
+func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{CIDR: "192.0.2.0/24", Ports: []int{443}},
+				{Host: "api.example.test", Ports: []int{443}},
+				{Domain: "example.test", IncludeSubdomains: true, Ports: []int{443}},
+			},
+		},
+	}
+	prediction, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	preview := DescribePredictedAccess(axes, prediction).Network
+	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+	assert.Contains(t, preview.Detail, "M2c DNS broker")
+	assert.Contains(t, preview.Detail, "entries: 1, 2")
+
+	launch, err := ResolveAccessEnforcement(
+		Default(),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes,
+		LaunchOSSandbox{
+			State:           "on",
+			Source:          "test filtered boundary",
+			FilteredNetwork: true,
+		},
+		ClaudeSandboxOff,
+	)
+	require.NoError(t, err)
+	rendered, notices, err := PlanAccessEnforcement(axes, launch)
+	if runtime.GOOS == "linux" {
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "M2c DNS broker")
+		assert.Contains(t, err.Error(), "entries: 1, 2")
+		return
+	}
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
 }
 
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {

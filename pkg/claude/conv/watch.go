@@ -2375,7 +2375,11 @@ func resumeLaunchCmdWithStackedProof(
 		// the recorded profile environment so a stale or hostile profile
 		// cannot unset the marker on resume.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
-		if err := session.ValidateTclaudeLayerNetwork(h, effectiveProfile); err != nil {
+		if _, err := session.ValidateTclaudeLayerNetwork(
+			h,
+			effectiveProfile,
+			harness.ResolvedModelTransport{},
+		); err != nil {
 			return "", "", nil, err
 		}
 		posture, err := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)

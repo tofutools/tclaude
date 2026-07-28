@@ -164,18 +164,19 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nWarning: network access list was not enforced\nClick to temporarily disable',
   },
   {
-    name: 'filtered prerequisite outcome rides the badge why-clause',
+    name: 'filtered launch gate rides the badge why-clause',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
       sandbox_implementation: 'tclaude-layer',
       sandbox_profiles_recorded: true,
       sandbox_access_notices: [{
         class: 'degradation', axis: 'network', reason: 'filtered_prerequisite_probe',
-        detail: 'filtered-network prerequisite probe: detected (bubblewrap namespace execution passed; pasta and nft executables found; gateway readiness is not verified in M2a); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open',
+        effect: 'launch_gated',
+        detail: 'filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available',
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap namespace execution passed; pasta and nft executables found; gateway readiness is not verified in M2a); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
   },
   {
     name: 'an offline lock stays informative but non-actionable',

@@ -4,10 +4,9 @@ import "fmt"
 
 // FilteredNetworkProtocolContract is the authored network-list contract. It is
 // deliberately narrower than "all IP": profiles describe ordinary IPv4/IPv6
-// TCP and UDP connections. QUIC is UDP. Portless rules may permit ICMP echo as
-// a best-effort transport feature, but raw and packet sockets are not authored
-// connection classes.
-const FilteredNetworkProtocolContract = "ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; ICMP echo is best-effort for portless entries; raw and packet sockets are not an authored class)"
+// TCP and UDP connections. QUIC is UDP. Raw and packet sockets are not
+// authored connection classes.
+const FilteredNetworkProtocolContract = "ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)"
 
 const FilteredNetworkHostLoopbackName = "host.tclaude.internal"
 

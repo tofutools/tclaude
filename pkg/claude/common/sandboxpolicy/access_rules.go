@@ -77,9 +77,11 @@ const (
 	AccessNoticeReasonEmptyIntersection     = "empty_intersection"
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
+	AccessNoticeReasonFilteredModelTraffic  = "filtered_model_transport"
 
 	AccessNoticeEffectNotEnforced     = "not_enforced"
 	AccessNoticeEffectEnforcedWider   = "enforced_wider"
+	AccessNoticeEffectLaunchGated     = "launch_gated"
 	AccessNoticeEffectNothingAllowed  = "nothing_allowed"
 	AccessNoticeEffectNotMaterialized = "not_materialized"
 )

@@ -901,7 +901,11 @@ func openCodeTclaudeLayerLaunchSpec(
 		if snapshot != nil {
 			effective = snapshot.Effective
 		}
-		if err := session.ValidateTclaudeLayerNetwork(openCodeHarness, effective); err != nil {
+		if _, err := session.ValidateTclaudeLayerNetwork(
+			openCodeHarness,
+			effective,
+			harness.ResolvedModelTransport{},
+		); err != nil {
 			return nil, err
 		}
 		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer network posture %s", posture)

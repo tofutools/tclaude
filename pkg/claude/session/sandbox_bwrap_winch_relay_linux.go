@@ -33,6 +33,7 @@ type stackedRelayBindingOptions struct {
 	ManifestSHA256 string
 	Consume        bool
 	ReadyPath      string
+	FilteredPolicy string
 }
 
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
@@ -83,6 +84,12 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 		"",
 		"write after the final binding fds reach bubblewrap (internal)",
 	)
+	cmd.Flags().StringVar(
+		&binding.FilteredPolicy,
+		"filtered-network-policy",
+		"",
+		"compiled filtered-network relay policy (internal)",
+	)
 	return cmd
 }
 
@@ -100,6 +107,10 @@ func runTclaudeLayerWinchRelay(
 	if len(argv) == 0 || argv[0] == "" {
 		return 125, fmt.Errorf("missing bubblewrap command")
 	}
+	if strings.TrimSpace(binding.FilteredPolicy) != "" &&
+		strings.TrimSpace(binding.ManifestPath) != "" {
+		return 125, fmt.Errorf("stacked and filtered relay bindings cannot be combined")
+	}
 	bindingArgs, bindingFiles, err := prepareStackedRelayBinding(binding)
 	if err != nil {
 		return 125, err
@@ -109,6 +120,11 @@ func runTclaudeLayerWinchRelay(
 			_ = file.Close()
 		}
 	}()
+	filtered, err := prepareFilteredNetworkRelay(binding.FilteredPolicy)
+	if err != nil {
+		return 125, err
+	}
+	defer filtered.Close()
 
 	statusR, statusW, err := os.Pipe()
 	if err != nil {
@@ -116,24 +132,28 @@ func runTclaudeLayerWinchRelay(
 	}
 	defer func() { _ = statusR.Close() }()
 
-	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+2)
+	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+len(filtered.SetupArgs)+8)
 	childArgs = append(childArgs, "--json-status-fd", "3")
-	if len(bindingArgs) == 0 {
+	if len(bindingArgs) == 0 && len(filtered.SetupArgs) == 0 {
 		childArgs = append(childArgs, argv[1:]...)
 	} else {
 		commandIndex := -1
-		for index, arg := range argv[1:] {
+		original := argv[1:]
+		for index, arg := range original {
 			if arg == "--" {
-				commandIndex = index + 1
+				commandIndex = index
 				break
 			}
 		}
 		if commandIndex < 0 {
-			return 125, fmt.Errorf("stacked binding requires a bubblewrap command separator")
+			return 125, fmt.Errorf("relay binding requires a bubblewrap command separator")
 		}
-		childArgs = append(childArgs, argv[1:commandIndex]...)
+		childArgs = append(childArgs, original[:commandIndex]...)
 		childArgs = append(childArgs, bindingArgs...)
-		childArgs = append(childArgs, argv[commandIndex:]...)
+		childArgs = append(childArgs, filtered.SetupArgs...)
+		childArgs = append(childArgs, "--")
+		childArgs = append(childArgs, filtered.Command...)
+		childArgs = append(childArgs, original[commandIndex+1:]...)
 	}
 	child := exec.Command(argv[0], childArgs...)
 	child.Stdin = os.Stdin
@@ -145,11 +165,18 @@ func runTclaudeLayerWinchRelay(
 	// so bubblewrap preserves them during startup even on the minimum
 	// supported 0.9.x series.
 	child.ExtraFiles = append([]*os.File{statusW}, bindingFiles...)
+	child.ExtraFiles = append(child.ExtraFiles, filtered.Files...)
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
 		return 125, fmt.Errorf("start bubblewrap: %w", err)
 	}
 	_ = statusW.Close()
+	if len(filtered.Files) > 0 {
+		// The child owns duplicates of the sealed bootstrap image and policy
+		// files. The parent no longer needs its bootstrap-image descriptor
+		// once bubblewrap has started.
+		_ = filtered.Files[0].Close()
+	}
 
 	waited := false
 	waitCh := make(chan error, 1)
@@ -192,6 +219,28 @@ func runTclaudeLayerWinchRelay(
 		return 125, fmt.Errorf("pin bubblewrap child pid %d: %w", status.ChildPID, err)
 	}
 	defer func() { _ = unix.Close(childPidfd) }()
+	if len(filtered.SetupArgs) > 0 {
+		if err := filtered.waitPolicyReady(status.ChildPID); err != nil {
+			return 125, err
+		}
+	}
+	pasta, pastaWait, err := filtered.startPasta(status.ChildPID)
+	if err != nil {
+		return 125, err
+	}
+	pastaWaited := false
+	defer func() {
+		if pasta == nil || pastaWaited {
+			return
+		}
+		_ = pasta.Process.Kill()
+		<-pastaWait
+	}()
+	if pasta != nil {
+		if err := filtered.releaseHarness(); err != nil {
+			return 125, err
+		}
+	}
 
 	for {
 		select {
@@ -206,7 +255,28 @@ func runTclaudeLayerWinchRelay(
 			}
 		case waitErr := <-waitCh:
 			waited = true
+			if pasta != nil && !pastaWaited {
+				_ = pasta.Process.Kill()
+				<-pastaWait
+				pastaWaited = true
+			}
 			return tclaudeLayerRelayExitCode(waitErr)
+		case pastaErr := <-pastaWait:
+			pastaWaited = true
+			select {
+			case waitErr := <-waitCh:
+				waited = true
+				return tclaudeLayerRelayExitCode(waitErr)
+			default:
+			}
+			_ = unix.PidfdSendSignal(childPidfd, syscall.SIGKILL, nil, 0)
+			if pastaErr == nil {
+				pastaErr = errors.New("gateway exited unexpectedly")
+			}
+			return 125, fmt.Errorf(
+				"filtered-network pasta gateway exited; sandbox terminated fail-closed: %w",
+				pastaErr,
+			)
 		}
 	}
 }

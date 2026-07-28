@@ -21,9 +21,9 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	assessments, aggregate, err := AssessFilteredNetworkRules(ir)
 	require.NoError(t, err)
 	require.Len(t, assessments, 3)
-	assert.Equal(t, EnforcePartial, aggregate)
+	assert.Equal(t, EnforceNone, aggregate)
 	assert.Equal(t, EnforceFull, assessments[0].DestinationLevel)
-	assert.Equal(t, EnforcePartial, assessments[1].DestinationLevel)
+	assert.Equal(t, EnforceNone, assessments[1].DestinationLevel)
 	assert.Equal(t, FilteredNetworkDNSIdentityCaveat, assessments[1].DestinationDetail)
 	assert.Equal(t, EnforcePartial, assessments[2].DestinationLevel)
 	assert.Equal(t, FilteredNetworkLoopbackCaveat, assessments[2].DestinationDetail)
@@ -34,7 +34,7 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	}
 }
 
-func TestAssessFilteredNetworkRulesCIDROnlyTargetIsFullButCapabilityStaysNone(t *testing.T) {
+func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2bCapabilityCells(t *testing.T) {
 	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
@@ -51,11 +51,15 @@ func TestAssessFilteredNetworkRulesCIDROnlyTargetIsFullButCapabilityStaysNone(t 
 		caps, tableErr := accessEnforcementTable(
 			h, sandboxpolicy.ImplementationTclaudeLayer,
 			sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList}},
-			"", "linux",
+			"", "linux", true,
 		)
 		require.NoError(t, tableErr)
-		assert.Equal(t, EnforceNone, caps.NetworkList,
-			"M2a must not flip NetworkList for %s", harnessName)
+		want := EnforceFull
+		if harnessName == OpenCodeName {
+			want = EnforceNone
+		}
+		assert.Equal(t, want, caps.NetworkList,
+			"M2b flips only Claude/Codex tclaude-layer; OpenCode waits for M3")
 	}
 }
 

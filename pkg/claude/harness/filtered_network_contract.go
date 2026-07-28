@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	FilteredNetworkDNSIdentityCaveat = "Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved shared IP can be reused until its lease expires."
+	FilteredNetworkDNSIdentityCaveat = "Host/domain selectors are not enforced in M2b; they require the M2c DNS broker."
 	FilteredNetworkLoopbackCaveat    = "Host loopback uses host.tclaude.internal; 127.0.0.1 and ::1 remain sandbox-private."
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
@@ -27,9 +27,8 @@ type FilteredNetworkRuleAssessment struct {
 }
 
 // AssessFilteredNetworkRules gives future launch adapters one stable source for
-// per-selector capability details. Host/domain and synthetic host-loopback
-// identity remain Partial; CIDR and TCP/UDP destination-port matching may claim
-// Full only after their executing smokes land.
+// per-selector capability details. Host/domain identity remains None until the
+// M2c DNS broker; synthetic host-loopback remains Partial.
 func AssessFilteredNetworkRules(
 	rules sandboxpolicy.FilteredNetworkRuleSet,
 ) ([]FilteredNetworkRuleAssessment, EnforcementLevel, error) {
@@ -47,7 +46,7 @@ func AssessFilteredNetworkRules(
 		}
 		switch rule.Selector {
 		case sandboxpolicy.NetworkSelectorHost, sandboxpolicy.NetworkSelectorDomain:
-			assessment.DestinationLevel = EnforcePartial
+			assessment.DestinationLevel = EnforceNone
 			assessment.DestinationDetail = FilteredNetworkDNSIdentityCaveat
 		case sandboxpolicy.NetworkSelectorCIDR:
 			assessment.DestinationLevel = EnforceFull

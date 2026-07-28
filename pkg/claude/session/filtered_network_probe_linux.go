@@ -3,32 +3,189 @@
 package session
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-var filteredNetworkLookPath = exec.LookPath
+var (
+	filteredNetworkLookPath           = exec.LookPath
+	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
+	validateFilteredNetworkExecutable = validateRootOwnedExecutable
+	inspectFilteredNetworkPasta       = inspectPastaCapabilities
+	filteredNetworkPastaCommand       = exec.CommandContext
+	filteredNetworkPastaProbeTimeout  = 5 * time.Second
+	filteredNetworkPastaHelpLimit     = 64 << 10
+)
+
+type filteredNetworkExecutables struct {
+	Pasta string
+	NFT   string
+}
+
+var requiredFilteredNetworkPastaOptions = []string{
+	"--foreground",
+	"--quiet",
+	"--config-net",
+	"--gateway",
+	"--no-map-gw",
+	"--map-guest-addr",
+	"--map-host-loopback",
+	"--tcp-ports",
+	"--udp-ports",
+	"--tcp-ns",
+	"--udp-ns",
+	"--no-splice",
+	"--pid",
+}
+
+func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
+	pasta, err := resolveFilteredNetworkExecutable("pasta")
+	if err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf("rootless pasta is required: %w", err)
+	}
+	if err := inspectFilteredNetworkPasta(pasta); err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf(
+			"rootless pasta lacks the required filtered-network capabilities: %w", err)
+	}
+	nft, err := resolveFilteredNetworkExecutable("nft")
+	if err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf("nftables (`nft`) is required: %w", err)
+	}
+	return filteredNetworkExecutables{Pasta: pasta, NFT: nft}, nil
+}
+
+func resolveFilteredNetworkExecutable(name string) (string, error) {
+	path, err := filteredNetworkLookPath(name)
+	if err != nil {
+		return "", err
+	}
+	path, err = filteredNetworkEvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s executable: %w", name, err)
+	}
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s resolved to non-absolute path %q", name, path)
+	}
+	if err := validateFilteredNetworkExecutable(path); err != nil {
+		return "", fmt.Errorf("%s executable %q is not trusted: %w", name, path, err)
+	}
+	return path, nil
+}
+
+func inspectPastaCapabilities(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), filteredNetworkPastaProbeTimeout)
+	defer cancel()
+	output := cappedFilteredNetworkOutput{limit: filteredNetworkPastaHelpLimit}
+	cmd := filteredNetworkPastaCommand(ctx, path, "--help")
+	cmd.Env = filteredNetworkHelperEnv()
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("inspect %q with --help: %w", path, ctxErr)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %q with --help: %w", path, err)
+	}
+	if output.truncated {
+		return fmt.Errorf(
+			"inspect %q with --help: output exceeds %d bytes",
+			path,
+			filteredNetworkPastaHelpLimit,
+		)
+	}
+	return validatePastaCapabilities(output.String())
+}
+
+type cappedFilteredNetworkOutput struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (w *cappedFilteredNetworkOutput) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	remaining := w.limit - w.buffer.Len()
+	if remaining <= 0 {
+		w.truncated = w.truncated || originalLen != 0
+		return originalLen, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		w.truncated = true
+	}
+	_, err := w.buffer.Write(p)
+	return originalLen, err
+}
+
+func (w *cappedFilteredNetworkOutput) String() string {
+	return w.buffer.String()
+}
+
+func validatePastaCapabilities(help string) error {
+	tokens := make(map[string]struct{})
+	for _, field := range strings.Fields(help) {
+		token, _, _ := strings.Cut(field, "=")
+		tokens[token] = struct{}{}
+	}
+	var missing []string
+	for _, option := range requiredFilteredNetworkPastaOptions {
+		if _, ok := tokens[option]; !ok {
+			missing = append(missing, option)
+		}
+	}
+	if len(missing) != 0 {
+		return fmt.Errorf("missing options: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func validateRootOwnedExecutable(path string) error {
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Uid != 0 {
+			return fmt.Errorf("path component %q is not root-owned", current)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("path component %q is group/world writable", current)
+		}
+		if current == path {
+			if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+				return fmt.Errorf("path is not a regular executable")
+			}
+		} else if !info.IsDir() {
+			return fmt.Errorf("parent %q is not a directory", current)
+		}
+		if current == string(filepath.Separator) {
+			break
+		}
+	}
+	return nil
+}
 
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
-	if _, err := resolveBwrapServerBinary(sandboxpolicy.NetworkIsolatedWithAgentd); err != nil {
+	if _, err := resolveBwrapServerBinary(sandboxpolicy.NetworkFiltered); err != nil {
 		return FilteredNetworkPrerequisite{
 			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
 		}
 	}
-	if _, err := filteredNetworkLookPath("pasta"); err != nil {
-		return FilteredNetworkPrerequisite{
-			Detail: "rootless pasta is required on PATH: " + err.Error(),
-		}
-	}
-	if _, err := filteredNetworkLookPath("nft"); err != nil {
-		return FilteredNetworkPrerequisite{
-			Detail: "nftables (`nft`) is required on PATH: " + err.Error(),
-		}
-	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution passed; pasta and nft executables " +
-			"were found on PATH; end-to-end gateway readiness is not verified in M2a",
+		Detail: "bubblewrap user/network namespace execution with namespace-root CAP_NET_ADMIN passed; trusted root-owned pasta and nft executables " +
+			"were found; end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }

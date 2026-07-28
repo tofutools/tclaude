@@ -55,4 +55,5 @@ func TestFilteredNetworkProtocolContractStaysBounded(t *testing.T) {
 	assert.Contains(t, FilteredNetworkProtocolContract, "IPv4/IPv6 TCP and UDP")
 	assert.Contains(t, FilteredNetworkProtocolContract, "QUIC is UDP")
 	assert.Contains(t, FilteredNetworkProtocolContract, "raw and packet sockets are not")
+	assert.NotContains(t, FilteredNetworkProtocolContract, "ICMP")
 }

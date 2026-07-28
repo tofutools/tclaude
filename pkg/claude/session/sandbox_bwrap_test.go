@@ -763,21 +763,57 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	require.NoError(t, err)
 
 	closed := sandboxpolicy.EffectiveProfile{NetworkAccess: sandboxpolicy.NetworkAccessNone}
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(openCode, closed), "requires hosted model traffic")
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(claude, closed), "requires hosted model traffic")
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
+	_, validateErr := ValidateTclaudeLayerNetwork(openCode, closed, harness.ResolvedModelTransport{})
+	require.ErrorContains(t, validateErr, "requires hosted model traffic")
+	_, validateErr = ValidateTclaudeLayerNetwork(claude, closed, harness.ResolvedModelTransport{})
+	require.ErrorContains(t, validateErr, "requires hosted model traffic")
+	_, validateErr = ValidateTclaudeLayerNetwork(codex, closed, harness.ResolvedModelTransport{})
+	require.ErrorContains(t, validateErr, sandboxpolicy.OfflineModelTransportEnv+"=1")
 
 	closed.Environment = []sandboxpolicy.EnvironmentEntry{{Name: sandboxpolicy.OfflineModelTransportEnv, Value: "0"}}
-	require.ErrorContains(t, ValidateTclaudeLayerNetwork(codex, closed), sandboxpolicy.OfflineModelTransportEnv+"=1")
+	_, validateErr = ValidateTclaudeLayerNetwork(codex, closed, harness.ResolvedModelTransport{})
+	require.ErrorContains(t, validateErr, sandboxpolicy.OfflineModelTransportEnv+"=1")
 	closed.Environment[0].Value = "1"
-	require.NoError(t, ValidateTclaudeLayerNetwork(codex, closed))
+	_, validateErr = ValidateTclaudeLayerNetwork(codex, closed, harness.ResolvedModelTransport{})
+	require.NoError(t, validateErr)
 
-	require.NoError(t, ValidateTclaudeLayerNetwork(claude, sandboxpolicy.EffectiveProfile{
+	_, validateErr = ValidateTclaudeLayerNetwork(claude, sandboxpolicy.EffectiveProfile{
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
-	}))
-	require.NoError(t, ValidateTclaudeLayerNetwork(openCode, sandboxpolicy.EffectiveProfile{
+	}, harness.ResolvedModelTransport{})
+	require.NoError(t, validateErr)
+	_, validateErr = ValidateTclaudeLayerNetwork(openCode, sandboxpolicy.EffectiveProfile{
 		NetworkAccess: sandboxpolicy.NetworkAccessInternet,
-	}))
+	}, harness.ResolvedModelTransport{})
+	require.NoError(t, validateErr)
+}
+
+func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *testing.T) {
+	claude := harness.Default()
+	effective := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "api.anthropic.com",
+				Ports:  []int{443},
+			}},
+		},
+	}
+
+	_, err := ValidateTclaudeLayerNetwork(
+		claude, effective, harness.ResolvedModelTransport{Model: "claude-sonnet"})
+	require.ErrorContains(t, err, "model provider configuration was not resolved")
+	require.ErrorContains(t, err, "use network open")
+
+	notices, err := ValidateTclaudeLayerNetwork(claude, effective, harness.ResolvedModelTransport{
+		Model:            "claude-sonnet",
+		Provider:         "anthropic",
+		ProviderResolved: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail, "no hidden model-traffic bypass")
+	assert.Contains(t, notices[0].Detail, "declared but not empirically validated")
+	assert.Contains(t, notices[0].Detail, "M2c")
 }
 
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
@@ -964,11 +1000,37 @@ func TestBwrapArgsProtectedHideBeatsAliasRepair(t *testing.T) {
 		"class-4 host control remains the final phase after every alias")
 }
 
-func TestBwrapArgsRefusesReservedFilteredPosture(t *testing.T) {
+func TestBwrapArgsRequiresCompiledFilteredPolicy(t *testing.T) {
 	_, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkFiltered,
 	})
-	require.ErrorContains(t, err, "reserved")
+	require.ErrorContains(t, err, "no compiled gateway policy")
+}
+
+func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "192.0.2.0/24", Ports: []int{443},
+		}},
+	})
+	require.NoError(t, err)
+
+	args, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
+		NetworkPosture:  sandboxpolicy.NetworkFiltered,
+		FilteredNetwork: &ir,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, strings.Join(args, " "),
+		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
 }
 
 // TCLAUDE_IGNORE_HOOKS is the blanket soft-disable used by callers that
@@ -1063,7 +1125,7 @@ func TestBwrapCommandShellQuotesHarnessCommand(t *testing.T) {
 	got, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, nil, nil,
 		sandboxpolicy.MountPlan{}, "export X='a b'; exec agent --flag")
 	require.NoError(t, err)
-	assert.Contains(t, got, " -- sh -c ")
+	assert.Contains(t, got, " -- /bin/sh -c ")
 	assert.Contains(t, got, "export X=")
 	assert.Contains(t, got, "--new-session")
 }
