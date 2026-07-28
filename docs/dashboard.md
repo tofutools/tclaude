@@ -392,13 +392,14 @@ toolbar chips are keyboard-operable: Tab reaches them, Enter/Space activates,
 and focusing a collapsed group's chips reveals their folded labels just like
 hovering does.
 
-A group may also carry one persistent http(s) attachment, shown as a compact
-**📌 label** immediately beside its name rather than as another quick-item
-chip. Click the label to open it; hover or keyboard-focus it to reveal the edit
-pencil. For groups without an attachment, the pin appears only while the group
-header is hovered or focused, keeping the normal header uncluttered. The editor
-accepts an optional display name and otherwise derives a short Linear issue
-key, GitHub number, or hostname. Clearing its URL removes the attachment.
+A group may also carry one persistent http(s) attachment, exposed as a compact
+**📎 paperclip** floating at the top-right of its header rather than as another
+quick-item chip. Because the control floats over the header, it consumes no
+layout space and never pushes the other controls sideways. It appears while the
+header is hovered or keyboard-focused and remains visible on touch devices.
+An existing attachment's paperclip opens it; hover or focus reveals the pencil
+to edit or clear it. The editor accepts an optional display name and otherwise
+derives a short Linear issue key, GitHub number, or hostname.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an

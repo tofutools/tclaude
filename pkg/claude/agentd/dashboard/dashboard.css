@@ -1066,39 +1066,46 @@ details[open] > summary::before { content: "▼ "; }
    space) drops the pointer cursor so it doesn't advertise a fold it won't
    perform. Non-group <details> (permissions, advanced config) carry no
    data-group-key and keep the generic whole-summary marker + pointer above. */
-details[data-group-key] > summary { cursor: default; }
+details[data-group-key] > summary { cursor: default; position: relative; }
 details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment {
-  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px;
-  vertical-align: middle; font: inherit; font-size: 11px;
+  position: absolute; z-index: 4; inset-block-start: 3px; inset-inline-end: 4px;
+  display: inline-flex; align-items: center; gap: 1px; margin: 0;
+  padding: 2px; border: 1px solid #30363d; border-radius: 5px;
+  background: #161b22; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.32);
+  vertical-align: middle; font: inherit; font-size: 12px; line-height: 1;
+  opacity: 0.8; transition: opacity 0.1s ease, border-color 0.1s ease;
 }
 .group-attachment a {
-  max-width: 28ch; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; color: #8b949e; text-decoration: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; color: #8b949e; text-decoration: none;
 }
-.group-attachment a:hover { color: #58a6ff; text-decoration: underline; }
+.group-attachment a:hover { color: #58a6ff; text-decoration: none; }
 .group-attachment button {
-  border: 0; background: none; color: #6e7681; padding: 1px 2px;
-  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border: 0; background: none;
+  color: #6e7681; padding: 0; font: inherit; font-size: 12px;
+  line-height: 1; cursor: pointer;
   border-radius: 3px;
 }
 .group-attachment button:hover { color: #58a6ff; background: rgba(88, 166, 255, 0.12); }
 .group-attachment button:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
 .group-attachment-empty {
-  opacity: 0.65; transition: opacity 0.1s ease;
+  opacity: 0.8;
 }
 .group-attachment-edit {
-  opacity: 0.65; transition: opacity 0.1s ease;
+  font-size: 10px; opacity: 0.65; transition: opacity 0.1s ease;
 }
 @media (hover: hover) {
-  .group-attachment-empty,
+  .group-attachment { opacity: 0; pointer-events: none; }
+  details[data-group-key] > summary:hover .group-attachment,
+  details[data-group-key] > summary:focus-within .group-attachment,
+  .group-attachment:focus,
+  .group-attachment:focus-within { opacity: 0.92; pointer-events: auto; }
   .group-attachment-edit { opacity: 0; pointer-events: none; }
-  details[data-group-key] > summary:hover .group-attachment-empty,
-  details[data-group-key] > summary:focus-within .group-attachment-empty,
-  .group-attachment-empty:focus { opacity: 0.65; pointer-events: auto; }
   .group-attachment-set:hover .group-attachment-edit,
   .group-attachment-set:focus-within .group-attachment-edit,
   .group-attachment-edit:focus { opacity: 1; pointer-events: auto; }
