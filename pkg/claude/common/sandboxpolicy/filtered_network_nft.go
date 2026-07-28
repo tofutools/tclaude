@@ -110,6 +110,9 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 	}
 	for _, line := range strings.Split(string(hostHosts), "\n") {
 		fields := strings.Fields(strings.SplitN(line, "#", 2)[0])
+		if len(fields) < 2 {
+			continue
+		}
 		for _, alias := range fields[1:] {
 			if strings.EqualFold(alias, FilteredNetworkHostLoopbackName) {
 				return nil, fmt.Errorf(

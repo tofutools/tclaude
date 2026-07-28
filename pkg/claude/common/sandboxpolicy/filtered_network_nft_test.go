@@ -44,10 +44,12 @@ func TestRenderFilteredNetworkNFTRefusesDNSSelectors(t *testing.T) {
 }
 
 func TestFilteredNetworkHostsFilePreservesHostRowsAndAddsSyntheticMapping(t *testing.T) {
-	got, err := FilteredNetworkHostsFile([]byte("127.0.0.1 localhost"))
+	got, err := FilteredNetworkHostsFile([]byte(
+		"\n# runner-managed hosts\n   \n127.0.0.1 localhost\n",
+	))
 	require.NoError(t, err)
 	assert.Equal(t,
-		"127.0.0.1 localhost\n"+
+		"\n# runner-managed hosts\n   \n127.0.0.1 localhost\n"+
 			FilteredNetworkLoopbackIPv4+" "+FilteredNetworkHostLoopbackName+"\n"+
 			FilteredNetworkLoopbackIPv6+" "+FilteredNetworkHostLoopbackName+"\n",
 		string(got),
