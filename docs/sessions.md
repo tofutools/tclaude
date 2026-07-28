@@ -348,6 +348,39 @@ To keep transcripts longer, set `claude_cleanup_period_days` in `~/.tclaude/data
 
 Unlike the resume-threshold overrides above, this **is** written into `~/.claude/settings.json` (as `cleanupPeriodDays`) — tclaude syncs the value there on every session start, before the `claude` process that would run the sweep launches. Because it lands in the real settings file, it also protects transcripts from your own plain `claude` runs, not just tclaude-spawned panes. Set a large value like `99999` to effectively keep transcripts forever (Claude Code rejects `0` and has no dedicated "never" option). Leave the key unset (or `0`) to let Claude Code's default — or whatever you've set in `settings.json` by hand — stand; tclaude then never touches the key.
 
+## Free-floating session display names
+
+A coding session launched with plain `tclaude` or `tclaude session new` is
+automatically enrolled as an agent. Until you rename it, tclaude gives that
+agent a deterministic display name such as
+`session-20260728-101733-f3e10b1d`: the launch time in UTC plus a short stable
+agent-id suffix. This is deliberately cheap and avoids turning the full first
+prompt into the dashboard identity. Agentd-managed group spawns retain their
+requested names.
+
+Optionally, agentd can replace that fallback with a short name inferred from
+the session's first prompt:
+
+```json
+{
+  "session": {
+    "auto_name_from_prompt": true
+  }
+}
+```
+
+This setting defaults to `false` because it normally makes an additional model
+call for each eligible session. When enabled, the call is non-interactive,
+read-only, and ephemeral. Agentd keeps a bounded recent-attempt cache to avoid
+repeatedly spending tokens on later prompts after a failure; restarting the
+daemon or eventually evicting an old entry permits a retry. When the single
+naming slot is busy, the attempt is dropped rather than queued and a later
+prompt may retry. The work runs asynchronously after the prompt hook has
+completed, so a slow, failed, unsupported, or malformed response leaves the
+deterministic fallback in place and never delays session startup or waits on
+the user's turn. Claude Code and Codex both use their own one-shot harness
+adapter for the same flow. An explicit rename always wins.
+
 ## Tmux Integration
 
 tmux is run with `-L tclaude` to create an isolated environemt and a namespace for sessions. 

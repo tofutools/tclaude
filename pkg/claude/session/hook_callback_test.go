@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -927,9 +928,10 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	db.ResetForTest()
 
 	require.NoError(t, SaveSessionState(&SessionState{
-		ID:     "start-sess",
-		ConvID: "conv-start",
-		Status: StatusIdle,
+		ID:      "start-sess",
+		ConvID:  "conv-start",
+		Status:  StatusIdle,
+		Created: time.Date(2026, time.July, 28, 12, 17, 33, 0, time.UTC),
 	}))
 
 	pre, err := db.AgentState("conv-start")
@@ -947,6 +949,39 @@ func TestRunHookCallback_SessionStartEnrollsLaunchedConv(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, db.AgentStateActive, post,
 		"a SessionStart from a tclaude-launched session must instant-enroll the conv as an agent")
+	actor, err := db.GetAgentByConv("conv-start")
+	require.NoError(t, err)
+	require.NotNil(t, actor)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
+}
+
+func TestRunHookCallback_SessionStartNamesActorPreEnrolledByReconcile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:      "reconciled-start-sess",
+		ConvID:  "conv-reconciled-start",
+		Status:  StatusIdle,
+		Created: time.Date(2026, time.July, 28, 12, 17, 33, 0, time.UTC),
+	}))
+	agentID, created, err := db.EnsureAgentForConv("conv-reconciled-start", "online-reconcile")
+	require.NoError(t, err)
+	require.True(t, created)
+
+	feedHook(t, "reconciled-start-sess", map[string]any{
+		"session_id":      "conv-reconciled-start",
+		"hook_event_name": "SessionStart",
+		"source":          "startup",
+		"cwd":             dir,
+	})
+
+	actor, err := db.GetAgent(agentID)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(actor.PendingName, "session-20260728-121733-"), actor.PendingName)
+	assert.True(t, IsFreeFloatingAgentName(actor.PendingName))
 }
 
 // Instant enrollment must be retirement-safe: a conv the human

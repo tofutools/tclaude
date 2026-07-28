@@ -446,7 +446,11 @@ func runHookCallback() error {
 		return brokerHookEvent(input, os.Stdout)
 	}
 
-	return DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout)
+	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
+		return err
+	}
+	MaybeRequestAutoName(input)
+	return nil
 }
 
 // DispatchHookEvent applies one parsed hook event: the PreCompact gate
@@ -1285,9 +1289,12 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// conv is alive and should be enrolled. Pending dashboard spawns are skipped
 	// here because agentd's sweeper owns their group/name/briefing intent.
 	if shouldEnrollLaunchedSessionFromHook(state, input, envSessionID, amb) {
-		if _, _, err := db.EnsureAgentForConv(state.ConvID, "session-start"); err != nil {
+		agentID, created, err := db.EnsureAgentForConv(state.ConvID, "session-start")
+		if err != nil {
 			slog.Warn("failed to register launched session as agent",
 				"conv_id", state.ConvID, "session_id", state.ID, "error", err, "module", "hooks")
+		} else {
+			AssignFreeFloatingFallback(state, agentID, created)
 		}
 	}
 
@@ -1383,6 +1390,37 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	}
 
 	return nil
+}
+
+// AssignFreeFloatingFallback covers both the normal hook-first enrollment and
+// the daemon-reconcile race where the same plain session was enrolled moments
+// earlier. Managed spawns have another CreatedVia value and are never touched.
+// The empty-name CAS is the final guard against overwriting a name installed
+// concurrently by spawn completion or an explicit operation.
+func AssignFreeFloatingFallback(state *SessionState, agentID string, created bool) {
+	actor, err := db.GetAgent(agentID)
+	if err != nil || actor == nil || !actor.Active() || actor.PendingName != "" {
+		return
+	}
+	switch actor.CreatedVia {
+	case "session-start", "online-reconcile", "cli":
+	default:
+		if !created {
+			return
+		}
+	}
+	createdAt := state.Created
+	if createdAt.IsZero() {
+		createdAt = state.LastHook
+	}
+	changed, err := db.ReplaceAgentPendingName(agentID, "", FreeFloatingAgentName(createdAt, agentID))
+	if err != nil {
+		slog.Warn("failed to assign launched session fallback name",
+			"conv_id", state.ConvID, "agent_id", agentID, "error", err, "module", "hooks")
+	} else if !changed {
+		slog.Debug("launched session fallback name lost a concurrent update",
+			"conv_id", state.ConvID, "agent_id", agentID, "module", "hooks")
+	}
 }
 
 func boundedSessionEndReason(reason string) string {

@@ -17,3 +17,10 @@ func TestResolvedTmuxNameStyle(t *testing.T) {
 	assert.Equal(t, TmuxNameStyleID, (&Config{Session: &SessionConfig{TmuxNameStyle: "Dir"}}).ResolvedTmuxNameStyle(), "styles are case-sensitive slugs")
 	assert.Equal(t, TmuxNameStyleDir, (&Config{Session: &SessionConfig{TmuxNameStyle: "dir"}}).ResolvedTmuxNameStyle())
 }
+
+func TestAutoNameFromPromptEnabled(t *testing.T) {
+	assert.False(t, (*Config)(nil).AutoNameFromPromptEnabled(), "nil config")
+	assert.False(t, (&Config{}).AutoNameFromPromptEnabled(), "absent session block")
+	assert.False(t, (&Config{Session: &SessionConfig{}}).AutoNameFromPromptEnabled(), "opt-in defaults off")
+	assert.True(t, (&Config{Session: &SessionConfig{AutoNameFromPrompt: true}}).AutoNameFromPromptEnabled())
+}

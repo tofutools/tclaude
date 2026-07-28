@@ -521,6 +521,28 @@ func SetAgentPendingName(agentID, name string) error {
 	return err
 }
 
+// ReplaceAgentPendingName atomically replaces an actor's pending display name
+// only when it still has expected. It lets background naming work refine a
+// generated fallback without clobbering a concurrent explicit rename.
+func ReplaceAgentPendingName(agentID, expected, name string) (bool, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return false, errors.New("ReplaceAgentPendingName: agent_id required")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE agents SET pending_name = ?
+		WHERE agent_id = ? AND pending_name = ?`,
+		strings.TrimSpace(name), agentID, strings.TrimSpace(expected))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // SetAgentInitialSpawnConfig records the verbatim JSON snapshot of the spawn
 // request an actor was born from onto agents.initial_spawn_config — the durable,
 // agent-level "what was this spawned with" record. A plain UPDATE — a no-op when

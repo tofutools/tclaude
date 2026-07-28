@@ -122,8 +122,8 @@ type Config struct {
 	// DashboardConfig. Absent → all defaults.
 	Dashboard *DashboardConfig `json:"dashboard,omitempty"`
 
-	// Session holds session-launch tuning — currently the tmux-session
-	// naming style. Absent → all defaults (short id-prefix tmux names).
+	// Session holds session-launch tuning — tmux-session naming and optional
+	// model-assisted display naming. Absent → all defaults.
 	Session *SessionConfig `json:"session,omitempty"`
 
 	// TUI holds the color scheme for tclaude's interactive terminal views
@@ -278,6 +278,12 @@ type SessionConfig struct {
 	// --label and to conversation resumes; agentd-spawned agents always
 	// pass their agent name as the label and are unaffected.
 	TmuxNameStyle string `json:"tmux_name_style,omitempty"`
+
+	// AutoNameFromPrompt lets agentd make a bounded, non-interactive model
+	// call to replace a free-floating session's deterministic display-name
+	// fallback after its first prompt. It defaults off: starting a session
+	// must not silently spend tokens or wait on another model invocation.
+	AutoNameFromPrompt bool `json:"auto_name_from_prompt,omitempty"`
 }
 
 // ResolvedTmuxNameStyle returns the effective tmux-session naming style,
@@ -292,6 +298,13 @@ func (c *Config) ResolvedTmuxNameStyle() string {
 		return TmuxNameStyleDir
 	}
 	return TmuxNameStyleID
+}
+
+// AutoNameFromPromptEnabled reports whether free-floating sessions may use a
+// one-shot model call to refine their deterministic display-name fallback.
+// Nil-safe and opt-in so the default launch path remains free and immediate.
+func (c *Config) AutoNameFromPromptEnabled() bool {
+	return c != nil && c.Session != nil && c.Session.AutoNameFromPrompt
 }
 
 // Activity-bot style values — the per-mode choices in ActivityBotsConfig.

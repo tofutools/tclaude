@@ -411,6 +411,28 @@ func TestSetAgentPendingName(t *testing.T) {
 	assert.Equal(t, "worker-7", a.PendingName)
 }
 
+func TestReplaceAgentPendingName(t *testing.T) {
+	setupTestDB(t)
+	_, err := Open()
+	require.NoError(t, err, "Open")
+
+	agentID, err := AllocateAgent("named-conv", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, SetAgentPendingName(agentID, "generated-fallback"))
+
+	changed, err := ReplaceAgentPendingName(agentID, "another-name", "model-name")
+	require.NoError(t, err)
+	assert.False(t, changed, "a stale expected name must not overwrite the actor")
+
+	changed, err = ReplaceAgentPendingName(agentID, "generated-fallback", "model-name")
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	a, err := GetAgent(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, "model-name", a.PendingName)
+}
+
 func agentIDs(agents []*Agent) []string {
 	out := make([]string, 0, len(agents))
 	for _, a := range agents {

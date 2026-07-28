@@ -200,7 +200,26 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to apply hook event")
 		return
 	}
+	if req.Input.HookEventName == "UserPromptSubmit" {
+		if harnessName, cwd, ok := brokeredAutoNameTarget(row.ID, req.Input.ConvID); ok {
+			scheduleAutoName(req.Input.ConvID, harnessName, cwd, req.Input.Prompt)
+		}
+	}
 	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{Stdout: stdout.String()})
+}
+
+// brokeredAutoNameTarget re-resolves the row after dispatch and proves the
+// submitted conversation is now the caller's own. Dispatch intentionally
+// returns nil when it ignores a foreign-conversation hook; without this
+// separate attribution check, that ignored payload could still name the
+// foreign actor.
+func brokeredAutoNameTarget(sessionID, submittedConvID string) (harnessName, cwd string, ok bool) {
+	state, err := session.LoadSessionState(sessionID)
+	if err != nil || state == nil || strings.TrimSpace(submittedConvID) == "" ||
+		state.ConvID != submittedConvID {
+		return "", "", false
+	}
+	return state.Harness, state.Cwd, true
 }
 
 // sanitizeBrokeredHookInput clamps the payload field that becomes a
