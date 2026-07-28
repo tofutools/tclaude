@@ -766,7 +766,16 @@ func validateOpenCodeV3LaunchContract(
 				i, entry.Name, name)
 		}
 		wantStateDir := filepath.Join(entry.Value, "opencode")
-		if !openCodeRuntimePathsEquivalent(contract.StateDirs[i], wantStateDir) {
+		matchesStateDir := canonicalOpenCodeRuntimePath(contract.StateDirs[i]) ==
+			canonicalOpenCodeRuntimePath(wantStateDir)
+		if i == 2 && !matchesStateDir {
+			// Darwin keeps XDG_CONFIG_HOME at the real host base while the
+			// daemon-final read-only root carries the resolved identity of a
+			// possible leaf symlink at <base>/opencode.
+			matchesStateDir = openCodeRuntimePathsEquivalent(
+				contract.StateDirs[i], wantStateDir)
+		}
+		if !matchesStateDir {
 			return fmt.Errorf("private OpenCode v3 %s does not target state directory %q",
 				name, contract.StateDirs[i])
 		}
