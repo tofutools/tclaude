@@ -78,7 +78,9 @@ func plantOpenCodeFilteredActiveAccount(
 		url TEXT NOT NULL,
 		access_token TEXT NOT NULL,
 		refresh_token TEXT NOT NULL,
-		token_expiry INTEGER
+		token_expiry INTEGER,
+		time_created INTEGER NOT NULL,
+		time_updated INTEGER NOT NULL
 	)`)
 	require.NoError(t, err)
 	_, err = store.Exec(`CREATE TABLE IF NOT EXISTS account_state (
@@ -88,11 +90,20 @@ func plantOpenCodeFilteredActiveAccount(
 	)`)
 	require.NoError(t, err)
 	_, err = store.Exec(
-		`INSERT OR REPLACE INTO account(
-			id, email, url, access_token, refresh_token, token_expiry
+		`INSERT INTO account(
+			id, email, url, access_token, refresh_token, token_expiry,
+			time_created, time_updated
 		 ) VALUES (
-			'account', 'fixture@example.invalid', ?, 'access', 'refresh', 4102444800000
-		 )`,
+			'account', 'fixture@example.invalid', ?, 'access', 'refresh',
+			4102444800000, 1, 1
+		 )
+		 ON CONFLICT(id) DO UPDATE SET
+			email = excluded.email,
+			url = excluded.url,
+			access_token = excluded.access_token,
+			refresh_token = excluded.refresh_token,
+			token_expiry = excluded.token_expiry,
+			time_updated = excluded.time_updated`,
 		accountURL)
 	require.NoError(t, err)
 	_, err = store.Exec(
