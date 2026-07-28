@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -100,7 +100,11 @@ func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 // generic fallback execs the browser in the FOREGROUND and does not
 // return until the browser is closed. A launcher still running after
 // browserLaunchProbe is treated as a successful launch, and reaped by the
-// background goroutine. See openBrowser in agentd/popup.go.
+// background goroutine.
+//
+// cmd.Stderr stays nil (/dev/null) so cmd.Wait() tracks the LAUNCHER and
+// not the browser it forked — see openBrowser in agentd/popup.go for the
+// full reasoning; launcherExitHint supplies the diagnostic instead.
 func openBrowserURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -122,12 +126,6 @@ func openBrowserURL(url string) error {
 		cmd = exec.Command("xdg-open", url)
 	}
 	name := filepath.Base(cmd.Path)
-	// Bounded so a launcher that survives the probe (or a browser that
-	// inherited stderr and spews for its whole lifetime) can't grow this
-	// buffer without limit.
-	var stderr cappedBuffer
-	stderr.max = maxBrowserStderr
-	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
@@ -138,10 +136,11 @@ func openBrowserURL(url string) error {
 		if err == nil {
 			return nil
 		}
-		// Wait has returned, so os/exec's stderr copier is done and the
-		// buffer is safe to read.
-		if msg := clipLauncherStderr(stderr.String()); msg != "" {
-			return fmt.Errorf("%s: %w: %s", name, err, msg)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if hint := launcherExitHint(name, exit.ExitCode()); hint != "" {
+				return fmt.Errorf("%s: %w: %s", name, err, hint)
+			}
 		}
 		return fmt.Errorf("%s: %w", name, err)
 	case <-time.After(browserLaunchProbe):
@@ -149,55 +148,31 @@ func openBrowserURL(url string) error {
 	}
 }
 
-const (
-	// browserLaunchProbe bounds how long openBrowserURL waits for a
-	// launcher to exit before calling the launch good. Real launcher
-	// failures are immediate (bad URL, no handler, no display); anything
-	// still alive this long has handed off or is fronting the browser
-	// itself.
-	browserLaunchProbe = 2 * time.Second
-	// maxBrowserStderr caps the launcher stderr kept for the error message.
-	maxBrowserStderr = 4 << 10
-	// maxLauncherStderrMsg caps how much of that stderr reaches the error
-	// string the CLI prints.
-	maxLauncherStderrMsg = 200
-)
+// browserLaunchProbe bounds how long openBrowserURL waits for a launcher to
+// exit before calling the launch good. Real launcher failures are immediate
+// (bad URL, no handler, no display); anything still alive this long has
+// handed off or is fronting the browser itself.
+const browserLaunchProbe = 2 * time.Second
 
-// clipLauncherStderr collapses launcher stderr onto one line and bounds it,
-// so the CLI's "Failed to open browser: …" stays a single readable message.
-// Mirrors agentd's auditClip, which the agentd copy of this function uses.
-func clipLauncherStderr(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > maxLauncherStderrMsg {
-		return s[:maxLauncherStderrMsg] + "…"
+// launcherExitHint turns a launcher's exit status into the human-readable
+// cause the CLI prints after "Failed to open browser: ". Only xdg-open
+// documents a status table — open(1) and cmd.exe's `start` do not, so they
+// get "" and the bare status. Duplicated from agentd/popup.go.
+func launcherExitHint(name string, code int) string {
+	if name != "xdg-open" {
+		return ""
 	}
-	return s
-}
-
-// cappedBuffer is an io.Writer that retains the first max bytes written and
-// discards the rest, never reporting a short write. os/exec's copier writes
-// to it from its own goroutine and openBrowserURL may abandon it at the
-// probe timeout while that goroutine is still running, so the mutex keeps
-// the abandoned case race-free. Duplicated from agentd/popup.go.
-type cappedBuffer struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
-}
-
-func (c *cappedBuffer) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if room := c.max - len(c.buf); room > 0 {
-		c.buf = append(c.buf, p[:min(room, len(p))]...)
+	switch code {
+	case 1:
+		return "error in command line syntax"
+	case 2:
+		return "the file or URL does not exist"
+	case 3:
+		return "no method available for opening it (no browser or desktop opener found)"
+	case 4:
+		return "the opening action failed"
 	}
-	return len(p), nil
-}
-
-func (c *cappedBuffer) String() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return string(c.buf)
+	return ""
 }
 
 // escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing

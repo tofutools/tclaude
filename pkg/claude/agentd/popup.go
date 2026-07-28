@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -744,9 +745,7 @@ func snapshotRequestBody(r *http.Request) string {
 // failures are exit codes: xdg-open reports "no method available" (3) or
 // "action failed" (4) on a headless/misconfigured host, and open(1) and
 // `start` fail similarly — all with a zero-valued Start(). So we also wait
-// briefly for the launcher to exit and surface a non-zero status, with the
-// launcher's stderr attached (that is where "xdg-open: no method available
-// for opening …" lands).
+// briefly for the launcher to exit and surface a non-zero status.
 //
 // The wait is bounded because success is not always a prompt exit: with a
 // desktop environment xdg-open delegates and returns immediately, but its
@@ -755,6 +754,16 @@ func snapshotRequestBody(r *http.Request) string {
 // loop for the length of a browsing session. A launcher still running after
 // browserLaunchProbe is therefore treated as a successful launch, and reaped
 // by the background goroutine.
+//
+// cmd.Stderr is deliberately left nil (/dev/null, as before). Pointing it at
+// any non-*os.File writer to capture the launcher's message would make
+// os/exec allocate a pipe plus a copier goroutine that cmd.Wait() joins, and
+// that copier only reaches EOF once EVERY holder of the write end closes it
+// — including the browser the launcher forked and left running. Wait() would
+// then be waiting on the BROWSER, not the launcher, so an xdg-open that
+// exited 3 in a millisecond would still be indistinguishable from a healthy
+// launch and get swallowed by the probe. launcherExitHint recovers the
+// diagnostic from the exit status instead, which needs no inherited fd.
 func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -776,12 +785,6 @@ func openBrowser(url string) error {
 		cmd = exec.Command("xdg-open", url)
 	}
 	name := filepath.Base(cmd.Path)
-	// Bounded so a launcher that survives the probe (or a browser that
-	// inherited stderr and spews for its whole lifetime) can't grow this
-	// buffer inside a long-lived daemon.
-	var stderr cappedBuffer
-	stderr.max = maxBrowserStderr
-	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", name, err)
 	}
@@ -792,10 +795,11 @@ func openBrowser(url string) error {
 		if err == nil {
 			return nil
 		}
-		// Wait has returned, so os/exec's stderr copier is done and the
-		// buffer is safe to read.
-		if msg := auditClip(stderr.String(), 200); msg != "" {
-			return fmt.Errorf("%s: %w: %s", name, err, msg)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if hint := launcherExitHint(name, exit.ExitCode()); hint != "" {
+				return fmt.Errorf("%s: %w: %s", name, err, hint)
+			}
 		}
 		return fmt.Errorf("%s: %w", name, err)
 	case <-time.After(browserLaunchProbe):
@@ -803,40 +807,32 @@ func openBrowser(url string) error {
 	}
 }
 
-const (
-	// browserLaunchProbe bounds how long openBrowser waits for a launcher
-	// to exit before calling the launch good. Real launcher failures are
-	// immediate (bad URL, no handler, no display); anything still alive
-	// this long has handed off or is fronting the browser itself.
-	browserLaunchProbe = 2 * time.Second
-	// maxBrowserStderr caps the launcher stderr kept for the error message.
-	maxBrowserStderr = 4 << 10
-)
+// browserLaunchProbe bounds how long openBrowser waits for a launcher to
+// exit before calling the launch good. Real launcher failures are immediate
+// (bad URL, no handler, no display); anything still alive this long has
+// handed off or is fronting the browser itself.
+const browserLaunchProbe = 2 * time.Second
 
-// cappedBuffer is an io.Writer that retains the first max bytes written and
-// discards the rest, never reporting a short write. os/exec's copier writes
-// to it from its own goroutine and openBrowser may abandon it at the probe
-// timeout while that goroutine is still running, so the mutex keeps the
-// abandoned case race-free.
-type cappedBuffer struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
-}
-
-func (c *cappedBuffer) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if room := c.max - len(c.buf); room > 0 {
-		c.buf = append(c.buf, p[:min(room, len(p))]...)
+// launcherExitHint turns a launcher's exit status into the human-readable
+// cause, so the log line says why the launch failed without us having to
+// capture the child's stderr (see openBrowser for why we can't). Only
+// xdg-open documents a status table — open(1) and cmd.exe's `start` do not,
+// so they get "" and the bare status.
+func launcherExitHint(name string, code int) string {
+	if name != "xdg-open" {
+		return ""
 	}
-	return len(p), nil
-}
-
-func (c *cappedBuffer) String() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return string(c.buf)
+	switch code {
+	case 1:
+		return "error in command line syntax"
+	case 2:
+		return "the file or URL does not exist"
+	case 3:
+		return "no method available for opening it (no browser or desktop opener found)"
+	case 4:
+		return "the opening action failed"
+	}
+	return ""
 }
 
 // escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing
