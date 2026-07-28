@@ -149,11 +149,18 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 	t.Cleanup(func() { _ = stopOpenCodeRuntime(openCodeDarwinLayerSmokeSessionID) })
 	require.NotEmpty(t, launch.ConvID)
 
+	// sandbox-exec applies the profile and then execs the inner command, so
+	// its own process name does not survive at the recorded PID. Pin the
+	// managed serve command here; the tool write/hide/read-only probes below
+	// are the hardware proof that this process inherited the Seatbelt profile.
 	require.Eventually(t, func() bool {
-		out, psErr := exec.Command("ps", "-p", fmt.Sprint(launch.PID), "-o", "comm=").Output()
-		return psErr == nil && strings.Contains(string(out), "sandbox-exec")
+		out, psErr := exec.Command("ps", "-p", fmt.Sprint(launch.PID), "-o", "command=").Output()
+		commandLine := string(out)
+		return psErr == nil &&
+			strings.Contains(commandLine, "opencode") &&
+			strings.Contains(commandLine, "serve")
 	}, 5*time.Second, 25*time.Millisecond,
-		"the recorded OpenCode wrapper PID must be the Seatbelt boundary")
+		"the recorded OpenCode PID must remain the managed serve command")
 
 	now := time.Now()
 	require.NoError(t, db.SaveSession(&db.SessionRow{
