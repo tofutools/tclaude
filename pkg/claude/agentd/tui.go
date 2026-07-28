@@ -813,15 +813,15 @@ func tuiSpawnCmd(api tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 	}
 }
 
-// tuiRetireCmd retires one agent through the daemon's own verb. It sends no
-// query parameters, which is the documented default pair for that endpoint:
-// the pane is asked to exit (?shutdown), and the worktree is left alone
-// (?delete_worktree) — the console never deletes an operator's work, and has
-// no probe of the kind the dashboard runs before offering to.
+// tuiRetireCmd retires one agent through the daemon's own verb. The
+// require_offline precondition keeps Delete's progressive contract true even
+// when another client resumes the agent while the confirmation is open. The
+// remaining documented defaults still apply: the pane is asked to exit and
+// the worktree is left alone.
 func tuiRetireCmd(api tuiAPI, convID, name string) tea.Cmd {
 	return func() tea.Msg {
 		var res tuiRetireResult
-		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire?require_offline=1", nil, &res)
 		return tuiRetiredMsg{agent: name, res: res, err: err}
 	}
 }
@@ -1363,18 +1363,25 @@ func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
 
 // tuiStopSummary describes a landed stop in one line.
 func tuiStopSummary(msg tuiStoppedMsg) string {
+	detail := strings.TrimSpace(msg.res.Detail)
+	withDetail := func(summary string) string {
+		if detail != "" {
+			summary += " Note: " + detail + "."
+		}
+		return summary
+	}
 	switch msg.res.Action {
 	case "soft_stopped":
-		return "Took " + msg.agent + " offline — its session was asked to exit."
+		return withDetail("Asked " + msg.agent + " to go offline — its session was asked to exit.")
 	case "killed_no_soft_exit":
-		return "Took " + msg.agent + " offline — its harness has no graceful exit, so the session was stopped."
+		return withDetail("Took " + msg.agent + " offline — its harness has no graceful exit, so the session was stopped.")
 	case "skipped:already_offline":
-		return msg.agent + " was already offline."
+		return withDetail(msg.agent + " was already offline.")
 	case "":
-		return "Asked the daemon to take " + msg.agent + " offline."
+		return withDetail("Asked the daemon to take " + msg.agent + " offline.")
 	default:
 		out := "Could not take " + msg.agent + " offline: " + msg.res.Action
-		if detail := strings.TrimSpace(msg.res.Detail); detail != "" {
+		if detail != "" {
 			out += " (" + detail + ")"
 		}
 		return out + "."
@@ -1525,8 +1532,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = tuiStopSummary(msg)
-		// The row is offline now — show that rather than leaving it reading
-		// as live until the next tick.
+		// Reconcile promptly: a graceful stop acknowledges delivery of the
+		// exit request, but the pane may take a moment to disappear.
 		return m.beginRefresh()
 
 	case tuiResumedMsg:

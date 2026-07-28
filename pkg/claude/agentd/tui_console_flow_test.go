@@ -393,16 +393,33 @@ func TestTUIConsoleDeleteStepsAnAgentOfflineThenRetiresIt(t *testing.T) {
 
 	c.Press(t, "delete", "y")
 	view := c.View()
-	assert.Contains(t, view, "Took worker offline", "the console reports the first step")
+	assert.Contains(t, view, "Asked worker to go offline", "the console reports the first step")
 	assert.Contains(t, view, "1 agents (0 online)", "the roster keeps the now-offline agent")
 	state, err = db.AgentState(sp.ConvID)
 	require.NoError(t, err)
 	assert.Equal(t, db.AgentStateActive, state, "taking an agent offline does not retire it")
 	assert.True(t, flowGroupHasMember(f, "dev", sp.ConvID), "the offline agent stays in its group")
 
+	// If another client resumes the agent while this confirmation is open,
+	// the daemon-side precondition refuses the stale retire rather than
+	// skipping Delete's online → offline step.
 	c.Press(t, "delete")
 	require.Contains(t, c.View(), "Retire worker?")
+	f.AssertResumeSpawned(f.AsHuman().Resume(sp.ConvID))
 	c.Press(t, "y")
+	view = c.View()
+	assert.Contains(t, view, "agent is online")
+	assert.Contains(t, view, "take it offline before")
+	state, err = db.AgentState(sp.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, db.AgentStateActive, state)
+	assert.True(t, flowGroupHasMember(f, "dev", sp.ConvID))
+
+	// Refresh to the externally resumed state, then take the two deliberate
+	// lifecycle steps again.
+	c.Refresh()
+	c.Press(t, "delete", "y")
+	c.Press(t, "delete", "y")
 	view = c.View()
 	assert.Contains(t, view, "Retired worker", "the console reports the outcome")
 	assert.Contains(t, view, "left dev", "including the groups the agent gave up")

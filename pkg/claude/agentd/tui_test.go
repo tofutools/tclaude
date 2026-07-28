@@ -549,7 +549,8 @@ func TestTUIRetireAsksThenPostsToTheDaemon(t *testing.T) {
 	require.NoError(t, msg.err)
 	assert.Equal(t, http.MethodPost, gotMethod)
 	assert.Equal(t, "/v1/agent/c1/retire", gotPath)
-	assert.Empty(t, gotQuery, "the console keeps the endpoint's own defaults: stop the pane, keep the worktree")
+	assert.Equal(t, "require_offline=1", gotQuery,
+		"the console must not retire an agent resumed while confirmation was open")
 
 	updated, refresh := retiring.Update(msg)
 	done := updated.(tuiModel)
@@ -714,9 +715,21 @@ func TestTUIDeleteOnAnOnlineAgentTakesItOffline(t *testing.T) {
 	updated, refresh := stopping.Update(msg)
 	done := updated.(tuiModel)
 	assert.False(t, done.stopping)
-	assert.Contains(t, done.notice, "Took worker offline")
+	assert.Contains(t, done.notice, "Asked worker to go offline")
 	assert.Contains(t, done.notice, "asked to exit")
-	assert.NotNil(t, refresh, "the row should show offline immediately")
+	assert.NotNil(t, refresh, "the row should reconcile promptly after the exit request")
+}
+
+func TestTUIStopSummaryCarriesSuccessfulDetail(t *testing.T) {
+	summary := tuiStopSummary(tuiStoppedMsg{
+		agent: "worker",
+		res: tuiStopResult{
+			Action: "soft_stopped",
+			Detail: "resume provenance unavailable; human recovery will be required",
+		},
+	})
+	assert.Contains(t, summary, "Asked worker to go offline")
+	assert.Contains(t, summary, "human recovery will be required")
 }
 
 func TestTUIXNoLongerRetiresAnAgent(t *testing.T) {
