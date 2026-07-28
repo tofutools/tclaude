@@ -186,19 +186,15 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 		return fmt.Errorf("prepare %s %s for retry: %w", method, path, err)
 	}
 
-	resp, err := a.doRequest(req)
+	resp, raw, err := a.doRequestBytes(req)
 	if err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read %s response: %w", path, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		msg := strings.TrimSpace(string(raw))
 		var payload struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		if json.Unmarshal(raw, &payload) == nil && strings.TrimSpace(payload.Error) != "" {
 			msg = strings.TrimSpace(payload.Error)
@@ -209,12 +205,26 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 		if resp.StatusCode == http.StatusNotFound {
 			msg += " (the target may be running a tclaude version without remote TUI support)"
 		}
+		if method == http.MethodPost &&
+			resp.StatusCode == http.StatusConflict &&
+			payload.Code == "idempotency_unknown" {
+			return fmt.Errorf("%s %s: %w", method, path, &tuiAmbiguousMutationError{
+				err:      fmt.Errorf("daemon lost the recorded mutation outcome during restart: %s", msg),
+				attempts: 1,
+			})
+		}
 		return fmt.Errorf("%s %s: %s", method, path, msg)
 	}
 	if out == nil || len(raw) == 0 {
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
+		if method == http.MethodPost {
+			return fmt.Errorf("decode %s response: %w", path, &tuiAmbiguousMutationError{
+				err:      err,
+				attempts: 1,
+			})
+		}
 		return fmt.Errorf("decode %s response: %w", path, err)
 	}
 	return nil
@@ -234,25 +244,30 @@ func (e *tuiAmbiguousMutationError) Error() string {
 
 func (e *tuiAmbiguousMutationError) Unwrap() error { return e.err }
 
-func (a *remoteTUIAPI) doRequest(req *http.Request) (*http.Response, error) {
+func (a *remoteTUIAPI) doRequestBytes(req *http.Request) (*http.Response, []byte, error) {
 	mutating := req.Method == http.MethodPost
 	attempts := 0
 	for {
 		attempts++
 		attempt, err := cloneTUIRequest(req)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		resp, err := a.client.Do(attempt)
 		if err == nil {
-			return resp, nil
+			raw, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr == nil {
+				return resp, raw, nil
+			}
+			err = fmt.Errorf("read response: %w", readErr)
 		}
 		retry := attempts - 1
 		if !mutating || retry >= len(a.mutationRetryBackoff) {
 			if mutating {
-				return nil, &tuiAmbiguousMutationError{err: err, attempts: attempts}
+				return nil, nil, &tuiAmbiguousMutationError{err: err, attempts: attempts}
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		timer := time.NewTimer(a.mutationRetryBackoff[retry])
 		<-timer.C

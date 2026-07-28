@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -135,6 +137,70 @@ func TestRemoteTUIAPIRetriesALostMutationResponseWithTheSameIdentity(t *testing.
 	require.Len(t, digests, 2)
 	assert.NotEmpty(t, digests[0])
 	assert.Equal(t, digests[0], digests[1])
+}
+
+func TestRemoteTUIAPIRetriesAPartialMutationResponseWithTheSameIdentity(t *testing.T) {
+	var committed atomic.Int32
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get(agent.IdempotencyKeyHeader))
+		if committed.CompareAndSwap(0, 1) {
+			conn, rw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack partial response: %v", err)
+				return
+			}
+			// Headers arrived and the body began, but Content-Length proves it
+			// was truncated. The retry must carry the same mutation identity.
+			_, _ = fmt.Fprint(rw, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"group\":\"dev\"")
+			_ = rw.Flush()
+			_ = conn.Close()
+			return
+		}
+		_, _ = w.Write([]byte(`{"group":"dev","agent_id":"agt_once"}`))
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	api.mutationRetryBackoff = []time.Duration{0}
+	var resp agent.SpawnResponse
+	require.NoError(t, api.post("/v1/groups/dev/spawn",
+		agent.SpawnRequest{Name: "once"}, &resp))
+	assert.Equal(t, "agt_once", resp.AgentID)
+	require.Len(t, keys, 2)
+	assert.Equal(t, keys[0], keys[1])
+}
+
+func TestRemoteTUIAPIMarksIdempotencyUnknownForReconciliation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"previous daemon exited before recording the response","code":"idempotency_unknown"}`))
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	err = api.post("/v1/groups/dev/spawn", agent.SpawnRequest{Name: "once"}, &agent.SpawnResponse{})
+	require.Error(t, err)
+	var ambiguous *tuiAmbiguousMutationError
+	assert.True(t, errors.As(err, &ambiguous), err)
+	assert.Contains(t, err.Error(), "outcome")
+}
+
+func TestRemoteTUIAPIMarksMalformedMutationResponseForReconciliation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"agent_id":`))
+	}))
+	defer srv.Close()
+
+	api, err := newRemoteTUIAPI(srv.URL, "tclo_remote-test")
+	require.NoError(t, err)
+	err = api.post("/v1/groups/dev/spawn", agent.SpawnRequest{Name: "once"}, &agent.SpawnResponse{})
+	require.Error(t, err)
+	var ambiguous *tuiAmbiguousMutationError
+	assert.True(t, errors.As(err, &ambiguous), err)
 }
 
 func TestTUIInitialRefreshDoesNotOverlapTheFirstTick(t *testing.T) {
