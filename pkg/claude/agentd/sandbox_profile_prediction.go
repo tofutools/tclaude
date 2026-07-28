@@ -116,8 +116,8 @@ func predictSandboxFilesystem(
 				tier, harness.AccessPredictionEnforcedPartial,
 				fmt.Sprintf(
 					"Claude Code's OS sandbox supports %d narrower carve-out%s (%s), "+
-						"but a denied parent with a reopen cannot be mirrored to built-in Read/Edit permissions; "+
-						"those built-in tools remain outside that parent deny",
+						"but a denied parent with a reopen cannot be mirrored to built-in file-tool permissions; "+
+						"Read/Write/Edit remain outside that parent deny",
 					len(reopens), pluralSuffix(len(reopens)), describePredictedReopens(reopens),
 				),
 			)
@@ -186,12 +186,14 @@ func predictSandboxEnvironment(
 		)
 	}
 	detail := fmt.Sprintf(
-		"tclaude injects %d literal environment variable%s into the harness launch environment inherited by tools",
+		"tclaude injects %d literal environment variable%s into the harness launch environment inherited by tools; "+
+			"these are mutable process configuration, not an access-control boundary",
 		count, pluralSuffix(count),
 	)
 	if target.harness.Name == harness.CodexName {
 		detail = fmt.Sprintf(
-			"tclaude injects %d literal environment variable%s at launch and pins them in Codex shell_environment_policy",
+			"tclaude injects %d literal environment variable%s at launch and pins their initial tool values in Codex "+
+				"shell_environment_policy; these are mutable process configuration, not an access-control boundary",
 			count, pluralSuffix(count),
 		)
 	}

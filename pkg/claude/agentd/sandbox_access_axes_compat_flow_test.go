@@ -182,7 +182,7 @@ func TestSandboxProfileEnforcementPredictsFilesystemEnvironmentAndAgentDirectori
 		"a launch-wide filesystem refusal also refuses its generated writable directories")
 
 	assert.Equal(t, harness.AccessPredictionEnforcedPartial, got.Targets[1].Axes.Filesystem.Outcome)
-	assert.Contains(t, got.Targets[1].Axes.Filesystem.Detail, "built-in Read/Edit")
+	assert.Contains(t, got.Targets[1].Axes.Filesystem.Detail, "Read/Write/Edit")
 	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[1].Axes.AgentDirectories.Outcome)
 
 	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[2].Axes.Filesystem.Outcome)
