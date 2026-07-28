@@ -95,6 +95,19 @@ func TestResolveTclaudeLayerClaudeRefusesMutableSettingsProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), settings)
 	assert.Contains(t, err.Error(), "ANTHROPIC_BASE_URL")
 	assert.Contains(t, err.Error(), "mutable")
+
+	require.NoError(t, os.WriteFile(settings, []byte(
+		`{"env":{"https_proxy":"http://mutable-proxy.example:8443"}}`), 0o600))
+	_, err = ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.DefaultName),
+		ModelTransportLaunchContext{
+			Cwd:         cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{{Name: "HOME", Value: home}},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), settings)
+	assert.Contains(t, err.Error(), "https_proxy")
+	assert.Contains(t, err.Error(), "mutable")
 }
 
 func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {

@@ -114,6 +114,12 @@ var claudeProviderSettingVariables = map[string]struct{}{
 	"CLAUDE_CODE_USE_FOUNDRY":              {},
 	"CLAUDE_CODE_USE_MANTLE":               {},
 	"CLAUDE_CODE_USE_VERTEX":               {},
+	"HTTPS_PROXY":                          {},
+	"https_proxy":                          {},
+	"HTTP_PROXY":                           {},
+	"http_proxy":                           {},
+	"ALL_PROXY":                            {},
+	"all_proxy":                            {},
 }
 
 // claudeSettingsProviderVariable refuses provider routing in live-reloaded
