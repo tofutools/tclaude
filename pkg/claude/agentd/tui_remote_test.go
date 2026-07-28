@@ -468,8 +468,7 @@ func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{
 		{Code: 'n', Text: "n"},
 		{Code: 'N', Text: "N"},
-		{Code: 'x', Text: "x"},
-		{Code: 'X', Text: "X"},
+		{Code: tea.KeyDelete},
 		{Code: tea.KeyEnter},
 	} {
 		blocked, mutationCmd := got.handleKey(key)
@@ -490,12 +489,12 @@ func TestTUIAmbiguousMutationForcesReconciliation(t *testing.T) {
 	assert.False(t, got.spawning)
 
 	got.mode = tuiModeConfirmRetire
-	got.retireTarget = tuiAgentRow{ConvID: "c1", Title: "offline"}
+	got.lifecycleTarget = tuiAgentRow{ConvID: "c1", Title: "offline"}
 	blocked, mutationCmd = got.handleKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	got = blocked.(tuiModel)
 	assert.Nil(t, mutationCmd)
 	assert.Equal(t, tuiModeList, got.mode)
-	assert.Empty(t, got.retireTarget)
+	assert.Empty(t, got.lifecycleTarget)
 	assert.False(t, got.retiring)
 
 	assert.NotContains(t, got.keyHintLine(), "new agent")

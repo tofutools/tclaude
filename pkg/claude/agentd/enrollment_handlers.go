@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -49,6 +50,19 @@ type retireConvOutcome struct {
 // retire touched — the bulk cleanup uses them for its ownerless-group
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
+	return retireAgentConvWithPrecondition(convID, by, reason, false)
+}
+
+var errRetireRequiresOffline = errors.New("agent is online")
+
+// retireAgentConvWithPrecondition optionally requires the target to remain
+// offline until the demotion commits. The check happens under the same launch
+// lock as resume, so a stale UI confirmation cannot retire an agent that was
+// resumed after the prompt opened.
+func retireAgentConvWithPrecondition(
+	convID, by, reason string,
+	requireOffline bool,
+) (retireConvOutcome, []int64, error) {
 	// Publish cancellation before waiting for the in-process launch mutex. A
 	// recovery worker may already own that mutex while it prepares a resume;
 	// its final durable claim check immediately before Spawn then observes this
@@ -67,6 +81,9 @@ func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, err
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	if requireOffline && pickAliveSession(convID) != nil {
+		return retireConvOutcome{}, nil, errRetireRequiresOffline
+	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
 	var out retireConvOutcome
@@ -194,6 +211,7 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	}
 	shutdown := retireShouldShutdown(r)
 	deleteWorktree := retireShouldDeleteWorktree(r)
+	query := r.URL.Query()
 
 	// The precondition pair is the caller's frozen probe result: the worktree
 	// path and the branch checked out there. Both halves travel together —
@@ -201,7 +219,6 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	// `git switch` in place without ever leaving the confirmed path, so a
 	// path-only precondition would leave that branch unguarded. Presence, not
 	// emptiness, binds the branch: a detached HEAD legitimately freezes "".
-	query := r.URL.Query()
 	_, hasExpectedWorktree := query["expected_worktree"]
 	_, hasExpectedBranch := query["expected_branch"]
 	if (hasExpectedWorktree || hasExpectedBranch) && !deleteWorktree {
@@ -248,8 +265,18 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	}
 
 	reason := strings.TrimSpace(query.Get("reason"))
-	outcome, _, err := retireAgentConv(convID, enrollmentActor(caller), reason)
+	outcome, _, err := retireAgentConvWithPrecondition(
+		convID,
+		enrollmentActor(caller),
+		reason,
+		query.Get("require_offline") == "1",
+	)
 	if err != nil {
+		if errors.Is(err, errRetireRequiresOffline) {
+			writeError(w, http.StatusConflict, "conflict",
+				"agent is online; take it offline before retiring")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}

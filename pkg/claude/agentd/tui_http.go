@@ -21,6 +21,7 @@ func buildTUIHTTPHandler() http.Handler {
 	mux.HandleFunc("GET /v1/groups", handleGroups)
 	mux.HandleFunc("GET /v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
+	mux.HandleFunc("POST /v1/agent/{selector}/stop", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/retire", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/resume", handleAgentByConv)
 
