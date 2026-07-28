@@ -621,7 +621,8 @@ func newTUIModel(api tuiAPI) tuiModel {
 	// and historically represents the embedded console. A real API always
 	// replaces these defaults with its explicit capabilities below.
 	m := tuiModel{
-		api: api,
+		api:        api,
+		refreshing: true, // Init immediately starts the first refresh.
 		capabilities: tuiCapabilities{
 			attachLocalPane:  true,
 			completeLocalDir: true,

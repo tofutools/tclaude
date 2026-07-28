@@ -96,6 +96,18 @@ func TestRemoteTUIAPIRemainsReusableAfterAnOutage(t *testing.T) {
 	assert.Equal(t, "back", rows[0].Title)
 }
 
+func TestTUIInitialRefreshDoesNotOverlapTheFirstTick(t *testing.T) {
+	api, err := newRemoteTUIAPI("agent-host:8321", "tclo_remote-test")
+	require.NoError(t, err)
+	m := newTUIModel(api)
+	assert.True(t, m.refreshing, "Init starts a refresh immediately")
+
+	updated, cmd := m.Update(tuiTickMsg{})
+	got := updated.(tuiModel)
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd, "the tick must reschedule itself without replacing the in-flight refresh")
+}
+
 func TestRemoteTUIModelDoesNotClaimHostLocalCapabilities(t *testing.T) {
 	api, err := newRemoteTUIAPI("agent-host:8321", "tclo_remote-test")
 	require.NoError(t, err)
