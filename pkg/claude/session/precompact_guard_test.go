@@ -268,12 +268,61 @@ func TestRunHookCallback_CompactingStatusLifecycle(t *testing.T) {
 	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
 		"session_id":      "conv-compact-status",
 		"hook_event_name": "PostCompact",
+		"trigger":         "auto",
 		"cwd":             dir,
 	}))
 	state, err = LoadSessionState("compact-status-sess")
 	require.NoError(t, err)
 	assert.Equal(t, StatusWorking, state.Status)
 	assert.Empty(t, state.StatusDetail, "PostCompact ends the visible compacting phase")
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "SessionStart",
+		"source":          "compact",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status,
+		"the post-compact SessionStart must not report idle during an active turn")
+	assert.Empty(t, state.StatusDetail)
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Bash",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, state.Status)
+	assert.Equal(t, "Bash", state.StatusDetail,
+		"the next operational hook selects the post-compaction status")
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", preCompact))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PostCompact",
+		"trigger":         "auto",
+		"cwd":             dir,
+	}))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "SessionStart",
+		"source":          "compact",
+		"cwd":             dir,
+	}))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "Stop",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, state.Status,
+		"a genuinely idle next hook still reports idle immediately")
+	assert.Empty(t, state.StatusDetail)
 
 	assert.Empty(t, captureHookStdout(t, "compact-status-sess", preCompact))
 	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
@@ -286,6 +335,30 @@ func TestRunHookCallback_CompactingStatusLifecycle(t *testing.T) {
 	assert.Equal(t, StatusWorking, state.Status)
 	assert.Empty(t, state.StatusDetail,
 		"any later accepted hook clears an abandoned compacting phase")
+
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PreCompact",
+		"trigger":         "manual",
+		"cwd":             dir,
+	}))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "PostCompact",
+		"trigger":         "manual",
+		"cwd":             dir,
+	}))
+	assert.Empty(t, captureHookStdout(t, "compact-status-sess", map[string]any{
+		"session_id":      "conv-compact-status",
+		"hook_event_name": "SessionStart",
+		"source":          "compact",
+		"cwd":             dir,
+	}))
+	state, err = LoadSessionState("compact-status-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusIdle, state.Status,
+		"a manual compaction returns to the already-idle prompt")
+	assert.Empty(t, state.StatusDetail)
 }
 
 func TestRunHookCallback_PreCompactStatusAttribution(t *testing.T) {

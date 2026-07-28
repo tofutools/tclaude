@@ -39,7 +39,7 @@ type HookCallbackInput struct {
 	NotificationType string          `json:"notification_type,omitempty"`
 	Reason           string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
 	Source           string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
-	Trigger          string          `json:"trigger,omitempty"` // PreCompact: auto | manual
+	Trigger          string          `json:"trigger,omitempty"` // PreCompact/PostCompact: auto | manual
 	Message          string          `json:"message,omitempty"`
 	Prompt           string          `json:"prompt,omitempty"`
 	Model            string          `json:"model,omitempty"`
@@ -655,7 +655,8 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// boundary, but a failed/aborted compaction may only produce another
 	// turn hook). Clear the phase eagerly so even an event whose arm below
 	// only stamps last_hook cannot leave the dashboard wedged on it.
-	if state.Status == StatusWorking && state.StatusDetail == "compacting" {
+	wasCompacting := state.Status == StatusWorking && state.StatusDetail == "compacting"
+	if wasCompacting {
 		state.StatusDetail = ""
 		if err := SaveSessionState(state); err != nil {
 			slog.Warn("failed to clear compacting status", "error", err, "module", "hooks")
@@ -938,7 +939,12 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			state.SubagentCount = len(state.Subagents)
 			return SaveSessionState(state)
 		}
-		// Session started or resumed - update ConvID and set to idle.
+		// Session started or resumed - update ConvID and normally set to
+		// idle. A post-compaction SessionStart is different: it is an
+		// in-process continuation boundary, not evidence that the turn
+		// stopped. PostCompact already selected working (auto/unknown) or
+		// idle (manual), so preserve that status until the next operational
+		// hook determines a new one.
 		// A (re)starting main thread definitionally has NO sub-agents
 		// running yet — this is a known-zero boundary for the ledger, and
 		// the reset is what clears phantoms left by lost SubagentStops
@@ -957,8 +963,10 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		if input.Source == "startup" || input.Source == "" {
 			state.BgShells = nil
 		}
-		state.Status = StatusIdle
-		state.StatusDetail = ""
+		if input.Source != "compact" {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+		}
 		// The conversation is alive again — drop any exit_reason a
 		// previous exit (or the reaper) recorded. Cleared conv-wide, not
 		// just for this row: a conv can own several session rows and the
@@ -1054,6 +1062,25 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 				slog.Warn("failed to reset compact state", "error", err, "module", "hooks")
 			} else {
 				slog.Info("post-compact state reset", "session_id", envSessionID, "module", "hooks")
+			}
+		}
+		// Auto-compaction happens inside an active turn, so the eager
+		// compacting-detail clear above intentionally leaves it working.
+		// A manual /compact returns the human to an idle prompt instead.
+		// SessionStart(source=compact), which follows this hook, preserves
+		// whichever status this boundary selected.
+		// PostCompact is exempt from the mismatched-conversation guard
+		// because a legitimate compaction can rotate the conv-id before its
+		// SessionStart(compact) announces that rotation. Do not let that
+		// exemption turn a foreign child's manual PostCompact into an idle
+		// stamp on the host: require either the ordinary attribution check,
+		// or the attributed compacting phase this hook just cleared.
+		attributed := wasCompacting || hookBelongsToTrackedMainConversation(state, input)
+		if input.Trigger == "manual" && attributed {
+			state.Status = StatusIdle
+			state.StatusDetail = ""
+			if err := SaveSessionState(state); err != nil {
+				return err
 			}
 		}
 		if err := db.UpdateSessionLastHook(state.ID, state.LastHook); err != nil {
