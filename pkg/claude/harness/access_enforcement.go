@@ -169,8 +169,8 @@ func BuiltinLaunchOSSandboxForValidatedMode(
 // ResolveAccessEnforcement mints capability data only after rung 1 has
 // produced positive OS-sandbox evidence. Outer implementations use their live
 // LaunchOSSandbox verdict. Builtin implementations may derive the same evidence
-// narrowly from a fully-resolved validated mode; OpenCode is refused by
-// SupportsBuiltinOSSandbox before that derivation.
+// narrowly from a fully-resolved validated mode; OpenCode has no builtin OS
+// sandbox and is refused by SupportsBuiltinOSSandbox before that derivation.
 func ResolveAccessEnforcement(
 	h *Harness,
 	implementation sandboxpolicy.Implementation,
@@ -257,7 +257,8 @@ func accessEnforcementTable(
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName) {
+			(h.Name == DefaultName || h.Name == CodexName ||
+				h.Name == OpenCodeName) {
 			caps.NetworkList = EnforceFull
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
@@ -284,12 +285,6 @@ func accessEnforcementTable(
 			caps.NetworkListCondition =
 				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
-		}
-		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
-			goos == "linux" && filteredNetworkReady &&
-			h.Name == OpenCodeName {
-			caps.NetworkListRefusal =
-				"OpenCode filtered networking remains disabled until the pinned real-OpenCode M3 smoke; use Claude Code or Codex with tclaude-layer, install missing filtered-network prerequisites if reported, or use network open"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull

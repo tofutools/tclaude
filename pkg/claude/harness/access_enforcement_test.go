@@ -305,7 +305,7 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 	assert.Equal(t, "tools_only_scope", notices[1].Reason)
 }
 
-func TestM2bNetworkListCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
+func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
 	}
@@ -335,11 +335,13 @@ func TestM2bNetworkListCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 				want := EnforceNone
 				if platform == "linux" &&
 					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
-					(target.harness.Name == DefaultName || target.harness.Name == CodexName) {
+					(target.harness.Name == DefaultName ||
+						target.harness.Name == CodexName ||
+						target.harness.Name == OpenCodeName) {
 					want = EnforceFull
 				}
 				assert.Equal(t, want, row.NetworkList,
-					"only the M2b Linux Claude/Codex tclaude-layer cells have an executing CI smoke")
+					"only the Linux tclaude-layer harness cells have executing CI smokes")
 			})
 		}
 	}
@@ -375,7 +377,7 @@ func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
 	assert.Contains(t, predicted.Detail, "outbound remains open")
 }
 
-func TestM2bOpenCodeFilteredPredictionAndReadyPlanRefuseUntilM3(t *testing.T) {
+func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeList,
@@ -391,23 +393,26 @@ func TestM2bOpenCodeFilteredPredictionAndReadyPlanRefuseUntilM3(t *testing.T) {
 	)
 	require.NoError(t, err)
 	preview := DescribePredictedAccess(axes, prediction).Network
-	assert.Equal(t, AccessPredictionRefused, preview.Outcome)
-	assert.Contains(t, preview.Detail, "real-OpenCode M3 smoke")
+	assert.Equal(t, AccessPredictionEnforced, preview.Outcome)
+	assert.Contains(t, preview.Detail, "Prerequisite-conditional prediction")
 
 	row, err := accessEnforcementTable(
 		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", true,
 	)
 	require.NoError(t, err)
-	_, _, err = PlanAccessEnforcement(axes, accessEnforcementFromTable(row))
-	require.ErrorContains(t, err, "real-OpenCode M3 smoke")
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeList, rendered.Network.Mode)
+	assert.Empty(t, notices)
 
 	row, err = accessEnforcementTable(
 		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", false,
 	)
 	require.NoError(t, err)
-	rendered, notices, err := PlanAccessEnforcement(
+	rendered, notices, err = PlanAccessEnforcement(
 		axes, accessEnforcementFromTable(row))
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)

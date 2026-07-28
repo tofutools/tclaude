@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -814,6 +816,9 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 
 func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{
+		Contract: session.TclaudeLayerLaunchContract{
+			StateRoot: "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
 		Effective: sandboxpolicy.EffectiveProfile{
 			Environment: []sandboxpolicy.EnvironmentEntry{
 				{Name: "PROFILE_VALUE", Value: "frozen"},
@@ -822,12 +827,58 @@ func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 		},
 	}
 	env := openCodeServerEnvironment([]string{
+		"HOME=/home/ambient",
 		"PATH=/usr/bin",
 		"PROFILE_VALUE=ambient",
 	}, spec)
 	assert.Equal(t, "frozen", lastOpenCodeEnvironmentValue(env, "PROFILE_VALUE"))
 	assert.Equal(t, "/tmp/agent-cache", lastOpenCodeEnvironmentValue(env, "GOCACHE"))
 	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(env, "PATH"))
+}
+
+func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *testing.T) {
+	spec := &session.TclaudeLayerLaunchSpec{
+		Contract: session.TclaudeLayerLaunchContract{
+			StateRoot: "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		Effective: sandboxpolicy.EffectiveProfile{
+			Network: &sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Loopback: true, Ports: []int{9443},
+				}},
+			},
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: "/home/profile"},
+				{Name: "OPENCODE_CONFIG_CONTENT", Value: `{"provider":"frozen"}`},
+				{Name: "OPENCODE_PURE", Value: "0"},
+				{Name: "OPENCODE_AUTH_CONTENT", Value: `{"ambient":"profile"}`},
+			},
+		},
+	}
+	env := openCodeServerEnvironment([]string{
+		"HOME=/home/ambient",
+		"OPENCODE_CONFIG=/tmp/ambient.json",
+		"OPENCODE_CONFIG_DIR=/tmp/ambient-config",
+		"OPENCODE_DISABLE_PROJECT_CONFIG=0",
+		"OPENCODE_PURE=0",
+		"OPENCODE_DISABLE_MODELS_FETCH=0",
+		"OPENCODE_AUTH_CONTENT={\"ambient\":true}",
+	}, spec)
+
+	assert.Equal(t, `{"provider":"frozen"}`,
+		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_CONTENT"))
+	assert.Equal(t,
+		"/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"+openCodeFilteredHomeBase,
+		lastOpenCodeEnvironmentValue(env, "HOME"))
+	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG"))
+	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_DIR"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+		env, "OPENCODE_DISABLE_PROJECT_CONFIG"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(env, "OPENCODE_PURE"))
+	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+		env, "OPENCODE_DISABLE_MODELS_FETCH"))
+	assert.Equal(t, "{}", lastOpenCodeEnvironmentValue(env, "OPENCODE_AUTH_CONTENT"))
 }
 
 func lastOpenCodeEnvironmentValue(environment []string, name string) string {
@@ -911,6 +962,128 @@ func TestReconcileOpenCodeRuntimeReplaysPersistedWrapperSpec(t *testing.T) {
 
 	assert.False(t, reconcileOpenCodeRuntime("spwn-wrapped-replay"))
 	assert.True(t, restartAttempted)
+}
+
+func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
+	t *testing.T,
+) {
+	if runtime.GOOS != "linux" {
+		t.Skip("OpenCode filtered replay is Linux-only")
+	}
+	setupTestDB(t)
+	shortBase := agentipctest.ShortSocketDir(t)
+	realHome := filepath.Join(shortBase, "home-real")
+	aliasHome := filepath.Join(shortBase, "home-alias")
+	require.NoError(t, os.MkdirAll(realHome, 0o700))
+	require.NoError(t, os.Symlink(realHome, aliasHome))
+	t.Setenv("HOME", aliasHome)
+	shortData, err := os.MkdirTemp("/tmp", "tcl823-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(shortData) })
+	t.Setenv("XDG_DATA_HOME", shortData)
+	agentSocket := agentipc.CanonicalSocketPath()
+	require.Contains(t, sandboxpolicy.AgentdSocketFloor(), agentSocket,
+		"positive control must use a generated agentd socket floor entry")
+	require.NoError(t, os.MkdirAll(filepath.Dir(agentSocket), 0o700))
+	agentListener, err := net.Listen("unix", agentSocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = agentListener.Close() })
+	cwd := filepath.Join(realHome, "work")
+	require.NoError(t, os.MkdirAll(cwd, 0o700))
+	previousResolver := resolveOpenCodeTclaudeLayer
+	previousRelayExecutable := openCodeRelayExecutable
+	resolveOpenCodeTclaudeLayer = func(
+		sandboxpolicy.NetworkPosture,
+	) (string, harness.LaunchOSSandbox, error) {
+		return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
+	}
+	openCodeRelayExecutable = os.Executable
+	t.Cleanup(func() {
+		resolveOpenCodeTclaudeLayer = previousResolver
+		openCodeRelayExecutable = previousRelayExecutable
+	})
+	agentID := db.NewAgentID()
+	allocation, err := allocatePrivateOpenCodeState(agentID)
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true, Ports: []int{43210},
+		}},
+	}
+	snapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "OPENCODE_CONFIG_CONTENT",
+		Value: `{"enabled_providers":["test"],"provider":{"test":{` +
+			`"npm":"@ai-sdk/openai-compatible","whitelist":["model"],` +
+			`"models":{"model":{}},"options":{` +
+			`"baseURL":"http://host.tclaude.internal:43210"}}}}`,
+	}}
+	spec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &snapshot, agentID)
+	require.NoError(t, err)
+	frozenAgentSocket := session.CanonicalTclaudeLayerGeneratedPath(agentSocket)
+	require.NotEqual(t, agentSocket, frozenAgentSocket,
+		"positive control requires a symlink-resolved floor identity")
+	require.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
+		Path: frozenAgentSocket, Access: sandboxpolicy.AccessRead,
+	})
+	_, encoded, err := openCodeSandboxRecord(spec)
+	require.NoError(t, err)
+
+	require.NotNil(t, spec.Contract.OpenCodeControl)
+	control := spec.Contract.OpenCodeControl
+	runtime := db.OpenCodeRuntime{
+		SessionID:             "spwn-filtered-account-replay",
+		ConvID:                "ses-filtered-account-replay",
+		ServerURL:             "http://opencode.internal",
+		Password:              "private",
+		Cwd:                   cwd,
+		PID:                   99_999_999,
+		PermissionJSON:        openCodeTestPermissionJSON,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: encoded,
+		Transport:             db.OpenCodeTransportUnixRelay,
+		ControlSocketPath:     control.SocketPath,
+		ControlSocketDevice:   1,
+		ControlSocketInode:    1,
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
+	hostileConfig := filepath.Join(
+		allocation.StateRoot, openCodeFilteredConfigBase,
+		"opencode", "opencode.json")
+	require.NoError(t, os.WriteFile(
+		hostileConfig, []byte(`{"provider":{"opaque":{}}}`), 0o600))
+	_, err = openCodeRuntimeSandboxSpec(runtime)
+	require.ErrorContains(t, err, "not provider-empty")
+	require.NoError(t, os.Remove(hostileConfig))
+	_, err = openCodeRuntimeSandboxSpec(runtime)
+	require.NoError(t, err)
+
+	previousRestart := restartOpenCodeProcess
+	t.Cleanup(func() { restartOpenCodeProcess = previousRestart })
+	restartAttempted := false
+	restartOpenCodeProcess = func(
+		_ *db.OpenCodeRuntime,
+		_ *session.TclaudeLayerLaunchSpec,
+	) (*openCodeProcess, error) {
+		restartAttempted = true
+		return nil, errors.New("stop after observing filtered replay")
+	}
+	assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID))
+	assert.True(t, restartAttempted,
+		"a clean persisted spec with a live agentd socket must reach restart")
+
+	plantOpenCodeFilteredActiveAccount(
+		t, allocation.StateRoot, "http://host.tclaude.internal:43210")
+	_, err = openCodeRuntimeSandboxSpec(runtime)
+	require.ErrorContains(t, err, "active persistent account/org")
+
+	restartAttempted = false
+	assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID))
+	assert.False(t, restartAttempted,
+		"persistent account authority must refuse before replay exec")
 }
 
 func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {

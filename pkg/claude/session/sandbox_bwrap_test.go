@@ -839,6 +839,26 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	require.Len(t, notices, 1)
 	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
 	assert.Contains(t, notices[0].Detail, "TCL-826")
+
+	openCode, resolveErr := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, resolveErr)
+	notices, err = ValidateTclaudeLayerNetwork(
+		openCode, custom, harness.ResolvedModelTransport{
+			Model:            "test/test-model",
+			Provider:         "test",
+			BaseURL:          "https://gateway.example/v1",
+			ProviderResolved: true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail, "explicit-provider configs only")
+	assert.Contains(t, notices[0].Detail, "OPENCODE_CONFIG_CONTENT")
+	assert.Contains(t, notices[0].Detail, "without a provider override")
+	assert.Contains(t, notices[0].Detail, "read-only, provider-empty private XDG and HOME")
+	assert.Contains(t, notices[0].Detail, "before every initial exec or restart")
+	assert.Contains(t, notices[0].Detail, "persistent account/org authority")
+	assert.Contains(t, notices[0].Detail, "soft tool policy")
+	assert.Contains(t, notices[0].Detail, "packet-enforced floor")
 }
 
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {

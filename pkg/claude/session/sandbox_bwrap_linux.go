@@ -226,10 +226,7 @@ func tclaudeLayerServerCommand(
 	plan sandboxpolicy.MountPlan,
 	serverCommand string,
 ) (string, error) {
-	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
-		return "", fmt.Errorf("filtered-network server boundaries remain disabled until M3")
-	}
-	return bwrapCommand(
+	command, err := bwrapCommand(
 		binary,
 		phase0WriteDirs,
 		privateWriteDirs,
@@ -239,6 +236,42 @@ func tclaudeLayerServerCommand(
 		plan,
 		serverCommand,
 	)
+	if err != nil {
+		return "", err
+	}
+	filtered, err := filteredNetworkRelayPrefix(plan)
+	if err != nil {
+		return "", err
+	}
+	if filtered == "" {
+		return command, nil
+	}
+	return tclaudeLayerRelayPrefix() + filtered + " -- " + command, nil
+}
+
+func tclaudeLayerUnixRelayServerCommandArgs(
+	spec TclaudeLayerLaunchSpec,
+	bwrapArgv []string,
+) ([]string, error) {
+	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return nil, err
+	}
+	if plan.NetworkPosture != sandboxpolicy.NetworkFiltered {
+		return bwrapArgv, nil
+	}
+	encoded, err := encodeFilteredNetworkRelayPolicy(plan)
+	if err != nil {
+		return nil, err
+	}
+	argv := []string{
+		"/proc/self/fd/4",
+		"session", tclaudeLayerWinchRelayCommand,
+		"--preserve-fds", "2",
+		"--filtered-network-policy", encoded,
+		"--",
+	}
+	return append(argv, bwrapArgv...), nil
 }
 
 func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {

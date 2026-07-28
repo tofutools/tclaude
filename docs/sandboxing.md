@@ -553,13 +553,12 @@ report socket fidelity. Opt into its adjacent details chevron with
 `sandbox-profiles plan` for a dry-run of explicit inputs.
 
 The Linux `filtered` posture enforces the packet and DNS subset for exact
-`tclaude-layer` Claude Code and Codex launches: IPv4/IPv6 CIDR destinations,
+`tclaude-layer` Claude Code, Codex, and OpenCode launches: IPv4/IPv6 CIDR destinations,
 exact DNS hosts, label-bound domains with optional subdomains, TCP/UDP
 destination ports (including QUIC as UDP), and synthetic host loopback. Raw and
 packet sockets, including authored ICMP access, are not part of the network-list
 contract. Host/domain selectors are `Partial`, because they enforce DNS-derived
-addresses rather than application identity. OpenCode waits for its pinned
-real-harness M3 smoke; `stacked` does not claim this cell.
+addresses rather than application identity. `stacked` does not claim this cell.
 
 Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
 `nft` through root-owned, non-group/world-writable paths. The pasta probe also
@@ -633,8 +632,36 @@ therefore requires inspectable file-backed API-key authentication (or an
 explicit custom provider that does not require OpenAI auth); ChatGPT, external
 token, and opaque keyring routes refuse with the named remedies of signing in
 with an API key or using network open. Complete dynamic provider resolution is
-tracked in TCL-826. OpenCode remains unresolved and refused until M3.
-For both supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
+tracked in TCL-826.
+
+OpenCode filtered supports explicit-provider configs only. The launch model and
+frozen profile `OPENCODE_CONFIG_CONTENT` must name exactly one provider using
+`@ai-sdk/openai-compatible`, whitelist and define exactly that one launch
+model, and give a concrete `options.baseURL` covered by the authored network
+list. The filtered server forces OpenCode's project-config, custom-config,
+model-fetch, auto-update, stored-auth, and plugin isolation inputs and replaces
+the ambient XDG and `$HOME/.opencode` config sources with provider-empty
+per-agent directories that are daemon-final read-only inside the executor. Their
+canonical contents and persistent account/org absence are rechecked immediately
+before every initial server exec and persisted restart. A model-level
+`provider` override refuses because it can replace
+the inspected adapter. An active persistent OpenCode account/organization also
+refuses because its remote config loads after inline content; sign out or clear
+the active organization,
+or use network open. Managed `/etc/opencode` config, opaque or default
+providers, substitutions, multiple providers/models, and other adapters refuse
+with the named remedy of using the strict explicit shape or network open.
+Unlike Claude/Codex, there is no implicit first-party origin
+set to discover: the authored base URL is the origin authority, and the pinned
+OpenCode 1.18.6 smoke proves the real server consumes it while an unauthorised
+TCP/UDP endpoint remains denied.
+
+OpenCode's sandbox-profile network access rules for built-in `webfetch` and
+`websearch` are soft tool rules. They are not the filtered security boundary;
+the `tclaude-layer` nft policy is the packet-enforced floor around the
+tool-executing server and all of its subprocesses.
+
+For all supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
 `ALL_PROXY` (including lowercase variants) changes the actual transport
 boundary and therefore refuses filtered launch until TCL-826 adds proxy-aware
 resolution; remove the proxy variable or use network open.
@@ -808,17 +835,24 @@ TCLAUDE_SANDBOX_V2_SMOKE=1 \
 ```
 
 The same Linux CI job installs a pinned OpenCode binary and hard-gates the
-server-authoritative smoke. That test starts a real wrapped `opencode serve`,
+server-authoritative smokes. The filesystem test starts a real wrapped `opencode serve`,
 connects a real unwrapped `opencode attach`, verifies the permission patch,
 executes the real bash tool across an allowed and denied path, and requires
 `tclaude agent whoami` from that tool subprocess to resolve the exact managed
-agent identity. It has no user-namespace capability skip. To repeat it after
-installing OpenCode:
+agent identity. The filtered activation test additionally proves the server
+consumes its inspected explicit `options.baseURL`, suppresses hostile alternate
+config/auth/model/plugin sources, and allows authored TCP/UDP tool traffic while
+denying an adjacent unauthorised port. Neither test has a user-namespace
+capability skip. To repeat them after installing OpenCode:
 
 ```bash
 TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
   TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
   go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerExecutorSmoke$' -count=1 -v -timeout=120s
+
+TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
+  TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY="$HOME/.cache/tclaude/tclaude-sandbox-v2-smoke" \
+  go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=180s
 ```
 
 The Darwin job likewise verifies that Seatbelt enforces its deny-write probe

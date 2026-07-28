@@ -62,6 +62,13 @@ func tclaudeLayerServerCommand(
 		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
+func tclaudeLayerUnixRelayServerCommandArgs(
+	_ TclaudeLayerLaunchSpec,
+	bwrapArgv []string,
+) ([]string, error) {
+	return bwrapArgv, nil
+}
+
 func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {
 	return harness.LaunchOSSandbox{
 		State:  "off",

@@ -414,6 +414,26 @@ jobs:
             exit 1
           fi
 
+      - name: Run OpenCode filtered-network activation smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-filtered-network-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeFilteredNetworkExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode filtered-network activation smoke did not complete"
+              echo
+              echo "The pinned real OpenCode explicit-provider and packet-boundary proof did not report an explicit pass."
+              echo "A skip, missing/renamed test, config-isolation regression, or zero-test success is a hard failure."
+              echo "The smoke must prove the executing server consumes only the inspected provider route, then allow authored model/TCP/UDP traffic and deny an unauthorised port."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeFilteredNetworkExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run stacked real-engine smoke
         env:
           TCLAUDE_STACKED_SANDBOX_SMOKE: "1"

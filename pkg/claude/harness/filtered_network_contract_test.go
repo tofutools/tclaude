@@ -34,7 +34,7 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	}
 }
 
-func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2cCapabilityCells(t *testing.T) {
+func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesActivatedCapabilityCells(t *testing.T) {
 	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
@@ -54,12 +54,8 @@ func TestAssessFilteredNetworkRulesCIDROnlyTargetMatchesM2cCapabilityCells(t *te
 			"", "linux", true,
 		)
 		require.NoError(t, tableErr)
-		want := EnforceFull
-		if harnessName == OpenCodeName {
-			want = EnforceNone
-		}
-		assert.Equal(t, want, caps.NetworkList,
-			"M2c serves Claude/Codex tclaude-layer; OpenCode waits for M3")
+		assert.Equal(t, EnforceFull, caps.NetworkList,
+			"every harness consumes the same packet-enforced tclaude-layer gateway")
 	}
 }
 

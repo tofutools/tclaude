@@ -93,6 +93,20 @@ type TclaudeLayerLaunchInput struct {
 	OpenCodeControl  *TclaudeLayerOpenCodeControl
 }
 
+// TclaudeLayerNetworkPosture derives the launch posture from the current
+// access-axis representation. Access lists intentionally have no legacy
+// network_access spelling, so consumers must not inspect that compatibility
+// field alone.
+func TclaudeLayerNetworkPosture(
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.NetworkPosture, error) {
+	axes, err := sandboxpolicy.EffectiveAccessAxes(effective)
+	if err != nil {
+		return sandboxpolicy.NetworkHostOpen, err
+	}
+	return sandboxpolicy.NetworkPostureForRules(axes.Network)
+}
+
 // BuildTclaudeLayerLaunchSpec freezes the launch-active filesystem rows, then
 // constructs the exact launch contract the outer
 // renderer consumes. Callers may persist the result and re-render it later
@@ -170,7 +184,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		// authenticated coordination path reachable even when /tmp or an
 		// authored Home deny hides the socket's ancestors.
 		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-			socket = canonicalGeneratedSandboxPath(socket)
+			socket = CanonicalTclaudeLayerGeneratedPath(socket)
 			if socket != "" {
 				launchReadDirs = append(launchReadDirs, socket)
 			}
@@ -225,11 +239,15 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	}, nil
 }
 
-// canonicalGeneratedSandboxPath freezes a daemon-owned path even when its leaf
-// does not exist yet. Generated paths bypass the authored-profile protected
-// root check because the daemon-final contract deliberately re-closes those
-// roots; they still need the same stable parent identity on replay.
-func canonicalGeneratedSandboxPath(path string) string {
+// CanonicalTclaudeLayerGeneratedPath freezes a daemon-owned path even when its
+// leaf does not exist yet. Generated paths bypass the authored-profile
+// protected root check because the daemon-final contract deliberately re-closes
+// those roots; they still need the same stable parent identity on replay.
+//
+// Persisted-spec consumers must use this same identity function when
+// recognizing generated contract rows, rather than comparing textual paths
+// that can differ through a supported symlinked HOME.
+func CanonicalTclaudeLayerGeneratedPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "." || !filepath.IsAbs(path) {
 		return ""
@@ -334,29 +352,16 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	return probeFilteredNetworkPrerequisite()
 }
 
-// ValidateFilteredNetworkHarnessSupport keeps the M2b OpenCode boundary
-// fail-closed once the host could otherwise activate filtered enforcement.
-// Missing prerequisites retain the existing honest widen-and-warn behavior;
-// M3 may remove this refusal only after its pinned real-OpenCode smoke passes.
+// ValidateFilteredNetworkHarnessSupport is the harness activation seam. All
+// currently registered tclaude-layer harnesses consume the Linux filtered
+// gateway; provider-specific model transport remains independently fail-closed.
 func ValidateFilteredNetworkHarnessSupport(
-	h *harness.Harness,
-	implementation sandboxpolicy.Implementation,
-	axes sandboxpolicy.ResolvedAxes,
-	probe FilteredNetworkPrerequisite,
+	_ *harness.Harness,
+	_ sandboxpolicy.Implementation,
+	_ sandboxpolicy.ResolvedAxes,
+	_ FilteredNetworkPrerequisite,
 ) error {
-	if h == nil ||
-		implementation != sandboxpolicy.ImplementationTclaudeLayer ||
-		axes.Network.Mode != sandboxpolicy.AccessModeList ||
-		!probe.Detected ||
-		h.Name != harness.OpenCodeName {
-		return nil
-	}
-	return &harness.SandboxCapabilityError{
-		Kind: harness.SandboxCapabilityNetworkAllowlist,
-		Message: "OpenCode filtered networking remains disabled until the pinned " +
-			"real-OpenCode M3 smoke; use Claude Code or Codex with tclaude-layer, " +
-			"or use network open",
-	}
+	return nil
 }
 
 // LaunchWhy is persisted in the resolved snapshot and therefore reaches both
@@ -422,6 +427,12 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 	posture sandboxpolicy.NetworkPosture,
 ) harness.LaunchOSSandbox {
 	if harnessName == harness.OpenCodeName {
+		if posture == sandboxpolicy.NetworkFiltered {
+			resolved := TclaudeLayerLaunchOSSandbox(posture)
+			resolved.Source += "; OpenCode tool-executing server confined; " +
+				"attach client outside boundary over authenticated Unix relay"
+			return resolved
+		}
 		return tclaudeLayerOpenCodeLaunchOSSandbox()
 	}
 	return TclaudeLayerLaunchOSSandbox(posture)
@@ -458,6 +469,9 @@ func ValidateTclaudeLayerNetwork(
 		}
 		if h.Name == harness.DefaultName {
 			detail += " If Claude's provider route changes after preflight, an unauthored destination is denied fail-closed for new flows at the packet floor; dynamic provider-resolution follow-up is tracked in TCL-826."
+		}
+		if h.Name == harness.OpenCodeName {
+			detail += " OpenCode filtered supports explicit-provider configs only: the launch model and frozen OPENCODE_CONFIG_CONTENT must name exactly one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses daemon-final read-only, provider-empty private XDG and HOME config directories and rechecks those directories plus persistent account/org authority before every initial exec or restart so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
@@ -712,7 +726,26 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	// exactly fd 3 (listener) and fd 4 (relay executable).
 	args = append(args, "--")
 	args = append(args, serverArgv...)
-	return append([]string{binary}, args...), nil
+	return tclaudeLayerUnixRelayServerCommandArgs(
+		spec, append([]string{binary}, args...))
+}
+
+// TclaudeLayerUnixRelayServerFDs returns the descriptors the inherited relay
+// command must name. The filtered supervisor owns bwrap fd 3 for its status
+// stream and fds 4-7 for its four sealed bootstrap inputs, then preserves the
+// launcher's listener and executable as fds 8 and 9. Without that supervisor
+// the launcher descriptors pass directly as fds 3 and 4.
+func TclaudeLayerUnixRelayServerFDs(
+	spec TclaudeLayerLaunchSpec,
+) (listenerFD, executableFD int, err error) {
+	_, _, _, _, _, plan, err := tclaudeLayerSpecRenderInput(spec)
+	if err != nil {
+		return 0, 0, err
+	}
+	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
+		return 8, 9, nil
+	}
+	return 3, 4, nil
 }
 
 func tclaudeLayerSpecRenderInput(
@@ -831,12 +864,14 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	if control == nil || control.Transport != TclaudeLayerUnixRelayTransport {
 		return fmt.Errorf("tclaude-layer v4 launch spec has no Unix-relay control authority")
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(spec.Effective.NetworkAccess)
+	posture, err := TclaudeLayerNetworkPosture(spec.Effective)
 	if err != nil {
 		return err
 	}
-	if posture != sandboxpolicy.NetworkIsolatedWithAgentd {
-		return fmt.Errorf("tclaude-layer v4 Unix relay requires the isolated network posture")
+	if posture != sandboxpolicy.NetworkIsolatedWithAgentd &&
+		posture != sandboxpolicy.NetworkFiltered {
+		return fmt.Errorf(
+			"tclaude-layer v4 Unix relay requires the isolated or filtered network posture")
 	}
 	rawPath := strings.TrimSpace(control.SocketPath)
 	path := filepath.Clean(rawPath)

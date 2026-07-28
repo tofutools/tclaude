@@ -163,7 +163,7 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
-func TestOpenCodeFilteredNetworkRefusesOnlyAfterPrerequisitesResolve(t *testing.T) {
+func TestOpenCodeFilteredNetworkUsesSharedPrerequisiteContract(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{{
@@ -190,7 +190,8 @@ func TestOpenCodeFilteredNetworkRefusesOnlyAfterPrerequisitesResolve(t *testing.
 		axes,
 		FilteredNetworkPrerequisite{Detected: true},
 	)
-	require.ErrorContains(t, err, "real-OpenCode M3 smoke")
+	require.NoError(t, err,
+		"the pinned M3 boundary activates OpenCode on the shared gateway")
 
 	err = ValidateFilteredNetworkHarnessSupport(
 		harness.Default(),

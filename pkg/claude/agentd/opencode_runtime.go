@@ -424,9 +424,14 @@ func openCodeRuntimeSandboxSpec(
 	}
 	if spec.Version == session.TclaudeLayerLaunchSpecVersion ||
 		spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
-		if err := validateOpenCodeV3LaunchContract(spec.Contract); err != nil {
+		if err := validateOpenCodeV3LaunchContract(
+			spec.Contract, openCodeFilteredNetworkSpec(&spec)); err != nil {
 			return nil, err
 		}
+	}
+	if err := validateOpenCodeFilteredProviderAuthority(&spec); err != nil {
+		return nil, fmt.Errorf(
+			"revalidate OpenCode filtered provider authority: %w", err)
 	}
 	cwd := canonicalOpenCodeRuntimePath(runtime.Cwd)
 	hasCwd := false
@@ -441,18 +446,18 @@ func openCodeRuntimeSandboxSpec(
 			"OpenCode tclaude-layer launch spec does not preserve runtime cwd %q as a writable contract path",
 			runtime.Cwd)
 	}
-	snapshot := sandboxpolicy.NewSnapshot(spec.Effective, nil)
-	revalidated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
+	effective, err := revalidateOpenCodeRuntimeEffective(spec.Effective)
 	if err != nil {
-		return nil, fmt.Errorf("revalidate OpenCode tclaude-layer launch spec: %w", err)
+		return nil, err
 	}
-	spec.Effective = revalidated.Effective
-	posture, err := sandboxpolicy.NetworkPostureForAccess(spec.Effective.NetworkAccess)
+	spec.Effective = effective
+	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
 	if err != nil {
 		return nil, err
 	}
 	if spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
-		if posture != sandboxpolicy.NetworkIsolatedWithAgentd ||
+		if (posture != sandboxpolicy.NetworkIsolatedWithAgentd &&
+			posture != sandboxpolicy.NetworkFiltered) ||
 			runtime.Transport != db.OpenCodeTransportUnixRelay ||
 			spec.Contract.OpenCodeControl == nil ||
 			runtime.ControlSocketPath != spec.Contract.OpenCodeControl.SocketPath {
@@ -474,6 +479,48 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("validate OpenCode tclaude-layer renderer contract: %w", err)
 	}
 	return &spec, nil
+}
+
+// revalidateOpenCodeRuntimeEffective omits the generated agentd AF_UNIX socket
+// floor while re-running directory normalization. A live socket is not a
+// directory and therefore cannot pass profile filesystem normalization, but
+// the floor is not operator-authored filesystem authority: the launch contract
+// binds and revalidates it separately as a Unix socket. Restore the exact
+// frozen rows only after every other effective field revalidates unchanged.
+func revalidateOpenCodeRuntimeEffective(
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.EffectiveProfile, error) {
+	socketFloor := make(map[string]bool)
+	for _, path := range sandboxpolicy.AgentdSocketFloor() {
+		path = session.CanonicalTclaudeLayerGeneratedPath(path)
+		if path != "" {
+			socketFloor[path] = true
+		}
+	}
+	withoutSocketFloor := effective
+	withoutSocketFloor.Filesystem = make(
+		[]sandboxpolicy.FilesystemGrant, 0, len(effective.Filesystem))
+	for _, grant := range effective.Filesystem {
+		if socketFloor[filepath.Clean(grant.Path)] {
+			if grant.Access != sandboxpolicy.AccessRead {
+				return sandboxpolicy.EffectiveProfile{}, fmt.Errorf(
+					"revalidate OpenCode tclaude-layer launch spec: generated agentd socket floor %q has unexpected %s access",
+					grant.Path, grant.Access)
+			}
+			continue
+		}
+		withoutSocketFloor.Filesystem = append(
+			withoutSocketFloor.Filesystem, grant)
+	}
+	snapshot := sandboxpolicy.NewSnapshot(withoutSocketFloor, nil)
+	revalidated, err := sandboxpolicy.RevalidateSnapshot(snapshot)
+	if err != nil {
+		return sandboxpolicy.EffectiveProfile{}, fmt.Errorf(
+			"revalidate OpenCode tclaude-layer launch spec: %w", err)
+	}
+	revalidated.Effective.Filesystem =
+		append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...)
+	return revalidated.Effective, nil
 }
 
 func canonicalOpenCodeRuntimePath(path string) string {
@@ -514,6 +561,10 @@ func startOpenCodeProcess(
 		return nil, err
 	}
 	defer cleanup()
+	if err := validateOpenCodeFilteredProviderAuthority(sandboxSpec); err != nil {
+		return nil, fmt.Errorf(
+			"prepare OpenCode filtered provider authority: %w", err)
+	}
 	cmd := exec.Command(command, args...)
 	cmd.Dir = runtime.Cwd
 	cmd.Env = openCodeServerEnvironment(os.Environ(), sandboxSpec)
@@ -632,8 +683,11 @@ func openCodeServeProcessExec(
 		return "", nil, nil, nil, noCleanup,
 			fmt.Errorf("resolve tclaude relay executable: %w", err)
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
-		sandboxpolicy.NetworkIsolatedWithAgentd)
+	posture, err := session.TclaudeLayerNetworkPosture(sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -641,9 +695,15 @@ func openCodeServeProcessExec(
 		"serve", "--hostname", "127.0.0.1",
 		"--port", port, "--log-level", "ERROR",
 	}
+	listenerFD, relayExecutableFD, err :=
+		session.TclaudeLayerUnixRelayServerFDs(*sandboxSpec)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
 	relayArgv := []string{
-		"/proc/self/fd/4", opencodeapi.InheritedUnixRelayMode,
-		"3", "127.0.0.1:" + port, "--", executable,
+		"/proc/self/fd/" + strconv.Itoa(relayExecutableFD),
+		opencodeapi.InheritedUnixRelayMode,
+		strconv.Itoa(listenerFD), "127.0.0.1:" + port, "--", executable,
 	}
 	relayArgv = append(relayArgv, serveArgs...)
 	argv, err := session.TclaudeLayerUnixRelayServerExecArgs(
@@ -708,10 +768,13 @@ func openCodeServerEnvironment(
 		return append([]string(nil), ambient...)
 	}
 	privateState := len(sandboxSpec.Contract.Environment) > 0
+	filtered := openCodeFilteredNetworkSpec(sandboxSpec)
 	out := make([]string, 0, len(ambient)+len(sandboxSpec.Effective.Environment)+
-		len(sandboxSpec.Contract.Environment))
+		len(sandboxSpec.Contract.Environment)+8)
 	for _, entry := range ambient {
-		if privateState && openCodePrivateEnvironmentName(strings.SplitN(entry, "=", 2)[0]) {
+		name := strings.SplitN(entry, "=", 2)[0]
+		if (privateState && openCodePrivateEnvironmentName(name)) ||
+			(filtered && openCodeFilteredControlledEnvironmentName(name)) {
 			continue
 		}
 		out = append(out, entry)
@@ -720,12 +783,53 @@ func openCodeServerEnvironment(
 		if privateState && openCodePrivateEnvironmentName(entry.Name) {
 			continue
 		}
+		if filtered && openCodeFilteredControlledEnvironmentName(entry.Name) {
+			continue
+		}
 		out = append(out, entry.Name+"="+entry.Value)
 	}
 	for _, entry := range sandboxSpec.Contract.Environment {
 		out = append(out, entry.Name+"="+entry.Value)
 	}
+	if filtered {
+		// These are OpenCode 1.18.6's provider-source isolation inputs.
+		// They make the frozen inline provider content the only dynamic provider
+		// source consumed by the authoritative server.
+		out = append(out,
+			"HOME="+filepath.Join(
+				sandboxSpec.Contract.StateRoot, openCodeFilteredHomeBase),
+			"OPENCODE_CONFIG=",
+			"OPENCODE_CONFIG_DIR=",
+			"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+			"OPENCODE_PURE=1",
+			"OPENCODE_DISABLE_MODELS_FETCH=1",
+			"OPENCODE_DISABLE_AUTOUPDATE=1",
+			"OPENCODE_AUTH_CONTENT={}",
+		)
+	}
 	return out
+}
+
+func openCodeFilteredNetworkSpec(
+	spec *session.TclaudeLayerLaunchSpec,
+) bool {
+	if spec == nil {
+		return false
+	}
+	posture, err := session.TclaudeLayerNetworkPosture(spec.Effective)
+	return err == nil && posture == sandboxpolicy.NetworkFiltered
+}
+
+func openCodeFilteredControlledEnvironmentName(name string) bool {
+	switch name {
+	case "HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR",
+		"OPENCODE_DISABLE_PROJECT_CONFIG", "OPENCODE_PURE",
+		"OPENCODE_DISABLE_MODELS_FETCH", "OPENCODE_DISABLE_AUTOUPDATE",
+		"OPENCODE_AUTH_CONTENT":
+		return true
+	default:
+		return false
+	}
 }
 
 func openCodePrivateEnvironmentName(name string) bool {
@@ -740,6 +844,7 @@ func openCodePrivateEnvironmentName(name string) bool {
 
 func validateOpenCodeV3LaunchContract(
 	contract session.TclaudeLayerLaunchContract,
+	filtered bool,
 ) error {
 	if len(contract.Environment) == 0 {
 		// Grandfathered v3 contracts intentionally keep ambient XDG state.
@@ -759,6 +864,11 @@ func validateOpenCodeV3LaunchContract(
 		len(contract.StateDirs) != len(expectedNames) {
 		return fmt.Errorf("private OpenCode v3 launch contract must carry exactly four XDG roots")
 	}
+	stateRoot := canonicalOpenCodeRuntimePath(contract.StateRoot)
+	if stateRoot == "" || !openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
+		return fmt.Errorf("private OpenCode v3 state root %q does not end in a stable agent id",
+			contract.StateRoot)
+	}
 	for i, name := range expectedNames {
 		entry := contract.Environment[i]
 		if entry.Name != name {
@@ -768,6 +878,21 @@ func validateOpenCodeV3LaunchContract(
 		wantStateDir := filepath.Join(entry.Value, "opencode")
 		matchesStateDir := canonicalOpenCodeRuntimePath(contract.StateDirs[i]) ==
 			canonicalOpenCodeRuntimePath(wantStateDir)
+		if i == 2 && filtered {
+			wantConfigBase := filepath.Join(stateRoot, openCodeFilteredConfigBase)
+			if canonicalOpenCodeRuntimePath(entry.Value) !=
+				canonicalOpenCodeRuntimePath(wantConfigBase) {
+				return fmt.Errorf(
+					"private filtered OpenCode XDG_CONFIG_HOME is %q, want empty per-agent base %q",
+					entry.Value, wantConfigBase)
+			}
+			// The normal config state dir remains the daemon-final read-only
+			// projection of ambient config, but filtered OpenCode does not
+			// select it as XDG_CONFIG_HOME.
+			matchesStateDir = canonicalOpenCodeRuntimePath(contract.StateDirs[i]) ==
+				canonicalOpenCodeRuntimePath(
+					filepath.Join(stateRoot, "config", "opencode"))
+		}
 		if i == 2 && !matchesStateDir {
 			// Darwin keeps XDG_CONFIG_HOME at the real host base while the
 			// daemon-final read-only root carries the resolved identity of a
@@ -779,11 +904,6 @@ func validateOpenCodeV3LaunchContract(
 			return fmt.Errorf("private OpenCode v3 %s does not target state directory %q",
 				name, contract.StateDirs[i])
 		}
-	}
-	stateRoot := canonicalOpenCodeRuntimePath(contract.StateRoot)
-	if stateRoot == "" || !openCodeAgentIDRE.MatchString(filepath.Base(stateRoot)) {
-		return fmt.Errorf("private OpenCode v3 state root %q does not end in a stable agent id",
-			contract.StateRoot)
 	}
 	privatePair := false
 	for _, pair := range contract.PrivateWriteDirs {
@@ -809,7 +929,39 @@ func validateOpenCodeV3LaunchContract(
 	if !configReadOnly {
 		return fmt.Errorf("private OpenCode v3 launch contract does not bind global config read-only")
 	}
+	if filtered {
+		expected := []string{
+			filepath.Join(stateRoot, openCodeFilteredConfigBase, "opencode"),
+			filepath.Join(stateRoot, openCodeFilteredHomeBase, ".opencode"),
+		}
+		if len(contract.ReadOnlyBinds) < len(expected) {
+			return fmt.Errorf(
+				"private filtered OpenCode contract does not seal its provider-empty config roots")
+		}
+		tail := contract.ReadOnlyBinds[len(contract.ReadOnlyBinds)-len(expected):]
+		for index, path := range expected {
+			if canonicalOpenCodeRuntimePath(tail[index].Source) != path ||
+				canonicalOpenCodeRuntimePath(tail[index].Target) != path {
+				return fmt.Errorf(
+					"private filtered OpenCode contract does not daemon-final seal provider config root %q",
+					path)
+			}
+		}
+	}
 	return nil
+}
+
+func validateOpenCodeFilteredProviderAuthority(
+	spec *session.TclaudeLayerLaunchSpec,
+) error {
+	if !openCodeFilteredNetworkSpec(spec) {
+		return nil
+	}
+	if err := validateOpenCodeFilteredProviderSources(
+		spec.Contract.StateRoot); err != nil {
+		return err
+	}
+	return refuseOpenCodeFilteredActiveAccount(spec.Contract.StateRoot)
 }
 
 func openCodeRuntimePathsEquivalent(left, right string) bool {
@@ -877,11 +1029,11 @@ func openCodeTclaudeLayerLaunchSpec(
 	if normalized != sandboxpolicy.ImplementationTclaudeLayer {
 		return nil, nil
 	}
-	network := sandboxpolicy.NetworkAccessInherit
+	effective := sandboxpolicy.EffectiveProfile{}
 	if snapshot != nil {
-		network = snapshot.Effective.NetworkAccess
+		effective = snapshot.Effective
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(network)
+	posture, err := session.TclaudeLayerNetworkPosture(effective)
 	if err != nil {
 		return nil, err
 	}
@@ -891,15 +1043,16 @@ func openCodeTclaudeLayerLaunchSpec(
 			if filteredErr != nil {
 				return nil, filteredErr
 			}
-			return nil, fmt.Errorf("network posture %s is reserved", posture)
+			if runtime.GOOS != "linux" {
+				return nil, fmt.Errorf("OpenCode filtered Unix relay is Linux-only")
+			}
+			return buildOpenCodeTclaudeLayerLaunchSpec(
+				cwd, gitWriteDirs, snapshot, agentID, true, true,
+				privateSessionIDs...)
 		}
 		openCodeHarness, resolveErr := harness.Resolve(harness.OpenCodeName)
 		if resolveErr != nil {
 			return nil, resolveErr
-		}
-		effective := sandboxpolicy.EffectiveProfile{NetworkAccess: network}
-		if snapshot != nil {
-			effective = snapshot.Effective
 		}
 		if _, err := session.ValidateTclaudeLayerNetwork(
 			openCodeHarness,
@@ -911,14 +1064,13 @@ func openCodeTclaudeLayerLaunchSpec(
 		return nil, fmt.Errorf("unsupported OpenCode tclaude-layer network posture %s", posture)
 	}
 	return buildOpenCodeTclaudeLayerLaunchSpec(
-		cwd, gitWriteDirs, snapshot, agentID, false, privateSessionIDs...)
+		cwd, gitWriteDirs, snapshot, agentID, false, false,
+		privateSessionIDs...)
 }
 
-// openCodeUnixRelayLaunchSpec builds the exercised v4 control-plane boundary.
-// The public spawn path deliberately does not call it yet: OpenCode's hosted
-// model traffic still fails ValidateTclaudeLayerNetwork under the isolated
-// posture. Keeping this seam separate makes that non-enforcement boundary
-// explicit while allowing CI to run the real engine.
+// openCodeUnixRelayLaunchSpec builds the isolated v4 control-plane smoke
+// boundary. Public filtered launches use the same builder through
+// openCodeTclaudeLayerLaunchSpec after provider and endpoint preflight.
 func openCodeUnixRelayLaunchSpec(
 	implementation, cwd string,
 	gitWriteDirs []string,
@@ -939,7 +1091,7 @@ func openCodeUnixRelayLaunchSpec(
 	if snapshot == nil {
 		return nil, fmt.Errorf("OpenCode Unix relay requires an isolated effective profile")
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(snapshot.Effective.NetworkAccess)
+	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
 		return nil, err
 	}
@@ -947,7 +1099,8 @@ func openCodeUnixRelayLaunchSpec(
 		return nil, fmt.Errorf("OpenCode Unix relay requires the isolated network posture")
 	}
 	return buildOpenCodeTclaudeLayerLaunchSpec(
-		cwd, gitWriteDirs, snapshot, agentID, true, privateSessionIDs...)
+		cwd, gitWriteDirs, snapshot, agentID, true, false,
+		privateSessionIDs...)
 }
 
 func buildOpenCodeTclaudeLayerLaunchSpec(
@@ -956,15 +1109,26 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 	snapshot *sandboxpolicy.Snapshot,
 	agentID string,
 	unixRelay bool,
+	filtered bool,
 	privateSessionIDs ...string,
 ) (*session.TclaudeLayerLaunchSpec, error) {
 	allocation, err := requireOpenCodeStateAllocation(agentID)
 	if err != nil {
 		return nil, err
 	}
+	if filtered {
+		if err := refuseOpenCodeFilteredActiveAccount(allocation.StateRoot); err != nil {
+			return nil, err
+		}
+	}
 	layout, err := openCodeStateLayoutForAllocation(*allocation)
 	if err != nil {
 		return nil, err
+	}
+	if filtered {
+		if err := isolateOpenCodeFilteredConfig(layout); err != nil {
+			return nil, err
+		}
 	}
 	var privateWriteDirs []session.TclaudeLayerPrivateWriteDir
 	if allocation.Mode == db.OpenCodeStatePrivate {
@@ -1006,6 +1170,58 @@ func buildOpenCodeTclaudeLayerLaunchSpec(
 		return nil, err
 	}
 	return &spec, nil
+}
+
+// refuseOpenCodeFilteredActiveAccount prevents OpenCode's persistent
+// account/org service from loading a remote provider config after the frozen
+// inline config. The pinned server keeps this state in its per-agent database,
+// independently of auth.json and OPENCODE_AUTH_CONTENT.
+func refuseOpenCodeFilteredActiveAccount(stateRoot string) error {
+	databasePath := filepath.Join(stateRoot, "data", "opencode", "opencode.db")
+	info, err := os.Lstat(databasePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf(
+			"OpenCode filtered cannot inspect persistent account authority: %w; fix the private state or use network open",
+			err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf(
+			"OpenCode filtered cannot inspect non-regular persistent account database %q; fix the private state or use network open",
+			databasePath)
+	}
+	dsn := (&url.URL{
+		Scheme:   "file",
+		Path:     databasePath,
+		RawQuery: "mode=ro&_pragma=busy_timeout(1000)&_pragma=query_only(1)",
+	}).String()
+	store, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf(
+			"OpenCode filtered cannot inspect persistent account authority: %w; sign out of OpenCode or use network open",
+			err)
+	}
+	defer func() { _ = store.Close() }()
+	var activeAccount, activeOrg sql.NullString
+	err = store.QueryRow(
+		`SELECT active_account_id, active_org_id FROM account_state WHERE id = 1`,
+	).Scan(&activeAccount, &activeOrg)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf(
+			"OpenCode filtered cannot prove persistent account/org provider configuration absent: %w; migrate or repair the OpenCode state under network open, then retry",
+			err)
+	}
+	if activeAccount.Valid && strings.TrimSpace(activeAccount.String) != "" &&
+		activeOrg.Valid && strings.TrimSpace(activeOrg.String) != "" {
+		return fmt.Errorf(
+			"OpenCode filtered does not support an active persistent account/org because its remote config loads after OPENCODE_CONFIG_CONTENT; sign out or clear the active organization, or use network open")
+	}
+	return nil
 }
 
 // finishOpenCodeProcessExit records a managed server's exit. It flags the

@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -284,15 +285,87 @@ requires_openai_auth = false
 	assert.Equal(t, "https://models.example/v1", resolved.BaseURL)
 }
 
-func TestResolveTclaudeLayerOpenCodeRemainsUnresolved(t *testing.T) {
+func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *testing.T) {
 	_, cwd := isolateModelTransportLaunch(t)
+	openCode := harness.MustGet(harness.OpenCodeName)
+
 	resolved, err := ResolveTclaudeLayerModelTransport(
-		harness.MustGet(harness.OpenCodeName),
+		openCode,
 		ModelTransportLaunchContext{Model: "provider/model", Cwd: cwd},
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "provider/model", resolved.Model)
+	require.Error(t, err)
 	assert.False(t, resolved.ProviderResolved)
+	assert.Contains(t, err.Error(), "explicit-provider configs only")
+	assert.Contains(t, err.Error(), "network open")
+
+	content := `{
+		"enabled_providers":["corp"],
+		"provider":{
+			"corp":{
+				"npm":"@ai-sdk/openai-compatible",
+				"whitelist":["model"],
+				"models":{"model":{"name":"Model"}},
+				"options":{"baseURL":"https://models.example/v1","apiKey":"test-key"}
+			}
+		}
+	}`
+	context := ModelTransportLaunchContext{
+		Model: "corp/model",
+		Cwd:   cwd,
+		Environment: []sandboxpolicy.EnvironmentEntry{{
+			Name: "OPENCODE_CONFIG_CONTENT", Value: content,
+		}},
+	}
+	resolved, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.NoError(t, err)
+	assert.Equal(t, harness.ResolvedModelTransport{
+		Model:            "corp/model",
+		Provider:         "corp",
+		BaseURL:          "https://models.example/v1",
+		ProviderResolved: true,
+	}, resolved)
+
+	context.Environment[0].Value = strings.Replace(
+		content, "https://models.example/v1", "{env:MODEL_URL}", 1)
+	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.ErrorContains(t, err, "may not use environment")
+
+	context.Environment[0].Value = strings.Replace(
+		content, `"enabled_providers":["corp"]`,
+		`"enabled_providers":["corp","other"]`, 1)
+	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.ErrorContains(t, err, "exactly")
+
+	context.Environment[0].Value = strings.Replace(
+		content,
+		`"models":{"model":{"name":"Model"}}`,
+		`"models":{"model":{"name":"Model","provider":{"npm":"file:///opaque.js"}}}`,
+		1)
+	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.ErrorContains(t, err, "may not override model.provider")
+	require.ErrorContains(t, err, "network open")
+}
+
+func TestResolveTclaudeLayerOpenCodeRefusesManagedConfig(t *testing.T) {
+	_, cwd := isolateModelTransportLaunch(t)
+	managed := filepath.Join(t.TempDir(), "opencode.json")
+	require.NoError(t, os.WriteFile(managed, []byte(`{}`), 0o600))
+	previous := openCodeManagedConfigPaths
+	openCodeManagedConfigPaths = func() []string { return []string{managed} }
+	t.Cleanup(func() { openCodeManagedConfigPaths = previous })
+
+	_, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.OpenCodeName),
+		ModelTransportLaunchContext{
+			Model: "corp/model", Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{{
+				Name:  "OPENCODE_CONFIG_CONTENT",
+				Value: `{"enabled_providers":["corp"],"provider":{"corp":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"https://models.example"}}}}`,
+			}},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), managed)
+	assert.Contains(t, err.Error(), "network open")
 }
 
 func isolateModelTransportLaunch(t *testing.T) (home, cwd string) {

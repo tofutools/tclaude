@@ -114,7 +114,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		"a ready probe without a filtered launch verdict must not activate enforcement")
 }
 
-func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.T) {
+func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *testing.T) {
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
 	t.Cleanup(func() {
@@ -122,16 +122,23 @@ func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.
 		resolveTclaudeLayerAccessVerdict = oldVerdict
 	})
 	resolveTclaudeLayerAccessVerdict = func(
-		string, sandboxpolicy.NetworkPosture,
+		_ string, posture sandboxpolicy.NetworkPosture,
 	) (harness.LaunchOSSandbox, error) {
-		return harness.LaunchOSSandbox{State: "on", Source: "test bwrap"}, nil
+		return harness.LaunchOSSandbox{
+			State: "on", Source: "test bwrap",
+			FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+		}, nil
 	}
 	newSnapshot := func() *sandboxpolicy.Snapshot {
 		return &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+			Environment: []sandboxpolicy.EnvironmentEntry{{
+				Name:  "OPENCODE_CONFIG_CONTENT",
+				Value: `{"enabled_providers":["corp"],"provider":{"corp":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"https://models.example","apiKey":"test-key"}}}}`,
+			}},
 			Network: &sandboxpolicy.NetworkRules{
 				Mode: sandboxpolicy.AccessModeList,
 				Allow: []sandboxpolicy.NetworkAllowEntry{{
-					CIDR: "192.0.2.0/24", Ports: []int{443},
+					Domain: "models.example", Ports: []int{443},
 				}},
 			},
 		}}
@@ -166,11 +173,9 @@ func TestPlanSandboxProfileAccessRefusesReadyOpenCodeFilteredUntilM3(t *testing.
 		harness.OpenCodeSandboxTclaudeLayer,
 		newSnapshot(),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
-		session.ModelTransportLaunchContext{},
+		session.ModelTransportLaunchContext{Model: "corp/model"},
 	)
-	require.NotNil(t, failure)
-	require.Equal(t, harness.SandboxCapabilityNetworkAllowlist, failure.Kind)
-	require.Contains(t, failure.Msg, "real-OpenCode M3 smoke")
+	require.Nil(t, failure)
 }
 
 func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing.T) {

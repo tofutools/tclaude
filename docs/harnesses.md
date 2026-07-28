@@ -108,13 +108,30 @@ remain governed by the filesystem policy. With no ambient global config, the
 empty private config base remains in use.
 
 The Linux executor also has a versioned, tclaude-owned Unix relay for carrying
-its authenticated control plane across an isolated network namespace. The
-server receives only an inherited listener fd; agentd dials the recorded Unix
-socket directly, and `opencode attach` runs behind a pre-bound local shim. This
-is control-plane foundation, not a new supported posture: OpenCode still
-refuses isolated profiles because its hosted model traffic cannot cross that
-boundary. Filtered OpenCode remains refused until the pinned real-OpenCode M3
-smoke. The relay itself remains Linux-only.
+its authenticated control plane across an isolated or filtered network
+namespace. The server receives only an inherited listener fd; agentd dials the
+recorded Unix socket directly, and `opencode attach` runs behind a pre-bound
+local shim. OpenCode still refuses isolated profiles because its hosted model
+traffic cannot cross that boundary. Filtered mode supports explicit-provider
+configs only: the launch model and frozen `OPENCODE_CONFIG_CONTENT` must name
+exactly one `@ai-sdk/openai-compatible` provider, one model, and a concrete
+`options.baseURL` covered by the authored network list. Project/custom config,
+ambient XDG and `$HOME/.opencode` config, model-catalog fetches, stored auth,
+and plugins are suppressed for that launch; a model-level `provider` override
+and an active persistent account/organization refuse because either can replace
+the inspected adapter or route after inline config is parsed. The selected
+provider-empty private config directories are daemon-final read-only, and both their
+canonical contents and account/org absence are re-proved before every initial
+server exec and persisted restart;
+opaque, default, dynamically routed, and managed `/etc/opencode` provider
+sources refuse with the remedy of making the route explicit or using network
+open. The relay itself remains Linux-only.
+
+OpenCode's sandbox-profile network permissions for its built-in `webfetch` and
+`websearch` tools remain soft rules evaluated by OpenCode. They are separate
+from the filtered `tclaude-layer` nft boundary, which packet-enforces every
+process below the tool-executing server; the two must not be read as equivalent
+security claims.
 OpenCode deliberately has no `stacked` contract: profile apply and launch
 refuse that selection by name instead of degrading to a single wall.
 The explicit `off` mode removes path scoping but keeps the selected approval
@@ -170,7 +187,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **Built-in OS sandbox** (`SupportsBuiltinOSSandbox`) | ✅ SRT | ✅ native `--sandbox` | ❌ none; `access-control` is a command filter, not confinement |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off`; experimental Linux `stacked` = tclaude bwrap + real SRT bwrap/seccomp after a live probe | ✅ managed profile (default) or raw `--sandbox`; experimental Linux `stacked` = tclaude bwrap + current Codex bwrap managed profile after a live probe | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with documented caveats; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
-| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; exact provider context and explicit model endpoint coverage required | ⚠️ same harness-independent Linux gateway and provider gate | ❌ refused until the pinned real-OpenCode M3 smoke |
+| **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; exact provider context and explicit model endpoint coverage required | ⚠️ same harness-independent Linux gateway and provider gate | ⚠️ same packet floor for explicit-provider configs only; opaque/default/dynamic routes refuse |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
