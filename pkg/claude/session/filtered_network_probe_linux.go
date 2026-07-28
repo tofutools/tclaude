@@ -3,12 +3,15 @@
 package session
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -18,6 +21,9 @@ var (
 	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
 	validateFilteredNetworkExecutable = validateRootOwnedExecutable
 	inspectFilteredNetworkPasta       = inspectPastaCapabilities
+	filteredNetworkPastaCommand       = exec.CommandContext
+	filteredNetworkPastaProbeTimeout  = 5 * time.Second
+	filteredNetworkPastaHelpLimit     = 64 << 10
 )
 
 type filteredNetworkExecutables struct {
@@ -76,19 +82,64 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 }
 
 func inspectPastaCapabilities(path string) error {
-	cmd := exec.Command(path, "--help")
+	ctx, cancel := context.WithTimeout(context.Background(), filteredNetworkPastaProbeTimeout)
+	defer cancel()
+	output := cappedFilteredNetworkOutput{limit: filteredNetworkPastaHelpLimit}
+	cmd := filteredNetworkPastaCommand(ctx, path, "--help")
 	cmd.Env = filteredNetworkHelperEnv()
-	output, err := cmd.CombinedOutput()
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("inspect %q with --help: %w", path, ctxErr)
+	}
 	if err != nil {
 		return fmt.Errorf("inspect %q with --help: %w", path, err)
 	}
-	return validatePastaCapabilities(string(output))
+	if output.truncated {
+		return fmt.Errorf(
+			"inspect %q with --help: output exceeds %d bytes",
+			path,
+			filteredNetworkPastaHelpLimit,
+		)
+	}
+	return validatePastaCapabilities(output.String())
+}
+
+type cappedFilteredNetworkOutput struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (w *cappedFilteredNetworkOutput) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	remaining := w.limit - w.buffer.Len()
+	if remaining <= 0 {
+		w.truncated = w.truncated || originalLen != 0
+		return originalLen, nil
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+		w.truncated = true
+	}
+	_, err := w.buffer.Write(p)
+	return originalLen, err
+}
+
+func (w *cappedFilteredNetworkOutput) String() string {
+	return w.buffer.String()
 }
 
 func validatePastaCapabilities(help string) error {
+	tokens := make(map[string]struct{})
+	for _, field := range strings.Fields(help) {
+		token, _, _ := strings.Cut(field, "=")
+		tokens[token] = struct{}{}
+	}
 	var missing []string
 	for _, option := range requiredFilteredNetworkPastaOptions {
-		if !strings.Contains(help, option) {
+		if _, ok := tokens[option]; !ok {
 			missing = append(missing, option)
 		}
 	}

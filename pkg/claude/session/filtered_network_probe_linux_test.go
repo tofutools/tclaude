@@ -3,9 +3,12 @@
 package session
 
 import (
+	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,10 +59,36 @@ func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *test
 	help := strings.Join(requiredFilteredNetworkPastaOptions, "\n")
 	require.NoError(t, validatePastaCapabilities(help))
 
-	help = strings.ReplaceAll(help, "--map-host-loopback", "--old-host-loopback")
+	help = strings.ReplaceAll(help, "--map-host-loopback", "--old--map-host-loopback")
+	help = strings.ReplaceAll(help, "--pid", "--pidfile")
 	err := validatePastaCapabilities(help)
 	require.ErrorContains(t, err, "--map-host-loopback")
+	assert.ErrorContains(t, err, "--pid")
 	assert.NotContains(t, err.Error(), "--map-guest-addr")
+}
+
+func TestFilteredNetworkPastaCapabilityProbeBoundsExecutionAndOutput(t *testing.T) {
+	oldCommand := filteredNetworkPastaCommand
+	oldTimeout := filteredNetworkPastaProbeTimeout
+	oldLimit := filteredNetworkPastaHelpLimit
+	t.Cleanup(func() {
+		filteredNetworkPastaCommand = oldCommand
+		filteredNetworkPastaProbeTimeout = oldTimeout
+		filteredNetworkPastaHelpLimit = oldLimit
+	})
+
+	filteredNetworkPastaProbeTimeout = 10 * time.Millisecond
+	filteredNetworkPastaCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/sleep", "1")
+	}
+	require.ErrorContains(t, inspectPastaCapabilities("/trusted/pasta"), "deadline exceeded")
+
+	filteredNetworkPastaProbeTimeout = 5 * time.Second
+	filteredNetworkPastaHelpLimit = 8
+	filteredNetworkPastaCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/echo", "123456789")
+	}
+	require.ErrorContains(t, inspectPastaCapabilities("/trusted/pasta"), "output exceeds")
 }
 
 func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
