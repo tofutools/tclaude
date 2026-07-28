@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -72,7 +73,11 @@ type cleanupResponse struct {
 	Reinstated int              `json:"reinstated"`
 	Skipped    int              `json:"skipped"`
 	Failed     int              `json:"failed"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	// RhythmsDisabled is the number of enabled group-target cron jobs
+	// auto-disabled because this cleanup retired the last live agents from
+	// their groups. Mirrors the per-group retire lifecycle invariant.
+	RhythmsDisabled int      `json:"rhythms_disabled,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
 // handleDashboardCleanup dispatches the /api/cleanup/{group,agents}
@@ -339,6 +344,11 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 	// Group IDs whose owner roster this pass may have emptied — swept
 	// once at the end for the ownerless-group warning.
 	ownerless := map[int64]bool{}
+	// Every group touched by a successful retire. A fleet cleanup can retire
+	// agents from several groups in one request; defer the liveness check until
+	// the whole cohort settles so groups emptied across multiple targets have
+	// their template-seeded rhythms disabled exactly once.
+	retiredGroups := map[int64]*db.AgentGroup{}
 
 	for _, tg := range targets {
 		// Resolve the title up-front: the delete path wipes the
@@ -376,6 +386,11 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 			// Soft-delete: demote to a plain conversation. The .jsonl
 			// and conv_index row are left intact and the agent can be
 			// reinstated later.
+			groupsBefore, groupsErr := db.ListGroupsForConv(tg.convID)
+			if groupsErr != nil {
+				slog.Warn("cleanup retire: could not snapshot group memberships for rhythm cleanup",
+					"conv", tg.convID, "err", groupsErr)
+			}
 			outcome, ownerGroups, rerr := retireAgentConv(tg.convID, "human", "")
 			switch {
 			case rerr != nil:
@@ -390,6 +405,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Detail = fmt.Sprintf("demoted to a plain conversation · left %d group(s), revoked %d perm + %d sudo grant(s)",
 					len(outcome.GroupsLeft), outcome.PermsRevoked, outcome.SudoRevoked)
 				resp.Retired++
+				for _, g := range groupsBefore {
+					retiredGroups[g.ID] = g
+				}
 				for _, gid := range ownerGroups {
 					ownerless[gid] = true
 				}
@@ -482,6 +500,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		resp.Outcomes = append(resp.Outcomes, out)
 	}
 
+	for _, g := range retiredGroups {
+		resp.RhythmsDisabled += disableGroupRhythmsIfEmptied(g)
+	}
 	resp.Warnings = append(resp.Warnings, warnOwnerlessGroups(ownerless)...)
 	writeJSON(w, http.StatusOK, resp)
 }

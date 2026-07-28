@@ -1561,7 +1561,9 @@ Two entry points, both on the Groups tab:
   disk; only the membership is dropped.
 - **All categories** (Groups tab filter bar → 🧹 clean up) — the rich modal.
   It spans three conversation categories — active agents, retired agents, and
-  plain conversations — and offers four tiers:
+  plain conversations — and offers four tiers. Active agents with no real
+  group are included explicitly as **Ungrouped** (or **Unbound** in wizard
+  mode); the title / id / group filter finds them by either name.
 
   | Tier        | Acts on                                                            |
   |-------------|--------------------------------------------------------------------|
@@ -1579,6 +1581,18 @@ deduplicates groups that share a repo, and opens the same explicit-selection
 preview as each group header's **cleanup worktrees…** action. The global
 **🧹 clean up** modal links to this preview too, under its agent cleanup
 options.
+
+The palette's status-filtered retire shortcuts cover the same complete roster.
+For both **idle** and **offline** agents it offers a command for each real
+group, one for the virtual **Ungrouped** group, and a separate global command
+across all groups (including Ungrouped). Each opens an explicit-selection
+preview before retiring anything. In wizard mode these commands use
+**Banish**, **familiars**, **parties**, and **Unbound**.
+
+The idle/offline status is captured when the preview opens. The checked roster
+is then exact: a checked agent remains selected if it resumes or starts working
+before submit, and is retired only if it remains checked. This intentionally
+differs from the rich cleanup modal's default online-session guard below.
 
 The modal lists the affected agents as an editable include/exclude checklist,
 with an "inactive ≥ N h" quick-filter for picking by staleness. Nothing is

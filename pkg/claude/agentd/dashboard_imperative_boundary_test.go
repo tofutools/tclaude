@@ -66,7 +66,8 @@ func TestDashboardStaticShellHasNoOrdinaryDialogs(t *testing.T) {
 func TestDashboardOperationExportsHaveDirectProducers(t *testing.T) {
 	moved := []string{
 		"shutdownScope", "powerOnScope", "openWindowModal", "openRetirePreview",
-		"openRetireUngroupedPreview", "openDeleteRetiredPreview", "openWorktreeCleanup",
+		"openRetireAllPreview", "openRetireUngroupedPreview",
+		"openDeleteRetiredPreview", "openWorktreeCleanup",
 		"openDeleteGroupModal", "openCleanupModal", "resumeAgentReq",
 	}
 	operationsBytes, err := fs.ReadFile(dashboardAssetsFS, "js/dashboard-operations.js")

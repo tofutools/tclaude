@@ -16,7 +16,8 @@ import {
 import {
   buildCleanupDescriptor, buildWindowSelectionDescriptor, openCleanupDialog,
   openDeleteRetiredPreviewDialog,
-  openDeleteGroupDialog, openGroupRetirePreviewDialog, openUngroupedRetirePreviewDialog,
+  openAllRetirePreviewDialog, openDeleteGroupDialog, openGroupRetirePreviewDialog,
+  openUngroupedRetirePreviewDialog,
   openWindowSelectionDialog,
 } from './transaction-dialog-controller.js';
 import { openWorktreeCleanup as openWorktreeCleanupDialog } from './worktree-cleanup-controller.js';
@@ -234,21 +235,20 @@ export function openRetirePreview(group, status) {
   return openGroupRetirePreviewDialog(group, status, candidates);
 }
 
-// ungroupedRetireCandidates builds the retire cohort for the command
-// palette's "Retire ungrouped agents…" command from the snapshot's
-// ungrouped[] list — every active agent that is a member of NO group
-// (online and offline alike). Each entry is {agent_id, conv_id, title,
-// status} — the same shape openRetirePreview's rows carry — so the
-// preview renders identically. The submit leads with the stable
-// agent_id (the BE resolves it back to the conv-id), falling back to
-// conv_id for a row with no actor id yet.
-function ungroupedRetireCandidates() {
-  const snap = lastSnapshot || {};
+// retireCandidatesByStatus builds a distinct explicit-selection cohort from
+// an Agents/Ungrouped snapshot roster. An empty status keeps every row (the
+// original "Retire ungrouped agents…" command); idle/offline use the same
+// liveness definitions as groupMembersByStatus and the rendered dashboard.
+function retireCandidatesByStatus(rows, status = '') {
   const seen = new Set();
   const out = [];
-  for (const a of (snap.ungrouped || [])) {
+  for (const a of (rows || [])) {
     if (!a.conv_id || seen.has(a.conv_id)) continue;
     seen.add(a.conv_id);
+    const matches = !status || (status === 'offline'
+      ? !a.online
+      : (a.online && a.state && a.state.status === status));
+    if (!matches) continue;
     out.push({
       agent_id: a.agent_id || '',
       conv_id: a.conv_id,
@@ -257,6 +257,14 @@ function ungroupedRetireCandidates() {
     });
   }
   return out;
+}
+
+function ungroupedRetireCandidates(status = '') {
+  return retireCandidatesByStatus((lastSnapshot || {}).ungrouped, status);
+}
+
+function allRetireCandidates(status) {
+  return retireCandidatesByStatus((lastSnapshot || {}).agents, status);
 }
 
 // openRetireUngroupedPreview runs the command palette's "Retire ungrouped
@@ -287,13 +295,28 @@ function ungroupedRetireCandidates() {
 // Like openRetirePreview, the candidate list is snapshotted and frozen at open
 // time, so background snapshots cannot shift the population between preview
 // and submit.
-export function openRetireUngroupedPreview() {
-  const candidates = ungroupedRetireCandidates();
+export function openRetireUngroupedPreview(status = '') {
+  const candidates = ungroupedRetireCandidates(status);
   if (candidates.length === 0) {
-    toast('retire: no ungrouped agents to retire');
+    const qualifier = status ? `${status} ` : '';
+    toast(`retire: no ${qualifier}ungrouped agents to retire`);
     return null;
   }
-  return openUngroupedRetirePreviewDialog(candidates);
+  return openUngroupedRetirePreviewDialog(candidates, status);
+}
+
+// openRetireAllPreview is the status-filtered fleet twin of
+// openRetireUngroupedPreview. Agents[] is the distinct active enrollment
+// roster, so it spans every real group plus the virtual Ungrouped group
+// without double-counting agents that belong to multiple groups.
+export function openRetireAllPreview(status) {
+  const word = RETIRE_STATUS_LABELS[status] || status;
+  const candidates = allRetireCandidates(status);
+  if (candidates.length === 0) {
+    toast(`retire: no ${word} agents across all groups`);
+    return null;
+  }
+  return openAllRetirePreviewDialog(status, candidates);
 }
 
 // openDeleteRetiredPreview is the human-driven sibling of the timed

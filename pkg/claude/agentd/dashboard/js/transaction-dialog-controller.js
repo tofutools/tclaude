@@ -224,9 +224,18 @@ export function openGroupRetirePreviewDialog(group, status, candidates) {
   });
 }
 
-export function openUngroupedRetirePreviewDialog(candidates) {
+export function openUngroupedRetirePreviewDialog(candidates, status = '') {
   return openTransactionDialog({
     kind: 'retire-ungrouped-preview',
+    status,
+    candidates: dedupeRetireCandidates(candidates),
+  });
+}
+
+export function openAllRetirePreviewDialog(status, candidates) {
+  return openTransactionDialog({
+    kind: 'retire-all-preview',
+    status,
     candidates: dedupeRetireCandidates(candidates),
   });
 }

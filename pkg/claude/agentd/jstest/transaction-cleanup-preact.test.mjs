@@ -173,6 +173,17 @@ test('agent cleanup composes tier, category, online, age, and search gates befor
   assert.match(host.querySelector('#cleanup-list').textContent, /Old agent/);
   assert.doesNotMatch(host.querySelector('#cleanup-list').textContent, /Retired agent|Plain conversation|Live agent/);
 
+  const includeOnline = host.querySelector('#cleanup-opt-online');
+  const unjoinTier = host.querySelector('[name="cleanup-tier"][value="unjoin"]');
+  unjoinTier.checked = true;
+  await harness.act(() => harness.fireEvent(unjoinTier, 'change'));
+  includeOnline.checked = true;
+  await harness.act(() => harness.fireEvent(includeOnline, 'change'));
+  assert.doesNotMatch(host.querySelector('#cleanup-list').textContent, /Live agent/,
+    'Ungrouped agents are omitted from the no-op unjoin tier');
+  includeOnline.checked = false;
+  await harness.act(() => harness.fireEvent(includeOnline, 'change'));
+
   const deleteTier = host.querySelector('[name="cleanup-tier"][value="delete"]');
   deleteTier.checked = true;
   await harness.act(() => harness.fireEvent(deleteTier, 'change'));
@@ -182,10 +193,17 @@ test('agent cleanup composes tier, category, online, age, and search gates befor
   assert.doesNotMatch(host.querySelector('#cleanup-list').textContent, /Plain conversation/);
   conversationCategory.checked = true;
   await harness.act(() => harness.fireEvent(conversationCategory, 'change'));
-  const includeOnline = host.querySelector('#cleanup-opt-online');
   includeOnline.checked = true;
   await harness.act(() => harness.fireEvent(includeOnline, 'change'));
   assert.match(host.querySelector('#cleanup-list').textContent, /Live agent/);
+  assert.match(host.querySelector('#cleanup-list').textContent, /in: Ungrouped/);
+  const search = host.querySelector('#cleanup-search');
+  search.value = 'unbound';
+  await harness.act(() => harness.fireEvent(search, 'input'));
+  assert.match(host.querySelector('#cleanup-list').textContent, /Live agent/);
+  assert.doesNotMatch(host.querySelector('#cleanup-list').textContent, /Old agent/);
+  search.value = '';
+  await harness.act(() => harness.fireEvent(search, 'input'));
   includeOnline.checked = false;
   await harness.act(() => harness.fireEvent(includeOnline, 'change'));
 
@@ -195,7 +213,6 @@ test('agent cleanup composes tier, category, online, age, and search gates befor
   assert.equal(host.querySelector('#cleanup-count').textContent, '2 selected',
     'old offline plus missing-activity rows pass while online stays hidden');
 
-  const search = host.querySelector('#cleanup-search');
   search.value = 'plain';
   await harness.act(() => harness.fireEvent(search, 'input'));
   assert.equal(host.querySelector('#cleanup-count').textContent, '1 selected');

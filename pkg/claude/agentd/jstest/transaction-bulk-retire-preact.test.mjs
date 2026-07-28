@@ -29,7 +29,7 @@ async function openBulk(t, descriptor, options = {}) {
   const actions = {
     close: state.close,
     retireGroupPreview: async () => ({}),
-    retireUngroupedPreview: async () => ({}),
+    retireAgentsPreview: async () => ({}),
     finishBulkRetire: async (result) => {
       state.handoff();
       state.finish(result);
@@ -90,17 +90,29 @@ test('bulk retire launchers conv-dedupe and freeze candidates at the controller 
 
   const ungrouped = controller.openUngroupedRetirePreviewDialog([
     candidates[1], { ...candidates[1] }, candidates[0],
-  ]);
+  ], 'offline');
   assert.equal(state.dialog.value.descriptor.kind, 'retire-ungrouped-preview');
+  assert.equal(state.dialog.value.descriptor.status, 'offline');
   assert.deepEqual(state.dialog.value.descriptor.candidates.map((candidate) => candidate.conv_id), [
     candidates[1].conv_id, candidates[0].conv_id,
   ]);
   state.close();
   await ungrouped;
+
+  const all = controller.openAllRetirePreviewDialog('idle', [
+    candidates[0], { ...candidates[0] }, candidates[1],
+  ]);
+  assert.equal(state.dialog.value.descriptor.kind, 'retire-all-preview');
+  assert.equal(state.dialog.value.descriptor.status, 'idle');
+  assert.deepEqual(state.dialog.value.descriptor.candidates.map((candidate) => candidate.conv_id), [
+    candidates[0].conv_id, candidates[1].conv_id,
+  ]);
+  state.close();
+  await all;
   unregister();
 });
 
-test('bulk retire actions preserve the exact group and ungrouped wire contracts', async (t) => {
+test('bulk retire actions preserve the exact group and cleanup-backed wire contracts', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
     harness.importDashboardModule('js/transaction-dialog-state.js'),
@@ -135,7 +147,7 @@ test('bulk retire actions preserve the exact group and ungrouped wire contracts'
   const looseRequest = Object.freeze({
     agents: ['agt_alpha', 'agt_beta'], shutdown: true, deleteWorktrees: true,
   });
-  assert.deepEqual(await actions.retireUngroupedPreview(looseRequest), { ok: true });
+  assert.deepEqual(await actions.retireAgentsPreview(looseRequest), { ok: true });
   assert.equal(requests[1][0], '/api/cleanup/agents');
   assert.deepEqual(JSON.parse(requests[1][1].body), {
     agents: looseRequest.agents,
@@ -184,9 +196,9 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
     'Banish idle familiars in "alpha team"');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
-    'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
+    'These idle agents in group "alpha team" will be demoted to plain, reinstatable conversations. Status is captured when this preview opens; a checked agent remains selected if its status changes before submit. Each ticked agent is removed from all its groups, including groups it owns, and its permission and sudo grants are revoked. Untick any you want to keep; only ticked agents are retired.');
   assert.equal(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
-    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
+    'These idle familiars in party "alpha team" will return to restorable conversation scrolls. Status is captured when this preview opens; a checked familiar remains selected if its status changes before submit. Each ticked familiar is removed from all its parties, including parties it owns, and its boons and sudo grants are revoked. Untick any you want to keep; only ticked familiars are banished.');
   assert.equal(host.querySelector('#retire-preview-count').textContent, '2 of 2 selected');
   assert.equal(harness.document.activeElement.id, 'retire-preview-submit');
 
@@ -239,7 +251,8 @@ test('group retire preview preserves bulk-only worktree coupling, hidden checks,
   first.reject(new Error('retire backend unavailable'));
   await harness.act(() => first.promise.catch(() => {}));
   assert.equal(host.querySelector('[role="alert"]').textContent, 'retire backend unavailable');
-  assert.equal(host.querySelector('#retire-preview-submit').textContent, 'Retry retire');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent, 'Retry retire');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent, 'Retry banishment');
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 2);
@@ -295,7 +308,7 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
     kind: 'retire-ungrouped-preview', candidates,
   }, {
     actions: {
-      retireUngroupedPreview: async (request) => { submitted = request; return response; },
+      retireAgentsPreview: async (request) => { submitted = request; return response; },
     },
   });
   const { harness, host } = mounted;
@@ -326,5 +339,40 @@ test('ungrouped retire preview uses visible-only controls but submits every chec
   host.querySelector('#retire-preview-submit').click();
   await harness.act(() => Promise.resolve());
   await mounted.pending;
+  await mounted.mounted.unmount();
+});
+
+test('global retire preview identifies every-group scope including Ungrouped and Unbound', async (t) => {
+  let submitted = null;
+  const mounted = await openBulk(t, {
+    kind: 'retire-all-preview', status: 'offline', candidates,
+  }, {
+    actions: {
+      retireAgentsPreview: async (request) => {
+        submitted = request;
+        return { retired: 2, skipped: 0, failed: 0, outcomes: [] };
+      },
+    },
+  });
+  const { harness, host } = mounted;
+  assert.equal(host.querySelector('#retire-preview-title .theme-copy-regular').textContent,
+    'Retire offline agents across all groups');
+  assert.equal(host.querySelector('#retire-preview-title .theme-copy-wizard').textContent,
+    'Banish offline familiars across all parties');
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-regular').textContent,
+    /span every group, including Ungrouped/);
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    /span every party, including the Unbound/);
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-regular').textContent,
+    'Retire 2 agents');
+  assert.equal(host.querySelector('#retire-preview-submit .theme-copy-wizard').textContent,
+    'Banish 2 familiars');
+  host.querySelector('#retire-preview-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(submitted, {
+    agents: ['agt_alpha', 'agt_beta'], shutdown: true, deleteWorktrees: true,
+  });
+  assert.match(host.querySelector('#retire-preview-hint .theme-copy-wizard').textContent,
+    /Banishment complete — 2 banished/);
   await mounted.mounted.unmount();
 });

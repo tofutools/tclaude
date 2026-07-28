@@ -232,6 +232,14 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"the bulk retire command is gated directly from the injected snapshot (no no-op)")
 	must("openRetirePreview(g.name, status)",
 		"per-group bulk retire opens the preview modal")
+	must("wiz(`Retire ${status} agents in Ungrouped`, `Banish ${status} familiars in Unbound`)",
+		"the virtual Ungrouped group gets status-filtered bulk retire commands with wizard vocabulary")
+	must("openRetireUngroupedPreview(status)",
+		"the virtual Ungrouped status command opens the cleanup-backed preview")
+	must("wiz(`Retire ${status} agents across all groups`, `Banish ${status} familiars across all parties`)",
+		"the palette offers a separate global status-filtered retire command")
+	must("openRetireAllPreview(status)",
+		"the global status command opens the all-agent preview")
 
 	// Ranking + synonyms live in the pure, unit-tested scorer module.
 	must("./palette-score.js", "palette imports the pure ranking module")
