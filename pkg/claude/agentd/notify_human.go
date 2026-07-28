@@ -896,7 +896,9 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if orig.ProcessCommandID != "" {
-		if err := resolveProcessHumanMessage(r.Context(), orig, body.Body); err != nil {
+		// The replacement-engine seam is deliberately nil-capable even though
+		// its temporary no-engine stub below always returns an error.
+		if err := resolveProcessHumanMessage(r.Context(), orig, body.Body); err != nil { //nolint:staticcheck
 			writeError(w, http.StatusConflict, "process_resolve", err.Error())
 			return
 		}
@@ -970,7 +972,7 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func resolveProcessHumanMessage(_ context.Context, _ *db.HumanMessage, _ string) error {
+func resolveProcessHumanMessage(_ context.Context, _ *db.HumanMessage, _ string) error { //nolint:staticcheck // Temporary stub intentionally always errors behind the nil-capable seam.
 	// Retain process command metadata for the replacement engine, but never
 	// feed a reply into the removed filesystem runtime. Old obligation rows are
 	// inert until a new engine explicitly adopts a migration policy.

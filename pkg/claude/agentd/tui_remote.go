@@ -3,26 +3,43 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/gorilla/websocket"
+	"github.com/muesli/cancelreader"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/common"
+	"golang.org/x/term"
 )
 
-const tuiHTTPPrefix = "/api/tui"
+const (
+	tuiHTTPPrefix               = "/api/tui"
+	remoteTUIEscapeByte         = byte(0x1d) // Ctrl-]
+	remoteTUIDetachCommand      = byte('d')
+	remoteTUIDetachCommandUpper = byte('D')
+)
+
+var errRemoteTUIDetached = errors.New("remote terminal detached")
 
 type tuiDashboardParams struct {
-	ConnectTo string `long:"connect-to" required:"true" help:"Dashboard URL or host[:port] to connect to (for example 10.0.0.4:8321 or https://agents.example.com)."`
+	ConnectTo           string `long:"connect-to" required:"true" help:"Dashboard URL or host[:port] to connect to (for example 10.0.0.4:8321 or https://agents.example.com)."`
+	OperatorToken       string `long:"operator-token" optional:"true" help:"Operator token for this dashboard, overriding local token detection. Prefer the environment or --remote-operator-token when shell history/process listings are a concern."`
+	RemoteOperatorToken string `long:"remote-operator-token" optional:"true" help:"Read the operator token over SSH from user@host:/absolute/path (also accepts user@host/absolute/path), overriding local token detection."`
 }
 
 // TUIDashboardCmd builds the standalone `tclaude agent tui-dashboard`
@@ -34,10 +51,18 @@ func TUIDashboardCmd() *cobra.Command {
 		Use:         "tui-dashboard",
 		Aliases:     []string{"tui"},
 		Short:       "Connect a terminal dashboard to a running agentd",
-		Long:        "Runs the terminal dashboard as a standalone HTTP client. It authenticates with the same operator token as `tclaude agent` commands and keeps polling through agentd restarts.",
+		Long:        "Runs the terminal dashboard as a standalone HTTP client. It authenticates with an explicit --operator-token, a token read through SSH with --remote-operator-token, or the normal local operator-token lookup (in that order), and keeps polling through agentd restarts.",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *tuiDashboardParams, _ *cobra.Command, _ []string) {
-			if err := runRemoteTUIDashboard(p.ConnectTo); err != nil {
+		RunFunc: func(p *tuiDashboardParams, cmd *cobra.Command, _ []string) {
+			token, err := resolveTUIOperatorToken(
+				p,
+				cmd.Flags().Changed("operator-token"),
+				cmd.Flags().Changed("remote-operator-token"),
+			)
+			if err == nil {
+				err = runRemoteTUIDashboard(p.ConnectTo, token)
+			}
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -45,12 +70,7 @@ func TUIDashboardCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-func runRemoteTUIDashboard(target string) error {
-	token := agent.OperatorToken()
-	if token == "" {
-		return fmt.Errorf("no operator token available; export %s from the agentd startup banner and retry",
-			agent.HumanTokenEnvVar)
-	}
+func runRemoteTUIDashboard(target, token string) error {
 	api, err := newRemoteTUIAPI(target, token)
 	if err != nil {
 		return err
@@ -60,6 +80,80 @@ func runRemoteTUIDashboard(target string) error {
 		return nil
 	}
 	return err
+}
+
+func resolveTUIOperatorToken(p *tuiDashboardParams, directSet, remoteSet bool) (string, error) {
+	if directSet && remoteSet {
+		return "", fmt.Errorf("--operator-token and --remote-operator-token are mutually exclusive")
+	}
+	if directSet {
+		if token := strings.TrimSpace(p.OperatorToken); token != "" {
+			return token, nil
+		}
+		return "", fmt.Errorf("--operator-token is empty")
+	}
+	if remoteSet {
+		source := strings.TrimSpace(p.RemoteOperatorToken)
+		if source == "" {
+			return "", fmt.Errorf("--remote-operator-token is empty")
+		}
+		return readRemoteTUIOperatorToken(source)
+	}
+	if token := agent.OperatorToken(); token != "" {
+		return token, nil
+	}
+	return "", fmt.Errorf(
+		"no operator token available; use --operator-token, --remote-operator-token, or export %s",
+		agent.HumanTokenEnvVar,
+	)
+}
+
+var runTUIOperatorTokenSSH = func(destination, path string) ([]byte, error) {
+	remoteCommand := "cat -- " + shellSingleQuote(path)
+	cmd := exec.Command("ssh", destination, remoteCommand)
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
+}
+
+func readRemoteTUIOperatorToken(source string) (string, error) {
+	destination, path, err := parseRemoteTUIOperatorTokenSource(source)
+	if err != nil {
+		return "", err
+	}
+	raw, err := runTUIOperatorTokenSSH(destination, path)
+	if err != nil {
+		return "", fmt.Errorf("read operator token from %s:%s over SSH: %w", destination, path, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("operator token at %s:%s is empty", destination, path)
+	}
+	return token, nil
+}
+
+func parseRemoteTUIOperatorTokenSource(source string) (destination, path string, err error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "", "", fmt.Errorf("remote operator token source is empty")
+	}
+	if i := strings.Index(source, ":/"); i >= 0 {
+		destination, path = source[:i], source[i+1:]
+	} else if i := strings.IndexByte(source, '/'); i >= 0 {
+		destination, path = source[:i], source[i:]
+	} else {
+		return "", "", fmt.Errorf(
+			"--remote-operator-token must be user@host:/absolute/path or user@host/absolute/path",
+		)
+	}
+	if destination == "" || strings.HasPrefix(destination, "-") ||
+		strings.ContainsAny(destination, " \t\r\n\x00") {
+		return "", "", fmt.Errorf("invalid SSH destination in --remote-operator-token")
+	}
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n\x00") {
+		return "", "", fmt.Errorf("remote operator token path must be absolute and contain no newlines")
+	}
+	return destination, path, nil
 }
 
 // remoteTUIAPI is the HTTP implementation of tuiAPI. Its cookie jar matters:
@@ -72,6 +166,7 @@ type remoteTUIAPI struct {
 	origin               string
 	token                string
 	client               *http.Client
+	wsDialer             *websocket.Dialer
 	mutationRetryBackoff []time.Duration
 }
 
@@ -88,6 +183,8 @@ func newRemoteTUIAPI(target, token string) (*remoteTUIAPI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create HTTP cookie jar: %w", err)
 	}
+	wsDialer := *websocket.DefaultDialer
+	wsDialer.HandshakeTimeout = 10 * time.Second
 	return &remoteTUIAPI{
 		baseURL: base,
 		origin:  origin,
@@ -103,6 +200,7 @@ func newRemoteTUIAPI(target, token string) (*remoteTUIAPI, error) {
 				return http.ErrUseLastResponse
 			},
 		},
+		wsDialer: &wsDialer,
 		mutationRetryBackoff: []time.Duration{
 			time.Second,
 			2 * time.Second,
@@ -157,7 +255,245 @@ func (a *remoteTUIAPI) identityWarning() string { return "" }
 func (a *remoteTUIAPI) connectionLabel() string { return a.baseURL }
 
 func (a *remoteTUIAPI) capabilities() tuiCapabilities {
-	return tuiCapabilities{}
+	return tuiCapabilities{attachAgent: true}
+}
+
+func (a *remoteTUIAPI) attach(agentName, convID, _ string) tea.Cmd {
+	command := &remoteTUIAttachCommand{
+		api:       a,
+		agentName: agentName,
+		convID:    convID,
+	}
+	return tea.Exec(command, func(err error) tea.Msg {
+		return tuiAttachedMsg{
+			agent:   agentName,
+			session: a.baseURL,
+			remote:  true,
+			err:     err,
+		}
+	})
+}
+
+// remoteTUIAttachCommand lets bubbletea release its alternate screen and input
+// reader while the dashboard's existing terminal WebSocket owns this terminal.
+// Ctrl-] D is consumed here as a transport-level detach escape, so it works
+// even when the dashboard itself is running inside another tmux. Ctrl-] Ctrl-]
+// sends one literal Ctrl-] to the remote terminal. When the detach escape, the
+// server-side tmux detach, or an agentd restart closes the socket, Run returns
+// and bubbletea restores the dashboard.
+type remoteTUIAttachCommand struct {
+	api       *remoteTUIAPI
+	agentName string
+	convID    string
+	stdin     io.Reader
+	stdout    io.Writer
+	stderr    io.Writer
+}
+
+func (c *remoteTUIAttachCommand) SetStdin(r io.Reader)  { c.stdin = r }
+func (c *remoteTUIAttachCommand) SetStdout(w io.Writer) { c.stdout = w }
+func (c *remoteTUIAttachCommand) SetStderr(w io.Writer) { c.stderr = w }
+
+func (c *remoteTUIAttachCommand) Run() error {
+	if strings.TrimSpace(c.convID) == "" {
+		return fmt.Errorf("%s has no conversation id to attach to", c.agentName)
+	}
+	if c.stdin == nil || c.stdout == nil {
+		return fmt.Errorf("remote terminal requires stdin and stdout")
+	}
+	conn, err := c.dial()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+
+	cancelInput, err := cancelreader.NewReader(c.stdin)
+	if err != nil {
+		return fmt.Errorf("prepare terminal input: %w", err)
+	}
+	defer func() { _ = cancelInput.Close() }()
+
+	var restore func() error
+	if file, ok := c.stdin.(interface{ Fd() uintptr }); ok && term.IsTerminal(int(file.Fd())) {
+		state, rawErr := term.MakeRaw(int(file.Fd()))
+		if rawErr != nil {
+			return fmt.Errorf("put terminal in raw mode: %w", rawErr)
+		}
+		restore = func() error { return term.Restore(int(file.Fd()), state) }
+		defer func() { _ = restore() }()
+	}
+
+	var writeMu sync.Mutex
+	writeMessage := func(messageType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(messageType, data)
+	}
+	sendSize := func() {
+		file, ok := c.stdin.(interface{ Fd() uintptr })
+		if !ok {
+			return
+		}
+		cols, rows, sizeErr := term.GetSize(int(file.Fd()))
+		if sizeErr != nil || cols <= 0 || rows <= 0 {
+			return
+		}
+		raw, marshalErr := json.Marshal(termResizeMsg{Type: "resize", Cols: cols, Rows: rows})
+		if marshalErr == nil {
+			_ = writeMessage(websocket.TextMessage, raw)
+		}
+	}
+	sendSize()
+
+	stopResize := make(chan struct{})
+	resizes := make(chan os.Signal, 1)
+	signal.Notify(resizes, syscall.SIGWINCH)
+	var pumps sync.WaitGroup
+	pumps.Add(1)
+	go func() {
+		defer pumps.Done()
+		for {
+			select {
+			case <-stopResize:
+				return
+			case <-resizes:
+				sendSize()
+			}
+		}
+	}()
+
+	inputErr := make(chan error, 1)
+	pumps.Add(1)
+	go func() {
+		defer pumps.Done()
+		buf := make([]byte, 4096)
+		escapePending := false
+		for {
+			n, readErr := cancelInput.Read(buf)
+			if n > 0 {
+				data, detach, pending := remoteTUIInput(buf[:n], escapePending)
+				escapePending = pending
+				if len(data) > 0 {
+					if writeErr := writeMessage(websocket.BinaryMessage, data); writeErr != nil {
+						inputErr <- writeErr
+						_ = conn.Close()
+						return
+					}
+				}
+				if detach {
+					inputErr <- errRemoteTUIDetached
+					_ = conn.Close()
+					return
+				}
+			}
+			if readErr != nil {
+				if escapePending {
+					if writeErr := writeMessage(websocket.BinaryMessage, []byte{remoteTUIEscapeByte}); writeErr != nil {
+						inputErr <- writeErr
+						_ = conn.Close()
+						return
+					}
+				}
+				if !errors.Is(readErr, cancelreader.ErrCanceled) {
+					inputErr <- readErr
+					_ = conn.Close()
+				}
+				return
+			}
+		}
+	}()
+
+	var streamErr error
+	for {
+		messageType, data, readErr := conn.ReadMessage()
+		if readErr != nil {
+			break
+		}
+		if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
+			continue
+		}
+		if _, writeErr := c.stdout.Write(data); writeErr != nil {
+			streamErr = writeErr
+			break
+		}
+	}
+
+	signal.Stop(resizes)
+	close(stopResize)
+	cancelInput.Cancel()
+	_ = conn.Close()
+	pumps.Wait()
+	select {
+	case err := <-inputErr:
+		if streamErr == nil && !errors.Is(err, io.EOF) && !errors.Is(err, errRemoteTUIDetached) {
+			streamErr = err
+		}
+	default:
+	}
+	if streamErr != nil {
+		return fmt.Errorf("remote terminal stream: %w", streamErr)
+	}
+	return nil
+}
+
+// remoteTUIInput applies the remote stream's two-byte escape protocol. An
+// escape can straddle reads, so pending is passed back to the caller. Doubling
+// the prefix quotes it; an unrecognized command remains transparent.
+func remoteTUIInput(input []byte, pending bool) (output []byte, detach, stillPending bool) {
+	output = make([]byte, 0, len(input))
+	for _, b := range input {
+		if !pending {
+			if b == remoteTUIEscapeByte {
+				pending = true
+			} else {
+				output = append(output, b)
+			}
+			continue
+		}
+		switch b {
+		case remoteTUIDetachCommand, remoteTUIDetachCommandUpper:
+			return output, true, false
+		case remoteTUIEscapeByte:
+			output = append(output, remoteTUIEscapeByte)
+		default:
+			output = append(output, remoteTUIEscapeByte, b)
+		}
+		pending = false
+	}
+	return output, false, pending
+}
+
+func (c *remoteTUIAttachCommand) dial() (*websocket.Conn, error) {
+	httpURL, err := url.Parse(c.api.baseURL + tuiHTTPPrefix + "/attach-ws/" + url.PathEscape(c.convID))
+	if err != nil {
+		return nil, fmt.Errorf("build remote terminal URL: %w", err)
+	}
+	wsURL := *httpURL
+	if wsURL.Scheme == "https" {
+		wsURL.Scheme = "wss"
+	} else {
+		wsURL.Scheme = "ws"
+	}
+	headers := http.Header{"Origin": []string{c.api.origin}}
+	for _, cookie := range c.api.client.Jar.Cookies(httpURL) {
+		headers.Add("Cookie", cookie.String())
+	}
+	conn, resp, err := c.api.wsDialer.Dial(wsURL.String(), headers)
+	if resp != nil {
+		c.api.client.Jar.SetCookies(httpURL, resp.Cookies())
+	}
+	if err != nil {
+		if resp != nil {
+			defer func() { _ = resp.Body.Close() }()
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+			if msg := strings.TrimSpace(string(raw)); msg != "" {
+				return nil, fmt.Errorf("connect remote terminal: %s: %s", resp.Status, msg)
+			}
+			return nil, fmt.Errorf("connect remote terminal: %s", resp.Status)
+		}
+		return nil, fmt.Errorf("connect remote terminal: %w", err)
+	}
+	return conn, nil
 }
 
 func (a *remoteTUIAPI) do(method, path string, in, out any) error {

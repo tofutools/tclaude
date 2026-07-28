@@ -1161,6 +1161,7 @@ type tuiAttachRecord struct {
 
 // Enter on a row with no live pane must say so, not silently do nothing.
 func TestTUIAttachWithoutALivePaneSaysSo(t *testing.T) {
+	setupTestDB(t)
 	rec := stubAttach(t)
 	m := newTUIModel(nil)
 	m.operator = true
@@ -1206,6 +1207,24 @@ func TestTUIReturnFromAPaneRefreshes(t *testing.T) {
 	assert.Contains(t, got.notice, "worker")
 	assert.True(t, got.refreshing)
 	assert.NotNil(t, cmd)
+}
+
+func TestTUIReturnFromRemoteTerminalInsideTmuxIsNotReportedAsASwitch(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/local-tmux")
+	m := newTUIModel(nil)
+	updated, cmd := m.Update(tuiAttachedMsg{
+		agent: "worker", session: "https://agent-host:8321", remote: true,
+	})
+	got := updated.(tuiModel)
+	assert.Contains(t, got.notice, "Back from the remote terminal for worker")
+	assert.NotContains(t, got.notice, "Switched")
+	assert.True(t, got.refreshing)
+	assert.NotNil(t, cmd)
+
+	got.capabilities.attachLocalPane = false
+	help := got.renderHelp()
+	assert.Contains(t, help, "ctrl-]")
+	assert.NotContains(t, help, "ctrl-b d")
 }
 
 func TestTUIAttachFailureIsReported(t *testing.T) {
@@ -1332,6 +1351,7 @@ func TestTUIResumeCarriesItsWarnings(t *testing.T) {
 // the listing is up to two seconds stale, and enter says so rather than
 // silently starting a second session for an agent that may still be up.
 func TestTUIEnterOnALiveRowWithoutAPaneSaysSo(t *testing.T) {
+	setupTestDB(t)
 	rec := stubAttach(t)
 	m := newTUIModel(nil)
 	m.operator = true
