@@ -299,27 +299,32 @@ jobs:
               server_pids+=("$!")
             done
           done
-          for port in 41001 41002; do
-            sudo ip netns exec "$namespace" \
-              socat "TCP6-LISTEN:$port,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
-              >"$RUNNER_TEMP/filtered-tcp6-$port.log" 2>&1 &
-            server_pids+=("$!")
-            sudo ip netns exec "$namespace" \
-              socat "UDP6-RECVFROM:$port,ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
-              >"$RUNNER_TEMP/filtered-udp6-$port.log" 2>&1 &
-            server_pids+=("$!")
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
           done
           sleep 1
           listener_dump=$(sudo ip netns exec "$namespace" ss -lntu6)
           printf '%s\n' "$listener_dump"
-          for port in 41001 41002; do
-            for protocol in tcp udp; do
-              if ! awk -v protocol="$protocol" -v port="$port" \
-                '$1 == protocol && $5 ~ ":" port "$" { found = 1 } END { exit !found }' \
-                <<<"$listener_dump"; then
-                echo "::error::IPv6 filtered-network fixture failed to bind $protocol port $port"
-                exit 1
-              fi
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              for protocol in tcp udp; do
+                endpoint="[$address]:$port"
+                if ! awk -v protocol="$protocol" -v endpoint="$endpoint" \
+                  '$1 == protocol && $5 == endpoint { found = 1 } END { exit !found }' \
+                  <<<"$listener_dump"; then
+                  echo "::error::IPv6 filtered-network fixture failed to bind $protocol $endpoint"
+                  exit 1
+                fi
+              done
             done
           done
           for protocol in TCP6 UDP6; do
