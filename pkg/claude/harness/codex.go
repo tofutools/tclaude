@@ -32,7 +32,9 @@ func init() {
 		OneShotReplay: OneShotReplayCodex,
 		Models:        codexModels{},
 		ModelTransport: staticModelTransport{
-			template: "net-openai-codex",
+			provider:    "openai",
+			template:    "net-openai-codex",
+			baseURLHost: "api.openai.com",
 			destinations: []sandboxpolicy.NetworkAllowEntry{
 				{Domain: "api.openai.com", Ports: []int{443}},
 				{Domain: "chatgpt.com", Ports: []int{443}},

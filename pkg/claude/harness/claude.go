@@ -32,7 +32,9 @@ func init() {
 		OneShotReplay: OneShotReplayDirect,
 		Models:        claudeModels{},
 		ModelTransport: staticModelTransport{
-			template: "net-anthropic",
+			provider:    "anthropic",
+			template:    "net-anthropic",
+			baseURLHost: "api.anthropic.com",
 			destinations: []sandboxpolicy.NetworkAllowEntry{{
 				Domain: "api.anthropic.com", Ports: []int{443},
 			}},

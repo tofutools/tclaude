@@ -2,7 +2,10 @@ package harness
 
 import (
 	"fmt"
+	"net/netip"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -18,19 +21,59 @@ type ModelTransportRequirement struct {
 	ResolvedBy   string                            `json:"resolved_by"`
 }
 
+// ResolvedModelTransport is provider-aware input minted only after launch
+// model/provider configuration has resolved. ProviderResolved prevents an
+// empty context from masquerading as proof of the harness default. BaseURL is
+// optional only for a known first-party provider.
+type ResolvedModelTransport struct {
+	Model            string `json:"model,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	BaseURL          string `json:"base_url,omitempty"`
+	ProviderResolved bool   `json:"provider_resolved"`
+}
+
 // ModelTransportResolver is deliberately separate from ModelCatalog. A model
 // token can be valid while its provider endpoint is unknown; filtered launch
 // must distinguish those cases and refuse the latter rather than widening.
 type ModelTransportResolver interface {
-	ResolveModelTransport(model string) (ModelTransportRequirement, error)
+	ResolveModelTransport(resolved ResolvedModelTransport) (ModelTransportRequirement, error)
 }
 
 type staticModelTransport struct {
+	provider     string
 	template     string
+	baseURLHost  string
 	destinations []sandboxpolicy.NetworkAllowEntry
 }
 
-func (r staticModelTransport) ResolveModelTransport(string) (ModelTransportRequirement, error) {
+func (r staticModelTransport) ResolveModelTransport(
+	resolved ResolvedModelTransport,
+) (ModelTransportRequirement, error) {
+	if !resolved.ProviderResolved {
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"model provider configuration was not resolved")
+	}
+	provider := strings.ToLower(strings.TrimSpace(resolved.Provider))
+	if provider != r.provider {
+		if strings.TrimSpace(resolved.BaseURL) == "" {
+			return ModelTransportRequirement{}, fmt.Errorf(
+				"provider %q has no concrete resolved endpoint", resolved.Provider)
+		}
+		return customModelTransportRequirement(
+			resolved.BaseURL, "resolved "+provider+" provider endpoint")
+	}
+	if strings.TrimSpace(resolved.BaseURL) != "" {
+		custom, err := customModelTransportRequirement(
+			resolved.BaseURL, "resolved "+provider+" provider endpoint")
+		if err != nil {
+			return ModelTransportRequirement{}, err
+		}
+		if len(custom.Destinations) != 1 ||
+			!strings.EqualFold(custom.Destinations[0].Domain, r.baseURLHost) ||
+			!slices.Equal(custom.Destinations[0].Ports, []int{443}) {
+			return custom, nil
+		}
+	}
 	return ModelTransportRequirement{
 		Template:     r.template,
 		Destinations: cloneNetworkDestinations(r.destinations),
@@ -40,14 +83,16 @@ func (r staticModelTransport) ResolveModelTransport(string) (ModelTransportRequi
 
 type unresolvedOpenCodeModelTransport struct{}
 
-func (unresolvedOpenCodeModelTransport) ResolveModelTransport(model string) (ModelTransportRequirement, error) {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		model = "(harness default)"
+func (unresolvedOpenCodeModelTransport) ResolveModelTransport(
+	resolved ResolvedModelTransport,
+) (ModelTransportRequirement, error) {
+	if resolved.ProviderResolved && strings.TrimSpace(resolved.BaseURL) != "" {
+		return customModelTransportRequirement(
+			resolved.BaseURL, "resolved OpenCode provider endpoint")
 	}
 	return ModelTransportRequirement{}, fmt.Errorf(
-		"OpenCode model %q does not expose a resolved provider endpoint at the harness descriptor seam",
-		model,
+		"OpenCode model %q does not expose a concrete resolved provider endpoint at the harness descriptor seam",
+		displayResolvedModel(resolved.Model),
 	)
 }
 
@@ -56,7 +101,7 @@ func (unresolvedOpenCodeModelTransport) ResolveModelTransport(model string) (Mod
 // refusal vocabulary; activation belongs to the smoke-gated filtered slices.
 func ResolveModelTransportRequirement(
 	h *Harness,
-	resolvedModel string,
+	resolved ResolvedModelTransport,
 ) (ModelTransportRequirement, error) {
 	if h == nil {
 		return ModelTransportRequirement{}, &SandboxCapabilityError{
@@ -69,7 +114,12 @@ func ResolveModelTransportRequirement(
 			h, "the harness has no resolved model-transport hook",
 		)
 	}
-	requirement, err := h.ModelTransport.ResolveModelTransport(resolvedModel)
+	if !resolved.ProviderResolved {
+		return ModelTransportRequirement{}, modelTransportCapabilityError(
+			h, "model provider configuration was not resolved; choose a resolvable provider or use network open",
+		)
+	}
+	requirement, err := h.ModelTransport.ResolveModelTransport(resolved)
 	if err != nil {
 		return ModelTransportRequirement{}, modelTransportCapabilityError(h, err.Error())
 	}
@@ -150,6 +200,12 @@ func networkRulesCoverDestination(
 		if !portsCover(candidate.Ports, required.Ports) {
 			continue
 		}
+		if candidate.CIDR != "" && candidate.CIDR == required.CIDR {
+			return true
+		}
+		if candidate.Loopback && required.Loopback {
+			return true
+		}
 		requiredName := required.Host
 		if requiredName == "" {
 			requiredName = required.Domain
@@ -189,6 +245,12 @@ func formatNetworkDestination(entry sandboxpolicy.NetworkAllowEntry) string {
 	if name == "" {
 		name = entry.Domain
 	}
+	if name == "" {
+		name = entry.CIDR
+	}
+	if entry.Loopback {
+		name = sandboxpolicy.FilteredNetworkHostLoopbackName
+	}
 	if len(entry.Ports) == 0 {
 		return name
 	}
@@ -197,6 +259,100 @@ func formatNetworkDestination(entry sandboxpolicy.NetworkAllowEntry) string {
 		ports = append(ports, fmt.Sprintf("%d", port))
 	}
 	return name + ":" + strings.Join(ports, ",")
+}
+
+func customModelTransportRequirement(
+	rawURL, resolvedBy string,
+) (ModelTransportRequirement, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"resolved provider endpoint %q is invalid: %w", rawURL, err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"resolved provider endpoint %q must use http or https", rawURL)
+	}
+	if parsed.User != nil || parsed.Hostname() == "" {
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"resolved provider endpoint %q must have a host and no userinfo", rawURL)
+	}
+	port := 443
+	if parsed.Scheme == "http" {
+		port = 80
+	}
+	if rawPort := parsed.Port(); rawPort != "" {
+		port, err = strconv.Atoi(rawPort)
+		if err != nil || port < 1 || port > 65535 {
+			return ModelTransportRequirement{}, fmt.Errorf(
+				"resolved provider endpoint %q has an invalid port", rawURL)
+		}
+	}
+	host := strings.ToLower(parsed.Hostname())
+	destination := sandboxpolicy.NetworkAllowEntry{
+		Domain: host, Ports: []int{port},
+	}
+	if address, parseErr := netip.ParseAddr(host); parseErr == nil {
+		switch {
+		case address.IsLoopback():
+			return ModelTransportRequirement{}, loopbackModelEndpointError(rawURL, port)
+		case address.Is4():
+			destination = sandboxpolicy.NetworkAllowEntry{
+				CIDR: netip.PrefixFrom(address, 32).String(), Ports: []int{port},
+			}
+		default:
+			destination = sandboxpolicy.NetworkAllowEntry{
+				CIDR: netip.PrefixFrom(address, 128).String(), Ports: []int{port},
+			}
+		}
+	} else if strings.EqualFold(host, "localhost") {
+		return ModelTransportRequirement{}, loopbackModelEndpointError(rawURL, port)
+	} else if strings.EqualFold(host, sandboxpolicy.FilteredNetworkHostLoopbackName) {
+		destination = sandboxpolicy.NetworkAllowEntry{
+			Loopback: true, Ports: []int{port},
+		}
+	}
+	ir, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode:  sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{destination},
+	})
+	if err != nil {
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"resolved provider endpoint %q is not representable: %w", rawURL, err)
+	}
+	normalized := ir.Rules[0]
+	destination = sandboxpolicy.NetworkAllowEntry{Ports: normalized.Ports}
+	switch normalized.Selector {
+	case sandboxpolicy.NetworkSelectorDomain:
+		destination.Domain = normalized.Value
+	case sandboxpolicy.NetworkSelectorCIDR:
+		destination.CIDR = normalized.Value
+	case sandboxpolicy.NetworkSelectorLoopback:
+		destination.Loopback = true
+	default:
+		return ModelTransportRequirement{}, fmt.Errorf(
+			"resolved provider endpoint %q produced unsupported selector %q",
+			rawURL, normalized.Selector)
+	}
+	return ModelTransportRequirement{
+		Destinations: []sandboxpolicy.NetworkAllowEntry{destination},
+		ResolvedBy:   resolvedBy,
+	}, nil
+}
+
+func loopbackModelEndpointError(rawURL string, port int) error {
+	return fmt.Errorf(
+		"resolved provider endpoint %q uses sandbox-private localhost; configure the provider for %s:%d to reach an explicitly allowed host-loopback service, choose a resolvable non-loopback provider, or use network open",
+		rawURL, sandboxpolicy.FilteredNetworkHostLoopbackName, port,
+	)
+}
+
+func displayResolvedModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "(harness default)"
+	}
+	return model
 }
 
 func cloneNetworkDestinations(

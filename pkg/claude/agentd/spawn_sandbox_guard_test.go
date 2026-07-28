@@ -76,8 +76,8 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	}
 	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
 		return session.FilteredNetworkPrerequisite{
-			Available: true,
-			Detail:    "bubblewrap user/network namespaces, pasta, and nftables are available",
+			Detected: true,
+			Detail:   "namespace execution passed; pasta and nft executables found; gateway not verified",
 		}
 	}
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
@@ -100,7 +100,7 @@ func TestPlanSandboxProfileAccessPersistsFilteredProbeWhyWithoutFlippingCapabili
 	require.Equal(t, "no_mechanism", notices[0].Reason,
 		"M2a must retain the widening authority")
 	require.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, notices[1].Reason)
-	require.Contains(t, notices[1].Detail, "prerequisite probe: ready")
+	require.Contains(t, notices[1].Detail, "prerequisite probe: detected")
 	require.Contains(t, notices[1].Detail, "not enabled yet")
 	require.Contains(t, notices[1].Detail, "outbound remains open")
 	require.Contains(t, snapshot.Effective.AccessNotices, notices[0])

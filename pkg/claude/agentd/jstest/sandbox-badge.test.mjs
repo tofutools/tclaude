@@ -171,11 +171,11 @@ const CASES = [
       sandbox_profiles_recorded: true,
       sandbox_access_notices: [{
         class: 'degradation', axis: 'network', reason: 'filtered_prerequisite_probe',
-        detail: 'filtered-network prerequisite probe: ready (bubblewrap user/network namespaces, pasta, and nftables are available); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open',
+        detail: 'filtered-network prerequisite probe: detected (bubblewrap namespace execution passed; pasta and nft executables found; gateway readiness is not verified in M2a); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open',
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: ready (bubblewrap user/network namespaces, pasta, and nftables are available); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap namespace execution passed; pasta and nft executables found; gateway readiness is not verified in M2a); the filtered applier is not enabled yet, so the network allow list remains unenforced and outbound remains open\nClick to temporarily disable',
   },
   {
     name: 'an offline lock stays informative but non-actionable',

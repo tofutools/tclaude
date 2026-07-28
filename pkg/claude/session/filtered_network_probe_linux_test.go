@@ -30,11 +30,12 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	}
 
 	got := ProbeFilteredNetworkPrerequisite()
-	require.True(t, got.Available)
+	require.True(t, got.Detected)
 	assert.Contains(t, got.Detail, "bubblewrap")
-	assert.Contains(t, got.Detail, "user/network namespaces")
+	assert.Contains(t, got.Detail, "user/network namespace")
 	assert.Contains(t, got.Detail, "pasta")
-	assert.Contains(t, got.Detail, "nftables")
+	assert.Contains(t, got.Detail, "nft")
+	assert.Contains(t, got.Detail, "not verified in M2a")
 	assert.Contains(t, got.LaunchWhy(), "not enabled yet")
 	assert.Contains(t, got.LaunchWhy(), "remains unenforced")
 }
@@ -58,8 +59,46 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 	}
 
 	got := ProbeFilteredNetworkPrerequisite()
-	require.False(t, got.Available)
+	require.False(t, got.Detected)
 	assert.Contains(t, got.Detail, "pasta")
 	assert.Contains(t, got.LaunchWhy(), "unavailable")
 	assert.Contains(t, got.LaunchWhy(), "outbound remains open")
+}
+
+func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
+	prior := []sandboxpolicy.AccessNotice{{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "network",
+		Reason: "no_mechanism",
+		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Detail: "network list remains open",
+	}}
+	current := appendFilteredNetworkPrerequisiteNotice(
+		prior,
+		true,
+		sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+		func() FilteredNetworkPrerequisite {
+			return FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "namespace execution passed; executables found; gateway not verified",
+			}
+		},
+	)
+	persisted := sandboxpolicy.ReplaceAccessDegradationNotices(nil, current...)
+	require.Len(t, persisted, 2)
+	assert.Equal(t, "no_mechanism", persisted[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredPrerequisite, persisted[1].Reason)
+	assert.Contains(t, persisted[1].Detail, "prerequisite probe: detected")
+	assert.Contains(t, persisted[1].Detail, "outbound remains open")
+
+	unchanged := appendFilteredNetworkPrerequisiteNotice(
+		prior,
+		false,
+		sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+		func() FilteredNetworkPrerequisite {
+			t.Fatal("non-outer launch must not run the filtered prerequisite probe")
+			return FilteredNetworkPrerequisite{}
+		},
+	)
+	assert.Equal(t, prior, unchanged)
 }

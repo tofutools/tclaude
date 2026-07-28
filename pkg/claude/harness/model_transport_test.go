@@ -20,7 +20,16 @@ func TestModelTransportRequirementsAreHarnessOwnedAndExplicit(t *testing.T) {
 			"api.openai.com:443", "chatgpt.com:443", "auth.openai.com:443",
 		}},
 	} {
-		requirement, err := ResolveModelTransportRequirement(MustGet(tc.harnessName), "")
+		provider := "anthropic"
+		if tc.harnessName == CodexName {
+			provider = "openai"
+		}
+		requirement, err := ResolveModelTransportRequirement(
+			MustGet(tc.harnessName),
+			ResolvedModelTransport{
+				Provider: provider, ProviderResolved: true,
+			},
+		)
 		require.NoError(t, err)
 		assert.Equal(t, tc.template, requirement.Template)
 		detail := DescribeModelTransportRequirement(requirement)
@@ -34,7 +43,9 @@ func TestModelTransportRequirementsAreHarnessOwnedAndExplicit(t *testing.T) {
 
 func TestModelTransportCoverageRefusesWithoutMutatingPolicy(t *testing.T) {
 	h := MustGet(CodexName)
-	requirement, err := ResolveModelTransportRequirement(h, "gpt-5.6-sol")
+	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model: "gpt-5.6-sol", Provider: "openai", ProviderResolved: true,
+	})
 	require.NoError(t, err)
 	rules := sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
@@ -63,7 +74,9 @@ func TestModelTransportCoverageRefusesWithoutMutatingPolicy(t *testing.T) {
 
 func TestModelTransportCoverageHonorsExplicitSubdomainAndPortBounds(t *testing.T) {
 	h := MustGet(DefaultName)
-	requirement, err := ResolveModelTransportRequirement(h, "sonnet")
+	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model: "sonnet", Provider: "anthropic", ProviderResolved: true,
+	})
 	require.NoError(t, err)
 	rules := sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
@@ -77,10 +90,84 @@ func TestModelTransportCoverageHonorsExplicitSubdomainAndPortBounds(t *testing.T
 }
 
 func TestOpenCodeModelTransportRequiresResolvedProviderEndpoint(t *testing.T) {
-	_, err := ResolveModelTransportRequirement(MustGet(OpenCodeName), "custom/model")
+	_, err := ResolveModelTransportRequirement(
+		MustGet(OpenCodeName),
+		ResolvedModelTransport{
+			Model: "custom/model", Provider: "custom", ProviderResolved: true,
+		},
+	)
 	require.Error(t, err)
 	var capability *SandboxCapabilityError
 	require.True(t, errors.As(err, &capability))
 	assert.Equal(t, SandboxCapabilityModelTransport, capability.Kind)
 	assert.Contains(t, err.Error(), "resolved provider endpoint")
+}
+
+func TestModelTransportRequiresProviderResolutionAndUsesConcreteCustomEndpoint(t *testing.T) {
+	h := MustGet(DefaultName)
+	_, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model: "sonnet",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider configuration was not resolved")
+	assert.Contains(t, err.Error(), "choose a resolvable provider")
+
+	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model:            "sonnet",
+		Provider:         "anthropic",
+		BaseURL:          "https://gateway.example/v1",
+		ProviderResolved: true,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, requirement.Template)
+	assert.Equal(t, "resolved anthropic provider endpoint", requirement.ResolvedBy)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Domain: "gateway.example", Ports: []int{443},
+	}}, requirement.Destinations)
+
+	requirement, err = ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model:            "sonnet",
+		Provider:         "anthropic",
+		BaseURL:          "https://api.anthropic.com:8443/v1",
+		ProviderResolved: true,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, requirement.Template,
+		"a non-default port on the first-party host is still a custom endpoint")
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Domain: "api.anthropic.com", Ports: []int{8443},
+	}}, requirement.Destinations)
+
+	openCode, err := ResolveModelTransportRequirement(
+		MustGet(OpenCodeName),
+		ResolvedModelTransport{
+			Model:            "custom/model",
+			Provider:         "custom",
+			BaseURL:          "http://host.tclaude.internal:11434/v1",
+			ProviderResolved: true,
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		Loopback: true, Ports: []int{11434},
+	}}, openCode.Destinations)
+
+	for _, baseURL := range []string{
+		"http://127.0.0.1:11434/v1",
+		"http://[::1]:11434/v1",
+		"http://localhost:11434/v1",
+	} {
+		_, loopbackErr := ResolveModelTransportRequirement(
+			MustGet(OpenCodeName),
+			ResolvedModelTransport{
+				Model:            "custom/model",
+				Provider:         "custom",
+				BaseURL:          baseURL,
+				ProviderResolved: true,
+			},
+		)
+		require.Error(t, loopbackErr)
+		assert.Contains(t, loopbackErr.Error(), "sandbox-private localhost")
+		assert.Contains(t, loopbackErr.Error(), sandboxpolicy.FilteredNetworkHostLoopbackName)
+	}
 }

@@ -27,7 +27,8 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 		}
 	}
 	return FilteredNetworkPrerequisite{
-		Available: true,
-		Detail:    "bubblewrap user/network namespaces, pasta, and nftables are available",
+		Detected: true,
+		Detail: "bubblewrap user/network namespace execution passed; pasta and nft executables " +
+			"were found on PATH; end-to-end gateway readiness is not verified in M2a",
 	}
 }

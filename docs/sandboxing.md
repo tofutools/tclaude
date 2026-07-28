@@ -556,8 +556,11 @@ best-effort for portless entries, and raw/packet sockets are not an authored
 class. No filtered applier is enabled today, so the capability matrix remains
 `None`: list policy widens to host-open with a warning. On Linux, resolved
 launches also record the live prerequisite result for bubblewrap user/network
-namespaces, rootless `pasta`, and nftables. A ready probe is preparation, not
-an enforcement claim, and the warning still says that outbound remains open.
+namespaces, rootless `pasta`, and nftables. A detected prerequisite is
+preparation, not an enforcement claim. In M2a, “detected” means the bubblewrap
+namespace execution passed and the `pasta`/`nft` executables were found;
+end-to-end gateway readiness is not claimed until the data-plane smoke. The
+warning still says that outbound remains open.
 
 The planned Linux gateway uses DNS-to-IP leases for host/domain rules, not SNI
 or application identity. A resolved shared IP can therefore be reused until

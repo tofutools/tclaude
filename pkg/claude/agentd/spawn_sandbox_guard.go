@@ -196,13 +196,7 @@ func planSandboxProfileAccessForLaunch(
 	if implementation.UsesTclaudeLayer() &&
 		axes.Network.Mode == sandboxpolicy.AccessModeList {
 		probe := probeFilteredNetworkPrerequisite()
-		notices = append(notices, sandboxpolicy.AccessNotice{
-			Class:  sandboxpolicy.AccessNoticeClassDegradation,
-			Axis:   "network",
-			Reason: sandboxpolicy.AccessNoticeReasonFilteredPrerequisite,
-			Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
-			Detail: probe.LaunchWhy(),
-		})
+		notices = append(notices, session.FilteredNetworkPrerequisiteNotice(probe))
 	}
 	materialization, err := sandboxpolicy.PrepareUnixSocketLaunch(rendered.UnixSockets)
 	if err != nil {
