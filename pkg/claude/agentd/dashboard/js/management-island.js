@@ -60,6 +60,40 @@ function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
 
+const SANDBOX_EVALUATION_FALLBACK_HARNESSES = [
+  { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+  { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+  // OpenCode's access-control mode is a command filter, not an OS sandbox.
+  // Its agentd-owned server boundary is the one supported evaluation target.
+  { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true, can_stacked: false },
+];
+
+function sandboxEvaluationHarnesses(catalog) {
+  const candidates = Array.isArray(catalog) && catalog.length
+    ? catalog
+    : SANDBOX_EVALUATION_FALLBACK_HARNESSES;
+  return candidates.filter((entry) =>
+    entry.can_builtin_os_sandbox || entry.can_tclaude_layer || entry.can_stacked);
+}
+
+function sandboxEvaluationImplementations(harness, platform, catalog) {
+  const entry = sandboxEvaluationHarnesses(catalog)
+    .find((candidate) => candidate.name === harness);
+  if (!entry) return [];
+  const options = [];
+  if (entry.can_builtin_os_sandbox) options.push(['harness-builtin', 'Harness built-in sandbox']);
+  if (entry.can_tclaude_layer) options.push(['tclaude-layer', 'tclaude sandbox']);
+  if (entry.can_stacked && platform === 'linux') options.push(['stacked', 'Stacked sandboxes']);
+  return options;
+}
+
+function sandboxEvaluationTarget(harness, implementation, platform) {
+  if (!harness) return null;
+  const target = { implementation, harness, platform };
+  if (harness === 'opencode') target.sandbox = 'tclaude-layer';
+  return target;
+}
+
 function SandboxOutcomeBucket({ bucket, open }) {
   return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
     <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
@@ -592,6 +626,7 @@ function sandboxFilesystemWire(draft, baseline) {
 function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
+  const evaluationHarnesses = sandboxEvaluationHarnesses(descriptor.catalog);
   const baseline = useMemo(() => {
     const axes = sandboxAccessAxes(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
@@ -613,7 +648,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const [commonRuleNotice, setCommonRuleNotice] = useState(null);
   const [networkTemplateNotice, setNetworkTemplateNotice] = useState(null);
   const [socketTemplateNotice, setSocketTemplateNotice] = useState(null);
-  const [evaluateFor, setEvaluateFor] = useState('');
+  const [evaluateHarness, setEvaluateHarness] = useState('');
+  const [evaluateImplementation, setEvaluateImplementation] = useState('harness-builtin');
+  const [evaluatePlatform, setEvaluatePlatform] = useState('linux');
   const [prediction, setPrediction] = useState(null);
   const [predictionError, setPredictionError] = useState('');
   const [predictionBusy, setPredictionBusy] = useState(false);
@@ -681,7 +718,15 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     : accessErrors;
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
-  const predictionSignature = JSON.stringify([predictionDraftError ? null : predictionDraft, evaluateFor, options.group || '']);
+  const evaluationImplementations = sandboxEvaluationImplementations(
+    evaluateHarness, evaluatePlatform, descriptor.catalog,
+  );
+  const evaluationTarget = sandboxEvaluationTarget(
+    evaluateHarness, evaluateImplementation, evaluatePlatform,
+  );
+  const predictionSignature = JSON.stringify([
+    predictionDraftError ? null : predictionDraft, evaluationTarget, options.group || '',
+  ]);
   useEffect(() => {
     if (typeof actions.predictSandbox !== 'function') return undefined;
     if (predictionDraftError || !predictionDraft.name.trim() || predictionAccessErrors.length > 0) {
@@ -690,7 +735,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     }
     let active = true;
     setPredictionBusy(true);
-    const targets = evaluateFor ? [(() => { const [implementation, harness, platform] = evaluateFor.split('/'); return { implementation, harness, platform }; })()] : [];
+    const targets = evaluationTarget ? [evaluationTarget] : [];
     const timer = setTimeout(() => {
       actions.predictSandbox(predictionDraft, targets, { group: options.group || '' }).then((value) => {
         if (!active) return;
@@ -770,16 +815,43 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
     <fieldset class="sbx-section sbx-effective-preview"><legend>Effective policy preview</legend>
-      <label>Evaluate for <select id="sandbox-profile-editor-evaluate-for" value=${evaluateFor} onChange=${(event) => setEvaluateFor(event.currentTarget.value)}>
-        <option value="">Default for this profile</option>
-        <option value="harness-builtin/claude/linux">Claude on Linux · built-in sandbox</option>
-        <option value="harness-builtin/claude/darwin">Claude on macOS · built-in sandbox</option>
-        <option value="harness-builtin/codex/linux">Codex on Linux · built-in sandbox</option>
-        <option value="harness-builtin/codex/darwin">Codex on macOS · built-in sandbox</option>
-        <option value="tclaude-layer/claude/linux">Claude on Linux · tclaude sandbox</option>
-        <option value="tclaude-layer/claude/darwin">Claude on macOS · tclaude sandbox</option>
-        <option value="stacked/claude/linux">Claude on Linux · stacked sandboxes</option>
-      </select></label>
+      <div class="sbx-evaluation-target-controls">
+        <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
+          const nextHarness = event.currentTarget.value;
+          const implementations = sandboxEvaluationImplementations(
+            nextHarness, evaluatePlatform, descriptor.catalog,
+          );
+          setEvaluateHarness(nextHarness);
+          if (!implementations.some(([value]) => value === evaluateImplementation)) {
+            setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
+          }
+        }}>
+          <option value="">Resolved default target</option>
+          ${evaluationHarnesses.map((entry) => html`
+            <option value=${entry.name}>${entry.display_name || entry.name}</option>
+          `)}
+        </select></label>
+        <label>Sandbox implementation <select id="sandbox-profile-editor-evaluate-implementation" value=${evaluateImplementation} disabled=${!evaluateHarness} onChange=${(event) => setEvaluateImplementation(event.currentTarget.value)}>
+          ${evaluateHarness
+    ? evaluationImplementations.map(([value, label]) => html`<option value=${value}>${label}</option>`)
+    : html`<option value="harness-builtin">Resolved with harness</option>`}
+        </select></label>
+        <label>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
+          const nextPlatform = event.currentTarget.value;
+          const implementations = sandboxEvaluationImplementations(
+            evaluateHarness, nextPlatform, descriptor.catalog,
+          );
+          setEvaluatePlatform(nextPlatform);
+          if (!implementations.some(([value]) => value === evaluateImplementation)) {
+            setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
+          }
+        }}>
+          ${evaluateHarness ? html`
+            <option value="linux">Linux</option>
+            <option value="darwin">macOS</option>
+          ` : html`<option value="linux">Resolved current host</option>`}
+        </select></label>
+      </div>
       ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}

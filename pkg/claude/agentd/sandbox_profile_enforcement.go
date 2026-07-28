@@ -121,7 +121,12 @@ func handleSandboxProfileEnforcement(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
-		mode := predictedBuiltinMode(target.harness.Name)
+		mode, err := resolveSandboxProfilePredictionMode(target, "")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				fmt.Sprintf("invalid --for target %q: %v", raw, err))
+			return
+		}
 		prediction, err := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes, mode, target.platform,
 		)
@@ -221,13 +226,10 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
 			return
 		}
-		mode := predictedBuiltinMode(target.harness.Name)
-		if strings.TrimSpace(requested.Sandbox) != "" {
-			mode, parseErr = harness.ResolveSandboxMode(target.harness, requested.Sandbox)
-			if parseErr != nil {
-				writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
-				return
-			}
+		mode, parseErr := resolveSandboxProfilePredictionMode(target, requested.Sandbox)
+		if parseErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", parseErr.Error())
+			return
 		}
 		predicted, predictErr := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
@@ -340,6 +342,11 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	}
 	if implementation == sandboxpolicy.ImplementationStacked {
 		sandboxMode = predictedBuiltinMode(harnessName)
+	}
+	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
+		resolvedHarness.Name, sandboxMode, implementation)
+	if err != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
 
 	sources := []string{}
@@ -739,4 +746,27 @@ func predictedBuiltinMode(harnessName string) string {
 	default:
 		return ""
 	}
+}
+
+// resolveSandboxProfilePredictionMode mirrors launch-time OpenCode
+// normalization. OpenCode's access-control mode is a command filter, not an OS
+// sandbox, so the only target this evaluator accepts for it is the tclaude
+// layer, reported truthfully as sandbox mode "tclaude-layer".
+func resolveSandboxProfilePredictionMode(
+	target parsedSandboxProfileEnforcementTarget,
+	requested string,
+) (string, error) {
+	mode := predictedBuiltinMode(target.harness.Name)
+	if strings.TrimSpace(requested) != "" {
+		var err error
+		mode, err = harness.ResolveSandboxMode(target.harness, requested)
+		if err != nil {
+			return "", err
+		}
+	}
+	if target.implementation == sandboxpolicy.ImplementationStacked {
+		mode = predictedBuiltinMode(target.harness.Name)
+	}
+	return harness.ResolveOpenCodeSandboxImplementationMode(
+		target.harness.Name, mode, target.implementation)
 }

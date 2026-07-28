@@ -1215,7 +1215,11 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     id: 41, name: 'access', filesystem: [], environment: [], includes: [], agent_directories: [],
     network: { mode: 'list', allow: [{ domain: 'api.anthropic.com', ports: [443] }] },
     unix_sockets: { mode: 'closed' },
-  }, options: { group: 'crew' } });
+  }, options: { group: 'crew' }, catalog: [
+    { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+    { name: 'codex', display_name: 'Codex', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
+    { name: 'opencode', display_name: 'OpenCode', can_builtin_os_sandbox: false, can_tclaude_layer: true, can_stacked: false },
+  ] });
   const predictions = [];
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async predictSandbox(draft, targets, context) {
@@ -1249,8 +1253,32 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.ok(host.querySelector('#sandbox-profile-editor-network-mode'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
-  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for option[value="stacked/claude/darwin"]'), null,
-    'the preview never offers the statically unsupported nested Seatbelt target');
+  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for'), null,
+    'the preview does not encode every target permutation in one selector');
+  const evaluationHarness = host.querySelector('#sandbox-profile-editor-evaluate-harness');
+  const evaluationImplementation = host.querySelector('#sandbox-profile-editor-evaluate-implementation');
+  const evaluationPlatform = host.querySelector('#sandbox-profile-editor-evaluate-platform');
+  assert.deepEqual([...evaluationHarness.options].map((option) => option.value),
+    ['', 'claude', 'codex', 'opencode']);
+  assert.equal(evaluationImplementation.disabled, true,
+    'the resolved default keeps the other target axes under daemon control');
+  choose(evaluationHarness, 'opencode');
+  await harness.act(() => harness.fireEvent(evaluationHarness, 'change'));
+  assert.deepEqual(
+    [...host.querySelector('#sandbox-profile-editor-evaluate-implementation').options]
+      .map((option) => option.value),
+    ['tclaude-layer'],
+    'OpenCode offers only its real tclaude OS sandbox, never soft access-control',
+  );
+  choose(evaluationPlatform, 'darwin');
+  await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.deepEqual(predictions.at(-1).targets, [{
+    implementation: 'tclaude-layer',
+    harness: 'opencode',
+    platform: 'darwin',
+    sandbox: 'tclaude-layer',
+  }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Claude on Linux · tclaude sandbox/);

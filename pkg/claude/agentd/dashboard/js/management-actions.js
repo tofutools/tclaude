@@ -355,7 +355,10 @@ export function createManagementActions({
     });
   }
   function openSandboxEditor(seed = null, options = {}) {
-    state.openDialog({ kind: 'sandbox-editor', seed, options });
+    state.openDialog({
+      kind: 'sandbox-editor', seed, options,
+      catalog: getSnapshot()?.harnesses || [],
+    });
     if (options.notice) state.error.value = options.notice;
   }
   function openSandboxClone(source) {
@@ -373,6 +376,7 @@ export function createManagementActions({
       kind: 'sandbox-editor',
       seed: { ...source, name },
       options: { editExisting: false, cloneSourceName: source.name },
+      catalog: getSnapshot()?.harnesses || [],
     });
     return true;
   }
