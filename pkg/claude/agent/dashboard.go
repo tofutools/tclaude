@@ -1,12 +1,15 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -83,6 +86,25 @@ func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 // (it's an implementation detail of the daemon's popup spawner) and
 // the WSL ordering is the same here. Keep both copies in sync if the
 // platform matrix grows.
+//
+// Start() alone only catches a missing launcher binary. The interesting
+// failures are exit codes: xdg-open reports "no method available" (3) or
+// "action failed" (4) on a headless/misconfigured host, and open(1) and
+// `start` fail similarly — all with a zero-valued Start(). That matters
+// most here, where the caller turns the error into a user-visible
+// "Failed to open browser" and rcIOFailure; without it the CLI printed
+// "Opening dashboard in your browser…" and exited 0 with nothing opened.
+//
+// The wait is bounded because success is not always a prompt exit: with a
+// desktop environment xdg-open delegates and returns immediately, but its
+// generic fallback execs the browser in the FOREGROUND and does not
+// return until the browser is closed. A launcher still running after
+// browserLaunchProbe is treated as a successful launch, and reaped by the
+// background goroutine.
+//
+// cmd.Stderr stays nil (/dev/null) so cmd.Wait() tracks the LAUNCHER and
+// not the browser it forked — see openBrowser in agentd/popup.go for the
+// full reasoning; launcherExitHint supplies the diagnostic instead.
 func openBrowserURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -103,7 +125,54 @@ func openBrowserURL(url string) error {
 		}
 		cmd = exec.Command("xdg-open", url)
 	}
-	return cmd.Start()
+	name := filepath.Base(cmd.Path)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case err := <-waited:
+		if err == nil {
+			return nil
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			if hint := launcherExitHint(name, exit.ExitCode()); hint != "" {
+				return fmt.Errorf("%s: %w: %s", name, err, hint)
+			}
+		}
+		return fmt.Errorf("%s: %w", name, err)
+	case <-time.After(browserLaunchProbe):
+		return nil
+	}
+}
+
+// browserLaunchProbe bounds how long openBrowserURL waits for a launcher to
+// exit before calling the launch good. Real launcher failures are immediate
+// (bad URL, no handler, no display); anything still alive this long has
+// handed off or is fronting the browser itself.
+const browserLaunchProbe = 2 * time.Second
+
+// launcherExitHint turns a launcher's exit status into the human-readable
+// cause the CLI prints after "Failed to open browser: ". Only xdg-open
+// documents a status table — open(1) and cmd.exe's `start` do not, so they
+// get "" and the bare status. Duplicated from agentd/popup.go.
+func launcherExitHint(name string, code int) string {
+	if name != "xdg-open" {
+		return ""
+	}
+	switch code {
+	case 1:
+		return "error in command line syntax"
+	case 2:
+		return "the file or URL does not exist"
+	case 3:
+		return "no method available for opening it (no browser or desktop opener found)"
+	case 4:
+		return "the opening action failed"
+	}
+	return ""
 }
 
 // escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing
