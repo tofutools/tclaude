@@ -83,7 +83,10 @@ const ACCESS_MODE_OPTIONS = [
 ];
 
 function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
-  const rules = draft.network || { mode: '', allow: [] };
+  // Access-rule arrays are sparse on the wire: Go deliberately omits an empty
+  // `allow`, including for list-mode empty intersections. Normalize at the
+  // render boundary so legacy and modern-empty payloads share one safe shape.
+  const rules = sandboxAccessAxes({ network: draft.network }).network;
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   const selector = (row) => row.domain ? 'domain' : row.cidr ? 'cidr' : row.loopback ? 'loopback' : 'host';
@@ -116,7 +119,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
 }
 
 function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
-  const rules = draft.unix_sockets || { mode: '', allow: [] };
+  const rules = sandboxAccessAxes({ unix_sockets: draft.unix_sockets }).unix_sockets;
   const update = (patch) => setDraft((value) => ({ ...value, unix_sockets: { ...value.unix_sockets, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   const insert = (entry) => {
@@ -572,7 +575,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || Array.isArray(network) || !unix_sockets || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network, unix_sockets }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
@@ -646,6 +649,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const accessErrors = sandboxAccessDraftErrors(draft);
   const warnings = sandboxPredictionWarnings(prediction);
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
+  const selectedEffectiveAxes = selectedEffective ? sandboxAccessAxes(selectedEffective) : null;
   const submitBlocked = saving || directoryBusy || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${networkTemplateNotice} setNotice=${setNetworkTemplateNotice}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
@@ -706,8 +710,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       ${(prediction?.contexts?.length || 0) > 1 && html`<label>Assignment context <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
       ${selectedEffective && html`<div class="sbx-effective-values">
         <div><strong>Layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
-        <div><strong>Network:</strong> ${selectedEffective.network.mode || 'unset'}${selectedEffective.network.mode === 'list' ? ` · ${selectedEffective.network.allow.length} destination(s)` : ''}</div>
-        <div><strong>Unix sockets:</strong> ${selectedEffective.unix_sockets.mode || 'unset'}${selectedEffective.unix_sockets.mode === 'list' ? ` · ${selectedEffective.unix_sockets.allow.length} entry(s)` : ''}</div>
+        <div><strong>Network:</strong> ${selectedEffectiveAxes.network.mode || 'unset'}${selectedEffectiveAxes.network.mode === 'list' ? ` · ${selectedEffectiveAxes.network.allow.length} destination(s)` : ''}</div>
+        <div><strong>Unix sockets:</strong> ${selectedEffectiveAxes.unix_sockets.mode || 'unset'}${selectedEffectiveAxes.unix_sockets.mode === 'list' ? ` · ${selectedEffectiveAxes.unix_sockets.allow.length} entry(s)` : ''}</div>
         <div><strong>agentd socket:</strong> ${selectedEffective.agentd_socket}</div>
       </div>`}
       ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 contexts; ${prediction.remaining_contexts} more assignment contexts are omitted.</div>` : null}

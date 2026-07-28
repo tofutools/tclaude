@@ -923,6 +923,84 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor tolerates legacy and modern sparse profile payloads', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const fixtures = [
+    ['legacy', {
+      // A real pre-access-axis/pre-spellings row: the new fields are absent,
+      // rather than materialized as empty objects or documents.
+      id: 1, name: 'legacy', filesystem: [], environment: [],
+    }],
+    ['modern-empty', {
+      id: 2, name: 'modern-empty', filesystem: [], environment: [],
+      filesystem_spellings: { version: 1, rules: [] },
+      network: { mode: 'list' }, unix_sockets: { mode: 'list' },
+    }],
+    ['modern-populated', {
+      id: 3, name: 'modern-populated',
+      filesystem: [{ path: '/work', access: 'read' }],
+      filesystem_spellings: {
+        version: 1,
+        rules: [{ resolved_path: '/work', spellings: ['/workspace'] }],
+      },
+      environment: [],
+      network: { mode: 'list', allow: [{ domain: 'example.com' }] },
+      unix_sockets: { mode: 'list', allow: [{ path: '/tmp/example.sock' }] },
+    }],
+  ];
+
+  for (const [label, seed] of fixtures) {
+    const state = createManagementState();
+    state.openDialog({ kind: 'sandbox-editor', seed, options: {} });
+    let saved = null;
+    const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+      async saveSandbox(value) { saved = value; },
+      async predictSandbox() {
+        return {
+          targets: [],
+          contexts: [{
+            context: {},
+            // Empty Go slices are intentionally omitted from these rule
+            // objects. This is the exact async response shape that crashed the
+            // effective-policy preview after an existing profile was loaded.
+            network: { mode: 'list' },
+            unix_sockets: { mode: 'list' },
+            agentd_socket: 'always reachable',
+          }],
+        };
+      },
+    });
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+    assert.ok(host.querySelector('#sandbox-profile-editor-modal'), `${label} renders`);
+    assert.match(host.querySelector('.sbx-effective-values').textContent,
+      /Network: list · 0 destination\(s\).*Unix sockets: list · 0 entry\(s\)/s,
+      `${label} renders sparse effective axes as empty lists`);
+
+    if (label === 'legacy') {
+      const mode = host.querySelector('#sandbox-profile-editor-network-mode');
+      mode.querySelector('option[value="list"]').selected = true;
+      await harness.act(() => harness.fireEvent(mode, 'change'));
+      const networkSection = mode.closest('fieldset');
+      await harness.act(() => harness.fireEvent(networkSection.querySelector('.sbx-add-row'), 'click'));
+      const hostInput = networkSection.querySelector('.sbx-network-value');
+      hostInput.value = 'api.example.com';
+      await harness.act(() => harness.fireEvent(hostInput, 'input'));
+      assert.equal(networkSection.querySelectorAll('.sbx-network-row').length, 1,
+        'a legacy profile can add a network destination');
+      await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+      assert.equal(saved.draft.network.mode, 'list');
+      assert.equal(saved.draft.network.allow[0].host, 'api.example.com');
+    }
+
+    unmount();
+    host.remove();
+  }
+});
+
 test('sandbox editor renders one authored-spelling row and keeps authority pinned through preview', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1080,6 +1158,24 @@ test('raw access JSON can repair a structured access validation error', async (t
     'the stale structured error cannot make raw repair unreachable');
   assert.equal(host.querySelector('.sbx-access-validation'), null);
   const rawNetwork = host.querySelector('#sandbox-profile-editor-network');
+  rawNetwork.value = '"open"';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent,
+    /network and unix sockets must be JSON objects/,
+    'primitive raw axes receive the intended validation error');
+  rawNetwork.value = '{"mode":"list","allow":false}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent,
+    /network and unix socket allow fields must be arrays/,
+    'malformed allow values are rejected instead of normalized as sparse lists');
   rawNetwork.value = '{"mode":"list","allow":[]}';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
