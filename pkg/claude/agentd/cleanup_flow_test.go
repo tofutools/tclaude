@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -376,6 +377,37 @@ func TestCleanup_Agents_DeleteRemovesLinkedWorktree(t *testing.T) {
 	require.Len(t, resp.Outcomes, 1)
 	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
 	f.AssertDeleted(conv)
+}
+
+// Inspection receives the stored path spelling even when it resolves through
+// a symlink. macOS temp directories expose this routinely as /var pointing at
+// /private/var; canonicalization belongs in comparisons, not at the git seam.
+func TestCleanup_Agents_InspectsLexicalWorktreePath(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "wtlx-1111-2222-3333-4444"
+	target := f.TestCwd("wt-lexical-target")
+	require.NoError(t, os.MkdirAll(target, 0o755))
+	alias := filepath.Join(filepath.Dir(target), "wt-lexical-alias")
+	require.NoError(t, os.Symlink(target, alias))
+	t.Cleanup(func() { _ = os.Remove(alias) })
+
+	f.HaveConvWithTitle(conv, "lexical-worktree-worker")
+	f.HaveAliveSession(conv, "spwn-wtlx", "tmux-wtlx", alias)
+	f.MarkOffline("tmux-wtlx")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		alias: {Root: alias, Branch: "feat", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+conv+`"],"delete":true,"delete_worktrees":true}`)
+
+	assert.Equal(t, 1, resp.Deleted)
+	assert.True(t, fw.wasRemoved(alias))
+	require.Len(t, resp.Outcomes, 1)
+	assert.Contains(t, resp.Outcomes[0].Detail, "worktree removed")
 }
 
 // A missing directory does not erase Git's linked-worktree registration.

@@ -103,16 +103,23 @@ func inspectWorktreeDirs(
 ) agentWorktreeView {
 	seen := map[string]bool{}
 	for _, dir := range dirs {
-		dir = cleanClaimDir(dir)
-		if dir == "" || seen[dir] {
+		dir = strings.TrimSpace(dir)
+		claimDir := cleanClaimDir(dir)
+		inspectKey := filepath.Clean(dir)
+		if claimDir == "" || seen[inspectKey] {
 			continue
 		}
-		seen[dir] = true
+		seen[inspectKey] = true
+		// Preserve the caller's spelling at the inspection seam. In
+		// particular, macOS temp paths commonly start with /var while their
+		// canonical spelling starts with /private/var; InspectWorktree can
+		// resolve either, but test seams and other callers expect the stored
+		// path they supplied.
 		st := inspectWorktreeFn(dir)
 		if st.Kind != "none" {
 			return agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
 		}
-		if reg, ok := registeredWorktreeForDir(registered, dir); ok {
+		if reg, ok := registeredWorktreeForDir(registered, claimDir); ok {
 			kind := "linked"
 			if reg.Info.IsMain {
 				kind = "main"
