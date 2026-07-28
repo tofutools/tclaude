@@ -1162,6 +1162,16 @@ func TestTerminalCommandPaletteShortcutEnabled(t *testing.T) {
 		TerminalCommandPaletteShortcutEnabled(), "explicit true → true")
 }
 
+func TestRecordedSandboxDetailsEnabled(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.RecordedSandboxDetailsEnabled(), "nil config → false")
+	assert.False(t, (&Config{}).RecordedSandboxDetailsEnabled(), "no features block → false")
+	assert.False(t, (&Config{Features: &FeaturesConfig{}}).RecordedSandboxDetailsEnabled(),
+		"features block, flag unset → false")
+	assert.True(t, (&Config{Features: &FeaturesConfig{RecordedSandboxDetails: true}}).
+		RecordedSandboxDetailsEnabled(), "explicit true → true")
+}
+
 // The default-off feature flags round-trip through the config file, and an
 // absent block stays absent (omitempty) so it never shows as a spurious diff.
 func TestFeaturesConfig_RoundTrips(t *testing.T) {
@@ -1169,17 +1179,19 @@ func TestFeaturesConfig_RoundTrips(t *testing.T) {
 		Processes:                      true,
 		GroupAttachments:               GroupAttachmentsFixed,
 		TerminalCommandPaletteShortcut: true,
+		RecordedSandboxDetails:         true,
 	}}
 	data, err := json.Marshal(in)
 	require.NoError(t, err)
 	assert.Contains(t, string(data),
-		`"features":{"processes":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true}`)
+		`"features":{"processes":true,"group_attachments":"fixed","terminal_command_palette_shortcut":true,"recorded_sandbox_details":true}`)
 
 	var out Config
 	require.NoError(t, json.Unmarshal(data, &out))
 	assert.True(t, out.ProcessesEnabled())
 	assert.Equal(t, GroupAttachmentsFixed, out.GroupAttachmentsMode())
 	assert.True(t, out.TerminalCommandPaletteShortcutEnabled())
+	assert.True(t, out.RecordedSandboxDetailsEnabled())
 
 	// A default config marshals without a features key at all.
 	none, err := json.Marshal(&Config{})

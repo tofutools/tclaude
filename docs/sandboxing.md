@@ -548,8 +548,9 @@ from escaping the constructed root through a host process's
 explicitly bound, or when an operator-authored filesystem grant re-exposes a
 parent directory under the normal most-specific-wins policy. This is the
 constructed-root posture's socket boundary; the compact badge tooltip does not
-report socket fidelity. Use its adjacent details chevron for recorded launch
-fidelity, or `sandbox-profiles plan` for a dry-run of explicit inputs. The
+report socket fidelity. Opt into its adjacent details chevron with
+`features.recorded_sandbox_details` for recorded launch fidelity, or use
+`sandbox-profiles plan` for a dry-run of explicit inputs. The
 reserved `filtered` posture will eventually cover
 host/domain, CIDR, host-loopback, and destination-port allowlists. Its authored
 contract is ordinary IPv4/IPv6 TCP and UDP traffic (QUIC is UDP); ICMP echo is

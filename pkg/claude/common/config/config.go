@@ -165,6 +165,11 @@ type FeaturesConfig struct {
 	// harnesses use that chord to clear the current input line.
 	TerminalCommandPaletteShortcut bool `json:"terminal_command_palette_shortcut,omitempty"`
 
+	// RecordedSandboxDetails shows the details chevron beside each agent's
+	// sandbox badge. It defaults off because the badge tooltip already exposes
+	// the common status and action; the chevron is an opt-in diagnostic surface.
+	RecordedSandboxDetails bool `json:"recorded_sandbox_details,omitempty"`
+
 	// AgentDirsMountParent switches how agent-owned directories are granted to
 	// the sandbox. On (the default): the shared parent root
 	// (agent-dirs/<launch-key>) is granted rw once, so the agent can create,
@@ -223,6 +228,13 @@ func (c *Config) GroupAttachmentsMode() GroupAttachmentsMode {
 // operator explicitly opts in.
 func (c *Config) TerminalCommandPaletteShortcutEnabled() bool {
 	return c != nil && c.Features != nil && c.Features.TerminalCommandPaletteShortcut
+}
+
+// RecordedSandboxDetailsEnabled reports whether the dashboard should show the
+// recorded-launch details chevron beside sandbox badges. It defaults off and
+// is nil-safe so the extra row chrome appears only after an explicit opt-in.
+func (c *Config) RecordedSandboxDetailsEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.RecordedSandboxDetails
 }
 
 // AgentDirsMountParentEnabled reports whether agent-owned directories should be

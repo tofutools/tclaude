@@ -316,7 +316,7 @@ test('SandboxBadge shortcuts only valid temporary sandbox transitions', async (t
   });
 });
 
-test('SandboxBadge adds an adjacent recorded-facts chevron without changing the glyph action', async (t) => {
+test('SandboxBadge gates the adjacent recorded-facts chevron without changing the glyph action', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', `
     export const lastSnapshot = { groups: [], ungrouped: [] };
@@ -334,7 +334,17 @@ test('SandboxBadge adds an adjacent recorded-facts chevron without changing the 
       sandbox_access_notices: [{ detail: 'socket selector did not materialize' }],
     },
   };
-  const mounted = await harness.mount(harness.html`<${SandboxBadge} member=${member} />`);
+  const defaultMounted = await harness.mount(harness.html`<${SandboxBadge} member=${member} />`);
+  try {
+    assert.equal(defaultMounted.container.querySelector('.sandbox-details-chevron'), null,
+      'recorded details are hidden by default');
+  } finally {
+    await defaultMounted.unmount();
+  }
+
+  const mounted = await harness.mount(
+    harness.html`<${SandboxBadge} member=${member} showDetails=${true} />`,
+  );
   try {
     const badge = mounted.container.querySelector('.sandbox-badge');
     const details = mounted.container.querySelector('.sandbox-details-chevron');
@@ -353,12 +363,12 @@ test('SandboxBadge adds an adjacent recorded-facts chevron without changing the 
   }
 
   const spoofed = await harness.mount(harness.html`<${SandboxBadge} member=${{
-    ...member,
-    state: {
-      ...member.state,
-      os_sandbox_source: 'profile "tclaude-layer (bubblewrap; host network)"',
-    },
-  }} />`);
+      ...member,
+      state: {
+        ...member.state,
+        os_sandbox_source: 'profile "tclaude-layer (bubblewrap; host network)"',
+      },
+    }} showDetails=${true} />`);
   try {
     const text = spoofed.container.querySelector('.sandbox-details-chevron').dataset.details;
     assert.match(text, /Recorded as unverified; no further fidelity detail was recorded/);

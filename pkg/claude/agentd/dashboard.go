@@ -1003,6 +1003,11 @@ type snapshotPayload struct {
 	// elsewhere remains the normal dashboard shortcut. Re-read on every
 	// snapshot so a Config-tab change takes effect without restarting agentd.
 	TerminalPaletteShortcut bool `json:"terminal_command_palette_shortcut_enabled"`
+	// RecordedSandboxDetails gates the optional details chevron beside each
+	// sandbox badge. The compact badge and tooltip remain visible either way.
+	// Re-read on every snapshot so a Config-tab change takes effect without
+	// restarting agentd.
+	RecordedSandboxDetails bool `json:"recorded_sandbox_details_enabled"`
 	// UserDefaultModel is the "model" key from the user-level
 	// ~/.claude/settings.json — what every claude launched without
 	// --model falls back to. "" = unset (claude's built-in default).
@@ -2678,6 +2683,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
 		GroupAttachmentsMode:     cfg.GroupAttachmentsMode(),
 		TerminalPaletteShortcut:  cfg.TerminalCommandPaletteShortcutEnabled(),
+		RecordedSandboxDetails:   cfg.RecordedSandboxDetailsEnabled(),
 		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
