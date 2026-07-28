@@ -5,8 +5,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -83,6 +86,21 @@ func runDashboard(p *dashboardParams, stdout, stderr io.Writer) int {
 // (it's an implementation detail of the daemon's popup spawner) and
 // the WSL ordering is the same here. Keep both copies in sync if the
 // platform matrix grows.
+//
+// Start() alone only catches a missing launcher binary. The interesting
+// failures are exit codes: xdg-open reports "no method available" (3) or
+// "action failed" (4) on a headless/misconfigured host, and open(1) and
+// `start` fail similarly — all with a zero-valued Start(). That matters
+// most here, where the caller turns the error into a user-visible
+// "Failed to open browser" and rcIOFailure; without it the CLI printed
+// "Opening dashboard in your browser…" and exited 0 with nothing opened.
+//
+// The wait is bounded because success is not always a prompt exit: with a
+// desktop environment xdg-open delegates and returns immediately, but its
+// generic fallback execs the browser in the FOREGROUND and does not
+// return until the browser is closed. A launcher still running after
+// browserLaunchProbe is treated as a successful launch, and reaped by the
+// background goroutine. See openBrowser in agentd/popup.go.
 func openBrowserURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -103,7 +121,83 @@ func openBrowserURL(url string) error {
 		}
 		cmd = exec.Command("xdg-open", url)
 	}
-	return cmd.Start()
+	name := filepath.Base(cmd.Path)
+	// Bounded so a launcher that survives the probe (or a browser that
+	// inherited stderr and spews for its whole lifetime) can't grow this
+	// buffer without limit.
+	var stderr cappedBuffer
+	stderr.max = maxBrowserStderr
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s: %w", name, err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- cmd.Wait() }()
+	select {
+	case err := <-waited:
+		if err == nil {
+			return nil
+		}
+		// Wait has returned, so os/exec's stderr copier is done and the
+		// buffer is safe to read.
+		if msg := clipLauncherStderr(stderr.String()); msg != "" {
+			return fmt.Errorf("%s: %w: %s", name, err, msg)
+		}
+		return fmt.Errorf("%s: %w", name, err)
+	case <-time.After(browserLaunchProbe):
+		return nil
+	}
+}
+
+const (
+	// browserLaunchProbe bounds how long openBrowserURL waits for a
+	// launcher to exit before calling the launch good. Real launcher
+	// failures are immediate (bad URL, no handler, no display); anything
+	// still alive this long has handed off or is fronting the browser
+	// itself.
+	browserLaunchProbe = 2 * time.Second
+	// maxBrowserStderr caps the launcher stderr kept for the error message.
+	maxBrowserStderr = 4 << 10
+	// maxLauncherStderrMsg caps how much of that stderr reaches the error
+	// string the CLI prints.
+	maxLauncherStderrMsg = 200
+)
+
+// clipLauncherStderr collapses launcher stderr onto one line and bounds it,
+// so the CLI's "Failed to open browser: …" stays a single readable message.
+// Mirrors agentd's auditClip, which the agentd copy of this function uses.
+func clipLauncherStderr(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > maxLauncherStderrMsg {
+		return s[:maxLauncherStderrMsg] + "…"
+	}
+	return s
+}
+
+// cappedBuffer is an io.Writer that retains the first max bytes written and
+// discards the rest, never reporting a short write. os/exec's copier writes
+// to it from its own goroutine and openBrowserURL may abandon it at the
+// probe timeout while that goroutine is still running, so the mutex keeps
+// the abandoned case race-free. Duplicated from agentd/popup.go.
+type cappedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if room := c.max - len(c.buf); room > 0 {
+		c.buf = append(c.buf, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return string(c.buf)
 }
 
 // escapeForCmdExe escapes cmd.exe metacharacters (`^&<>|`) by prefixing
