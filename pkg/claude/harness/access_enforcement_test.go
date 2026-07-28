@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -447,10 +448,17 @@ func TestM2bHostDomainEntriesArePreviewedAndLaunchedAsRefusals(t *testing.T) {
 		ClaudeSandboxOff,
 	)
 	require.NoError(t, err)
-	_, _, err = PlanAccessEnforcement(axes, launch)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "M2c DNS broker")
-	assert.Contains(t, err.Error(), "entries: 1, 2")
+	rendered, notices, err := PlanAccessEnforcement(axes, launch)
+	if runtime.GOOS == "linux" {
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "M2c DNS broker")
+		assert.Contains(t, err.Error(), "entries: 1, 2")
+		return
+	}
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
 }
 
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
