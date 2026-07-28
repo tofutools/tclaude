@@ -20,6 +20,9 @@ func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing
 	got, err := RenderFilteredNetworkNFT(ir)
 	require.NoError(t, err)
 	assert.Contains(t, got, "type filter hook output priority filter; policy drop;")
+	assert.Contains(t, got, "ct state established accept")
+	assert.NotContains(t, got, "ct state established,related",
+		"related flows still require their own authored destination and port")
 	assert.Contains(t, got,
 		"ip6 daddr { fe80::/10, ff02::/16 } ip6 hoplimit 255 "+
 			"icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept",

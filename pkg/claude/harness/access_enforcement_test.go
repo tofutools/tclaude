@@ -476,7 +476,7 @@ func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	caps := AccessEnforcement{
 		networkList: EnforceFull,
 		networkSelectors: []NetworkSelectorCapability{
-			{Selector: "host", Level: EnforcePartial, Detail: FilteredNetworkDNSIdentityCaveat},
+			{Selector: "host", Level: EnforcePartial, Detail: filteredNetworkDNSCaveat()},
 			{Selector: "cidr", Level: EnforceFull},
 		},
 		networkPorts: EnforceFull,

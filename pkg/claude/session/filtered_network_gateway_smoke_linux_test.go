@@ -39,8 +39,16 @@ const (
 	filteredGatewayLoopbackDenyEnv   = "TCLAUDE_FILTERED_LOOPBACK_DENIED_PORT"
 	filteredGatewayReadyPathEnv      = "TCLAUDE_FILTERED_READY_PATH"
 	filteredGatewayHoldEnv           = "TCLAUDE_FILTERED_HOLD"
+	filteredGatewayDNSSmokeEnv       = "TCLAUDE_FILTERED_DNS_HELPER"
 	filteredGatewayTclaudeBinaryEnv  = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	filteredGatewayConnectionTimeout = 900 * time.Millisecond
+	filteredGatewayExactHost         = "exact-host.filtered.test"
+	filteredGatewaySiblingHost       = "sibling.filtered.test"
+	filteredGatewayExactDomain       = "exact-domain.filtered.test"
+	filteredGatewayExactDomainChild  = "child.exact-domain.filtered.test"
+	filteredGatewayTreeDomain        = "tree.filtered.test"
+	filteredGatewayTreeDomainChild   = "child.tree.filtered.test"
+	filteredGatewaySuffixConfusion   = "tree.filtered.test.attacker.invalid"
 )
 
 func TestFilteredSmokeExecutableNameMatchesPastaVariantsOnly(t *testing.T) {
@@ -57,6 +65,20 @@ func TestFilteredSmokeExecutableNameMatchesPastaVariantsOnly(t *testing.T) {
 // It also exercises synthetic host loopback and kills the supervised pasta
 // process to prove fail-closed sandbox teardown.
 func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
+	runTclaudeLayerFilteredNetworkSmoke(t, false)
+}
+
+// TestTclaudeLayerFilteredNetworkDNSSmoke is the named executing M2c boundary.
+// It runs the same real Claude/Codex tclaude-layer launch path as M2b, then
+// proves exact-host versus sibling, exact-domain versus child,
+// domain-with-subdomains, suffix confusion, port bounds, shared-IP reuse, and
+// expiry of the kernel lease at the fixture DNS TTL.
+func TestTclaudeLayerFilteredNetworkDNSSmoke(t *testing.T) {
+	runTclaudeLayerFilteredNetworkSmoke(t, true)
+}
+
+func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, dnsSmoke bool) {
+	t.Helper()
 	if os.Getenv(filteredGatewaySmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_FILTERED_NETWORK_SMOKE=1 on the executing Linux CI boundary")
 	}
@@ -115,6 +137,20 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 			{Loopback: true, Ports: []int{hostAllowedPort}},
 		},
 	}
+	if dnsSmoke {
+		rules.Allow = append(rules.Allow,
+			sandboxpolicy.NetworkAllowEntry{
+				Host: filteredGatewayExactHost, Ports: []int{allowedPort},
+			},
+			sandboxpolicy.NetworkAllowEntry{
+				Domain: filteredGatewayExactDomain, Ports: []int{allowedPort},
+			},
+			sandboxpolicy.NetworkAllowEntry{
+				Domain: filteredGatewayTreeDomain, IncludeSubdomains: true,
+				Ports: []int{allowedPort},
+			},
+		)
+	}
 	axes := sandboxpolicy.ResolvedAxes{Network: rules}
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules
@@ -172,7 +208,7 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 			cmd.Env = filteredSmokeHelperEnv(
 				os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
 				allowedPort, deniedPort,
-				hostAllowedPort, hostDeniedPort, "", false,
+				hostAllowedPort, hostDeniedPort, "", false, dnsSmoke,
 			)
 			output, runErr := cmd.CombinedOutput()
 			require.NoErrorf(t, runErr, "%s filtered smoke output:\n%s", harnessName, output)
@@ -180,6 +216,9 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 		})
 	}
 
+	if dnsSmoke {
+		return
+	}
 	readyPath := filepath.Join(helperDir, "fail-closed-ready")
 	logPath := filepath.Join(root, "fail-closed.log")
 	logFile, err := os.Create(logPath)
@@ -190,7 +229,7 @@ func TestTclaudeLayerFilteredNetworkSmoke(t *testing.T) {
 	cmd.Env = filteredSmokeHelperEnv(
 		os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
 		allowedPort, deniedPort,
-		hostAllowedPort, hostDeniedPort, readyPath, true,
+		hostAllowedPort, hostDeniedPort, readyPath, true, false,
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -230,6 +269,15 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	assert.Contains(t, string(hosts),
 		sandboxpolicy.FilteredNetworkLoopbackIPv4+" "+
 			sandboxpolicy.FilteredNetworkHostLoopbackName)
+	dnsSmoke := os.Getenv(filteredGatewayDNSSmokeEnv) == "1"
+	if dnsSmoke {
+		assert.NotContains(t, string(hosts), filteredGatewayExactHost,
+			"host fixture aliases must resolve through the broker, not /etc/hosts")
+		resolv, readErr := os.ReadFile("/etc/resolv.conf")
+		require.NoError(t, readErr)
+		assert.Contains(t, string(resolv),
+			"nameserver "+sandboxpolicy.FilteredNetworkDNSIPv4)
+	}
 
 	allowedAddr := requireFilteredSmokeEnv(t, filteredGatewayAllowedAddrEnv)
 	adjacentAddr := requireFilteredSmokeEnv(t, filteredGatewayAdjacentAddrEnv)
@@ -282,6 +330,11 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort("::1", strconv.Itoa(loopbackPort)))
 	filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort("::1", strconv.Itoa(loopbackPort)))
 
+	if dnsSmoke {
+		runFilteredNetworkDNSHelper(
+			t, adjacentAddr, adjacentAddr6, allowedPort, deniedPort)
+	}
+
 	if readyPath := strings.TrimSpace(os.Getenv(filteredGatewayReadyPathEnv)); readyPath != "" {
 		require.NoError(t, os.WriteFile(readyPath, []byte("ready"), 0o600))
 	}
@@ -296,6 +349,7 @@ func filteredSmokeHelperEnv(
 	allowedPort, deniedPort, loopbackPort, loopbackDeniedPort int,
 	readyPath string,
 	hold bool,
+	dnsSmoke bool,
 ) []string {
 	env := append([]string(nil), base...)
 	env = append(env,
@@ -313,7 +367,97 @@ func filteredSmokeHelperEnv(
 	if hold {
 		env = append(env, filteredGatewayHoldEnv+"=1")
 	}
+	if dnsSmoke {
+		env = append(env, filteredGatewayDNSSmokeEnv+"=1")
+	}
 	return env
+}
+
+func runFilteredNetworkDNSHelper(
+	t *testing.T,
+	adjacentAddr, adjacentAddr6 string,
+	allowedPort, deniedPort int,
+) {
+	t.Helper()
+	adjacent4Allowed := net.JoinHostPort(
+		adjacentAddr, strconv.Itoa(allowedPort))
+	adjacent6Allowed := net.JoinHostPort(
+		adjacentAddr6, strconv.Itoa(allowedPort))
+
+	// No IP membership exists until an authored DNS identity is resolved.
+	filteredSmokeTCPDenied(t, "tcp4", adjacent4Allowed)
+	filteredSmokeTCPDenied(t, "tcp6", adjacent6Allowed)
+	filteredSmokeDNSDenied(t, filteredGatewaySiblingHost, "ip4")
+	filteredSmokeDNSDenied(t, filteredGatewayExactDomainChild, "ip4")
+	filteredSmokeDNSDenied(t, filteredGatewaySuffixConfusion, "ip4")
+
+	exactEndpoint := net.JoinHostPort(
+		filteredGatewayExactHost, strconv.Itoa(allowedPort))
+	filteredSmokeTCPRoundTrip(t, "tcp4", exactEndpoint)
+	filteredSmokeUDPRoundTrip(t, "udp4", exactEndpoint)
+	filteredSmokeTCPRoundTrip(t, "tcp6", exactEndpoint)
+	filteredSmokeUDPRoundTrip(t, "udp6", exactEndpoint)
+	filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort(
+		filteredGatewayExactHost, strconv.Itoa(deniedPort)))
+
+	filteredSmokeTCPRoundTrip(t, "tcp4", net.JoinHostPort(
+		filteredGatewayExactDomain, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPRoundTrip(t, "tcp4", net.JoinHostPort(
+		filteredGatewayTreeDomain, strconv.Itoa(allowedPort)))
+	filteredSmokeTCPRoundTrip(t, "tcp4", net.JoinHostPort(
+		filteredGatewayTreeDomainChild, strconv.Itoa(allowedPort)))
+
+	// This is the named shared-IP residual: once one allowed DNS identity has
+	// leased the address, an IP literal can reuse it until expiry.
+	filteredSmokeTCPRoundTrip(t, "tcp4", adjacent4Allowed)
+	filteredSmokeTCPRoundTrip(t, "tcp6", adjacent6Allowed)
+
+	// Keep one admitted flow open across expiry. New flows lose membership at
+	// the TTL, but this established connection remains usable.
+	connection := filteredSmokeOpenTCPEcho(t, "tcp4", exactEndpoint)
+	defer func() { _ = connection.Close() }()
+	time.Sleep(filteredNetworkDNSHostMappingTTL + time.Second)
+	filteredSmokeTCPEchoOnConnection(t, connection)
+	filteredSmokeTCPDenied(t, "tcp4", adjacent4Allowed)
+	filteredSmokeTCPDenied(t, "tcp6", adjacent6Allowed)
+
+	// A fresh answer—not a broker timer—refreshes membership for new flows.
+	filteredSmokeTCPRoundTrip(t, "tcp4", exactEndpoint)
+	filteredSmokeTCPRoundTrip(t, "tcp4", adjacent4Allowed)
+}
+
+func filteredSmokeDNSDenied(t *testing.T, host, network string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(
+		context.Background(), filteredGatewayConnectionTimeout)
+	defer cancel()
+	_, err := net.DefaultResolver.LookupNetIP(ctx, network, host)
+	require.Errorf(t, err, "DNS deny %s (%s)", host, network)
+}
+
+func filteredSmokeOpenTCPEcho(
+	t *testing.T,
+	network, address string,
+) net.Conn {
+	t.Helper()
+	connection, err := net.DialTimeout(
+		network, address, filteredGatewayConnectionTimeout)
+	require.NoErrorf(t, err, "%s allow %s", network, address)
+	filteredSmokeTCPEchoOnConnection(t, connection)
+	return connection
+}
+
+func filteredSmokeTCPEchoOnConnection(t *testing.T, connection net.Conn) {
+	t.Helper()
+	require.NoError(t, connection.SetDeadline(
+		time.Now().Add(filteredGatewayConnectionTimeout)))
+	payload := []byte("tclaude-filtered-established")
+	_, err := connection.Write(payload)
+	require.NoError(t, err)
+	reply := make([]byte, len(payload))
+	_, err = io.ReadFull(connection, reply)
+	require.NoError(t, err)
+	assert.Equal(t, payload, reply)
 }
 
 func requireFilteredSmokeEnv(t *testing.T, name string) string {

@@ -24,7 +24,7 @@ func TestAssessFilteredNetworkRulesRatesActualEntries(t *testing.T) {
 	assert.Equal(t, EnforcePartial, aggregate)
 	assert.Equal(t, EnforceFull, assessments[0].DestinationLevel)
 	assert.Equal(t, EnforcePartial, assessments[1].DestinationLevel)
-	assert.Equal(t, FilteredNetworkDNSIdentityCaveat, assessments[1].DestinationDetail)
+	assert.Equal(t, filteredNetworkDNSCaveat(), assessments[1].DestinationDetail)
 	assert.Equal(t, EnforcePartial, assessments[2].DestinationLevel)
 	assert.Equal(t, FilteredNetworkLoopbackCaveat, assessments[2].DestinationDetail)
 	for _, assessment := range assessments {

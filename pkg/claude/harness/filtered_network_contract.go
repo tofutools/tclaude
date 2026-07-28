@@ -9,9 +9,14 @@ import (
 
 const (
 	FilteredNetworkDNSIdentityCaveat = "Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved shared IP can be reused until its lease expires."
+	FilteredNetworkDNSLeaseCaveat    = "Fresh DNS answers refresh the lease; already-established flows may continue after lease expiry, while new flows require fresh resolution."
 	FilteredNetworkLoopbackCaveat    = "Host loopback uses host.tclaude.internal; 127.0.0.1 and ::1 remain sandbox-private."
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
+
+func filteredNetworkDNSCaveat() string {
+	return FilteredNetworkDNSIdentityCaveat + " " + FilteredNetworkDNSLeaseCaveat
+}
 
 // FilteredNetworkRuleAssessment describes the honest target rating for one IR
 // entry. It is control-plane data, not a capability flip: NetworkList remains
@@ -48,7 +53,7 @@ func AssessFilteredNetworkRules(
 		switch rule.Selector {
 		case sandboxpolicy.NetworkSelectorHost, sandboxpolicy.NetworkSelectorDomain:
 			assessment.DestinationLevel = EnforcePartial
-			assessment.DestinationDetail = FilteredNetworkDNSIdentityCaveat
+			assessment.DestinationDetail = filteredNetworkDNSCaveat()
 		case sandboxpolicy.NetworkSelectorCIDR:
 			assessment.DestinationLevel = EnforceFull
 			assessment.DestinationDetail =

@@ -535,19 +535,11 @@ func minUint32(a, b uint32) uint32 {
 
 type filteredNetworkDNSLeases struct {
 	authority filteredNetworkNFTLeaseAdder
-	now       func() time.Time
-	mu        sync.Mutex
-	expires   map[filteredNetworkLeaseKey]time.Time
 }
 
 type filteredNetworkNFTLeaseAdder interface {
-	Add(string, netip.Addr, time.Duration) error
+	Upsert([]string, netip.Addr, time.Duration) error
 	Close() error
-}
-
-type filteredNetworkLeaseKey struct {
-	set     string
-	address netip.Addr
 }
 
 func newFilteredNetworkDNSLeases(
@@ -559,8 +551,6 @@ func newFilteredNetworkDNSLeases(
 	}
 	return &filteredNetworkDNSLeases{
 		authority: nftAuthority,
-		now:       time.Now,
-		expires:   make(map[filteredNetworkLeaseKey]time.Time),
 	}, nil
 }
 
@@ -576,45 +566,22 @@ func (l *filteredNetworkDNSLeases) Ensure(
 	address netip.Addr,
 	ttl time.Duration,
 ) (time.Duration, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if !address.IsValid() || address.IsUnspecified() ||
 		address.IsMulticast() || ttl < time.Second {
 		return 0, fmt.Errorf("filtered DNS lease is invalid")
 	}
-	now := l.now()
 	effective := ttl.Truncate(time.Second)
-	keys := make([]filteredNetworkLeaseKey, 0, len(rules))
+	sets := make([]string, 0, len(rules))
 	for _, rule := range rules {
 		ipv4Set, ipv6Set := sandboxpolicy.FilteredNetworkDNSSetNames(rule.EntryIndex)
 		setName := ipv6Set
 		if address.Is4() {
 			setName = ipv4Set
 		}
-		key := filteredNetworkLeaseKey{set: setName, address: address}
-		keys = append(keys, key)
-		if expiry, ok := l.expires[key]; ok {
-			remaining := expiry.Sub(now).Truncate(time.Second)
-			if remaining >= time.Second {
-				if remaining < effective {
-					effective = remaining
-				}
-			} else {
-				delete(l.expires, key)
-			}
-		}
+		sets = append(sets, setName)
 	}
-	for _, key := range keys {
-		if _, exists := l.expires[key]; exists {
-			continue
-		}
-		if err := l.authority.Add(key.set, key.address, effective); err != nil {
-			return 0, err
-		}
-		l.expires[key] = now.Add(effective)
-	}
-	if effective < time.Second {
-		return 0, fmt.Errorf("filtered DNS lease expired before reply")
+	if err := l.authority.Upsert(sets, address, effective); err != nil {
+		return 0, err
 	}
 	return effective, nil
 }
@@ -659,8 +626,8 @@ func (a *filteredNetworkNFTAuthority) Close() error {
 	return a.file.Close()
 }
 
-func (a *filteredNetworkNFTAuthority) Add(
-	setName string,
+func (a *filteredNetworkNFTAuthority) Upsert(
+	setNames []string,
 	address netip.Addr,
 	ttl time.Duration,
 ) error {
@@ -674,14 +641,16 @@ func (a *filteredNetworkNFTAuthority) Add(
 		Family: nftables.TableFamilyINet,
 		Name:   sandboxpolicy.FilteredNetworkNFTTable,
 	}
-	set := &nftables.Set{
-		Table: table, Name: setName, HasTimeout: true,
-	}
 	key := address.AsSlice()
-	if err := conn.SetAddElements(set, []nftables.SetElement{{
-		Key: key, Timeout: ttl,
-	}}); err != nil {
-		return err
+	for _, setName := range setNames {
+		set := &nftables.Set{
+			Table: table, Name: setName, HasTimeout: true,
+		}
+		if err := conn.SetAddElements(set, []nftables.SetElement{{
+			Key: key, Timeout: ttl,
+		}}); err != nil {
+			return err
+		}
 	}
 	return conn.Flush()
 }
@@ -694,6 +663,7 @@ func (a *filteredNetworkNFTAuthority) exchange(
 	}
 	var payload []byte
 	ackCount := 0
+	markFilteredNetworkNFTUpserts(requests)
 	for i := range requests {
 		requests[i].Header.PID = a.pid
 		if requests[i].Header.Flags&netlink.Acknowledge != 0 {
@@ -725,6 +695,19 @@ func (a *filteredNetworkNFTAuthority) exchange(
 		replies = append(replies, messages...)
 	}
 	return replies, nil
+}
+
+func markFilteredNetworkNFTUpserts(requests []netlink.Message) {
+	for i := range requests {
+		if requests[i].Header.Type != netlink.HeaderType(
+			(unix.NFNL_SUBSYS_NFTABLES<<8)|unix.NFT_MSG_NEWSETELEM,
+		) {
+			continue
+		}
+		// CREATE|REPLACE is an atomic create-or-refresh. A repeat answer
+		// therefore starts a new lease only from that fresh observation.
+		requests[i].Header.Flags |= netlink.Replace
+	}
 }
 
 func unmarshalFilteredNetworkNetlinkMessages(

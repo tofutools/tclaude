@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdlayher/netlink"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"golang.org/x/net/dns/dnsmessage"
+	"golang.org/x/sys/unix"
 )
 
 type fakeFilteredDNSLeaseStore struct {
@@ -255,35 +257,32 @@ func TestFilteredDNSBrokerLeaseAuthorityFailureIsFatal(t *testing.T) {
 }
 
 type fakeFilteredNFTLeaseAdder struct {
-	adds []fakeFilteredNFTAdd
+	upserts []fakeFilteredNFTUpsert
 }
 
-type fakeFilteredNFTAdd struct {
-	set     string
+type fakeFilteredNFTUpsert struct {
+	sets    []string
 	address netip.Addr
 	ttl     time.Duration
 }
 
-func (f *fakeFilteredNFTLeaseAdder) Add(
-	set string,
+func (f *fakeFilteredNFTLeaseAdder) Upsert(
+	sets []string,
 	address netip.Addr,
 	ttl time.Duration,
 ) error {
-	f.adds = append(f.adds, fakeFilteredNFTAdd{
-		set: set, address: address, ttl: ttl,
+	f.upserts = append(f.upserts, fakeFilteredNFTUpsert{
+		sets: append([]string(nil), sets...), address: address, ttl: ttl,
 	})
 	return nil
 }
 
 func (*fakeFilteredNFTLeaseAdder) Close() error { return nil }
 
-func TestFilteredDNSLeaseNeverExtendsPastOriginalExpiry(t *testing.T) {
+func TestFilteredDNSLeaseRefreshRequiresFreshAnswer(t *testing.T) {
 	authority := &fakeFilteredNFTLeaseAdder{}
-	now := time.Unix(1_000, 0)
 	leases := &filteredNetworkDNSLeases{
 		authority: authority,
-		now:       func() time.Time { return now },
-		expires:   make(map[filteredNetworkLeaseKey]time.Time),
 	}
 	rules := []sandboxpolicy.FilteredNetworkRule{{EntryIndex: 4}}
 	address := netip.MustParseAddr("192.0.2.88")
@@ -291,22 +290,41 @@ func TestFilteredDNSLeaseNeverExtendsPastOriginalExpiry(t *testing.T) {
 	effective, err := leases.Ensure(rules, address, 30*time.Second)
 	require.NoError(t, err)
 	assert.Equal(t, 30*time.Second, effective)
-	require.Len(t, authority.adds, 1)
-	assert.Equal(t, "dns4_4", authority.adds[0].set)
+	require.Len(t, authority.upserts, 1)
+	assert.Equal(t, []string{"dns4_4"}, authority.upserts[0].sets)
 
-	now = now.Add(12 * time.Second)
 	effective, err = leases.Ensure(
 		append(rules, sandboxpolicy.FilteredNetworkRule{EntryIndex: 5}),
 		address,
 		60*time.Second,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, 18*time.Second, effective)
-	require.Len(t, authority.adds, 2,
-		"a repeated answer must not refresh the original kernel lease")
-	assert.Equal(t, "dns4_5", authority.adds[1].set)
-	assert.Equal(t, 18*time.Second, authority.adds[1].ttl,
-		"a new rule's lease may not outlive an existing rule lease returned in the same answer")
+	assert.Equal(t, 60*time.Second, effective)
+	require.Len(t, authority.upserts, 2)
+	assert.Equal(t, []string{"dns4_4", "dns4_5"}, authority.upserts[1].sets)
+	assert.Equal(t, 60*time.Second, authority.upserts[1].ttl,
+		"a fresh DNS answer starts a fresh TTL-bound kernel lease")
+}
+
+func TestFilteredNFTLeaseMutationIsCreateOrRefresh(t *testing.T) {
+	elementType := netlink.HeaderType(
+		(unix.NFNL_SUBSYS_NFTABLES << 8) | unix.NFT_MSG_NEWSETELEM)
+	requests := []netlink.Message{
+		{Header: netlink.Header{
+			Type: netlink.HeaderType(unix.NFNL_MSG_BATCH_BEGIN),
+		}},
+		{Header: netlink.Header{
+			Type: elementType, Flags: netlink.Request | netlink.Create,
+		}},
+		{Header: netlink.Header{
+			Type: netlink.HeaderType(unix.NFNL_MSG_BATCH_END),
+		}},
+	}
+	markFilteredNetworkNFTUpserts(requests)
+	assert.NotZero(t, requests[1].Header.Flags&netlink.Create)
+	assert.NotZero(t, requests[1].Header.Flags&netlink.Replace)
+	assert.Zero(t, requests[0].Header.Flags&netlink.Replace)
+	assert.Zero(t, requests[2].Header.Flags&netlink.Replace)
 }
 
 func TestParseFilteredNetworkDNSUpstreams(t *testing.T) {

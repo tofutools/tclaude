@@ -263,12 +263,12 @@ func accessEnforcementTable(
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorHost),
 					Level:    EnforcePartial,
-					Detail:   FilteredNetworkDNSIdentityCaveat,
+					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorDomain),
 					Level:    EnforcePartial,
-					Detail:   FilteredNetworkDNSIdentityCaveat,
+					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorCIDR),

@@ -56,6 +56,10 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	body.WriteString("  chain output {\n")
 	body.WriteString("    type filter hook output priority filter; policy drop;\n")
 	body.WriteString("    oifname \"lo\" accept\n")
+	// Lease expiry stops new flows without tearing down traffic admitted while
+	// the lease was valid. Deliberately omit "related": protocol-created side
+	// channels must satisfy authored destination and port rules of their own.
+	body.WriteString("    ct state established accept\n")
 	// IPv6 needs router and neighbor discovery to configure and reach pasta's
 	// tap gateway. Limit that control plane to link-local destinations and
 	// link-local multicast with the hop limit required by RFC 4861.
