@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -489,6 +491,95 @@ func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
 	assert.Nil(t, cmd)
 	assert.Contains(t, got.notice, "not loaded yet")
 	assert.NotContains(t, got.notice, "groups create")
+}
+
+// spawnFormOnDir opens the spawn form with the cursor on the Directory
+// field and dir prefilled, the state every completion test starts from.
+func spawnFormOnDir(t *testing.T, dir string) tuiModel {
+	t.Helper()
+	m := newTUIModel(nil)
+	m.width = 120
+	m = m.openSpawnForm()
+	for m.form.field != tuiFieldDir {
+		m = m.moveSpawnField(1)
+	}
+	m.form.dir.SetValue(dir)
+	return m
+}
+
+func tuiTabKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyTab} }
+
+// Tab on the Directory field completes the path instead of leaving the
+// field, the same way the `session watch` new-session prompt does.
+func TestTUISpawnDirTabCompletesAnUnambiguousPath(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "project-beta"), 0o755))
+
+	m := spawnFormOnDir(t, filepath.Join(root, "project-b"))
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	got := updated.(tuiModel)
+
+	assert.Equal(t, filepath.Join(root, "project-beta")+"/", got.form.dir.Value())
+	assert.Empty(t, got.form.dirSuggestions)
+	assert.Equal(t, tuiFieldDir, got.form.field, "completing must not move off the field")
+}
+
+// Several matches extend as far as they can and list the candidates under
+// the field, which is where the operator reads them.
+func TestTUISpawnDirTabListsAmbiguousCandidates(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "project-alpha"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "project-beta"), 0o755))
+
+	m := spawnFormOnDir(t, filepath.Join(root, "proj"))
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	got := updated.(tuiModel)
+
+	assert.Equal(t, filepath.Join(root, "project-"), got.form.dir.Value())
+	assert.Equal(t, []string{"project-alpha", "project-beta"}, got.form.dirSuggestions)
+	view := got.renderSpawnForm()
+	assert.Contains(t, view, "project-alpha")
+	assert.Contains(t, view, "project-beta")
+
+	// The next keystroke retires the list — it answers a path that is no
+	// longer what the field says.
+	typed, _ := got.handleSpawnKey(tuiKey("x"))
+	assert.Empty(t, typed.(tuiModel).form.dirSuggestions)
+}
+
+// An empty Directory means "the group's default", so there is nothing to
+// complete and Tab keeps its ordinary next-field job.
+func TestTUISpawnDirTabOnAnEmptyFieldMovesOn(t *testing.T) {
+	m := spawnFormOnDir(t, "")
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	got := updated.(tuiModel)
+	assert.Equal(t, tuiFieldHarness, got.form.field)
+	assert.Empty(t, got.form.dir.Value())
+}
+
+// Tab anywhere else in the form is still plain field navigation.
+func TestTUISpawnTabOnAnotherFieldMovesOn(t *testing.T) {
+	m := newTUIModel(nil)
+	m = m.openSpawnForm()
+	require.Equal(t, tuiFieldGroup, m.form.field)
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	assert.Equal(t, tuiFieldName, updated.(tuiModel).form.field)
+}
+
+// The candidate list is one line by contract: the form renders it whether
+// or not there are candidates so the fields below hold still, which only
+// works if a long list is trimmed rather than wrapped.
+func TestTUISpawnDirSuggestionsStayOnOneLine(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 40
+	m = m.openSpawnForm()
+	m.form.dirSuggestions = []string{
+		"alpha-service", "beta-service", "gamma-service", "delta-service",
+	}
+	line := m.dirSuggestionLine()
+	assert.LessOrEqual(t, lipgloss.Width(line), m.width)
+	assert.Contains(t, line, "alpha-service")
+	assert.Contains(t, line, "more)")
 }
 
 // stubAttach swaps the terminal handover for a recorder and returns the
