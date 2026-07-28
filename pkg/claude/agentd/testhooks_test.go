@@ -715,6 +715,14 @@ func SetTclaudeLayerAccessVerdictForTest(
 	return func() { resolveTclaudeLayerAccessVerdict = previous }
 }
 
+func SetFilteredNetworkPrerequisiteForTest(
+	fn func() session.FilteredNetworkPrerequisite,
+) func() {
+	previous := probeFilteredNetworkPrerequisite
+	probeFilteredNetworkPrerequisite = fn
+	return func() { probeFilteredNetworkPrerequisite = previous }
+}
+
 // SetStackedSandboxHostAvailabilityForTest swaps the inner-engine probe used
 // by the launch gate so flow tests do not depend on a real harness executable
 // being installed on the test host.
@@ -1409,6 +1417,8 @@ func tuiKeyForTest(t *testing.T, key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
 		return tea.KeyPressMsg{Code: tea.KeyRight}
+	case "delete":
+		return tea.KeyPressMsg{Code: tea.KeyDelete}
 	}
 	runes := []rune(key)
 	if len(runes) != 1 {

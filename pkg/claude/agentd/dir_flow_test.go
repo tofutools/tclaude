@@ -653,4 +653,8 @@ func TestDir_TermWSRoutesRequireDashboardAuth(t *testing.T) {
 	rec = testharness.Serve(dash, httptest.NewRequest(http.MethodGet, "/api/open-window-ws/whatever", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code,
 		"open-window-ws without a session cookie must be refused; body=%s", rec.Body.String())
+
+	rec = testharness.Serve(dash, httptest.NewRequest(http.MethodGet, "/api/tui/attach-ws/whatever", nil))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"remote TUI attach without a session cookie must be refused; body=%s", rec.Body.String())
 }

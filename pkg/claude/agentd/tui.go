@@ -2,8 +2,8 @@ package agentd
 
 // Terminal UI for `tclaude agentd serve --tui` — a deliberately small
 // in-terminal stand-in for the web dashboard's most-used moves: see which
-// agents exist, start a new one, go to one's tmux session, and retire one that
-// is done. On its own it
+// agents exist, start a new one, go to one's tmux session, take one offline,
+// and retire one that is done. On its own it
 // is the whole operator surface (runServe starts no dashboard listener); it
 // also runs happily beside the web dashboard when the operator asks for both.
 // Either way it is plain text with no color scheme, no theming and no
@@ -123,8 +123,9 @@ func tuiEndedNormally(err error) bool {
 
 // tuiCapabilities names the operations that depend on the console sharing the
 // daemon host and process lifetime. API-backed operations (list, spawn, retire,
-// resume) need no capability bit: both implementations support them.
+// stop, resume) need no capability bit: both implementations support them.
 type tuiCapabilities struct {
+	attachAgent      bool
 	attachLocalPane  bool
 	completeLocalDir bool
 	shutdownOnQuit   bool
@@ -138,6 +139,7 @@ type tuiCapabilities struct {
 type tuiAPI interface {
 	get(path string, out any) error
 	post(path string, in, out any) error
+	attach(agentName, convID, tmuxSession string) tea.Cmd
 	isOperator() bool
 	identityWarning() string
 	connectionLabel() string
@@ -231,10 +233,28 @@ func (a *inProcessTUIAPI) connectionLabel() string {
 
 func (a *inProcessTUIAPI) capabilities() tuiCapabilities {
 	return tuiCapabilities{
+		attachAgent:      true,
 		attachLocalPane:  true,
 		completeLocalDir: true,
 		shutdownOnQuit:   true,
 	}
+}
+
+func (a *inProcessTUIAPI) attach(agentName, convID, tmuxSession string) tea.Cmd {
+	if tmuxSession == "" {
+		if sess := pickAliveSession(convID); sess != nil {
+			tmuxSession = sess.TmuxSession
+		}
+	}
+	if tmuxSession == "" {
+		return func() tea.Msg {
+			return tuiAttachedMsg{
+				agent: agentName,
+				err:   fmt.Errorf("%s has no live tmux session to attach to", agentName),
+			}
+		}
+	}
+	return tuiAttachToPane(agentName, tmuxSession, insideTmux())
 }
 
 func (a *inProcessTUIAPI) get(path string, out any) error {
@@ -436,6 +456,12 @@ type tuiRetireResult struct {
 	Shutdown memberOpResult    `json:"shutdown"`
 }
 
+// tuiStopResult is the subset of the stop response the console reports.
+type tuiStopResult struct {
+	Action string `json:"action"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // tuiResumeResult is the subset of the resume response the console reports:
 // what the daemon did, and — for everything that is not a plain "resumed" —
 // why.
@@ -458,6 +484,7 @@ const (
 	tuiModeSpawn
 	tuiModeHelp
 	tuiModeConfirmQuit
+	tuiModeConfirmStop
 	tuiModeConfirmRetire
 )
 
@@ -529,12 +556,13 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
-	// refreshing / spawning / retiring / resuming keep the periodic tick from
+	// refreshing / spawning / stopping / retiring / resuming keep the periodic tick from
 	// stacking requests and the operator from firing two of the same action at
 	// once.
 	refreshing        bool
 	refreshGeneration uint64
 	spawning          bool
+	stopping          bool
 	retiring          bool
 	resuming          bool
 	// reconcilingMutation latches after a remote mutation's outcome becomes
@@ -544,11 +572,11 @@ type tuiModel struct {
 	reconcilingMutation      bool
 	reconciliationRefreshGen uint64
 	lastRefresh              time.Time
-	// retireTarget is the agent the retire confirmation is about, captured
-	// when the prompt opens rather than re-read when it is answered: the
-	// listing re-sorts under the cursor every two seconds, so resolving the
-	// target on "y" could retire an agent the operator never saw named.
-	retireTarget tuiAgentRow
+	// lifecycleTarget is the agent the stop/retire confirmation is about,
+	// captured when the prompt opens rather than re-read when it is answered:
+	// the listing re-sorts under the cursor every two seconds, so resolving the
+	// target on "y" could act on an agent the operator never saw named.
+	lifecycleTarget tuiAgentRow
 
 	filterActive bool
 
@@ -607,12 +635,20 @@ type (
 	tuiAttachedMsg struct {
 		agent   string
 		session string
+		remote  bool
 		err     error
 	}
 	// tuiRetiredMsg carries the outcome of one retire request.
 	tuiRetiredMsg struct {
 		agent string
 		res   tuiRetireResult
+		err   error
+	}
+	// tuiStoppedMsg carries the outcome of one stop request — turning an
+	// online agent offline.
+	tuiStoppedMsg struct {
+		agent string
+		res   tuiStopResult
 		err   error
 	}
 	// tuiResumedMsg carries the outcome of one resume request — turning an
@@ -633,6 +669,7 @@ func newTUIModel(api tuiAPI) tuiModel {
 		refreshing:        true, // Init immediately starts the first refresh.
 		refreshGeneration: 1,
 		capabilities: tuiCapabilities{
+			attachAgent:      true,
 			attachLocalPane:  true,
 			completeLocalDir: true,
 			shutdownOnQuit:   true,
@@ -776,16 +813,27 @@ func tuiSpawnCmd(api tuiAPI, group string, req agent.SpawnRequest) tea.Cmd {
 	}
 }
 
-// tuiRetireCmd retires one agent through the daemon's own verb. It sends no
-// query parameters, which is the documented default pair for that endpoint:
-// the pane is asked to exit (?shutdown), and the worktree is left alone
-// (?delete_worktree) — the console never deletes an operator's work, and has
-// no probe of the kind the dashboard runs before offering to.
+// tuiRetireCmd retires one agent through the daemon's own verb. The
+// require_offline precondition keeps Delete's progressive contract true even
+// when another client resumes the agent while the confirmation is open. The
+// remaining documented defaults still apply: the pane is asked to exit and
+// the worktree is left alone.
 func tuiRetireCmd(api tuiAPI, convID, name string) tea.Cmd {
 	return func() tea.Msg {
 		var res tuiRetireResult
-		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire", nil, &res)
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/retire?require_offline=1", nil, &res)
 		return tuiRetiredMsg{agent: name, res: res, err: err}
+	}
+}
+
+// tuiStopCmd turns one online agent off through the daemon's own stop verb.
+// It sends no force query: Delete is the graceful step toward removal, so it
+// asks the harness to exit cleanly and never drops unsubmitted input.
+func tuiStopCmd(api tuiAPI, convID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var res tuiStopResult
+		err := api.post("/v1/agent/"+url.PathEscape(convID)+"/stop", nil, &res)
+		return tuiStoppedMsg{agent: name, res: res, err: err}
 	}
 }
 
@@ -1078,6 +1126,13 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 // tmux server. inTmux reports whether agentd itself is running inside tmux.
 var tuiAttachToPane = realTUIAttachToPane
 
+func (m tuiModel) attachCmd(agentName, convID, tmuxSession string) tea.Cmd {
+	if m.api != nil {
+		return m.api.attach(agentName, convID, tmuxSession)
+	}
+	return tuiAttachToPane(agentName, tmuxSession, insideTmux())
+}
+
 // realTUIAttachToPane is the production handover, and it has two shapes
 // because agentd's own terminal may already be a tmux client:
 //
@@ -1215,12 +1270,11 @@ func tuiTrimmedLines(in []string) []string {
 // attachSelected puts the operator on the selected agent's tmux session — the
 // console's answer to "let me actually go look at what this agent is doing".
 //
-// The target is resolved from the daemon's own session rows rather than over
-// the API: which tmux session an agent is on is local process state, and the
-// action itself is a takeover of THIS terminal, which no HTTP shape can
-// express. Both halves are therefore gated on the console being the operator,
-// so a console that the daemon classifies as an agent cannot use it to reach a
-// peer's pane and drive it.
+// Both transports hand THIS terminal to the agent: the embedded API resolves
+// the daemon-host tmux session directly, while the remote API streams the web
+// dashboard's authenticated terminal WebSocket. The operator gate applies to
+// both, so an agent-class console cannot use either path to reach a peer's pane
+// and drive it.
 func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 	row, ok := m.selectedAgent()
 	if !ok {
@@ -1230,39 +1284,65 @@ func (m tuiModel) attachSelected() (tuiModel, tea.Cmd) {
 		m.notice = "Only an operator console can attach to an agent's terminal."
 		return m, nil
 	}
-	if !m.capabilities.attachLocalPane {
-		m.notice = "This console is remote; attach to the agent from the daemon host."
+	if !m.capabilities.attachAgent {
+		m.notice = "This console cannot attach to an agent's terminal."
 		return m, nil
 	}
-	sess := pickAliveSession(row.ConvID)
-	if sess == nil || sess.TmuxSession == "" {
-		m.notice = row.name() + " has no live tmux session to attach to."
-		return m, nil
+	if m.capabilities.attachLocalPane {
+		sess := pickAliveSession(row.ConvID)
+		if sess == nil || sess.TmuxSession == "" {
+			m.notice = row.name() + " has no live tmux session to attach to."
+			return m, nil
+		}
+		if insideTmux() {
+			m.notice = "Switching to " + sess.TmuxSession + "…"
+			return m, m.attachCmd(row.name(), row.ConvID, sess.TmuxSession)
+		}
+		m.notice = "Attaching to " + row.name() + " — detach (ctrl-b d) to come back."
+		return m, m.attachCmd(row.name(), row.ConvID, sess.TmuxSession)
 	}
-	if insideTmux() {
-		m.notice = "Switching to " + sess.TmuxSession + "…"
-	} else {
-		m.notice = "Attached to " + sess.TmuxSession + " — detach (ctrl-b d) to come back."
-	}
-	return m, tuiAttachToPane(row.name(), sess.TmuxSession, insideTmux())
+	m.notice = "Opening remote terminal for " + row.name() + " — press ctrl-] d to come back."
+	return m, m.attachCmd(row.name(), row.ConvID, "")
 }
 
-// confirmRetireSelected opens the retire confirmation over the selected row.
-// Retiring is not undoable from here (reinstating is a CLI/dashboard move) and
-// it stops the agent's pane, so it always asks first — the same rule quitting
-// follows.
-func (m tuiModel) confirmRetireSelected() tuiModel {
+// confirmDeleteStepSelected moves the selected agent one step toward removal:
+// online agents are taken offline, while agents already offline are retired.
+// Both actions ask first, and the target is captured here so a background
+// refresh cannot move another row under the cursor before confirmation.
+func (m tuiModel) confirmDeleteStepSelected() tuiModel {
 	row, ok := m.selectedAgent()
 	if !ok {
+		return m
+	}
+	if row.Online {
+		if m.stopping {
+			m.notice = "A stop is already in flight."
+			return m
+		}
+		m.lifecycleTarget = row
+		m.mode = tuiModeConfirmStop
 		return m
 	}
 	if m.retiring {
 		m.notice = "A retire is already in flight."
 		return m
 	}
-	m.retireTarget = row
+	m.lifecycleTarget = row
 	m.mode = tuiModeConfirmRetire
 	return m
+}
+
+// stopConfirmed fires the graceful stop the operator just confirmed.
+func (m tuiModel) stopConfirmed() (tuiModel, tea.Cmd) {
+	row := m.lifecycleTarget
+	m.lifecycleTarget = tuiAgentRow{}
+	m.mode = tuiModeList
+	if row.ConvID == "" {
+		return m, nil
+	}
+	m.stopping = true
+	m.notice = "Taking " + row.name() + " offline…"
+	return m, tuiStopCmd(m.api, row.ConvID, row.name())
 }
 
 // retireConfirmed fires the retire the operator just confirmed. Permission is
@@ -1270,8 +1350,8 @@ func (m tuiModel) confirmRetireSelected() tuiModel {
 // itself, so an agent-class console gets the same refusal here it would get
 // over the socket rather than a second, divergent rule.
 func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
-	row := m.retireTarget
-	m.retireTarget = tuiAgentRow{}
+	row := m.lifecycleTarget
+	m.lifecycleTarget = tuiAgentRow{}
 	m.mode = tuiModeList
 	if row.ConvID == "" {
 		return m, nil
@@ -1279,6 +1359,33 @@ func (m tuiModel) retireConfirmed() (tuiModel, tea.Cmd) {
 	m.retiring = true
 	m.notice = "Retiring " + row.name() + "…"
 	return m, tuiRetireCmd(m.api, row.ConvID, row.name())
+}
+
+// tuiStopSummary describes a landed stop in one line.
+func tuiStopSummary(msg tuiStoppedMsg) string {
+	detail := strings.TrimSpace(msg.res.Detail)
+	withDetail := func(summary string) string {
+		if detail != "" {
+			summary += " Note: " + detail + "."
+		}
+		return summary
+	}
+	switch msg.res.Action {
+	case "soft_stopped":
+		return withDetail("Asked " + msg.agent + " to go offline — its session was asked to exit.")
+	case "killed_no_soft_exit":
+		return withDetail("Took " + msg.agent + " offline — its harness has no graceful exit, so the session was stopped.")
+	case "skipped:already_offline":
+		return withDetail(msg.agent + " was already offline.")
+	case "":
+		return withDetail("Asked the daemon to take " + msg.agent + " offline.")
+	default:
+		out := "Could not take " + msg.agent + " offline: " + msg.res.Action
+		if detail != "" {
+			out += " (" + detail + ")"
+		}
+		return out + "."
+	}
 }
 
 // tuiRetireSummary describes a landed retire in one line: what the demotion
@@ -1410,6 +1517,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// retired agent listed until the next tick.
 		return m.beginRefresh()
 
+	case tuiStoppedMsg:
+		m.stopping = false
+		if msg.err != nil {
+			m.notice = "Take offline failed: " + msg.err.Error()
+			if tuiMutationOutcomeUnknown(msg.err) {
+				m.notice = "Take-offline outcome unknown: the connection was lost after the request; refreshing before another action."
+				m.reconcilingMutation = true
+				var refresh tea.Cmd
+				m, refresh = m.beginRefresh()
+				m.reconciliationRefreshGen = m.refreshGeneration
+				return m, refresh
+			}
+			return m, nil
+		}
+		m.notice = tuiStopSummary(msg)
+		// Reconcile promptly: a graceful stop acknowledges delivery of the
+		// exit request, but the pane may take a moment to disappear.
+		return m.beginRefresh()
+
 	case tuiResumedMsg:
 		m.resuming = false
 		if msg.err != nil {
@@ -1431,10 +1557,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiAttachedMsg:
 		if msg.err != nil {
-			m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
+			if msg.remote {
+				m.notice = "Could not reach the remote terminal for " + msg.agent + ": " + msg.err.Error()
+			} else {
+				m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
+			}
 			return m, nil
 		}
-		if insideTmux() {
+		if msg.remote {
+			m.notice = "Back from the remote terminal for " + msg.agent + "."
+		} else if insideTmux() {
 			m.notice = "Switched to " + msg.session + " (" + msg.agent + ")."
 		} else {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
@@ -1468,7 +1600,10 @@ func tuiMutationOutcomeUnknown(err error) bool {
 // back to the ordinary "spawned, here it is in the listing" path.
 func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 	session := msg.resp.TmuxSession
-	if !m.operator || !m.capabilities.attachLocalPane || session == "" {
+	convID := msg.resp.ConvID
+	if !m.operator || !m.capabilities.attachAgent ||
+		(m.capabilities.attachLocalPane && session == "") ||
+		(!m.capabilities.attachLocalPane && convID == "") {
 		return m, nil
 	}
 	name := msg.resp.AgentID
@@ -1480,12 +1615,16 @@ func (m tuiModel) focusSpawned(msg tuiSpawnedMsg) (tuiModel, tea.Cmd) {
 		// operator has to go on.
 		name = session
 	}
-	if insideTmux() {
+	if m.capabilities.attachLocalPane && insideTmux() {
 		m.notice += " — switching to " + session + "…"
-	} else {
-		m.notice += " — attaching; detach (ctrl-b d) to come back."
+		return m, m.attachCmd(name, convID, session)
 	}
-	return m, tuiAttachToPane(name, session, insideTmux())
+	if m.capabilities.attachLocalPane {
+		m.notice += " — attaching; detach (ctrl-b d) to come back."
+	} else {
+		m.notice += " — opening its remote terminal; press ctrl-] d to come back."
+	}
+	return m, m.attachCmd(name, convID, session)
 }
 
 // tuiSpawnSummary describes a landed spawn in one line. A Codex agent held
@@ -1512,7 +1651,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// in flight. Once that request becomes ambiguous, cancel the stale
 		// modal as well as blocking list-mode mutation shortcuts.
 		m.mode = tuiModeList
-		m.retireTarget = tuiAgentRow{}
+		m.lifecycleTarget = tuiAgentRow{}
 		m.notice = "Waiting for a successful refresh to reconcile the previous action before another mutation."
 		return m, nil
 	}
@@ -1535,6 +1674,16 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tuiModeConfirmStop:
+		switch msg.String() {
+		case "y", "Y":
+			return m.stopConfirmed()
+		default:
+			m.mode = tuiModeList
+			m.lifecycleTarget = tuiAgentRow{}
+		}
+		return m, nil
+
 	case tuiModeConfirmRetire:
 		// Same contract as the quit prompt: only "y" goes through, and the
 		// prompt says so. Ctrl-C is a cancel here rather than a second
@@ -1545,7 +1694,7 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.retireConfirmed()
 		default:
 			m.mode = tuiModeList
-			m.retireTarget = tuiAgentRow{}
+			m.lifecycleTarget = tuiAgentRow{}
 		}
 		return m, nil
 
@@ -1595,9 +1744,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
-	case "x", "X":
+	case "delete":
 		m.notice = ""
-		return m.confirmRetireSelected(), nil
+		return m.confirmDeleteStepSelected(), nil
 	case "r":
 		if !m.refreshing {
 			m.notice = ""
@@ -1612,9 +1761,11 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func tuiReconciliationBlocksMutation(mode tuiMode, key string) bool {
 	switch mode {
 	case tuiModeList:
-		return key == "enter" || strings.EqualFold(key, "n") || strings.EqualFold(key, "x")
+		return key == "enter" || key == "delete" || strings.EqualFold(key, "n")
 	case tuiModeSpawn:
 		return key == "enter"
+	case tuiModeConfirmStop:
+		return strings.EqualFold(key, "y")
 	case tuiModeConfirmRetire:
 		return strings.EqualFold(key, "y")
 	default:
@@ -1823,18 +1974,24 @@ func (m tuiModel) confirmPrompt() string {
 			return "Quit this remote console? [y / any other key = cancel]"
 		}
 		return "Quit and shut down agentd? [y / any other key = cancel]"
+	case tuiModeConfirmStop:
+		const prefix = "Take "
+		const suffix = " offline? [y / any other key = cancel]"
+		return prefix +
+			tuiTruncate(m.lifecycleTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
+			suffix
 	case tuiModeConfirmRetire:
 		const prefix = "Retire "
-		const suffix = " and stop its session? [y / any other key = cancel]"
+		const suffix = "? [y / any other key = cancel]"
 		return prefix +
-			tuiTruncate(m.retireTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
+			tuiTruncate(m.lifecycleTarget.name(), m.promptNameBudget(len(prefix)+len(suffix))) +
 			suffix
 	default:
 		return ""
 	}
 }
 
-// promptNameBudget is how many columns the retire prompt may spend on the
+// promptNameBudget is how many columns a lifecycle prompt may spend on the
 // agent's name: what the terminal leaves after the indent and the fixed text,
 // capped at the AGENT column's own width so a name that fits the listing reads
 // identically here.
@@ -1895,10 +2052,12 @@ func (m tuiModel) enterHint() string {
 		return ""
 	case !row.Online:
 		return "enter start"
-	case !m.operator || !m.capabilities.attachLocalPane:
+	case !m.operator || !m.capabilities.attachAgent:
 		return ""
-	case insideTmux():
+	case m.capabilities.attachLocalPane && insideTmux():
 		return "enter switch to"
+	case !m.capabilities.attachLocalPane:
+		return "enter remote attach"
 	default:
 		return "enter attach"
 	}
@@ -1919,10 +2078,10 @@ func (m tuiModel) keyHintLine() string {
 	}
 	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
 	if len(m.visibleAgents()) > 0 {
-		// Unlike attaching, retire is not statically an operator-only move: an
-		// agent-class console can hold agent.retire over its own group's
-		// members, so the daemon decides and the key stays advertised.
-		hints = "x retire • " + hints
+		// Unlike attaching, lifecycle moves are not statically operator-only:
+		// an agent-class console can hold stop/retire permissions over its own
+		// group's members, so the daemon decides and the key stays advertised.
+		hints = "del offline / retire • " + hints
 	}
 	if enter := m.enterHint(); enter != "" {
 		hints = enter + " • " + hints
@@ -1958,6 +2117,9 @@ func (m tuiModel) summaryLine() string {
 	}
 	if m.resuming {
 		line += " • starting…"
+	}
+	if m.stopping {
+		line += " • taking offline…"
 	}
 	return line
 }
@@ -2017,7 +2179,7 @@ func (m tuiModel) renderSpawnForm() string {
 		completeHint = "tab complete dir • "
 	}
 	spawnHint := "enter spawn"
-	if m.operator && m.capabilities.attachLocalPane {
+	if m.operator && m.capabilities.attachAgent {
 		spawnHint = "enter spawn + go to its pane"
 	}
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
@@ -2130,18 +2292,25 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    ↑/k, ↓/j   Move the cursor\n")
 	b.WriteString("    enter      On an offline agent: start it again, in the directory and\n")
 	b.WriteString("               conversation it was last running.\n")
-	if m.capabilities.attachLocalPane {
-		b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
-		b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
-		b.WriteString("               with ctrl-b d. Going to a pane is operator consoles only;\n")
+	if m.capabilities.attachAgent {
+		if m.capabilities.attachLocalPane {
+			b.WriteString("               On a live one: go to its tmux session — switch-client when\n")
+			b.WriteString("               agentd runs inside tmux, otherwise attach until you detach\n")
+			b.WriteString("               with ctrl-b d.\n")
+		} else {
+			b.WriteString("               On a live one: stream its daemon-host tmux session through\n")
+			b.WriteString("               the dashboard's authenticated terminal WebSocket. Press\n")
+			b.WriteString("               ctrl-] d to close only that stream and return; press\n")
+			b.WriteString("               ctrl-] ctrl-] to send a literal ctrl-] remotely.\n")
+		}
+		b.WriteString("               Going to a pane is operator consoles only;\n")
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")
-	} else {
-		b.WriteString("               A remote console cannot attach to a live daemon-host pane.\n")
 	}
 	b.WriteString("    n          Start a new agent\n")
-	b.WriteString("    x          Retire the selected agent (asks first): it leaves its\n")
-	b.WriteString("               groups, loses its grants and its session is asked to\n")
-	b.WriteString("               exit. The conversation and any worktree are kept.\n")
+	b.WriteString("    delete     Move the selected agent one step toward removal (asks first):\n")
+	b.WriteString("               a live agent is taken offline; an already-offline agent is\n")
+	b.WriteString("               retired, leaving its groups and losing its grants. Retiring\n")
+	b.WriteString("               keeps the conversation and any worktree.\n")
 	b.WriteString("    f          Filter the list: only show active agents (toggle)\n")
 	b.WriteString("    r          Refresh now (the list also polls every 2s)\n")
 	b.WriteString("    ?/h        This help\n")
@@ -2164,7 +2333,7 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("               Directory starts on the group's own default directory\n")
 	b.WriteString("               (add a subdirectory to start below it) and follows the\n")
 	b.WriteString("               group picker until you type a path of your own.\n")
-	if m.capabilities.attachLocalPane {
+	if m.capabilities.attachAgent {
 		b.WriteString("    enter      Spawn, then go straight to the new agent's pane —\n")
 		b.WriteString("               the same move enter makes on its row. Operator\n")
 		b.WriteString("               consoles only; an agent still starting up (no pane\n")

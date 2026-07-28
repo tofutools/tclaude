@@ -225,6 +225,8 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, dnsSmoke bool) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	require.NotEmpty(t, wrapped[harness.DefaultName],
+		"fail-closed phase requires the Claude wrapped launch command")
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", wrapped[harness.DefaultName])
 	cmd.Env = filteredSmokeHelperEnv(
 		os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,

@@ -30,6 +30,7 @@ func TestAttemptsAreMonotonicAndMintDistinctCommandIdentities(t *testing.T) {
 		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
 		if command == nil {
 			t.Fatalf("attempt %d was not planned", attempt)
+			continue
 		}
 		if command.Attempt != attempt {
 			t.Fatalf("command attempt = %d, want %d", command.Attempt, attempt)

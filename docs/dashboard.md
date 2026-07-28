@@ -53,28 +53,32 @@ use it immediately.
 
 `tclaude agentd serve --tui` runs a small text UI in the daemon's own terminal.
 It covers the moves the dashboard is most often opened for — see which agents
-exist, start a new one, go look at one, retire one that is done — and nothing
-else:
+exist, start a new one, go look at one, take one offline, retire one that is
+done — and nothing else:
 
 ```
 enter  go to the selected agent's tmux session — or, on an offline agent,
        turn it back on
 n      start a new agent (group, spawn profile, name, directory, harness,
        startup brief)
-x      retire the selected agent (it asks first)
+delete move the selected agent one step toward removal (it asks first):
+       online → offline, offline → retired
 f      filter the list down to the active agents (toggle)
 r      refresh now (the list also polls every 2s)
 ?      key help
 q      quit — this SHUTS DOWN the daemon (it asks first)
 ```
 
-**x** is the console's `tclaude agent retire`: the agent leaves its groups,
-loses its permission and sudo grants, and its session is asked to exit. The
-conversation stays on disk and any worktree is left alone — the console never
-deletes an operator's work, so a worktree you no longer want goes through the
-CLI or the dashboard, which probe it first. Retiring is confirmed before
-anything happens, and the confirmation acts on the agent it names even if the
-listing re-sorted under the cursor in the meantime.
+**delete** moves the selected agent one step toward removal. On an online agent
+it is the console's graceful `tclaude agent stop`: the session is asked to exit,
+leaving the agent offline and ready for **enter** to resume it. On an already
+offline agent it is `tclaude agent retire`: the agent leaves its groups and
+loses its permission and sudo grants. The conversation stays on disk and any
+worktree is left alone — the console never deletes an operator's work, so a
+worktree you no longer want goes through the CLI or the dashboard, which probe
+it first. Both actions are confirmed before anything happens, and the
+confirmation acts on the agent it names even if the listing re-sorted under the
+cursor in the meantime.
 
 **enter** on a live agent does what it does in `tclaude session watch` — it
 puts you on that agent's pane. When agentd itself runs inside tmux it uses
@@ -206,6 +210,15 @@ tclaude agent tui-dashboard --connect-to=agent-host:8321
 
 # A full URL is also accepted (including an HTTPS reverse-proxy prefix).
 tclaude agent tui-dashboard --connect-to=https://agents.example.com/tclaude
+
+# When this machine's automatically detected token belongs to a different,
+# local agentd, override it explicitly:
+tclaude agent tui-dashboard --connect-to=agent-host:8321 \
+  --operator-token=tclo_...
+
+# Or read the remote daemon's persisted token through your existing SSH setup:
+tclaude agent tui-dashboard --connect-to=agent-host:8321 \
+  --remote-operator-token=operator@agent-host:/home/operator/.tclaude/data/operator_token
 ```
 
 A bare `host[:port]` means HTTP; a URL may use HTTP or HTTPS. The operator
@@ -215,11 +228,26 @@ not confined to the local machine.
 
 The terminal model talks through a small Go API interface with separate
 in-process and HTTP implementations. Listing, spawning, starting offline
-agents, and retiring are identical on both transports and reach the same
-versioned daemon handlers. Host-local operations are intentionally not faked:
-a remote console cannot attach its terminal to the daemon host's tmux server
-or tab-complete the daemon host's filesystem. Quitting a remote console exits
-only that client; agentd and its agents keep running.
+agents, retiring, and attaching are available on both transports. **Enter** on
+a live remote agent temporarily gives the local terminal to the same
+authenticated PTY/WebSocket bridge used by the web dashboard; **Ctrl-] D**
+closes only that remote stream and returns to the terminal dashboard, including
+when the dashboard itself runs inside a local tmux. Because `Ctrl-]` is the
+remote stream's escape prefix, press **Ctrl-] Ctrl-]** to send one literal
+`Ctrl-]` to the remote application. The remote tmux client does not displace an
+operator already viewing that session elsewhere. Daemon-host path completion
+remains unavailable because paths must be completed on the machine where the
+terminal UI is running. Quitting a remote console exits only that client;
+agentd and its agents keep running.
+
+Token resolution is explicit-first: `--operator-token` (literal value), then
+`--remote-operator-token` (an SSH source in
+`user@host:/absolute/path` or `user@host/absolute/path` form), then
+`TCLAUDE_HUMAN_TOKEN` / the normal local persisted-token lookup. The two flags
+are mutually exclusive. A literal command-line token may be retained in shell
+history or exposed in a process listing, so prefer the environment or the SSH
+source when that matters. The SSH form runs the local `ssh` client and therefore
+uses the operator's normal SSH config, agent, and host verification.
 
 The remote client polls every two seconds and treats connection failures as
 transient. It keeps the current listing visible while agentd is down and
@@ -232,9 +260,9 @@ operator token (`agent.persist_operator_token` or
 `--persist-operator-token`) as well if reconnecting after an unclean stop must
 work, because an ungraceful exit cannot save the previous dashboard session.
 
-The server exposes only the six versioned operations this TUI uses under
-`/api/tui/`; it does not publish agentd's entire Unix-socket API on the
-dashboard listener.
+The server exposes only the six versioned JSON operations and one terminal
+WebSocket this TUI uses under `/api/tui/`; it does not publish agentd's entire
+Unix-socket API on the dashboard listener.
 
 ## Fixed loopback port
 

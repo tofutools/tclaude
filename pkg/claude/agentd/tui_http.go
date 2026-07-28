@@ -1,9 +1,13 @@
 package agentd
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
 // buildTUIHTTPHandler exposes only the versioned operations the terminal
@@ -17,6 +21,7 @@ func buildTUIHTTPHandler() http.Handler {
 	mux.HandleFunc("GET /v1/groups", handleGroups)
 	mux.HandleFunc("GET /v1/spawn-profiles", handleSpawnProfiles)
 	mux.HandleFunc("POST /v1/groups/{name}/spawn", v1GroupRoute(handleGroupSpawn))
+	mux.HandleFunc("POST /v1/agent/{selector}/stop", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/retire", handleAgentByConv)
 	mux.HandleFunc("POST /v1/agent/{selector}/resume", handleAgentByConv)
 
@@ -30,6 +35,46 @@ func buildTUIHTTPHandler() http.Handler {
 		}
 		api.ServeHTTP(w, asDashboardHumanPeer(r))
 	})
+}
+
+// handleTUIAttachWS streams the selected agent's real tmux pane to a
+// standalone terminal dashboard. It uses the same PTY/WebSocket pump as the
+// browser dashboard, but attaches tmux directly without `-d`: observing an
+// agent remotely must not evict an operator who is already attached elsewhere.
+//
+// The direct command execs tmux rather than the `tclaude session attach`
+// wrapper. That wrapper intentionally refuses an already-attached session,
+// while tmux itself supports several viewers. Passing an empty teardown
+// session makes runPTYOverWS close only this exec'd tmux client through its PTY
+// and process group rather than broadly detaching the session's other clients.
+func handleTUIAttachWS(w http.ResponseWriter, r *http.Request) {
+	if !authenticateTUIHTTPRequest(w, r) {
+		return
+	}
+	selector := strings.TrimPrefix(r.URL.Path, "/api/tui/attach-ws/")
+	if u, err := url.PathUnescape(selector); err == nil {
+		selector = u
+	}
+	if selector == "" || strings.Contains(selector, "/") {
+		http.Error(w, "expected /api/tui/attach-ws/{agent}", http.StatusNotFound)
+		return
+	}
+	resolved, _, err := agent.ResolveSelector(selector)
+	if err != nil {
+		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	sess := pickAliveSession(resolved.ConvID)
+	if sess == nil || sess.TmuxSession == "" {
+		http.Error(w, "no live tmux session for "+short8(resolved.ConvID), http.StatusNotFound)
+		return
+	}
+	command := fmt.Sprintf(
+		"exec tmux -L %s attach-session -t %s",
+		shellSingleQuote(clcommon.TmuxSocketName),
+		shellSingleQuote(clcommon.ExactTarget(sess.TmuxSession)),
+	)
+	runPTYOverWS(w, r, command, "")
 }
 
 // authenticateTUIHTTPRequest accepts either an existing dashboard session or
