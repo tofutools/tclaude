@@ -696,10 +696,20 @@ func (m tuiModel) cycleChoice(delta int) tuiModel {
 }
 
 // completingDir reports whether a Tab should complete a path rather than
-// move to the next field: the directory field is focused and has something
-// to complete.
+// move to the next field: this is an operator console, the directory field
+// is focused, and there is something to complete.
+//
+// The operator check is the same gate attachSelected uses, for the same
+// reason. Completion reads the filesystem as the process agentd runs in —
+// the human's own, outside any agent sandbox — and a console started from
+// inside a harness pane is agent-class and drivable by that agent through
+// tmux send-keys. Ungated, Tab would hand it bulk directory listings from
+// outside its sandbox. A failed spawn already leaks whether one guessed
+// path exists, but that is a per-path oracle; enumerating names the agent
+// could not have guessed is a different thing, so the console does not
+// offer it to a caller the daemon would not treat as the human.
 func (m tuiModel) completingDir() bool {
-	return m.form.field == tuiFieldDir && m.form.dir.Value() != ""
+	return m.operator && m.form.field == tuiFieldDir && m.form.dir.Value() != ""
 }
 
 // completeDir runs one round of bash-like directory completion on the
@@ -1249,7 +1259,14 @@ func (m tuiModel) renderSpawnForm() string {
 	if m.notice != "" {
 		b.WriteString("\n  " + m.notice + "\n")
 	}
-	b.WriteString("\n  enter spawn • ↑/↓/tab next field • tab complete dir • ←/→ change group/harness • esc cancel\n")
+	// Name tab-completion only where it works, the same way keyHintLine names
+	// enter only for a console that can attach.
+	completeHint := ""
+	if m.operator {
+		completeHint = "tab complete dir • "
+	}
+	b.WriteString("\n  enter spawn • ↑/↓/tab next field • " + completeHint +
+		"←/→ change group/harness • esc cancel\n")
 	return b.String()
 }
 
@@ -1318,7 +1335,8 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("  New agent\n")
 	b.WriteString("    tab/↑/↓    Next / previous field\n")
 	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
-	b.WriteString("               one match completes it, several list below the field\n")
+	b.WriteString("               one match completes it, several list below the\n")
+	b.WriteString("               field. Operator consoles only.\n")
 	b.WriteString("    ←/→        Change the group or harness\n")
 	b.WriteString("    enter      Spawn\n")
 	b.WriteString("    esc        Cancel\n\n")

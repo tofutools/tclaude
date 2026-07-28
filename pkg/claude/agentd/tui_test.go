@@ -493,12 +493,14 @@ func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
 	assert.NotContains(t, got.notice, "groups create")
 }
 
-// spawnFormOnDir opens the spawn form with the cursor on the Directory
-// field and dir prefilled, the state every completion test starts from.
+// spawnFormOnDir opens the spawn form on an operator console with the
+// cursor on the Directory field and dir prefilled, the state every
+// completion test starts from.
 func spawnFormOnDir(t *testing.T, dir string) tuiModel {
 	t.Helper()
 	m := newTUIModel(nil)
 	m.width = 120
+	m.operator = true
 	m = m.openSpawnForm()
 	for m.form.field != tuiFieldDir {
 		m = m.moveSpawnField(1)
@@ -555,6 +557,26 @@ func TestTUISpawnDirTabOnAnEmptyFieldMovesOn(t *testing.T) {
 	got := updated.(tuiModel)
 	assert.Equal(t, tuiFieldHarness, got.form.field)
 	assert.Empty(t, got.form.dir.Value())
+}
+
+// A console the daemon does not treat as the human gets no completion: it
+// reads the filesystem as agentd's own user, outside any sandbox the
+// driving agent is under. Tab stays plain field navigation there, and the
+// form does not advertise a key that would do nothing.
+func TestTUISpawnDirTabIsRefusedForANonOperatorConsole(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "project-beta"), 0o755))
+
+	m := spawnFormOnDir(t, filepath.Join(root, "project-b"))
+	m.operator = false
+
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	got := updated.(tuiModel)
+	assert.Equal(t, filepath.Join(root, "project-b"), got.form.dir.Value(),
+		"the typed path must be left alone")
+	assert.Empty(t, got.form.dirSuggestions)
+	assert.Equal(t, tuiFieldHarness, got.form.field, "tab falls back to next-field")
+	assert.NotContains(t, got.renderSpawnForm(), "complete dir")
 }
 
 // Tab anywhere else in the form is still plain field navigation.
