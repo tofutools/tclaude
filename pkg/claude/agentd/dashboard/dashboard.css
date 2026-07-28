@@ -1066,7 +1066,9 @@ details[open] > summary::before { content: "▼ "; }
    space) drops the pointer cursor so it doesn't advertise a fold it won't
    perform. Non-group <details> (permissions, advanced config) carry no
    data-group-key and keep the generic whole-summary marker + pointer above. */
-details[data-group-key] > summary { cursor: default; position: relative; }
+details[data-group-key] > summary {
+  cursor: default; position: relative; padding-inline-end: 48px;
+}
 details[data-group-key] > summary::before { content: none; }
 details[data-group-key] > summary .group-name { cursor: pointer; user-select: none; }
 details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
@@ -1099,7 +1101,11 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment-edit {
   font-size: 10px; opacity: 0.65; transition: opacity 0.1s ease;
 }
-@media (hover: hover) {
+/* Only fine pointers get the hover-reveal treatment. Coarse/touch pointers
+   keep the control visible, so their first tap activates it instead of merely
+   manufacturing a sticky hover state. Opacity keeps hidden controls in the
+   keyboard tab order; focus-within then reveals the whole control. */
+@media (hover: hover) and (pointer: fine) {
   .group-attachment { opacity: 0; pointer-events: none; }
   details[data-group-key] > summary:hover .group-attachment,
   details[data-group-key] > summary:focus-within .group-attachment,

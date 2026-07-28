@@ -394,9 +394,10 @@ hovering does.
 
 A group may also carry one persistent http(s) attachment, exposed as a compact
 **📎 paperclip** floating at the top-right of its header rather than as another
-quick-item chip. Because the control floats over the header, it consumes no
-layout space and never pushes the other controls sideways. It appears while the
-header is hovered or keyboard-focused and remains visible on touch devices.
+quick-item chip. It stays outside the inline control sequence, so it never
+pushes neighboring controls sideways; a reserved edge keeps it clear of long
+group names on narrow screens. It appears while the header is hovered or
+keyboard-focused and remains visible on touch devices.
 An existing attachment's paperclip opens it; hover or focus reveals the pencil
 to edit or clear it. The editor accepts an optional display name and otherwise
 derives a short Linear issue key, GitHub number, or hostname.

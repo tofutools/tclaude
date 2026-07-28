@@ -30,10 +30,16 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
 
   const attachment = (name) => host.querySelector(
     `details[data-group-key="${name}"] > summary .group-attachment`);
+  const assertTabReachable = (element) => {
+    assert.ok(element?.matches('a[href], button:not([disabled])'));
+    assert.notEqual(element?.getAttribute('tabindex'), '-1');
+    assert.equal(element?.hasAttribute('hidden'), false);
+  };
   const safe = attachment('safe');
   assert.equal(safe.querySelector('a')?.getAttribute('href'), 'https://example.com/project');
   assert.equal(safe.querySelector('a')?.textContent, '📎', 'the floating control stays icon-only');
   assert.match(safe.querySelector('a')?.getAttribute('title'), /Safe project/);
+  assertTabReachable(safe.querySelector('a'));
 
   const unsafe = attachment('unsafe');
   assert.equal(unsafe.querySelector('a'), null, 'a bad stored row must never become a live link');
@@ -42,10 +48,12 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     unsafe.querySelector('.group-attachment-invalid').getAttribute('aria-label'),
     /unsafe stored attachment/,
   );
+  assertTabReachable(unsafe.querySelector('.group-attachment-invalid'));
   assert.ok(unsafe.querySelector('.group-attachment-edit'), 'bad rows remain editable/clearable');
 
   const empty = attachment('empty');
   assert.equal(empty?.tagName, 'BUTTON');
   assert.equal(empty?.textContent, '📎');
+  assertTabReachable(empty);
   await mounted.unmount();
 });

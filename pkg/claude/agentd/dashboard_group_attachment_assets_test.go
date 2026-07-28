@@ -24,6 +24,9 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},
 		{"js/action-dialog-actions.js", `/api/groups/${encodeURIComponent(group)}/attachment`},
 		{"dashboard.css", `position: absolute; z-index: 4;`},
+		{"dashboard.css", `padding-inline-end: 48px;`},
+		{"dashboard.css", `@media (hover: hover) and (pointer: fine)`},
+		{"dashboard.css", `.group-attachment { opacity: 0; pointer-events: none; }`},
 		{"dashboard.css", `summary:hover .group-attachment`},
 		{"dashboard.css", `.group-attachment-set:hover .group-attachment-edit`},
 	} {
