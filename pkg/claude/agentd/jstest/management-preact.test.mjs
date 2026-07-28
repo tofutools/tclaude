@@ -1112,9 +1112,21 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
     await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
     assert.ok(host.querySelector('#sandbox-profile-editor-modal'), `${label} renders`);
-    assert.match(host.querySelector('.sbx-rule-bucket-applied').textContent,
+    const applied = host.querySelector('.sbx-rule-bucket-applied');
+    assert.equal(applied.hasAttribute('open'), false,
+      `${label} keeps fully supported rules folded even when every rule is supported`);
+    assert.equal(applied.querySelector('.sbx-rule-count').textContent, '3');
+    assert.match(applied.textContent,
       /Block outbound network \(allow list is empty\).*Block Unix sockets \(allow list is empty\)/s,
       `${label} renders sparse effective axes as concrete empty-list rules`);
+    const partial = host.querySelector('.sbx-rule-bucket-partial');
+    assert.equal(partial.hasAttribute('open'), true);
+    assert.equal(partial.querySelector('.sbx-rule-count').textContent, '0',
+      `${label} keeps an empty partial category visible`);
+    const unsupported = host.querySelector('.sbx-rule-bucket-not-applied');
+    assert.equal(unsupported.hasAttribute('open'), true);
+    assert.equal(unsupported.querySelector('.sbx-rule-count').textContent, '0',
+      `${label} keeps an empty unsupported category visible`);
 
     if (label === 'legacy') {
       const mode = host.querySelector('#sandbox-profile-editor-network-mode');
@@ -1244,17 +1256,20 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     /Claude on Linux · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
-    'successful rules stay folded when attention is needed elsewhere');
+    'fully supported rules always start folded');
+  assert.equal(applied.querySelector('.sbx-rule-count').textContent, '4');
   assert.match(applied.textContent,
     /Set environment: POLICY_OWNER.*Private read\/write directory: \$GOCACHE.*Block Unix sockets.*tclaude agent control/s);
   const partial = host.querySelector('.sbx-rule-bucket-partial');
   assert.equal(partial.hasAttribute('open'), true);
+  assert.equal(partial.querySelector('.sbx-rule-count').textContent, '2');
   assert.match(partial.textContent,
     /Partially supported rules.*Block: \/home\/operator.*Read\/write: \/home\/operator\/work.*built-in tools cannot preserve this carve-out/s);
   assert.doesNotMatch(partial.textContent, /another assignment refuses/,
     'the selected assignment uses its own verdict instead of the aggregate worst case');
   const notApplied = host.querySelector('.sbx-rule-bucket-not-applied');
   assert.equal(notApplied.hasAttribute('open'), true);
+  assert.equal(notApplied.querySelector('.sbx-rule-count').textContent, '1');
   assert.match(notApplied.textContent,
     /Block outbound network \(allow list is empty\).*resolver-owned network detail/s);
   const otherAssignments = host.querySelector('.sbx-other-assignments');

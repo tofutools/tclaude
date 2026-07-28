@@ -642,9 +642,10 @@ context, and audited insert-only presets. Its **Effective policy preview**
 shows concrete effective rules grouped as **Fully supported rules**,
 **Partially supported rules**, and **Unsupported rules** for the selected
 implementation/harness/platform. Partial and unsupported groups open
-automatically; successful rules stay folded when another group needs
-attention. Unset axes are omitted, and profile-layer composition details stay
-behind a secondary disclosure.
+automatically, while fully supported rules always start folded. All three
+groups remain visible with a rule count, including zero-count partial and
+unsupported groups. Unset axes are omitted, and profile-layer composition
+details stay behind a secondary disclosure.
 
 Each assignment context has its own verdict, while the daemon also evaluates
 every context for the aggregate safety result. If another assignment has a

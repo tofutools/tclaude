@@ -4238,6 +4238,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-rule-bucket > summary {
   cursor: pointer;
   font-weight: 600;
+  padding-right: 2.5rem;
+  position: relative;
 }
 .sbx-rule-bucket-applied {
   background: rgba(46, 160, 67, .07);
@@ -4254,12 +4256,15 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-rule-count {
   background: #21262d;
   border-radius: 999px;
-  float: right;
   font-size: .75rem;
   font-weight: 500;
   min-width: 1.4rem;
   padding: .05rem .4rem;
+  position: absolute;
+  right: 0;
   text-align: center;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .sbx-rule-bucket ul {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;

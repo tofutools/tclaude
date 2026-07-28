@@ -61,10 +61,9 @@ function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
 
 function SandboxOutcomeBucket({ bucket, open }) {
-  if (!bucket.rules.length) return null;
   return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
     <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
-    <ul>${bucket.rules.map((rule, index) => html`<li key=${index}>${rule}</li>`)}</ul>
+    ${bucket.rules.length > 0 && html`<ul>${bucket.rules.map((rule, index) => html`<li key=${index}>${rule}</li>`)}</ul>`}
     ${bucket.reasons.map((reason, index) => html`<div key=${index} class="sbx-rule-reason"><strong>${reason.label}:</strong> ${reason.detail}</div>`)}
   </details>`;
 }
@@ -74,7 +73,6 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
   const buckets = sandboxRuleBuckets(axes, context);
   const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
   const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
-  const hasProblems = buckets.partial.rules.length > 0 || buckets.notApplied.rules.length > 0;
   const partialCount = buckets.partial.rules.length;
   const unsupportedCount = buckets.notApplied.rules.length;
   const a11ySummary = `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
@@ -87,7 +85,7 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
     ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
-    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${!hasProblems}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${false}/>
     <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}/>
     <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}/>
     <details class="sbx-target-details"><summary>Evaluation details</summary>
