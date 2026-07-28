@@ -77,12 +77,10 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
   const hasProblems = buckets.partial.rules.length > 0 || buckets.notApplied.rules.length > 0;
   const partialCount = buckets.partial.rules.length;
   const unsupportedCount = buckets.notApplied.rules.length;
-  const a11ySummary = buckets.launchRefused
-    ? 'This target refuses the launch.'
-    : `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
+  const a11ySummary = `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
   return html`<div class="sbx-policy-result">
     <strong class="sbx-policy-target">${sandboxTargetLabel(target)}</strong>
-    <div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">${a11ySummary}</div>
+    ${!buckets.launchRefused && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">${a11ySummary}</div>`}
     ${otherWarnings.length > 0 && html`<div class=${`sbx-other-assignments${otherLaunchRefused ? ' refused' : ''}`} role=${otherLaunchRefused ? 'alert' : 'status'}>
       <strong>Other assignments need attention.</strong>
       <div>The overall safety check includes every assignment, including any omitted from the selector.</div>
