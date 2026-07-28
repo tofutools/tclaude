@@ -17,6 +17,8 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `<${GroupAttachment} group=${group} actions=${actions} />`},
 		{"js/groups-list.js", `class="group-attachment group-attachment-empty"`},
 		{"js/groups-list.js", `>📌 ${label}</a>`},
+		{"js/groups-list.js", `class="group-attachment-invalid muted"`},
+		{"js/groups-list.js", `parsed.protocol === 'http:' || parsed.protocol === 'https:'`},
 		{"js/groups-actions.js", `openGroupAttachmentDialog({`},
 		{"js/action-dialog-state.js", `kind: 'group-attachment'`},
 		{"js/action-dialog-island.js", `actions.setGroupAttachment({`},

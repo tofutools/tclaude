@@ -31,15 +31,27 @@ function GroupActivity({ members, snapshot }) {
   return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
+function safeGroupAttachmentURL(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host ? raw : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function GroupAttachment({ group, actions }) {
-  const url = group.attachment_url || '';
-  const label = group.attachment_label || url;
+  const rawURL = String(group.attachment_url || '').trim();
+  const url = safeGroupAttachmentURL(rawURL);
+  const label = group.attachment_label || rawURL;
   const openEditor = (event) => {
     event.preventDefault();
     event.stopPropagation();
     actions.openGroupAttachment(group);
   };
-  if (!url) {
+  if (!rawURL) {
     return html`<button
       type="button" class="group-attachment group-attachment-empty"
       aria-label=${`Attach a persistent link to ${group.name}`}
@@ -47,12 +59,18 @@ function GroupAttachment({ group, actions }) {
       onClick=${openEditor}
     >📌</button>`;
   }
+  const display = url
+    ? html`<a
+        href=${url} target="_blank" rel="noopener noreferrer" draggable=${false}
+        title=${`Open ${label} — ${url}`}
+        onClick=${(event) => event.stopPropagation()}
+      >📌 ${label}</a>`
+    : html`<span
+        class="group-attachment-invalid muted"
+        title="Stored attachment is not a safe HTTP(S) URL — edit or clear it"
+      >📌 ${label}</span>`;
   return html`<span class="group-attachment group-attachment-set">
-    <a
-      href=${url} target="_blank" rel="noopener noreferrer" draggable=${false}
-      title=${`Open ${label} — ${url}`}
-      onClick=${(event) => event.stopPropagation()}
-    >📌 ${label}</a>
+    ${display}
     <button
       type="button" class="group-attachment-edit"
       aria-label=${`Edit the persistent link for ${group.name}`}
