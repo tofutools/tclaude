@@ -114,9 +114,16 @@ test('production disclosure binder persists an intentional fold as zero', async 
   const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
   t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
 
-  const attachmentClick = harness.fireEvent(attachment, 'click', { detail: 1 });
-  assert.equal(attachmentClick.defaultPrevented, false,
-    'the summary capture guard must not cancel native attachment navigation');
+  for (const detail of [0, 1]) {
+    const attachmentClick = harness.fireEvent(attachment, 'click', { detail });
+    assert.equal(attachmentClick.defaultPrevented, false,
+      `${detail === 0 ? 'keyboard' : 'pointer'} attachment navigation remains native`);
+    harness.fireEvent(details, 'toggle');
+    assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), null,
+      'attachment activation must not leave a stale disclosure intent');
+    assert.equal(dashPrefs.getItem('tclaude.dash.spawn.lastGroup'), null,
+      'attachment activation must not become the command palette group target');
+  }
 
   harness.fireEvent(title, 'click', { detail: 1 });
   details.open = false;
