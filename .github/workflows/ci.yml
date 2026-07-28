@@ -71,9 +71,12 @@ jobs:
           test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
             "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
           make -C "$RUNNER_TEMP/passt" pasta
+          # Replace the packaged binary in its root-owned path: hosted runners
+          # deliberately leave /usr/local/bin writable, which must fail the
+          # production executable trust walk.
           sudo install -o root -g root -m 0755 \
-            "$RUNNER_TEMP/passt/passt" /usr/local/bin/pasta
-          /usr/local/bin/pasta --version
+            "$RUNNER_TEMP/passt/passt" /usr/bin/pasta
+          /usr/bin/pasta --version
 
       - name: Install pinned OpenCode smoke binary
         run: |
