@@ -116,13 +116,19 @@ opencode profile you just picked.
 **Directory** opens on the selected group's own default directory
 (`tclaude agent groups set-default-dir`), with a trailing `/` and the cursor at
 the end: the common "somewhere under the group's tree" spawn is a subdirectory
-name typed onto it, and **tab** completes from there. Cycling the group picker
-moves the directory with it until you type a path of your own — after that the
-field is yours and the picker leaves it alone. Clearing it is still fine: a
-blank directory is the daemon's own fallback to that same group default. A
-group with no default leaves the field blank. The path comes from the daemon's
-group listing, which serves it to an operator console only — an agent-class
-console gets an empty field.
+name typed onto it, and **tab** completes that name once you start it. Cycling
+the group picker moves the directory with it until you type a path of your own
+— after that the field is yours and the picker leaves it alone. Clearing it is
+still fine: a blank directory is the daemon's own fallback to that same group
+default. A group with no default leaves the field blank. The path comes from
+the daemon's group listing, which serves it to an operator console only — an
+agent-class console gets an empty field.
+
+**tab** on Directory only completes a path you have typed into. On the field
+as the form left it — blank, or the group's directory untouched — **tab** stays
+plain next-field navigation, so you can always tab through the form; without
+that a group directory with exactly one subdirectory would complete straight
+into it and quietly move the spawn.
 
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.

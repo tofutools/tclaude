@@ -403,6 +403,11 @@ type tuiRetireResult struct {
 type tuiResumeResult struct {
 	Action string `json:"action"`
 	Detail string `json:"detail,omitempty"`
+	// Warnings are the notes a resume that DID land still wants read: an
+	// agent that came back with reduced sandbox access, say. They are the one
+	// thing a bare "Started X." would otherwise swallow, and this console has
+	// no browser to go and find them in.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ---- model -----------------------------------------------------------------
@@ -909,7 +914,18 @@ func tuiIsChoiceField(field int) bool {
 // could not have guessed is a different thing, so the console does not
 // offer it to a caller the daemon would not treat as the human.
 func (m tuiModel) completingDir() bool {
-	return m.operator && m.form.field == tuiFieldDir && m.form.dir.Value() != ""
+	if !m.operator || m.form.field != tuiFieldDir {
+		return false
+	}
+	// Only a path the operator has typed into is completed. An untouched
+	// field — blank, or the group's own directory as the form filled it in —
+	// keeps Tab's ordinary next-field job, which is the only way to tab past
+	// Directory at all. It would not be a harmless completion either:
+	// CompleteDirPath resolves a directory with exactly one child straight
+	// into that child, so a Tab meant as "next field" would silently spawn
+	// the agent somewhere the operator never chose.
+	value := m.form.dir.Value()
+	return value != "" && value != m.form.dirPrefill
 }
 
 // completeDir runs one round of bash-like directory completion on the
@@ -1070,18 +1086,45 @@ func (m tuiModel) resumeSelected(row tuiAgentRow) (tuiModel, tea.Cmd) {
 // and this console has no browser to go and read that in, so the reason
 // travels with the verdict or it is lost.
 func tuiResumeSummary(msg tuiResumedMsg) string {
-	switch msg.res.Action {
-	case "resumed", "":
-		return "Started " + msg.agent + "."
+	var out string
+	switch action := msg.res.Action; action {
+	case "resumed":
+		out = "Started " + msg.agent + "."
+	case "":
+		// No action at all: an older daemon, or a response shape that did not
+		// carry one. Claiming a start that may not have happened is the one
+		// reading to avoid — the listing settles it either way.
+		out = "Asked the daemon to start " + msg.agent + "."
 	case "skipped:already_online":
-		return msg.agent + " was already running."
+		out = msg.agent + " was already running."
+	case "skipped:not_active_agent":
+		// The agent was retired out from under the listing. That is not a
+		// failure to report as one, and the raw wire token means nothing to
+		// an operator.
+		out = msg.agent + " has been retired, so it cannot be started from here."
 	default:
-		out := "Could not start " + msg.agent + ": " + msg.res.Action
+		out = "Could not start " + msg.agent + ": " + action
 		if detail := strings.TrimSpace(msg.res.Detail); detail != "" {
 			out += " (" + detail + ")"
 		}
-		return out + "."
+		out += "."
 	}
+	if warnings := tuiTrimmedLines(msg.res.Warnings); len(warnings) > 0 {
+		out += " Note: " + strings.Join(warnings, "; ") + "."
+	}
+	return out
+}
+
+// tuiTrimmedLines drops the blank entries from a wire string list and trims
+// the rest, so a stray empty warning cannot render as an empty clause.
+func tuiTrimmedLines(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // attachSelected puts the operator on the selected agent's tmux session — the
@@ -1200,6 +1243,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshErr = ""
+		// Which agent the cursor is on is decided before the listing under it
+		// is replaced — see restoreCursor.
+		selected, hadSelection := m.selectedAgent()
 		m.agents = msg.agents
 		m.groups = msg.groups
 		// A failed profile read keeps the last list it managed to fetch: a
@@ -1211,6 +1257,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.profiles = msg.profiles
 		}
 		m.lastRefresh = time.Now()
+		if hadSelection {
+			m.restoreCursor(selected.ConvID)
+		}
 		visible := m.visibleAgents()
 		if m.cursor >= len(visible) {
 			m.cursor = max(len(visible)-1, 0)
@@ -1441,9 +1490,9 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down":
 		return m.moveSpawnField(1), nil
 	case "tab":
-		// Tab only completes once there is a path to complete; on the empty
-		// field — its default, meaning "the group's directory" — it keeps
-		// its ordinary next-field job so tabbing through the form works.
+		// Tab only completes a directory the operator has typed into; on the
+		// field as the form left it — blank, or the group's own directory —
+		// it keeps its ordinary next-field job (see completingDir).
 		if m.completingDir() {
 			return m.completeDir(), nil
 		}
@@ -1459,6 +1508,29 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	updated, cmd := m.updateFocusedInput(msg)
 	return updated, cmd
+}
+
+// restoreCursor puts the cursor back on the agent it was on, by conv-id,
+// after a refresh has replaced the listing under it. An agent that is no
+// longer listed (retired, or filtered out) leaves the cursor where it was,
+// for the clamp above to bring back into range.
+//
+// The listing re-sorts on every poll — online agents first, then by name — so
+// an index alone does not name an agent for longer than two seconds. That is
+// the same hazard the retire prompt captures its target for, and it bites
+// hardest right after enter starts an offline agent: that agent jumps from
+// the bottom of the listing to the top, and a cursor left at the old index
+// would put the next keystroke on whichever agent slid into its place.
+func (m *tuiModel) restoreCursor(convID string) {
+	if convID == "" {
+		return
+	}
+	for i, a := range m.visibleAgents() {
+		if a.ConvID == convID {
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m *tuiModel) ensureCursorVisible() {
@@ -1906,9 +1978,10 @@ func (m tuiModel) renderHelp() string {
 	b.WriteString("    q/esc      Quit — this SHUTS DOWN the daemon (asks first)\n\n")
 	b.WriteString("  New agent\n")
 	b.WriteString("    tab/↑/↓    Next / previous field\n")
-	b.WriteString("    tab        On a non-empty Directory, complete the path instead:\n")
-	b.WriteString("               one match completes it, several list below the\n")
-	b.WriteString("               field. Operator consoles only.\n")
+	b.WriteString("    tab        On a Directory you have typed into, complete the path\n")
+	b.WriteString("               instead: one match completes it, several list below\n")
+	b.WriteString("               the field. Operator consoles only. On the field as the\n")
+	b.WriteString("               form left it, tab still moves to the next field.\n")
 	b.WriteString("    ←/→        Change the group, spawn profile or harness\n")
 	b.WriteString("               A profile of \"(default)\" names none, which leaves the\n")
 	b.WriteString("               group's and the global default profile in force.\n")

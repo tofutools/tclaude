@@ -876,6 +876,42 @@ func TestTUIUpdateClampsCursorAgainstVisibleAgents(t *testing.T) {
 	assert.Equal(t, 1, got.cursor)
 }
 
+// A refresh re-sorts the listing under the cursor every two seconds, so the
+// cursor follows the agent it was on rather than the index it sat at —
+// otherwise the next keystroke acts on whichever agent slid into its place.
+// Starting an offline agent is the sharpest case: it moves to the top.
+func TestTUIRefreshKeepsTheCursorOnTheSameAgent(t *testing.T) {
+	m := newTUIModel(nil)
+	m.agents = []tuiAgentRow{
+		{ConvID: "c1", Title: "mmm", Online: true},
+		{ConvID: "c2", Title: "zzz", Online: true},
+		{ConvID: "c3", Title: "aaa", Online: false},
+	}
+	m.cursor = 2
+	selected, ok := m.selectedAgent()
+	require.True(t, ok)
+	require.Equal(t, "aaa", selected.name())
+
+	// "aaa" came up, so the next poll sorts it to the front.
+	updated, _ := m.Update(tuiDataMsg{agents: []tuiAgentRow{
+		{ConvID: "c3", Title: "aaa", Online: true},
+		{ConvID: "c1", Title: "mmm", Online: true},
+		{ConvID: "c2", Title: "zzz", Online: true},
+	}})
+	got := updated.(tuiModel)
+	row, ok := got.selectedAgent()
+	require.True(t, ok)
+	assert.Equal(t, "aaa", row.name(), "the cursor follows the agent, not the row number")
+
+	// An agent that leaves the listing entirely leaves the cursor to be
+	// clamped back into range.
+	updated, _ = got.Update(tuiDataMsg{agents: []tuiAgentRow{
+		{ConvID: "c1", Title: "mmm", Online: true},
+	}})
+	got = updated.(tuiModel)
+	assert.Equal(t, 0, got.cursor)
+}
+
 // The spawn form must not tell an operator to create a group when the group
 // list simply has not arrived yet.
 func TestTUISpawnBeforeTheFirstRefreshSaysSo(t *testing.T) {
@@ -951,6 +987,36 @@ func TestTUISpawnDirTabOnAnEmptyFieldMovesOn(t *testing.T) {
 	got := updated.(tuiModel)
 	assert.Equal(t, tuiFieldHarness, got.form.field)
 	assert.Empty(t, got.form.dir.Value())
+}
+
+// The group's prefilled directory is not something to complete either: Tab
+// there is how the operator gets off the field, and completing it would move
+// the spawn — a directory with exactly one child completes straight into that
+// child.
+func TestTUISpawnDirTabOnTheGroupsOwnDirectoryMovesOn(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "only-child"), 0o755))
+
+	m := newTUIModel(nil)
+	m.operator = true
+	m.groups = []tuiGroupRow{{Name: "dev", DefaultCwd: root}}
+	m = m.openSpawnForm()
+	for m.form.field != tuiFieldDir {
+		m = m.moveSpawnField(1)
+	}
+	require.Equal(t, root+"/", m.form.dir.Value())
+
+	updated, _ := m.handleSpawnKey(tuiTabKey())
+	got := updated.(tuiModel)
+	assert.Equal(t, tuiFieldHarness, got.form.field, "tab must still reach the next field")
+	assert.Equal(t, root+"/", got.form.dir.Value(), "and must not pick a subdirectory nobody chose")
+
+	// Once the operator starts typing a subdirectory, Tab completes it again.
+	typing := m
+	typing.form.dir.SetValue(filepath.Join(root, "only"))
+	completed, _ := typing.handleSpawnKey(tuiTabKey())
+	assert.Equal(t, filepath.Join(root, "only-child")+"/", completed.(tuiModel).form.dir.Value())
+	assert.Equal(t, tuiFieldDir, completed.(tuiModel).form.field)
 }
 
 // A console the daemon does not treat as the human gets no completion: it
@@ -1233,6 +1299,48 @@ func TestTUIResumeReportsWhyItDidNotStart(t *testing.T) {
 	assert.Contains(t,
 		tuiResumeSummary(tuiResumedMsg{agent: "worker", res: tuiResumeResult{Action: "skipped:already_online"}}),
 		"was already running")
+
+	// Nor is one that was retired out from under the listing — and the raw
+	// wire token means nothing to an operator.
+	retired := tuiResumeSummary(tuiResumedMsg{
+		agent: "worker", res: tuiResumeResult{Action: "skipped:not_active_agent", Detail: "state: retired"},
+	})
+	assert.Contains(t, retired, "has been retired")
+	assert.NotContains(t, retired, "skipped:not_active_agent")
+
+	// A response with no action at all (an older daemon) must not claim a
+	// start that may not have happened.
+	assert.NotContains(t, tuiResumeSummary(tuiResumedMsg{agent: "worker"}), "Started worker")
+}
+
+// A resume that lands can still have something to say — reduced sandbox
+// access, say. This console is the only place the operator would read it.
+func TestTUIResumeCarriesItsWarnings(t *testing.T) {
+	summary := tuiResumeSummary(tuiResumedMsg{agent: "worker", res: tuiResumeResult{
+		Action:   "resumed",
+		Warnings: []string{"sandbox: read-only /srv", "  ", "profile fell back to claude"},
+	}})
+	assert.Contains(t, summary, "Started worker")
+	assert.Contains(t, summary, "sandbox: read-only /srv")
+	assert.Contains(t, summary, "profile fell back to claude")
+	assert.NotContains(t, summary, ";  ;", "a blank warning must not render as an empty clause")
+}
+
+// A row the listing calls online whose pane has since died is not a resume:
+// the listing is up to two seconds stale, and enter says so rather than
+// silently starting a second session for an agent that may still be up.
+func TestTUIEnterOnALiveRowWithoutAPaneSaysSo(t *testing.T) {
+	rec := stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+	m.agents = []tuiAgentRow{{ConvID: "no-such-conv", Title: "worker", Online: true}}
+
+	updated, cmd := m.handleKey(tuiEnterKey())
+	got := updated.(tuiModel)
+	assert.Nil(t, cmd)
+	assert.False(t, rec.called)
+	assert.False(t, got.resuming, "an online row is never resumed")
+	assert.Contains(t, got.notice, "worker has no live tmux session")
 }
 
 // A refused resume releases the in-flight guard and reports the refusal —
