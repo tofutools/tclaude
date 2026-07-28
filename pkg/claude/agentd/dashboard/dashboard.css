@@ -3921,6 +3921,12 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 #sandbox-profile-editor-modal .cron-create-modal {
   resize: both; overflow: auto;
 }
+/* Access-list rows use fixed table-like columns, so give the sandbox editor a
+   roomier at-rest width. makeModalResizable restores any persisted user width
+   as an inline style, which continues to take precedence over this default. */
+#sandbox-profile-editor-modal .cron-create-modal {
+  width: min(900px, calc(100vw - 32px));
+}
 /* The summoning-circle template editor is user-resizable too (JOH-357), the
    same escape hatch as spawn/clone above: many familiar rows + a role brief
    make the fixed dialog feel cramped. resize needs overflow non-visible on
@@ -4092,11 +4098,30 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin: .25rem 0 .5rem;
   min-width: 13rem;
 }
+.sbx-row.sbx-access-row {
+  display: grid;
+}
 .sbx-network-row {
-  grid-template-columns: 7rem minmax(12rem, 1fr) auto 9rem auto;
+  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem auto;
 }
 .sbx-network-value,
 .sbx-socket-value {
+  min-width: 0;
+}
+.sbx-network-value-readonly {
+  display: flex;
+  align-items: center;
+  background: #0d1117;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  color: #8b949e;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+.sbx-network-modifier {
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 .sbx-socket-row {
@@ -10381,11 +10406,13 @@ body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section select,
+body.wizard #sandbox-profile-editor-modal .sbx-network-value-readonly,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
   color: #f3e6c0;
 }
+body.wizard #sandbox-profile-editor-modal .sbx-network-value-readonly { color: #b39ddb; }
 body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text]:focus,
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]):focus,
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]):focus,

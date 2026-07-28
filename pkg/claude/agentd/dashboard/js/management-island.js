@@ -120,10 +120,10 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   };
   return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend>Network</legend>
     <${Select} id="sandbox-profile-editor-network-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
-    ${rules.mode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-network-row">
+    ${rules.mode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
       <${Select} class="sbx-network-selector" value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
-      ${kind === 'loopback' ? html`<span class="sbx-network-value">localhost</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
-      ${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}
+      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly">localhost</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
+      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
       <input class="sbx-network-ports" list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
       <button type="button" aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
     </div>`; })}</div>
@@ -151,7 +151,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   return html`<fieldset class="sbx-section sbx-access-axis"><legend>Unix sockets</legend>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
     <p class="sbx-axis-help">The tclaude agentd socket is always reachable and is not an editable row.</p>
-    ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-socket-row">
+    ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${Select} class="sbx-socket-selector" value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => update({ allow: rules.allow.map((item, i) => i === index ? { [kind]: '' } : item) })} options=${[['path', 'path'], ['path_glob', 'glob']]}/>
       <input class="sbx-socket-value" value=${glob ? row.path_glob || '' : row.path || ''} placeholder=${glob ? '/tmp/ssh-*/agent.*' : '/run/example.sock'} onInput=${(event) => updateRow(index, glob ? { path_glob: event.currentTarget.value } : { path: event.currentTarget.value })}/>
       <button type="button" aria-label="Delete Unix-socket row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
