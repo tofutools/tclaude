@@ -465,18 +465,21 @@ reserved header space, so it never moves or resizes neighboring controls. Fine
 pointers show it only while the group header is hovered; keyboard focus reveals
 the attachment control itself, while non-hover touch devices keep it visible.
 
-In **fixed** mode, the paperclip is a normal in-flow quick item at the far right
-of the group header, after the sandbox-profile control and any link-status chip.
-Its link/ticket label remains visible even when the other quick-item labels
-auto-fold; the item dims and brightens with the other group quick controls, and
-only the edit pencil appears on hover.
+In **fixed** mode, the attachment control is a normal in-flow quick item at the
+far right of the group header, after the sandbox-profile control and any
+link-status chip. When unset, its paperclip stays dim until hovered and gains
+the standard quick-control frame on hover. Once set, only the link/ticket label
+is shown; it remains visible even when the other quick-item labels auto-fold,
+dims and brightens with the other group quick controls, and underlines on hover.
+Only the edit pencil appears on hover.
 
-An existing attachment's paperclip opens it; its pencil edits or clears it. The
-editor accepts an optional display name and otherwise derives a short Linear
-issue key, GitHub number, or hostname. Closing a floating editor returns focus
-to the group's native disclosure summary so the hover overlay does not remain
-visible after Escape. Turning the setting off hides both presentations without
-deleting stored attachments.
+In float mode, an existing attachment's paperclip opens it; in fixed mode, its
+label does. The pencil edits or clears it. The editor accepts an optional
+display name and otherwise derives a short Linear issue key, GitHub number, or
+hostname. Closing a floating editor returns focus to the group's native
+disclosure summary so the hover overlay does not remain visible after Escape.
+Turning the setting off hides both presentations without deleting stored
+attachments.
 
 The tab's filter bar carries **+ new group** and a **⚙ cog** menu holding the
 less-frequent group-wide actions: **⤒ import** (recreate a group from an

@@ -21,7 +21,8 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `class="group-attachment-label"`},
 		{"js/groups-list.js", `tabindex=${fixed ? '-1' : undefined}`},
 		{"js/groups-list.js", `group-attachment-empty`},
-		{"js/groups-list.js", `>📎${visibleLabel}</a>`},
+		{"js/groups-list.js", `class="group-attachment-icon"`},
+		{"js/groups-list.js", `>${visibleIcon}${visibleLabel}</a>`},
 		{"js/groups-list.js", `class="group-attachment-invalid"`},
 		{"js/groups-list.js", `/^https?:\/\/[^/\\?#\s]/i.test(raw)`},
 		{"js/groups-list.js", `parsed.protocol === 'http:' || parsed.protocol === 'https:'`},
@@ -53,6 +54,14 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 }`},
 		{"dashboard.css", `.group-attachment-fixed > button:hover {
   color: #58a6ff; background: transparent; text-decoration: none;
+}`},
+		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:hover {
+  color: #58a6ff; border-color: #58a6ff;
+}`},
+		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty .group-attachment-icon { opacity: 0.4; }`},
+		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:hover .group-attachment-icon { opacity: 1; }`},
+		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:focus-visible {
+  outline: 1px solid #58a6ff; outline-offset: 1px;
 }`},
 		{"dashboard.css", `.group-attachment-label {`},
 		{"dashboard.css", `.group-attachment-fixed:hover .group-attachment-edit`},
