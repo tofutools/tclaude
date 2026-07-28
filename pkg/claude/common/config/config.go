@@ -1622,16 +1622,25 @@ type AgentConfig struct {
 	// as `tclaude session attach code-reviewer` and shows up under that name
 	// in `tmux ls` / the status line.
 	//
-	// Default OFF (absent / false) keeps the random token: a name-derived
-	// label is not globally unique, so it is disambiguated with a `-2`, `-3`,
-	// … suffix (the same shape `session new` uses for a taken tmux name) —
-	// and those suffixes climb for as long as the older namesake's session row
-	// survives, because a session id owns durable per-session history (costs,
-	// telemetry, notify state) that must never be reused. Operators who prefer
-	// stable-but-opaque labels should leave this off.
+	// The name is the BASE CANDIDATE, not necessarily the final label. It is
+	// run through agent.NormalizeSpawnName ("café" → "caf") and trimmed to
+	// agent.MaxSpawnNameLen minus the longest suffix the disambiguation tiers
+	// can append, so a disambiguated label still clears the same 64-char cap
+	// the name itself passed.
 	//
-	// A spawn with no name, or whose name normalizes to nothing, always falls
-	// back to the random token. See agentd.spawnLabelSequence.
+	// Default OFF (absent / false) keeps the random token: a name-derived
+	// label is not globally unique, so a taken base is disambiguated with a
+	// `-2`, `-3`, … suffix (the same shape `session new` uses for a taken tmux
+	// name) — and those suffixes climb for as long as the older namesake's
+	// session row survives, because a session id owns durable per-session
+	// history (costs, telemetry, notify state) that must never be reused.
+	// Operators who prefer stable-but-opaque labels should leave this off.
+	//
+	// The numeric ladder is bounded; past it the base keeps a random hex
+	// suffix ("worker-a3f9c1"), and past THAT the label degrades to a plain
+	// random token so a spawn never fails over its cosmetic label. A spawn
+	// with no name, or whose name normalizes to nothing, takes that random
+	// token straight away. See agentd.spawnLabelSequence for the exact tiers.
 	SpawnLabelFromName bool `json:"spawn_label_from_name,omitempty"`
 
 	// SpawnInlineMaxChars bounds the "inline the briefing into the first turn"

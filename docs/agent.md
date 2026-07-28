@@ -913,20 +913,31 @@ agent's name instead, so an agent named `code-reviewer` is reachable as
 `tclaude session attach code-reviewer` and appears under that name in
 `tmux ls` and the tmux status line.
 
-A name is not unique, so a taken label is disambiguated with the same `-2`,
-`-3`, … suffix `tclaude session new` uses for a taken tmux name. "Taken" is
-deliberately stricter here than for a plain `session new`: any existing
+The name is the *base candidate*, not necessarily the final label. It is put
+through the same normalization described above (so `--name "café"` labels the
+session `caf`), and trimmed to 57 characters — 64 minus the 7 the longest
+disambiguating suffix needs — so even a disambiguated label stays inside the
+same 64-character cap the name itself passed.
+
+A name is not unique either, so a taken base is disambiguated with the same
+`-2`, `-3`, … suffix `tclaude session new` uses for a taken tmux name. "Taken"
+is deliberately stricter here than for a plain `session new`: any existing
 session row blocks its label, **including an exited one**, because a session id
 owns durable per-session history (costs, telemetry checkpoints, notify state)
-that must never be conflated between two different agents. So spawning
-`worker` repeatedly climbs `worker`, `worker-2`, `worker-3`, … for as long as
-the older namesakes' rows survive — they are reaped with the rest of the old
-exited sessions, which is what stops the suffixes climbing forever. A live tmux
-session of that name and an in-flight pending spawn also block it. If you would
-rather have short, stable, opaque labels, leave the flag off.
+that must never be conflated between two different agents. A live tmux session
+of that name, a reserved pending spawn, and a spawn still in flight in this
+daemon all block it too. So spawning `worker` repeatedly climbs `worker`,
+`worker-2`, `worker-3`, … for as long as the older namesakes' rows survive —
+they are reaped with the rest of the old exited sessions, which is what stops
+the suffixes climbing forever. If you would rather have short, stable, opaque
+labels, leave the flag off.
 
-A spawn with no name (or whose name normalizes to nothing) always falls back to
-the random token. Cloning is unaffected — a clone keeps the random label.
+The numeric ladder stops at `-99`. Past that the name is kept but the suffix
+becomes random hex (`worker-a3f9c1`), and if even those collide the label falls
+back entirely to a plain random `spwn-XXXXXX` token — so a spawn never fails
+over its cosmetic label. A spawn with no name, or whose name normalizes to
+nothing, takes that random token straight away. Cloning is unaffected — a clone
+keeps the random label.
 
 The name-derived label belongs to the session that was *spawned*, not to the
 conversation. A resume — restart, reincarnate, power-on — relaunches with
