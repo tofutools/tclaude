@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -24,13 +25,12 @@ const standingOrderLockTimeout = 3 * time.Second
 const standingOrderLockRetryDelay = 20 * time.Millisecond
 
 // lockStandingOrderDelivery serializes the evaluate → deliver → record
-// sequence for one stable recipient agent.
+// sequence for one recipient scope.
 //
 // Cadence and cooldown checks are read-modify-write operations: the ledger row
 // that closes either window is written only after delivery succeeds. Two
-// SessionStart events for the same stable agent — a compaction racing a
-// resume, generation rotation, or replay — can otherwise both read "not yet"
-// and both deliver one rate-controlled order.
+// SessionStart events in the same protected scope can otherwise both read
+// "not yet" and both deliver one rate-controlled order.
 //
 // It is a FILE lock rather than a mutex because the two paths that deliver run
 // in different processes: the direct hook callback runs inside the agent's own
@@ -50,9 +50,68 @@ const standingOrderLockRetryDelay = 20 * time.Millisecond
 // leaves the rate window open, so the order is still pending and the next
 // boundary can deliver it; and in the common case the holder we lost the race
 // to is delivering that very order right now, so nothing is lost at all.
-func lockStandingOrderDelivery(ctx context.Context, agentID string) (func(), bool) {
-	agentID = strings.TrimSpace(agentID)
-	if agentID == "" {
+type standingOrderRateLocks struct {
+	release          func()
+	cadenceAcquired  bool
+	cooldownAcquired bool
+}
+
+// lockStandingOrderRateControls acquires only the scopes this order set needs.
+//
+// Cadence without cooldown is conversation-generation scoped. Keeping that
+// lock on convID preserves a zero-cooldown order's ability to deliver to a new
+// generation while the old one is still awaiting its hook ACK. Cooldown is
+// deliberately stable-agent scoped so /clear or reincarnation cannot reset
+// the minimum interval. A cooldown order that also uses once-per-generation
+// needs only the stronger agent lock: it serializes every generation and
+// therefore also serializes one generation.
+func lockStandingOrderRateControls(
+	ctx context.Context,
+	orders []*db.StandingOrder,
+	convID, agentID string,
+) standingOrderRateLocks {
+	needCadence, needCooldown := false, false
+	for _, o := range orders {
+		if o == nil {
+			continue
+		}
+		if o.CooldownSeconds > 0 {
+			needCooldown = true
+		} else if o.Cadence == db.StandingCadenceOncePerGeneration {
+			needCadence = true
+		}
+	}
+	locks := standingOrderRateLocks{
+		release:          func() {},
+		cadenceAcquired:  !needCadence,
+		cooldownAcquired: !needCooldown,
+	}
+	var releases []func()
+	if needCooldown {
+		release, acquired := lockStandingOrderDelivery(ctx, "agent", agentID)
+		locks.cooldownAcquired = acquired
+		if acquired {
+			releases = append(releases, release)
+		}
+	}
+	if needCadence {
+		release, acquired := lockStandingOrderDelivery(ctx, "conv", convID)
+		locks.cadenceAcquired = acquired
+		if acquired {
+			releases = append(releases, release)
+		}
+	}
+	locks.release = func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+	return locks
+}
+
+func lockStandingOrderDelivery(ctx context.Context, scope, key string) (func(), bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
 		// An empty key must never become one shared bucket for every
 		// actorless conversation. Refuse rate-gated delivery instead.
 		return func() {}, false
@@ -64,7 +123,7 @@ func lockStandingOrderDelivery(ctx context.Context, agentID string) (func(), boo
 		return func() {}, false
 	}
 	// Hashing keeps even a malformed persisted id from becoming a path.
-	sum := sha256.Sum256([]byte(agentID))
+	sum := sha256.Sum256([]byte(scope + ":" + key))
 	lockPath := filepath.Join(lockDir, "standing-order-"+hex.EncodeToString(sum[:])+".lock")
 	fl := flock.New(lockPath)
 
@@ -73,13 +132,13 @@ func lockStandingOrderDelivery(ctx context.Context, agentID string) (func(), boo
 	locked, err := fl.TryLockContext(lockCtx, standingOrderLockRetryDelay)
 	if err != nil || !locked {
 		slog.Info("standing orders: another path holds this agent's delivery lock, skipping rate-gated orders",
-			"agent_id", agentID, "error", err, "module", "hooks")
+			"scope", scope, "key", key, "error", err, "module", "hooks")
 		return func() {}, false
 	}
 	return func() {
 		if err := fl.Unlock(); err != nil {
 			slog.Debug("standing orders: failed to release delivery lock",
-				"agent_id", agentID, "error", err, "module", "hooks")
+				"scope", scope, "key", key, "error", err, "module", "hooks")
 		}
 	}, true
 }
