@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
@@ -267,20 +266,8 @@ func trustedStandingOrderPrompt(prompt, targetAgent, targetConv string) bool {
 func trustedStandingOrderPromptOrigin(
 	prompt, targetAgent, targetConv string,
 ) *db.StandingOrderAgentMessageOrigin {
-	const prefix = "[system: new agent message #"
-	if !strings.HasPrefix(prompt, prefix) {
-		return nil
-	}
-	rest := strings.TrimPrefix(prompt, prefix)
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 || (end < len(rest) && rest[end] != ' ' && rest[end] != ';') {
-		return nil
-	}
-	messageID, err := strconv.ParseInt(rest[:end], 10, 64)
-	if err != nil || messageID <= 0 {
+	messageID, _, ok := agentMessagePrompt(prompt)
+	if !ok {
 		return nil
 	}
 	message, err := db.GetAgentMessage(messageID)
@@ -342,12 +329,18 @@ func applyStandingOrderTurnOrigin(
 			_ = clearStandingOrderTurnOrigin(agentID, state.ConvID)
 			return input
 		}
-		_, err := db.ActivateStandingOrderTurnOrigin(
+		activated, err := db.ActivateStandingOrderTurnOrigin(
 			agentID, state.ConvID, origin.OpenCodeMessageID,
 			time.Now(), 24*time.Hour)
 		if err != nil {
 			slog.Warn("standing orders: failed to activate hook turn origin",
 				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+		if !activated {
+			// The prompt may name another trusted reminder, but only the exact
+			// message currently armed for this stable agent owns this turn.
+			_ = clearStandingOrderTurnOrigin(agentID, state.ConvID)
+			return input
 		}
 	}
 	active, err := db.GetStandingOrderTurnOrigin(

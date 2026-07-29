@@ -64,8 +64,20 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	require.NotNil(t, message)
 	nudge := messageNudgeText(messageID)
 
-	require.True(t, sendNudgeBracket(convID, message, nudge))
+	state, err := session.LoadSessionState(sessionID)
+	require.NoError(t, err)
+	state.Status = session.StatusWorking
+	require.NoError(t, session.SaveSessionState(state))
+	require.False(t, sendNudgeBracket(convID, message, nudge),
+		"a standing-order nudge must not arm behind an active hook turn")
 	origin, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	assert.Nil(t, origin)
+
+	state.Status = session.StatusIdle
+	require.NoError(t, session.SaveSessionState(state))
+	require.True(t, sendNudgeBracket(convID, message, nudge))
+	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
 	require.NotNil(t, origin)
 	assert.Equal(t, db.StandingOrderTurnOriginPending, origin.State)
@@ -73,7 +85,8 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, session.DispatchHookEvent(context.Background(),
 		session.HookCallbackInput{
-			HookEventName: "UserPromptSubmit", ConvID: convID, Prompt: nudge,
+			HookEventName: "UserPromptSubmit", ConvID: convID,
+			Prompt: "<wrapped>\n" + nudge + "\n</wrapped>",
 		}, sessionID, session.LocalHookAmbient(), &output))
 	assert.Empty(t, output.String())
 	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())

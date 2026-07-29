@@ -319,19 +319,22 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 			return false
 		}
 	}
+	if standingOrderOrigin != nil &&
+		sess.Status != session.StatusIdle &&
+		sess.Status != session.StatusError {
+		// Standing-order reminders wait for a quiescent delivery boundary.
+		// Hook-based harnesses cannot otherwise correlate later tool hooks to
+		// an exact submitted prompt ID, while OpenCode already follows this
+		// rule so a reminder is not queued behind a known-active turn. A real
+		// hook-harness prompt racing this check clears the pending marker at
+		// its UserPromptSubmit boundary before any of its tool hooks run.
+		return false
+	}
 	// Keep this name-keyed until TCL-675 defines the coherent managed-server
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
 	if sess.Harness == harness.OpenCodeName {
 		if standingOrderOrigin != nil {
-			// Do not enqueue behind a known-active turn. Error is quiescent too:
-			// the failed turn is over and OpenCode is back at its prompt. The
-			// durable marker is correlated to the exact OpenCode user-message
-			// ID, so a prompt racing after this check cannot steal attribution.
-			if sess.Status != session.StatusIdle &&
-				sess.Status != session.StatusError {
-				return false
-			}
 			err = sendOpenCodeStandingOrderNudge(
 				toConv, m.ToAgent, standingOrderOrigin, nudge)
 		} else {
