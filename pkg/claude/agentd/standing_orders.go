@@ -258,10 +258,14 @@ func recordStandingDebounceOutcome(
 	capability standingorders.Capability,
 	detail string,
 ) {
+	epoch := pending.Epoch
+	if order.Cadence == db.StandingCadenceOncePerGeneration {
+		epoch = convID
+	}
 	_, _ = db.RecordStandingDelivery(&db.StandingDelivery{
 		OrderID: order.ID, OrderRevision: order.Revision,
 		TargetConv: convID, TargetAgent: pending.TargetAgent,
-		Epoch: pending.Epoch, Outcome: outcome,
+		Epoch: epoch, Outcome: outcome,
 		Transport: capability.Transport, Harness: harnessName, Detail: detail,
 	})
 }

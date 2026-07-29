@@ -28,10 +28,10 @@ const standingOrderLockRetryDelay = 20 * time.Millisecond
 // lockStandingOrderDelivery serializes the evaluate → deliver → record
 // sequence for one recipient scope.
 //
-// Cadence and cooldown checks are read-modify-write operations: the ledger row
-// that closes either window is written only after delivery succeeds. Two
-// SessionStart events in the same protected scope can otherwise both read
-// "not yet" and both deliver one rate-controlled order.
+// Cadence, cooldown, and debounce scheduling are read-modify-write operations.
+// The ledger row that closes a delivery window is written only after delivery
+// succeeds, while a debounce edge is moved before its event releases the lock.
+// Concurrent events can otherwise both deliver or lose the newest quiet edge.
 //
 // It is a FILE lock rather than a mutex because the two paths that deliver run
 // in different processes: the direct hook callback runs inside the agent's own
@@ -59,7 +59,7 @@ type standingOrderRateLocks struct {
 
 // lockStandingOrderRateControls acquires only the scopes this order set needs.
 //
-// Cadence without cooldown is conversation-generation scoped. Keeping that
+// Cadence without cooldown or debounce is conversation-generation scoped. Keeping that
 // lock on convID preserves a zero-cooldown order's ability to deliver to a new
 // generation while the old one is still awaiting its hook ACK. Cooldown is
 // deliberately stable-agent scoped so /clear or reincarnation cannot reset
@@ -116,14 +116,17 @@ func lockStandingOrderRateControls(
 
 // LockStandingOrderAgentDelivery is the scheduler-side half of the same
 // cross-process lock used by hook evaluation. The caller must re-read the
-// pending row after acquiring it.
+// pending row after acquiring it. It only waits one retry interval: the
+// scheduler can try again on its next tick, so waiting through a model ACK
+// would delay every other due candidate without making this one deliver sooner.
 func LockStandingOrderAgentDelivery(
 	ctx context.Context,
 	orderID int64,
 	agentID string,
 ) (func(), bool) {
-	return lockStandingOrderDelivery(
-		ctx, "agent", standingOrderRateLockKey(orderID, agentID))
+	return lockStandingOrderDeliveryWithin(
+		ctx, "agent", standingOrderRateLockKey(orderID, agentID),
+		standingOrderLockRetryDelay)
 }
 
 func standingOrderRateLockKey(orderID int64, recipient string) string {
