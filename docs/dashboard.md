@@ -61,6 +61,8 @@ enter  go to the selected agent's tmux session — or, on an offline agent,
        turn it back on
 n      start a new agent (group, spawn profile, name, directory, harness,
        startup brief)
+s      start a plain interactive shell session (directory, label) and go
+       to it
 delete move the selected agent one step toward removal (it asks first):
        online → offline, offline → retired
 f      filter the list down to the active agents (toggle)
@@ -134,11 +136,27 @@ plain next-field navigation, so you can always tab through the form; without
 that a group directory with exactly one subdirectory would complete straight
 into it and quietly move the spawn.
 
+**s** opens the shell form: a plain interactive shell in its own tmux session,
+the console's `tclaude session new --shell`. It is a **session, not an agent** —
+no conversation, no group, no permissions — so it never appears in the listing
+behind the form; find it again with `tclaude session ls` and
+`tclaude session attach <handle>`, or in `tclaude session watch`. **Directory**
+opens on the directory the console itself was started in, with the same **tab**
+contract as the spawn form (it completes a path you have typed into, and stays
+next-field navigation on the field as the form left it). **Label** names the
+tmux handle; blank generates one. Enter starts it and hands you the pane, the
+same handover **enter** makes on an agent's row. Like attaching, this is
+operator consoles only, and only on the daemon's own host — see the identity
+note below.
+
 The UI is deliberately plain: no colour scheme, no theming, no per-terminal
 palette. The cursor row is inverse video and that is the whole visual system.
-Everything it shows or does goes through the daemon's own API, so a spawn
-started here is the same spawn the CLI and the browser dashboard perform —
-same defaults, same validation, same audit entry.
+Everything it shows or does about *agents* goes through the daemon's own API, so
+a spawn started here is the same spawn the CLI and the browser dashboard perform
+— same defaults, same validation, same audit entry. The two exceptions are the
+host-local moves that have no HTTP shape: attaching this terminal to a pane, and
+starting a shell session. Both are gated on the console being the operator
+instead.
 
 ### With or without the web dashboard
 

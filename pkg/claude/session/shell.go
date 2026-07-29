@@ -23,6 +23,32 @@ import (
 // happens, so none of that machinery is affected.
 const ShellHarnessName = "shell"
 
+// ShellSession identifies a shell session that has just been created: the
+// row's primary key, the tmux session to attach to, and the directory it was
+// started in.
+type ShellSession struct {
+	SessionID   string
+	TmuxSession string
+	Cwd         string
+}
+
+// StartShellSession creates a detached shell session and returns its handle,
+// printing nothing and attaching nothing — for callers that already own the
+// terminal (the `agentd serve --tui` console) and do their own announcing and
+// attaching. dir may be empty (the caller's working directory), relative, or
+// "~"-prefixed; label may be empty (a synthetic session id is generated).
+//
+// It is the same launch `tclaude session new --shell --detached` performs,
+// minus the CLI flag rejection: the parameters a shell session cannot carry
+// are simply not accepted here.
+func StartShellSession(dir, label string) (ShellSession, error) {
+	return startShellSession(&NewParams{
+		Dir:      clcommon.ExpandHomePrefix(dir),
+		Label:    label,
+		Detached: true,
+	})
+}
+
 // runNewShell starts a plain interactive shell in a new tmux session: same
 // detach/reattach, `session ls`/watch visibility, and attach/kill as a
 // coding-harness session, but with no conversation, no hooks, and none of
@@ -34,20 +60,31 @@ func runNewShell(params *NewParams) error {
 	if err := rejectShellUnsupportedFlags(params); err != nil {
 		return err
 	}
+	created, err := startShellSession(params)
+	if err != nil {
+		return err
+	}
+	return announceAndAttach(fmt.Sprintf("Created shell session %s", created.TmuxSession),
+		created.SessionID, created.TmuxSession, created.Cwd, params.Detached)
+}
 
+// startShellSession is the launch itself, shared by the CLI path above and
+// StartShellSession. It creates the pane and its session row and returns once
+// both are live; announcing and attaching belong to the caller.
+func startShellSession(params *NewParams) (ShellSession, error) {
 	// Same nested-spawn guard and tmux-presence check as a coding-harness
 	// launch — a plain shell is still a tmux session tclaude is about to
 	// create.
 	if err := GuardAgainstNestedSpawn(); err != nil {
-		return err
+		return ShellSession{}, err
 	}
 	if err := CheckTmuxInstalled(); err != nil {
-		return err
+		return ShellSession{}, err
 	}
 
 	cwd, err := resolveSessionDir(params.Dir)
 	if err != nil {
-		return err
+		return ShellSession{}, err
 	}
 
 	// No conversation exists to resume, so the session id is always either
@@ -63,10 +100,10 @@ func runNewShell(params *NewParams) error {
 	// silently overwrite it). See JOH-248/JOH-332 (liveSessionOwningID).
 	owner, err := liveOwnerConflict(sessionID, params.Label)
 	if err != nil {
-		return err
+		return ShellSession{}, err
 	}
 	if owner != nil {
-		return fmt.Errorf("session %s already exists; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
+		return ShellSession{}, fmt.Errorf("session %s already exists; attach with: tclaude session attach %s", owner.TmuxSession, owner.TmuxSession)
 	}
 
 	tmuxSession := UniqueTmuxSessionName(TmuxNameBase(sessionID, params.Label, cwd))
@@ -108,7 +145,7 @@ func runNewShell(params *NewParams) error {
 	// dead label) keep their prior state on failure, exactly as before.
 	priorRow, err := db.LoadSession(sessionID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check for existing session row: %w", err)
+		return ShellSession{}, fmt.Errorf("check for existing session row: %w", err)
 	}
 	launchRowOwned := priorRow == nil
 	launchRowCommitted := false
@@ -124,7 +161,7 @@ func runNewShell(params *NewParams) error {
 		}
 	}()
 	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
-		return fmt.Errorf("prepare managed pane exit identity: %w", err)
+		return ShellSession{}, fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
 	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	if err != nil {
@@ -141,7 +178,7 @@ func runNewShell(params *NewParams) error {
 	shellCmd = exitGuard.wrap(shellCmd)
 
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, shellCmd); err != nil {
-		return err
+		return ShellSession{}, err
 	}
 	exitGuard.armPaneHook()
 	exitGuard.bind()
@@ -163,17 +200,17 @@ func runNewShell(params *NewParams) error {
 		// alive while the launch-row defer rolls the row back would orphan a
 		// live pane tclaude can no longer see.
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
-		return fmt.Errorf("failed to save session state: %w", err)
+		return ShellSession{}, fmt.Errorf("failed to save session state: %w", err)
 	}
 	if err := exitGuard.release(); err != nil {
 		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
-		return fmt.Errorf("bind managed pane exit audit: %w", err)
+		return ShellSession{}, fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
 	// The pane is up and bound; from here the row belongs to the live session
-	// (an attach failure below must not delete it).
+	// (the caller's own announce/attach failing must not delete it).
 	launchRowCommitted = true
-	return announceAndAttach(fmt.Sprintf("Created shell session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+	return ShellSession{SessionID: sessionID, TmuxSession: tmuxSession, Cwd: cwd}, nil
 }
 
 // shellBinary picks the interactive shell to launch: $SHELL, falling back

@@ -3,7 +3,7 @@ package agentd
 // Terminal UI for `tclaude agentd serve --tui` — a deliberately small
 // in-terminal stand-in for the web dashboard's most-used moves: see which
 // agents exist, start a new one, go to one's tmux session, take one offline,
-// and retire one that is done. On its own it
+// retire one that is done, and drop into a plain shell session. On its own it
 // is the whole operator surface (runServe starts no dashboard listener); it
 // also runs happily beside the web dashboard when the operator asks for both.
 // Either way it is plain text with no color scheme, no theming and no
@@ -14,10 +14,13 @@ package agentd
 // Everything it shows or does goes through the daemon's own /v1 HTTP API
 // (tuiAPI), not through the DB or the spawn internals, so the TUI cannot
 // drift from — or quietly skip — the validation, permission and audit paths
-// every other spawn surface runs. The one exception is attachSelected, which
-// hands this very terminal to an agent's tmux session: there is no HTTP shape
-// for a local terminal takeover, so it reads the session row directly and is
-// gated on the console being the operator instead.
+// every other spawn surface runs. The exceptions are the two host-local moves
+// that have no HTTP shape: attachSelected, which hands this very terminal to an
+// agent's tmux session, and the shell form, which starts a plain interactive
+// shell session (a session, not an agent — no conversation, no group, no
+// permissions, and so nothing for the agent API to describe). Both read or
+// drive local session state directly and are gated on the console being the
+// operator instead.
 
 import (
 	"bytes"
@@ -44,6 +47,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // tuiRefreshInterval is how often the console re-polls the daemon. It
@@ -125,8 +129,14 @@ func tuiEndedNormally(err error) bool {
 // daemon host and process lifetime. API-backed operations (list, spawn, retire,
 // stop, resume) need no capability bit: both implementations support them.
 type tuiCapabilities struct {
-	attachAgent      bool
-	attachLocalPane  bool
+	attachAgent     bool
+	attachLocalPane bool
+	// startLocalShell is the console's ability to start a plain interactive
+	// shell session on the daemon host. Like attachLocalPane it needs the
+	// console and the daemon to share a machine and a terminal: the launch
+	// creates a tmux session on the daemon's host and then hands this terminal
+	// to it, neither of which a remote console can do.
+	startLocalShell  bool
 	completeLocalDir bool
 	shutdownOnQuit   bool
 }
@@ -235,6 +245,7 @@ func (a *inProcessTUIAPI) capabilities() tuiCapabilities {
 	return tuiCapabilities{
 		attachAgent:      true,
 		attachLocalPane:  true,
+		startLocalShell:  true,
 		completeLocalDir: true,
 		shutdownOnQuit:   true,
 	}
@@ -482,6 +493,7 @@ type tuiMode int
 const (
 	tuiModeList tuiMode = iota
 	tuiModeSpawn
+	tuiModeShell
 	tuiModeHelp
 	tuiModeConfirmQuit
 	tuiModeConfirmStop
@@ -499,6 +511,13 @@ const (
 	tuiFieldHarness
 	tuiFieldBrief
 	tuiSpawnFieldCount
+)
+
+// Shell-form fields, in tab order.
+const (
+	tuiShellFieldDir = iota
+	tuiShellFieldLabel
+	tuiShellFieldCount
 )
 
 // tuiHarnessDefault is the spawn form's "don't pin a harness" choice: the
@@ -556,6 +575,11 @@ type tuiModel struct {
 	// and the help view keeps it reachable afterwards.
 	tokenLines      []string
 	showTokenBanner bool
+	// startupDir is the working directory the console was started in, and the
+	// shell form's starting point — read once here because a shell session is
+	// launched by the daemon process and inherits nothing from a form field
+	// left blank.
+	startupDir string
 	// refreshing / spawning / stopping / retiring / resuming keep the periodic tick from
 	// stacking requests and the operator from firing two of the same action at
 	// once.
@@ -565,6 +589,7 @@ type tuiModel struct {
 	stopping          bool
 	retiring          bool
 	resuming          bool
+	startingShell     bool
 	// reconcilingMutation latches after a remote mutation's outcome becomes
 	// ambiguous. It survives failed polls and blocks every mutating key until
 	// a refresh started after that mutation establishes canonical daemon
@@ -580,7 +605,8 @@ type tuiModel struct {
 
 	filterActive bool
 
-	form tuiSpawnForm
+	form  tuiSpawnForm
+	shell tuiShellForm
 }
 
 // tuiSpawnForm is the "new agent" prompt. Group, profile and harness are
@@ -610,6 +636,26 @@ type tuiSpawnForm struct {
 	dirSuggestions []string
 }
 
+// tuiShellForm is the "new shell session" prompt: a plain interactive shell in
+// its own tmux session, which is a session and not an agent — no conversation,
+// no group, no permissions, and no row in the listing this console renders. It
+// asks only what a shell session actually has: where to start, and what to call
+// the tmux handle.
+type tuiShellForm struct {
+	field int
+
+	dir   textinput.Model
+	label textinput.Model
+	// dirPrefill is the value openShellForm wrote into dir — the directory the
+	// console itself was started in. As in the spawn form it separates an
+	// untouched field from one the operator has typed into, which is what
+	// decides whether Tab completes a path or moves to the next field.
+	dirPrefill string
+	// dirSuggestions holds the ambiguous Tab-completion candidates for dir,
+	// listed under the field until the next keystroke.
+	dirSuggestions []string
+}
+
 type (
 	tuiTickMsg time.Time
 	// tuiDataMsg carries one completed refresh — both lists, or the error
@@ -629,6 +675,11 @@ type (
 		group string
 		resp  agent.SpawnResponse
 		err   error
+	}
+	// tuiShellStartedMsg carries the outcome of one shell-session launch.
+	tuiShellStartedMsg struct {
+		created session.ShellSession
+		err     error
 	}
 	// tuiAttachedMsg carries the outcome of putting the operator on an
 	// agent's pane — after they detach, in the attach case.
@@ -671,10 +722,18 @@ func newTUIModel(api tuiAPI) tuiModel {
 		capabilities: tuiCapabilities{
 			attachAgent:      true,
 			attachLocalPane:  true,
+			startLocalShell:  true,
 			completeLocalDir: true,
 			shutdownOnQuit:   true,
 		},
 		connectionLabel: "in-process",
+	}
+	// Where the console was started is where a shell session started from it
+	// defaults to. A daemon that cannot read its own working directory leaves
+	// this blank, which the form treats as "the daemon's directory" rather than
+	// refusing the launch.
+	if wd, err := os.Getwd(); err == nil {
+		m.startupDir = wd
 	}
 	if api != nil {
 		m.identityWarning = api.identityWarning()
@@ -1121,6 +1180,129 @@ func (m tuiModel) submitSpawn() (tuiModel, tea.Cmd) {
 	return m, tuiSpawnCmd(m.api, group, req)
 }
 
+// openShellForm builds a fresh "new shell session" prompt, with the directory
+// field on the one the console was started in — the directory the operator was
+// standing in when they ran `agentd serve --tui`, and so the one they most
+// likely mean. Tab extends it from there.
+func (m tuiModel) openShellForm() tuiModel {
+	form := tuiShellForm{
+		dir:        newTUITextInput("  Directory: "),
+		label:      newTUITextInput("  Label:     "),
+		dirPrefill: m.startupDir,
+	}
+	form.dir.SetValue(m.startupDir)
+	form.dir.CursorEnd()
+	form.dir.Focus()
+	m.shell = form
+	m.mode = tuiModeShell
+	return m
+}
+
+// moveShellField shifts focus through the shell form, wrapping, and moves the
+// text-input focus with it. Both fields are text inputs, so unlike the spawn
+// form there is no choice field to blur into.
+func (m tuiModel) moveShellField(delta int) tuiModel {
+	m.shell.field = ((m.shell.field+delta)%tuiShellFieldCount + tuiShellFieldCount) % tuiShellFieldCount
+	m.shell.dir.Blur()
+	m.shell.label.Blur()
+	switch m.shell.field {
+	case tuiShellFieldDir:
+		m.shell.dir.Focus()
+	case tuiShellFieldLabel:
+		m.shell.label.Focus()
+	}
+	return m
+}
+
+func (m tuiModel) updateFocusedShellInput(msg tea.Msg) (tuiModel, tea.Cmd) {
+	var cmd tea.Cmd
+	switch m.shell.field {
+	case tuiShellFieldDir:
+		m.shell.dir, cmd = m.shell.dir.Update(msg)
+	case tuiShellFieldLabel:
+		m.shell.label, cmd = m.shell.label.Update(msg)
+	}
+	return m, cmd
+}
+
+// completingShellDir is the shell form's half of completingDir, with the same
+// gates for the same reasons: completion reads the daemon host's filesystem
+// outside any agent sandbox, so it is offered to an operator console on the
+// daemon host only, and only on a path the operator has typed into — on the
+// field as the form left it, Tab keeps its ordinary next-field job, which is
+// the only way to reach Label at all.
+func (m tuiModel) completingShellDir() bool {
+	if !m.operator || !m.capabilities.completeLocalDir || m.shell.field != tuiShellFieldDir {
+		return false
+	}
+	value := m.shell.dir.Value()
+	return value != "" && value != m.shell.dirPrefill
+}
+
+func (m tuiModel) completeShellDir() tuiModel {
+	completed, candidates := clcommon.CompleteDirPath(m.shell.dir.Value())
+	m.shell.dir.SetValue(completed)
+	m.shell.dir.CursorEnd()
+	m.shell.dirSuggestions = candidates
+	return m
+}
+
+// startShellSelected opens the shell form, refusing consoles that cannot run
+// the launch. Starting a shell is host-local like attaching: it creates a tmux
+// session on the daemon's own host, in the daemon's own filesystem and outside
+// any agent sandbox, and then hands this terminal to it. It also goes nowhere
+// near the daemon's /v1 API — there is no HTTP shape for it and no permission
+// to check, because a shell session is not an agent — so the operator gate here
+// is the whole gate, exactly as it is for attachSelected.
+func (m tuiModel) startShellSelected() tuiModel {
+	if !m.operator {
+		m.notice = "Only an operator console can start a shell session."
+		return m
+	}
+	if !m.capabilities.startLocalShell {
+		m.notice = "This console cannot start a shell session — it does not share the daemon's host."
+		return m
+	}
+	if m.startingShell {
+		m.notice = "A shell session is already starting."
+		return m
+	}
+	m.notice = ""
+	return m.openShellForm()
+}
+
+// submitShell turns the shell form into a launch. A blank directory is left
+// blank on purpose: session.StartShellSession then falls back to the daemon
+// process's own working directory, which is what the field was prefilled with
+// anyway.
+func (m tuiModel) submitShell() (tuiModel, tea.Cmd) {
+	if m.startingShell {
+		m.notice = "A shell session is already starting."
+		return m, nil
+	}
+	dir := strings.TrimSpace(m.shell.dir.Value())
+	label := strings.TrimSpace(m.shell.label.Value())
+	m.mode = tuiModeList
+	m.startingShell = true
+	m.notice = "Starting a shell session…"
+	return m, tuiStartShellCmd(dir, label)
+}
+
+// tuiStartShell is the shell-session launch, indirected through a package var
+// so tests can drive the form without a tmux server.
+var tuiStartShell = session.StartShellSession
+
+// tuiStartShellCmd creates the shell session on its own goroutine: the launch
+// talks to tmux and the session DB, and the console must stay responsive while
+// it does. It creates the session detached and returns its handle; attaching is
+// the caller's own step, so bubbletea still owns the terminal when this lands.
+func tuiStartShellCmd(dir, label string) tea.Cmd {
+	return func() tea.Msg {
+		created, err := tuiStartShell(dir, label)
+		return tuiShellStartedMsg{created: created, err: err}
+	}
+}
+
 // tuiAttachToPane hands this terminal to the tmux session named by target,
 // indirected through a package var so tests can observe the target without a
 // tmux server. inTmux reports whether agentd itself is running inside tmux.
@@ -1555,6 +1737,24 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// "offline" until the next tick.
 		return m.beginRefresh()
 
+	case tuiShellStartedMsg:
+		m.startingShell = false
+		if msg.err != nil {
+			m.notice = "Could not start a shell session: " + msg.err.Error()
+			return m, nil
+		}
+		// A shell session is not an agent, so it will never appear in the
+		// listing this console renders — naming its tmux handle is what lets the
+		// operator find it again (`tclaude session attach <handle>`) after they
+		// detach.
+		m.notice = "Started shell session " + msg.created.TmuxSession + " in " + msg.created.Cwd + "."
+		if insideTmux() {
+			m.notice += " Switching to it…"
+		} else {
+			m.notice += " Attaching; detach (ctrl-b d) to come back."
+		}
+		return m, tuiAttachToPane(msg.created.SessionID, msg.created.TmuxSession, insideTmux())
+
 	case tuiAttachedMsg:
 		if msg.err != nil {
 			if msg.remote {
@@ -1700,6 +1900,9 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case tuiModeSpawn:
 		return m.handleSpawnKey(msg)
+
+	case tuiModeShell:
+		return m.handleShellKey(msg)
 	}
 
 	// List mode.
@@ -1744,6 +1947,8 @@ func (m tuiModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n", "N":
 		m.notice = ""
 		return m.openSpawnForm(), nil
+	case "s", "S":
+		return m.startShellSelected(), nil
 	case "delete":
 		m.notice = ""
 		return m.confirmDeleteStepSelected(), nil
@@ -1812,6 +2017,33 @@ func (m tuiModel) handleSpawnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return updated, cmd
 }
 
+func (m tuiModel) handleShellKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	// The candidate list belongs to the Tab that produced it, exactly as in the
+	// spawn form: anything else retires it, so it never lingers as a stale
+	// answer to a path the operator has since edited.
+	if key != "tab" || !m.completingShellDir() {
+		m.shell.dirSuggestions = nil
+	}
+	switch key {
+	case "esc", "ctrl+c":
+		m.mode = tuiModeList
+		return m, nil
+	case "enter":
+		return m.submitShell()
+	case "up", "shift+tab":
+		return m.moveShellField(-1), nil
+	case "down":
+		return m.moveShellField(1), nil
+	case "tab":
+		if m.completingShellDir() {
+			return m.completeShellDir(), nil
+		}
+		return m.moveShellField(1), nil
+	}
+	return m.updateFocusedShellInput(msg)
+}
+
 // restoreCursor puts the cursor back on the agent it was on, by conv-id,
 // after a refresh has replaced the listing under it. An agent that is no
 // longer listed (retired, or filtered out) leaves the cursor where it was,
@@ -1856,6 +2088,8 @@ func (m tuiModel) View() tea.View {
 		return tea.View{Content: m.renderHelp(), AltScreen: true}
 	case tuiModeSpawn:
 		return tea.View{Content: m.renderSpawnForm(), AltScreen: true}
+	case tuiModeShell:
+		return tea.View{Content: m.renderShellForm(), AltScreen: true}
 	}
 	return tea.View{Content: m.renderList(), AltScreen: true}
 }
@@ -2076,7 +2310,11 @@ func (m tuiModel) keyHintLine() string {
 	if m.reconcilingMutation {
 		return "reconciling unknown outcome • r refresh • " + filterLabel + " • ↑/↓ move • ? help • " + quitHint
 	}
-	hints := "n new agent • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
+	newHints := "n new agent"
+	if m.operator && m.capabilities.startLocalShell {
+		newHints += " • s new shell"
+	}
+	hints := newHints + " • " + filterLabel + " • r refresh • ↑/↓ move • ? help • " + quitHint
 	if len(m.visibleAgents()) > 0 {
 		// Unlike attaching, lifecycle moves are not statically operator-only:
 		// an agent-class console can hold stop/retire permissions over its own
@@ -2121,6 +2359,9 @@ func (m tuiModel) summaryLine() string {
 	if m.stopping {
 		line += " • taking offline…"
 	}
+	if m.startingShell {
+		line += " • starting a shell…"
+	}
 	return line
 }
 
@@ -2157,7 +2398,7 @@ func (m tuiModel) renderSpawnForm() string {
 	b.WriteString("\n")
 	// Always emit this line, blank or not, so a candidate list appearing and
 	// disappearing doesn't shift the fields below it up and down.
-	b.WriteString(m.dirSuggestionLine() + "\n")
+	b.WriteString(m.dirSuggestionLine(m.form.dirSuggestions) + "\n")
 	harnessChoice := tuiHarnessDefault
 	if m.form.harnessIdx >= 0 && m.form.harnessIdx < len(m.form.harnessNames) {
 		harnessChoice = m.form.harnessNames[m.form.harnessIdx]
@@ -2185,6 +2426,48 @@ func (m tuiModel) renderSpawnForm() string {
 	b.WriteString("\n  " + spawnHint + " • ↑/↓/tab next field • " + completeHint +
 		"←/→ change group/profile/harness • esc cancel\n")
 	return b.String()
+}
+
+func (m tuiModel) renderShellForm() string {
+	var b strings.Builder
+	b.WriteString("\n  New shell session\n\n")
+	b.WriteString("  A plain interactive shell in its own tmux session — a session, not an\n")
+	b.WriteString("  agent: no conversation, no group, and no row in the list behind this\n")
+	b.WriteString("  form. Find it again with `tclaude session ls`.\n\n")
+
+	b.WriteString(m.shell.dir.View() + m.shellDirHint())
+	b.WriteString("\n")
+	// Always emit this line, blank or not, so a candidate list appearing and
+	// disappearing doesn't shift the fields below it up and down.
+	b.WriteString(m.dirSuggestionLine(m.shell.dirSuggestions) + "\n")
+	b.WriteString(m.shell.label.View() +
+		tuiHint(m.shell.label.Value() == "", "  (blank = an auto-generated handle)"))
+	b.WriteString("\n")
+
+	if m.notice != "" {
+		b.WriteString("\n  " + m.notice + "\n")
+	}
+	completeHint := ""
+	if m.operator && m.capabilities.completeLocalDir {
+		completeHint = "tab complete dir • "
+	}
+	b.WriteString("\n  enter start + attach • ↑/↓/tab next field • " + completeHint + "esc cancel\n")
+	return b.String()
+}
+
+// shellDirHint explains the directory field's state: a blank field lands in the
+// daemon's own working directory, and an untouched prefill says it is the
+// directory this console was started in rather than a path someone typed.
+func (m tuiModel) shellDirHint() string {
+	value := m.shell.dir.Value()
+	switch {
+	case value == "":
+		return "  (blank = the directory agentd is running in)"
+	case m.shell.dirPrefill != "" && value == m.shell.dirPrefill:
+		return "  (where this console was started — edit it to start elsewhere)"
+	default:
+		return ""
+	}
 }
 
 // dirHint explains the directory field's state: a blank field still lands in
@@ -2240,22 +2523,22 @@ func (m tuiModel) profileChoiceHint() string {
 // dropping the ones that don't fit. A directory with many children would
 // otherwise wrap and push the rest of the form around — the one thing the
 // always-emitted line above is there to prevent.
-func (m tuiModel) dirSuggestionLine() string {
-	if len(m.form.dirSuggestions) == 0 {
+func (m tuiModel) dirSuggestionLine(suggestions []string) string {
+	if len(suggestions) == 0 {
 		return ""
 	}
 	const indent = "  "
 	if m.width <= len(indent) {
 		// No width yet (no WindowSizeMsg): show them all rather than nothing.
-		return indent + strings.Join(m.form.dirSuggestions, "  ")
+		return indent + strings.Join(suggestions, "  ")
 	}
 	line := indent
-	for i, name := range m.form.dirSuggestions {
+	for i, name := range suggestions {
 		next := name
 		if i > 0 {
 			next = "  " + name
 		}
-		more := fmt.Sprintf("  (+%d more)", len(m.form.dirSuggestions)-i)
+		more := fmt.Sprintf("  (+%d more)", len(suggestions)-i)
 		if lipgloss.Width(line+next) > m.width {
 			if lipgloss.Width(line+more) <= m.width {
 				line += more
@@ -2307,6 +2590,10 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("               starting one is whatever the daemon grants this console.\n")
 	}
 	b.WriteString("    n          Start a new agent\n")
+	if m.capabilities.startLocalShell {
+		b.WriteString("    s          Start a plain interactive shell session and attach to it.\n")
+		b.WriteString("               Operator consoles only.\n")
+	}
 	b.WriteString("    delete     Move the selected agent one step toward removal (asks first):\n")
 	b.WriteString("               a live agent is taken offline; an already-offline agent is\n")
 	b.WriteString("               retired, leaving its groups and losing its grants. Retiring\n")
@@ -2342,6 +2629,23 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("    enter      Spawn; the new agent lands in the remote listing.\n")
 	}
 	b.WriteString("    esc        Cancel\n\n")
+	if m.capabilities.startLocalShell {
+		b.WriteString("  New shell session\n")
+		b.WriteString("    A session, not an agent: a plain interactive shell in its own tmux\n")
+		b.WriteString("    session, with no conversation, no group and no permissions — so it\n")
+		b.WriteString("    never appears in the list above. Reach it later with\n")
+		b.WriteString("    `tclaude session ls` and `tclaude session attach <handle>`.\n")
+		b.WriteString("    tab/↑/↓    Next / previous field\n")
+		if m.capabilities.completeLocalDir {
+			b.WriteString("    tab        On a Directory you have typed into, complete the path\n")
+			b.WriteString("               instead, exactly as in the new-agent form. Directory\n")
+			b.WriteString("               starts on the directory this console was started in.\n")
+		}
+		b.WriteString("    Label names the tmux handle; blank generates one.\n")
+		b.WriteString("    enter      Start it, then go to its pane — the same handover enter\n")
+		b.WriteString("               makes on an agent's row\n")
+		b.WriteString("    esc        Cancel\n\n")
+	}
 	if m.connectionLabel != "" && m.connectionLabel != "in-process" {
 		b.WriteString("  Connected to " + m.connectionLabel + ". The console keeps polling\n")
 		b.WriteString("  through outages and reconnects when agentd returns at this address.\n\n")
