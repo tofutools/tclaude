@@ -48,6 +48,7 @@ func Cmd() *cobra.Command {
 			permissionsCmd(),
 			sudoCmd(),
 			cronCmd(),
+			ordersCmd(),
 			templatesCmd(),
 			rolesCmd(),
 			profilesCmd(),

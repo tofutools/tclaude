@@ -1035,6 +1035,26 @@ func DeleteAgentGroup(name string) error {
 		`DELETE FROM agent_cron_jobs WHERE target_kind = 'group' AND group_id = ?`, gID); err != nil {
 		return err
 	}
+	// Group-target standing orders (TCL-841) are swept for the same reason and
+	// on the same terms: they target THIS group and are meaningless once it is
+	// gone, while a conv-target order merely routed through the group still has
+	// a real recipient and is left alone. Their delivery-ledger rows go with
+	// them — an evaluation history for an order that no longer exists answers
+	// no question anyone can still ask.
+	//
+	// Unlike the cron sweep this is closer to correctness than tidy-up: a
+	// group id is reused when a later group takes the same row, and a
+	// surviving order would then start injecting text into whoever joins it.
+	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries
+		WHERE order_id IN (
+			SELECT id FROM agent_standing_orders WHERE target_kind = 'group' AND group_id = ?
+		)`, gID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM agent_standing_orders WHERE target_kind = 'group' AND group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM spawn_harness_rules WHERE group_id = ?`, gID); err != nil {
 		return err
 	}

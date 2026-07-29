@@ -1005,3 +1005,52 @@ CREATE TABLE opencode_agent_state_allocations (
 			)
 		);
 
+CREATE TABLE agent_standing_orders (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			name              TEXT    NOT NULL DEFAULT '',
+			revision          INTEGER NOT NULL DEFAULT 1,
+			owner_agent       TEXT    NOT NULL DEFAULT '',
+			target_kind       TEXT    NOT NULL DEFAULT 'conv',
+			target_agent      TEXT    NOT NULL DEFAULT '',
+			group_id          INTEGER NOT NULL DEFAULT 0,
+			target_role       TEXT    NOT NULL DEFAULT '',
+			summary           TEXT    NOT NULL DEFAULT '',
+			trigger_event     TEXT    NOT NULL DEFAULT '',
+			trigger_sources   TEXT    NOT NULL DEFAULT '',
+			timing            TEXT    NOT NULL DEFAULT 'next-turn',
+			cadence           TEXT    NOT NULL DEFAULT 'always',
+			enabled           INTEGER NOT NULL DEFAULT 1,
+			disabled_reason   TEXT    NOT NULL DEFAULT '',
+			operator_authored INTEGER NOT NULL DEFAULT 0,
+			created_at        TEXT    NOT NULL,
+			updated_at        TEXT    NOT NULL DEFAULT ''
+		);
+
+CREATE INDEX idx_agent_standing_orders_owner
+			ON agent_standing_orders(owner_agent);
+
+CREATE INDEX idx_agent_standing_orders_group
+			ON agent_standing_orders(group_id);
+
+CREATE UNIQUE INDEX idx_agent_standing_orders_name
+			ON agent_standing_orders(name);
+
+CREATE TABLE agent_standing_order_deliveries (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			order_id       INTEGER NOT NULL,
+			order_revision INTEGER NOT NULL DEFAULT 0,
+			target_conv    TEXT    NOT NULL DEFAULT '',
+			epoch          TEXT    NOT NULL DEFAULT '',
+			outcome        TEXT    NOT NULL DEFAULT '',
+			transport      TEXT    NOT NULL DEFAULT '',
+			harness        TEXT    NOT NULL DEFAULT '',
+			detail         TEXT    NOT NULL DEFAULT '',
+			created_at     TEXT    NOT NULL
+		);
+
+CREATE INDEX idx_agent_standing_order_deliveries_order
+			ON agent_standing_order_deliveries(order_id, created_at);
+
+CREATE INDEX idx_agent_standing_order_deliveries_epoch
+			ON agent_standing_order_deliveries(order_id, order_revision, target_conv, epoch);
+

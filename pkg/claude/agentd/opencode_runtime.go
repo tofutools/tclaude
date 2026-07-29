@@ -2291,6 +2291,7 @@ func applyOpenCodeHooks(
 			}
 			err := session.ApplyHook(input, runtime.SessionID)
 			if err == nil {
+				deliverOpenCodeStandingOrders(input, runtime.SessionID)
 				break
 			}
 			if !errors.Is(err, sql.ErrNoRows) || time.Now().After(deadline) {

@@ -146,12 +146,15 @@ func TestDecidePreCompact(t *testing.T) {
 				ConvID:        "conv-" + c.envSession,
 				Trigger:       c.trigger,
 			}
-			blocked, err := decidePreCompact(input, c.envSession, LocalHookAmbient(), &buf)
+			resp, err := decidePreCompact(input, c.envSession, LocalHookAmbient())
 			require.NoError(t, err)
-			assert.Equal(t, c.wantBlock, blocked)
+			assert.Equal(t, c.wantBlock, resp.Decision != "")
+			// Serialize through the shared writer so this still covers the
+			// bytes the harness actually sees, not only the verdict value.
+			require.NoError(t, resp.Write(&buf, input.HookEventName))
 
 			if c.wantBlock {
-				var dec preCompactDecision
+				var dec hookDecisionDocument
 				require.NoError(t, json.Unmarshal(buf.Bytes(), &dec),
 					"expected a JSON block decision, got %q", buf.String())
 				assert.Equal(t, "block", dec.Decision)
@@ -217,7 +220,7 @@ func TestRunHookCallback_PreCompactEmitsBlockOnStdout(t *testing.T) {
 		"model":           "gpt-5.5",
 	})
 
-	var dec preCompactDecision
+	var dec hookDecisionDocument
 	require.NoError(t, json.Unmarshal([]byte(out), &dec),
 		"stdout should carry a JSON block decision, got %q", out)
 	assert.Equal(t, "block", dec.Decision)

@@ -1,0 +1,431 @@
+package session
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+)
+
+// standingOrderFixture wires up a real session row, a real group with the
+// session's conv as a member, and one enabled order targeting that group. It
+// returns the group id so a test can vary the order's target.
+func standingOrderFixture(t *testing.T, harnessName string) int64 {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:      "sess-1",
+		ConvID:  "conv-1",
+		Status:  StatusIdle,
+		Harness: harnessName,
+	}))
+
+	_, _, err := db.EnsureAgentForConv("conv-1", "test")
+	require.NoError(t, err)
+
+	groupID, err := db.CreateAgentGroup("tclaude", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: groupID, ConvID: "conv-1", Role: "worker",
+	}))
+	return groupID
+}
+
+func insertOrder(t *testing.T, groupID int64, mut ...func(*db.StandingOrder)) int64 {
+	t.Helper()
+	o := &db.StandingOrder{
+		Name:             "pr-early",
+		TargetKind:       db.StandingTargetGroup,
+		GroupID:          groupID,
+		Summary:          "Push the PR early; cold review may follow.",
+		TriggerEvent:     db.StandingTriggerSessionStart,
+		TriggerSources:   []string{db.StandingSourceCompact, db.StandingSourceStartup},
+		Timing:           db.StandingTimingSameContinuation,
+		Cadence:          db.StandingCadenceAlways,
+		Enabled:          true,
+		OperatorAuthored: true,
+	}
+	for _, m := range mut {
+		m(o)
+	}
+	id, err := db.InsertStandingOrder(o)
+	require.NoError(t, err)
+	return id
+}
+
+func sessionStart(source string) HookCallbackInput {
+	return HookCallbackInput{
+		HookEventName: "SessionStart",
+		ConvID:        "conv-1",
+		Source:        source,
+	}
+}
+
+// observe runs the observation-only path and immediately drops the delivery
+// lock it hands back. These tests exercise what the path DECIDES; the caller's
+// send window is not what they are about, and holding the lock across the rest
+// of a test would make a second call in the same test wait out the timeout.
+func observe(input HookCallbackInput) []PendingStandingMessage {
+	pending, release := ObserveStandingOrders(input, "sess-1")
+	release()
+	return pending
+}
+
+func dispatch(t *testing.T, input HookCallbackInput) string {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(), input, "sess-1", LocalHookAmbient(), &buf))
+	return buf.String()
+}
+
+func additionalContext(t *testing.T, out string) string {
+	t.Helper()
+	var doc struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &doc), "output was %q", out)
+	assert.Equal(t, "SessionStart", doc.HookSpecificOutput.HookEventName)
+	return doc.HookSpecificOutput.AdditionalContext
+}
+
+// The headline path: a compaction boundary re-states the order in the same
+// continuation, which is the whole reason this feature exists.
+func TestStandingOrderDeliveredOnCompactBoundary(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID)
+
+	got := additionalContext(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+
+	assert.Contains(t, got, "Push the PR early")
+	assert.Contains(t, got, "pr-early@1", "the order name and revision must travel with the text")
+	assert.Contains(t, got, "authored by operator", "provenance belongs in the text, not just metadata")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest, "a delivery must be recorded")
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportHookContext, latest.Transport)
+	assert.Equal(t, harness.DefaultName, latest.Harness)
+}
+
+func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceResume)),
+		"a source the order did not select must write nothing at all")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "a clean no-match must not fill the ledger")
+}
+
+// An empty source is a cold start; normalizing it keeps the operator's
+// "startup" filter meaning one thing.
+func TestStandingOrderEmptySourceTreatedAsStartup(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+
+	got := additionalContext(t, dispatch(t, sessionStart("")))
+	assert.Contains(t, got, "Push the PR early")
+}
+
+func TestStandingOrderNotDeliveredToNonMember(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) { o.GroupID = groupID + 999 })
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+}
+
+func TestStandingOrderRoleFilter(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) { o.TargetRole = "reviewer" })
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)),
+		"the member holds role 'worker', so a reviewer-filtered order must not reach it")
+}
+
+// An order requiring same-continuation on a harness that has no such channel
+// delivers NOTHING, and says so in the ledger rather than downgrading quietly.
+//
+// SCOPE OF THIS TEST: it drives DispatchHookEvent, which proves the evaluator
+// and the capability model. The real OpenCode path does not reach
+// DispatchHookEvent — its SSE projector calls ApplyHook — so the integration
+// itself is covered separately by TestObserveStandingOrdersSplitsByRequiredTiming
+// below, which exercises the observation-only entry point OpenCode actually
+// uses. Both are needed: this one pins the decision, that one pins the wiring.
+func TestStandingOrderUnsupportedTimingIsRecordedNotDowngraded(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest, "an undeliverable order must still be explained")
+	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
+	assert.Equal(t, db.StandingTransportNone, latest.Transport)
+}
+
+func TestStandingOrderDisabledDeliversNothing(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID)
+	require.NoError(t, db.SetStandingOrderEnabled(id, false))
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+}
+
+// Cadence must survive the round trip through the ledger: the second boundary
+// in the same conversation is suppressed, and editing the text re-arms it.
+func TestStandingOrderCadenceOncePerGenerationAndRevisionRearm(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceCompact)), "Push the PR early")
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)),
+		"a second boundary in the same generation must be suppressed")
+
+	require.NoError(t, db.UpdateStandingOrderText(id, "Push the PR early, then request a cold review."))
+
+	got := additionalContext(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	assert.Contains(t, got, "cold review", "an edited order must reach the agents the edit was for")
+	assert.Contains(t, got, "pr-early@2")
+}
+
+// Subagent inheritance is deliberately out of v1: an in-harness subagent
+// shares the main conv-id, so without this guard every short-lived Explore
+// agent would be handed orders it will never act on.
+func TestStandingOrderSkipsInHarnessSubagents(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+
+	input := sessionStart(db.StandingSourceStartup)
+	input.AgentID = "sub-1"
+
+	assert.Empty(t, dispatch(t, input))
+}
+
+// Events with no standing-order trigger must not change what the hook writes.
+func TestStandingOrderIgnoresUntriggeredEvents(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+
+	out := dispatch(t, HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "Bash",
+	})
+	assert.Empty(t, out)
+}
+
+// Multiple matching orders arrive as one document, in a stable order.
+func TestStandingOrderMultipleOrdersRenderTogether(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Name = "worktrees"
+		o.Summary = "Use a git worktree for feature work."
+	})
+
+	got := additionalContext(t, dispatch(t, sessionStart(db.StandingSourceStartup)))
+
+	assert.Contains(t, got, "Push the PR early")
+	assert.Contains(t, got, "Use a git worktree")
+	assert.Less(t, indexOf(got, "Push the PR early"), indexOf(got, "Use a git worktree"),
+		"orders render in insertion order so the document is stable")
+}
+
+func indexOf(haystack, needle string) int {
+	return bytes.Index([]byte(haystack), []byte(needle))
+}
+
+// The observation-only path (OpenCode) must never silently do nothing. An
+// order requiring same-continuation is recorded as unsupported and returns no
+// pending message; one asking for next-turn comes back for the caller to send.
+func TestObserveStandingOrdersSplitsByRequiredTiming(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	sameID := insertOrder(t, groupID)
+
+	pending := observe(sessionStart(db.StandingSourceCompact))
+	assert.Empty(t, pending, "a same-continuation order is not satisfiable by a message")
+
+	latest, err := db.LatestStandingDelivery(sameID)
+	require.NoError(t, err)
+	require.NotNil(t, latest, "the degradation must be visible, not silent")
+	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
+}
+
+func TestObserveStandingOrdersReturnsNextTurnOrdersForMessageDelivery(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+	})
+
+	pending := observe(sessionStart(db.StandingSourceCompact))
+	require.Len(t, pending, 1)
+	assert.Equal(t, "pr-early", pending[0].Name)
+	assert.Contains(t, pending[0].Body, "Push the PR early")
+	assert.Equal(t, "conv-1", pending[0].TargetConv)
+
+	// Nothing is recorded until the caller reports the send outcome, so a
+	// crash between the two cannot leave a delivery claimed that never went.
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest)
+
+	RecordStandingMessageDelivery(pending[0], nil)
+	latest, err = db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+// A failed send must not satisfy the cadence, or the next boundary would treat
+// an undelivered order as already done.
+func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	pending := observe(sessionStart(db.StandingSourceCompact))
+	require.Len(t, pending, 1)
+	RecordStandingMessageDelivery(pending[0], errors.New("queue full"))
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDeliveryFailed, latest.Outcome)
+
+	already, err := db.StandingOrderDeliveredInEpoch(id, 1, "conv-1", "conv-1")
+	require.NoError(t, err)
+	assert.False(t, already, "a failed send must remain retryable")
+
+	again := observe(sessionStart(db.StandingSourceCompact))
+	assert.Len(t, again, 1, "the next boundary retries")
+}
+
+// A failed write must NOT burn a once-per-generation cadence slot. Recording
+// before the write would mark the order delivered for a conversation that
+// never saw the text, leaving it permanently silent with a ledger that
+// disagrees — unrecoverable and invisible. Repeating a reminder is the far
+// cheaper failure.
+func TestStandingOrderFailedWriteDoesNotBurnCadence(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	err := DispatchHookEvent(context.Background(), sessionStart(db.StandingSourceCompact),
+		"sess-1", LocalHookAmbient(), failingWriter{})
+	require.Error(t, err, "a write failure must surface")
+
+	already, err := db.StandingOrderDeliveredInEpoch(id, 1, "conv-1", "conv-1")
+	require.NoError(t, err)
+	assert.False(t, already, "an undelivered order must remain deliverable")
+
+	// The next boundary really does retry, end to end.
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceCompact)), "Push the PR early")
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// An agent-authored order must not be delivered as if the human wrote it.
+func TestObserveStandingOrdersCarriesRealAuthorship(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	// The owner must be a real enrolled actor: the read path drops an order
+	// whose owner cannot be resolved as live, exactly as cron's does.
+	ownerAgent, _, err := db.EnsureAgentForConv("conv-author", "test")
+	require.NoError(t, err)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.OperatorAuthored = false
+		o.OwnerAgent = ownerAgent
+	})
+
+	pending := observe(sessionStart(db.StandingSourceCompact))
+	require.Len(t, pending, 1)
+	assert.False(t, pending[0].OperatorAuthored,
+		"an agent-authored order must not be stamped operator-authored")
+	assert.Equal(t, "conv-author", pending[0].OwnerConv,
+		"the message must be attributed to the authoring agent's live generation")
+	assert.Contains(t, pending[0].Body, "authored by agent "+ownerAgent)
+}
+
+func TestObserveStandingOrdersOperatorOrderStaysOperatorAuthored(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.OperatorAuthored = true
+	})
+
+	pending := observe(sessionStart(db.StandingSourceCompact))
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].OperatorAuthored)
+}
+
+// An event naming a conversation the caller was NOT resolved as must be
+// refused outright.
+//
+// applyHook returns nil both when it applies an event and when its
+// foreign-process guard drops one, so a payload naming somebody else's conv
+// still reaches the standing-order path. Trusting it would leak the orders
+// targeting that agent to whoever named it, and — worse — write a `delivered`
+// ledger row that consumes the victim's once-per-generation slot, silencing
+// the real agent behind a ledger claiming success.
+func TestStandingOrderRefusesForeignConvInPayload(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	// A second session that is not in the target group, naming conv-1.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "sess-2", ConvID: "conv-2", Status: StatusIdle, Harness: harness.DefaultName,
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "sess-2", LocalHookAmbient(), &buf))
+
+	assert.Empty(t, buf.String(), "an order must not leak to an agent that merely named the conv")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "a foreign event must not consume the victim's cadence slot")
+
+	// The real agent still receives it.
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceStartup)), "Push the PR early")
+}
+
+// Without a resolvable session row there is no authority for which
+// conversation an event is about, so evaluation is refused rather than
+// falling back to the payload.
+func TestStandingOrderRefusesUnresolvableSession(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "", LocalHookAmbient(), &buf))
+	assert.Empty(t, buf.String())
+}
