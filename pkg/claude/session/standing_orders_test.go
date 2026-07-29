@@ -257,7 +257,7 @@ func TestStandingOrderTrimmedToolInputRecordsUnevaluable(t *testing.T) {
 	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, latest.Outcome)
 }
 
-func TestStandingOrderOpenCodeActionTriggerIsUnsupportedNotQueued(t *testing.T) {
+func TestStandingOrderOpenCodeToolTriggerQueuesNextTurn(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.OpenCodeName)
 	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
 		o.TriggerEvent = db.StandingTriggerToolBefore
@@ -272,24 +272,20 @@ func TestStandingOrderOpenCodeActionTriggerIsUnsupportedNotQueued(t *testing.T) 
 		ConvID:        "conv-1",
 		ToolName:      "Bash",
 	})
-	assert.Empty(t, pending, "action-trigger messages stay off until origin suppression exists")
+	require.Len(t, pending, 1)
+	assert.Equal(t, id, pending[0].OrderID)
 
 	latest, err := db.LatestStandingDelivery(id)
 	require.NoError(t, err)
-	require.NotNil(t, latest)
-	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
-	assert.Contains(t, latest.Detail, "origin suppression")
+	assert.Nil(t, latest,
+		"the observation path must not claim delivery before the message is queued")
 
-	// Capability is unchanged for this order revision and stable recipient.
-	// Repeated high-frequency tool hooks must not append an unbounded ledger.
-	assert.Empty(t, observe(HookCallbackInput{
-		HookEventName: "PreToolUse",
-		ConvID:        "conv-1",
-		ToolName:      "Bash",
-	}))
-	deliveries, err := db.ListStandingDeliveries(id, 10)
+	RecordStandingMessageDelivery(pending[0], nil)
+	latest, err = db.LatestStandingDelivery(id)
 	require.NoError(t, err)
-	assert.Len(t, deliveries, 1)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
 }
 
 func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {
