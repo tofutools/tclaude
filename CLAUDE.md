@@ -127,7 +127,10 @@ decision needs. Instead:
    trick as `pkg/claude/agentd/dashsnap`).
 3. Send the rendered image to the operator with
    `tclaude agent notify-human -a out.png` plus a short assessment and a
-   recommendation, and let the human pick.
+   recommendation, and let the human pick. Note that notify-human is
+   permission-gated (`human.notify` slug or group ownership); an agent without
+   the grant should route the image through its coordinating agent or fall
+   back to `--ask-human`.
 4. Only after a direction is chosen, ticket and implement it in the real
    frontend.
 
