@@ -8,6 +8,7 @@ import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { JobsCronDialogRoot } from './jobs-dialog-island.js';
+import { JobsStandingOrderDialogRoot } from './jobs-standing-order-dialog-island.js';
 import { registerJobsController } from './jobs-controller.js';
 
 const html = htm.bind(h);
@@ -144,7 +145,7 @@ function StandingOrderCapability({ capability }) {
   </${Fragment}>`;
 }
 
-function StandingOrderRow({ order }) {
+function StandingOrderRow({ order, actions }) {
   const summary = (order.summary || '').replace(/\s+/g, ' ').trim();
   return html`<tr data-key=${`standing-order-${order.id}`}>
     <td>${order.enabled
@@ -170,7 +171,20 @@ function StandingOrderRow({ order }) {
       <div class="muted">requires ${order.timing || 'next-turn'}</div>
       <${StandingOrderCapability} capability=${order.capability} />
     </td>
-    <td><span class="muted" title="Standing-order management is CLI-only in this first prototype">CLI</span></td>
+    <td><div class="row-actions">
+      <button onClick=${() => actions.openStandingOrderEdit(order)}
+        title="Edit this standing order">edit</button>
+      <button class=${order.enabled ? 'warn' : ''} onClick=${() => actions.toggleStandingOrder(order)}
+        title=${order.enabled
+          ? 'Disable this standing order'
+          : order.disabled_reason
+            ? `Re-enable and clear automatic marker: ${order.disabled_reason}`
+            : 'Re-enable this standing order'}>
+        ${order.enabled ? 'disable' : 'enable'}
+      </button>
+      <button class="danger" onClick=${() => actions.deleteStandingOrder(order)}
+        title="Delete this standing order and its evaluation history">delete</button>
+    </div></td>
   </tr>`;
 }
 
@@ -266,9 +280,8 @@ function Pager({ state, paging, refresh, disabled = false }) {
 
 function EmptyJobs({ kind }) {
   if (kind === 'standing-order') {
-    return html`<div class="empty">No standing orders yet. The first prototype manages them with
-      <code>tclaude agent orders</code>; matching orders and their latest evaluation appear here.
-    </div>`;
+    return html`<div class="empty">No standing orders yet. Use <strong>+ new standing order</strong>
+      above to add a session-boundary reminder.</div>`;
   }
   if (kind === 'cron') {
     return html`<div class="empty">No schedules yet. Use <strong>
@@ -349,6 +362,10 @@ export function JobsApp({ state, actions }) {
           <span class="cron-open-label-regular">+ new cron job</span>
           <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
         </button>`}
+      ${(current.kind === 'all' || current.kind === 'standing-order') && html`
+        <button id="standing-order-create-open" class="primary"
+          title="Create a standing instruction triggered at session boundaries"
+          onClick=${() => actions.openStandingOrderCreate({})}>+ new standing order</button>`}
     </div>
     <${AsyncLoadState} label="Automations" request=${current.request}
       retry=${() => void actions.refresh()} errorClass="jobs-error" />
@@ -363,7 +380,8 @@ export function JobsApp({ state, actions }) {
               <tbody>${current.rows.map((row) => row.kind === 'cron'
                 ? html`<${CronRow} key=${`cron-${row.cron?.id}`} job=${row.cron || {}} actions=${actions} />`
                 : row.kind === 'standing-order'
-                  ? html`<${StandingOrderRow} key=${`standing-order-${row.order?.id}`} order=${row.order || {}} />`
+                  ? html`<${StandingOrderRow} key=${`standing-order-${row.order?.id}`}
+                    order=${row.order || {}} actions=${actions} />`
                   : html`<${ExportRow} key=${`export-${row.export?.id}`} job=${row.export || {}} actions=${actions} />`
               )}</tbody>
             </table>
@@ -396,6 +414,7 @@ export function mountJobsIsland({
     const attempt = (step) => { try { step(); } catch (error) { failures.push(error); } };
     attempt(() => { unregister?.(); unregister = null; });
     attempt(() => state.closeCronDialog());
+    attempt(() => state.closeStandingOrderDialog());
     attempt(() => render(null, dialogHost));
     attempt(() => render(null, badgeHost));
     attempt(() => render(null, host));
@@ -406,8 +425,10 @@ export function mountJobsIsland({
     unregister = registerJobsController(controller);
     render(html`<${JobsApp} state=${state} actions=${actions} />`, host);
     render(html`<${JobsBadge} state=${state} />`, badgeHost);
-    render(html`<${JobsCronDialogRoot} state=${state} actions=${actions}
-      confirmDiscard=${confirmDiscard}/>` , dialogHost);
+    render(html`<${Fragment}>
+      <${JobsCronDialogRoot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
+      <${JobsStandingOrderDialogRoot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
+    </${Fragment}>` , dialogHost);
     registerCleanup(cleanup);
   } catch (error) {
     try { cleanup(); } catch (cleanupError) {

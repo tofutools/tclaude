@@ -23,6 +23,15 @@ func sampleOrder(name string) *StandingOrder {
 	}
 }
 
+func setStandingOrderEnabledForTest(t *testing.T, id int64, enabled bool) {
+	t.Helper()
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	require.NoError(t, SetStandingOrderEnabled(
+		id, enabled, current.Revision, current.UpdatedAt))
+}
+
 func TestStandingOrder_InsertAndRead(t *testing.T) {
 	setupTestDB(t)
 
@@ -152,12 +161,52 @@ func TestStandingOrder_TextEditBumpsRevision(t *testing.T) {
 	id, err := InsertStandingOrder(sampleOrder("pr-early"))
 	require.NoError(t, err)
 
-	require.NoError(t, UpdateStandingOrderText(id, "Push the PR early, then trigger a cold review."))
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	current.Summary = "Push the PR early, then trigger a cold review."
+	require.NoError(t, UpdateStandingOrder(id, current.Revision, current.UpdatedAt, current))
 
 	got, err := GetStandingOrder(id)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), got.Revision)
 	assert.Contains(t, got.Summary, "cold review")
+}
+
+func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("before"))
+	require.NoError(t, err)
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	replacement := sampleOrder("after")
+	replacement.Summary = "Updated instruction."
+	replacement.TriggerSources = []string{StandingSourceResume}
+	replacement.Timing = StandingTimingNextTurn
+	replacement.Cadence = StandingCadenceOncePerGeneration
+	replacement.Enabled = false
+	replacement.DisabledReason = StandingDisabledReasonGroupRetired
+	require.NoError(t, UpdateStandingOrder(id, 1, before.UpdatedAt, replacement))
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(2), got.Revision)
+	assert.Equal(t, "after", got.Name)
+	assert.Equal(t, "Updated instruction.", got.Summary)
+	assert.Equal(t, []string{StandingSourceResume}, got.TriggerSources)
+	assert.Equal(t, StandingTimingNextTurn, got.Timing)
+	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
+	assert.False(t, got.Enabled)
+	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
+
+	stale := sampleOrder("stale-overwrite")
+	err = UpdateStandingOrder(id, 1, before.UpdatedAt, stale)
+	assert.ErrorIs(t, err, ErrStandingOrderRevisionConflict)
+	got, _ = GetStandingOrder(id)
+	assert.Equal(t, "after", got.Name, "a stale writer cannot overwrite the accepted edit")
 }
 
 func TestStandingOrder_EnableDisableClearsReason(t *testing.T) {
@@ -173,10 +222,55 @@ func TestStandingOrder_EnableDisableClearsReason(t *testing.T) {
 	assert.False(t, got.Enabled)
 	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
 
-	require.NoError(t, SetStandingOrderEnabled(id, true))
+	setStandingOrderEnabledForTest(t, id, true)
 	got, _ = GetStandingOrder(id)
 	assert.True(t, got.Enabled)
 	assert.Empty(t, got.DisabledReason, "an explicit enable is a human choice, not an auto-pause")
+}
+
+func TestStandingOrder_EnableDisableNoOpIsIdempotent(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	require.NoError(t, SetStandingOrderEnabled(
+		id, true, before.Revision, before.UpdatedAt))
+	after, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	assert.Equal(t, before.Revision, after.Revision)
+	assert.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
+func TestStandingOrder_AutomaticLifecycleInvalidatesStaleWritersWithoutRearming(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	captured, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+
+	n, err := DisableGroupTargetStandingOrdersForRetire(1)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	retired, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, retired)
+	assert.Equal(t, captured.Revision, retired.Revision,
+		"automatic lifecycle changes remain neutral to the delivery cadence")
+	assert.NotEqual(t, captured.UpdatedAt, retired.UpdatedAt,
+		"the row CAS token must advance even when delivery cadence does not")
+
+	replacement := sampleOrder("stale-edit")
+	assert.ErrorIs(t,
+		UpdateStandingOrder(id, captured.Revision, captured.UpdatedAt, replacement),
+		ErrStandingOrderRevisionConflict)
+	assert.ErrorIs(t,
+		DeleteStandingOrder(id, captured.Revision, captured.UpdatedAt),
+		ErrStandingOrderRevisionConflict)
 }
 
 // Only orders tclaude itself paused come back on a resume — one the human
@@ -188,7 +282,7 @@ func TestStandingOrder_GroupResumeSkipsHandDisabledOrders(t *testing.T) {
 	handID, err := InsertStandingOrder(sampleOrder("hand"))
 	require.NoError(t, err)
 
-	require.NoError(t, SetStandingOrderEnabled(handID, false))
+	setStandingOrderEnabledForTest(t, handID, false)
 
 	n, err := DisableGroupTargetStandingOrdersForRetire(1)
 	require.NoError(t, err)
@@ -210,7 +304,7 @@ func TestStandingOrder_ListEnabledForEvent(t *testing.T) {
 	require.NoError(t, err)
 	offID, err := InsertStandingOrder(sampleOrder("off"))
 	require.NoError(t, err)
-	require.NoError(t, SetStandingOrderEnabled(offID, false))
+	setStandingOrderEnabledForTest(t, offID, false)
 
 	got, err := ListEnabledStandingOrdersForEvent(StandingTriggerSessionStart)
 	require.NoError(t, err)
@@ -283,7 +377,10 @@ func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, DeleteStandingOrder(id))
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	require.NoError(t, DeleteStandingOrder(id, current.Revision, current.UpdatedAt))
 
 	got, err := GetStandingOrder(id)
 	require.NoError(t, err)
@@ -292,6 +389,31 @@ func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	recs, err := ListStandingDeliveries(id, 10)
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+}
+
+func TestStandingOrder_DeleteRevisionRejectsStaleEditor(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	current.Summary = "New wording."
+	require.NoError(t, UpdateStandingOrder(id, current.Revision, current.UpdatedAt, current))
+	current, err = GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+
+	assert.ErrorIs(t, DeleteStandingOrder(id, 1, current.UpdatedAt),
+		ErrStandingOrderRevisionConflict)
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	require.NoError(t, DeleteStandingOrder(id, 2, current.UpdatedAt))
+	got, err = GetStandingOrder(id)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestStandingOrder_TriggerLabelAndSourceMatching(t *testing.T) {

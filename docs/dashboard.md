@@ -1128,16 +1128,37 @@ The legacy execution engine and its Runs, Worklist, viewer, and instantiation
 surfaces have been removed. Runtime execution is temporarily unavailable while
 the replacement engine is designed. See [Processes](processes.md).
 
-### Cron
+### Automations
 
-The scheduled-job table — name, owner, target, interval, immediate-run opt-in,
-last run, status pill, and body summary. Per-row buttons: enable/disable,
-**run now**, edit, delete. New jobs wait for their first scheduled due time by
-default. The create/edit form can opt into one immediate run; on edit, only an
-off→on transition fires, so repeat saves and daemon restarts cannot replay it.
-**+ new cron job** opens a create form (also reachable pre-filled from the
-**⏰ schedule…** items in the Groups tab's group and member menus). See
-[Agent Coordination → cron](agent.md#cron) for what cron jobs do.
+One table with subviews for exports, recurring **Schedules**, and durable
+**Standing orders**.
+
+The scheduled-job rows show name, owner, target, interval, immediate-run
+opt-in, last run, status, and body summary. Per-row buttons: enable/disable,
+**run now**, edit, duplicate, and delete. New jobs wait for their first
+scheduled due time by default. The create/edit form can opt into one immediate
+run; on edit, only an off→on transition fires, so repeat saves and daemon
+restarts cannot replay it. **+ new cron job** opens a create form (also
+reachable pre-filled from the **⏰ schedule…** items in the Groups tab's group
+and member menus). See [Agent Coordination → cron](agent.md#cron).
+
+Standing-order rows show the stable agent or group target, instruction,
+trigger, required delivery timing, capability, and latest evaluation.
+**+ new standing order** creates one; each row can be edited, enabled/disabled,
+or deleted. The first authoring surface deliberately exposes only the trigger
+semantics the evaluator already implements:
+
+- a session boundary, optionally filtered to startup, resume, clear, and/or
+  compaction;
+- either same-continuation hook context or next-turn message delivery as a
+  required guarantee (an unsupported harness reports a visible non-delivery,
+  rather than silently weakening the guarantee);
+- every matching boundary or once per conversation generation.
+
+Single-agent targets are persisted by stable `agt_…` ID, never by conversation
+generation. Editing an agent-authored order preserves its author and lifecycle
+ownership. Re-enabling an automatically retired order requires confirmation
+and clears its retirement marker explicitly.
 
 ### Sudo
 

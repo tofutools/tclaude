@@ -23,6 +23,9 @@ func TestStandingOrder_RetireOwnerDisablesOrders(t *testing.T) {
 	o.OwnerConv = owner
 	id, err := InsertStandingOrder(o)
 	require.NoError(t, err)
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
 
 	out, err := RetireAgentAuthorizationByConv(owner, "human", "test")
 	require.NoError(t, err)
@@ -34,6 +37,10 @@ func TestStandingOrder_RetireOwnerDisablesOrders(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.False(t, got.Enabled)
+	assert.Equal(t, before.Revision, got.Revision,
+		"retirement must not re-arm the delivery cadence")
+	assert.NotEqual(t, before.UpdatedAt, got.UpdatedAt,
+		"retirement must invalidate stale dashboard writers")
 	assert.Equal(t, StandingDisabledReasonAgentRetired, got.DisabledReason,
 		"the marker records WHY, so a later reinstate can tell this apart from a hand-disabled order")
 }

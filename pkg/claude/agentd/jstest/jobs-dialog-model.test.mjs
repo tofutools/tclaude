@@ -68,3 +68,48 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.equal(model.cronDraftDirty(draft, model.createCronDraft(model.cronJobToPrefill(job))), false);
   assert.equal(model.cronDraftDirty({ ...draft, body: 'changed' }, draft), true);
 });
+
+test('standing-order dialog model preserves stable targets, explicit any-source semantics, and revision CAS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/jobs-dialog-model.js');
+  const order = {
+    id: 9, name: 'pr-early', revision: 3, enabled: false,
+    updated_at: '2026-07-29T12:00:00Z',
+    target: { kind: 'group', group_id: 7, group_name: 'alpha', role: 'reviewer' },
+    summary: 'Push the PR early.',
+    trigger: { event: 'session.start', sources: ['compact', 'resume'] },
+    timing: 'same-continuation', cadence: 'once-per-generation',
+  };
+  const draft = model.createStandingOrderDraft(model.standingOrderToPrefill(order));
+  assert.equal(draft.target.mode, 'group');
+  assert.equal(draft.target.groupName, 'alpha');
+  assert.equal(draft.sourceMode, 'selected');
+  assert.equal(model.validateStandingOrderDraft({ kind: 'edit' }, draft), null);
+  assert.deepEqual(model.buildStandingOrderMutation({ kind: 'edit', id: 9 }, draft), {
+    path: '/api/standing-orders/9', method: 'PATCH',
+    payload: {
+      name: 'pr-early', revision: 3, updated_at: '2026-07-29T12:00:00Z',
+      target: 'group:alpha', role: 'reviewer',
+      summary: 'Push the PR early.', trigger_event: 'session.start',
+      sources: ['compact', 'resume'], timing: 'same-continuation',
+      cadence: 'once-per-generation', enabled: false,
+    },
+  });
+
+  const any = model.createStandingOrderDraft({
+    name: 'all-boundaries', target: 'agt_target', summary: 'Remember.',
+  });
+  assert.equal(any.sourceMode, 'any');
+  assert.deepEqual(model.buildStandingOrderMutation({ kind: 'create' }, any), {
+    path: '/api/standing-orders', method: 'POST',
+    payload: {
+      name: 'all-boundaries', target: 'agt_target', role: '', summary: 'Remember.',
+      trigger_event: 'session.start', sources: [], timing: 'same-continuation',
+      cadence: 'always', enabled: true,
+    },
+  });
+  any.sourceMode = 'selected';
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'sources');
+  assert.equal(model.standingOrderDraftDirty(draft,
+    model.createStandingOrderDraft(model.standingOrderToPrefill(order))), false);
+});

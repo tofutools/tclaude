@@ -748,7 +748,7 @@ func (c *importCtx) scrubRetiredActorAuthority() error {
 			// Same scrub for standing orders: an import must not be able to
 			// introduce an ACTIVE high-authority instruction owned by an actor
 			// that is already retired in the importing database.
-			{`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ? WHERE owner_agent = ? AND enabled = 1`, []any{StandingDisabledReasonAgentRetired, agentID}},
+			{`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?, updated_at = ? WHERE owner_agent = ? AND enabled = 1`, []any{StandingDisabledReasonAgentRetired, now, agentID}},
 		} {
 			if _, err := c.tx.Exec(stmt.query, stmt.args...); err != nil {
 				return fmt.Errorf("import: scrub retired actor authority: %w", err)
