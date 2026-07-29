@@ -153,8 +153,43 @@ same handover **enter** makes on an agent's row. Like attaching, this is
 operator consoles only, and only on the daemon's own host — see the identity
 note below.
 
-The UI is deliberately plain: no colour scheme, no theming, no per-terminal
-palette. The cursor row is inverse video and that is the whole visual system.
+### The usage line
+
+The bottom of the list view carries a status line in the shape of [Claude
+Code's own](status-bar.md): the account's rolling subscription limits, each as
+a bar, a percentage and the time until it resets, plus month-to-date API spend
+when there is any.
+
+```
+usage  5h ███░░░░░ 42% (3h41m) • 7d █░░░░░░░ 18% (2d9h) • api $12.34 mtd ($0.42 today)
+```
+
+The figures are the same ones the web dashboard's top bar shows and come from
+the same place — the cached reading Claude Code's statusline callback leaves in
+SQLite, plus the optional Anthropic usage poll (`usage.poll_anthropic_api`). The
+console never calls the API itself; it re-reads that cache every 30 seconds, so
+the line can trail a fresh session's first turn by up to half a minute — and it
+survives an idle spell rather than collapsing to `n/a` overnight.
+
+When a Codex account also has recent figures, both are named
+(`claude 5h … • codex 5h …`). A narrow terminal drops whole segments from the
+right rather than wrapping, so the line is never more than one row; below about
+thirty columns not even the first segment fits and the line is dropped
+altogether. `usage  n/a` means the daemon has no usable reading (an API-billing
+account has no rolling windows), and `usage  unavailable` means the console
+could not read it at all. A standalone console pointed at a tclaude too old to
+have the endpoint shows no line rather than an error, and picks the readout up
+by itself if that daemon is upgraded under it.
+
+The readout is the operator's own subscription, so the daemon serves it to an
+operator console only; an agent-class console (see the identity note below)
+shows no usage line. `tclaude usage` prints the same limits from the CLI.
+
+The rest of the UI is deliberately plain: no theming, no per-terminal palette.
+The usage bars are the one place colour carries meaning — green, amber and red
+on the same thresholds as the status bar, from the same `tui.color_scheme`
+palette as `session watch` — and the cursor row is inverse video. That is the
+whole visual system.
 Everything it shows or does about *agents* goes through the daemon's own API, so
 a spawn started here is the same spawn the CLI and the browser dashboard perform
 — same defaults, same validation, same audit entry. The two exceptions are the
@@ -282,7 +317,7 @@ operator token (`agent.persist_operator_token` or
 `--persist-operator-token`) as well if reconnecting after an unclean stop must
 work, because an ungraceful exit cannot save the previous dashboard session.
 
-The server exposes only the six versioned JSON operations and one terminal
+The server exposes only the eight versioned JSON operations and one terminal
 WebSocket this TUI uses under `/api/tui/`; it does not publish agentd's entire
 Unix-socket API on the dashboard listener.
 

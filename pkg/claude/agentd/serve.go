@@ -1042,6 +1042,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/prs", handleWhoamiPRs)
 	mux.HandleFunc("/v1/whoami/tags", handleWhoamiTags)
 	mux.HandleFunc("/v1/lookup", handleLookup)
+	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("/v1/peers", handlePeers)
 	mux.HandleFunc("/v1/messages", handleMessages)
 	mux.HandleFunc("/v1/messages/", handleMessageByIDOrReply)

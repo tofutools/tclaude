@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -207,6 +208,38 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 	out.SevenDay = sd
 	phases = append(phases, perfPhase{Name: "assemble", Ms: durMs(time.Since(assembleStart))})
 	return out, hasRealCost, phases, costErr
+}
+
+// handleUsage serves the account-level subscription usage readout — the same
+// figures the web dashboard's top bar shows, in the same JSON shape, so a
+// client without a browser (the terminal console) can render them too.
+//
+// Like the dashboard's own collector it never makes a network call: it reads
+// the cached last-known figures, so polling it is cheap and a missing or stale
+// cache degrades to available=false rather than an error.
+//
+// Human-only. These are the operator's own billing/subscription figures, and
+// nothing an agent does needs them; an agent that legitimately wants its
+// account's limits has `tclaude usage`, which goes to the Anthropic API under
+// the credentials it already has, rather than reading the operator's console
+// readout through the daemon.
+func handleUsage(w http.ResponseWriter, r *http.Request) {
+	if !requireHuman(w, r, "read subscription usage") {
+		return
+	}
+	// A config that will not load is not a reason to withhold the readout:
+	// ResolvedUsageIdleTimeout is nil-safe and falls back to the default grace.
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Debug("usage readout: config load failed; using the default idle timeout", "error", err)
+	}
+	usage, _, _, costErr := collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+	if costErr != nil {
+		// Same disposition as the dashboard snapshot: the cost history is one
+		// part of the readout, and losing it must not cost the rate-limit bars.
+		slog.Debug("usage readout: cost history read failed; omitting the cost figures", "error", costErr)
+	}
+	writeJSON(w, http.StatusOK, usage)
 }
 
 // liveUsageWindow returns the wire shape for a cached bucket while it still

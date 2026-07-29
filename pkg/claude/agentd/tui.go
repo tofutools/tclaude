@@ -304,6 +304,12 @@ func (a *inProcessTUIAPI) do(method, path string, in, out any) error {
 	if err := serveTUIRequest(a.handler, rec, req); err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
+	if rec.code == http.StatusNotFound {
+		// Same disposition the remote client gives a 404: the daemon has no
+		// such operation, which an optional readout should go quiet about
+		// rather than report as a failure.
+		return fmt.Errorf("%s %s: %w", method, path, &tuiUnsupportedEndpointError{msg: tuiErrorMessage(rec)})
+	}
 	if rec.code >= http.StatusBadRequest {
 		return fmt.Errorf("%s %s: %s", method, path, tuiErrorMessage(rec))
 	}
@@ -597,6 +603,23 @@ type tuiModel struct {
 	reconcilingMutation      bool
 	reconciliationRefreshGen uint64
 	lastRefresh              time.Time
+	// usage is the last subscription-usage readout the daemon served — the
+	// account's rolling limits and API spend, shown as the console's status
+	// line. usageLoaded distinguishes "the daemon has answered" from the empty
+	// zero value; usageFailed says every attempt so far has failed, which is
+	// the one thing worth saying out loud in place of the figures.
+	// lastUsageAttempt paces the poll (see tuiUsageInterval) — it is far slower
+	// than the listing's, so it rides the same tick rather than its own timer.
+	// usageUnsupported says the daemon has no usage endpoint at all — a
+	// standalone console pointed at an older tclaude. That is not a failure to
+	// report, so the line goes away entirely and the poll drops to a slow
+	// re-check that costs nothing but lets an upgraded daemon bring it back.
+	usage            tuiUsage
+	usageLoaded      bool
+	usageFailed      bool
+	usageUnsupported bool
+	usageFetching    bool
+	lastUsageAttempt time.Time
 	// lifecycleTarget is the agent the stop/retire confirmation is about,
 	// captured when the prompt opens rather than re-read when it is answered:
 	// the listing re-sorts under the cursor every two seconds, so resolving the
@@ -669,6 +692,12 @@ type (
 		// profilesErr is the profile listing's own failure, kept apart from
 		// err: it costs the spawn form one picker, not the whole console.
 		profilesErr error
+	}
+	// tuiUsageMsg carries one completed usage poll — the account's rolling
+	// limits and API spend, or the error that stopped the read.
+	tuiUsageMsg struct {
+		usage tuiUsage
+		err   error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -781,6 +810,12 @@ func (m tuiModel) viewportHeight() int {
 	}
 	if m.notice != "" {
 		chrome += lipgloss.Height(m.renderWrapped(m.notice))
+	}
+	// The usage line is one row by contract — fitUsageLine trims it to the
+	// terminal rather than wrapping — and is absent entirely until the console
+	// has a readout to show.
+	if m.usageLine() != "" {
+		chrome++
 	}
 	if m.confirmPrompt() != "" {
 		chrome += 2
@@ -1616,12 +1651,45 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiTickMsg:
-		if m.refreshing {
-			return m, tuiTickCmd()
+		cmds := []tea.Cmd{tuiTickCmd()}
+		// The usage readout rides this tick but on its own much slower cadence
+		// — see tuiUsageInterval — and independently of the listing poll, so a
+		// slow refresh cannot starve it.
+		if m.usageDue() {
+			m.usageFetching = true
+			m.lastUsageAttempt = time.Now()
+			cmds = append(cmds, m.usageCmd())
 		}
-		var refresh tea.Cmd
-		m, refresh = m.beginRefresh()
-		return m, tea.Batch(refresh, tuiTickCmd())
+		if !m.refreshing {
+			var refresh tea.Cmd
+			m, refresh = m.beginRefresh()
+			cmds = append(cmds, refresh)
+		}
+		return m, tea.Batch(cmds...)
+
+	case tuiUsageMsg:
+		m.usageFetching = false
+		if msg.err != nil {
+			// A daemon without the endpoint is not a broken readout, it is a
+			// readout that does not exist here: say nothing, and drop whatever
+			// an earlier daemon told us — those figures have no source now.
+			if tuiEndpointUnsupported(msg.err) {
+				m.usageUnsupported = true
+				m.usageLoaded = false
+				m.usageFailed = false
+				return m, nil
+			}
+			// Keep the last good figures if there are any: they are cached
+			// readings to begin with, and one failed poll of an optional
+			// readout must not blank a line the operator is reading.
+			m.usageFailed = !m.usageLoaded
+			return m, nil
+		}
+		m.usage = msg.usage
+		m.usageLoaded = true
+		m.usageFailed = false
+		m.usageUnsupported = false
+		return m, nil
 
 	case tuiDataMsg:
 		// Tests and other direct model callers may leave the generation at
@@ -2197,7 +2265,11 @@ func (m tuiModel) renderList() string {
 	if m.notice != "" {
 		b.WriteString(m.renderWrapped(m.notice) + "\n")
 	}
-	b.WriteString("\n  " + m.keyHintLine() + "\n")
+	b.WriteString("\n")
+	if usage := m.usageLine(); usage != "" {
+		b.WriteString("  " + usage + "\n")
+	}
+	b.WriteString("  " + m.keyHintLine() + "\n")
 
 	if prompt := m.confirmPrompt(); prompt != "" {
 		b.WriteString("\n  " + prompt + "\n")
