@@ -310,6 +310,12 @@ func applyStandingOrderTurnOrigin(
 	input HookCallbackInput,
 	envSessionID string,
 ) HookCallbackInput {
+	switch input.HookEventName {
+	case "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"Stop", "StopFailure":
+	default:
+		return input
+	}
 	state, err := loadStandingOrderSession(envSessionID)
 	if err != nil || state == nil || state.ConvID == "" ||
 		(input.ConvID != "" && input.ConvID != state.ConvID) {
