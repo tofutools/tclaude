@@ -2440,9 +2440,15 @@ func resumeLaunchCmdWithStackedProof(
 		if capsErr != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
 		}
-		if _, _, planErr := harness.PlanAccessEnforcement(axes, caps); planErr != nil {
+		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
+		if planErr != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", planErr)
 		}
+		effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			effectiveProfile.AccessNotices, notices...,
+		)
+		effectiveSandbox.Effective.AccessNotices = append(
+			[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
 	}
 	if outerLayer {
 		resolvedModel := harness.ResolvedModelTransport{}

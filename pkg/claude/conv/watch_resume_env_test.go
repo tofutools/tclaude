@@ -436,15 +436,30 @@ func TestStandaloneResumeDoesNotInheritUnenforcedNetworkAuthorization(t *testing
 		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin),
 	}))
 
-	_, _, _, err = resumeLaunchCmd(
-		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
-	require.Error(t, err)
-	assert.Equal(t,
-		"sandbox_profile_changed: Codex builtin sandbox (tools-only scope) cannot enforce closed network access; "+
-			"choose a sandbox implementation that can enforce closed network access, use network open, "+
-			"or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog",
-		err.Error(),
-	)
+	var launchSnapshot *sandboxpolicy.Snapshot
+	_, profilePath, _, err := resumeLaunchCmdWithStackedProof(
+		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil, nil,
+		&launchSnapshot)
+	if runtime.GOOS == "linux" {
+		require.Error(t, err)
+		assert.Equal(t,
+			"sandbox_profile_changed: Codex builtin sandbox (tools-only scope) cannot enforce closed network access; "+
+				"choose a sandbox implementation that can enforce closed network access, use network open, "+
+				"or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog",
+			err.Error(),
+		)
+		return
+	}
+
+	require.Equal(t, "darwin", runtime.GOOS, "native Windows is not supported")
+	require.NoError(t, err,
+		"a newly capable Darwin renderer may resume without inheriting the override")
+	t.Cleanup(func() { _ = os.Remove(profilePath) })
+	require.NotNil(t, launchSnapshot)
+	for _, notice := range launchSnapshot.Effective.AccessNotices {
+		assert.NotEqual(t, sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+			notice.Reason, "a successfully enforced resume must clear the stale warning")
+	}
 }
 
 func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {
