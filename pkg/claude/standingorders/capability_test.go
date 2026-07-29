@@ -62,12 +62,12 @@ func TestCapabilityUnknownTriggerAndTiming(t *testing.T) {
 
 // The rolled-up cell must report the worst case: the failure this feature has
 // to avoid is an operator believing guidance reached agents it never reached.
-func TestRolledUpCapabilityReportsWorstCase(t *testing.T) {
-	worst := RolledUpCapability(db.StandingTimingSameContinuation, db.StandingTriggerSessionStart)
+func TestPlatformCapabilityReportsWorstCase(t *testing.T) {
+	worst := PlatformCapability(db.StandingTimingSameContinuation, db.StandingTriggerSessionStart)
 	assert.Equal(t, StatusUnsupported, worst.Status)
 	assert.NotEmpty(t, worst.Detail)
 
-	fine := RolledUpCapability(db.StandingTimingNextTurn, db.StandingTriggerSessionStart)
+	fine := PlatformCapability(db.StandingTimingNextTurn, db.StandingTriggerSessionStart)
 	assert.Equal(t, StatusSupported, fine.Status)
 }
 
@@ -90,4 +90,33 @@ func TestOutcomeIsProblem(t *testing.T) {
 	} {
 		assert.True(t, OutcomeIsProblem(bad), bad)
 	}
+}
+
+// The distinction this pair of functions exists to preserve: a conv-targeted
+// Claude order is not "unsupported" merely because OpenCode exists somewhere.
+func TestReduceCapabilityUsesOnlyReachableHarnesses(t *testing.T) {
+	timing, event := db.StandingTimingSameContinuation, db.StandingTriggerSessionStart
+
+	reachable := ReduceCapability(timing, event, []string{harness.DefaultName})
+	assert.Equal(t, StatusSupported, reachable.Status,
+		"a Claude-only target must not inherit OpenCode's limitation")
+
+	assert.Equal(t, StatusUnsupported, PlatformCapability(timing, event).Status,
+		"the platform-wide answer is still the worst case")
+}
+
+func TestReduceCapabilityMixedGroupTakesWorstCase(t *testing.T) {
+	c := ReduceCapability(db.StandingTimingSameContinuation, db.StandingTriggerSessionStart,
+		[]string{harness.DefaultName, harness.CodexName, harness.OpenCodeName})
+
+	assert.Equal(t, StatusUnsupported, c.Status)
+	assert.NotEmpty(t, c.Detail)
+}
+
+// Nothing reachable means nothing delivered — never "supported".
+func TestReduceCapabilityEmptyListIsUnsupported(t *testing.T) {
+	c := ReduceCapability(db.StandingTimingNextTurn, db.StandingTriggerSessionStart, nil)
+
+	assert.Equal(t, StatusUnsupported, c.Status)
+	assert.Equal(t, db.StandingTransportNone, c.Transport)
 }

@@ -129,19 +129,37 @@ func CapabilityByHarness(timing, event string) map[string]Capability {
 	return out
 }
 
-// RolledUpCapability reduces the per-harness answers to the worst case, so a
-// single dashboard cell can say "not everyone gets this" without the operator
-// having to expand every row.
+// ReduceCapability reduces the answers for a specific set of harnesses to the
+// worst case, so a single cell can say "not everyone gets this" without the
+// operator having to expand every row.
 //
 // Worst-case rather than typical-case on purpose: the failure this feature has
 // to avoid is an operator believing guidance reached agents it never reached.
-func RolledUpCapability(timing, event string) Capability {
-	worst := Capability{Status: StatusSupported, Transport: db.StandingTransportHookContext}
+//
+// The caller supplies the harnesses that are ACTUALLY REACHABLE by the order —
+// resolved from the conv target, or from the live group roster for a group
+// target. That distinction is the whole point of this function existing
+// separately from PlatformCapability: rolling up across every harness tclaude
+// knows about would mark a conv-targeted Claude order "unsupported" because
+// some other agent somewhere runs OpenCode, which is not a fact about that
+// order at all.
+//
+// An empty list reduces to unsupported-with-no-detail rather than to
+// "supported": if nothing is reachable, nothing is delivered.
+func ReduceCapability(timing, event string, harnesses []string) Capability {
+	if len(harnesses) == 0 {
+		return Capability{
+			Status:    StatusUnsupported,
+			Transport: db.StandingTransportNone,
+			Detail:    "no reachable target",
+		}
+	}
 	rank := map[Status]int{StatusSupported: 0, StatusDegraded: 1, StatusUnsupported: 2}
+	worst := Capability{Status: StatusSupported, Transport: db.StandingTransportHookContext}
 	var detail string
-	for _, h := range KnownHarnesses {
+	for i, h := range harnesses {
 		c := CapabilityFor(timing, event, h)
-		if rank[c.Status] > rank[worst.Status] {
+		if i == 0 || rank[c.Status] > rank[worst.Status] {
 			worst = c
 			detail = c.Detail
 		} else if c.Status == worst.Status && c.Detail != "" && detail == "" {
@@ -150,4 +168,14 @@ func RolledUpCapability(timing, event string) Capability {
 	}
 	worst.Detail = detail
 	return worst
+}
+
+// PlatformCapability is the worst case across every harness tclaude supports.
+//
+// It answers "could this order be authored to work everywhere", NOT "does this
+// order reach its targets" — those are different questions and conflating them
+// is misleading in both directions. Use ReduceCapability with the order's real
+// target harnesses for the second one.
+func PlatformCapability(timing, event string) Capability {
+	return ReduceCapability(timing, event, KnownHarnesses)
 }

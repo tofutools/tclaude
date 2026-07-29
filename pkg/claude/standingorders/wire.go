@@ -32,12 +32,18 @@ type TriggerView struct {
 
 // EvaluationView is the most recent ledger row for an order.
 type EvaluationView struct {
-	At         time.Time `json:"at"`
-	Outcome    string    `json:"outcome"`
-	Transport  string    `json:"transport,omitempty"`
-	Harness    string    `json:"harness,omitempty"`
-	Detail     string    `json:"detail,omitempty"`
-	TargetConv string    `json:"target_conv,omitempty"`
+	At      time.Time `json:"at"`
+	Outcome string    `json:"outcome"`
+	// Problem is OutcomeIsProblem(Outcome), carried on the payload because the
+	// dashboard runs in a browser and cannot call the Go helper. Without it
+	// the UI has to keep its own outcome-to-severity branch, which is exactly
+	// the vocabulary drift this shared payload exists to prevent: a new
+	// outcome added here would silently render as "fine" over there.
+	Problem    bool   `json:"problem"`
+	Transport  string `json:"transport,omitempty"`
+	Harness    string `json:"harness,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	TargetConv string `json:"target_conv,omitempty"`
 }
 
 // OrderView is one standing order as the dashboard sees it.
@@ -61,7 +67,16 @@ type OrderView struct {
 	Timing  string `json:"timing"`
 	Cadence string `json:"cadence"`
 
-	Capability          Capability            `json:"capability"`
+	// Capability is the worst case across the harnesses this order can
+	// ACTUALLY reach, resolved by the caller from the conv target or the live
+	// group roster. It is null when the caller could not resolve them, because
+	// "we don't know who this reaches" is a different answer from "it reaches
+	// nobody" and the UI should not render one as the other.
+	Capability *Capability `json:"capability"`
+	// PlatformCapability is the worst case across every harness tclaude
+	// supports. It answers "could this order be authored to work everywhere",
+	// not "does it reach its targets" — see ReduceCapability.
+	PlatformCapability  Capability            `json:"platform_capability"`
 	CapabilityByHarness map[string]Capability `json:"capability_by_harness"`
 
 	LastEvaluation *EvaluationView `json:"last_evaluation"`
@@ -70,10 +85,16 @@ type OrderView struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// NewOrderView projects a stored order into the wire shape. groupName is
-// resolved by the caller (which has the group registry) and may be empty;
-// latest may be nil when the order has never produced a ledger row.
-func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDelivery) OrderView {
+// NewOrderView projects a stored order into the wire shape.
+//
+// groupName is resolved by the caller (which has the group registry) and may
+// be empty; latest may be nil when the order has never produced a ledger row.
+//
+// targetHarnesses are the harnesses the order can actually reach — the
+// recipient's harness for a conv target, or the distinct harnesses on the live
+// roster for a group target. Pass nil when they cannot be resolved; Capability
+// is then null rather than a guess.
+func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDelivery, targetHarnesses []string) OrderView {
 	v := OrderView{
 		ID:               o.ID,
 		Name:             o.Name,
@@ -99,15 +120,20 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		},
 		Timing:              o.Timing,
 		Cadence:             o.Cadence,
-		Capability:          RolledUpCapability(o.Timing, o.TriggerEvent),
+		PlatformCapability:  PlatformCapability(o.Timing, o.TriggerEvent),
 		CapabilityByHarness: CapabilityByHarness(o.Timing, o.TriggerEvent),
 		CreatedAt:           o.CreatedAt,
 		UpdatedAt:           o.UpdatedAt,
+	}
+	if len(targetHarnesses) > 0 {
+		reachable := ReduceCapability(o.Timing, o.TriggerEvent, targetHarnesses)
+		v.Capability = &reachable
 	}
 	if latest != nil {
 		v.LastEvaluation = &EvaluationView{
 			At:         latest.CreatedAt,
 			Outcome:    latest.Outcome,
+			Problem:    OutcomeIsProblem(latest.Outcome),
 			Transport:  latest.Transport,
 			Harness:    latest.Harness,
 			Detail:     latest.Detail,
