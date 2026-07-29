@@ -39,7 +39,11 @@ type jobsPage struct {
 			} `json:"trigger"`
 			LastEvaluation *struct {
 				Outcome string `json:"outcome"`
+				Problem bool   `json:"problem"`
 			} `json:"last_evaluation"`
+			Capability *struct {
+				Status string `json:"status"`
+			} `json:"capability"`
 		} `json:"order"`
 	} `json:"rows"`
 	Offset          int `json:"offset"`
@@ -64,6 +68,11 @@ func getJobs(t *testing.T, dash http.Handler, query string) jobsPage {
 func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	f := newFlow(t)
 	group := f.HaveGroup("gamma-team")
+	const orderTarget = "jjj00000-0000-4000-8000-000000000003"
+	f.HaveMemberWithRole(group.Name, orderTarget, "reviewer")
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "standing-order-target", ConvID: orderTarget, Harness: "codex",
+	}))
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	_, err := db.InsertExportJob(&db.ExportJob{
@@ -86,6 +95,7 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 		Name:             "pr-early",
 		TargetKind:       db.StandingTargetGroup,
 		GroupID:          group.ID,
+		TargetRole:       "reviewer",
 		Summary:          "Push the pull request early.",
 		TriggerEvent:     db.StandingTriggerSessionStart,
 		TriggerSources:   []string{db.StandingSourceCompact},
@@ -132,6 +142,9 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 			assert.Equal(t, "session.start (compact)", r.Order.Trigger.Label)
 			require.NotNil(t, r.Order.LastEvaluation)
 			assert.Equal(t, db.StandingOutcomeDelivered, r.Order.LastEvaluation.Outcome)
+			assert.False(t, r.Order.LastEvaluation.Problem)
+			require.NotNil(t, r.Order.Capability)
+			assert.Equal(t, "supported", r.Order.Capability.Status)
 		}
 	}
 	assert.Equal(t, map[string]int{"export": 2, "cron": 1, "standing-order": 1}, kinds)

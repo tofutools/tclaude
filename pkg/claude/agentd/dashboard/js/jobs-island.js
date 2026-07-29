@@ -117,11 +117,11 @@ function StandingOrderOutcome({ evaluation }) {
   const outcome = evaluation.outcome || 'unknown';
   const cls = outcome === 'delivered'
     ? 'state-working'
-    : outcome === 'no-match' || outcome === 'suppressed-cadence'
-      ? 'state-offline'
-      : outcome === 'not-evaluated-trimmed'
-        ? 'state-error'
-        : 'state-awaiting';
+    : outcome === 'not-evaluated-trimmed'
+      ? 'state-error'
+      : evaluation.problem
+        ? 'state-awaiting'
+        : 'state-offline';
   return html`<${Fragment}>
     <span class=${`state-pill ${cls}`} title=${evaluation.detail || outcome}>${outcome}</span>
     ${evaluation.detail && html`<div class="muted order-evaluation-detail" title=${evaluation.detail}>${evaluation.detail}</div>`}
@@ -129,8 +129,14 @@ function StandingOrderOutcome({ evaluation }) {
 }
 
 function StandingOrderCapability({ capability }) {
-  const value = capability || {};
-  const status = value.status || 'unsupported';
+  if (!capability) {
+    return html`<${Fragment}>
+      <span class="state-pill state-offline" title="Target harnesses could not be resolved">unknown</span>
+      <div class="muted">target capability</div>
+    </${Fragment}>`;
+  }
+  const value = capability;
+  const status = value.status;
   const cls = status === 'supported' ? 'state-working' : status === 'degraded' ? 'state-awaiting' : 'state-error';
   return html`<${Fragment}>
     <span class=${`state-pill ${cls}`} title=${value.detail || status}>${status}</span>

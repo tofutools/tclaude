@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 )
 
@@ -145,7 +146,8 @@ func collectJobRows() []dashboardJobRow {
 				}
 			}
 			latest, _ := db.LatestStandingDelivery(order.ID)
-			view := standingorders.NewOrderView(order, groupName, latest)
+			view := standingorders.NewOrderView(
+				order, groupName, latest, standingOrderTargetHarnesses(order))
 			at := order.UpdatedAt
 			if latest != nil {
 				at = latest.CreatedAt
@@ -173,6 +175,50 @@ func collectJobRows() []dashboardJobRow {
 	out := make([]dashboardJobRow, 0, len(all))
 	for _, k := range all {
 		out = append(out, k.row)
+	}
+	return out
+}
+
+// standingOrderTargetHarnesses resolves only the live recipients this order
+// can actually reach. nil means resolution was incomplete (capability unknown);
+// a non-nil empty slice means resolution succeeded and found no recipients.
+func standingOrderTargetHarnesses(order *db.StandingOrder) []string {
+	var convs []string
+	if order.IsGroupTarget() {
+		members, err := db.ListAgentGroupMembers(order.GroupID)
+		if err != nil {
+			return nil
+		}
+		convs = make([]string, 0, len(members))
+		for _, member := range members {
+			if order.TargetRole != "" && !strings.EqualFold(order.TargetRole, member.Role) {
+				continue
+			}
+			convs = append(convs, member.ConvID)
+		}
+	} else {
+		convs = make([]string, 0, 1)
+		if order.TargetConv != "" {
+			convs = append(convs, order.TargetConv)
+		}
+	}
+
+	out := make([]string, 0, len(convs))
+	seen := map[string]struct{}{}
+	for _, convID := range convs {
+		sessionRow, err := db.FindSessionByConvID(convID)
+		if err != nil || sessionRow == nil {
+			return nil
+		}
+		name := sessionRow.Harness
+		if name == "" {
+			name = harness.DefaultName
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
 	}
 	return out
 }

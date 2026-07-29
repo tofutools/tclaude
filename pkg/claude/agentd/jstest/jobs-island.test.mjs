@@ -33,7 +33,7 @@ function page(name = 'Daily summary') {
         capability: { status: 'degraded', transport: 'hook-context', detail: 'OpenCode uses a queued turn.' },
         last_evaluation: {
           at: '2026-07-11T12:00:00Z', outcome: 'not-evaluated-trimmed',
-          detail: 'Tool input was trimmed.',
+          problem: true, detail: 'Tool input was trimmed.',
         },
       } },
     ],
