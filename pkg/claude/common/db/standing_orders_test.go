@@ -160,6 +160,39 @@ func TestStandingOrder_TextEditBumpsRevision(t *testing.T) {
 	assert.Contains(t, got.Summary, "cold review")
 }
 
+func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("before"))
+	require.NoError(t, err)
+
+	replacement := sampleOrder("after")
+	replacement.Summary = "Updated instruction."
+	replacement.TriggerSources = []string{StandingSourceResume}
+	replacement.Timing = StandingTimingNextTurn
+	replacement.Cadence = StandingCadenceOncePerGeneration
+	replacement.Enabled = false
+	replacement.DisabledReason = StandingDisabledReasonGroupRetired
+	require.NoError(t, UpdateStandingOrder(id, 1, replacement))
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(2), got.Revision)
+	assert.Equal(t, "after", got.Name)
+	assert.Equal(t, "Updated instruction.", got.Summary)
+	assert.Equal(t, []string{StandingSourceResume}, got.TriggerSources)
+	assert.Equal(t, StandingTimingNextTurn, got.Timing)
+	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
+	assert.False(t, got.Enabled)
+	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
+
+	stale := sampleOrder("stale-overwrite")
+	err = UpdateStandingOrder(id, 1, stale)
+	assert.ErrorIs(t, err, ErrStandingOrderRevisionConflict)
+	got, _ = GetStandingOrder(id)
+	assert.Equal(t, "after", got.Name, "a stale writer cannot overwrite the accepted edit")
+}
+
 func TestStandingOrder_EnableDisableClearsReason(t *testing.T) {
 	setupTestDB(t)
 	id, err := InsertStandingOrder(sampleOrder("pr-early"))
@@ -292,6 +325,23 @@ func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	recs, err := ListStandingDeliveries(id, 10)
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+}
+
+func TestStandingOrder_DeleteRevisionRejectsStaleEditor(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	require.NoError(t, UpdateStandingOrderText(id, "New wording."))
+
+	assert.ErrorIs(t, DeleteStandingOrderRevision(id, 1), ErrStandingOrderRevisionConflict)
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	require.NoError(t, DeleteStandingOrderRevision(id, 2))
+	got, err = GetStandingOrder(id)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestStandingOrder_TriggerLabelAndSourceMatching(t *testing.T) {

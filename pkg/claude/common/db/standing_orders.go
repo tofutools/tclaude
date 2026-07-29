@@ -152,6 +152,11 @@ var ErrStandingOrderNameTaken = errors.New("standing order name already exists")
 // ErrStandingOrderInvalid classifies a write rejected by Validate.
 var ErrStandingOrderInvalid = errors.New("invalid standing order")
 
+// ErrStandingOrderRevisionConflict reports an edit based on a stale revision.
+// Dashboard dialogs carry the revision they opened so two operator tabs cannot
+// silently overwrite one another's trigger or model-visible text.
+var ErrStandingOrderRevisionConflict = errors.New("standing order revision conflict")
+
 // StandingOrder is a row in agent_standing_orders: durable guidance delivered
 // when a trigger matches rather than on a wall clock.
 //
@@ -558,17 +563,60 @@ func UpdateStandingOrderText(id int64, summary string) error {
 	return err
 }
 
-// SetStandingOrderEnabled toggles an order and clears any disabled_reason.
-// An explicit enable/disable is always a human-managed choice, so it resets
-// the marker that distinguishes tclaude's own auto-pauses.
+// UpdateStandingOrder replaces every operator-editable field and bumps the
+// revision atomically. expectedRevision is an optimistic-concurrency guard:
+// the edit is rejected if another writer changed the order after the dialog
+// opened.
+func UpdateStandingOrder(id, expectedRevision int64, o *StandingOrder) error {
+	if expectedRevision <= 0 {
+		return fmt.Errorf("%w: expected revision is required", ErrStandingOrderInvalid)
+	}
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE agent_standing_orders SET
+		name = ?, revision = revision + 1,
+		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
+		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
+		enabled = ?, disabled_reason = ?, operator_authored = ?, updated_at = ?
+		WHERE id = ? AND revision = ?`,
+		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
+		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
+		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), formatStandingTime(time.Now()),
+		id, expectedRevision)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("UpdateStandingOrder %q: %w", o.Name, ErrStandingOrderNameTaken)
+		}
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStandingOrderRevisionConflict
+	}
+	return nil
+}
+
+// SetStandingOrderEnabled toggles an order, clears any disabled_reason, and
+// bumps its revision when the state changes. The bump both invalidates a
+// concurrently open editor and re-arms delivery when an operator explicitly
+// enables an order again.
 func SetStandingOrderEnabled(id int64, enabled bool) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
 	_, err = d.Exec(`UPDATE agent_standing_orders
-		SET enabled = ?, disabled_reason = '', updated_at = ? WHERE id = ?`,
-		boolToInt(enabled), formatStandingTime(time.Now()), id)
+		SET enabled = ?, disabled_reason = '', revision = revision + 1, updated_at = ?
+		WHERE id = ? AND (enabled != ? OR disabled_reason != '')`,
+		boolToInt(enabled), formatStandingTime(time.Now()), id, boolToInt(enabled))
 	return err
 }
 
@@ -587,6 +635,40 @@ func DeleteStandingOrder(id int64) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_standing_orders WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteStandingOrderRevision removes an order and its ledger only if the
+// caller still holds the current revision. Dashboard editors use this so a
+// stale tab cannot delete an order that another operator has since rewritten.
+func DeleteStandingOrderRevision(id, expectedRevision int64) error {
+	if expectedRevision <= 0 {
+		return fmt.Errorf("%w: expected revision is required", ErrStandingOrderInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`DELETE FROM agent_standing_orders WHERE id = ? AND revision = ?`,
+		id, expectedRevision)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStandingOrderRevisionConflict
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries WHERE order_id = ?`, id); err != nil {
 		return err
 	}
 	return tx.Commit()

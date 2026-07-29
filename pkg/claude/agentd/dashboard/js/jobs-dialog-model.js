@@ -125,3 +125,92 @@ export function buildCronMutation(dialog, draft) {
 export function resetCronDraftForAnother(draft) {
   return { ...draft, name: '', subject: '', body: '' };
 }
+
+export function standingOrderToPrefill(order = {}) {
+  const target = order.target || {};
+  const groupTarget = target.kind === 'group';
+  return {
+    name: text(order.name),
+    revision: Number(order.revision) || 0,
+    targetMode: groupTarget ? 'group' : 'solo',
+    target: groupTarget ? '' : text(target.agent),
+    groupName: groupTarget ? text(target.group_name || target.group_id) : '',
+    role: groupTarget ? text(target.role) : '',
+    summary: text(order.summary),
+    sources: Array.isArray(order.trigger?.sources) ? [...order.trigger.sources] : [],
+    timing: text(order.timing),
+    cadence: text(order.cadence),
+    enabled: !!order.enabled,
+  };
+}
+
+export function createStandingOrderDraft(prefill = {}) {
+  const mode = prefill.targetMode === 'group' ? 'group' : 'solo';
+  const sources = Array.isArray(prefill.sources) ? [...prefill.sources] : [];
+  return {
+    name: text(prefill.name),
+    revision: Number(prefill.revision) || 0,
+    target: {
+      mode,
+      target: mode === 'solo' ? text(prefill.target) : '',
+      groupName: mode === 'group' ? text(prefill.groupName) : '',
+      scopeGroup: text(prefill.scopeGroup),
+    },
+    role: text(prefill.role),
+    summary: text(prefill.summary),
+    sourceMode: sources.length ? 'selected' : 'any',
+    sources,
+    timing: prefill.timing === 'next-turn' ? 'next-turn' : 'same-continuation',
+    cadence: prefill.cadence === 'once-per-generation' ? 'once-per-generation' : 'always',
+    enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
+  };
+}
+
+export function standingOrderDraftDirty(draft, initial) {
+  return JSON.stringify(draft) !== JSON.stringify(initial);
+}
+
+export function validateStandingOrderDraft(dialog, draft) {
+  const target = cronTargetValue(draft.target);
+  if (!target) {
+    if (draft.target.mode === 'group') {
+      return { code: 'group-target', message: 'Pick a group from the dropdown (or create one first via the Groups tab).' };
+    }
+    if (draft.target.scopeGroup) {
+      return { code: 'scoped-target', message: 'This group has no members — switch to Group (multicast), or add a member first.' };
+    }
+    return { code: 'solo-target', message: 'Target is required — type a stable agt_ id / title or use 🔍 to pick.' };
+  }
+  if (!draft.name.trim()) return { code: 'name', message: 'Name is required.' };
+  if (!draft.summary.trim()) return { code: 'summary', message: 'Instruction is required.' };
+  if (draft.sourceMode === 'selected' && draft.sources.length === 0) {
+    return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
+  }
+  if (dialog.kind === 'edit' && !draft.revision) {
+    return { code: 'revision', message: 'This order has no revision; reload the Automations page and try again.' };
+  }
+  return null;
+}
+
+export function buildStandingOrderMutation(dialog, draft) {
+  const payload = {
+    name: draft.name.trim(),
+    target: cronTargetValue(draft.target),
+    role: draft.target.mode === 'group' ? draft.role.trim() : '',
+    summary: draft.summary.trim(),
+    trigger_event: 'session.start',
+    sources: draft.sourceMode === 'any' ? [] : [...draft.sources],
+    timing: draft.timing,
+    cadence: draft.cadence,
+    enabled: draft.enabled,
+  };
+  if (dialog.kind === 'edit') {
+    payload.revision = draft.revision;
+    return {
+      path: `/api/standing-orders/${encodeURIComponent(dialog.id)}`,
+      method: 'PATCH',
+      payload,
+    };
+  }
+  return { path: '/api/standing-orders', method: 'POST', payload };
+}

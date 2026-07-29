@@ -61,6 +61,10 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
     runCron: () => calls.push('run'), toggleCron: () => calls.push('toggle'),
     deleteCron: () => calls.push('delete'), downloadExport: () => calls.push('download'),
     dismissExport: () => calls.push('dismiss'),
+    openStandingOrderCreate: () => calls.push('order-create'),
+    openStandingOrderEdit: () => calls.push('order-edit'),
+    toggleStandingOrder: () => calls.push('order-toggle'),
+    deleteStandingOrder: () => calls.push('order-delete'),
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
   const badge = await harness.mount(harness.html`<${JobsBadge} state=${state} />`);
@@ -83,6 +87,10 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   assert.match(orderRow.textContent, /pr-early/);
   assert.match(orderRow.textContent, /not-evaluated-trimmed/);
   assert.ok(orderRow.querySelector('.state-error'), 'trimmed evaluation is visually distinct');
+  await harness.act(() => harness.fireEvent(getByRole(orderRow, 'button', { name: 'edit' }), 'click'));
+  await harness.act(() => harness.fireEvent(getByRole(orderRow, 'button', { name: 'disable' }), 'click'));
+  assert.ok(calls.includes('order-edit'));
+  assert.ok(calls.includes('order-toggle'));
   const edit = getByRole(cronRow, 'button', { name: 'edit' });
   edit.focus();
   const selectedTextNode = cronRow.querySelector('.rowname').firstChild;

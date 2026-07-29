@@ -12,12 +12,17 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   let confirms = true;
   let creates = 0;
   let duplicates = 0;
+  let orderCreates = 0;
+  const orderEdits = [];
   const state = {
     upsertCron: () => {},
     openCronCreate: () => { creates += 1; },
     openCronEdit: (job) => edits.push(job),
     openCronDuplicate: () => { duplicates += 1; },
     closeCronDialog: () => {},
+    openStandingOrderCreate: () => { orderCreates += 1; },
+    openStandingOrderEdit: (order) => orderEdits.push(order),
+    closeStandingOrderDialog: () => {},
   };
   const actions = createJobsActions({
     state,
@@ -31,27 +36,41 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   actions.openCronCreate();
   actions.openCronEdit({ id: 4 });
   actions.openCronDuplicate({ id: 4 });
+  actions.openStandingOrderCreate();
+  actions.openStandingOrderEdit({ id: 12 });
   actions.downloadExport({ id: 9 });
   assert.equal(creates, 1);
   assert.deepEqual(edits, [{ id: 4 }]);
   assert.equal(duplicates, 1);
+  assert.equal(orderCreates, 1);
+  assert.deepEqual(orderEdits, [{ id: 12 }]);
   assert.deepEqual(downloads, [9]);
 
   await actions.toggleCron({ id: 4, name: 'daily', enabled: true });
   await actions.runCron({ id: 4, name: 'daily' });
   await actions.deleteCron({ id: 4, name: 'daily' });
   await actions.dismissExport({ id: 9, title: 'summary' });
+  await actions.toggleStandingOrder({ id: 12, name: 'pr-early', enabled: true });
+  await actions.deleteStandingOrder({ id: 12, revision: 4, name: 'pr-early' });
   assert.deepEqual(mutations, [
     { path: '/api/cron/4/disable', options: { method: 'POST' } },
     { path: '/api/cron/4/run-now', options: { method: 'POST' } },
     { path: '/api/cron/4', options: { method: 'DELETE' } },
     { path: '/api/export-jobs/9', options: { method: 'DELETE' } },
+    { path: '/api/standing-orders/12/disable', options: { method: 'POST' } },
+    { path: '/api/standing-orders/12?revision=4', options: { method: 'DELETE' } },
   ]);
-  assert.equal(notices.length, 4);
+  assert.equal(notices.length, 6);
 
   confirms = false;
   assert.equal(await actions.deleteCron({ id: 5, name: 'keep' }), false);
-  assert.equal(mutations.length, 4, 'cancelled destructive action does not mutate');
+  assert.equal(mutations.length, 6, 'cancelled destructive action does not mutate');
+
+  confirms = false;
+  assert.equal(await actions.toggleStandingOrder({
+    id: 13, name: 'retired', enabled: false, disabled_reason: 'group-retired',
+  }), false);
+  assert.equal(mutations.length, 6, 'automatic retirement requires explicit re-enable confirmation');
 
   const failing = createJobsActions({
     state,

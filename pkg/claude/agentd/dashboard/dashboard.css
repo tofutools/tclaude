@@ -5027,6 +5027,28 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-family: inherit; cursor: pointer;
 }
 .cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+.standing-order-target-picker > select { width: 100%; }
+.standing-order-field {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px;
+}
+.standing-order-field > .cron-target-modes {
+  display: flex; flex-wrap: wrap; gap: 12px; color: #c9d1d9;
+}
+.standing-order-options {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px; padding: 8px 10px;
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
+}
+.standing-order-options label,
+.standing-order-choice {
+  display: flex; align-items: flex-start; gap: 7px; cursor: pointer;
+}
+.standing-order-choice input { margin-top: 2px; }
+.standing-order-choice > span {
+  display: flex; flex-direction: column; gap: 2px; line-height: 1.35;
+}
+.standing-order-choice strong { color: #c9d1d9; font-weight: 600; }
+.standing-order-retirement-warning { margin: 0; }
 .spawn-unenforced-toggle {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
 }
