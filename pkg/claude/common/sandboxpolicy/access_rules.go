@@ -121,13 +121,10 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 	network := NetworkRules{}
 	sockets := UnixSocketRules{}
 	if p.Network != nil {
-		network = cloneNetworkRules(*p.Network)
-		if network.Baseline != "" {
-			var err error
-			network, err = MaterializeNetworkRules(network)
-			if err != nil {
-				return ResolvedAxes{}, err
-			}
+		var err error
+		network, err = resolvedNetworkRules(*p.Network)
+		if err != nil {
+			return ResolvedAxes{}, err
 		}
 		if err := validateLegacyNetworkAgreement(p.NetworkAccess, network.Mode); err != nil {
 			return ResolvedAxes{}, err
@@ -157,6 +154,16 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 	return ResolvedAxes{Network: network, UnixSockets: sockets}, nil
 }
 
+// resolvedNetworkRules clones the authored rules and, when a baseline is
+// present, materializes pack references into the effective mode and entries.
+func resolvedNetworkRules(network NetworkRules) (NetworkRules, error) {
+	resolved := cloneNetworkRules(network)
+	if resolved.Baseline == "" {
+		return resolved, nil
+	}
+	return MaterializeNetworkRules(resolved)
+}
+
 func validateLegacyNetworkAgreement(legacy NetworkAccess, mode AccessMode) error {
 	if legacy == NetworkAccessInherit {
 		return nil
@@ -178,13 +185,9 @@ func LegacyNetworkAccessForExport(network *NetworkRules, stored NetworkAccess) N
 	if network == nil {
 		return stored
 	}
-	resolved := cloneNetworkRules(*network)
-	if resolved.Baseline != "" {
-		var err error
-		resolved, err = MaterializeNetworkRules(resolved)
-		if err != nil {
-			return NetworkAccessInherit
-		}
+	resolved, err := resolvedNetworkRules(*network)
+	if err != nil {
+		return NetworkAccessInherit
 	}
 	switch resolved.Mode {
 	case AccessModeOpen:

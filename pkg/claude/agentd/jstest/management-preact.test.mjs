@@ -1551,9 +1551,25 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
     'expanded pack destinations are read-only');
   await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
-  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 0,
-    'defaults are applied only on the first transition to Deny all');
+    'allow-all carries no unlocks in the draft');
+  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 3,
+    'returning to Deny all restores the session-retained unlocks instead of re-deriving defaults');
+  // Clear via the attribute: LinkeDOM inputs have no checked accessor, and an
+  // own-property write would detach this element from attribute-backed
+  // rendering for the rest of the test.
+  const uncheck = newDraft.host.querySelector('.sbx-network-pack input:checked');
+  await harness.act(() => {
+    uncheck.removeAttribute('checked');
+    uncheck.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  });
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
+    'unchecking a default pack takes effect');
+  await harness.act(() => { choose(newBaseline, 'inherit'); harness.fireEvent(newBaseline, 'change'); });
+  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 2,
+    'an unchecked default stays unchecked across baseline flips; defaults are never re-applied');
   newDraft.unmount();
   newDraft.host.remove();
 });

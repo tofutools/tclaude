@@ -243,12 +243,27 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
     const next = kind === 'loopback' ? { loopback: true, ports: rules.allow[index].ports || [] } : { [kind]: '', ports: rules.allow[index].ports || [] };
     update({ allow: rules.allow.map((row, i) => i === index ? next : row) });
   };
+  // Unlocks are retained session-locally across baseline flips so an
+  // accidental select change is recoverable; the stored draft still carries
+  // no packs or allow rows while the baseline is allow/inherit.
+  const retainedUnlocks = useRef(null);
   const changeBaseline = (baseline) => {
-    const packs = baseline === 'deny' && defaultsAvailable ? DEFAULT_NETWORK_PACKS : [];
-    if (baseline === 'deny' && defaultsAvailable) setDefaultsAvailable(false);
+    if (deny && baseline !== 'deny') {
+      retainedUnlocks.current = { packs: rules.packs, allow: rules.allow };
+    }
+    let packs = [];
+    let allow = [];
+    if (baseline === 'deny') {
+      if (retainedUnlocks.current) {
+        ({ packs, allow } = retainedUnlocks.current);
+      } else if (defaultsAvailable) {
+        packs = DEFAULT_NETWORK_PACKS;
+        setDefaultsAvailable(false);
+      }
+    }
     setDraft((value) => ({
       ...value,
-      network: { baseline, packs, allow: [] },
+      network: { baseline, packs, allow },
     }));
   };
   const togglePack = (id, checked) => update({
