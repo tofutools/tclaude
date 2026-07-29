@@ -2665,7 +2665,7 @@ func applyOpenCodeHooks(
 		} else if originUncertain {
 			input.StandingOrderOrigin = true
 		}
-		if input.StandingOrderNativeOnly {
+		if input.StandingOrderOnly {
 			deliverOpenCodeStandingOrders(input, runtime.SessionID)
 			continue
 		}

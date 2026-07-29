@@ -27,11 +27,19 @@ func TestOpenCodeEventProjectorMapping(t *testing.T) {
 		wantEvents []string
 		wantTool   string
 		wantDetail string
+		wantSource string
 	}{
 		{
 			name:       "session created",
 			event:      openCodeTestEvent("evt_created", "session.created", convID, ``),
 			wantEvents: []string{"SessionStart"},
+			wantSource: "startup",
+		},
+		{
+			name:       "session compacted",
+			event:      openCodeTestEvent("evt_compacted", "session.compacted", convID, ``),
+			wantEvents: []string{"SessionStart"},
+			wantSource: "compact",
 		},
 		{
 			name: "busy",
@@ -151,6 +159,7 @@ func TestOpenCodeEventProjectorMapping(t *testing.T) {
 			if len(got) == 0 {
 				return
 			}
+			assert.Equal(t, tt.wantSource, got[0].Source)
 			switch got[0].HookEventName {
 			case "Notification":
 				assert.Equal(t, "elicitation_dialog", got[0].NotificationType)
@@ -369,6 +378,12 @@ func TestOpenCodeNativeHookSessionIdentityUsesEventWireShape(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "compaction session id",
+			event: openCodeTestEvent(
+				"evt_compacted_native", "session.compacted", convID, ``),
+			want: true,
+		},
+		{
 			name: "foreign nested session",
 			event: `{"id":"evt_foreign_message","type":"message.updated","properties":{` +
 				`"info":{"id":"msg_2","sessionID":"ses_other","role":"assistant"}}}`,
@@ -384,10 +399,67 @@ func TestOpenCodeNativeHookSessionIdentityUsesEventWireShape(t *testing.T) {
 			assert.Equal(t, tt.want, ok)
 			if ok {
 				assert.Equal(t, convID, native.ConvID)
-				assert.True(t, native.StandingOrderNativeOnly)
+				assert.True(t, native.StandingOrderOnly)
 			}
 		})
 	}
+}
+
+func TestOpenCodeCompactionProjectsPortableStandingOrderBoundary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	const (
+		sessionID = "spwn-opencode-compact-order"
+		convID    = "ses_opencode_compact_order"
+	)
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID, Cwd: home,
+		Harness: harness.OpenCodeName, Status: session.StatusWorking,
+	}))
+	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:           "after-compact",
+		TargetKind:     db.StandingTargetConv,
+		TargetAgent:    agentID,
+		Summary:        "Re-read the durable project constraints.",
+		TriggerEvent:   db.StandingTriggerSessionStart,
+		TriggerSources: []string{db.StandingSourceCompact},
+		Timing:         db.StandingTimingNextTurn,
+		Cadence:        db.StandingCadenceAlways,
+		Enabled:        true,
+	})
+	require.NoError(t, err)
+
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, Cwd: home,
+	}
+	projector := newOpenCodeEventProjector(convID, home)
+	require.True(t, consumeOpenCodeEvent(context.Background(), runtime, projector,
+		json.RawMessage(openCodeTestEvent(
+			"evt_compacted", "session.compacted", convID, ``))))
+
+	messages, err := db.ListAgentMessagesForConv(convID, 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "[standing-order:after-compact]", messages[0].Subject)
+	assert.Contains(t, messages[0].Body, "Re-read the durable project constraints.")
+
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+
+	state, err := session.LoadSessionState(sessionID)
+	require.NoError(t, err)
+	assert.True(t, state.LastHook.IsZero(),
+		"the portable boundary is standing-order-only, not a synthetic status callback")
+	assert.Equal(t, session.StatusWorking, state.Status,
+		"a compact boundary is an in-process continuation, not an idle boundary")
 }
 
 func TestOpenCodeProjectionDrivesSharedStatusStateMachine(t *testing.T) {

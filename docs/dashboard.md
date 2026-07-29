@@ -1174,11 +1174,15 @@ semantics the evaluator already implements:
   recipient agent. The cooldown follows the agent across `/clear` and
   reincarnation rather than resetting with its conversation ID.
 
-Action triggers currently use the inline hook-context channel on Claude Code
-and Codex. OpenCode projects the equivalent events from an observation-only
-stream, but queued action-trigger delivery is deliberately reported as
-unsupported until messages can carry a trigger-origin marker. Without that
-marker, an automation-created prompt or tool turn could trigger itself.
+Action triggers use the inline hook-context channel on Claude Code and Codex.
+OpenCode projects the equivalent events from its observation-only SSE stream,
+including `session.compacted` as the portable compaction boundary. Orders that
+explicitly accept next-turn timing use the durable message queue; the delivered
+turn carries a trusted origin marker so an automation-created prompt or tool
+turn cannot trigger itself. Same-continuation remains visibly unsupported on
+OpenCode: its currently released plugin interception seams are experimental,
+and tclaude does not install one implicitly or let a beta plugin failure break
+the intercepted model request.
 
 Single-agent targets are persisted by stable `agt_…` ID, never by conversation
 generation. Editing an agent-authored order preserves its author and lifecycle
