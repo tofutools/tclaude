@@ -65,6 +65,7 @@ type sandboxGlobalAccessRulesJSON struct {
 type sandboxAccessTemplateJSON struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
+	Group   string `json:"group,omitempty"`
 	Mode    string `json:"mode"`
 	Entries any    `json:"entries"`
 	Note    string `json:"note"`
@@ -155,42 +156,19 @@ func sandboxGlobalAccessRules(home string) sandboxGlobalAccessRulesJSON {
 }
 
 func sandboxNetworkTemplates() []sandboxAccessTemplateJSON {
-	return []sandboxAccessTemplateJSON{
-		{
-			ID: "net-github", Label: "GitHub essentials", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{
-				{Domain: "github.com"}, {Domain: "api.github.com"}, {Domain: "codeload.github.com"},
-			},
-			Note:    "GitHub documents these domains for essential API and source-download operations: https://docs.github.com/en/actions/reference/runners/self-hosted-runners",
-			Warning: "GitHub documents additional domains for Actions, releases, LFS, packages, and artifacts; add only the services this profile actually needs.",
-		},
-		{
-			ID: "net-openai-codex", Label: "OpenAI models (Codex CLI)", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{
-				{Domain: "api.openai.com", Ports: []int{443}},
-			},
-			Note:    "The supported filtered Codex route uses api.openai.com for API-key model traffic: https://platform.openai.com/docs/api-reference/introduction",
-			Warning: "ChatGPT-auth Codex is refused in filtered mode because remote provider overrides are not launch-resolvable; custom model providers, web search, plugins, MCP servers, and commands run by the agent need their own destinations.",
-		},
-		{
-			ID: "net-anthropic", Label: "Anthropic API", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{{
-				Domain: "api.anthropic.com", Ports: []int{443},
-			}},
-			Note: "Anthropic documents the direct Claude API at https://api.anthropic.com: https://platform.claude.com/docs/en/api/overview",
-		},
-		{
-			ID: "net-go-modules", Label: "Public Go modules", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "proxy.golang.org"}, {Domain: "sum.golang.org"}},
-			Note:    "The Go module reference documents proxy.golang.org and sum.golang.org as the public defaults: https://go.dev/ref/mod",
-			Warning: "The default GOPROXY also falls back to direct VCS hosts; this preset intentionally omits those unbounded destinations.",
-		},
-		{
-			ID: "net-npm", Label: "Public npm registry", Mode: "list",
-			Entries: []sandboxpolicy.NetworkAllowEntry{{Domain: "registry.npmjs.org"}},
-			Note:    "npm documents https://registry.npmjs.org as the default public registry: https://docs.npmjs.com/cli/npm-doctor/",
-		},
+	return sandboxNetworkPacks()
+}
+
+func sandboxNetworkPacks() []sandboxAccessTemplateJSON {
+	packs := sandboxpolicy.NetworkPackCatalog()
+	out := make([]sandboxAccessTemplateJSON, 0, len(packs))
+	for _, pack := range packs {
+		out = append(out, sandboxAccessTemplateJSON{
+			ID: pack.ID, Label: pack.Label, Group: pack.Group, Mode: "list",
+			Entries: pack.Entries, Note: pack.Note, Warning: pack.Warning,
+		})
 	}
+	return out
 }
 
 func sandboxSocketTemplates() []sandboxAccessTemplateJSON {

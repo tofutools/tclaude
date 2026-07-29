@@ -33,9 +33,24 @@ const (
 	AccessModeList   AccessMode = "list"
 )
 
+// NetworkBaseline is the authored network posture used by compositional
+// profiles. It is deliberately separate from AccessMode: a deny baseline
+// materializes to closed when it has no unlocks and to list when it does.
+type NetworkBaseline string
+
+const (
+	NetworkBaselineInherit NetworkBaseline = "inherit"
+	NetworkBaselineAllow   NetworkBaseline = "allow"
+	NetworkBaselineDeny    NetworkBaseline = "deny"
+)
+
 type NetworkRules struct {
-	Mode  AccessMode          `json:"mode"`
-	Allow []NetworkAllowEntry `json:"allow,omitempty"`
+	// Mode is the forever-readable legacy/effective representation. Newly
+	// authored profiles use Baseline; resolved launch authority uses Mode.
+	Mode     AccessMode          `json:"mode,omitempty"`
+	Baseline NetworkBaseline     `json:"baseline,omitempty"`
+	Packs    []string            `json:"packs,omitempty"`
+	Allow    []NetworkAllowEntry `json:"allow,omitempty"`
 }
 
 // NetworkAllowEntry names exactly one outbound destination selector.
@@ -107,6 +122,13 @@ func DeriveAccessAxes(p Profile) (ResolvedAxes, error) {
 	sockets := UnixSocketRules{}
 	if p.Network != nil {
 		network = cloneNetworkRules(*p.Network)
+		if network.Baseline != "" {
+			var err error
+			network, err = MaterializeNetworkRules(network)
+			if err != nil {
+				return ResolvedAxes{}, err
+			}
+		}
 		if err := validateLegacyNetworkAgreement(p.NetworkAccess, network.Mode); err != nil {
 			return ResolvedAxes{}, err
 		}
@@ -156,7 +178,15 @@ func LegacyNetworkAccessForExport(network *NetworkRules, stored NetworkAccess) N
 	if network == nil {
 		return stored
 	}
-	switch network.Mode {
+	resolved := cloneNetworkRules(*network)
+	if resolved.Baseline != "" {
+		var err error
+		resolved, err = MaterializeNetworkRules(resolved)
+		if err != nil {
+			return NetworkAccessInherit
+		}
+	}
+	switch resolved.Mode {
 	case AccessModeOpen:
 		return NetworkAccessInternet
 	case AccessModeClosed:
@@ -172,16 +202,44 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if in == nil {
 		return nil, nil
 	}
-	if err := validateAccessMode("network", in.Mode); err != nil {
-		return nil, err
-	}
-	if in.Mode != AccessModeList && len(in.Allow) > 0 {
-		return nil, fmt.Errorf(`network.allow is only valid with mode "list"`)
+	if in.Baseline != "" {
+		if in.Mode != AccessModeUnset {
+			return nil, fmt.Errorf("network must set baseline or legacy mode, not both")
+		}
+		switch in.Baseline {
+		case NetworkBaselineInherit, NetworkBaselineAllow, NetworkBaselineDeny:
+		default:
+			return nil, fmt.Errorf(
+				"network.baseline %q is invalid (want inherit, allow, or deny)",
+				in.Baseline,
+			)
+		}
+		if in.Baseline != NetworkBaselineDeny &&
+			(len(in.Packs) > 0 || len(in.Allow) > 0) {
+			return nil, fmt.Errorf(
+				"network packs and allow entries are only valid with baseline %q",
+				NetworkBaselineDeny,
+			)
+		}
+	} else {
+		if err := validateAccessMode("network", in.Mode); err != nil {
+			return nil, err
+		}
+		if len(in.Packs) > 0 {
+			return nil, fmt.Errorf("network.packs requires the compositional baseline representation")
+		}
+		if in.Mode != AccessModeList && len(in.Allow) > 0 {
+			return nil, fmt.Errorf(`network.allow is only valid with mode "list"`)
+		}
 	}
 	if len(in.Allow) > MaxNetworkAllowEntries {
 		return nil, fmt.Errorf("network.allow has too many entries (maximum %d)", MaxNetworkAllowEntries)
 	}
-	out := &NetworkRules{Mode: in.Mode}
+	packs, err := normalizeNetworkPackRefs(in.Packs)
+	if err != nil {
+		return nil, err
+	}
+	out := &NetworkRules{Mode: in.Mode, Baseline: in.Baseline, Packs: packs}
 	seen := make(map[string]struct{}, len(in.Allow))
 	for i, entry := range in.Allow {
 		normalized, err := normalizeNetworkAllowEntry(entry, i)
@@ -198,6 +256,11 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	sort.Slice(out.Allow, func(i, j int) bool {
 		return networkEntryKey(out.Allow[i]) < networkEntryKey(out.Allow[j])
 	})
+	if out.Baseline != "" {
+		if _, err := MaterializeNetworkRules(*out); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
 }
 
@@ -544,6 +607,7 @@ func socketEntryKey(entry SocketAllowEntry) string {
 
 func cloneNetworkRules(in NetworkRules) NetworkRules {
 	out := in
+	out.Packs = append([]string(nil), in.Packs...)
 	if in.Allow == nil {
 		out.Allow = nil
 		return out

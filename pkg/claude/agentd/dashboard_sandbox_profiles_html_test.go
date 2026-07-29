@@ -102,7 +102,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`class="sbx-common-rule-warn"`:                                                 "preset warnings are visible before and after insertion",
 		`.sbx-common-rule-notice {`:                                                    "the insertion notice has its own caution styling",
 		`function loadCommonRuleCatalog()`:                                             "the repurposed catalog feeds the preset menu",
-		`[1, 2, 3, 4, 5, 6, 7, 8].includes(parsed?.format_version)`:                    "import accepts every export envelope version, including spelling-sidecar v8",
+		`[1, 2, 3, 4, 5, 6, 7, 8, 9].includes(parsed?.format_version)`:                 "import accepts every export envelope version, including network-pack v9",
 		`if (body?.code) error.code = body.code`:                                       "request failures preserve the daemon's typed code",
 		`id="sandbox-profile-import-include-error"`:                                    "per-policy include errors render in the import preview",
 		`conflict === 'skip' ? 'skip' : 'overwrite'`:                                   "the error policy shares the all-incoming overwrite graph",

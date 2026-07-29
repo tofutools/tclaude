@@ -90,6 +90,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
 			Warning string                            `json:"warning"`
 		} `json:"network_templates"`
+		NetworkPacks []struct {
+			ID      string                            `json:"id"`
+			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
+			Warning string                            `json:"warning"`
+		} `json:"network_packs"`
 		SocketTemplates []struct {
 			ID string `json:"id"`
 		} `json:"socket_templates"`
@@ -106,15 +111,19 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)
-	assert.Equal(t, []string{"net-github", "net-openai-codex", "net-anthropic", "net-go-modules", "net-npm"},
-		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID, catalog.NetworkTemplates[4].ID})
+	assert.Equal(t, []string{"net-local", "net-anthropic", "net-openai-codex", "net-github", "net-go-modules", "net-npm"},
+		[]string{catalog.NetworkPacks[0].ID, catalog.NetworkPacks[1].ID, catalog.NetworkPacks[2].ID, catalog.NetworkPacks[3].ID, catalog.NetworkPacks[4].ID, catalog.NetworkPacks[5].ID})
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
+		catalog.NetworkPacks[0].Entries)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
 		{Domain: "api.openai.com", Ports: []int{443}},
-	}, catalog.NetworkTemplates[1].Entries)
-	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "ChatGPT-auth Codex is refused")
+	}, catalog.NetworkPacks[2].Entries)
+	assert.Contains(t, catalog.NetworkPacks[2].Warning, "ChatGPT-auth Codex is refused")
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
 		Domain: "api.anthropic.com", Ports: []int{443},
-	}}, catalog.NetworkTemplates[2].Entries)
+	}}, catalog.NetworkPacks[1].Entries)
+	assert.Equal(t, catalog.NetworkPacks, catalog.NetworkTemplates,
+		"legacy insertion catalog remains a compatibility alias")
 	assert.NotContains(t, rec.Body.String(), "net-pypi")
 	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
 		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})

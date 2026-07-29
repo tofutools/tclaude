@@ -65,6 +65,36 @@ func TestFlattenExpandsIncludesWithLocalOverride(t *testing.T) {
 	}, got.Environment)
 }
 
+func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
+	registry := map[string]*Profile{
+		"github": {
+			Name: "github",
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineDeny,
+				Packs:    []string{"net-github"},
+			},
+		},
+	}
+	got, err := Flatten(Profile{
+		Name:     "api-only",
+		Includes: []string{"github"},
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineDeny,
+			Allow: []NetworkAllowEntry{{
+				Domain: "api.github.com",
+			}},
+		},
+	}, registryLookup(registry))
+	require.NoError(t, err)
+	require.NotNil(t, got.Network)
+	assert.Equal(t, NetworkRules{
+		Mode: AccessModeList,
+		Allow: []NetworkAllowEntry{{
+			Domain: "api.github.com",
+		}},
+	}, *got.Network)
+}
+
 func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
