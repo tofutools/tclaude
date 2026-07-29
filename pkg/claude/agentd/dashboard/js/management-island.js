@@ -290,6 +290,36 @@ function NetworkEntryBadge({ verdict, busy }) {
   </details>`;
 }
 
+function networkEntriesMayOverlap(left = {}, right = {}) {
+  const leftPorts = new Set(Array.isArray(left.ports) ? left.ports.map(Number) : []);
+  const rightPorts = new Set(Array.isArray(right.ports) ? right.ports.map(Number) : []);
+  if (leftPorts.size && rightPorts.size &&
+      ![...leftPorts].some((port) => rightPorts.has(port))) return false;
+
+  if (left.loopback || right.loopback) {
+    if (left.loopback && right.loopback) return true;
+    // Valid authored CIDRs never cover loopback. DNS selectors can resolve to
+    // loopback, so keep those conservatively possibly overlapping.
+    return !(left.cidr || right.cidr);
+  }
+  if (left.cidr || right.cidr) {
+    // CIDR/CIDR and DNS/CIDR overlap needs address resolution or IP parsing.
+    // Uncertainty must suppress a "redundant" claim, never invent one.
+    return true;
+  }
+
+  const dns = (entry) => ({
+    name: String(entry.host || entry.domain || '').toLowerCase(),
+    subdomains: !!entry.domain && !!entry.include_subdomains,
+  });
+  const a = dns(left);
+  const b = dns(right);
+  if (!a.name || !b.name) return true;
+  const covers = (selector, name) => selector.name === name ||
+    (selector.subdomains && name.endsWith(`.${selector.name}`));
+  return covers(a, b.name) || covers(b, a.name);
+}
+
 function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
   const defaultsAvailable = useRef(!!newDraft);
@@ -370,10 +400,21 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
     ...rules.allow.map((row, index) => ({ row, index, mode: 'allow' })),
     ...rules.deny.map((row, index) => ({ row, index, mode: 'deny' })),
   ];
-  const redundantLabel = (mode) =>
-    (rules.baseline === 'deny' && mode === 'deny') ? 'Redundant under Deny all'
-      : (rules.baseline === 'allow' && mode === 'allow') ? 'Redundant under Allow all'
-        : '';
+  const allowEntries = [
+    ...rules.allow,
+    ...(catalog.network_packs || []).flatMap((pack) =>
+      packMode(pack.id) === 'allow' ? pack.entries || [] : []),
+  ];
+  const knownPackIDs = new Set((catalog.network_packs || []).map((pack) => pack.id));
+  const unresolvedAllowPack = rules.packs.some((id) => !knownPackIDs.has(id));
+  const redundantLabel = (mode, entries) => {
+    if (rules.baseline === 'allow' && mode === 'allow') return 'Redundant under Allow all';
+    if (rules.baseline !== 'deny' || mode !== 'deny') return '';
+    if (unresolvedAllowPack) return '';
+    return (entries || []).every((denyEntry) =>
+      !allowEntries.some((allowEntry) => networkEntriesMayOverlap(allowEntry, denyEntry)))
+      ? 'Redundant under Deny all' : '';
+  };
   const predictionByEntry = new Map((predictions || []).flatMap((value) =>
     (value.keys?.length ? value.keys : [
       sandboxNetworkModeEntryKey(value.mode || 'allow', value.entry),
@@ -403,7 +444,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
             disabled=${!editable} value=${packMode(pack.id)} onChange=${(mode) => changePackMode(pack.id, mode)}
             options=${[['off', 'Off'], ['allow', 'Allow'], ['deny', 'Deny']]}/>
           <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong></span>
-          ${redundantLabel(packMode(pack.id)) && html`<span class="sbx-network-redundant">${redundantLabel(packMode(pack.id))}</span>`}
+          ${redundantLabel(packMode(pack.id), pack.entries) && html`<span class="sbx-network-redundant">${redundantLabel(packMode(pack.id), pack.entries)}</span>`}
           ${packHelp && html`<${SandboxHelp}><${HelpDisclosure} id=${packHelpID}
             label=${`${pack.label} network pack`} help=${packHelp}
             open=${helpOpen === packHelpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
@@ -415,7 +456,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
         setOpen=${setHelpOpen}/></${SandboxHelp}></div>
       <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); return html`<div key=${`${mode}:${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
         <div class="sbx-network-mode-cell"><span class="sbx-network-value-readonly">${mode === 'deny' ? 'Deny' : 'Allow'}</span>
-          ${redundantLabel(mode) && html`<span class="sbx-network-redundant">${redundantLabel(mode)}</span>`}</div>
+          ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
         <span class="sbx-network-modifier">${kind === 'domain' && row.include_subdomains ? 'subdomains' : ''}</span>
@@ -427,7 +468,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
       <div class="sbx-network-mode-cell"><${Select} class="sbx-network-rule-mode" aria-label="Network row mode"
         disabled=${!editable} value=${mode} onChange=${(value) => changeRowMode(mode, index, value)}
         options=${[['allow', 'Allow'], ['deny', 'Deny']]}/>
-        ${redundantLabel(mode) && html`<span class="sbx-network-redundant">${redundantLabel(mode)}</span>`}</div>
+        ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
       <${Select} class="sbx-network-selector" disabled=${!editable} value=${kind} onChange=${(value) => changeSelector(mode, index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
       ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!editable} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(mode, index, { [kind]: event.currentTarget.value })}/>`}
       <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!editable} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(mode, index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>

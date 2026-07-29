@@ -1843,6 +1843,18 @@ test('network packs and manual destinations author deny mode without implying en
 
   const manualMode = network.querySelector('.sbx-network-rule-mode');
   await harness.act(() => { choose(manualMode, 'allow'); harness.fireEvent(manualMode, 'change'); });
+  await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
+  let overlapRow = [...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')].at(-1);
+  const overlapMode = overlapRow.querySelector('.sbx-network-rule-mode');
+  await harness.act(() => { choose(overlapMode, 'deny'); harness.fireEvent(overlapMode, 'change'); });
+  overlapRow = [...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')].at(-1);
+  const overlapValue = overlapRow.querySelector('.sbx-network-value');
+  overlapValue.value = 'blocked.example';
+  await harness.act(() => harness.fireEvent(overlapValue, 'input'));
+  assert.equal(overlapRow.querySelector('.sbx-network-redundant'), null,
+    'a deny rule that overlaps an Allow release can narrow it and is not redundant');
+  await harness.act(() => harness.fireEvent(
+    [...network.querySelectorAll('[aria-label="Delete network row"]')].at(-1), 'click'));
   await harness.act(() => harness.fireEvent(
     mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.deepEqual(saved.draft.network, {
