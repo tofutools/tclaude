@@ -1060,13 +1060,9 @@ func TestRequestOpenCodeLayerSmokeShellBusyTimeoutIncludesLastBody(t *testing.T)
 		writer http.ResponseWriter,
 		_ *http.Request,
 	) {
-		if requests.Add(1) == 1 {
-			writer.WriteHeader(http.StatusConflict)
-			_, _ = writer.Write([]byte(busyBody))
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-		_, _ = writer.Write([]byte(`{"parts":[]}`))
+		requests.Add(1)
+		writer.WriteHeader(http.StatusConflict)
+		_, _ = writer.Write([]byte(busyBody))
 	}))
 	t.Cleanup(server.Close)
 
@@ -1076,10 +1072,10 @@ func TestRequestOpenCodeLayerSmokeShellBusyTimeoutIncludesLastBody(t *testing.T)
 		Password:  "password",
 		PID:       os.Getpid(),
 		Cwd:       t.TempDir(),
-	}, "true", 10*time.Millisecond, time.Millisecond)
+	}, "true", 100*time.Millisecond, time.Second)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), busyBody)
-	assert.Equal(t, int32(2), requests.Load())
+	assert.Equal(t, int32(1), requests.Load())
 }
 
 func TestRequestOpenCodeLayerSmokeShellRejectsOtherStatusesImmediately(t *testing.T) {
