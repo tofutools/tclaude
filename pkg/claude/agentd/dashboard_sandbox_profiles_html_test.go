@@ -44,7 +44,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`.sbx-filesystem-access > .sbx-segmented-option.is-selected.sbx-state-write`:   "filesystem write state retains green permission styling",
 		`.sbx-filesystem-access > .sbx-segmented-option.is-selected.sbx-state-deny`:    "filesystem deny state retains red permission styling",
 		`.sbx-row .sbx-inc-name {`:                                                     "include selectors retain their intrinsic-width layout hook",
-		`.sbx-environment-row > input {`:                                               "environment name and value retain shared monospace styling",
+		`.sbx-section .sbx-environment-row > input {`:                                  "environment name and value retain shared monospace styling",
 		`id="sandbox-profile-editor-evaluate-harness"`:                                 "target harness prediction picker",
 		`id="sandbox-profile-editor-evaluate-implementation"`:                          "sandbox implementation prediction picker",
 		`id="sandbox-profile-editor-evaluate-platform"`:                                "target platform prediction picker",
