@@ -1051,6 +1051,22 @@ func DeleteAgentGroup(name string) error {
 	// deleting one group does not delete an instruction still in use
 	// elsewhere. This is an administrative target reshaping only: the
 	// effective recipients do not change, so delivery revision stays put.
+	//
+	// First invalidate stale order editors for definitions where this group
+	// is an additional activation. The foreign-key cascade will remove those
+	// rows when the group goes away, but a cascade alone cannot advance the
+	// parent definition's optimistic-concurrency token.
+	scopeRemovalTime := formatStandingTime(time.Now())
+	if _, err := tx.Exec(`
+		UPDATE agent_standing_orders
+		   SET row_version = row_version + 1, updated_at = ?
+		 WHERE EXISTS (
+			SELECT 1 FROM agent_standing_order_group_scopes scope
+			 WHERE scope.order_id = agent_standing_orders.id
+			   AND scope.group_id = ?
+		 )`, scopeRemovalTime, gID); err != nil {
+		return err
+	}
 	type standingOrderPromotion struct {
 		orderID int64
 		groupID int64

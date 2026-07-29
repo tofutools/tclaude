@@ -226,6 +226,36 @@ func TestStandingOrder_DeletePrimaryGroupPromotesReusableScope(t *testing.T) {
 		"the delivery history remains attached to the surviving definition")
 }
 
+func TestStandingOrder_DeleteAdditionalGroupInvalidatesEditors(t *testing.T) {
+	setupTestDB(t)
+	primaryID, err := CreateAgentGroup("standing-keep-primary", "")
+	require.NoError(t, err)
+	additionalID, err := CreateAgentGroup("standing-delete-additional", "")
+	require.NoError(t, err)
+
+	o := sampleOrder("additional-group-removal")
+	o.GroupID = primaryID
+	id, err := InsertStandingOrder(o)
+	require.NoError(t, err)
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	current, err = SetStandingOrderGroupScope(
+		id, additionalID, current.RowVersion, true)
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteAgentGroup("standing-delete-additional"))
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, primaryID, got.GroupID)
+	assert.Empty(t, got.AdditionalGroupIDs)
+	assert.Equal(t, current.Revision, got.Revision,
+		"removing recipients does not re-arm those who remain")
+	assert.Equal(t, current.RowVersion+1, got.RowVersion,
+		"the cascade removal invalidates stale Automations editors")
+}
+
 func TestStandingOrder_RetiringPrimaryGroupLeavesReusableOrderEnabled(t *testing.T) {
 	setupTestDB(t)
 	primaryID, err := CreateAgentGroup("standing-retire-primary", "")
