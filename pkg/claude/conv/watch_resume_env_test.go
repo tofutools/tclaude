@@ -404,6 +404,49 @@ func TestWatchResumeRefreshesSocketMaterializationForAdapterAndSavedState(t *tes
 	assert.Contains(t, string(raw), `"`+canonicalSocket+`" = "allow"`)
 }
 
+func TestStandaloneResumeDoesNotInheritUnenforcedNetworkAuthorization(t *testing.T) {
+	setupTestDB(t)
+	workspace := t.TempDir()
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{
+		Explicit: &sandboxpolicy.Profile{
+			Name: "closed-network",
+			Network: &sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeClosed,
+			},
+		},
+	})
+	require.NoError(t, err)
+	effective.AccessNotices = []sandboxpolicy.AccessNotice{{
+		Class:  sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:   "network",
+		Reason: sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+		Effect: sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Detail: "the predecessor launch was explicitly authorized with open outbound network access",
+	}}
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    "source-session",
+		ConvID:                resumeConvCodex,
+		Harness:               harness.CodexName,
+		Cwd:                   workspace,
+		SandboxMode:           harness.SandboxManagedProfile,
+		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin),
+	}))
+
+	_, _, _, err = resumeLaunchCmd(
+		harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.Error(t, err)
+	assert.Equal(t,
+		"sandbox_profile_changed: Codex builtin sandbox (tools-only scope) cannot enforce closed network access; "+
+			"choose a sandbox implementation that can enforce closed network access, use network open, "+
+			"or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog",
+		err.Error(),
+	)
+}
+
 func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
