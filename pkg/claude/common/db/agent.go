@@ -1045,6 +1045,73 @@ func DeleteAgentGroup(name string) error {
 	// Unlike the cron sweep this is closer to correctness than tidy-up: a
 	// group id is reused when a later group takes the same row, and a
 	// surviving order would then start injecting text into whoever joins it.
+	//
+	// A reusable definition may also be activated on other groups. Promote
+	// the lowest additional group to primary before the legacy sweep so
+	// deleting one group does not delete an instruction still in use
+	// elsewhere. This is an administrative target reshaping only: the
+	// effective recipients do not change, so delivery revision stays put.
+	//
+	// First invalidate stale order editors for definitions where this group
+	// is an additional activation. The foreign-key cascade will remove those
+	// rows when the group goes away, but a cascade alone cannot advance the
+	// parent definition's optimistic-concurrency token.
+	scopeRemovalTime := formatStandingTime(time.Now())
+	if _, err := tx.Exec(`
+		UPDATE agent_standing_orders
+		   SET row_version = row_version + 1, updated_at = ?
+		 WHERE EXISTS (
+			SELECT 1 FROM agent_standing_order_group_scopes scope
+			 WHERE scope.order_id = agent_standing_orders.id
+			   AND scope.group_id = ?
+		 )`, scopeRemovalTime, gID); err != nil {
+		return err
+	}
+	type standingOrderPromotion struct {
+		orderID int64
+		groupID int64
+	}
+	promotionRows, err := tx.Query(`
+		SELECT orders.id, MIN(scope.group_id)
+		  FROM agent_standing_orders orders
+		  JOIN agent_standing_order_group_scopes scope ON scope.order_id = orders.id
+		 WHERE orders.target_kind = 'group' AND orders.group_id = ?
+		 GROUP BY orders.id`, gID)
+	if err != nil {
+		return err
+	}
+	var promotions []standingOrderPromotion
+	for promotionRows.Next() {
+		var promotion standingOrderPromotion
+		if err := promotionRows.Scan(&promotion.orderID, &promotion.groupID); err != nil {
+			_ = promotionRows.Close()
+			return err
+		}
+		promotions = append(promotions, promotion)
+	}
+	if err := promotionRows.Close(); err != nil {
+		return err
+	}
+	if err := promotionRows.Err(); err != nil {
+		return err
+	}
+	promotionTime := formatStandingTime(time.Now())
+	for _, promotion := range promotions {
+		if _, err := tx.Exec(`
+			UPDATE agent_standing_orders
+			   SET group_id = ?, target_role = '',
+			       row_version = row_version + 1, updated_at = ?
+			 WHERE id = ? AND target_kind = 'group' AND group_id = ?`,
+			promotion.groupID, promotionTime, promotion.orderID, gID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM agent_standing_order_group_scopes
+			 WHERE order_id = ? AND group_id = ?`,
+			promotion.orderID, promotion.groupID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries
 		WHERE order_id IN (
 			SELECT id FROM agent_standing_orders WHERE target_kind = 'group' AND group_id = ?

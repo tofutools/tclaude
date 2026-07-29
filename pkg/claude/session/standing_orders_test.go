@@ -673,3 +673,45 @@ func TestStandingOrderRefusesUnresolvableSession(t *testing.T) {
 		sessionStart(db.StandingSourceStartup), "", LocalHookAmbient(), &buf))
 	assert.Empty(t, buf.String())
 }
+
+func TestStandingOrderGlobalRefusesRetiredRunningAgent(t *testing.T) {
+	standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, 0, func(o *db.StandingOrder) {
+		o.TargetKind = db.StandingTargetGlobal
+		o.GroupID = 0
+	})
+
+	retired, err := db.RetireAgentAuthorizationByConv(
+		"conv-1", "human", "test keeps the session running")
+	require.NoError(t, err)
+	require.True(t, retired.Retired)
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "sess-1", LocalHookAmbient(), &buf))
+	assert.Empty(t, buf.String(),
+		"a retired actor kept alive with shutdown=0 is outside global scope")
+}
+
+func TestStandingOrderGlobalRefusesStalePredecessorGeneration(t *testing.T) {
+	standingOrderFixture(t, harness.DefaultName)
+	orderID := insertOrder(t, 0, func(o *db.StandingOrder) {
+		o.TargetKind = db.StandingTargetGlobal
+		o.GroupID = 0
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	_, err := db.RotateAgentConv("conv-1", "conv-2", "test rotation")
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "sess-1", LocalHookAmbient(), &buf))
+	assert.Empty(t, buf.String(),
+		"a still-running predecessor is not a current routing generation")
+
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	assert.Nil(t, latest,
+		"a stale generation must not consume the active agent's cadence slot")
+}

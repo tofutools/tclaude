@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -105,6 +106,13 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 		OperatorAuthored: true,
 	})
 	require.NoError(t, err)
+	additionalGroupID, err := db.CreateAgentGroup("delta-team", "")
+	require.NoError(t, err)
+	order, err := db.GetStandingOrder(orderID)
+	require.NoError(t, err)
+	_, err = db.SetStandingOrderGroupScope(
+		orderID, additionalGroupID, order.RowVersion, true)
+	require.NoError(t, err)
 	_, err = db.RecordStandingDelivery(&db.StandingDelivery{
 		OrderID:       orderID,
 		OrderRevision: 1,
@@ -160,6 +168,14 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	require.Len(t, exportOnly.Rows, 1)
 	require.Equal(t, "export", exportOnly.Rows[0].Kind)
 	assert.Equal(t, "alpha report", exportOnly.Rows[0].Export.Title)
+
+	additionalGroupOnly := getJobs(t, dash, "?q=delta-team")
+	require.Len(t, additionalGroupOnly.Rows, 1)
+	require.Equal(t, "standing-order", additionalGroupOnly.Rows[0].Kind)
+	additionalGroupIDOnly := getJobs(t, dash,
+		"?q=%23"+strconv.FormatInt(additionalGroupID, 10))
+	require.Len(t, additionalGroupIDOnly.Rows, 1)
+	require.Equal(t, "standing-order", additionalGroupIDOnly.Rows[0].Kind)
 
 	// A kind name matches as filter text too — "export" finds both exports.
 	byKind := getJobs(t, dash, "?q=export")

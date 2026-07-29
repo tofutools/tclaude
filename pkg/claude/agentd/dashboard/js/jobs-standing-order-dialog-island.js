@@ -64,11 +64,16 @@ function StandingOrderTargetPicker({ value, onChange, snapshot }) {
   const setMode = (mode) => onChange({ ...value, mode });
   return html`<div class="cron-create-target standing-order-target-picker">
     <div class="cron-target-modes">
+      <label><input type="radio" name="standing-order-target-mode" value="global"
+        checked=${value.mode === 'global'} onChange=${() => setMode('global')} /> Everyone (global)</label>
       <label><input type="radio" name="standing-order-target-mode" value="solo"
         checked=${value.mode === 'solo'} onChange=${() => setMode('solo')} /> Solo agent</label>
       <label><input type="radio" name="standing-order-target-mode" value="group"
         checked=${value.mode === 'group'} onChange=${() => setMode('group')} /> Group (multicast)</label>
     </div>
+    ${value.mode === 'global' && html`<div class="muted">
+      Applies to every active enrolled agent. This is explicit and remains inert until the order is enabled.
+    </div>`}
     ${value.mode === 'solo' && html`<select id="standing-order-target" value=${value.target}
       onChange=${(event) => onChange({ ...value, target: event.currentTarget.value })}>
       <option value="">(pick an agent)</option>

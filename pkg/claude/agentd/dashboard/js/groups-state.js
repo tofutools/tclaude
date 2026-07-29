@@ -174,10 +174,12 @@ export function createGroupsState({
   const viewOpen = signal(false);
   const memberEditor = signal(null);
   const addMemberDialog = signal(null);
+  const standingOrdersDialog = signal(null);
   const renderRevision = signal(0);
   let initialized = false;
   let nextMemberEditorLaunchID = 0;
   let nextAddMemberLaunchID = 0;
+  let nextStandingOrdersLaunchID = 0;
 
   const view = computed(() => {
     renderRevision.value;
@@ -284,6 +286,19 @@ export function createGroupsState({
     addMemberDialog.value = null;
   }
 
+  function openStandingOrders(group) {
+    if (standingOrdersDialog.value || !group?.name || group.virtual) return false;
+    standingOrdersDialog.value = {
+      launchID: ++nextStandingOrdersLaunchID,
+      group: String(group.name),
+    };
+    return true;
+  }
+
+  function closeStandingOrders() {
+    standingOrdersDialog.value = null;
+  }
+
   function optimisticAddMember(groupName, candidate) {
     const current = snapshot.value;
     const conv = String(candidate?.conv_id || '');
@@ -326,11 +341,13 @@ export function createGroupsState({
   }
 
   return Object.freeze({
-    snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog, renderRevision,
+    snapshot, query, visibility, viewOpen, memberEditor, addMemberDialog,
+    standingOrdersDialog, renderRevision,
     view, columnOptions, deviationCount,
     initialize, publish, setQuery, setVisible, setColumnShown, rerender,
     openMemberEditor, closeMemberEditor,
     openAddMember, closeAddMember, optimisticAddMember,
+    openStandingOrders, closeStandingOrders,
   });
 }
 

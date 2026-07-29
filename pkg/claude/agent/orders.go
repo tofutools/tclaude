@@ -111,6 +111,10 @@ func runOrdersLs(stdout, stderr io.Writer) int {
 }
 
 func ordersTargetLabel(o *db.StandingOrder) string {
+	if o.IsGlobalTarget() {
+		return "global"
+	}
+	var labels []string
 	if o.IsGroupTarget() {
 		label := "group:#" + strconv.FormatInt(o.GroupID, 10)
 		if g, err := db.GetAgentGroupByID(o.GroupID); err == nil && g != nil {
@@ -119,12 +123,20 @@ func ordersTargetLabel(o *db.StandingOrder) string {
 		if o.TargetRole != "" {
 			label += "/" + o.TargetRole
 		}
-		return label
+		labels = append(labels, label)
+	} else if o.TargetAgent != "" {
+		labels = append(labels, shortID(o.TargetAgent))
+	} else {
+		labels = append(labels, "(unresolved stable agent)")
 	}
-	if o.TargetAgent != "" {
-		return shortID(o.TargetAgent)
+	for _, groupID := range o.AdditionalGroupIDs {
+		label := "group:#" + strconv.FormatInt(groupID, 10)
+		if g, err := db.GetAgentGroupByID(groupID); err == nil && g != nil {
+			label = "group:" + g.Name
+		}
+		labels = append(labels, label)
 	}
-	return "(unresolved stable agent)"
+	return strings.Join(labels, " + ")
 }
 
 func shortID(id string) string {

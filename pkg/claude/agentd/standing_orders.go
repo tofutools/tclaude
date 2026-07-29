@@ -242,18 +242,33 @@ func standingDebounceInScope(
 	order *db.StandingOrder,
 	targetAgent string,
 ) (bool, error) {
-	if !order.IsGroupTarget() {
-		return order.TargetAgent == targetAgent, nil
+	if order.IsGlobalTarget() {
+		return targetAgent != "", nil
 	}
-	member, err := db.FindAgentMemberInGroup(order.GroupID, targetAgent)
-	if err != nil {
-		return false, err
+	if !order.IsGroupTarget() && order.TargetAgent == targetAgent {
+		return true, nil
 	}
-	if member == nil {
-		return false, nil
+	if order.IsGroupTarget() {
+		member, err := db.FindAgentMemberInGroup(order.GroupID, targetAgent)
+		if err != nil {
+			return false, err
+		}
+		if member != nil &&
+			(order.TargetRole == "" ||
+				strings.EqualFold(order.TargetRole, member.Role)) {
+			return true, nil
+		}
 	}
-	return order.TargetRole == "" ||
-		strings.EqualFold(order.TargetRole, member.Role), nil
+	for _, groupID := range order.AdditionalGroupIDs {
+		member, err := db.FindAgentMemberInGroup(groupID, targetAgent)
+		if err != nil {
+			return false, err
+		}
+		if member != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func recordStandingDebounceOutcome(

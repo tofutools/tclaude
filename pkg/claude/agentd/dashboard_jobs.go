@@ -3,6 +3,7 @@ package agentd
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,43 +168,71 @@ func collectJobRows() []dashboardJobRow {
 }
 
 func dashboardStandingOrderView(order *db.StandingOrder, groupNames map[int64]string) standingorders.OrderView {
-	groupName := ""
+	groupIDs := append([]int64(nil), order.AdditionalGroupIDs...)
 	if order.IsGroupTarget() && order.GroupID > 0 {
-		var ok bool
-		groupName, ok = groupNames[order.GroupID]
-		if !ok {
-			if group, groupErr := db.GetAgentGroupByID(order.GroupID); groupErr == nil && group != nil {
-				groupName = group.Name
-			}
-			groupNames[order.GroupID] = groupName
+		groupIDs = append(groupIDs, order.GroupID)
+	}
+	for _, groupID := range groupIDs {
+		if _, ok := groupNames[groupID]; ok {
+			continue
 		}
+		groupName := ""
+		if group, groupErr := db.GetAgentGroupByID(groupID); groupErr == nil && group != nil {
+			groupName = group.Name
+		}
+		groupNames[groupID] = groupName
 	}
 	latest, _ := db.LatestStandingDelivery(order.ID)
 	return standingorders.NewOrderView(
-		order, groupName, latest, standingOrderTargetHarnesses(order))
+		order, groupNames, latest, standingOrderTargetHarnesses(order))
 }
 
 // standingOrderTargetHarnesses resolves only the live recipients this order
 // can actually reach. nil means resolution was incomplete (capability unknown);
 // a non-nil empty slice means resolution succeeded and found no recipients.
 func standingOrderTargetHarnesses(order *db.StandingOrder) []string {
-	var convs []string
-	if order.IsGroupTarget() {
+	convs := make([]string, 0)
+	seenConvs := map[string]struct{}{}
+	addConv := func(convID string) {
+		convID = strings.TrimSpace(convID)
+		if convID == "" {
+			return
+		}
+		if _, ok := seenConvs[convID]; ok {
+			return
+		}
+		seenConvs[convID] = struct{}{}
+		convs = append(convs, convID)
+	}
+	if order.IsGlobalTarget() {
+		agents, err := db.ListActiveAgents()
+		if err != nil {
+			return nil
+		}
+		for _, agent := range agents {
+			addConv(agent.CurrentConvID)
+		}
+	} else if order.IsGroupTarget() {
 		members, err := db.ListAgentGroupMembers(order.GroupID)
 		if err != nil {
 			return nil
 		}
-		convs = make([]string, 0, len(members))
 		for _, member := range members {
 			if order.TargetRole != "" && !strings.EqualFold(order.TargetRole, member.Role) {
 				continue
 			}
-			convs = append(convs, member.ConvID)
+			addConv(member.ConvID)
 		}
 	} else {
-		convs = make([]string, 0, 1)
-		if order.TargetConv != "" {
-			convs = append(convs, order.TargetConv)
+		addConv(order.TargetConv)
+	}
+	for _, groupID := range order.AdditionalGroupIDs {
+		members, err := db.ListAgentGroupMembers(groupID)
+		if err != nil {
+			return nil
+		}
+		for _, member := range members {
+			addConv(member.ConvID)
 		}
 	}
 
@@ -264,6 +293,14 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 			o.Target.Kind, o.Target.Agent, o.Target.Conv,
 			o.Target.GroupName, o.Target.Role,
 			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence}
+		if o.Target.GroupID > 0 {
+			groupID := strconv.FormatInt(o.Target.GroupID, 10)
+			hay = append(hay, groupID, "#"+groupID)
+		}
+		for _, group := range o.AdditionalGroups {
+			groupID := strconv.FormatInt(group.GroupID, 10)
+			hay = append(hay, group.GroupName, groupID, "#"+groupID)
+		}
 		if o.Capability != nil {
 			hay = append(hay, string(o.Capability.Status),
 				o.Capability.Transport, o.Capability.Detail)

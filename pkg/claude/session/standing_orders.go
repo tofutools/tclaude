@@ -566,30 +566,37 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	// evaluator so every caller — including `orders explain` — shares it.
 	ev.Source = standingorders.NormalizeSource(trigger, ev.Source)
 
+	live, err := db.IsLiveAgentConv(convID)
+	if err != nil {
+		slog.Warn("standing orders: failed to resolve recipient activity",
+			"error", err, "conv_id", convID, "module", "hooks")
+		return standingorders.Event{}, false
+	}
+	if !live {
+		return standingorders.Event{}, false
+	}
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		slog.Warn("standing orders: failed to resolve agent for conv",
 			"error", err, "conv_id", convID, "module", "hooks")
 		return standingorders.Event{}, false
 	}
+	if agentID == "" {
+		return standingorders.Event{}, false
+	}
 	ev.AgentID = agentID
 
-	// A conversation with no actor cannot be in a group, so it is only ever
-	// reachable by a conv-targeted order — leave memberships empty rather than
-	// failing the whole evaluation.
-	if agentID != "" {
-		groups, err := db.ListGroupsForAgent(agentID)
-		if err != nil {
-			slog.Warn("standing orders: failed to read group memberships",
-				"error", err, "agent", agentID, "module", "hooks")
-			return standingorders.Event{}, false
-		}
-		for _, g := range groups {
-			ev.Memberships = append(ev.Memberships, standingorders.Membership{
-				GroupID: g.ID,
-				Role:    roleInGroup(g.ID, convID),
-			})
-		}
+	groups, err := db.ListGroupsForAgent(agentID)
+	if err != nil {
+		slog.Warn("standing orders: failed to read group memberships",
+			"error", err, "agent", agentID, "module", "hooks")
+		return standingorders.Event{}, false
+	}
+	for _, g := range groups {
+		ev.Memberships = append(ev.Memberships, standingorders.Membership{
+			GroupID: g.ID,
+			Role:    roleInGroup(g.ID, convID),
+		})
 	}
 	return ev, true
 }

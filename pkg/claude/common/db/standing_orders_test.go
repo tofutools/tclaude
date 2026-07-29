@@ -60,6 +60,72 @@ func TestStandingOrder_InsertAndRead(t *testing.T) {
 	assert.Nil(t, missing, "absent order should read as (nil, nil)")
 }
 
+func TestStandingOrder_GlobalTargetAndAdditionalGroupScopes(t *testing.T) {
+	setupTestDB(t)
+
+	global := sampleOrder("global")
+	global.TargetKind = StandingTargetGlobal
+	global.GroupID = 0
+	require.NoError(t, global.Validate())
+	globalID, err := InsertStandingOrder(global)
+	require.NoError(t, err)
+	storedGlobal, err := GetStandingOrder(globalID)
+	require.NoError(t, err)
+	require.True(t, storedGlobal.IsGlobalTarget())
+
+	primary, err := CreateAgentGroup("primary", "")
+	require.NoError(t, err)
+	additional, err := CreateAgentGroup("additional", "")
+	require.NoError(t, err)
+	sameGlobal, err := SetStandingOrderGroupScope(
+		globalID, additional, storedGlobal.RowVersion, true)
+	require.NoError(t, err)
+	assert.Empty(t, sameGlobal.AdditionalGroupIDs,
+		"a global target does not persist a redundant group activation")
+	assert.Equal(t, storedGlobal.RowVersion, sameGlobal.RowVersion)
+	_, err = SetStandingOrderGroupScope(
+		globalID, additional, storedGlobal.RowVersion, false)
+	assert.ErrorIs(t, err, ErrStandingOrderInvalid,
+		"global scope is changed from Automations, not detached per group")
+
+	order := sampleOrder("shared")
+	order.GroupID = primary
+	orderID, err := InsertStandingOrder(order)
+	require.NoError(t, err)
+	current, err := GetStandingOrder(orderID)
+	require.NoError(t, err)
+
+	assigned, err := SetStandingOrderGroupScope(
+		orderID, additional, current.RowVersion, true)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{additional}, assigned.AdditionalGroupIDs)
+	assert.Equal(t, int64(1), assigned.Revision,
+		"recipient-scoped cadence does not re-arm overlapping recipients")
+	assert.Equal(t, int64(2), assigned.RowVersion)
+
+	_, err = SetStandingOrderGroupScope(
+		orderID, additional, current.RowVersion, false)
+	assert.ErrorIs(t, err, ErrStandingOrderVersionConflict)
+
+	same, err := SetStandingOrderGroupScope(
+		orderID, additional, assigned.RowVersion, true)
+	require.NoError(t, err)
+	assert.Equal(t, assigned.RowVersion, same.RowVersion,
+		"idempotent assignment does not re-arm delivery")
+
+	_, err = SetStandingOrderGroupScope(
+		orderID, primary, same.RowVersion, false)
+	assert.ErrorIs(t, err, ErrStandingOrderInvalid,
+		"the Groups tab cannot detach the primary authoring scope")
+
+	removed, err := SetStandingOrderGroupScope(
+		orderID, additional, same.RowVersion, false)
+	require.NoError(t, err)
+	assert.Empty(t, removed.AdditionalGroupIDs)
+	assert.Equal(t, int64(1), removed.Revision)
+	assert.Equal(t, int64(3), removed.RowVersion)
+}
+
 func TestStandingOrder_NameIsUnique(t *testing.T) {
 	setupTestDB(t)
 

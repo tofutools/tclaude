@@ -1279,6 +1279,54 @@ test('inline rename skips its delayed retry when the first refresh has the new t
   assert.equal(waits, 0, 'direct-store harnesses do not pay the Claude retry delay');
 });
 
+test('group standing-order actions use row-versioned assignment endpoints', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const calls = [];
+  const notices = [];
+  const state = {
+    openStandingOrders: (group) => calls.push(['open', group.name]),
+    closeStandingOrders: () => calls.push(['close']),
+  };
+  const actions = createGroupsActions({
+    state,
+    refresh: async () => {},
+    notify: (message) => notices.push(message),
+    fetchImpl: async (url, options = {}) => {
+      calls.push(['fetch', url, options.method || 'GET']);
+      return {
+        ok: true,
+        json: async () => options.method
+          ? { order: { id: 7, name: 'shared', row_version: 4 }, assigned: true }
+          : { group: 'alpha', orders: [] },
+        text: async () => '',
+      };
+    },
+  });
+
+  actions.openStandingOrders({ name: 'alpha' });
+  actions.closeStandingOrders();
+  assert.deepEqual(await actions.loadStandingOrders('alpha'),
+    { group: 'alpha', orders: [] });
+  const updated = await actions.setStandingOrderScope(
+    'alpha',
+    { order: { id: 7, name: 'shared', row_version: 3 } },
+    true,
+  );
+  assert.equal(updated.assigned, true);
+  assert.deepEqual(calls, [
+    ['open', 'alpha'],
+    ['close'],
+    ['fetch', '/api/groups/alpha/standing-orders', 'GET'],
+    ['fetch', '/api/groups/alpha/standing-orders/7?row_version=3', 'POST'],
+  ]);
+  assert.deepEqual(notices, ['shared: enabled for alpha']);
+});
+
 test('member editor actions keep independent endpoint and stable-selector boundaries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ saveMemberEditorRequests }, { memberEditorChanges }] = await Promise.all([

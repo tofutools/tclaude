@@ -84,6 +84,38 @@ export function createGroupsActions({
     openAddMember(group) {
       return state.openAddMember(group);
     },
+    openStandingOrders(group) {
+      return state.openStandingOrders(group);
+    },
+    closeStandingOrders() {
+      state.closeStandingOrders();
+    },
+    async loadStandingOrders(group) {
+      const response = await fetchImpl(
+        `/api/groups/${encodeURIComponent(group)}/standing-orders`,
+        { credentials: 'same-origin' },
+      );
+      if (!response.ok) {
+        throw new Error(`load standing orders failed: ${await responseError(response)}`);
+      }
+      return response.json();
+    },
+    async setStandingOrderScope(group, row, assigned) {
+      const order = row?.order || {};
+      const response = await fetchImpl(
+        `/api/groups/${encodeURIComponent(group)}/standing-orders/${encodeURIComponent(order.id)}?row_version=${encodeURIComponent(order.row_version)}`,
+        {
+          method: assigned ? 'POST' : 'DELETE',
+          credentials: 'same-origin',
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`set standing-order scope failed: ${await responseError(response)}`);
+      }
+      const updated = await response.json();
+      notify(`${order.name}: ${assigned ? 'enabled for' : 'removed from'} ${group}`);
+      return updated;
+    },
     openSpawnHarnessPolicy(group) {
       return openSpawnHarnessPolicy(group?.name || group || '');
     },
