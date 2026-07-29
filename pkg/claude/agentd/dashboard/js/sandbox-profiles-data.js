@@ -331,7 +331,10 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [])
       detail: verdict.detail || '',
     });
     if (verdict.outcome === 'refused') launchRefused = true;
-    if (bucket !== buckets.applied && verdict.detail) {
+    // Per-rule prediction detail belongs behind that row's keyboard-reachable
+    // help affordance. Keep only target/axis-wide reasons visible beneath the
+    // bucket, or an 8-row DNS policy repeats the same long caveat eight times.
+    if (!rowPrediction && bucket !== buckets.applied && verdict.detail) {
       const identity = `${rule.axis}\0${verdict.outcome}\0${verdict.detail}`;
       if (!seenReasons.has(identity)) {
         seenReasons.add(identity);
