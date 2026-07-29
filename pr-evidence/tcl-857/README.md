@@ -1,11 +1,15 @@
 # TCL-857 Chrome evidence
 
-Production tip: `1d197d9cd2206b6b4f7b0e9f66831b0be0502948`
+Final production tip: `8b8624166b2ffa25aaa3d5ee6ee2623c23617299`
+
+Capture source tip: `1d197d9cd2206b6b4f7b0e9f66831b0be0502948`.
+The final production commit is a base-only rebase; all six changed production
+and test files are byte-for-byte identical to the capture source tip.
 
 These screenshots were rendered from the real dashboard handler with host
 Google Chrome at 1280×900 and 720×900, in regular and wizard skins, with the
-production worktree pinned to the tip above. The fixture opens the production
-sandbox-profile editor with both:
+production worktree pinned to the capture source tip above. The fixture opens
+the production sandbox-profile editor with both:
 
 - a resolvable `dev-caches` include; and
 - an authored, unresolvable `base-caches` include.
