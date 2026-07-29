@@ -1470,6 +1470,51 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   unmount();
 });
 
+test('effective-policy target alerts open their collapsed section without a composition notice', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'attention', filesystem: [{ path: '/blocked', access: 'deny' }],
+    environment: [], includes: [], agent_directories: [],
+    network: { baseline: 'allow', packs: [], allow: [] }, unix_sockets: { mode: '' },
+  }, options: {} });
+  const contextAxes = {
+    filesystem: { outcome: 'enforced', detail: 'selected assignment is enforced' },
+    environment: { outcome: 'enforced', detail: 'environment is enforced' },
+    agent_directories: { outcome: 'enforced', detail: 'agent directories are enforced' },
+    network: { outcome: 'enforced', detail: 'network is enforced' },
+    unix_sockets: { outcome: 'enforced', detail: 'sockets are enforced' },
+  };
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() {
+      return {
+        targets: [{
+          target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' },
+          axes: {
+            ...contextAxes,
+            filesystem: { outcome: 'refused', detail: 'another assignment refuses this rule' },
+          },
+          context_axes: [contextAxes],
+        }],
+        contexts: [{
+          context: {}, filesystem: [{ path: '/blocked', access: 'deny' }],
+          environment: [], agent_directories: [], network: { mode: 'open' },
+          unix_sockets: { mode: '' }, notices: [],
+        }],
+      };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(host.querySelector('#sandbox-profile-editor-effective-policy-section').open, true,
+    'a target alert opens Effective policy preview even without a composition warning');
+  assert.match(host.querySelector('.sbx-other-assignments').textContent,
+    /Other assignments need attention.*another assignment refuses this rule/s);
+  unmount();
+});
+
 test('blank new sandbox drafts do not request an enforcement prediction', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -2130,9 +2175,13 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   assert.equal(feedError.getAttribute('role'), 'alert');
   assert.equal(host.querySelector('.cron-create-error').textContent, '', 'an optional feed never writes to the shared error signal');
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, 0);
-  // Nothing inside a closed <details> is visible or announced, so the summary
-  // itself has to say the presets are unavailable.
-  assert.match(host.querySelector('.sbx-common-rule-summary').textContent, /unavailable/);
+  const commonRuleMenu = host.querySelector('#sandbox-profile-editor-common-rules');
+  assert.equal(host.querySelector('#sandbox-profile-editor-filesystem-section').open, true,
+    'the feed alert opens its owning Filesystem section');
+  assert.equal(commonRuleMenu.hasAttribute('open') || commonRuleMenu.open === true, true,
+    'the nested preset disclosure opens so the alert and retry are visible');
+  assert.match(commonRuleMenu.querySelector('.sbx-common-rule-summary').textContent, /unavailable/,
+    'the summary still names the failure if the operator folds it again');
   const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true,

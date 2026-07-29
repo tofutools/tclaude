@@ -205,6 +205,12 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
   </div>`;
 }
 
+function sandboxPolicyNeedsAttention(target, context, contextIndex) {
+  const axes = target.context_axes?.[contextIndex] || target.axes || {};
+  return sandboxRuleBuckets(axes, context).launchRefused
+    || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0;
+}
+
 function accessRowShapeError(network, unixSockets) {
   const isRow = (row) => !!row && typeof row === 'object' && !Array.isArray(row);
   const networkIndex = (network.allow || []).findIndex((row) => !isRow(row));
@@ -852,6 +858,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   };
   // Unmount bumps the generation so an in-flight load resolves into nothing.
   useEffect(() => { loadCommonRules(); return () => { commonRuleGeneration.current++; }; }, []);
+  useEffect(() => {
+    if (commonRuleFeedError) setCommonRulesOpen(true);
+  }, [commonRuleFeedError]);
   const [directoryStatus, setDirectoryStatus] = useState({ missing: [], creatable: [] }); const [directoryBusy, setDirectoryBusy] = useState(false);
   const directoryGeneration = useRef(0); const submitRef = useRef(null); const wasSaving = useRef(false); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
   const dirty = dirtyDraft(draft, baseline);
@@ -962,6 +971,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
+  const effectivePolicyAttention = !!selectedEffective
+    && (prediction?.targets || []).some((target) =>
+      sandboxPolicyNeedsAttention(target, selectedEffective, effectiveContext));
   const submitBlocked = saving || directoryBusy || !!networkPackVisibilityError
     || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
@@ -972,7 +984,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
-      help=${FILESYSTEM_HELP} hidden=${advanced} attention=${globalConfigWarnings.length > 0}>
+      help=${FILESYSTEM_HELP} hidden=${advanced}
+      attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -1013,7 +1026,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     <${SandboxSection} id="sandbox-profile-editor-effective-policy-section"
       className="sbx-effective-preview" label="Effective policy preview"
       help=${EFFECTIVE_POLICY_HELP} hidden=${advanced}
-      attention=${!!predictionError || (selectedEffective?.notices || []).length > 0}>
+      attention=${!!predictionError || (selectedEffective?.notices || []).length > 0
+        || effectivePolicyAttention}>
       <div class="sbx-evaluation-target-controls">
         <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
