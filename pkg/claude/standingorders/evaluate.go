@@ -130,6 +130,9 @@ func InScope(o *db.StandingOrder, ev Event) (bool, string) {
 	// conversation ids are routing facts and cadence epochs, never durable
 	// order targets. Standing-order storage was introduced with agent-keyed
 	// targets, so there is no legacy conv-only row shape to support.
+	if o.TargetAgent == "" || ev.AgentID == "" {
+		return false, "single-agent target requires a stable agent id on both sides"
+	}
 	if o.TargetAgent == ev.AgentID {
 		return true, ""
 	}

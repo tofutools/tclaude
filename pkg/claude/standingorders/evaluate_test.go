@@ -111,7 +111,7 @@ func TestEvaluateSingleTargetFollowsStableAgentKey(t *testing.T) {
 	assert.True(t, d.Deliver, "a conv rotation must not strand the order")
 }
 
-func TestEvaluateSingleTargetNeverFallsBackToConversationID(t *testing.T) {
+func TestEvaluateSingleTargetNeverFallsBackToConversationIDOrEmptyIdentity(t *testing.T) {
 	// Invalid or old data that lacks a stable target must fail closed. A
 	// matching generation id is never a substitute for the persistent actor.
 	o := order(func(o *db.StandingOrder) {
@@ -125,6 +125,10 @@ func TestEvaluateSingleTargetNeverFallsBackToConversationID(t *testing.T) {
 	assert.False(t, d.Deliver)
 	assert.Equal(t, db.StandingOutcomeOutOfScope, d.Outcome)
 	assert.Contains(t, d.Detail, "stable agent")
+
+	actorless := Evaluate(o, event(func(e *Event) { e.AgentID = "" }), neverDelivered)
+	assert.False(t, actorless.Deliver, "two empty agent ids must not compare as a valid target")
+	assert.Equal(t, db.StandingOutcomeOutOfScope, actorless.Outcome)
 }
 
 func TestEvaluateSourceFilter(t *testing.T) {
