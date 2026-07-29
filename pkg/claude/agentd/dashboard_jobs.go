@@ -259,8 +259,11 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 			o.OwnerAgent, o.OwnerConv,
 			o.Target.Kind, o.Target.Agent, o.Target.Conv,
 			o.Target.GroupName, o.Target.Role,
-			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence,
-			string(o.Capability.Status), o.Capability.Transport, o.Capability.Detail}
+			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence}
+		if o.Capability != nil {
+			hay = append(hay, string(o.Capability.Status),
+				o.Capability.Transport, o.Capability.Detail)
+		}
 		if o.LastEvaluation != nil {
 			hay = append(hay, o.LastEvaluation.Outcome, o.LastEvaluation.Transport,
 				o.LastEvaluation.Harness, o.LastEvaluation.Detail, o.LastEvaluation.TargetConv)

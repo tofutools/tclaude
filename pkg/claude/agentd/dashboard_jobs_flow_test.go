@@ -196,3 +196,26 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	assert.Equal(t, 2, clamped.Offset, "stale offset clamps to the last page start")
 	assert.Len(t, clamped.Rows, 2)
 }
+
+func TestDashboardJobs_SearchHandlesUnresolvedStandingOrderCapability(t *testing.T) {
+	newFlow(t)
+	_, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:             "unresolved-target",
+		TargetKind:       db.StandingTargetConv,
+		TargetConv:       "conv-with-no-session",
+		Summary:          "Still searchable while its target is offline.",
+		TriggerEvent:     db.StandingTriggerSessionStart,
+		Timing:           db.StandingTimingNextTurn,
+		Cadence:          db.StandingCadenceAlways,
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+
+	page := getJobs(t, agentd.BuildDashboardHandlerForTest(),
+		"?kind=standing-order&q=unresolved-target")
+	require.Len(t, page.Rows, 1)
+	require.NotNil(t, page.Rows[0].Order)
+	assert.Nil(t, page.Rows[0].Order.Capability,
+		"unknown target capability stays unknown rather than panicking or fabricating support")
+}

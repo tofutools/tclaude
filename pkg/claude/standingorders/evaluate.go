@@ -303,8 +303,7 @@ func RenderContext(decisions []Decision) string {
 		return ""
 	}
 	return "Standing orders in force for this session:\n" + strings.Join(lines, "\n") +
-		"\n(These are durable standing orders, not part of the current request. " +
-		"Run `tclaude agent orders ls` to inspect them.)"
+		"\n(These are durable standing orders, not part of the current request.)"
 }
 
 // NormalizeSource canonicalizes a harness's event source. An empty

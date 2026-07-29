@@ -271,6 +271,8 @@ func TestRenderContextUnattributedOrderSaysSo(t *testing.T) {
 
 	assert.Contains(t, text, "unattributed")
 	assert.NotContains(t, text, "authored by operator")
+	assert.NotContains(t, text, "tclaude agent orders",
+		"model-visible context must not advertise a host-only DB command to sandboxed agents")
 }
 
 // The steady state of a once-per-generation order must not append a ledger row

@@ -467,7 +467,7 @@ func runHookCallback() error {
 // written is decided by dispatchHookEvent as a VALUE — see HookResponse — and
 // serialized here, once, at the single edge that owns the byte stream.
 func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
-	resp, err := dispatchHookEvent(ctx, input, envSessionID, amb)
+	resp, err := PrepareHookEvent(ctx, input, envSessionID, amb)
 	// Deferred before the error check so a producer that acquired a lock and
 	// then failed cannot strand it.
 	defer resp.Release()
@@ -481,6 +481,17 @@ func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	// that failed must not leave a durable claim that it succeeded.
 	resp.Commit()
 	return nil
+}
+
+// PrepareHookEvent applies one parsed hook event but leaves response delivery
+// and its acknowledgement to the caller.
+//
+// Direct callbacks should use DispatchHookEvent. The agentd hook broker uses
+// this lower-level form because writing to its in-memory HTTP response buffer
+// is not proof that the sandboxed client successfully relayed those bytes to
+// the harness; it commits only after a separate acknowledgement.
+func PrepareHookEvent(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient) (HookResponse, error) {
+	return dispatchHookEvent(ctx, input, envSessionID, amb)
 }
 
 // dispatchHookEvent applies one event and reports what tclaude wants the
