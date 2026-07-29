@@ -537,9 +537,21 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 			persistCodexHookModel(state, input)
 		}
 		resp, err := decidePreCompact(input, envSessionID, amb)
-		if err != nil || resp.Decision != "" || stateErr != nil ||
+		if err != nil || stateErr != nil ||
 			!hookBelongsToTrackedMainConversation(state, input) {
 			return resp, err
+		}
+		// PreCompact bypasses the ordinary ApplyHook path because it may carry
+		// a gate decision, but it is still a selectable native hook. It has no
+		// tested same-continuation context channel, so a supported selector can
+		// only queue a next-turn message here. Keep that side effect separate
+		// from the gate document: a block decision remains the sole stdout
+		// response, byte-for-byte.
+		input = applyStandingOrderTurnOrigin(input, envSessionID)
+		orderResp := standingOrderResponse(ctx, input, envSessionID)
+		orderResp.Release()
+		if resp.Decision != "" {
+			return resp, nil
 		}
 		state.Status = StatusWorking
 		state.StatusDetail = "compacting"

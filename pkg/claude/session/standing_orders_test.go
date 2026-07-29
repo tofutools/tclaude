@@ -593,6 +593,33 @@ func TestHarnessHookSelectorQueuesDirectCallbackWhenEventHasNoInlineContext(t *t
 	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
 }
 
+func TestHarnessHookSelectorQueuesFromPreCompactGatePath(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	orderID := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerHookEvent
+		o.TriggerSources = nil
+		o.Timing = db.StandingTimingNextTurn
+		o.HookSelectors = []hookevents.Selector{{
+			Harness: hookevents.HarnessClaude,
+			Event:   "PreCompact",
+		}}
+	})
+
+	assert.Empty(t, dispatch(t, HookCallbackInput{
+		HookEventName: "PreCompact",
+		ConvID:        "conv-1",
+		Trigger:       "manual",
+	}))
+	messages, err := db.ListAgentMessagesForConv("conv-1", 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "[standing-order:pr-early]", messages[0].Subject)
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
 // A failed send must not satisfy the cadence, or the next boundary would treat
 // an undelivered order as already done.
 func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {

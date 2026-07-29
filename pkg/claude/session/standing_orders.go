@@ -322,7 +322,7 @@ func applyStandingOrderTurnOrigin(
 ) HookCallbackInput {
 	switch input.HookEventName {
 	case "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-		"Stop", "StopFailure":
+		"Stop", "StopFailure", "PreCompact":
 	default:
 		return input
 	}
