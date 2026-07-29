@@ -308,16 +308,10 @@ function networkEntriesMayOverlap(left = {}, right = {}) {
     return true;
   }
 
-  const dns = (entry) => ({
-    name: String(entry.host || entry.domain || '').toLowerCase(),
-    subdomains: !!entry.domain && !!entry.include_subdomains,
-  });
-  const a = dns(left);
-  const b = dns(right);
-  if (!a.name || !b.name) return true;
-  const covers = (selector, name) => selector.name === name ||
-    (selector.subdomains && name.endsWith(`.${selector.name}`));
-  return covers(a, b.name) || covers(b, a.name);
+  // Different DNS names can resolve to the same address. Without resolution
+  // data they remain possibly overlapping even when neither name covers the
+  // other syntactically.
+  return true;
 }
 
 function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {

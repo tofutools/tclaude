@@ -1849,10 +1849,10 @@ test('network packs and manual destinations author deny mode without implying en
   await harness.act(() => { choose(overlapMode, 'deny'); harness.fireEvent(overlapMode, 'change'); });
   overlapRow = [...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')].at(-1);
   const overlapValue = overlapRow.querySelector('.sbx-network-value');
-  overlapValue.value = 'blocked.example';
+  overlapValue.value = 'telemetry.example';
   await harness.act(() => harness.fireEvent(overlapValue, 'input'));
   assert.equal(overlapRow.querySelector('.sbx-network-redundant'), null,
-    'a deny rule that overlaps an Allow release can narrow it and is not redundant');
+    'different DNS names may share an address, so a deny can narrow the release');
   await harness.act(() => harness.fireEvent(
     [...network.querySelectorAll('[aria-label="Delete network row"]')].at(-1), 'click'));
   await harness.act(() => harness.fireEvent(
