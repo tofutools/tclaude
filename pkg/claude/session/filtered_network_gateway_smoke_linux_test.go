@@ -176,6 +176,10 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 				{CIDR: filteredSmokeCoveringPrefix(t, allowedAddr, adjacentAddr)},
 				{CIDR: filteredSmokeCoveringPrefix(t, allowedAddr6, adjacentAddr6)},
 				{Host: filteredGatewaySiblingHost},
+				// Explicit query authority makes these useful negative
+				// controls for deny suffix matching under a list baseline.
+				{Host: filteredGatewayExactDomainChild},
+				{Host: filteredGatewaySuffixConfusion},
 			},
 			Deny: []sandboxpolicy.NetworkAllowEntry{
 				{Host: filteredGatewayExactHost},
