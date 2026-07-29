@@ -290,12 +290,12 @@ function EmptyJobs({ kind }) {
 
 const JOB_KIND_LABELS = {
   all: 'All',
-  export: 'Exports',
+  'export': 'Exports',
   cron: 'Schedules',
   'standing-order': 'Standing orders',
 };
 const JOB_KIND_COUNT_LABELS = {
-  export: ['export', 'exports'],
+  'export': ['export', 'exports'],
   cron: ['schedule', 'schedules'],
   'standing-order': ['standing order', 'standing orders'],
 };

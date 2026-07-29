@@ -11611,7 +11611,10 @@ body.wizard .access-subtab,
 body.wizard .jobs-subtab { color: #b39ddb; }
 body.wizard .access-subtab:hover,
 body.wizard .jobs-subtab:hover { color: #f3e6c0; }
-body.wizard .access-subtab.active,
+body.wizard .access-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
 body.wizard .jobs-subtab.active {
   background: #3a2a63; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
