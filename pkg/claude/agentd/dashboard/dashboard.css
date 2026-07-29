@@ -4309,10 +4309,15 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   gap: .3rem;
   min-height: 1.4rem;
 }
-.sbx-network-pack-mode {
+.sbx-network-pack > .sbx-network-pack-mode {
   flex: 0 0 5.5rem;
   padding-bottom: 3px;
   padding-top: 3px;
+  width: 5.5rem;
+}
+.sbx-network-pack > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .sbx-network-pack-visibility-error {
   align-items: center;
@@ -4344,12 +4349,26 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-row.sbx-access-row {
   display: grid;
 }
-.sbx-network-row {
-  /* The trailing column (pack label / delete button) is fixed: each row is its
-     own grid, so an auto column would size to that row's label and misalign
-     the shared 1fr value column across rows. */
-  gap: 4px;
-  grid-template-columns: 13rem 6rem minmax(10rem, 1fr) 6.5rem 8rem 7rem 8.5rem;
+.sbx-network-table {
+  align-items: stretch;
+  display: grid;
+  gap: 6px 4px;
+  grid-template-columns:
+    6rem
+    6rem
+    minmax(5rem, 1fr)
+    minmax(0, 5.5rem)
+    minmax(6rem, 8rem)
+    minmax(4.5rem, 8.5rem);
+  min-width: 0;
+}
+/* Both release-owned and manual rows participate in one grid so every cell
+   shares the same columns. The wrappers remain in the DOM for keyed Preact
+   ownership and row-scoped event handlers; display:contents removes only
+   their independent layout boxes. */
+.sbx-network-table > .sbx-network-rows,
+.sbx-network-table .sbx-network-row {
+  display: contents;
 }
 .sbx-network-row > button:last-child {
   justify-self: start;
@@ -4357,6 +4376,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-network-row input,
 .sbx-network-row select,
 .sbx-network-row .sbx-network-value-readonly {
+  align-self: start;
   padding-bottom: 4px;
   padding-top: 4px;
 }
@@ -4365,19 +4385,23 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   min-width: 0;
 }
 .sbx-network-mode-cell {
-  align-items: center;
+  align-items: flex-start;
   display: flex;
+  flex-direction: column;
   gap: .35rem;
   min-width: 0;
 }
-.sbx-network-mode-cell > select,
+.sbx-network-mode-cell > .sbx-network-rule-mode,
 .sbx-network-mode-cell > .sbx-network-value-readonly {
-  flex: 0 0 5.5rem;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
 }
 .sbx-network-redundant {
   color: var(--text-muted);
   font-size: .72rem;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 .sbx-network-value-readonly {
   display: flex;
@@ -4391,18 +4415,25 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   padding: 6px 10px;
 }
 .sbx-network-modifier {
+  align-self: start;
   display: flex;
   align-items: center;
+  min-height: 29px;
   min-width: 0;
 }
 .sbx-network-pack-owner {
-  align-self: center;
-  justify-self: end;
-  text-align: right;
+  align-self: start;
+  justify-self: stretch;
+  line-height: 29px;
+  text-align: left;
   color: var(--text-muted);
   font-size: .78rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.sbx-network-verdict {
+.sbx-network-deny-disclosure {
   align-self: center;
   min-width: 0;
   position: relative;
@@ -4434,11 +4465,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   width: max-content;
   z-index: 3;
 }
-.sbx-network-badge-enforced { color: #3fb950; }
-.sbx-network-badge-partial { color: #d29922; }
-.sbx-network-badge-not-enforced,
-.sbx-network-badge-refused { color: #f85149; }
-.sbx-network-badge-pending { color: var(--text-muted); }
+.sbx-network-badge-not-enforced { color: #f85149; }
 .sbx-socket-row {
   grid-template-columns: 6rem minmax(14rem, 1fr) auto;
 }

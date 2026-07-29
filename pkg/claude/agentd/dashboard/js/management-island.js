@@ -89,10 +89,10 @@ const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allo
   + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
   + 'future endpoint updates follow the stored pack reference. Deny pack rows are authored but '
   + 'not enforced in this frontend-first release. Expanded destinations below are read-only.';
-const NETWORK_DESTINATIONS_HELP = 'Destination badges evaluate this profile’s own materialized '
-  + 'rows before Includes and assignment intersections. The Effective policy preview remains '
-  + 'authoritative for composed launch behavior. Deny destinations always report Not enforced in '
-  + 'this frontend-first release: they are stored but do not yet block traffic.';
+const NETWORK_DESTINATIONS_HELP = 'The Effective policy preview below evaluates this profile’s '
+  + 'materialized rows before Includes and assignment intersections and remains authoritative for '
+  + 'composed launch behavior. Not enforced badges on Deny destinations disclose that those rows '
+  + 'are stored but do not yet block traffic in this frontend-first release.';
 const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
   + 'The tclaude agentd socket is always reachable and is not an editable row.';
 const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
@@ -269,23 +269,15 @@ const NETWORK_BASELINE_OPTIONS = [
 
 const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
 
-const NETWORK_ENTRY_OUTCOMES = {
-  enforced: ['Enforced', 'enforced'],
-  enforced_partial: ['Partial', 'partial'],
-  not_enforced: ['Not enforced', 'not-enforced'],
-  refused: ['Refused', 'refused'],
-};
+const NETWORK_DENY_NOT_ENFORCED = 'This deny rule is authored but this release does not apply deny '
+  + 'entries; traffic matching this destination is not blocked by this rule.';
 
-function NetworkEntryBadge({ verdict, busy }) {
-  const current = busy ? null : verdict;
-  const [label, tone] = busy
-    ? ['Evaluating…', 'pending']
-    : NETWORK_ENTRY_OUTCOMES[current?.outcome] || ['Not evaluated', 'pending'];
-  const detail = current?.detail
-    || (busy ? 'Enforcement prediction is updating.' : 'Complete the profile to evaluate this destination.');
-  return html`<details class="sbx-network-verdict">
-    <summary class=${`sbx-network-badge sbx-network-badge-${tone}`} title=${detail}
-      aria-label=${`${label}: ${detail}`}>${label}</summary>
+function NetworkDenyDisclosure({ verdict }) {
+  const detail = verdict?.outcome === 'not_enforced' && verdict.detail
+    ? verdict.detail : NETWORK_DENY_NOT_ENFORCED;
+  return html`<details class="sbx-network-deny-disclosure">
+    <summary class="sbx-network-badge sbx-network-badge-not-enforced" title=${detail}
+      aria-label=${`Not enforced: ${detail}`}>Not enforced</summary>
     <span class="sbx-network-badge-detail">${detail}</span>
   </details>`;
 }
@@ -314,7 +306,7 @@ function networkEntriesMayOverlap(left = {}, right = {}) {
   return true;
 }
 
-function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
   const defaultsAvailable = useRef(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
@@ -448,28 +440,29 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
         id="sandbox-profile-editor-network-destinations-help" label="network access list"
         help=${NETWORK_DESTINATIONS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-destinations-help'}
         setOpen=${setHelpOpen}/></${SandboxHelp}></div>
+      <div class="sbx-network-table">
       <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); return html`<div key=${`${mode}:${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
         <div class="sbx-network-mode-cell"><span class="sbx-network-value-readonly">${mode === 'deny' ? 'Deny' : 'Allow'}</span>
+          ${mode === 'deny' && html`<${NetworkDenyDisclosure} verdict=${verdictFor(mode, row)}/>`}
           ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
         <span class="sbx-network-modifier">${kind === 'domain' && row.include_subdomains ? 'subdomains' : ''}</span>
         <span class="sbx-network-ports sbx-network-value-readonly">${(row.ports || []).join(', ') || 'all ports'}</span>
-        <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
         <span class="sbx-network-pack-owner" title="This release-owned row is changed by toggling its pack.">${pack.label}</span>
       </div>`; })}</div>
       <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${manualRows.map(({ row, index, mode }) => { const kind = selector(row); return html`<div key=${`${mode}:${index}`} class="sbx-row sbx-access-row sbx-network-row">
       <div class="sbx-network-mode-cell"><${Select} class="sbx-network-rule-mode" aria-label="Network row mode"
         disabled=${!editable} value=${mode} onChange=${(value) => changeRowMode(mode, index, value)}
         options=${[['allow', 'Allow'], ['deny', 'Deny']]}/>
+        ${mode === 'deny' && html`<${NetworkDenyDisclosure} verdict=${verdictFor(mode, row)}/>`}
         ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
       <${Select} class="sbx-network-selector" disabled=${!editable} value=${kind} onChange=${(value) => changeSelector(mode, index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
       ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!editable} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(mode, index, { [kind]: event.currentTarget.value })}/>`}
       <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!editable} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(mode, index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
       <input class="sbx-network-ports" disabled=${!editable} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank matches all ports for the destination." onInput=${(event) => updateRow(mode, index, { ports: event.currentTarget.value })}/>
-      <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
       <button type="button" disabled=${!editable} aria-label="Delete network row" onClick=${() => updateRows(mode, rowsFor(mode).filter((_, i) => i !== index))}>×</button>
-    </div>`; })}</div>
+    </div>`; })}</div></div>
     <datalist id="sandbox-common-ports"><option value="443"/><option value="80, 443"/><option value="22"/></datalist>
     <button type="button" class="sbx-add-row" disabled=${!editable} onClick=${() => {
       const mode = rules.baseline === 'allow' ? 'deny' : 'allow';
@@ -1071,7 +1064,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
-      predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
+      predictions=${prediction?.targets?.[0]?.network_entries || []}
       packVisibilityError=${networkPackVisibilityError}
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}

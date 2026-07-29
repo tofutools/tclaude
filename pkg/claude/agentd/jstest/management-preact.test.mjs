@@ -1395,12 +1395,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     ],
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Not enforced');
-  assert.match(host.querySelector('.sbx-network-badge').title,
-    /upstream proxy is experimental and off by default/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
-  assert.match(host.querySelector('.sbx-network-badge-detail').textContent,
-    /tclaude-layer filtering on Linux/);
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'allow rows do not duplicate the Effective policy preview with a per-row verdict');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Codex on Linux · built-in sandbox · no filtered network sandbox yet/);
   assert.match(host.querySelector('.sbx-rule-bucket-not-applied').textContent,
@@ -1416,8 +1412,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   );
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Evaluating…',
-    'a target change never leaves the previous target verdict visible');
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'target changes keep evaluation status in the preview instead of adding row verdicts');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
@@ -1426,11 +1422,6 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     sandbox: 'tclaude-layer',
   }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Partial');
-  assert.match(host.querySelector('.sbx-network-badge').title, /bounded lease/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
-  assert.match(host.querySelector('.sbx-network-badge-detail').textContent, /bounded lease/,
-    'keyboard-operable native details expose the full row explanation');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
@@ -1837,8 +1828,11 @@ test('network packs and manual destinations author deny mode without implying en
 
   const baseline = network.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
-  assert.match(network.querySelector('.sbx-network-redundant').textContent,
+  const redundant = network.querySelector('.sbx-network-manual-rows .sbx-network-redundant');
+  assert.match(redundant.textContent,
     /Redundant under Deny all/);
+  assert.equal(redundant.closest('.sbx-network-mode-cell') !== null, true,
+    'the subdued redundancy label stays visible beneath the compact mode control');
   assert.match(network.querySelector('.sbx-add-row').textContent, /add allow destination/);
 
   const manualMode = network.querySelector('.sbx-network-rule-mode');
@@ -1868,7 +1862,7 @@ test('network packs and manual destinations author deny mode without implying en
   mounted.host.remove();
 });
 
-test('network row predictions reconcile daemon-normalized entries to authored spellings', async (t) => {
+test('deny disclosures reconcile daemon-normalized entries without restoring row evaluation verdicts', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1876,7 +1870,10 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: {
     name: 'noncanonical-network', filesystem: [], environment: [], includes: [], agent_directories: [],
-    network: { mode: 'list', allow: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }] },
+    network: {
+      baseline: 'allow', packs: [], deny_packs: [],
+      allow: [], deny: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }],
+    },
     unix_sockets: { mode: '' },
   }, options: {} });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
@@ -1884,13 +1881,14 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
       return {
         targets: [{
           network_entries: [{
+            mode: 'deny',
             entry: { domain: 'api.example.com', ports: [443] },
             keys: [
-              '{"domain":"api.example.com","ports":[443]}',
-              '{"domain":"API.EXAMPLE.COM","ports":[443]}',
+              'deny:{"domain":"api.example.com","ports":[443]}',
+              'deny:{"domain":"API.EXAMPLE.COM","ports":[443]}',
             ],
-            outcome: 'enforced',
-            detail: 'normalized destination is enforced',
+            outcome: 'not_enforced',
+            detail: 'normalized deny destination is stored but not applied',
           }],
         }],
         contexts: [],
@@ -1899,8 +1897,10 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Enforced');
-  assert.match(host.querySelector('.sbx-network-badge').title, /normalized destination/);
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Not enforced');
+  assert.match(host.querySelector('.sbx-network-badge').title, /normalized deny destination/);
+  assert.equal(host.querySelector('.sbx-network-badge').closest('.sbx-network-mode-cell') !== null, true,
+    'the enforcement disclosure lives with the mode instead of occupying an evaluation column');
   unmount();
 });
 
@@ -1923,7 +1923,16 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
 
   const networkRows = [...host.querySelectorAll('.sbx-network-row')];
   assert.equal(networkRows.length, 2);
+  const networkTable = host.querySelector('.sbx-network-table');
+  assert.ok(networkTable, 'release-owned and manual destinations share one grid owner');
+  assert.deepEqual(
+    [...networkTable.children].map((rows) => rows.className),
+    ['sbx-rows sbx-network-rows sbx-network-pack-rows', 'sbx-rows sbx-network-rows sbx-network-manual-rows'],
+  );
   assert.ok(networkRows.every((row) => row.classList.contains('sbx-access-row')));
+  assert.ok(networkRows.every((row) => row.closest('.sbx-network-table') === networkTable));
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'ordinary allow rows have no duplicate per-row evaluation verdict');
   assert.ok(networkRows.every((row) => row.querySelector('.sbx-network-modifier')),
     'every network kind reserves the modifier column');
   assert.ok(networkRows[0].querySelector('.sbx-network-modifier .sbx-inline-check'));
