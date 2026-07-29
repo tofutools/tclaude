@@ -67,7 +67,7 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   assert.equal(badge.container.querySelector('#jobs-badge').textContent, '1');
   assert.equal(badge.container.querySelector('#jobs-badge').hidden, false);
 
-  const filter = getByRole(mounted.container, 'textbox', { name: 'Filter jobs' });
+  const filter = getByRole(mounted.container, 'textbox', { name: 'Filter automations' });
   assert.equal(filter.value, '');
   const standingOrders = getByRole(mounted.container, 'tab', { name: 'Standing orders' });
   await harness.act(() => harness.fireEvent(standingOrders, 'click'));
@@ -183,11 +183,12 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
     toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
-  assert.match(mounted.container.textContent, /Loading jobs/);
+  assert.match(mounted.container.textContent, /Loading automations/);
 
   await harness.act(() => state.failRequest(1, new Error('offline')));
   assert.match(getByRole(mounted.container, 'alert').textContent, /offline/);
-  assert.doesNotMatch(mounted.container.textContent, /No jobs yet/, 'a failed first load is not an empty result');
+  assert.doesNotMatch(mounted.container.textContent, /No exports, schedules, or standing orders yet/,
+    'a failed first load is not an empty result');
 
   state.beginRequest(2);
 
@@ -195,8 +196,8 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
     snapshot.value = { jobs: [], export_jobs_active: 0, paging: { jobs: { total: 0, total_unfiltered: 0 } } };
     state.commitRequest(2);
   });
-  assert.match(mounted.container.textContent, /No jobs yet/);
-  assert.equal(mounted.container.querySelector('#filter-jobs-count').textContent, '0 jobs');
+  assert.match(mounted.container.textContent, /No exports, schedules, or standing orders yet/);
+  assert.equal(mounted.container.querySelector('#filter-jobs-count').textContent, '0 items');
   await mounted.unmount();
 });
 

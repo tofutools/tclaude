@@ -63,7 +63,7 @@ export function createJobsActions({
     dismissExport: async (job) => {
       const yes = await confirm({
         title: 'Dismiss this export?',
-        body: 'Removes the export job from the Jobs list and deletes its file from the server (if one was delivered). A still-running job is discarded when it lands.',
+        body: 'Removes the export job from the Automations list and deletes its file from the server (if one was delivered). A still-running job is discarded when it lands.',
         meta: job.title || job.conv_label || ('#' + job.id),
         okLabel: 'Dismiss',
       });

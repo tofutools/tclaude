@@ -281,8 +281,8 @@ function EmptyJobs({ kind }) {
       <strong>📋 summary…</strong>.
     </div>`;
   }
-  return html`<div class="empty">No jobs yet. Agent exports appear here when started (an agent row's ⚙ menu →
-    <strong>📋 summary…</strong>); schedule a cron job with the <strong>
+  return html`<div class="empty">No exports, schedules, or standing orders yet. Agent exports appear here
+    when started (an agent row's ⚙ menu → <strong>📋 summary…</strong>); schedule a cron job with the <strong>
     <span class="cron-open-label-regular">+ new cron job</span>
     <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.
   </div>`;
@@ -320,7 +320,7 @@ export function JobsApp({ state, actions }) {
   const count = current.query
     ? `${total} / ${totalAll}`
     : `${totalAll} ${current.kind === 'all'
-      ? `job${totalAll === 1 ? '' : 's'}`
+      ? `item${totalAll === 1 ? '' : 's'}`
       : JOB_KIND_COUNT_LABELS[current.kind][totalAll === 1 ? 0 : 1]}`;
 
   const selectKind = (value) => {
@@ -328,19 +328,19 @@ export function JobsApp({ state, actions }) {
   };
 
   return html`<div class="jobs-island">
-    <div class="jobs-subnav" role="tablist" aria-label="Job views">
+    <div class="jobs-subnav" role="tablist" aria-label="Automation views">
       ${JOBS_KINDS.map((kind) => html`<button type="button"
         class=${`jobs-subtab${current.kind === kind ? ' active' : ''}`}
         role="tab" aria-selected=${current.kind === kind ? 'true' : 'false'}
         onClick=${() => selectKind(kind)}>${JOB_KIND_LABELS[kind]}</button>`)}
     </div>
     <div class="filter-bar">
-      <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter jobs"
+      <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
         placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-jobs-count" aria-live="polite">${count}</span>
-      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear job filter"
+      <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear automation filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
       ${(current.kind === 'all' || current.kind === 'cron') && html`
@@ -350,7 +350,7 @@ export function JobsApp({ state, actions }) {
           <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
         </button>`}
     </div>
-    <${AsyncLoadState} label="Jobs" request=${current.request}
+    <${AsyncLoadState} label="Automations" request=${current.request}
       retry=${() => void actions.refresh()} errorClass="jobs-error" />
     <div id="jobs-list" aria-busy=${current.request.phase === 'loading' ? 'true' : 'false'}>
       ${!current.request.hasLoaded

@@ -69,6 +69,11 @@ func registerHookAck(sessionID string, commit, release func()) (string, error) {
 	}
 	token := hex.EncodeToString(raw[:])
 	entry := &pendingHookAck{sessionID: sessionID, commit: commit, release: release}
+	// Publish while holding the same lock the expiry callback takes. If the
+	// process is suspended for longer than the TTL immediately after starting
+	// the timer, the callback must wait until the entry is visible rather than
+	// observe no entry and leave a subsequently published lock owner immortal.
+	hookAckRegistry.Lock()
 	entry.timer = time.AfterFunc(hookBrokerAckTTL, func() {
 		var release func()
 		hookAckRegistry.Lock()
@@ -81,7 +86,6 @@ func registerHookAck(sessionID string, commit, release func()) (string, error) {
 			release()
 		}
 	})
-	hookAckRegistry.Lock()
 	hookAckRegistry.pending[token] = entry
 	hookAckRegistry.Unlock()
 	return token, nil

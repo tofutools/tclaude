@@ -222,7 +222,7 @@ export function createActionDialogActions({
     },
     downloadExport,
     exportReady(label) { notify(`Export ready for ${label}`); },
-    exportStillRunning() { notify('Export still running — follow it on the Jobs tab'); },
+    exportStillRunning() { notify('Export still running — follow it on the Automations tab'); },
     // Polling stays outside the component. The returned cleanup owns both the
     // timer and any in-flight request, so close/unmount cannot publish stale
     // status into a later dialog or trigger a foreign download.
