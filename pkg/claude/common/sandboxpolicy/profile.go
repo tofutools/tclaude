@@ -206,12 +206,9 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 		return Profile{}, nil, err
 	}
 	if network != nil {
-		resolved := cloneNetworkRules(*network)
-		if resolved.Baseline != "" {
-			resolved, err = MaterializeNetworkRules(resolved)
-			if err != nil {
-				return Profile{}, nil, err
-			}
+		resolved, err := resolvedNetworkRules(*network)
+		if err != nil {
+			return Profile{}, nil, err
 		}
 		if err := validateLegacyNetworkAgreement(networkAccess, resolved.Mode); err != nil {
 			return Profile{}, nil, err
