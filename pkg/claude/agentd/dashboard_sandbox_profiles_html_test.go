@@ -47,7 +47,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`label: 'Partially supported rules'`:                                           "partial rules have a plain-language bucket",
 		`class="sbx-launch-blocked" role="alert"`:                                      "launch refusal is announced immediately",
 		`class="sbx-a11y-status" role="status"`:                                        "asynchronous prediction outcomes have a live status region",
-		`(selectedEffective.notices || []).map(`:                                       "empty intersections remain visible in composition details",
+		`(selectedEffective?.notices || []).map(`:                                      "empty intersections remain visible at the bottom of the effective-policy preview",
 		`id="sandbox-profile-scribe-open"`:                                             "new-profile agent configuration",
 		`id="sandbox-profile-editor-scribe"`:                                           "current-draft agent configuration",
 		`id="sandbox-profile-export-open"`:                                             "export trigger",
