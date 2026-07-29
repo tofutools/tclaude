@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // order builds a valid enabled group-target order, so each test can mutate the
@@ -32,6 +33,37 @@ func order(mut ...func(*db.StandingOrder)) *db.StandingOrder {
 		m(o)
 	}
 	return o
+}
+
+func TestEvaluateHarnessHookSelectorsUseExactHarnessEventOR(t *testing.T) {
+	o := order()
+	o.TriggerEvent = db.StandingTriggerHookEvent
+	o.TriggerSources = nil
+	o.Timing = db.StandingTimingNextTurn
+	o.HookSelectors = []hookevents.Selector{
+		{Harness: hookevents.HarnessClaude, Event: "PostCompact"},
+		{Harness: hookevents.HarnessOpenCode, Event: "session.compacted"},
+	}
+	ev := event()
+	ev.Event = db.StandingTriggerHookEvent
+	ev.Harness = hookevents.HarnessOpenCode
+	ev.NativeEvent = "session.compacted"
+
+	d := Evaluate(o, ev, nil)
+	assert.True(t, d.Deliver)
+	assert.Equal(t, db.StandingTransportMessage, d.Capability.Transport)
+
+	ev.NativeEvent = "session.created"
+	d = Evaluate(o, ev, nil)
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeNoMatch, d.Outcome)
+
+	ev.Harness = hookevents.HarnessClaude
+	ev.NativeEvent = "PostCompact"
+	d = Evaluate(o, ev, nil)
+	assert.True(t, d.Deliver)
+	assert.Equal(t, db.StandingTransportMessage, d.Capability.Transport,
+		"PostCompact has no tested inline context response and must queue next-turn")
 }
 
 func event(mut ...func(*Event)) Event {

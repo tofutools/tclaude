@@ -19,8 +19,8 @@ import (
 // turn on every event, so the overwhelmingly common answer ("this event has no
 // triggers") must cost nothing. Only an event that maps to a real trigger goes
 // on to open the database.
-func standingOrderTriggerFor(hookEventName string) string {
-	switch hookEventName {
+func standingOrderTriggerFor(input HookCallbackInput) string {
+	switch input.HookEventName {
 	case "SessionStart":
 		return db.StandingTriggerSessionStart
 	case "UserPromptSubmit":
@@ -29,6 +29,9 @@ func standingOrderTriggerFor(hookEventName string) string {
 		return db.StandingTriggerToolBefore
 	case "PostToolUse":
 		return db.StandingTriggerToolAfter
+	}
+	if input.NativeHookEvent != "" || input.HookEventName != "" {
+		return db.StandingTriggerHookEvent
 	}
 	return ""
 }
@@ -51,7 +54,7 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 	if input.StandingOrderOrigin {
 		return HookResponse{}
 	}
-	trigger := standingOrderTriggerFor(input.HookEventName)
+	trigger := standingOrderTriggerFor(input)
 	if trigger == "" {
 		return HookResponse{}
 	}
@@ -61,7 +64,7 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 	// inheritance is deliberately not in v1 (an order would otherwise be
 	// re-injected into every short-lived Explore agent that will never act on
 	// it), so those events are not evaluated at all.
-	if input.AgentID != "" {
+	if input.AgentID != "" && input.HookEventName == "SessionStart" {
 		return HookResponse{}
 	}
 
@@ -70,7 +73,8 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		return HookResponse{}
 	}
 
-	orders, err := db.ListEnabledStandingOrdersForEvent(trigger)
+	orders, err := db.ListEnabledStandingOrdersForEvent(
+		trigger, ev.Harness, ev.NativeEvent)
 	if err != nil {
 		slog.Warn("standing orders: failed to read orders, skipping this event",
 			"error", err, "event", input.HookEventName, "module", "hooks")
@@ -107,8 +111,26 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 	// otherwise, and no way to notice. Record after and a failed record means
 	// the reminder is repeated at the next boundary. One is unrecoverable and
 	// invisible; the other is mild and self-correcting.
+	var inlineDecisions, recordDecisions []standingorders.Decision
+	for _, d := range decisions {
+		if d.Deliver && d.Capability.Transport == db.StandingTransportMessage {
+			pending := pendingStandingMessage(d, ev)
+			_, sendErr := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+				ToConv: pending.TargetConv, ToRecipients: []string{pending.TargetConv},
+				Subject: "[standing-order:" + pending.Name + "]", Body: pending.Body,
+				FromConv: pending.OwnerConv, OperatorAuthored: pending.OperatorAuthored,
+			}, pending.OrderID, pending.OrderRevision)
+			RecordStandingMessageDelivery(pending, sendErr)
+			continue
+		}
+		recordDecisions = append(recordDecisions, d)
+		if d.Deliver && d.Capability.Transport == db.StandingTransportHookContext {
+			inlineDecisions = append(inlineDecisions, d)
+		}
+	}
+
 	commit := func() {
-		for _, d := range decisions {
+		for _, d := range recordDecisions {
 			if !d.ShouldRecord() {
 				continue
 			}
@@ -129,7 +151,7 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		}
 	}
 
-	text := standingorders.RenderContext(decisions)
+	text := standingorders.RenderContext(inlineDecisions)
 	if text == "" {
 		// Nothing is being written, so there is no write to wait for; the
 		// non-delivery outcomes still belong in the ledger.
@@ -164,15 +186,16 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	if input.StandingOrderOrigin {
 		return nil, noop
 	}
-	trigger := standingOrderTriggerFor(input.HookEventName)
-	if trigger == "" || input.AgentID != "" {
+	trigger := standingOrderTriggerFor(input)
+	if trigger == "" || (input.AgentID != "" && input.HookEventName == "SessionStart") {
 		return nil, noop
 	}
 	ev, ok := standingOrderEvent(input, envSessionID, trigger)
 	if !ok {
 		return nil, noop
 	}
-	orders, err := db.ListEnabledStandingOrdersForEvent(trigger)
+	orders, err := db.ListEnabledStandingOrdersForEvent(
+		trigger, ev.Harness, ev.NativeEvent)
 	if err != nil || len(orders) == 0 {
 		return nil, noop
 	}
@@ -489,6 +512,25 @@ type PendingStandingMessage struct {
 	OwnerConv        string
 }
 
+func pendingStandingMessage(
+	d standingorders.Decision,
+	ev standingorders.Event,
+) PendingStandingMessage {
+	return PendingStandingMessage{
+		OrderID:          d.Order.ID,
+		OrderRevision:    d.Order.Revision,
+		Name:             d.Order.Name,
+		Body:             standingorders.RenderContext([]standingorders.Decision{d}),
+		TargetConv:       ev.ConvID,
+		TargetAgent:      ev.AgentID,
+		Epoch:            d.Epoch,
+		Harness:          ev.Harness,
+		Detail:           d.Detail,
+		OperatorAuthored: d.Order.OperatorAuthored,
+		OwnerConv:        d.Order.OwnerConv,
+	}
+}
+
 // RecordStandingMessageDelivery closes the ledger for a message-transport
 // delivery the caller attempted. sendErr nil means it went out.
 //
@@ -548,6 +590,7 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 
 	ev := standingorders.Event{
 		Event:          trigger,
+		NativeEvent:    strings.TrimSpace(input.NativeHookEvent),
 		Source:         strings.ToLower(strings.TrimSpace(input.Source)),
 		ConvID:         convID,
 		Harness:        db.DefaultHarness,
@@ -560,6 +603,9 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	}
 	if h := strings.TrimSpace(state.Harness); h != "" {
 		ev.Harness = h
+	}
+	if ev.NativeEvent == "" {
+		ev.NativeEvent = strings.TrimSpace(input.HookEventName)
 	}
 	// An empty SessionStart source means a cold start; the harnesses spell it
 	// "startup" when they spell it at all. Normalization lives in the

@@ -2434,6 +2434,10 @@ func consumeOpenCodeEventLocked(
 	}
 	observeOpenCodeStandingOrderAssistant(runtime, projector, event)
 	projected, err := projector.project(event)
+	if native, ok := projector.takeNativeHook(); ok {
+		applyOpenCodeHooks(ctx, runtime, projector,
+			[]session.HookCallbackInput{native})
+	}
 	if err != nil {
 		slog.Debug("OpenCode SSE event could not be projected",
 			"session", runtime.SessionID, "error", err)
@@ -2660,6 +2664,10 @@ func applyOpenCodeHooks(
 				projector.standingOrderTurn || originUncertain
 		} else if originUncertain {
 			input.StandingOrderOrigin = true
+		}
+		if input.StandingOrderNativeOnly {
+			deliverOpenCodeStandingOrders(input, runtime.SessionID)
+			continue
 		}
 		deadline := time.Now().Add(openCodeHookRowWait)
 		applied := false

@@ -140,6 +140,10 @@ export function standingOrderToPrefill(order = {}) {
     role: groupTarget ? text(target.role) : '',
     summary: text(order.summary),
     triggerEvent: text(order.trigger?.event),
+    hookSelectors: Array.isArray(order.trigger?.selectors)
+      ? order.trigger.selectors.map((selector) => ({
+        harness: text(selector?.harness), event: text(selector?.event),
+      })) : [],
     sources: Array.isArray(order.trigger?.sources) ? [...order.trigger.sources] : [],
     matchField: text(order.trigger?.match_field),
     matchRegex: text(order.trigger?.match_regex),
@@ -155,6 +159,10 @@ export function createStandingOrderDraft(prefill = {}) {
   const mode = ['global', 'group'].includes(prefill.targetMode)
     ? prefill.targetMode : 'solo';
   const sources = Array.isArray(prefill.sources) ? [...prefill.sources] : [];
+  const hookSelectors = Array.isArray(prefill.hookSelectors)
+    ? prefill.hookSelectors.map((selector) => ({
+      harness: text(selector?.harness), event: text(selector?.event),
+    })) : [];
   return {
     name: text(prefill.name),
     revision: Number(prefill.revision) || 0,
@@ -169,6 +177,8 @@ export function createStandingOrderDraft(prefill = {}) {
     summary: text(prefill.summary),
     triggerEvent: ['user.prompt', 'tool.before', 'tool.after'].includes(prefill.triggerEvent)
       ? prefill.triggerEvent : 'session.start',
+    triggerMode: hookSelectors.length ? 'native' : 'portable',
+    hookSelectors,
     sourceMode: sources.length ? 'selected' : 'any',
     sources,
     matchField: text(prefill.matchField),
@@ -190,6 +200,7 @@ export const STANDING_ORDER_MATCH_FIELDS = Object.freeze({
   'user.prompt': Object.freeze(['', 'prompt', 'cwd']),
   'tool.before': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
   'tool.after': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+  'hook.event': Object.freeze(['', 'cwd']),
 });
 
 export function standingOrderTargetValue(target = {}) {
@@ -210,14 +221,18 @@ export function validateStandingOrderDraft(dialog, draft) {
   }
   if (!draft.name.trim()) return { code: 'name', message: 'Name is required.' };
   if (!draft.summary.trim()) return { code: 'summary', message: 'Instruction is required.' };
-  if (draft.triggerEvent === 'session.start' &&
+  if (draft.triggerMode === 'native' && draft.hookSelectors.length === 0) {
+    return { code: 'hook-selectors', message: 'Select at least one harness hook.' };
+  }
+  if (draft.triggerMode !== 'native' && draft.triggerEvent === 'session.start' &&
       draft.sourceMode === 'selected' && draft.sources.length === 0) {
     return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
   }
-  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent]) {
+  const effectiveTrigger = draft.triggerMode === 'native' ? 'hook.event' : draft.triggerEvent;
+  if (!STANDING_ORDER_MATCH_FIELDS[effectiveTrigger]) {
     return { code: 'trigger', message: 'Pick a supported trigger event.' };
   }
-  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent].includes(draft.matchField)) {
+  if (!STANDING_ORDER_MATCH_FIELDS[effectiveTrigger].includes(draft.matchField)) {
     return { code: 'match-field', message: 'Pick a match field supported by this trigger.' };
   }
   if (!!draft.matchField !== !!draft.matchRegex.trim()) {
@@ -254,8 +269,11 @@ export function buildStandingOrderMutation(dialog, draft) {
     target: standingOrderTargetValue(draft.target),
     role: draft.target.mode === 'group' ? draft.role.trim() : '',
     summary: draft.summary.trim(),
-    trigger_event: draft.triggerEvent,
-    sources: draft.triggerEvent === 'session.start' && draft.sourceMode !== 'any'
+    trigger_event: draft.triggerMode === 'native' ? 'hook.event' : draft.triggerEvent,
+    hook_selectors: draft.triggerMode === 'native'
+      ? draft.hookSelectors.map((selector) => ({ ...selector })) : [],
+    sources: draft.triggerMode !== 'native' &&
+      draft.triggerEvent === 'session.start' && draft.sourceMode !== 'any'
       ? [...draft.sources] : [],
     match_field: draft.matchField,
     match_regex: draft.matchRegex,

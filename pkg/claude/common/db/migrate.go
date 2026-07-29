@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 175
+const currentVersion = 176
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan

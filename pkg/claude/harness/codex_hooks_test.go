@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // seedTclaudeOnPath makes clcommon.DetectCmd resolve to a bare "tclaude"
@@ -76,6 +79,50 @@ func TestCodexHookInstaller_InstallAndCheck(t *testing.T) {
 		assert.Equal(t, "command", groups[0].Hooks[0].Type)
 		assert.Equal(t, codexHookCommandStr(), groups[0].Hooks[0].Command)
 	}
+}
+
+func TestCodexHookInstallerAddsAndPrunesEnabledNativeSelectorHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.Install())
+	read := func() map[string]json.RawMessage {
+		t.Helper()
+		hooks, _, err := readCodexHooks(inst.ConfigTarget())
+		require.NoError(t, err)
+		return hooks
+	}
+	_, exists := read()["SessionEnd"]
+	assert.False(t, exists, "no standing order means no extra callback")
+
+	id, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:         "codex-session-end",
+		TargetKind:   db.StandingTargetGroup,
+		GroupID:      1,
+		Summary:      "Close out the session.",
+		TriggerEvent: db.StandingTriggerHookEvent,
+		HookSelectors: []hookevents.Selector{{
+			Harness: hookevents.HarnessCodex,
+			Event:   "SessionEnd",
+		}},
+		Timing:  db.StandingTimingNextTurn,
+		Cadence: db.StandingCadenceAlways,
+		Enabled: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, inst.Install())
+	assert.True(t, codexHooksContain(read()["SessionEnd"], codexHookCommandStr()))
+
+	order, err := db.GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NoError(t, db.SetStandingOrderEnabled(id, false, order.RowVersion))
+	require.NoError(t, inst.Install())
+	_, exists = read()["SessionEnd"]
+	assert.False(t, exists)
 }
 
 // TestCodexHookInstaller_Idempotent installs twice and confirms no

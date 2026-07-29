@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // Dashboard standing-order mutation routes. This is intentionally a
@@ -17,6 +20,7 @@ import (
 func registerDashboardStandingOrderRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/standing-orders", handleDashboardStandingOrderCreate)
 	mux.HandleFunc("/api/standing-orders/", handleDashboardStandingOrderAPI)
+	mux.HandleFunc("/api/standing-order-hooks", handleDashboardStandingOrderHooks)
 }
 
 type dashboardStandingOrderMutation struct {
@@ -24,20 +28,21 @@ type dashboardStandingOrderMutation struct {
 	RowVersion int64  `json:"row_version,omitempty"`
 	// Revision and UpdatedAt are accepted from a dashboard tab opened before
 	// the row-version migration. New clients use RowVersion exclusively.
-	Revision        int64    `json:"revision,omitempty"`
-	UpdatedAt       string   `json:"updated_at,omitempty"`
-	Target          string   `json:"target"`
-	Role            string   `json:"role,omitempty"`
-	Summary         string   `json:"summary"`
-	Sources         []string `json:"sources,omitempty"`
-	Timing          string   `json:"timing"`
-	Cadence         string   `json:"cadence"`
-	CooldownSeconds int64    `json:"cooldown_seconds,omitempty"`
-	DebounceSeconds int64    `json:"debounce_seconds,omitempty"`
-	Enabled         *bool    `json:"enabled,omitempty"`
-	TriggerEvent    string   `json:"trigger_event,omitempty"`
-	MatchField      string   `json:"match_field,omitempty"`
-	MatchRegex      string   `json:"match_regex,omitempty"`
+	Revision        int64                 `json:"revision,omitempty"`
+	UpdatedAt       string                `json:"updated_at,omitempty"`
+	Target          string                `json:"target"`
+	Role            string                `json:"role,omitempty"`
+	Summary         string                `json:"summary"`
+	Sources         []string              `json:"sources,omitempty"`
+	Timing          string                `json:"timing"`
+	Cadence         string                `json:"cadence"`
+	CooldownSeconds int64                 `json:"cooldown_seconds,omitempty"`
+	DebounceSeconds int64                 `json:"debounce_seconds,omitempty"`
+	Enabled         *bool                 `json:"enabled,omitempty"`
+	TriggerEvent    string                `json:"trigger_event,omitempty"`
+	HookSelectors   []hookevents.Selector `json:"hook_selectors,omitempty"`
+	MatchField      string                `json:"match_field,omitempty"`
+	MatchRegex      string                `json:"match_regex,omitempty"`
 }
 
 func handleDashboardStandingOrderCreate(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +62,8 @@ func handleDashboardStandingOrderCreate(w http.ResponseWriter, r *http.Request) 
 		writeDashboardStandingOrderError(w, "create", err)
 		return
 	}
-	writeDashboardStandingOrder(w, id)
+	warning := reconcileStandingOrderHookDeclarations(nil, order)
+	writeDashboardStandingOrder(w, id, warning)
 }
 
 func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +109,10 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 			writeDashboardStandingOrderError(w, "toggle", err)
 			return
 		}
+		updated, _ := db.GetStandingOrder(id)
+		if warning := reconcileStandingOrderHookDeclarations(order, updated); warning != "" {
+			w.Header().Set("X-Tclaude-Hook-Warning", warning)
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -116,7 +126,8 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 			writeDashboardStandingOrderError(w, "update", err)
 			return
 		}
-		writeDashboardStandingOrder(w, id)
+		warning := reconcileStandingOrderHookDeclarations(order, replacement)
+		writeDashboardStandingOrder(w, id, warning)
 	case http.MethodDelete:
 		rowVersion, ok := dashboardStandingOrderCASFromQuery(w, r, order)
 		if !ok {
@@ -125,6 +136,9 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 		if err := db.DeleteStandingOrder(id, rowVersion); err != nil {
 			writeDashboardStandingOrderError(w, "delete", err)
 			return
+		}
+		if warning := reconcileStandingOrderHookDeclarations(order, nil); warning != "" {
+			w.Header().Set("X-Tclaude-Hook-Warning", warning)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -191,6 +205,10 @@ func decodeDashboardStandingOrder(
 		return nil, 0, false
 	}
 	trigger := strings.TrimSpace(body.TriggerEvent)
+	selectors := hookevents.NormalizeSelectors(body.HookSelectors)
+	if len(selectors) > 0 {
+		trigger = db.StandingTriggerHookEvent
+	}
 	if trigger == "" {
 		trigger = db.StandingTriggerSessionStart
 	}
@@ -205,6 +223,7 @@ func decodeDashboardStandingOrder(
 		Name:             body.Name,
 		Summary:          body.Summary,
 		TriggerEvent:     trigger,
+		HookSelectors:    selectors,
 		TriggerSources:   body.Sources,
 		MatchField:       body.MatchField,
 		MatchRegex:       body.MatchRegex,
@@ -295,7 +314,7 @@ func dashboardStandingOrderCAS(
 	return current.RowVersion, true
 }
 
-func writeDashboardStandingOrder(w http.ResponseWriter, id int64) {
+func writeDashboardStandingOrder(w http.ResponseWriter, id int64, warning ...string) {
 	order, err := db.GetStandingOrder(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "read result: "+err.Error())
@@ -306,7 +325,56 @@ func writeDashboardStandingOrder(w http.ResponseWriter, id int64) {
 		return
 	}
 	view := dashboardStandingOrderView(order, map[int64]string{})
+	if len(warning) > 0 && warning[0] != "" {
+		w.Header().Set("X-Tclaude-Hook-Warning", warning[0])
+		view.HookSetupWarning = warning[0]
+	}
 	writeJSON(w, http.StatusOK, view)
+}
+
+func handleDashboardStandingOrderHooks(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hooks": hookevents.All()})
+}
+
+func reconcileStandingOrderHookDeclarations(
+	before, after *db.StandingOrder,
+) string {
+	harnesses := map[string]bool{}
+	collect := func(order *db.StandingOrder) {
+		if order == nil {
+			return
+		}
+		for _, selector := range order.HookSelectors {
+			if order.Enabled || order == before {
+				harnesses[selector.Harness] = true
+			}
+		}
+	}
+	collect(before)
+	collect(after)
+
+	var problems []string
+	if harnesses[hookevents.HarnessClaude] {
+		if err := session.InstallHooks(); err != nil {
+			problems = append(problems, "Claude hook registration failed: "+err.Error())
+		}
+	}
+	if harnesses[hookevents.HarnessCodex] {
+		codex, ok := harness.Get(harness.CodexName)
+		if !ok || codex.Hooks == nil {
+			problems = append(problems, "Codex hook registration is unavailable")
+		} else if err := codex.Hooks.Install(); err != nil {
+			problems = append(problems, "Codex hook registration failed: "+err.Error())
+		}
+	}
+	return strings.Join(problems, "; ")
 }
 
 func writeDashboardStandingOrderError(w http.ResponseWriter, operation string, err error) {

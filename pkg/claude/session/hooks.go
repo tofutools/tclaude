@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // isOurHook returns true if a hook command belongs to tclaude (any binary variant,
@@ -19,6 +21,26 @@ func isOurHook(command string) bool {
 	}
 	base := filepath.Base(fields[0])
 	return base == "tclaude"
+}
+
+func desiredClaudeHooks() map[string][]HookMatcher {
+	out := make(map[string][]HookMatcher, len(RequiredHooks))
+	for event, matchers := range RequiredHooks {
+		out[event] = matchers
+	}
+	events, err := db.EnabledStandingOrderHookEvents(hookevents.HarnessClaude)
+	if err != nil {
+		// Database trouble must not make setup remove the baseline status
+		// hooks. It merely postpones optional standing-order declarations.
+		return out
+	}
+	hook := HookConfig{Type: "command", Command: HookCommand}
+	for _, event := range events {
+		if _, baseline := out[event]; !baseline {
+			out[event] = []HookMatcher{{Hooks: []HookConfig{hook}}}
+		}
+	}
+	return out
 }
 
 // HookMatcher represents a hook matcher configuration
@@ -193,7 +215,7 @@ func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) 
 	}
 
 	// Check each required hook event
-	for event := range RequiredHooks {
+	for event := range desiredClaudeHooks() {
 		eventHooks, ok := hooks[event]
 		if !ok || !containsCurrentHook(string(eventHooks)) {
 			missing = append(missing, event)
@@ -253,7 +275,7 @@ func InstallHooks() error {
 	}
 
 	// Second pass: add current hooks for all required events
-	for event, requiredMatchers := range RequiredHooks {
+	for event, requiredMatchers := range desiredClaudeHooks() {
 		eventHooksRaw, exists := hooks[event]
 		if exists {
 			var existingMatchers []json.RawMessage

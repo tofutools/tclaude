@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // codexHookEvents is the set of Codex hook events tclaude registers its
@@ -30,6 +33,27 @@ var codexHookEvents = []string{
 	"PostCompact",
 	"SubagentStart",
 	"SubagentStop",
+}
+
+func desiredCodexHookEvents() []string {
+	seen := make(map[string]struct{}, len(codexHookEvents))
+	out := append([]string(nil), codexHookEvents...)
+	for _, event := range out {
+		seen[event] = struct{}{}
+	}
+	extra, err := db.EnabledStandingOrderHookEvents(hookevents.HarnessCodex)
+	if err != nil {
+		return out
+	}
+	for _, event := range extra {
+		if _, exists := seen[event]; exists {
+			continue
+		}
+		seen[event] = struct{}{}
+		out = append(out, event)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // codexHooksPath is ~/.codex/hooks.json — Codex's dedicated hooks file
@@ -161,7 +185,7 @@ func (codexHookInstaller) Check() (installed bool, missing []string, needsRepair
 			break
 		}
 	}
-	for _, event := range codexHookEvents {
+	for _, event := range desiredCodexHookEvents() {
 		if !codexHooksContain(hooks[event], want) {
 			missing = append(missing, event)
 		}
@@ -232,7 +256,7 @@ func planCodexHookInstall() (codexHookInstallPlan, error) {
 	if err != nil {
 		return codexHookInstallPlan{}, err
 	}
-	for _, event := range codexHookEvents {
+	for _, event := range desiredCodexHookEvents() {
 		var groups []json.RawMessage
 		if existing, ok := hooks[event]; ok {
 			if err := json.Unmarshal(existing, &groups); err != nil {

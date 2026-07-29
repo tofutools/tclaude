@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // setTestHookCommand overrides HookCommand and rebuilds RequiredHooks for testing
@@ -67,6 +70,52 @@ func TestRequiredHooks_RegistersStopFailure(t *testing.T) {
 		_, ok := RequiredHooks[event]
 		assert.Truef(t, ok, "RequiredHooks must register %q", event)
 	}
+}
+
+func TestInstallHooksAddsAndPrunesOnlyEnabledNativeSelectorHooks(t *testing.T) {
+	setTestHookCommand(t)
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	require.NoError(t, InstallHooks())
+	readHooks := func() map[string]json.RawMessage {
+		t.Helper()
+		data, err := os.ReadFile(ClaudeSettingsPath())
+		require.NoError(t, err)
+		var settings struct {
+			Hooks map[string]json.RawMessage `json:"hooks"`
+		}
+		require.NoError(t, json.Unmarshal(data, &settings))
+		return settings.Hooks
+	}
+	_, exists := readHooks()["ConfigChange"]
+	assert.False(t, exists, "no standing order means no extra callback")
+
+	id, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:         "config-reminder",
+		TargetKind:   db.StandingTargetGroup,
+		GroupID:      1,
+		Summary:      "Review configuration changes.",
+		TriggerEvent: db.StandingTriggerHookEvent,
+		HookSelectors: []hookevents.Selector{{
+			Harness: hookevents.HarnessClaude,
+			Event:   "ConfigChange",
+		}},
+		Timing:  db.StandingTimingNextTurn,
+		Cadence: db.StandingCadenceAlways,
+		Enabled: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, InstallHooks())
+	assert.True(t, containsCurrentHook(string(readHooks()["ConfigChange"])))
+
+	order, err := db.GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NoError(t, db.SetStandingOrderEnabled(id, false, order.RowVersion))
+	require.NoError(t, InstallHooks())
+	_, exists = readHooks()["ConfigChange"]
+	assert.False(t, exists, "disabled selector must remove its optional callback")
 }
 
 func TestNeedsHookCleanup(t *testing.T) {

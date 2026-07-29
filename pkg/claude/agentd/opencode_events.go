@@ -22,6 +22,7 @@ type openCodeEventProjector struct {
 	standingOrderTurn bool
 	seenEventIDs      map[string]struct{}
 	seenEventOrder    []string
+	pendingNativeHook *session.HookCallbackInput
 }
 
 type openCodeSessionStatus struct {
@@ -105,6 +106,7 @@ func newOpenCodeEventProjector(convID, cwd string) *openCodeEventProjector {
 }
 
 func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookCallbackInput, error) {
+	p.pendingNativeHook = nil
 	var envelope openCodeEventEnvelope
 	if err := json.Unmarshal(event, &envelope); err != nil {
 		return nil, fmt.Errorf("decode OpenCode event: %w", err)
@@ -112,15 +114,23 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 	if envelope.Type == "" {
 		return nil, nil
 	}
-	if p.convID == "" || envelope.Properties.SessionID == "" ||
-		envelope.Properties.SessionID != p.convID {
+	if p.convID == "" ||
+		(envelope.Properties.SessionID == "" &&
+			!openCodeSessionOptionalEvent(envelope.Type)) ||
+		(envelope.Properties.SessionID != "" &&
+			envelope.Properties.SessionID != p.convID) {
 		// /event is directory-scoped, not session-scoped. A user's OpenCode
 		// store can contain several conversations for the same worktree.
+		// Session-scoped events must name this runtime; genuinely directory-
+		// scoped native hooks carry no session id and are attributed to the
+		// runtime whose stream observed them.
 		return nil, nil
 	}
 	if p.seenEvent(envelope.ID) {
 		return nil, nil
 	}
+	native := p.nativeHook(envelope.Type)
+	p.pendingNativeHook = &native
 
 	switch envelope.Type {
 	case "session.created":
@@ -349,6 +359,35 @@ func (p *openCodeEventProjector) hook(eventName string) session.HookCallbackInpu
 		input.Source = "startup"
 	}
 	return input
+}
+
+func (p *openCodeEventProjector) nativeHook(eventName string) session.HookCallbackInput {
+	return session.HookCallbackInput{
+		ConvID:                  p.convID,
+		Cwd:                     p.cwd,
+		NativeHookEvent:         eventName,
+		StandingOrderNativeOnly: true,
+	}
+}
+
+func (p *openCodeEventProjector) takeNativeHook() (session.HookCallbackInput, bool) {
+	if p.pendingNativeHook == nil {
+		return session.HookCallbackInput{}, false
+	}
+	input := *p.pendingNativeHook
+	p.pendingNativeHook = nil
+	return input, true
+}
+
+func openCodeSessionOptionalEvent(eventName string) bool {
+	switch eventName {
+	case "file.edited", "file.watcher.updated", "installation.updated",
+		"lsp.client.diagnostics", "lsp.updated", "server.connected",
+		"shell.env", "tui.prompt.append", "tui.command.execute",
+		"tui.toast.show":
+		return true
+	}
+	return false
 }
 
 func questionPrompts(in []openCodeQuestionPrompt) []struct {

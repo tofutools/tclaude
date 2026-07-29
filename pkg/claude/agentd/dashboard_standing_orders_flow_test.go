@@ -12,6 +12,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -209,6 +210,59 @@ func TestDashboardStandingOrders_ValidatesActionTriggerMatcher(t *testing.T) {
 
 	body["name"] = "invalid-lookahead"
 	body["match_regex"] = `(?=deploy)`
+	_, code = mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestDashboardStandingOrders_HarnessHookCatalogAndORSelectors(t *testing.T) {
+	newFlow(t)
+	targetAgent, _, err := db.EnsureAgentForConv("conv-native-hook-target", "test")
+	require.NoError(t, err)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	rec := testharness.Serve(dash, dashReq(
+		t, http.MethodGet, "/api/standing-order-hooks", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var catalog struct {
+		Hooks []hookevents.Definition `json:"hooks"`
+	}
+	testharness.DecodeJSON(t, rec, &catalog)
+	assert.Contains(t, catalog.Hooks, hookevents.Definition{
+		Selector: hookevents.Selector{
+			Harness: hookevents.HarnessOpenCode,
+			Event:   "session.compacted",
+		},
+		Baseline: true,
+	})
+
+	body := standingOrderBody(targetAgent, 0)
+	body["name"] = "native-boundaries"
+	body["trigger_event"] = db.StandingTriggerHookEvent
+	body["sources"] = []string{}
+	body["timing"] = db.StandingTimingNextTurn
+	body["hook_selectors"] = []map[string]string{
+		{"harness": hookevents.HarnessClaude, "event": "PostCompact"},
+		{"harness": hookevents.HarnessCodex, "event": "PostCompact"},
+		{"harness": hookevents.HarnessOpenCode, "event": "session.compacted"},
+	}
+	created, code := mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, created)
+	assert.Equal(t, db.StandingTriggerHookEvent, created.Trigger.Event)
+	assert.Len(t, created.Trigger.Selectors, 3)
+	assert.Contains(t, created.Trigger.Label, "claude:PostCompact")
+	assert.Equal(t, standingorders.StatusSupported,
+		created.CapabilityByHarness[hookevents.HarnessOpenCode].Status)
+	assert.Equal(t, db.StandingTransportMessage,
+		created.CapabilityByHarness[hookevents.HarnessOpenCode].Transport)
+
+	body["name"] = "invalid-native-hook"
+	body["hook_selectors"] = []map[string]string{{
+		"harness": hookevents.HarnessClaude,
+		"event":   "NotARealHook",
+	}}
 	_, code = mutateStandingOrder(t, dash, http.MethodPost,
 		"/api/standing-orders", body)
 	assert.Equal(t, http.StatusBadRequest, code)

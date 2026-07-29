@@ -72,6 +72,9 @@ export function createJobsActions({
           method, body: payload, refreshAfter: false,
         });
         notify(`standing order ${method === 'PATCH' ? 'saved' : 'created'}: ${order?.name || ('#' + (order?.id || ''))}`);
+        if (order?.hook_setup_warning) {
+          notify(`Standing order saved, but hook setup needs attention: ${order.hook_setup_warning}`, true);
+        }
         void refresh();
         return order;
       } catch (error) {
