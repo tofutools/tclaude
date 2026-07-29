@@ -57,19 +57,26 @@ var KnownHarnesses = []string{harness.DefaultName, harness.CodexName, harness.Op
 //
 // The honest position for v1:
 //
-//   - Claude Code and Codex CLI both expose a hook whose stdout reaches the
+//   - Claude Code and Codex CLI both expose hooks whose stdout reaches the
 //     next model request inside the current turn, so both can meet
-//     same-continuation on SessionStart.
+//     same-continuation for the supported session/prompt/tool events.
 //   - OpenCode's SSE projection is an observation path with no response
 //     channel (see opencode_events.go — it calls ApplyHook and discards any
 //     result), so it has no same-continuation channel at all. Its orders go
-//     out on the message path, which is a queued turn.
+//     out on the message path only for SessionStart. Action-trigger messages
+//     remain off until they can carry origin suppression.
 //
 // An unknown harness is reported as message-only rather than assumed capable.
 // Guessing upward would mean promising a timing guarantee tclaude has never
 // tested on that harness.
 func CapabilityFor(timing, event, harnessName string) Capability {
-	if event != db.StandingTriggerSessionStart {
+	actionTrigger := false
+	switch event {
+	case db.StandingTriggerSessionStart:
+	case db.StandingTriggerUserPrompt, db.StandingTriggerToolBefore,
+		db.StandingTriggerToolAfter:
+		actionTrigger = true
+	default:
 		return Capability{
 			Status:    StatusUnsupported,
 			Transport: db.StandingTransportNone,
@@ -78,6 +85,19 @@ func CapabilityFor(timing, event, harnessName string) Capability {
 	}
 
 	sameContinuation := harnessName == harness.DefaultName || harnessName == harness.CodexName
+	if actionTrigger && !sameContinuation {
+		// OpenCode projects these events from an observation-only SSE stream.
+		// Sending the resulting order back as a queued user turn could itself
+		// produce another prompt/tool event and create an automation loop.
+		// Keep the action triggers direct-only until delayed delivery carries
+		// origin suppression.
+		return Capability{
+			Status:    StatusUnsupported,
+			Transport: db.StandingTransportNone,
+			Detail: harnessName + " exposes this event only on an observation path; " +
+				"queued delivery is disabled until self-trigger origin suppression is available",
+		}
+	}
 
 	switch timing {
 	case db.StandingTimingSameContinuation:

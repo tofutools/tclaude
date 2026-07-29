@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -28,15 +29,28 @@ const (
 	StandingDisabledReasonGroupRetired = CronDisabledReasonGroupRetired
 )
 
-// Trigger events. v1 ships exactly one, but the column is a string rather than
-// a flag so adding tool/command triggers later is a data change and not a
-// schema change — and so the dashboard's trigger column never has to be
-// rewritten.
+// Trigger events are normalized across harnesses before evaluation.
 const (
 	// StandingTriggerSessionStart matches the harness SessionStart lifecycle
 	// event. Its sources are the harness's own `source` values, normalized by
 	// NormalizeTriggerSources.
 	StandingTriggerSessionStart = "session.start"
+	// StandingTriggerUserPrompt matches a submitted user prompt.
+	StandingTriggerUserPrompt = "user.prompt"
+	// StandingTriggerToolBefore and StandingTriggerToolAfter match tool
+	// lifecycle boundaries before and after execution.
+	StandingTriggerToolBefore = "tool.before"
+	StandingTriggerToolAfter  = "tool.after"
+)
+
+// Match fields expose a deliberately small normalized projection of hook
+// payloads. One order matches at most one field; more complex OR behavior is
+// represented by separate orders so each branch has its own ledger history.
+const (
+	StandingMatchFieldCwd       = "cwd"
+	StandingMatchFieldPrompt    = "prompt"
+	StandingMatchFieldToolName  = "tool_name"
+	StandingMatchFieldToolInput = "tool_input"
 )
 
 // SessionStart sources a trigger may select. An order with no sources matches
@@ -91,6 +105,9 @@ const (
 	// StandingOutcomeSuppressedCadence — matched, but already delivered in
 	// this cadence epoch.
 	StandingOutcomeSuppressedCadence = "suppressed-cadence"
+	// StandingOutcomeSuppressedCooldown — matched, but this stable recipient
+	// received the same order revision too recently.
+	StandingOutcomeSuppressedCooldown = "suppressed-cooldown"
 	// StandingOutcomeDisabled — the order is disabled; see disabled_reason.
 	StandingOutcomeDisabled = "disabled"
 	// StandingOutcomeOutOfScope — this agent is not in the order's target set.
@@ -116,9 +133,9 @@ const (
 	// unsupported-timing: the harness is not the limitation, tclaude is.
 	StandingOutcomeTransportUnimplemented = "transport-unimplemented"
 	// StandingOutcomeNotEvaluatedBusy — the order matched, but another
-	// delivery path held this conversation's delivery lock, so the cadence
-	// read-modify-write could not be performed safely and the order was NOT
-	// delivered on this boundary.
+	// delivery path held the applicable conversation-cadence or stable-agent
+	// cooldown lock, so the rate-control read-modify-write could not be
+	// performed safely and the order was NOT delivered on this boundary.
 	//
 	// It is recorded rather than dropped silently because a skipped delivery
 	// looks identical to a healthy one from the outside, and it deliberately
@@ -144,6 +161,15 @@ const (
 // full text of anything longer belongs behind `orders show`.
 const StandingSummaryMaxLen = 2000
 
+// StandingMatchRegexMaxLen bounds authoring mistakes. Go's regexp engine is
+// RE2 and therefore linear-time, but an unbounded expression would still add
+// needless compile and display cost on every matching hook.
+const StandingMatchRegexMaxLen = 1024
+
+// StandingCooldownMaxSeconds keeps an accidental dashboard value from
+// suppressing an order effectively forever. Zero disables cooldown.
+const StandingCooldownMaxSeconds int64 = 365 * 24 * 60 * 60
+
 // ErrStandingOrderNameTaken is the canonical rejection for a duplicate order
 // name. Names are the stable handle the CLI and the skill address orders by,
 // so they are unique across the store.
@@ -151,6 +177,11 @@ var ErrStandingOrderNameTaken = errors.New("standing order name already exists")
 
 // ErrStandingOrderInvalid classifies a write rejected by Validate.
 var ErrStandingOrderInvalid = errors.New("invalid standing order")
+
+// ErrStandingOrderRevisionConflict reports an edit based on a stale revision.
+// Dashboard dialogs carry the revision they opened so two operator tabs cannot
+// silently overwrite one another's trigger or model-visible text.
+var ErrStandingOrderRevisionConflict = errors.New("standing order revision conflict")
 
 // StandingOrder is a row in agent_standing_orders: durable guidance delivered
 // when a trigger matches rather than on a wall clock.
@@ -187,9 +218,18 @@ type StandingOrder struct {
 	// TriggerSources filters a lifecycle trigger to particular sources. Empty
 	// means "every source".
 	TriggerSources []string
+	// MatchField and MatchRegex are either both empty (match every event of
+	// this type) or select one normalized event field and a validated RE2
+	// expression. Regexes are case-sensitive unless authored with (?i).
+	MatchField string
+	MatchRegex string
 
 	Timing  string
 	Cadence string
+	// CooldownSeconds limits successful deliveries per stable recipient agent.
+	// It is revision-scoped: editing/re-enabling an order deliberately rearms
+	// it, matching the existing once-per-generation cadence semantics.
+	CooldownSeconds int64
 
 	Enabled        bool
 	DisabledReason string
@@ -217,10 +257,18 @@ func (o *StandingOrder) IsGroupTarget() bool {
 // the dashboard print the same string rather than each composing their own
 // from event + sources.
 func (o *StandingOrder) TriggerLabel() string {
-	if len(o.TriggerSources) == 0 {
-		return o.TriggerEvent + " (any source)"
+	label := o.TriggerEvent
+	if o.TriggerEvent == StandingTriggerSessionStart {
+		if len(o.TriggerSources) == 0 {
+			label += " (any source)"
+		} else {
+			label += " (" + strings.Join(o.TriggerSources, ", ") + ")"
+		}
 	}
-	return o.TriggerEvent + " (" + strings.Join(o.TriggerSources, ", ") + ")"
+	if o.MatchField != "" {
+		label += " where " + o.MatchField + " matches /" + o.MatchRegex + "/"
+	}
+	return label
 }
 
 // MatchesSource reports whether the order's trigger accepts a given harness
@@ -248,6 +296,10 @@ type StandingDelivery struct {
 	OrderID       int64
 	OrderRevision int64
 	TargetConv    string
+	// TargetAgent is the durable recipient key. TargetConv remains useful
+	// diagnostic history and a once-per-generation epoch, but must not define
+	// a cooldown that should survive conversation rotation.
+	TargetAgent string
 	// Epoch is the cadence key the delivery was recorded under. For
 	// StandingCadenceOncePerGeneration it is the conversation generation.
 	Epoch     string
@@ -333,15 +385,26 @@ func (o *StandingOrder) Validate() error {
 		return fmt.Errorf("%w: target role applies only to a group target", ErrStandingOrderInvalid)
 	}
 
-	if o.TriggerEvent != StandingTriggerSessionStart {
-		return fmt.Errorf("%w: unknown trigger event %q (v1 supports %q)",
-			ErrStandingOrderInvalid, o.TriggerEvent, StandingTriggerSessionStart)
+	switch o.TriggerEvent {
+	case StandingTriggerSessionStart, StandingTriggerUserPrompt,
+		StandingTriggerToolBefore, StandingTriggerToolAfter:
+	default:
+		return fmt.Errorf("%w: unknown trigger event %q",
+			ErrStandingOrderInvalid, o.TriggerEvent)
 	}
 	o.TriggerSources = NormalizeTriggerSources(o.TriggerSources)
+	if o.TriggerEvent != StandingTriggerSessionStart && len(o.TriggerSources) > 0 {
+		return fmt.Errorf("%w: trigger sources apply only to %q",
+			ErrStandingOrderInvalid, StandingTriggerSessionStart)
+	}
 	for _, s := range o.TriggerSources {
 		if !ValidStandingSource(s) {
 			return fmt.Errorf("%w: unknown trigger source %q", ErrStandingOrderInvalid, s)
 		}
+	}
+	o.MatchField = strings.ToLower(strings.TrimSpace(o.MatchField))
+	if err := ValidateStandingMatcher(o.TriggerEvent, o.MatchField, o.MatchRegex); err != nil {
+		return err
 	}
 
 	switch o.Timing {
@@ -354,7 +417,51 @@ func (o *StandingOrder) Validate() error {
 	default:
 		return fmt.Errorf("%w: unknown cadence %q", ErrStandingOrderInvalid, o.Cadence)
 	}
+	if o.CooldownSeconds < 0 || o.CooldownSeconds > StandingCooldownMaxSeconds {
+		return fmt.Errorf("%w: cooldown_seconds must be between 0 and %d",
+			ErrStandingOrderInvalid, StandingCooldownMaxSeconds)
+	}
 	return nil
+}
+
+// ValidateStandingMatcher checks the matcher independently of the rest of an
+// order. Writes call it through Validate, and the evaluator calls it again on
+// rows read from storage so a directly edited or corrupted row fails closed.
+func ValidateStandingMatcher(event, field, expression string) error {
+	if (field == "") != (expression == "") {
+		return fmt.Errorf("%w: match_field and match_regex must be set together",
+			ErrStandingOrderInvalid)
+	}
+	if field == "" {
+		return nil
+	}
+	if !validStandingMatchField(event, field) {
+		return fmt.Errorf("%w: field %q cannot be matched on trigger %q",
+			ErrStandingOrderInvalid, field, event)
+	}
+	if len(expression) > StandingMatchRegexMaxLen {
+		return fmt.Errorf("%w: match_regex is %d bytes, limit is %d",
+			ErrStandingOrderInvalid, len(expression), StandingMatchRegexMaxLen)
+	}
+	if _, err := regexp.Compile(expression); err != nil {
+		return fmt.Errorf("%w: invalid RE2 match_regex: %v",
+			ErrStandingOrderInvalid, err)
+	}
+	return nil
+}
+
+func validStandingMatchField(event, field string) bool {
+	switch event {
+	case StandingTriggerSessionStart:
+		return field == StandingMatchFieldCwd
+	case StandingTriggerUserPrompt:
+		return field == StandingMatchFieldPrompt || field == StandingMatchFieldCwd
+	case StandingTriggerToolBefore, StandingTriggerToolAfter:
+		return field == StandingMatchFieldToolName ||
+			field == StandingMatchFieldToolInput ||
+			field == StandingMatchFieldCwd
+	}
+	return false
 }
 
 // standingSelect is the shared SELECT for reading standing orders. As with
@@ -367,7 +474,8 @@ const standingSelect = `SELECT o.id, o.name, o.revision,
 	o.owner_agent, COALESCE(ow.current_conv_id, ''),
 	o.target_kind, o.target_agent, COALESCE(tg.current_conv_id, ''),
 	o.group_id, o.target_role, o.summary,
-	o.trigger_event, o.trigger_sources, o.timing, o.cadence,
+	o.trigger_event, o.trigger_sources, o.match_field, o.match_regex,
+	o.timing, o.cadence, o.cooldown_seconds,
 	o.enabled, o.disabled_reason, o.operator_authored,
 	o.created_at, o.updated_at
 	FROM agent_standing_orders o
@@ -388,7 +496,8 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		&o.OwnerAgent, &o.OwnerConv,
 		&o.TargetKind, &o.TargetAgent, &o.TargetConv,
 		&o.GroupID, &o.TargetRole, &o.Summary,
-		&o.TriggerEvent, &sources, &o.Timing, &o.Cadence,
+		&o.TriggerEvent, &sources, &o.MatchField, &o.MatchRegex,
+		&o.Timing, &o.Cadence, &o.CooldownSeconds,
 		&enabled, &o.DisabledReason, &operator,
 		&createdRaw, &updatedRaw,
 	); err != nil {
@@ -434,11 +543,13 @@ func InsertStandingOrder(o *StandingOrder) (int64, error) {
 	now := formatStandingTime(time.Now())
 	res, err := d.Exec(`INSERT INTO agent_standing_orders
 		(name, revision, owner_agent, target_kind, target_agent, group_id, target_role,
-		 summary, trigger_event, trigger_sources, timing, cadence,
+		 summary, trigger_event, trigger_sources, timing, cadence, cooldown_seconds,
+		 match_field, match_regex,
 		 enabled, disabled_reason, operator_authored, created_at, updated_at)
-		VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
+		o.CooldownSeconds, o.MatchField, o.MatchRegex,
 		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -534,46 +645,103 @@ func listStandingOrders(d *sql.DB, query string, args ...any) ([]*StandingOrder,
 	return out, rows.Err()
 }
 
-// UpdateStandingOrderText replaces the delivered text and bumps the revision,
-// re-arming any once-per-generation cadence. Editing what an agent will be
-// told must not leave recipients pinned to an "already delivered" record for
-// the old wording — that would silently withhold the new text from exactly the
-// agents the edit was for.
-func UpdateStandingOrderText(id int64, summary string) error {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return fmt.Errorf("%w: summary is required", ErrStandingOrderInvalid)
+// UpdateStandingOrder replaces every operator-editable field and bumps the
+// delivery revision atomically. expectedRevision catches content changes;
+// expectedUpdatedAt also catches automatic lifecycle changes that deliberately
+// leave the delivery cadence untouched.
+func UpdateStandingOrder(
+	id, expectedRevision int64, expectedUpdatedAt time.Time, o *StandingOrder,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
 	}
-	if len(summary) > StandingSummaryMaxLen {
-		return fmt.Errorf("%w: summary is %d bytes, limit is %d",
-			ErrStandingOrderInvalid, len(summary), StandingSummaryMaxLen)
+	if err := o.Validate(); err != nil {
+		return err
 	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE agent_standing_orders
-		SET summary = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
-		summary, formatStandingTime(time.Now()), id)
-	return err
+	res, err := d.Exec(`UPDATE agent_standing_orders SET
+		name = ?, revision = revision + 1,
+		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
+		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
+		cooldown_seconds = ?, match_field = ?, match_regex = ?,
+		enabled = ?, disabled_reason = ?, operator_authored = ?, updated_at = ?
+		WHERE id = ? AND revision = ? AND updated_at = ?`,
+		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
+		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
+		o.CooldownSeconds, o.MatchField, o.MatchRegex,
+		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), formatStandingTime(time.Now()),
+		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("UpdateStandingOrder %q: %w", o.Name, ErrStandingOrderNameTaken)
+		}
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStandingOrderRevisionConflict
+	}
+	return nil
 }
 
-// SetStandingOrderEnabled toggles an order and clears any disabled_reason.
-// An explicit enable/disable is always a human-managed choice, so it resets
-// the marker that distinguishes tclaude's own auto-pauses.
-func SetStandingOrderEnabled(id int64, enabled bool) error {
+// SetStandingOrderEnabled toggles an order through the same two-part CAS used
+// by full edits. A successful state change clears disabled_reason and bumps the
+// delivery revision, intentionally re-arming a manually re-enabled order.
+func SetStandingOrderEnabled(
+	id int64, enabled bool, expectedRevision int64, expectedUpdatedAt time.Time,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE agent_standing_orders
-		SET enabled = ?, disabled_reason = '', updated_at = ? WHERE id = ?`,
-		boolToInt(enabled), formatStandingTime(time.Now()), id)
-	return err
+	res, err := d.Exec(`UPDATE agent_standing_orders
+		SET enabled = ?, disabled_reason = '', revision = revision + 1, updated_at = ?
+		WHERE id = ? AND revision = ? AND updated_at = ?
+		AND (enabled != ? OR disabled_reason != '')`,
+		boolToInt(enabled), formatStandingTime(time.Now()), id,
+		expectedRevision, formatStandingTime(expectedUpdatedAt), boolToInt(enabled))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		current, getErr := GetStandingOrder(id)
+		if getErr != nil {
+			return getErr
+		}
+		if current != nil &&
+			current.Revision == expectedRevision &&
+			current.UpdatedAt.Equal(expectedUpdatedAt) &&
+			current.Enabled == enabled &&
+			current.DisabledReason == "" {
+			return nil
+		}
+		return ErrStandingOrderRevisionConflict
+	}
+	return nil
 }
 
-// DeleteStandingOrder removes an order and its ledger rows.
-func DeleteStandingOrder(id int64) error {
+// DeleteStandingOrder removes an order and its ledger only if the caller still
+// holds both current CAS tokens. There is deliberately no unguarded exported
+// delete: a stale tab must not remove an order another writer changed.
+func DeleteStandingOrder(
+	id, expectedRevision int64, expectedUpdatedAt time.Time,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -583,10 +751,20 @@ func DeleteStandingOrder(id int64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries WHERE order_id = ?`, id); err != nil {
+	res, err := tx.Exec(
+		`DELETE FROM agent_standing_orders WHERE id = ? AND revision = ? AND updated_at = ?`,
+		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
+	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM agent_standing_orders WHERE id = ?`, id); err != nil {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrStandingOrderRevisionConflict
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries WHERE order_id = ?`, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -603,9 +781,10 @@ func DisableGroupTargetStandingOrdersForRetire(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?
+		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?, updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND enabled = 1`,
-		StandingDisabledReasonGroupRetired, StandingTargetGroup, groupID)
+		StandingDisabledReasonGroupRetired, formatStandingTime(time.Now()),
+		StandingTargetGroup, groupID)
 	if err != nil {
 		return 0, err
 	}
@@ -622,12 +801,13 @@ func ReenableGroupRetiredStandingOrders(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = ''
+		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = '', updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?
 		 AND (owner_agent = '' OR EXISTS (
 			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
 		 ))`,
-		StandingTargetGroup, groupID, StandingDisabledReasonGroupRetired)
+		formatStandingTime(time.Now()), StandingTargetGroup, groupID,
+		StandingDisabledReasonGroupRetired)
 	if err != nil {
 		return 0, err
 	}
@@ -645,16 +825,78 @@ func RecordStandingDelivery(rec *StandingDelivery) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if rec.Outcome == StandingOutcomeUnsupportedTiming {
+		// Capability failures are stable for one order revision, recipient,
+		// and harness. High-frequency action hooks can encounter the same
+		// unsupported OpenCode order thousands of times; preserve the first
+		// explanation without growing an unbounded row-per-hook ledger.
+		res, err := d.Exec(`INSERT INTO agent_standing_order_deliveries
+			(order_id, order_revision, target_conv, target_agent, epoch, outcome, transport, harness, detail, created_at)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			WHERE NOT EXISTS (
+				SELECT 1 FROM agent_standing_order_deliveries
+				WHERE order_id = ? AND order_revision = ? AND target_agent = ?
+				AND harness = ? AND outcome = ? AND transport = ? AND detail = ?
+			)`,
+			rec.OrderID, rec.OrderRevision, rec.TargetConv, rec.TargetAgent, rec.Epoch,
+			rec.Outcome, rec.Transport, rec.Harness, rec.Detail,
+			formatStandingTime(time.Now()),
+			rec.OrderID, rec.OrderRevision, rec.TargetAgent, rec.Harness, rec.Outcome,
+			rec.Transport, rec.Detail)
+		if err != nil {
+			return 0, err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return 0, err
+		}
+		return res.LastInsertId()
+	}
 	res, err := d.Exec(`INSERT INTO agent_standing_order_deliveries
-		(order_id, order_revision, target_conv, epoch, outcome, transport, harness, detail, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.OrderID, rec.OrderRevision, rec.TargetConv, rec.Epoch,
+		(order_id, order_revision, target_conv, target_agent, epoch, outcome, transport, harness, detail, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.OrderID, rec.OrderRevision, rec.TargetConv, rec.TargetAgent, rec.Epoch,
 		rec.Outcome, rec.Transport, rec.Harness, rec.Detail,
 		formatStandingTime(time.Now()))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// LatestSuccessfulStandingDeliveryAt returns when this stable recipient last
+// received the current order revision. A missing row returns the zero time.
+//
+// Pre-v170 rows have no target_agent and are intentionally not backfilled:
+// current conversation mappings cannot prove who owned a historical conv at
+// delivery time. Enabling cooldown therefore gives an existing order one
+// clean delivery before the new stable-agent history takes effect.
+func LatestSuccessfulStandingDeliveryAt(orderID, revision int64, targetAgent string) (time.Time, error) {
+	targetAgent = strings.TrimSpace(targetAgent)
+	if targetAgent == "" {
+		return time.Time{}, fmt.Errorf("%w: cooldown lookup requires a stable target agent", ErrStandingOrderInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var raw string
+	err = d.QueryRow(`SELECT created_at FROM agent_standing_order_deliveries
+		WHERE order_id = ? AND order_revision = ? AND target_agent = ?
+		AND outcome IN (?, ?)
+		ORDER BY id DESC LIMIT 1`,
+		orderID, revision, targetAgent,
+		StandingOutcomeDelivered, StandingOutcomeDegradedTransport).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	at := parseStandingTime(raw)
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("invalid standing-order delivery time %q", raw)
+	}
+	return at, nil
 }
 
 // StandingOrderDeliveredInEpoch reports whether a delivery has already been
@@ -692,7 +934,7 @@ func ListStandingDeliveries(orderID int64, limit int) ([]*StandingDelivery, erro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT id, order_id, order_revision, target_conv, epoch,
+	rows, err := d.Query(`SELECT id, order_id, order_revision, target_conv, target_agent, epoch,
 		outcome, transport, harness, detail, created_at
 		FROM agent_standing_order_deliveries
 		WHERE order_id = ? ORDER BY id DESC LIMIT ?`, orderID, limit)
@@ -707,6 +949,7 @@ func ListStandingDeliveries(orderID int64, limit int) ([]*StandingDelivery, erro
 			createdRaw string
 		)
 		if err := rows.Scan(&rec.ID, &rec.OrderID, &rec.OrderRevision, &rec.TargetConv,
+			&rec.TargetAgent,
 			&rec.Epoch, &rec.Outcome, &rec.Transport, &rec.Harness, &rec.Detail,
 			&createdRaw); err != nil {
 			return nil, err

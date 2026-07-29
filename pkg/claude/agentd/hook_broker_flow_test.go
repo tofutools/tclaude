@@ -280,6 +280,54 @@ func TestHookBroker_ParityWithDirectCallback(t *testing.T) {
 		"dashboard status must match between a brokered and a direct agent")
 }
 
+// The client-side oversize test proves trimming SETS PayloadTrimmed. This
+// broker flow proves the other half of the production composition: agentd
+// preserves that evidence through PrepareHookEvent and the standing-order
+// evaluator records "could not evaluate" rather than a false clean miss.
+func TestHookBroker_TrimEvidenceReachesStandingOrderLedger(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel,
+		"tmux-broker-layer", brokerPanePID)
+
+	targetAgent, _, err := db.EnsureAgentForConv(brokerLayerConv, "test")
+	require.NoError(t, err)
+	require.NotEmpty(t, targetAgent)
+	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:             "trim-evidence",
+		TargetKind:       db.StandingTargetConv,
+		TargetAgent:      targetAgent,
+		Summary:          "Review the tool input before proceeding.",
+		TriggerEvent:     db.StandingTriggerToolBefore,
+		MatchField:       db.StandingMatchFieldToolInput,
+		MatchRegex:       "deploy",
+		Timing:           db.StandingTimingSameContinuation,
+		Cadence:          db.StandingCadenceAlways,
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+
+	code, response := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		Input: session.HookCallbackInput{
+			ConvID:         brokerLayerConv,
+			HookEventName:  "PreToolUse",
+			ToolName:       "Bash",
+			Cwd:            f.World.HomeDir,
+			PayloadTrimmed: true,
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.Empty(t, response.Stdout)
+	assert.Empty(t, response.AckToken, "no model-visible delivery waits for an ACK")
+
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, latest.Outcome)
+	assert.NotEqual(t, db.StandingOutcomeNoMatch, latest.Outcome)
+}
+
 // TestHookBroker_IdentityComesFromAncestryNotThePayload pins finding 3 of
 // the inventory: the caller's TCLAUDE_SESSION_ID is a cross-check, never
 // the authority. A wrapped agent that names another agent's session must

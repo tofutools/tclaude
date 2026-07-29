@@ -3,6 +3,7 @@ package standingorders
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,31 @@ func TestEvaluateDeliversOnMatchingBoundary(t *testing.T) {
 	assert.Equal(t, db.StandingOutcomeDelivered, d.Outcome)
 	assert.Equal(t, db.StandingTransportHookContext, d.Capability.Transport)
 	assert.True(t, d.ShouldRecord())
+}
+
+func TestEvaluateCorruptMatcherFailsClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		regex string
+	}{
+		{name: "expression without field", regex: `.*`},
+		{name: "field without expression", field: db.StandingMatchFieldCwd},
+		{name: "unknown field matching empty", field: "unknown", regex: `^$`},
+		{name: "field invalid for event", field: db.StandingMatchFieldPrompt, regex: `.*`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Evaluate(order(func(o *db.StandingOrder) {
+				o.MatchField = tt.field
+				o.MatchRegex = tt.regex
+			}), event(), neverDelivered)
+
+			assert.False(t, d.Deliver)
+			assert.Equal(t, db.StandingOutcomeNoMatch, d.Outcome)
+			assert.Contains(t, d.Detail, "stored matcher is invalid")
+		})
+	}
 }
 
 func TestEvaluateDisabledShortCircuitsBeforeScope(t *testing.T) {
@@ -149,9 +175,13 @@ func TestEvaluateEmptySourcesMatchesEverySource(t *testing.T) {
 // The distinction this feature most needs to preserve: a payload we could not
 // read is not the same answer as a trigger that did not match.
 func TestEvaluateTrimmedPayloadIsDistinctFromNoMatch(t *testing.T) {
-	o := order(func(o *db.StandingOrder) { o.TriggerEvent = "tool.before" })
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = "deploy"
+	})
 	ev := event(func(e *Event) {
-		e.Event = "tool.before"
+		e.Event = db.StandingTriggerToolBefore
 		e.PayloadTrimmed = true
 	})
 
@@ -161,6 +191,62 @@ func TestEvaluateTrimmedPayloadIsDistinctFromNoMatch(t *testing.T) {
 	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, d.Outcome)
 	assert.NotEqual(t, db.StandingOutcomeNoMatch, d.Outcome)
 	assert.True(t, d.ShouldRecord(), "an unevaluatable trigger must reach the ledger")
+}
+
+func TestEvaluateTrimmedPayloadStillMatchesToolName(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.MatchField = db.StandingMatchFieldToolName
+		o.MatchRegex = `(?i)^bash$`
+	})
+	ev := event(func(e *Event) {
+		e.Event = db.StandingTriggerToolBefore
+		e.ToolName = "Bash"
+		e.PayloadTrimmed = true
+	})
+
+	d := Evaluate(o, ev, neverDelivered)
+	assert.True(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeDelivered, d.Outcome)
+}
+
+func TestEvaluateTrimmedPromptIsUnevaluable(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = "deploy"
+	})
+	ev := event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "truncated prefix"
+		e.PayloadTrimmed = true
+	})
+
+	d := Evaluate(o, ev, neverDelivered)
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, d.Outcome)
+}
+
+func TestEvaluateRegexMatcherUsesNormalizedField(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `(?i)\bdeploy\b`
+	})
+
+	matched := Evaluate(o, event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "Please DEPLOY the service"
+	}), neverDelivered)
+	assert.True(t, matched.Deliver)
+
+	missed := Evaluate(o, event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "Run the tests"
+	}), neverDelivered)
+	assert.False(t, missed.Deliver)
+	assert.Equal(t, db.StandingOutcomeNoMatch, missed.Outcome)
+	assert.Contains(t, missed.Detail, db.StandingMatchFieldPrompt)
 }
 
 // SessionStart does not read the tool payload, so a trimmed event must not
@@ -232,6 +318,62 @@ func TestEvaluateCadenceLookupFailureDeliversAnyway(t *testing.T) {
 
 	assert.True(t, d.Deliver)
 	assert.Contains(t, d.Detail, "database is locked")
+}
+
+func TestEvaluateCooldownUsesStableRecipientAndRevision(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+	var gotOrder, gotRevision int64
+	var gotAgent string
+	d := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(orderID, revision int64, targetAgent string) (time.Time, error) {
+			gotOrder, gotRevision, gotAgent = orderID, revision, targetAgent
+			return now.Add(-30 * time.Second), nil
+		})
+
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeSuppressedCooldown, d.Outcome)
+	assert.True(t, d.ShouldRecord(), "a cooldown suppression is a distinct ledger outcome")
+	assert.Equal(t, o.ID, gotOrder)
+	assert.Equal(t, o.Revision, gotRevision)
+	assert.Equal(t, "agt_aaa", gotAgent)
+	assert.Contains(t, d.Detail, "stable agent agt_aaa")
+	assert.False(t, OutcomeIsProblem(d.Outcome), "a working rate control is not a fault")
+}
+
+func TestEvaluateCooldownExpiresAndFailuresFailOpen(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 2, 0, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+
+	expired := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(int64, int64, string) (time.Time, error) {
+			return now.Add(-61 * time.Second), nil
+		})
+	assert.True(t, expired.Deliver)
+
+	failed := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(int64, int64, string) (time.Time, error) {
+			return time.Time{}, errors.New("database is locked")
+		})
+	assert.True(t, failed.Deliver)
+	assert.Contains(t, failed.Detail, "database is locked")
+}
+
+func TestEvaluateCooldownNeverUsesAnEmptySharedRecipientBucket(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+	consulted := false
+	d := Evaluate(o, event(func(e *Event) {
+		e.AgentID = ""
+		e.OccurredAt = now
+	}), neverDelivered, func(int64, int64, string) (time.Time, error) {
+		consulted = true
+		return now, nil
+	})
+
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeOutOfScope, d.Outcome)
+	assert.False(t, consulted)
 }
 
 func TestRenderContextCarriesProvenanceAndRevision(t *testing.T) {

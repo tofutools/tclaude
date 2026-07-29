@@ -19,6 +19,14 @@ function selectedValue(select) {
     ?? '';
 }
 
+function segmentedValue(control) {
+  return control.querySelector('[role="radio"][aria-checked="true"]')?.dataset.value ?? '';
+}
+
+function segment(control, value) {
+  return control.querySelector(`[role="radio"][data-value="${value}"]`);
+}
+
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
@@ -1047,6 +1055,86 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox filesystem and socket rows reuse accessible segmented controls while compact rows keep their authored shapes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'base' }, { name: 'segments' }]);
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'segments',
+    filesystem: [
+      { path: '/read', access: 'read' },
+      { path: '/write', access: 'write' },
+      { path: '/deny', access: 'deny' },
+    ],
+    environment: [{ name: 'GOCACHE', value: '/cache/go-build' }],
+    includes: ['base'],
+    agent_directories: ['NODE_COMPILE_CACHE'],
+    unix_sockets: {
+      mode: 'list',
+      allow: [{ path: '/run/example.sock' }, { path_glob: '/tmp/ssh-*/agent.*' }],
+    },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const filesystemRows = [...host.querySelectorAll('.sbx-filesystem-row')];
+  const filesystemControls = filesystemRows.map((row) => row.querySelector('.sbx-filesystem-access'));
+  assert.equal(filesystemRows.length, 3);
+  assert.deepEqual(filesystemControls.map(segmentedValue), ['read', 'write', 'deny']);
+  assert.equal(filesystemControls.every((control) => control.getAttribute('role') === 'radiogroup'), true);
+  assert.deepEqual([...filesystemControls[0].querySelectorAll('[role="radio"]')].map((radio) => radio.textContent),
+    ['Read', 'Write', 'Deny']);
+  for (const [control, value] of filesystemControls.map((item) => [item, segmentedValue(item)])) {
+    assert.equal(segment(control, value).classList.contains(`sbx-state-${value}`), true,
+      `${value} filesystem state exposes its permission-color CSS class`);
+    assert.equal(segment(control, value).classList.contains('is-selected'), true);
+  }
+  const readRadio = segment(filesystemControls[0], 'read');
+  readRadio.focus();
+  await harness.act(() => harness.fireEvent(readRadio, 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'write');
+  assert.equal(harness.document.activeElement, segment(filesystemControls[0], 'write'));
+  await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'write'), 'keydown', { key: 'End' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'deny');
+  await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'deny'), 'keydown', { key: 'Home' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'read');
+  assert.equal(segment(filesystemControls[0], 'read').getAttribute('tabindex'), '0');
+  assert.equal(segment(filesystemControls[0], 'write').getAttribute('tabindex'), '-1');
+
+  const socketMode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  const socketControls = [...host.querySelectorAll('.sbx-socket-selector')];
+  assert.equal(socketMode.tagName, 'SELECT', 'the three-state section posture remains a dropdown');
+  assert.deepEqual(socketControls.map(segmentedValue), ['path', 'path_glob']);
+  assert.deepEqual([...socketControls[0].querySelectorAll('[role="radio"]')].map((radio) => radio.textContent),
+    ['Path', 'Glob']);
+  assert.equal(segment(socketControls[0], 'path').classList.contains('sbx-state-path'), true);
+  assert.equal(segment(socketControls[1], 'path_glob').classList.contains('sbx-state-path_glob'), true);
+  const socketValue = host.querySelector('.sbx-socket-value');
+  await harness.act(() => harness.fireEvent(segment(socketControls[0], 'path'), 'click'));
+  assert.equal(socketValue.value, '/run/example.sock',
+    'reactivating the selected syntax does not clear the authored socket value');
+  await harness.act(() => harness.fireEvent(segment(socketControls[0], 'path'), 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(socketControls[0]), 'path_glob');
+  assert.equal(segment(socketControls[0], 'path_glob').classList.contains('is-selected'), true);
+
+  const include = host.querySelector('.sbx-inc-name');
+  assert.equal(include.tagName, 'SELECT');
+  assert.ok(include.closest('.sbx-include-row'), 'includes opt into the intrinsic-width row hook');
+  const environmentRow = host.querySelector('.sbx-environment-row');
+  assert.ok(environmentRow.querySelector('.sbx-env-name'));
+  assert.ok(environmentRow.querySelector('.sbx-env-value'));
+  assert.equal(environmentRow.querySelectorAll('input').length, 2,
+    'environment keeps free-form name/value controls under the fixed-grid hooks');
+  const agentRow = host.querySelector('.sbx-agent-name').closest('.sbx-row');
+  assert.equal(agentRow.querySelector('.sbx-segmented-control'), null,
+    'agent-owned directory rows remain exactly the free-form input control');
+  unmount();
+  host.remove();
+});
+
 const COMMON_RULES = {
   version: 1,
   home: '/home/op',
@@ -1395,12 +1483,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     ],
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Not enforced');
-  assert.match(host.querySelector('.sbx-network-badge').title,
-    /upstream proxy is experimental and off by default/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
-  assert.match(host.querySelector('.sbx-network-badge-detail').textContent,
-    /tclaude-layer filtering on Linux/);
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'allow rows do not duplicate the Effective policy preview with a per-row verdict');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Codex on Linux · built-in sandbox · no filtered network sandbox yet/);
   assert.match(host.querySelector('.sbx-rule-bucket-not-applied').textContent,
@@ -1416,8 +1500,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   );
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Evaluating…',
-    'a target change never leaves the previous target verdict visible');
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'target changes keep evaluation status in the preview instead of adding row verdicts');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
@@ -1426,11 +1510,6 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     sandbox: 'tclaude-layer',
   }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Partial');
-  assert.match(host.querySelector('.sbx-network-badge').title, /bounded lease/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
-  assert.match(host.querySelector('.sbx-network-badge-detail').textContent, /bounded lease/,
-    'keyboard-operable native details expose the full row explanation');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
@@ -1709,14 +1788,21 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   const packModes = [...newDraft.host.querySelectorAll('.sbx-network-pack-mode')];
-  const allowed = packModes.filter((select) => selectedValue(select) === 'allow');
+  const packDisclosure = newDraft.host.querySelector('.sbx-network-packs');
+  assert.equal(packDisclosure.hasAttribute('open'), false,
+    'built-in packs use the editor collapsed-by-default disclosure pattern');
+  const allowed = packModes.filter((control) => segmentedValue(control) === 'allow');
   assert.equal(allowed.length, 3);
-  assert.match(allowed.map((select) => select.parentElement.textContent).join(' '),
+  assert.match(allowed.map((control) => control.parentElement.textContent).join(' '),
     /Local access.*Anthropic API.*OpenAI API/s);
   const packRows = [...newDraft.host.querySelectorAll('.sbx-network-pack')];
   assert.equal(packRows.length, 3);
   assert.equal(packRows.every((row) => row.querySelectorAll('.sbx-network-pack-mode').length === 1), true,
     'built-in packs render as one dense three-state row each');
+  assert.equal(packRows.every((row) => row.querySelector('.sbx-network-pack-mode').getAttribute('role') === 'radiogroup'), true,
+    'each pack mode is exposed as one named radio group');
+  assert.equal(packRows.every((row) => row.querySelector('.sbx-network-pack-label strong') === null), true,
+    'pack labels use normal body typography instead of heading emphasis');
   assert.equal(packRows.every((row) => row.querySelector('small') === null), true,
     'pack disclosure copy is no longer permanently rendered under the label');
   const localHelp = packRows[0].querySelector('.spawn-field-help-trigger');
@@ -1727,12 +1813,46 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 3);
   assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
     'expanded pack destinations are read-only');
+  assert.equal(newDraft.host.querySelector('.sbx-network-pack-row .sbx-segmented-control'), null,
+    'read-only expanded destinations never instantiate the segmented component');
+  assert.ok(newDraft.host.querySelector('.sbx-network-pack-row .sbx-network-mode-readonly.sbx-state-allow'),
+    'read-only modes use the same explicit color-state mapping as editable controls');
+
+  const keyboardMode = packModes[0];
+  const allowRadio = segment(keyboardMode, 'allow');
+  allowRadio.focus();
+  assert.equal(allowRadio.getAttribute('tabindex'), '0');
+  assert.equal(segment(keyboardMode, 'off').getAttribute('tabindex'), '-1');
+  assert.equal(segment(keyboardMode, 'deny').getAttribute('tabindex'), '-1');
+  await harness.act(() => harness.fireEvent(allowRadio, 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(keyboardMode), 'deny');
+  assert.equal(segment(keyboardMode, 'deny').classList.contains('sbx-state-deny'), true);
+  assert.equal(segment(keyboardMode, 'deny').classList.contains('is-selected'), true);
+  assert.equal(segment(keyboardMode, 'deny').getAttribute('tabindex'), '0');
+  assert.equal(harness.document.activeElement, segment(keyboardMode, 'deny'),
+    'arrow selection moves the roving focus with the authored value');
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'deny'), 'keydown', { key: 'ArrowLeft' }));
+  assert.equal(segmentedValue(keyboardMode), 'allow');
+  assert.equal(segment(keyboardMode, 'allow').classList.contains('sbx-state-allow'), true);
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'allow'), 'keydown', { key: 'Home' }));
+  assert.equal(segmentedValue(keyboardMode), 'off');
+  assert.equal(segment(keyboardMode, 'off').classList.contains('sbx-state-off'), true);
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'off'), 'keydown', { key: 'End' }));
+  assert.equal(segmentedValue(keyboardMode), 'deny');
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'deny'), 'keydown', { key: 'ArrowDown' }));
+  assert.equal(segmentedValue(keyboardMode), 'off', 'Down wraps to the first segment');
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'off'), 'keydown', { key: 'ArrowUp' }));
+  assert.equal(segmentedValue(keyboardMode), 'deny', 'Up wraps to the last segment');
+  await harness.act(() => harness.fireEvent(segment(keyboardMode, 'allow'), 'click'));
+  assert.equal(segmentedValue(keyboardMode), 'allow',
+    'click and keyboard both author through the same segmented control');
+
   await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .filter((select) => selectedValue(select) === 'allow').length, 3,
+    .filter((control) => segmentedValue(control) === 'allow').length, 3,
     'allow-all retains explicitly authored allow packs');
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .every((select) => !select.hasAttribute('disabled')), true,
+    .every((control) => [...control.querySelectorAll('[role="radio"]')].every((radio) => !radio.disabled)), true,
     'allow-all unlocks pack authoring for deny restrictions');
   assert.match(newDraft.host.querySelector('.sbx-network-redundant').textContent,
     /Redundant under Allow all/);
@@ -1743,19 +1863,16 @@ test('new deny drafts apply default pack references once and pack rows stay read
     'the container does not contradict its intentionally operable help controls');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .filter((select) => selectedValue(select) === 'allow').length, 3,
+    .filter((control) => segmentedValue(control) === 'allow').length, 3,
     'returning to Deny all retains authored pack modes');
   const turnOff = newDraft.host.querySelector('.sbx-network-pack-mode');
-  await harness.act(() => {
-    choose(turnOff, 'off');
-    harness.fireEvent(turnOff, 'change');
-  });
+  await harness.act(() => harness.fireEvent(segment(turnOff, 'off'), 'click'));
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
     'turning off a default pack takes effect');
   const currentBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(currentBaseline, 'inherit'); harness.fireEvent(currentBaseline, 'change'); });
   assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
-    .every((select) => select.hasAttribute('disabled')), true,
+    .every((control) => [...control.querySelectorAll('[role="radio"]')].every((radio) => radio.disabled)), true,
     'No override disables all pack mode controls');
   const inheritedBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(inheritedBaseline, 'deny'); harness.fireEvent(inheritedBaseline, 'change'); });
@@ -1811,13 +1928,24 @@ test('network packs and manual destinations author deny mode without implying en
   const localPack = [...network.querySelectorAll('.sbx-network-pack')]
     .find((row) => /Local access/.test(row.textContent));
   assert.ok(localPack);
-  assert.equal(selectedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
-  assert.equal(selectedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
-  const badges = [...network.querySelectorAll('.sbx-network-badge')];
-  assert.equal(badges.length, 2);
-  assert.deepEqual(badges.map((badge) => badge.textContent),
-    ['Not enforced', 'Not enforced']);
-  assert.equal(badges.every((badge) => /not blocked by this rule/.test(badge.title)), true);
+  assert.equal(segmentedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
+  const authoredMode = network.querySelector('.sbx-network-rule-mode');
+  assert.equal(segmentedValue(authoredMode), 'deny');
+  const authoredDeny = segment(authoredMode, 'deny');
+  authoredDeny.focus();
+  await harness.act(() => harness.fireEvent(authoredDeny, 'keydown', { key: 'ArrowLeft' }));
+  const movedMode = network.querySelector('.sbx-network-rule-mode');
+  assert.equal(segmentedValue(movedMode), 'allow');
+  assert.equal(harness.document.activeElement, segment(movedMode, 'allow'),
+    'a manual row keeps roving focus when its existing mode handler moves it between buckets');
+  await harness.act(() => harness.fireEvent(segment(movedMode, 'allow'), 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
+  assert.equal(network.querySelector('.sbx-network-badge'), null,
+    'deny destinations do not duplicate evaluation-style verdict chips');
+  const denyNote = network.querySelector('.sbx-network-deny-note');
+  assert.equal(denyNote.textContent, 'Deny rules are authoring-only and not enforced yet.');
+  assert.equal(network.querySelectorAll('.sbx-network-deny-note').length, 1,
+    'one section-level disclosure covers deny packs and manual rows');
 
   const networkHelp = mounted.host.querySelector(
     '[aria-controls="sandbox-profile-editor-network-help-hint"]');
@@ -1830,23 +1958,26 @@ test('network packs and manual destinations author deny mode without implying en
   await harness.act(() => harness.fireEvent(add, 'click'));
   const manualModes = [...network.querySelectorAll('.sbx-network-rule-mode')];
   assert.equal(manualModes.length, 2);
-  assert.equal(selectedValue(manualModes[1]), 'deny',
+  assert.equal(segmentedValue(manualModes[1]), 'deny',
     'Allow all gives actively added destinations a visible Deny mode');
   const deleteButtons = [...network.querySelectorAll('[aria-label="Delete network row"]')];
   await harness.act(() => harness.fireEvent(deleteButtons.at(-1), 'click'));
 
   const baseline = network.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
-  assert.match(network.querySelector('.sbx-network-redundant').textContent,
+  const redundant = network.querySelector('.sbx-network-manual-rows .sbx-network-redundant');
+  assert.match(redundant.textContent,
     /Redundant under Deny all/);
+  assert.equal(redundant.closest('.sbx-network-mode-cell') !== null, true,
+    'the subdued redundancy label stays visible beneath the compact mode control');
   assert.match(network.querySelector('.sbx-add-row').textContent, /add allow destination/);
 
   const manualMode = network.querySelector('.sbx-network-rule-mode');
-  await harness.act(() => { choose(manualMode, 'allow'); harness.fireEvent(manualMode, 'change'); });
+  await harness.act(() => harness.fireEvent(segment(manualMode, 'allow'), 'click'));
   await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
   let overlapRow = [...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')].at(-1);
   const overlapMode = overlapRow.querySelector('.sbx-network-rule-mode');
-  await harness.act(() => { choose(overlapMode, 'deny'); harness.fireEvent(overlapMode, 'change'); });
+  await harness.act(() => harness.fireEvent(segment(overlapMode, 'deny'), 'click'));
   overlapRow = [...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')].at(-1);
   const overlapValue = overlapRow.querySelector('.sbx-network-value');
   overlapValue.value = 'telemetry.example';
@@ -1868,7 +1999,7 @@ test('network packs and manual destinations author deny mode without implying en
   mounted.host.remove();
 });
 
-test('network row predictions reconcile daemon-normalized entries to authored spellings', async (t) => {
+test('deny disclosure is section-level and independent of normalized prediction entries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1876,7 +2007,10 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: {
     name: 'noncanonical-network', filesystem: [], environment: [], includes: [], agent_directories: [],
-    network: { mode: 'list', allow: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }] },
+    network: {
+      baseline: 'allow', packs: [], deny_packs: [],
+      allow: [], deny: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }],
+    },
     unix_sockets: { mode: '' },
   }, options: {} });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
@@ -1884,13 +2018,14 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
       return {
         targets: [{
           network_entries: [{
+            mode: 'deny',
             entry: { domain: 'api.example.com', ports: [443] },
             keys: [
-              '{"domain":"api.example.com","ports":[443]}',
-              '{"domain":"API.EXAMPLE.COM","ports":[443]}',
+              'deny:{"domain":"api.example.com","ports":[443]}',
+              'deny:{"domain":"API.EXAMPLE.COM","ports":[443]}',
             ],
-            outcome: 'enforced',
-            detail: 'normalized destination is enforced',
+            outcome: 'not_enforced',
+            detail: 'normalized deny destination is stored but not applied',
           }],
         }],
         contexts: [],
@@ -1899,8 +2034,9 @@ test('network row predictions reconcile daemon-normalized entries to authored sp
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Enforced');
-  assert.match(host.querySelector('.sbx-network-badge').title, /normalized destination/);
+  assert.equal(host.querySelector('.sbx-network-badge'), null);
+  assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
+    'Deny rules are authoring-only and not enforced yet.');
   unmount();
 });
 
@@ -1923,14 +2059,30 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
 
   const networkRows = [...host.querySelectorAll('.sbx-network-row')];
   assert.equal(networkRows.length, 2);
+  const networkTable = host.querySelector('.sbx-network-table');
+  assert.ok(networkTable, 'release-owned and manual destinations share one grid owner');
+  assert.deepEqual(
+    [...networkTable.children].map((rows) => rows.className),
+    ['sbx-rows sbx-network-rows sbx-network-pack-rows', 'sbx-rows sbx-network-rows sbx-network-manual-rows'],
+  );
   assert.ok(networkRows.every((row) => row.classList.contains('sbx-access-row')));
-  assert.ok(networkRows.every((row) => row.querySelector('.sbx-network-modifier')),
-    'every network kind reserves the modifier column');
+  assert.ok(networkRows.every((row) => row.closest('.sbx-network-table') === networkTable));
+  assert.equal(host.querySelector('.sbx-network-badge'), null,
+    'ordinary allow rows have no duplicate per-row evaluation verdict');
   assert.ok(networkRows[0].querySelector('.sbx-network-modifier .sbx-inline-check'));
-  assert.equal(networkRows[1].querySelector('.sbx-network-modifier').textContent, '');
+  assert.equal(networkRows[0].querySelector('.sbx-network-modifier').textContent.trim(), 'subdomains');
+  assert.equal(networkRows[0].querySelector('.sbx-network-ports').placeholder, 'ports');
+  assert.equal([...networkRows[0].querySelector('.sbx-network-selector').options]
+    .some((option) => option.textContent === 'loopback'), true,
+  'the kind dropdown retains its longest label');
+  assert.equal(networkRows[1].querySelector('.sbx-network-modifier'), null);
+  assert.equal(networkRows[1].classList.contains('sbx-network-row-no-modifier'), true,
+    'rows without a subdomains checkbox give the dead modifier gutter to the value cell');
   const loopbackValue = networkRows[1].querySelector('span.sbx-network-value.sbx-network-value-readonly');
   assert.equal(loopbackValue.textContent, '—');
   assert.equal(loopbackValue.getAttribute('aria-hidden'), 'true');
+  assert.equal(loopbackValue.querySelector('input'), null,
+    'a read-only no-value cell is plain muted text rather than input-look markup');
   const networkHelp = host.querySelector('#sandbox-profile-editor-network-help-hint');
   assert.match(networkHelp.textContent, /Host matches one exact DNS name/);
   assert.match(networkHelp.textContent, /blank allows all ports/);
@@ -2234,7 +2386,7 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   const rows = [...host.querySelectorAll('.sbx-section .sbx-row')].filter((row) => row.querySelector('.sbx-path'));
   const inserted = rows[rows.length - 1];
   assert.equal(inserted.querySelector('.sbx-path').value, '/home/op');
-  assert.equal(inserted.querySelector('.sbx-access').getAttribute('value'), 'deny');
+  assert.equal(segmentedValue(inserted.querySelector('.sbx-access')), 'deny');
   assert.notEqual(inserted.querySelector('.sbx-path').disabled, true, 'inserted rows stay ordinary editable rows');
   const notice = host.querySelector('#sandbox-profile-editor-common-rule-notice');
   assert.match(notice.textContent, /Added 1 deny row from “Deny home directory”: \/home\/op/);
@@ -2331,6 +2483,8 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true,
     'a blocking catalog diagnostic exposes its explanation and retry control');
+  assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
+    'a blocking pack-catalog diagnostic opens the nested pack disclosure');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
   assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,
@@ -2374,6 +2528,8 @@ test('a failing common-rule feed also blocks hidden deny-pack intent under Allow
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true);
+  assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
+    'hidden deny-pack diagnostics auto-open the folded pack controls');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local/s);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
@@ -2388,7 +2544,7 @@ test('a failing common-rule feed also blocks hidden deny-pack intent under Allow
   assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
   const localPack = [...host.querySelectorAll('.sbx-network-pack')]
     .find((row) => /Local access/.test(row.textContent));
-  assert.equal(selectedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
+  assert.equal(segmentedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
   assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 1);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();

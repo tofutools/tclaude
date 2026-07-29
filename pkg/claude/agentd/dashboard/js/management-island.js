@@ -8,8 +8,6 @@ import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
-  sandboxNetworkEntryKey,
-  sandboxNetworkModeEntryKey,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
@@ -89,10 +87,9 @@ const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allo
   + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
   + 'future endpoint updates follow the stored pack reference. Deny pack rows are authored but '
   + 'not enforced in this frontend-first release. Expanded destinations below are read-only.';
-const NETWORK_DESTINATIONS_HELP = 'Destination badges evaluate this profile’s own materialized '
-  + 'rows before Includes and assignment intersections. The Effective policy preview remains '
-  + 'authoritative for composed launch behavior. Deny destinations always report Not enforced in '
-  + 'this frontend-first release: they are stored but do not yet block traffic.';
+const NETWORK_DESTINATIONS_HELP = 'The Effective policy preview below evaluates composed launch '
+  + 'behavior after Includes and assignment intersections. Deny destinations are stored but do not '
+  + 'yet block traffic in this frontend-first release.';
 const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
   + 'The tclaude agentd socket is always reachable and is not an editable row.';
 const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
@@ -113,6 +110,44 @@ const html = htm.bind(h);
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
+
+function SegmentedControl({ label, value, onChange, options, disabled = false, className = '' }) {
+  const activate = (event, index) => {
+    if (disabled) return;
+    let nextIndex = index;
+    switch (event.key) {
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        nextIndex = (index - 1 + options.length) % options.length;
+        break;
+      case 'ArrowRight':
+      case 'ArrowDown':
+        nextIndex = (index + 1) % options.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = options.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    event.currentTarget.parentElement?.children[nextIndex]?.focus();
+    onChange(options[nextIndex][0]);
+  };
+  return html`<div class=${`sbx-segmented-control${className ? ` ${className}` : ''}`}
+      role="radiogroup" aria-label=${label} aria-disabled=${disabled || null}>
+    ${options.map(([key, text], index) => {
+      const selected = key === value;
+      return html`<button key=${key} type="button" role="radio" aria-checked=${selected}
+        data-value=${key} disabled=${disabled} tabindex=${selected ? '0' : '-1'}
+        class=${`sbx-segmented-option sbx-state-${key}${selected ? ' is-selected' : ''}`}
+        onClick=${() => onChange(key)} onKeyDown=${(event) => activate(event, index)}>${text}</button>`;
+    })}
+  </div>`;
+}
 
 function SandboxHelp({ children }) {
   return html`<span class="sbx-section-help" onClick=${(event) => event.stopPropagation()}>${children}</span>`;
@@ -269,27 +304,6 @@ const NETWORK_BASELINE_OPTIONS = [
 
 const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
 
-const NETWORK_ENTRY_OUTCOMES = {
-  enforced: ['Enforced', 'enforced'],
-  enforced_partial: ['Partial', 'partial'],
-  not_enforced: ['Not enforced', 'not-enforced'],
-  refused: ['Refused', 'refused'],
-};
-
-function NetworkEntryBadge({ verdict, busy }) {
-  const current = busy ? null : verdict;
-  const [label, tone] = busy
-    ? ['Evaluating…', 'pending']
-    : NETWORK_ENTRY_OUTCOMES[current?.outcome] || ['Not evaluated', 'pending'];
-  const detail = current?.detail
-    || (busy ? 'Enforcement prediction is updating.' : 'Complete the profile to evaluate this destination.');
-  return html`<details class="sbx-network-verdict">
-    <summary class=${`sbx-network-badge sbx-network-badge-${tone}`} title=${detail}
-      aria-label=${`${label}: ${detail}`}>${label}</summary>
-    <span class="sbx-network-badge-detail">${detail}</span>
-  </details>`;
-}
-
 function networkEntriesMayOverlap(left = {}, right = {}) {
   const leftPorts = new Set(Array.isArray(left.ports) ? left.ports.map(Number) : []);
   const rightPorts = new Set(Array.isArray(right.ports) ? right.ports.map(Number) : []);
@@ -314,11 +328,25 @@ function networkEntriesMayOverlap(left = {}, right = {}) {
   return true;
 }
 
-function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
+  const [packsOpen, setPacksOpen] = useState(false);
+  const manualRowKeys = useRef({ allow: [], deny: [] });
+  const nextManualRowKey = useRef(0);
+  const hadPackAttention = useRef(false);
+  useEffect(() => {
+    if (packVisibilityAttention && !hadPackAttention.current) setPacksOpen(true);
+    hadPackAttention.current = !!packVisibilityAttention;
+  }, [packVisibilityAttention]);
   const defaultsAvailable = useRef(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
   const editable = rules.baseline !== 'inherit';
+  for (const mode of ['allow', 'deny']) {
+    manualRowKeys.current[mode].length = Math.min(manualRowKeys.current[mode].length, rules[mode].length);
+    while (manualRowKeys.current[mode].length < rules[mode].length) {
+      manualRowKeys.current[mode].push(`network-manual-row-${nextManualRowKey.current++}`);
+    }
+  }
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const rowsFor = (mode) => mode === 'deny' ? rules.deny : rules.allow;
   const updateRows = (mode, rows) => update({ [mode]: rows });
@@ -341,6 +369,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
   const changeRowMode = (mode, index, nextMode) => {
     if (mode === nextMode) return;
     const row = rowsFor(mode)[index];
+    const [rowKey] = manualRowKeys.current[mode].splice(index, 1);
+    manualRowKeys.current[nextMode].push(rowKey);
     update({
       [mode]: rowsFor(mode).filter((_, i) => i !== index),
       [nextMode]: [...rowsFor(nextMode), row],
@@ -394,6 +424,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
     ...rules.allow.map((row, index) => ({ row, index, mode: 'allow' })),
     ...rules.deny.map((row, index) => ({ row, index, mode: 'deny' })),
   ];
+  const hasDenyRules = rules.deny.length > 0 || rules.deny_packs.length > 0;
   const allowEntries = [
     ...rules.allow,
     ...(catalog.network_packs || []).flatMap((pack) =>
@@ -409,15 +440,6 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
       !allowEntries.some((allowEntry) => networkEntriesMayOverlap(allowEntry, denyEntry)))
       ? 'Redundant under Deny all' : '';
   };
-  const predictionByEntry = new Map((predictions || []).flatMap((value) =>
-    (value.keys?.length ? value.keys : [
-      sandboxNetworkModeEntryKey(value.mode || 'allow', value.entry),
-      sandboxNetworkEntryKey(value.entry),
-    ])
-      .map((key) => [key, value])));
-  const verdictFor = (mode, row) =>
-    predictionByEntry.get(sandboxNetworkModeEntryKey(mode, row))
-      || predictionByEntry.get(sandboxNetworkEntryKey(row));
   return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
       attention=${packVisibilityAttention}>
@@ -426,53 +448,59 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
       <legend class="sbx-network-unlocks-legend">Network rules</legend>
-      <div class="sbx-network-subhead"><strong>Built-in rule packs</strong><${SandboxHelp}><${HelpDisclosure}
-        id="sandbox-profile-editor-network-packs-help" label="built-in network rule packs"
-        help=${NETWORK_PACKS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-packs-help'}
-        setOpen=${setHelpOpen}/></${SandboxHelp}></div>
-      <div class="sbx-network-pack-list">${(catalog.network_packs || []).map((pack) => {
+      <details class="sbx-network-packs" open=${packsOpen || null}
+        onToggle=${(event) => setPacksOpen(event.currentTarget.open)}>
+        <summary class="sbx-network-subhead"><strong>Built-in rule packs</strong><${SandboxHelp}><${HelpDisclosure}
+          id="sandbox-profile-editor-network-packs-help" label="built-in network rule packs"
+          help=${NETWORK_PACKS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-packs-help'}
+          setOpen=${setHelpOpen}/></${SandboxHelp}></summary>
+        <div class="sbx-network-pack-list">${(catalog.network_packs || []).map((pack) => {
         const packHelp = [pack.note || '', pack.warning ? `⚠ ${pack.warning}` : ''].filter(Boolean).join(' ');
         const packHelpID = `sandbox-profile-editor-network-pack-${String(pack.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}-help`;
         return html`<div key=${pack.id} class="sbx-network-pack">
-          <${Select} class="sbx-network-pack-mode" aria-label=${`${pack.label} network pack mode`}
+          <${SegmentedControl} className="sbx-network-pack-mode" label=${`${pack.label} network pack mode`}
             disabled=${!editable} value=${packMode(pack.id)} onChange=${(mode) => changePackMode(pack.id, mode)}
             options=${[['off', 'Off'], ['allow', 'Allow'], ['deny', 'Deny']]}/>
-          <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong></span>
+          <span class="sbx-network-pack-label">${pack.group ? `${pack.group} · ` : ''}${pack.label}</span>
           ${redundantLabel(packMode(pack.id), pack.entries) && html`<span class="sbx-network-redundant">${redundantLabel(packMode(pack.id), pack.entries)}</span>`}
           ${packHelp && html`<${SandboxHelp}><${HelpDisclosure} id=${packHelpID}
             label=${`${pack.label} network pack`} help=${packHelp}
             open=${helpOpen === packHelpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
         </div>`;
-      })}</div>
+      })}</div></details>
       <div class="sbx-network-subhead"><strong>Destinations</strong><${SandboxHelp}><${HelpDisclosure}
         id="sandbox-profile-editor-network-destinations-help" label="network access list"
         help=${NETWORK_DESTINATIONS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-destinations-help'}
         setOpen=${setHelpOpen}/></${SandboxHelp}></div>
-      <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); return html`<div key=${`${mode}:${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
-        <div class="sbx-network-mode-cell"><span class="sbx-network-value-readonly">${mode === 'deny' ? 'Deny' : 'Allow'}</span>
+      ${hasDenyRules && html`<div class="sbx-network-deny-note" role="note">Deny rules are authoring-only and not enforced yet.</div>`}
+      <div class="sbx-network-table">
+      <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); const hasModifier = kind === 'domain' && row.include_subdomains; return html`<div key=${`${mode}:${pack.id}:${index}`} class=${`sbx-row sbx-access-row sbx-network-row sbx-network-pack-row${hasModifier ? '' : ' sbx-network-row-no-modifier'}`}>
+        <div class="sbx-network-mode-cell"><span class=${`sbx-network-mode-readonly sbx-state-${mode}`}>${mode === 'deny' ? 'Deny' : 'Allow'}</span>
           ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
-        <span class="sbx-network-modifier">${kind === 'domain' && row.include_subdomains ? 'subdomains' : ''}</span>
+        ${hasModifier && html`<span class="sbx-network-modifier">subdomains</span>`}
         <span class="sbx-network-ports sbx-network-value-readonly">${(row.ports || []).join(', ') || 'all ports'}</span>
-        <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
         <span class="sbx-network-pack-owner" title="This release-owned row is changed by toggling its pack.">${pack.label}</span>
       </div>`; })}</div>
-      <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${manualRows.map(({ row, index, mode }) => { const kind = selector(row); return html`<div key=${`${mode}:${index}`} class="sbx-row sbx-access-row sbx-network-row">
-      <div class="sbx-network-mode-cell"><${Select} class="sbx-network-rule-mode" aria-label="Network row mode"
+      <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${manualRows.map(({ row, index, mode }) => { const kind = selector(row); const hasModifier = kind === 'domain'; return html`<div key=${manualRowKeys.current[mode][index]} class=${`sbx-row sbx-access-row sbx-network-row${hasModifier ? '' : ' sbx-network-row-no-modifier'}`}>
+      <div class="sbx-network-mode-cell"><${SegmentedControl} className="sbx-network-rule-mode" label="Network row mode"
         disabled=${!editable} value=${mode} onChange=${(value) => changeRowMode(mode, index, value)}
         options=${[['allow', 'Allow'], ['deny', 'Deny']]}/>
         ${redundantLabel(mode, [row]) && html`<span class="sbx-network-redundant">${redundantLabel(mode, [row])}</span>`}</div>
       <${Select} class="sbx-network-selector" disabled=${!editable} value=${kind} onChange=${(value) => changeSelector(mode, index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
       ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!editable} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(mode, index, { [kind]: event.currentTarget.value })}/>`}
-      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!editable} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(mode, index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
-      <input class="sbx-network-ports" disabled=${!editable} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank matches all ports for the destination." onInput=${(event) => updateRow(mode, index, { ports: event.currentTarget.value })}/>
-      <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
-      <button type="button" disabled=${!editable} aria-label="Delete network row" onClick=${() => updateRows(mode, rowsFor(mode).filter((_, i) => i !== index))}>×</button>
-    </div>`; })}</div>
+      ${hasModifier && html`<span class="sbx-network-modifier"><label class="sbx-inline-check"><input type="checkbox" disabled=${!editable} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(mode, index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label></span>`}
+      <input class="sbx-network-ports" disabled=${!editable} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank matches all ports for the destination." onInput=${(event) => updateRow(mode, index, { ports: event.currentTarget.value })}/>
+      <button type="button" disabled=${!editable} aria-label="Delete network row" onClick=${() => {
+        manualRowKeys.current[mode].splice(index, 1);
+        updateRows(mode, rowsFor(mode).filter((_, i) => i !== index));
+      }}>×</button>
+    </div>`; })}</div></div>
     <datalist id="sandbox-common-ports"><option value="443"/><option value="80, 443"/><option value="22"/></datalist>
     <button type="button" class="sbx-add-row" disabled=${!editable} onClick=${() => {
       const mode = rules.baseline === 'allow' ? 'deny' : 'allow';
+      manualRowKeys.current[mode].push(`network-manual-row-${nextManualRowKey.current++}`);
       updateRows(mode, [...rowsFor(mode), { host: '', ports: [] }]);
     }}>＋ add ${rules.baseline === 'allow' ? 'deny' : 'allow'} destination</button>
     </fieldset>
@@ -497,7 +525,12 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
       className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
-      <${Select} class="sbx-socket-selector" value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => update({ allow: rules.allow.map((item, i) => i === index ? { [kind]: '' } : item) })} options=${[['path', 'path'], ['path_glob', 'glob']]}/>
+      <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
+        value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => {
+          if (kind === (glob ? 'path_glob' : 'path')) return;
+          update({ allow: rules.allow.map((item, i) => i === index ? { [kind]: '' } : item) });
+        }}
+        options=${[['path', 'Path'], ['path_glob', 'Glob']]}/>
       <input class="sbx-socket-value" value=${glob ? row.path_glob || '' : row.path || ''} placeholder=${glob ? '/tmp/ssh-*/agent.*' : '/run/example.sock'} onInput=${(event) => updateRow(index, glob ? { path_glob: event.currentTarget.value } : { path: event.currentTarget.value })}/>
       <button type="button" aria-label="Delete Unix-socket row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
     </div>`; })}</div>
@@ -1071,7 +1104,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
-      predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
       packVisibilityError=${networkPackVisibilityError}
       packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
       retryPackCatalog=${loadCommonRules}
@@ -1088,7 +1120,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes
@@ -1111,9 +1143,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       </div>`}
     </${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
-      help=${ENVIRONMENT_HELP} hidden=${advanced}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
+      help=${ENVIRONMENT_HELP} hidden=${advanced}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-includes-section" label="Includes"
-      help=${INCLUDES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></${SandboxSection}>
+      help=${INCLUDES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row sbx-include-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-agent-directories-section" label="Agent-owned directories"
       help=${AGENT_DIRECTORIES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-effective-policy-section"

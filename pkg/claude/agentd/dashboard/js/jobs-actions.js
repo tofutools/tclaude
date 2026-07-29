@@ -37,12 +37,19 @@ export function createJobsActions({
     }
   }
 
+  function standingOrderCAS(order) {
+    return `revision=${encodeURIComponent(order.revision)}&updated_at=${encodeURIComponent(order.updated_at || '')}`;
+  }
+
   return Object.freeze({
     refresh,
     openCronCreate: state.openCronCreate,
     openCronEdit: state.openCronEdit,
     openCronDuplicate: state.openCronDuplicate,
     closeCronDialog: state.closeCronDialog,
+    openStandingOrderCreate: state.openStandingOrderCreate,
+    openStandingOrderEdit: state.openStandingOrderEdit,
+    closeStandingOrderDialog: state.closeStandingOrderDialog,
     explainCron: (expr) => requestMutation('/api/cron/explain', {
       body: { expr }, refreshAfter: false,
     }),
@@ -55,6 +62,18 @@ export function createJobsActions({
         notify(`cron ${method === 'PATCH' ? 'saved' : 'created'}: ${cron?.name || ('#' + (cron?.id || ''))}`);
         void refresh();
         return cron;
+      } catch (error) {
+        throw new Error(detail(error), { cause: error });
+      }
+    },
+    saveStandingOrder: async ({ path, method, payload }) => {
+      try {
+        const order = await requestMutation(path, {
+          method, body: payload, refreshAfter: false,
+        });
+        notify(`standing order ${method === 'PATCH' ? 'saved' : 'created'}: ${order?.name || ('#' + (order?.id || ''))}`);
+        void refresh();
+        return order;
       } catch (error) {
         throw new Error(detail(error), { cause: error });
       }
@@ -97,6 +116,33 @@ export function createJobsActions({
       if (!yes) return false;
       return run(`cron delete: ${job.name}`, () =>
         requestMutation(`/api/cron/${encodeURIComponent(job.id)}`, { method: 'DELETE' }));
+    },
+    toggleStandingOrder: async (order) => {
+      const verb = order.enabled ? 'disable' : 'enable';
+      if (!order.enabled && order.disabled_reason) {
+        const yes = await confirm({
+          title: 'Re-enable automatically disabled order?',
+          body: `This order was disabled automatically (${order.disabled_reason}). Re-enabling is an explicit override and clears that retirement marker.`,
+          meta: order.name,
+          okLabel: 'Re-enable order',
+        });
+        if (!yes) return false;
+      }
+      return run(`standing order ${verb}: ${order.name}`, () =>
+        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}/${verb}?${standingOrderCAS(order)}`,
+          { method: 'POST' }));
+    },
+    deleteStandingOrder: async (order) => {
+      const yes = await confirm({
+        title: 'Delete standing order?',
+        body: 'Removes the order and its evaluation history. The target itself is unaffected.',
+        meta: order.name,
+        okLabel: 'Delete order',
+      });
+      if (!yes) return false;
+      return run(`standing order delete: ${order.name}`, () =>
+        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}?${standingOrderCAS(order)}`,
+          { method: 'DELETE' }));
     },
   });
 }

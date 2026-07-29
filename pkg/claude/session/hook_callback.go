@@ -46,6 +46,10 @@ type HookCallbackInput struct {
 	StopHookActive   bool            `json:"stop_hook_active,omitempty"`
 	ToolName         string          `json:"tool_name,omitempty"`
 	ToolInput        json.RawMessage `json:"tool_input,omitempty"`
+	// PayloadTrimmed is internal broker evidence, never emitted by a harness.
+	// It prevents a payload matcher from turning dropped tool fields or
+	// truncated prompt text into a confident clean no-match.
+	PayloadTrimmed bool `json:"tclaude_payload_trimmed,omitempty"`
 	// ToolResponse is the structured tool RESULT a PostToolUse carries.
 	// Its shape is per-tool; the only field tclaude reads today is Bash's
 	// backgroundTaskId, the handle for a `run_in_background` launch (see

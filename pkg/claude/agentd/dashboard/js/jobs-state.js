@@ -4,7 +4,7 @@ import { dashPrefs } from './prefs.js';
 import {
   applySortState, JOBS_ACCESSORS, persistedTableSort, persistTableSort,
 } from './sort.js';
-import { cronJobToPrefill } from './jobs-dialog-model.js';
+import { cronJobToPrefill, standingOrderToPrefill } from './jobs-dialog-model.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.jobs';
 const KIND_KEY = 'tclaude.dash.jobs.kind';
@@ -37,6 +37,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     error: null,
   });
   const dialog = signal(null);
+  const orderDialog = signal(null);
   let initialized = false;
   let nextLaunchID = 0;
 
@@ -69,6 +70,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       sort: sort.value,
       request: request.value,
       dialog: dialog.value,
+      orderDialog: orderDialog.value,
       dashboard: value,
     };
   });
@@ -219,7 +221,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   }
 
   function openCronDialog(descriptor) {
-    if (dialog.value) return false;
+    if (dialog.value || orderDialog.value) return false;
     dialog.value = { ...descriptor, launchID: ++nextLaunchID };
     return true;
   }
@@ -248,12 +250,34 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     dialog.value = null;
   }
 
+  function openStandingOrderDialog(descriptor) {
+    if (dialog.value || orderDialog.value) return false;
+    orderDialog.value = { ...descriptor, launchID: ++nextLaunchID };
+    return true;
+  }
+
+  function openStandingOrderCreate(prefill = {}) {
+    return openStandingOrderDialog({ kind: 'create', prefill: { ...prefill } });
+  }
+
+  function openStandingOrderEdit(order = {}) {
+    return openStandingOrderDialog({
+      kind: 'edit', id: order.id, order: { ...order },
+      prefill: standingOrderToPrefill(order),
+    });
+  }
+
+  function closeStandingOrderDialog() {
+    orderDialog.value = null;
+  }
+
   return Object.freeze({
-    query, kind, offset, limit, sort, request, dialog, params, view,
+    query, kind, offset, limit, sort, request, dialog, orderDialog, params, view,
     initialize, setQuery, setKind, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
     openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,
+    openStandingOrderCreate, openStandingOrderEdit, closeStandingOrderDialog,
   });
 }
 

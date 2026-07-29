@@ -67,7 +67,7 @@ func TestOrdersLsEmptyAndPopulated(t *testing.T) {
 
 func TestOrdersShowRendersCapabilityMatrix(t *testing.T) {
 	setupTestDB(t)
-	o := seedOrder(t)
+	o := seedOrder(t, func(o *db.StandingOrder) { o.CooldownSeconds = 90 })
 
 	var out, errOut bytes.Buffer
 	require.Equal(t, rcOK, runOrdersShow(&out, &errOut, o.Name))
@@ -76,6 +76,7 @@ func TestOrdersShowRendersCapabilityMatrix(t *testing.T) {
 	assert.Contains(t, got, "pr-early")
 	assert.Contains(t, got, "Push the PR early")
 	assert.Contains(t, got, "Author:    operator")
+	assert.Contains(t, got, "Cooldown:  1m30s per stable recipient agent")
 	// The matrix is the point: an operator must be able to see that this
 	// order does not reach OpenCode at all before they rely on it.
 	assert.Contains(t, got, harness.DefaultName)
@@ -162,16 +163,63 @@ func TestOrdersExplainReportsTrimmedPayload(t *testing.T) {
 	// A trigger that DOES read the tool payload, so trimming is decisive.
 	seedOrder(t, func(o *db.StandingOrder) {
 		o.GroupID = groupID
-		o.TriggerEvent = db.StandingTriggerSessionStart
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = "deploy"
 	})
 
 	var out, errOut bytes.Buffer
 	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
-		Event: "tool.before", Source: "", Conv: convID,
+		Event: db.StandingTriggerToolBefore, Source: "", Conv: convID,
 		Harness: harness.DefaultName, Trimmed: true,
 	}))
 	assert.Contains(t, out.String(), "payload trimmed",
 		"the simulated condition must be echoed so the output is self-describing")
+	assert.Contains(t, out.String(), db.StandingOutcomeNotEvaluatedTrimmed)
+}
+
+func TestOrdersExplainSuppliesRegexMatcherInputs(t *testing.T) {
+	setupTestDB(t)
+	groupID, convID := seedGroupWithMember(t)
+	seedOrder(t, func(o *db.StandingOrder) {
+		o.GroupID = groupID
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `(?i)\bdeploy\b`
+	})
+
+	var out, errOut bytes.Buffer
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerUserPrompt, Conv: convID,
+		Harness: harness.DefaultName, Prompt: "Please DEPLOY now",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeDelivered)
+
+	out.Reset()
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerUserPrompt, Conv: convID,
+		Harness: harness.DefaultName, Prompt: "Run tests",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeNoMatch)
+}
+
+func TestOrdersExplainNormalizesCwdLikeLiveHooks(t *testing.T) {
+	setupTestDB(t)
+	groupID, convID := seedGroupWithMember(t)
+	seedOrder(t, func(o *db.StandingOrder) {
+		o.GroupID = groupID
+		o.MatchField = db.StandingMatchFieldCwd
+		o.MatchRegex = `^/work/project$`
+	})
+
+	var out, errOut bytes.Buffer
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerSessionStart, Source: db.StandingSourceCompact,
+		Conv: convID, Harness: harness.DefaultName, Cwd: "  /work/project  ",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeDelivered)
 }
 
 func TestOrdersExplainNoOrders(t *testing.T) {

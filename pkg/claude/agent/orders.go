@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -48,9 +49,11 @@ func ordersCmd() *cobra.Command {
 		Use:   "orders",
 		Short: "Inspect trigger-driven standing orders",
 		Long: "List, show, and dry-run standing orders: durable guidance delivered when a trigger matches " +
-			"rather than on a wall clock. v1 supports the session.start trigger (sources: startup, resume, " +
-			"clear, compact). An order declares the delivery timing it REQUIRES; a harness that cannot meet " +
-			"it reports unsupported rather than downgrading silently.",
+			"rather than on a wall clock. Supported triggers are session.start, user.prompt, tool.before, " +
+			"and tool.after, with optional validated RE2 matching over normalized event fields. " +
+			"An order declares the delivery timing it REQUIRES; a harness that cannot meet " +
+			"it reports unsupported rather than downgrading silently. An optional per-agent cooldown limits " +
+			"successful deliveries without depending on conversation generation.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			ordersLsCmd(),
@@ -164,6 +167,7 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 	fmt.Fprintf(stdout, "Trigger:   %s\n", o.TriggerLabel())
 	fmt.Fprintf(stdout, "Timing:    %s (required — no silent downgrade)\n", o.Timing)
 	fmt.Fprintf(stdout, "Cadence:   %s\n", o.Cadence)
+	fmt.Fprintf(stdout, "Cooldown:  %s\n", ordersCooldownLabel(o.CooldownSeconds))
 	fmt.Fprintf(stdout, "\nText delivered to the agent:\n  %s\n", o.Summary)
 
 	fmt.Fprintln(stdout, "\nPer-harness capability:")
@@ -194,14 +198,25 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 	return rcOK
 }
 
+func ordersCooldownLabel(seconds int64) string {
+	if seconds <= 0 {
+		return "off"
+	}
+	return (time.Duration(seconds) * time.Second).String() + " per stable recipient agent"
+}
+
 // ---- explain ----
 
 type ordersExplainParams struct {
-	Event   string `long:"event" optional:"true" default:"session.start" help:"Trigger event to simulate. v1 supports session.start."`
+	Event   string `long:"event" optional:"true" default:"session.start" help:"Trigger event to simulate: session.start | user.prompt | tool.before | tool.after."`
 	Source  string `long:"source" optional:"true" default:"startup" help:"Event source: startup | resume | clear | compact."`
 	Conv    string `long:"conv" optional:"true" help:"Conversation to evaluate as. Defaults to the current one."`
 	Harness string `long:"harness" optional:"true" default:"claude" help:"Harness to evaluate as: claude | codex | opencode. Decides which timing guarantees are available."`
 	Trimmed bool   `long:"trimmed" optional:"true" help:"Simulate a hook payload whose tool fields were dropped for size, to see which orders could not be evaluated at all."`
+	Cwd     string `long:"cwd" optional:"true" help:"Working directory matcher input."`
+	Prompt  string `long:"prompt" optional:"true" help:"Prompt matcher input for user.prompt."`
+	Tool    string `long:"tool" optional:"true" help:"Tool-name matcher input for tool.before/tool.after."`
+	Input   string `long:"input" optional:"true" help:"Compact JSON tool-input matcher value for tool.before/tool.after."`
 }
 
 func ordersExplainCmd() *cobra.Command {
@@ -236,6 +251,11 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 		ConvID:         convID,
 		Harness:        p.Harness,
 		PayloadTrimmed: p.Trimmed,
+		OccurredAt:     time.Now(),
+		Cwd:            strings.TrimSpace(p.Cwd),
+		Prompt:         p.Prompt,
+		ToolName:       standingorders.NormalizeToolName(p.Tool),
+		ToolInput:      standingorders.NormalizeToolInput([]byte(p.Input)),
 	}
 
 	agentID, err := db.AgentIDForConv(convID)
@@ -281,7 +301,8 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 	// The real cadence state is consulted so a suppressed order is reported as
 	// suppressed — an explain that ignored the ledger would confidently
 	// predict a delivery that would not happen.
-	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	decisions := standingorders.EvaluateAll(
+		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	for _, d := range decisions {
 		mark := "—"
 		if d.Deliver {

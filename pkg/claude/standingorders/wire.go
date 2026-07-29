@@ -27,9 +27,11 @@ type TargetView struct {
 // TriggerView carries a pre-rendered label so every surface prints the same
 // string instead of composing its own from event + sources.
 type TriggerView struct {
-	Event   string   `json:"event"`
-	Sources []string `json:"sources,omitempty"`
-	Label   string   `json:"label"`
+	Event      string   `json:"event"`
+	Sources    []string `json:"sources,omitempty"`
+	MatchField string   `json:"match_field,omitempty"`
+	MatchRegex string   `json:"match_regex,omitempty"`
+	Label      string   `json:"label"`
 }
 
 // EvaluationView is the most recent ledger row for an order.
@@ -68,6 +70,8 @@ type OrderView struct {
 
 	Timing  string `json:"timing"`
 	Cadence string `json:"cadence"`
+	// CooldownSeconds is zero when disabled.
+	CooldownSeconds int64 `json:"cooldown_seconds"`
 
 	// Capability is the worst case across the harnesses this order can
 	// ACTUALLY reach, resolved by the caller from a single target agent's
@@ -117,12 +121,15 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		},
 		Summary: o.Summary,
 		Trigger: TriggerView{
-			Event:   o.TriggerEvent,
-			Sources: o.TriggerSources,
-			Label:   o.TriggerLabel(),
+			Event:      o.TriggerEvent,
+			Sources:    o.TriggerSources,
+			MatchField: o.MatchField,
+			MatchRegex: o.MatchRegex,
+			Label:      o.TriggerLabel(),
 		},
 		Timing:              o.Timing,
 		Cadence:             o.Cadence,
+		CooldownSeconds:     o.CooldownSeconds,
 		PlatformCapability:  PlatformCapability(o.Timing, o.TriggerEvent),
 		CapabilityByHarness: CapabilityByHarness(o.Timing, o.TriggerEvent),
 		CreatedAt:           o.CreatedAt,
@@ -156,7 +163,8 @@ func OutcomeIsProblem(outcome string) bool {
 		// Suppressed-by-cadence is a once-per-generation order behaving as
 		// authored, not a fault. Flagging it would mark a correctly working
 		// order as a problem for the rest of the conversation.
-		db.StandingOutcomeSuppressedCadence:
+		db.StandingOutcomeSuppressedCadence,
+		db.StandingOutcomeSuppressedCooldown:
 		return false
 	}
 	return true

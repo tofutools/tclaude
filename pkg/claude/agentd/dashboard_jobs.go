@@ -134,23 +134,10 @@ func collectJobRows() []dashboardJobRow {
 	}
 	if orders, err := db.ListStandingOrders(); err == nil {
 		for _, order := range orders {
-			groupName := ""
-			if order.IsGroupTarget() && order.GroupID > 0 {
-				var ok bool
-				groupName, ok = groupNames[order.GroupID]
-				if !ok {
-					if group, groupErr := db.GetAgentGroupByID(order.GroupID); groupErr == nil && group != nil {
-						groupName = group.Name
-					}
-					groupNames[order.GroupID] = groupName
-				}
-			}
-			latest, _ := db.LatestStandingDelivery(order.ID)
-			view := standingorders.NewOrderView(
-				order, groupName, latest, standingOrderTargetHarnesses(order))
+			view := dashboardStandingOrderView(order, groupNames)
 			at := order.UpdatedAt
-			if latest != nil {
-				at = latest.CreatedAt
+			if view.LastEvaluation != nil {
+				at = view.LastEvaluation.At
 			}
 			all = append(all, keyed{
 				row: dashboardJobRow{Kind: jobKindStandingOrder, Order: &view},
@@ -177,6 +164,23 @@ func collectJobRows() []dashboardJobRow {
 		out = append(out, k.row)
 	}
 	return out
+}
+
+func dashboardStandingOrderView(order *db.StandingOrder, groupNames map[int64]string) standingorders.OrderView {
+	groupName := ""
+	if order.IsGroupTarget() && order.GroupID > 0 {
+		var ok bool
+		groupName, ok = groupNames[order.GroupID]
+		if !ok {
+			if group, groupErr := db.GetAgentGroupByID(order.GroupID); groupErr == nil && group != nil {
+				groupName = group.Name
+			}
+			groupNames[order.GroupID] = groupName
+		}
+	}
+	latest, _ := db.LatestStandingDelivery(order.ID)
+	return standingorders.NewOrderView(
+		order, groupName, latest, standingOrderTargetHarnesses(order))
 }
 
 // standingOrderTargetHarnesses resolves only the live recipients this order

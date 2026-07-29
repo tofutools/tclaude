@@ -125,3 +125,139 @@ export function buildCronMutation(dialog, draft) {
 export function resetCronDraftForAnother(draft) {
   return { ...draft, name: '', subject: '', body: '' };
 }
+
+export function standingOrderToPrefill(order = {}) {
+  const target = order.target || {};
+  const groupTarget = target.kind === 'group';
+  return {
+    name: text(order.name),
+    revision: Number(order.revision) || 0,
+    updatedAt: text(order.updated_at),
+    targetMode: groupTarget ? 'group' : 'solo',
+    target: groupTarget ? '' : text(target.agent),
+    groupName: groupTarget ? text(target.group_name || target.group_id) : '',
+    role: groupTarget ? text(target.role) : '',
+    summary: text(order.summary),
+    triggerEvent: text(order.trigger?.event),
+    sources: Array.isArray(order.trigger?.sources) ? [...order.trigger.sources] : [],
+    matchField: text(order.trigger?.match_field),
+    matchRegex: text(order.trigger?.match_regex),
+    timing: text(order.timing),
+    cadence: text(order.cadence),
+    cooldownSeconds: Number(order.cooldown_seconds) || 0,
+    enabled: !!order.enabled,
+  };
+}
+
+export function createStandingOrderDraft(prefill = {}) {
+  const mode = prefill.targetMode === 'group' ? 'group' : 'solo';
+  const sources = Array.isArray(prefill.sources) ? [...prefill.sources] : [];
+  return {
+    name: text(prefill.name),
+    revision: Number(prefill.revision) || 0,
+    updatedAt: text(prefill.updatedAt),
+    target: {
+      mode,
+      target: mode === 'solo' ? text(prefill.target) : '',
+      groupName: mode === 'group' ? text(prefill.groupName) : '',
+      scopeGroup: text(prefill.scopeGroup),
+    },
+    role: text(prefill.role),
+    summary: text(prefill.summary),
+    triggerEvent: ['user.prompt', 'tool.before', 'tool.after'].includes(prefill.triggerEvent)
+      ? prefill.triggerEvent : 'session.start',
+    sourceMode: sources.length ? 'selected' : 'any',
+    sources,
+    matchField: text(prefill.matchField),
+    matchRegex: text(prefill.matchRegex),
+    timing: prefill.timing === 'next-turn' ? 'next-turn' : 'same-continuation',
+    cadence: prefill.cadence === 'once-per-generation' ? 'once-per-generation' : 'always',
+    cooldownSeconds: Number(prefill.cooldownSeconds) || 0,
+    enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
+  };
+}
+
+export function standingOrderDraftDirty(draft, initial) {
+  return JSON.stringify(draft) !== JSON.stringify(initial);
+}
+
+export const STANDING_ORDER_MATCH_FIELDS = Object.freeze({
+  'session.start': Object.freeze(['', 'cwd']),
+  'user.prompt': Object.freeze(['', 'prompt', 'cwd']),
+  'tool.before': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+  'tool.after': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+});
+
+export function validateStandingOrderDraft(dialog, draft) {
+  const target = cronTargetValue(draft.target);
+  if (!target) {
+    if (draft.target.mode === 'group') {
+      return { code: 'group-target', message: 'Pick a group from the dropdown (or create one first via the Groups tab).' };
+    }
+    if (draft.target.scopeGroup) {
+      return { code: 'scoped-target', message: 'This group has no members — switch to Group (multicast), or add a member first.' };
+    }
+    return { code: 'solo-target', message: 'Target is required — type a stable agt_ id / title or use 🔍 to pick.' };
+  }
+  if (!draft.name.trim()) return { code: 'name', message: 'Name is required.' };
+  if (!draft.summary.trim()) return { code: 'summary', message: 'Instruction is required.' };
+  if (draft.triggerEvent === 'session.start' &&
+      draft.sourceMode === 'selected' && draft.sources.length === 0) {
+    return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
+  }
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent]) {
+    return { code: 'trigger', message: 'Pick a supported trigger event.' };
+  }
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent].includes(draft.matchField)) {
+    return { code: 'match-field', message: 'Pick a match field supported by this trigger.' };
+  }
+  if (!!draft.matchField !== !!draft.matchRegex.trim()) {
+    return { code: 'match-regex', message: 'Choose a field and enter its RE2 match expression together.' };
+  }
+  if (draft.matchRegex.length > 1024) {
+    return { code: 'match-regex-length', message: 'Match expression must be at most 1024 characters.' };
+  }
+  if (/(\\[1-9]|\\k<|\(\?(?:[=!]|<[=!]))/.test(draft.matchRegex)) {
+    return { code: 'match-regex-re2', message: 'RE2 does not support backreferences or look-around assertions.' };
+  }
+  if (!Number.isInteger(Number(draft.cooldownSeconds)) ||
+      Number(draft.cooldownSeconds) < 0 ||
+      Number(draft.cooldownSeconds) > 31536000) {
+    return { code: 'cooldown', message: 'Minimum interval must be a whole number of seconds from 0 to 31536000.' };
+  }
+  if (dialog.kind === 'edit' && !draft.revision) {
+    return { code: 'revision', message: 'This order has no revision; reload the Automations page and try again.' };
+  }
+  if (dialog.kind === 'edit' && !draft.updatedAt) {
+    return { code: 'updated-at', message: 'This order has no edit token; reload the Automations page and try again.' };
+  }
+  return null;
+}
+
+export function buildStandingOrderMutation(dialog, draft) {
+  const payload = {
+    name: draft.name.trim(),
+    target: cronTargetValue(draft.target),
+    role: draft.target.mode === 'group' ? draft.role.trim() : '',
+    summary: draft.summary.trim(),
+    trigger_event: draft.triggerEvent,
+    sources: draft.triggerEvent === 'session.start' && draft.sourceMode !== 'any'
+      ? [...draft.sources] : [],
+    match_field: draft.matchField,
+    match_regex: draft.matchRegex,
+    timing: draft.timing,
+    cadence: draft.cadence,
+    cooldown_seconds: Number(draft.cooldownSeconds) || 0,
+    enabled: draft.enabled,
+  };
+  if (dialog.kind === 'edit') {
+    payload.revision = draft.revision;
+    payload.updated_at = draft.updatedAt;
+    return {
+      path: `/api/standing-orders/${encodeURIComponent(dialog.id)}`,
+      method: 'PATCH',
+      payload,
+    };
+  }
+  return { path: '/api/standing-orders', method: 'POST', payload };
+}

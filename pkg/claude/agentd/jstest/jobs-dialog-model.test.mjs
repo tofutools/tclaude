@@ -68,3 +68,71 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.equal(model.cronDraftDirty(draft, model.createCronDraft(model.cronJobToPrefill(job))), false);
   assert.equal(model.cronDraftDirty({ ...draft, body: 'changed' }, draft), true);
 });
+
+test('standing-order dialog model preserves stable targets, explicit any-source semantics, and revision CAS', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/jobs-dialog-model.js');
+  const order = {
+    id: 9, name: 'pr-early', revision: 3, enabled: false,
+    updated_at: '2026-07-29T12:00:00Z',
+    target: { kind: 'group', group_id: 7, group_name: 'alpha', role: 'reviewer' },
+    summary: 'Push the PR early.',
+    trigger: { event: 'session.start', sources: ['compact', 'resume'] },
+    timing: 'same-continuation', cadence: 'once-per-generation',
+    cooldown_seconds: 90,
+  };
+  const draft = model.createStandingOrderDraft(model.standingOrderToPrefill(order));
+  assert.equal(draft.target.mode, 'group');
+  assert.equal(draft.target.groupName, 'alpha');
+  assert.equal(draft.sourceMode, 'selected');
+  assert.equal(model.validateStandingOrderDraft({ kind: 'edit' }, draft), null);
+  assert.deepEqual(model.buildStandingOrderMutation({ kind: 'edit', id: 9 }, draft), {
+    path: '/api/standing-orders/9', method: 'PATCH',
+    payload: {
+      name: 'pr-early', revision: 3, updated_at: '2026-07-29T12:00:00Z',
+      target: 'group:alpha', role: 'reviewer',
+      summary: 'Push the PR early.', trigger_event: 'session.start',
+      sources: ['compact', 'resume'], match_field: '', match_regex: '',
+      timing: 'same-continuation',
+      cadence: 'once-per-generation', cooldown_seconds: 90, enabled: false,
+    },
+  });
+
+  const any = model.createStandingOrderDraft({
+    name: 'all-boundaries', target: 'agt_target', summary: 'Remember.',
+  });
+  assert.equal(any.sourceMode, 'any');
+  assert.deepEqual(model.buildStandingOrderMutation({ kind: 'create' }, any), {
+    path: '/api/standing-orders', method: 'POST',
+    payload: {
+      name: 'all-boundaries', target: 'agt_target', role: '', summary: 'Remember.',
+      trigger_event: 'session.start', sources: [], match_field: '', match_regex: '',
+      timing: 'same-continuation',
+      cadence: 'always', cooldown_seconds: 0, enabled: true,
+    },
+  });
+  any.sourceMode = 'selected';
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'sources');
+  any.sourceMode = 'any';
+  any.cooldownSeconds = -1;
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'cooldown');
+  assert.equal(model.standingOrderDraftDirty(draft,
+    model.createStandingOrderDraft(model.standingOrderToPrefill(order))), false);
+
+  const prompt = model.createStandingOrderDraft({
+    name: 'deploy-prompt', target: 'agt_target', summary: 'Use the release checklist.',
+    triggerEvent: 'user.prompt', matchField: 'prompt', matchRegex: '(?i)\\bdeploy\\b',
+  });
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, prompt), null);
+  assert.deepEqual(model.buildStandingOrderMutation({ kind: 'create' }, prompt).payload, {
+    name: 'deploy-prompt', target: 'agt_target', role: '',
+    summary: 'Use the release checklist.', trigger_event: 'user.prompt',
+    sources: [], match_field: 'prompt', match_regex: '(?i)\\bdeploy\\b',
+    timing: 'same-continuation', cadence: 'always', cooldown_seconds: 0, enabled: true,
+  });
+  prompt.matchRegex = ' deploy ';
+  assert.equal(model.buildStandingOrderMutation({ kind: 'create' }, prompt).payload.match_regex,
+    ' deploy ', 'regex whitespace is meaningful and must be preserved');
+  prompt.matchRegex = '(?=deploy)';
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, prompt).code, 'match-regex-re2');
+});

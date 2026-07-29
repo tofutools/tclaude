@@ -1139,16 +1139,51 @@ The legacy execution engine and its Runs, Worklist, viewer, and instantiation
 surfaces have been removed. Runtime execution is temporarily unavailable while
 the replacement engine is designed. See [Processes](processes.md).
 
-### Cron
+### Automations
 
-The scheduled-job table — name, owner, target, interval, immediate-run opt-in,
-last run, status pill, and body summary. Per-row buttons: enable/disable,
-**run now**, edit, delete. New jobs wait for their first scheduled due time by
-default. The create/edit form can opt into one immediate run; on edit, only an
-off→on transition fires, so repeat saves and daemon restarts cannot replay it.
-**+ new cron job** opens a create form (also reachable pre-filled from the
-**⏰ schedule…** items in the Groups tab's group and member menus). See
-[Agent Coordination → cron](agent.md#cron) for what cron jobs do.
+One table with subviews for exports, recurring **Schedules**, and durable
+**Standing orders**.
+
+The scheduled-job rows show name, owner, target, interval, immediate-run
+opt-in, last run, status, and body summary. Per-row buttons: enable/disable,
+**run now**, edit, duplicate, and delete. New jobs wait for their first
+scheduled due time by default. The create/edit form can opt into one immediate
+run; on edit, only an off→on transition fires, so repeat saves and daemon
+restarts cannot replay it. **+ new cron job** opens a create form (also
+reachable pre-filled from the **⏰ schedule…** items in the Groups tab's group
+and member menus). See [Agent Coordination → cron](agent.md#cron).
+
+Standing-order rows show the stable agent or group target, instruction,
+trigger, required delivery timing, capability, and latest evaluation.
+**+ new standing order** creates one; each row can be edited, enabled/disabled,
+or deleted. The first authoring surface deliberately exposes only the trigger
+semantics the evaluator already implements:
+
+- a session boundary (optionally filtered to startup, resume, clear, and/or
+  compaction), a submitted user prompt, or the before/after boundary of a tool
+  call;
+- an optional RE2 expression over one event-appropriate normalized field:
+  working directory, prompt text, tool name, or compact-JSON tool input.
+  Expressions are validated before save and are case-sensitive unless they
+  include an RE2 flag such as `(?i)`;
+- either same-continuation hook context or next-turn message delivery as a
+  required guarantee (an unsupported harness reports a visible non-delivery,
+  rather than silently weakening the guarantee);
+- every matching boundary or once per conversation generation;
+- an optional minimum interval between successful deliveries to each stable
+  recipient agent. The cooldown follows the agent across `/clear` and
+  reincarnation rather than resetting with its conversation ID.
+
+Action triggers currently use the inline hook-context channel on Claude Code
+and Codex. OpenCode projects the equivalent events from an observation-only
+stream, but queued action-trigger delivery is deliberately reported as
+unsupported until messages can carry a trigger-origin marker. Without that
+marker, an automation-created prompt or tool turn could trigger itself.
+
+Single-agent targets are persisted by stable `agt_…` ID, never by conversation
+generation. Editing an agent-authored order preserves its author and lifecycle
+ownership. Re-enabling an automatically retired order requires confirmation
+and clears its retirement marker explicitly.
 
 ### Sudo
 

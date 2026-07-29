@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,15 @@ func sampleOrder(name string) *StandingOrder {
 		Cadence:        StandingCadenceAlways,
 		Enabled:        true,
 	}
+}
+
+func setStandingOrderEnabledForTest(t *testing.T, id int64, enabled bool) {
+	t.Helper()
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	require.NoError(t, SetStandingOrderEnabled(
+		id, enabled, current.Revision, current.UpdatedAt))
 }
 
 func TestStandingOrder_InsertAndRead(t *testing.T) {
@@ -65,10 +75,35 @@ func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 		"no summary":       func(o *StandingOrder) { o.Summary = "" },
 		"bad target kind":  func(o *StandingOrder) { o.TargetKind = "everyone" },
 		"group without id": func(o *StandingOrder) { o.GroupID = 0 },
-		"unknown trigger":  func(o *StandingOrder) { o.TriggerEvent = "tool.before" },
+		"unknown trigger":  func(o *StandingOrder) { o.TriggerEvent = "no.such.event" },
 		"unknown source":   func(o *StandingOrder) { o.TriggerSources = []string{"whenever"} },
-		"unknown timing":   func(o *StandingOrder) { o.Timing = "immediately" },
-		"unknown cadence":  func(o *StandingOrder) { o.Cadence = "hourly" },
+		"source on prompt trigger": func(o *StandingOrder) {
+			o.TriggerEvent = StandingTriggerUserPrompt
+		},
+		"matcher field without regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+		},
+		"matcher regex without field": func(o *StandingOrder) {
+			o.MatchRegex = "repo"
+		},
+		"matcher field invalid for event": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldPrompt
+			o.MatchRegex = "deploy"
+		},
+		"invalid matcher regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+			o.MatchRegex = "(unterminated"
+		},
+		"excessive matcher regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+			o.MatchRegex = strings.Repeat("x", StandingMatchRegexMaxLen+1)
+		},
+		"unknown timing":    func(o *StandingOrder) { o.Timing = "immediately" },
+		"unknown cadence":   func(o *StandingOrder) { o.Cadence = "hourly" },
+		"negative cooldown": func(o *StandingOrder) { o.CooldownSeconds = -1 },
+		"excessive cooldown": func(o *StandingOrder) {
+			o.CooldownSeconds = StandingCooldownMaxSeconds + 1
+		},
 		"role on conv target": func(o *StandingOrder) {
 			o.TargetKind = StandingTargetConv
 			o.GroupID = 0
@@ -152,12 +187,58 @@ func TestStandingOrder_TextEditBumpsRevision(t *testing.T) {
 	id, err := InsertStandingOrder(sampleOrder("pr-early"))
 	require.NoError(t, err)
 
-	require.NoError(t, UpdateStandingOrderText(id, "Push the PR early, then trigger a cold review."))
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	current.Summary = "Push the PR early, then trigger a cold review."
+	require.NoError(t, UpdateStandingOrder(id, current.Revision, current.UpdatedAt, current))
 
 	got, err := GetStandingOrder(id)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), got.Revision)
 	assert.Contains(t, got.Summary, "cold review")
+}
+
+func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("before"))
+	require.NoError(t, err)
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	replacement := sampleOrder("after")
+	replacement.Summary = "Updated instruction."
+	replacement.TriggerSources = []string{StandingSourceResume}
+	replacement.MatchField = StandingMatchFieldCwd
+	replacement.MatchRegex = `/deploy$`
+	replacement.Timing = StandingTimingNextTurn
+	replacement.Cadence = StandingCadenceOncePerGeneration
+	replacement.CooldownSeconds = 90
+	replacement.Enabled = false
+	replacement.DisabledReason = StandingDisabledReasonGroupRetired
+	require.NoError(t, UpdateStandingOrder(id, 1, before.UpdatedAt, replacement))
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(2), got.Revision)
+	assert.Equal(t, "after", got.Name)
+	assert.Equal(t, "Updated instruction.", got.Summary)
+	assert.Equal(t, []string{StandingSourceResume}, got.TriggerSources)
+	assert.Equal(t, StandingMatchFieldCwd, got.MatchField)
+	assert.Equal(t, `/deploy$`, got.MatchRegex)
+	assert.Equal(t, StandingTimingNextTurn, got.Timing)
+	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
+	assert.Equal(t, int64(90), got.CooldownSeconds)
+	assert.False(t, got.Enabled)
+	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
+
+	stale := sampleOrder("stale-overwrite")
+	err = UpdateStandingOrder(id, 1, before.UpdatedAt, stale)
+	assert.ErrorIs(t, err, ErrStandingOrderRevisionConflict)
+	got, _ = GetStandingOrder(id)
+	assert.Equal(t, "after", got.Name, "a stale writer cannot overwrite the accepted edit")
 }
 
 func TestStandingOrder_EnableDisableClearsReason(t *testing.T) {
@@ -173,10 +254,55 @@ func TestStandingOrder_EnableDisableClearsReason(t *testing.T) {
 	assert.False(t, got.Enabled)
 	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
 
-	require.NoError(t, SetStandingOrderEnabled(id, true))
+	setStandingOrderEnabledForTest(t, id, true)
 	got, _ = GetStandingOrder(id)
 	assert.True(t, got.Enabled)
 	assert.Empty(t, got.DisabledReason, "an explicit enable is a human choice, not an auto-pause")
+}
+
+func TestStandingOrder_EnableDisableNoOpIsIdempotent(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	require.NoError(t, SetStandingOrderEnabled(
+		id, true, before.Revision, before.UpdatedAt))
+	after, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	assert.Equal(t, before.Revision, after.Revision)
+	assert.Equal(t, before.UpdatedAt, after.UpdatedAt)
+}
+
+func TestStandingOrder_AutomaticLifecycleInvalidatesStaleWritersWithoutRearming(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	captured, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+
+	n, err := DisableGroupTargetStandingOrdersForRetire(1)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	retired, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, retired)
+	assert.Equal(t, captured.Revision, retired.Revision,
+		"automatic lifecycle changes remain neutral to the delivery cadence")
+	assert.NotEqual(t, captured.UpdatedAt, retired.UpdatedAt,
+		"the row CAS token must advance even when delivery cadence does not")
+
+	replacement := sampleOrder("stale-edit")
+	assert.ErrorIs(t,
+		UpdateStandingOrder(id, captured.Revision, captured.UpdatedAt, replacement),
+		ErrStandingOrderRevisionConflict)
+	assert.ErrorIs(t,
+		DeleteStandingOrder(id, captured.Revision, captured.UpdatedAt),
+		ErrStandingOrderRevisionConflict)
 }
 
 // Only orders tclaude itself paused come back on a resume — one the human
@@ -188,7 +314,7 @@ func TestStandingOrder_GroupResumeSkipsHandDisabledOrders(t *testing.T) {
 	handID, err := InsertStandingOrder(sampleOrder("hand"))
 	require.NoError(t, err)
 
-	require.NoError(t, SetStandingOrderEnabled(handID, false))
+	setStandingOrderEnabledForTest(t, handID, false)
 
 	n, err := DisableGroupTargetStandingOrdersForRetire(1)
 	require.NoError(t, err)
@@ -210,7 +336,7 @@ func TestStandingOrder_ListEnabledForEvent(t *testing.T) {
 	require.NoError(t, err)
 	offID, err := InsertStandingOrder(sampleOrder("off"))
 	require.NoError(t, err)
-	require.NoError(t, SetStandingOrderEnabled(offID, false))
+	setStandingOrderEnabledForTest(t, offID, false)
 
 	got, err := ListEnabledStandingOrdersForEvent(StandingTriggerSessionStart)
 	require.NoError(t, err)
@@ -233,7 +359,8 @@ func TestStandingOrder_DeliveryLedgerAndCadence(t *testing.T) {
 
 	_, err = RecordStandingDelivery(&StandingDelivery{
 		OrderID: id, OrderRevision: 1, TargetConv: "conv-a", Epoch: "conv-a",
-		Outcome: StandingOutcomeDelivered, Transport: StandingTransportHookContext,
+		TargetAgent: "agt_aaa",
+		Outcome:     StandingOutcomeDelivered, Transport: StandingTransportHookContext,
 		Harness: "claude", Detail: "session.start(source=compact)",
 	})
 	require.NoError(t, err)
@@ -252,7 +379,20 @@ func TestStandingOrder_DeliveryLedgerAndCadence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	assert.Equal(t, StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, "agt_aaa", latest.TargetAgent)
 	assert.False(t, latest.CreatedAt.IsZero())
+
+	deliveredAt, err := LatestSuccessfulStandingDeliveryAt(id, 1, "agt_aaa")
+	require.NoError(t, err)
+	assert.WithinDuration(t, latest.CreatedAt, deliveredAt, time.Millisecond)
+
+	otherAgent, err := LatestSuccessfulStandingDeliveryAt(id, 1, "agt_bbb")
+	require.NoError(t, err)
+	assert.True(t, otherAgent.IsZero(), "one stable recipient must not cool down another")
+
+	_, err = LatestSuccessfulStandingDeliveryAt(id, 1, "")
+	assert.ErrorIs(t, err, ErrStandingOrderInvalid,
+		"an empty recipient must not become a shared cooldown bucket")
 }
 
 // An evaluation that never put text in front of the agent must not suppress
@@ -273,6 +413,28 @@ func TestStandingOrder_FailedOutcomeDoesNotSuppressCadence(t *testing.T) {
 	assert.False(t, already, "an undelivered order must remain deliverable")
 }
 
+func TestStandingOrder_UnsupportedOutcomeIsDeduplicatedPerRecipientRevision(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+
+	rec := &StandingDelivery{
+		OrderID: id, OrderRevision: 1, TargetConv: "conv-a",
+		TargetAgent: "agt_aaa", Outcome: StandingOutcomeUnsupportedTiming,
+		Transport: StandingTransportNone, Harness: "opencode",
+		Detail: "action hooks are observation-only",
+	}
+	_, err = RecordStandingDelivery(rec)
+	require.NoError(t, err)
+	_, err = RecordStandingDelivery(rec)
+	require.NoError(t, err)
+
+	got, err := ListStandingDeliveries(id, 10)
+	require.NoError(t, err)
+	assert.Len(t, got, 1,
+		"unchanged high-frequency capability failures need one durable explanation")
+}
+
 func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	setupTestDB(t)
 	id, err := InsertStandingOrder(sampleOrder("pr-early"))
@@ -283,7 +445,10 @@ func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, DeleteStandingOrder(id))
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	require.NoError(t, DeleteStandingOrder(id, current.Revision, current.UpdatedAt))
 
 	got, err := GetStandingOrder(id)
 	require.NoError(t, err)
@@ -292,6 +457,31 @@ func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	recs, err := ListStandingDeliveries(id, 10)
 	require.NoError(t, err)
 	assert.Empty(t, recs)
+}
+
+func TestStandingOrder_DeleteRevisionRejectsStaleEditor(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	current.Summary = "New wording."
+	require.NoError(t, UpdateStandingOrder(id, current.Revision, current.UpdatedAt, current))
+	current, err = GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+
+	assert.ErrorIs(t, DeleteStandingOrder(id, 1, current.UpdatedAt),
+		ErrStandingOrderRevisionConflict)
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	require.NoError(t, DeleteStandingOrder(id, 2, current.UpdatedAt))
+	got, err = GetStandingOrder(id)
+	require.NoError(t, err)
+	assert.Nil(t, got)
 }
 
 func TestStandingOrder_TriggerLabelAndSourceMatching(t *testing.T) {
@@ -304,6 +494,22 @@ func TestStandingOrder_TriggerLabelAndSourceMatching(t *testing.T) {
 	o.TriggerSources = nil
 	assert.Equal(t, "session.start (any source)", o.TriggerLabel())
 	assert.True(t, o.MatchesSource(StandingSourceResume), "no sources means every source")
+
+	o.MatchField = StandingMatchFieldCwd
+	o.MatchRegex = `(?i)/repo$`
+	assert.Equal(t,
+		`session.start (any source) where cwd matches /(?i)/repo$/`,
+		o.TriggerLabel())
+
+	prompt := sampleOrder("prompt")
+	prompt.TriggerEvent = StandingTriggerUserPrompt
+	prompt.TriggerSources = nil
+	prompt.MatchField = StandingMatchFieldPrompt
+	prompt.MatchRegex = `\bdeploy\b`
+	require.NoError(t, prompt.Validate())
+	assert.Equal(t,
+		`user.prompt where prompt matches /\bdeploy\b/`,
+		prompt.TriggerLabel())
 }
 
 func TestNormalizeTriggerSources(t *testing.T) {
