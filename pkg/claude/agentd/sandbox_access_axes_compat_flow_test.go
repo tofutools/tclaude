@@ -763,6 +763,37 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 			"the exact built-in local/model combination refuses as a whole")
 		assert.Contains(t, row.Detail, "TCL-826")
 	}
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "authored-aliases", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline": "deny",
+				"allow": []any{
+					map[string]any{"domain": "API.EXAMPLE.COM", "ports": []int{443, 443}},
+					map[string]any{"cidr": "192.0.2.9/24"},
+				},
+			},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var aliases struct {
+		Targets []struct {
+			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &aliases)
+	require.Len(t, aliases.Targets, 1)
+	require.Len(t, aliases.Targets[0].NetworkEntries, 2)
+	allKeys := []string{}
+	for _, row := range aliases.Targets[0].NetworkEntries {
+		allKeys = append(allKeys, row.Keys...)
+	}
+	assert.Contains(t, allKeys, `{"domain":"API.EXAMPLE.COM","ports":[443]}`)
+	assert.Contains(t, allKeys, `{"cidr":"192.0.2.9/24"}`)
 }
 
 func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {

@@ -210,13 +210,20 @@ const NETWORK_ENTRY_OUTCOMES = {
 };
 
 function NetworkEntryBadge({ verdict, busy }) {
-  const [label, tone] = NETWORK_ENTRY_OUTCOMES[verdict?.outcome]
-    || [busy ? 'Evaluating…' : 'Not evaluated', 'pending'];
-  return html`<span class=${`sbx-network-badge sbx-network-badge-${tone}`}
-    title=${verdict?.detail || (busy ? 'Enforcement prediction is updating.' : 'Complete the profile to evaluate this destination.')}>${label}</span>`;
+  const current = busy ? null : verdict;
+  const [label, tone] = busy
+    ? ['Evaluating…', 'pending']
+    : NETWORK_ENTRY_OUTCOMES[current?.outcome] || ['Not evaluated', 'pending'];
+  const detail = current?.detail
+    || (busy ? 'Enforcement prediction is updating.' : 'Complete the profile to evaluate this destination.');
+  return html`<details class="sbx-network-verdict">
+    <summary class=${`sbx-network-badge sbx-network-badge-${tone}`} title=${detail}
+      aria-label=${`${label}: ${detail}`}>${label}</summary>
+    <span class="sbx-network-badge-detail">${detail}</span>
+  </details>`;
 }
 
-function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy }) {
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError }) {
   const [helpOpen, setHelpOpen] = useState('');
   const [defaultsAvailable, setDefaultsAvailable] = useState(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
@@ -253,13 +260,14 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
     rules.packs.includes(pack.id)
       ? (pack.entries || []).map((row) => ({ row, pack }))
       : []);
-  const predictionByEntry = new Map((predictions || []).map((value) => [
-    sandboxNetworkEntryKey(value.entry), value,
-  ]));
+  const predictionByEntry = new Map((predictions || []).flatMap((value) =>
+    (value.keys?.length ? value.keys : [sandboxNetworkEntryKey(value.entry)])
+      .map((key) => [key, value])));
   return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend class="sbx-section-legend">Network <${HelpDisclosure}
       id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
       open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
+    ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert">⚠ ${packVisibilityError}</div>`}
     <fieldset class="sbx-network-unlocks" disabled=${!deny}>
       <legend>Built-in rule packs</legend>
       <p class="sbx-axis-help">Release-owned unlocks expand into the read-only rows below. Stored pack references follow endpoint updates in future tclaude releases.</p>
@@ -268,6 +276,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
         <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong>${pack.note ? html`<small>${pack.note}</small>` : null}${pack.warning ? html`<small class="sbx-common-rule-warn">⚠ ${pack.warning}</small>` : null}</span>
       </label>`)}</div>
       <h4 class="sbx-network-list-title">Access list</h4>
+      <p class="sbx-axis-help">Destination badges evaluate this profile's own materialized rows before Includes and assignment intersections. The Effective policy preview below remains authoritative for composed launch behavior.</p>
       <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack }, index) => { const kind = selector(row); return html`<div key=${`${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
@@ -783,11 +792,27 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     try { predictionDraft = { ...draft, ...parseRaw() }; }
     catch (error) { predictionDraftError = message(error); }
   }
-  const accessErrors = sandboxAccessDraftErrors(draft);
+  const authoredNetwork = sandboxNetworkAuthoring(
+    advanced && !predictionDraftError ? predictionDraft : draft,
+  );
+  const knownNetworkPacks = new Set((commonRules.network_packs || []).map((pack) => pack.id));
+  const hiddenNetworkPacks = authoredNetwork.baseline === 'deny'
+    ? authoredNetwork.packs.filter((id) => !knownNetworkPacks.has(id))
+    : [];
+  const networkPackVisibilityError = hiddenNetworkPacks.length
+    ? `Saving is paused because release-owned authority cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
+    : '';
+  const accessErrors = [
+    ...sandboxAccessDraftErrors(draft),
+    ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+  ];
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
   // can resume preview even if the hidden structured draft remains invalid.
   const predictionAccessErrors = predictionDraftError ? [] : advanced
-    ? sandboxAccessDraftErrors(predictionDraft)
+    ? [
+      ...sandboxAccessDraftErrors(predictionDraft),
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ]
     : accessErrors;
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
@@ -849,10 +874,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
-  const submitBlocked = saving || directoryBusy || (!advanced && accessErrors.length > 0);
+  const submitBlocked = saving || directoryBusy || !!networkPackVisibilityError
+    || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
-      predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+      predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
+      packVisibilityError=${networkPackVisibilityError}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>

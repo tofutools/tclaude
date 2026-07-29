@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -274,13 +275,45 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			ResolvedBy: resolvedBy,
 			Predicted:  true,
 			Axes:       described,
-			NetworkEntries: harness.DescribePredictedNetworkEntries(
-				draftAxes.Network, draftPredicted,
+			NetworkEntries: predictedDraftNetworkEntries(
+				draftAxes.Network, draftPredicted, body.Draft.Network,
 			),
 			ContextAxes: contextAxes,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func predictedDraftNetworkEntries(
+	rules sandboxpolicy.NetworkRules,
+	caps harness.PredictedAccessEnforcement,
+	authored *sandboxpolicy.NetworkRules,
+) []harness.PredictedNetworkEntry {
+	rows := harness.DescribePredictedNetworkEntries(rules, caps)
+	if authored == nil || len(rows) == 0 {
+		return rows
+	}
+	for _, entry := range authored.Allow {
+		materialized, err := sandboxpolicy.MaterializeNetworkRules(
+			sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Allow:    []sandboxpolicy.NetworkAllowEntry{entry},
+			},
+		)
+		if err != nil || len(materialized.Allow) != 1 {
+			continue
+		}
+		canonicalKey := harness.NetworkEntryPredictionKey(materialized.Allow[0])
+		authoredKey := harness.NetworkEntryPredictionKey(entry)
+		for i := range rows {
+			if harness.NetworkEntryPredictionKey(rows[i].Entry) != canonicalKey ||
+				slices.Contains(rows[i].Keys, authoredKey) {
+				continue
+			}
+			rows[i].Keys = append(rows[i].Keys, authoredKey)
+		}
+	}
+	return rows
 }
 
 func flattenDraftSandboxProfileForPrediction(draft *db.SandboxProfile) (sandboxpolicy.Profile, error) {

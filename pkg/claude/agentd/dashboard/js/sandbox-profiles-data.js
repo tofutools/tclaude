@@ -102,14 +102,16 @@ function portsForWire(value) {
 }
 
 export function sandboxNetworkEntryKey(entry = {}) {
+  const ports = [...new Set(portsForWire(entry.ports))].sort((a, b) => a - b);
   return JSON.stringify({
     ...(entry.host ? { host: entry.host } : {}),
-    ...(entry.domain ? { domain: entry.domain, include_subdomains: !!entry.include_subdomains } : {}),
+    ...(entry.domain ? {
+      domain: entry.domain,
+      ...(entry.include_subdomains ? { include_subdomains: true } : {}),
+    } : {}),
     ...(entry.cidr ? { cidr: entry.cidr } : {}),
     ...(entry.loopback ? { loopback: true } : {}),
-    ...(portsForWire(entry.ports).length
-      ? { ports: [...portsForWire(entry.ports)].sort((a, b) => a - b) }
-      : {}),
+    ...(ports.length ? { ports } : {}),
   });
 }
 

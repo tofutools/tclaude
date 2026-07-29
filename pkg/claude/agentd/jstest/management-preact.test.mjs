@@ -1303,6 +1303,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   );
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Evaluating…',
+    'a target change never leaves the previous target verdict visible');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
@@ -1313,6 +1315,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Partial');
   assert.match(host.querySelector('.sbx-network-badge').title, /bounded lease/);
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
+  assert.match(host.querySelector('.sbx-network-badge-detail').textContent, /bounded lease/,
+    'keyboard-operable native details expose the full row explanation');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Claude on Linux · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
@@ -1551,6 +1556,42 @@ test('new deny drafts apply default pack references once and pack rows stay read
     'defaults are applied only on the first transition to Deny all');
   newDraft.unmount();
   newDraft.host.remove();
+});
+
+test('network row predictions reconcile daemon-normalized entries to authored spellings', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'noncanonical-network', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }] },
+    unix_sockets: { mode: '' },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() {
+      return {
+        targets: [{
+          network_entries: [{
+            entry: { domain: 'api.example.com', ports: [443] },
+            keys: [
+              '{"domain":"api.example.com","ports":[443]}',
+              '{"domain":"API.EXAMPLE.COM","ports":[443]}',
+            ],
+            outcome: 'enforced',
+            detail: 'normalized destination is enforced',
+          }],
+        }],
+        contexts: [],
+      };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Enforced');
+  assert.match(host.querySelector('.sbx-network-badge').title, /normalized destination/);
+  unmount();
 });
 
 test('sandbox access rows expose aligned grid cells for network and Unix sockets', async (t) => {
@@ -1922,13 +1963,13 @@ test('a profile carrying retired baseline fields loads with no baseline UI at al
 
 // The catalog is a convenience, not a dependency: a feed that fails must never
 // block editing the table by hand.
-test('a failing common-rule feed leaves the filesystem table usable', async (t) => {
+test('a failing common-rule feed blocks hidden pack authority but leaves manual filesystem editing usable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  state.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
   let feedOffline = true;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async loadCommonRuleCatalog() { if (feedOffline) throw new Error('feed offline'); return COMMON_RULES; },
@@ -1944,6 +1985,12 @@ test('a failing common-rule feed leaves the filesystem table usable', async (t) 
   // Nothing inside a closed <details> is visible or announced, so the summary
   // itself has to say the presets are unavailable.
   assert.match(host.querySelector('.sbx-common-rule-summary').textContent, /unavailable/);
+  const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
+  await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
+  assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
+    /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
+    'unrendered release-owned network authority cannot be saved');
   [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, 1, 'rows can still be added by hand');
@@ -1953,6 +2000,9 @@ test('a failing common-rule feed leaves the filesystem table usable', async (t) 
   assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-feed-error'), null);
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
   assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
+  assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
+  assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();
 });
 

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"slices"
@@ -96,6 +97,7 @@ type PredictedAccessAxes struct {
 // verdict after pack expansion without relying on positional indices.
 type PredictedNetworkEntry struct {
 	Entry   sandboxpolicy.NetworkAllowEntry `json:"entry"`
+	Keys    []string                        `json:"keys"`
 	Outcome string                          `json:"outcome"`
 	Detail  string                          `json:"detail"`
 }
@@ -471,7 +473,8 @@ func DescribePredictedNetworkEntries(
 	setAll := func(outcome, detail string) []PredictedNetworkEntry {
 		for i, entry := range rules.Allow {
 			out[i] = PredictedNetworkEntry{
-				Entry: entry, Outcome: outcome, Detail: detail,
+				Entry: entry, Keys: []string{NetworkEntryPredictionKey(entry)},
+				Outcome: outcome, Detail: detail,
 			}
 		}
 		return out
@@ -531,10 +534,28 @@ func DescribePredictedNetworkEntries(
 			detail += " " + caps.NetworkListCondition
 		}
 		out[i] = PredictedNetworkEntry{
-			Entry: entry, Outcome: outcome, Detail: detail,
+			Entry: entry, Keys: []string{NetworkEntryPredictionKey(entry)},
+			Outcome: outcome, Detail: detail,
 		}
 	}
 	return out
+}
+
+// NetworkEntryPredictionKey is the stable editor reconciliation identity for
+// one entry spelling. It preserves selector spelling (so an authored alias can
+// be returned alongside the normalized key) while canonicalizing the
+// order-insensitive port set.
+func NetworkEntryPredictionKey(entry sandboxpolicy.NetworkAllowEntry) string {
+	if len(entry.Ports) > 0 {
+		ports := append([]int(nil), entry.Ports...)
+		slices.Sort(ports)
+		entry.Ports = slices.Compact(ports)
+	}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		panic("marshal network prediction key: " + err.Error())
+	}
+	return string(raw)
 }
 
 func predictNetworkAxis(
