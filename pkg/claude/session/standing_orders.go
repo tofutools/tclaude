@@ -566,6 +566,15 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	// evaluator so every caller — including `orders explain` — shares it.
 	ev.Source = standingorders.NormalizeSource(trigger, ev.Source)
 
+	live, err := db.IsLiveAgentConv(convID)
+	if err != nil {
+		slog.Warn("standing orders: failed to resolve recipient activity",
+			"error", err, "conv_id", convID, "module", "hooks")
+		return standingorders.Event{}, false
+	}
+	if !live {
+		return standingorders.Event{}, false
+	}
 	agentID, err := db.AgentIDForConv(convID)
 	if err != nil {
 		slog.Warn("standing orders: failed to resolve agent for conv",
@@ -573,15 +582,6 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 		return standingorders.Event{}, false
 	}
 	if agentID == "" {
-		return standingorders.Event{}, false
-	}
-	recipient, err := db.GetAgent(agentID)
-	if err != nil {
-		slog.Warn("standing orders: failed to resolve recipient activity",
-			"error", err, "agent", agentID, "module", "hooks")
-		return standingorders.Event{}, false
-	}
-	if recipient == nil || !recipient.Active() {
 		return standingorders.Event{}, false
 	}
 	ev.AgentID = agentID
