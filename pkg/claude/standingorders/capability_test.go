@@ -80,13 +80,14 @@ func TestCapabilityByHarnessCoversEveryKnownHarness(t *testing.T) {
 }
 
 func TestOutcomeIsProblem(t *testing.T) {
-	// Healthy states. suppressed-cadence belongs here: it is the steady state
-	// of a once-per-generation order at every boundary after the first, so
-	// flagging it would mark a correctly working order as a problem forever.
+	// Healthy states. Rate-control suppression is the order behaving exactly
+	// as authored, so flagging it would mark a correctly working order as a
+	// problem until its delivery window opens.
 	for _, ok := range []string{
 		db.StandingOutcomeDelivered,
 		db.StandingOutcomeNoMatch,
 		db.StandingOutcomeSuppressedCadence,
+		db.StandingOutcomeSuppressedCooldown,
 	} {
 		assert.False(t, OutcomeIsProblem(ok), ok)
 	}
