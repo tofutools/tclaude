@@ -428,22 +428,25 @@ func TestDashboardCSS_SandboxProfileEditorResizable(t *testing.T) {
 	}
 }
 
-// TestDashboardCSS_SandboxProfileSelectLayouts guards the distinct access and
-// included-profile selector layouts. The access control contains native arrow chrome and horizontal
-// padding, so the old 5.5em basis clipped the ordinary "write" label in
-// Chromium. Seven em fits both the regular labels and wizard mode's longer
-// "inscribe" label without making the selector flexible.
+// TestDashboardCSS_SandboxProfileSelectLayouts guards the distinct authored and
+// inherited row layouts. Authored filesystem access is a segmented control in
+// the shared grid; only immutable inherited-access badges retain the old narrow
+// column. Included-profile selects are intentionally intrinsic rather than
+// stretching across their section.
 func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
 	if err != nil {
 		t.Fatalf("reading embedded dashboard.css: %v", err)
 	}
 	css := string(cssBytes)
-	if !strings.Contains(css, ".sbx-row .sbx-access { flex: 0 0 7em; }") {
-		t.Error("dashboard.css access selector must reserve enough width for its labels and native arrow")
+	if !strings.Contains(css, ".sbx-global-row .sbx-access { flex: 0 0 7em; }") {
+		t.Error("dashboard.css inherited access badge must retain its narrow read-only column")
 	}
-	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 1; min-width: 0;") {
-		t.Error("dashboard.css included-profile selector must fill the available row width")
+	if !strings.Contains(css, ".sbx-filesystem-row {\n  display: grid;\n  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto;") {
+		t.Error("dashboard.css authored filesystem rows must use the shared segmented/path/action grid")
+	}
+	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {
+		t.Error("dashboard.css included-profile selector must retain intrinsic width")
 	}
 }
 

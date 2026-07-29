@@ -4762,7 +4762,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }
 /* Immutable inherited-access badges retain the old narrow-column footprint;
    authored rows use the wider three-state grid below. */
-.sbx-row .sbx-access { flex: 0 0 7em; }
+.sbx-global-row .sbx-access { flex: 0 0 7em; }
 .sbx-row .sbx-inc-name {
   flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
