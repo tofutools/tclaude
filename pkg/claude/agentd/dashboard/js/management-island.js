@@ -803,10 +803,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const networkPackVisibilityError = hiddenNetworkPacks.length
     ? `Saving is paused because release-owned authority cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
     : '';
-  const accessErrors = [
-    ...sandboxAccessDraftErrors(draft),
-    ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
-  ];
+  const accessErrors = sandboxAccessDraftErrors(draft);
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
   // can resume preview even if the hidden structured draft remains invalid.
   const predictionAccessErrors = predictionDraftError ? [] : advanced
@@ -814,7 +811,10 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       ...sandboxAccessDraftErrors(predictionDraft),
       ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
     ]
-    : accessErrors;
+    : [
+      ...accessErrors,
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ];
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
   const evaluationImplementations = sandboxEvaluationImplementations(

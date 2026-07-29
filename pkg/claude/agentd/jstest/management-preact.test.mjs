@@ -1989,6 +1989,8 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
+  assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,
+    'the authority warning is rendered and announced exactly once');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
     'unrendered release-owned network authority cannot be saved');
   [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click();
