@@ -4835,9 +4835,9 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row > button:last-child { padding: 0 9px; color: #8b949e; }
+.sbx-row button:last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
 .sbx-row button:hover { background: #2d333b; }
-.sbx-row > button:last-child:hover { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
