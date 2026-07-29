@@ -93,6 +93,7 @@ const (
 	AccessNoticeClassLaunch      = "launch"
 
 	AccessNoticeReasonEmptyIntersection     = "empty_intersection"
+	AccessNoticeReasonMissingInclude        = "missing_include"
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
 	AccessNoticeReasonFilteredModelTraffic  = "filtered_model_transport"
@@ -103,11 +104,12 @@ const (
 	// profiles cannot author it.
 	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
 
-	AccessNoticeEffectNotEnforced     = "not_enforced"
-	AccessNoticeEffectEnforcedWider   = "enforced_wider"
-	AccessNoticeEffectLaunchGated     = "launch_gated"
-	AccessNoticeEffectNothingAllowed  = "nothing_allowed"
-	AccessNoticeEffectNotMaterialized = "not_materialized"
+	AccessNoticeEffectNotEnforced       = "not_enforced"
+	AccessNoticeEffectEnforcedWider     = "enforced_wider"
+	AccessNoticeEffectLaunchGated       = "launch_gated"
+	AccessNoticeEffectNothingAllowed    = "nothing_allowed"
+	AccessNoticeEffectNotMaterialized   = "not_materialized"
+	AccessNoticeEffectPreviewIncomplete = "preview_incomplete"
 )
 
 // AccessNotice is the single persisted disclosure record used by access

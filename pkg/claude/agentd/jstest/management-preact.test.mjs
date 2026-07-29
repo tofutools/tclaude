@@ -1135,6 +1135,49 @@ test('sandbox filesystem and socket rows reuse accessible segmented controls whi
   host.remove();
 });
 
+test('sandbox editor discloses missing includes and preserves their authored names on save', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'base' },
+    { name: 'dev' },
+  ]);
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'dev', filesystem: [], environment: [],
+    includes: ['base', 'base-caches'], agent_directories: [],
+  }, options: {} });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const includes = [...host.querySelectorAll('.sbx-inc-name')];
+  assert.equal(includes.length, 2);
+  assert.equal(selectedValue(includes[0]), 'base');
+  assert.equal(includes[0].closest('.sbx-include-row').querySelector('.sbx-include-warning'), null,
+    'a resolvable include remains an ordinary compact select');
+  const missing = includes[1];
+  assert.equal(selectedValue(missing), 'base-caches',
+    'the sentinel option keeps the authored value selected in the DOM');
+  assert.equal(missing.querySelector('option[value="base-caches"]').textContent, '— missing —');
+  assert.equal(missing.getAttribute('aria-invalid'), 'true');
+  const warning = missing.closest('.sbx-include-row').querySelector('.sbx-include-warning');
+  assert.equal(warning.getAttribute('role'), 'alert');
+  assert.equal(missing.getAttribute('aria-describedby'), warning.id);
+  assert.match(warning.textContent, /⚠ "base-caches" not found in registry/);
+
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.includes, ['base', 'base-caches'],
+    'an untouched load→save round-trip never drops or rewrites the missing include');
+  unmount();
+  host.remove();
+});
+
 const COMMON_RULES = {
   version: 1,
   home: '/home/op',
