@@ -20,6 +20,14 @@ import (
 // tick would spend a DB read and a cost-history walk to redraw the same bar.
 const tuiUsageInterval = 30 * time.Second
 
+// tuiUsageUnsupportedInterval is how often a console keeps checking a daemon
+// that answered "no such endpoint" — a standalone console pointed at an older
+// tclaude. Giving up permanently would leave the readout dark for the rest of
+// the console's life even after the far end is upgraded and restarted under it,
+// which is precisely what a long-lived remote console does; a 404 every ten
+// minutes costs nothing and brings the line back on its own.
+const tuiUsageUnsupportedInterval = 10 * time.Minute
+
 // tuiUsageBarWidth is how many cells one rolling-limit bar spends. It matches
 // the web dashboard's USAGE_BAR_WIDTH so the same reading looks the same in
 // both surfaces.
@@ -63,12 +71,20 @@ type tuiUsageWindow struct {
 // usageDue reports whether this tick should start a usage poll: only for a
 // console the daemon treats as the operator (the endpoint is human-only, so
 // any other console would just collect refusals), never while one is already
-// in flight, and no more often than tuiUsageInterval.
+// in flight, and no more often than tuiUsageInterval — or, against a daemon
+// that has no usage endpoint, tuiUsageUnsupportedInterval.
 func (m tuiModel) usageDue() bool {
 	if !m.operator || m.usageFetching {
 		return false
 	}
-	return m.lastUsageAttempt.IsZero() || time.Since(m.lastUsageAttempt) >= tuiUsageInterval
+	if m.lastUsageAttempt.IsZero() {
+		return true
+	}
+	interval := tuiUsageInterval
+	if m.usageUnsupported {
+		interval = tuiUsageUnsupportedInterval
+	}
+	return time.Since(m.lastUsageAttempt) >= interval
 }
 
 // usageCmd reads the account's usage figures off the daemon. Like the listing
@@ -134,7 +150,10 @@ func tuiUsageWindowText(label string, w *tuiUsageWindow) string {
 	if w == nil {
 		return ""
 	}
-	out := fmt.Sprintf("%s %s %.0f%%", label, tuiUsageBar(w.Pct), w.Pct)
+	// math.Round, not %.0f: Go rounds a half to even and the dashboard's
+	// Math.round rounds it away from zero, so 62.5% would read 62% here and
+	// 63% there off the very same payload.
+	out := fmt.Sprintf("%s %s %.0f%%", label, tuiUsageBar(w.Pct), math.Round(w.Pct))
 	if w.Remaining != "" {
 		out += " (" + w.Remaining + ")"
 	}
@@ -195,7 +214,7 @@ func tuiUsageMoney(usd float64) string {
 // depends on it — so segments are dropped from the right until it fits, and a
 // terminal too narrow for even the first one gets no line at all.
 func (m tuiModel) usageLine() string {
-	if !m.operator {
+	if !m.operator || m.usageUnsupported {
 		return ""
 	}
 	if !m.usageLoaded {

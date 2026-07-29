@@ -304,6 +304,12 @@ func (a *inProcessTUIAPI) do(method, path string, in, out any) error {
 	if err := serveTUIRequest(a.handler, rec, req); err != nil {
 		return fmt.Errorf("%s %s: %w", method, path, err)
 	}
+	if rec.code == http.StatusNotFound {
+		// Same disposition the remote client gives a 404: the daemon has no
+		// such operation, which an optional readout should go quiet about
+		// rather than report as a failure.
+		return fmt.Errorf("%s %s: %w", method, path, &tuiUnsupportedEndpointError{msg: tuiErrorMessage(rec)})
+	}
 	if rec.code >= http.StatusBadRequest {
 		return fmt.Errorf("%s %s: %s", method, path, tuiErrorMessage(rec))
 	}
@@ -604,9 +610,14 @@ type tuiModel struct {
 	// the one thing worth saying out loud in place of the figures.
 	// lastUsageAttempt paces the poll (see tuiUsageInterval) — it is far slower
 	// than the listing's, so it rides the same tick rather than its own timer.
+	// usageUnsupported says the daemon has no usage endpoint at all — a
+	// standalone console pointed at an older tclaude. That is not a failure to
+	// report, so the line goes away entirely and the poll drops to a slow
+	// re-check that costs nothing but lets an upgraded daemon bring it back.
 	usage            tuiUsage
 	usageLoaded      bool
 	usageFailed      bool
+	usageUnsupported bool
 	usageFetching    bool
 	lastUsageAttempt time.Time
 	// lifecycleTarget is the agent the stop/retire confirmation is about,
@@ -1659,6 +1670,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiUsageMsg:
 		m.usageFetching = false
 		if msg.err != nil {
+			// A daemon without the endpoint is not a broken readout, it is a
+			// readout that does not exist here: say nothing, and drop whatever
+			// an earlier daemon told us — those figures have no source now.
+			if tuiEndpointUnsupported(msg.err) {
+				m.usageUnsupported = true
+				m.usageLoaded = false
+				m.usageFailed = false
+				return m, nil
+			}
 			// Keep the last good figures if there are any: they are cached
 			// readings to begin with, and one failed poll of an optional
 			// readout must not blank a line the operator is reading.
@@ -1668,6 +1688,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.usage = msg.usage
 		m.usageLoaded = true
 		m.usageFailed = false
+		m.usageUnsupported = false
 		return m, nil
 
 	case tuiDataMsg:

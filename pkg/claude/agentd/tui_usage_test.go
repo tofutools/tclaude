@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -144,6 +145,80 @@ func TestTUIUsageLineReportsAReadoutItCouldNotGet(t *testing.T) {
 	updated, _ = ok.Update(tuiUsageMsg{err: errUsagePoll})
 	stale := updated.(tuiModel)
 	assert.Contains(t, stale.usageLine(), "42%")
+}
+
+// A standalone console can outlive the daemon it points at and end up talking
+// to a tclaude old enough to have no usage endpoint. That is not a failure to
+// report at the operator — it is a readout that does not exist there — so the
+// line goes away rather than latching "unavailable" forever, and the poll backs
+// off to a slow re-check that brings it back if the far end is upgraded.
+func TestTUIUsageGoesQuietAgainstADaemonWithoutTheEndpoint(t *testing.T) {
+	m := newTUIModel(nil)
+	m.operator = true
+	m.width = 140
+
+	// A daemon that HAS the endpoint and merely failed still gets reported.
+	updated, _ := m.Update(tuiUsageMsg{err: errUsagePoll})
+	assert.Equal(t, "usage  unavailable", updated.(tuiModel).usageLine())
+
+	unsupported := fmt.Errorf("GET /v1/usage: %w", &tuiUnsupportedEndpointError{msg: "Not Found"})
+	updated, _ = updated.(tuiModel).Update(tuiUsageMsg{err: unsupported})
+	quiet := updated.(tuiModel)
+	assert.Empty(t, quiet.usageLine(), "no line at all for a daemon that has no readout")
+
+	quiet.lastUsageAttempt = time.Now().Add(-tuiUsageInterval)
+	assert.False(t, quiet.usageDue(), "and no 30s polling of a route that is not there")
+	quiet.lastUsageAttempt = time.Now().Add(-tuiUsageUnsupportedInterval)
+	assert.True(t, quiet.usageDue(), "but it checks again in case the daemon was upgraded")
+
+	// And an upgraded daemon brings the readout straight back.
+	updated, _ = quiet.Update(tuiUsageMsg{usage: claudeUsage()})
+	assert.Contains(t, updated.(tuiModel).usageLine(), "42%")
+}
+
+// Figures an earlier daemon served have no source once the console is talking
+// to one without the endpoint, so they are dropped rather than left frozen.
+func TestTUIUsageDropsFiguresWhenTheEndpointDisappears(t *testing.T) {
+	m := loadedUsageModel(claudeUsage())
+	unsupported := fmt.Errorf("GET /v1/usage: %w", &tuiUnsupportedEndpointError{msg: "Not Found"})
+	updated, _ := m.Update(tuiUsageMsg{err: unsupported})
+	assert.Empty(t, updated.(tuiModel).usageLine())
+}
+
+// A 404 from the in-process client is typed the same way, so the console's two
+// transports agree on what "this daemon has no such operation" looks like.
+func TestTUIAPIMarksAMissingEndpointAsUnsupported(t *testing.T) {
+	api := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	withOperatorToken(t, "tclo_test-token")
+
+	err := api.get("/v1/usage", &tuiUsage{})
+	require.Error(t, err)
+	assert.True(t, tuiEndpointUnsupported(err), err)
+	assert.Contains(t, err.Error(), "Not Found", "the message the operator reads is unchanged")
+
+	// Every other refusal stays an ordinary failure.
+	other := stubTUIAPI(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusForbidden, "auth", "only the human operator may read subscription usage")
+	})
+	err = other.get("/v1/usage", &tuiUsage{})
+	require.Error(t, err)
+	assert.False(t, tuiEndpointUnsupported(err), err)
+}
+
+// The console rounds a percentage the way the dashboard's Math.round does, not
+// the way Go's %.0f (half-to-even) would: the same payload must not read 62%
+// here and 63% in the browser.
+func TestTUIUsageRoundsHalvesLikeTheDashboard(t *testing.T) {
+	line := loadedUsageModel(tuiUsage{tuiSubscriptionUsage: tuiSubscriptionUsage{
+		Available: true,
+		FiveHour:  &tuiUsageWindow{Pct: 62.5},
+		SevenDay:  &tuiUsageWindow{Pct: 3.5},
+	}}).usageLine()
+
+	assert.Contains(t, line, "63%")
+	assert.Contains(t, line, "4%")
 }
 
 // The readout is the operator's own account. A console the daemon does not

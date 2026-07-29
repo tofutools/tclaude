@@ -167,15 +167,19 @@ usage  5h ███░░░░░ 42% (3h41m) • 7d █░░░░░░░ 1
 The figures are the same ones the web dashboard's top bar shows and come from
 the same place — the cached reading Claude Code's statusline callback leaves in
 SQLite, plus the optional Anthropic usage poll (`usage.poll_anthropic_api`). The
-console never calls the API itself; it re-reads that cache every 30 seconds,
-which is why the line can lag a fresh session's first turn by a few seconds and
-why it survives an idle spell rather than collapsing to `n/a` overnight.
+console never calls the API itself; it re-reads that cache every 30 seconds, so
+the line can trail a fresh session's first turn by up to half a minute — and it
+survives an idle spell rather than collapsing to `n/a` overnight.
 
 When a Codex account also has recent figures, both are named
-(`claude 5h … • codex 5h …`). A narrow terminal drops segments from the right
-rather than wrapping — the line is always exactly one row. `usage  n/a` means
-the daemon has no usable reading (an API-billing account has no rolling
-windows), and `usage  unavailable` means the console could not read it at all.
+(`claude 5h … • codex 5h …`). A narrow terminal drops whole segments from the
+right rather than wrapping, so the line is never more than one row; below about
+thirty columns not even the first segment fits and the line is dropped
+altogether. `usage  n/a` means the daemon has no usable reading (an API-billing
+account has no rolling windows), and `usage  unavailable` means the console
+could not read it at all. A standalone console pointed at a tclaude too old to
+have the endpoint shows no line rather than an error, and picks the readout up
+by itself if that daemon is upgraded under it.
 
 The readout is the operator's own subscription, so the daemon serves it to an
 operator console only; an agent-class console (see the identity note below)

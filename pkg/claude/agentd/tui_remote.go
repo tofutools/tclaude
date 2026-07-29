@@ -540,6 +540,11 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			msg += " (the target may be running a tclaude version without remote TUI support)"
+			// Typed, so an optional readout can tell "this daemon has no such
+			// operation" apart from "this call failed" — see
+			// tuiEndpointUnsupported. The message is unchanged: anything that
+			// only prints the error reads exactly what it read before.
+			return fmt.Errorf("%s %s: %w", method, path, &tuiUnsupportedEndpointError{msg: msg})
 		}
 		if method == http.MethodPost &&
 			resp.StatusCode == http.StatusConflict &&
@@ -564,6 +569,23 @@ func (a *remoteTUIAPI) do(method, path string, in, out any) error {
 		return fmt.Errorf("decode %s response: %w", path, err)
 	}
 	return nil
+}
+
+// tuiUnsupportedEndpointError means the daemon answered 404: it has no route
+// for this operation at all, which for a standalone console usually means the
+// far end is an older tclaude. It carries the same text the untyped error did,
+// so it only matters to a caller that asks (tuiEndpointUnsupported) — one whose
+// feature is optional and should go quiet rather than report a failure the
+// operator can do nothing about.
+type tuiUnsupportedEndpointError struct{ msg string }
+
+func (e *tuiUnsupportedEndpointError) Error() string { return e.msg }
+
+// tuiEndpointUnsupported reports whether err is a daemon that does not have
+// the endpoint, as opposed to one that has it and failed.
+func tuiEndpointUnsupported(err error) bool {
+	var unsupported *tuiUnsupportedEndpointError
+	return errors.As(err, &unsupported)
 }
 
 // tuiAmbiguousMutationError means every safe retry of one idempotency key
