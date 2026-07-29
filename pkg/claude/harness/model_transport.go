@@ -91,9 +91,58 @@ func (unresolvedOpenCodeModelTransport) ResolveModelTransport(
 			resolved.BaseURL, "resolved OpenCode provider endpoint")
 	}
 	return ModelTransportRequirement{}, fmt.Errorf(
-		"OpenCode model %q does not expose a concrete resolved provider endpoint at the harness descriptor seam",
+		"OpenCode model %q does not expose a concrete resolved provider endpoint at the harness descriptor seam; "+
+			"OpenCode effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open",
 		displayResolvedModel(resolved.Model),
 	)
+}
+
+// IsLocalAccessNetworkPreset recognizes the exact strict Local access wire
+// shape. Port-scoped or repeated loopback entries are ordinary Access lists.
+func IsLocalAccessNetworkPreset(rules sandboxpolicy.NetworkRules) bool {
+	return rules.Mode == sandboxpolicy.AccessModeList &&
+		len(rules.Allow) == 1 &&
+		rules.Allow[0].Loopback &&
+		rules.Allow[0].Host == "" &&
+		rules.Allow[0].Domain == "" &&
+		rules.Allow[0].CIDR == "" &&
+		len(rules.Allow[0].Ports) == 0
+}
+
+// IsLocalModelAPIsNetworkPreset recognizes the daemon-normalized wire shape
+// behind the editor's Local + model APIs convenience. It is intentionally
+// exact: any extra selector, port, subdomain widening, or destination is an
+// ordinary Access list.
+func IsLocalModelAPIsNetworkPreset(rules sandboxpolicy.NetworkRules) bool {
+	if rules.Mode != sandboxpolicy.AccessModeList || len(rules.Allow) != 3 {
+		return false
+	}
+	seenLoopback := false
+	seenDomains := map[string]bool{}
+	for _, entry := range rules.Allow {
+		switch {
+		case entry.Loopback:
+			if seenLoopback || entry.Host != "" || entry.Domain != "" ||
+				entry.CIDR != "" || len(entry.Ports) != 0 {
+				return false
+			}
+			seenLoopback = true
+		case entry.Domain == "api.anthropic.com" ||
+			entry.Domain == "api.openai.com":
+			if entry.Host != "" || entry.CIDR != "" ||
+				entry.IncludeSubdomains || entry.Loopback ||
+				!slices.Equal(entry.Ports, []int{443}) ||
+				seenDomains[entry.Domain] {
+				return false
+			}
+			seenDomains[entry.Domain] = true
+		default:
+			return false
+		}
+	}
+	return seenLoopback &&
+		seenDomains["api.anthropic.com"] &&
+		seenDomains["api.openai.com"]
 }
 
 // ResolveModelTransportRequirement invokes the harness-owned hook only after
@@ -302,7 +351,9 @@ func customModelTransportRequirement(
 	if address, parseErr := netip.ParseAddr(host); parseErr == nil {
 		switch {
 		case address.IsLoopback():
-			return ModelTransportRequirement{}, loopbackModelEndpointError(rawURL, port)
+			destination = sandboxpolicy.NetworkAllowEntry{
+				Loopback: true, Ports: []int{port},
+			}
 		case address.Is4():
 			destination = sandboxpolicy.NetworkAllowEntry{
 				CIDR: netip.PrefixFrom(address, 32).String(), Ports: []int{port},
@@ -313,7 +364,9 @@ func customModelTransportRequirement(
 			}
 		}
 	} else if strings.EqualFold(host, "localhost") {
-		return ModelTransportRequirement{}, loopbackModelEndpointError(rawURL, port)
+		destination = sandboxpolicy.NetworkAllowEntry{
+			Loopback: true, Ports: []int{port},
+		}
 	} else if strings.EqualFold(host, sandboxpolicy.FilteredNetworkHostLoopbackName) {
 		destination = sandboxpolicy.NetworkAllowEntry{
 			Loopback: true, Ports: []int{port},
@@ -345,13 +398,6 @@ func customModelTransportRequirement(
 		Destinations: []sandboxpolicy.NetworkAllowEntry{destination},
 		ResolvedBy:   resolvedBy,
 	}, nil
-}
-
-func loopbackModelEndpointError(rawURL string, port int) error {
-	return fmt.Errorf(
-		"resolved provider endpoint %q uses sandbox-private localhost; configure the provider for %s:%d to reach an explicitly allowed host-loopback service, choose a resolvable non-loopback provider, or use network open",
-		rawURL, sandboxpolicy.FilteredNetworkHostLoopbackName, port,
-	)
 }
 
 func displayResolvedModel(model string) string {

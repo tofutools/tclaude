@@ -418,6 +418,54 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
 	require.Len(t, notices, 1)
 	assert.Equal(t, "no_mechanism", notices[0].Reason)
+
+	localPresets := []sandboxpolicy.ResolvedAxes{
+		{Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true,
+			}},
+		}},
+		{Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.anthropic.com", Ports: []int{443}},
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Loopback: true},
+			},
+		}},
+	}
+	for _, local := range localPresets {
+		for _, platform := range []string{"linux", "darwin"} {
+			prediction, err = PredictAccessEnforcement(
+				openCode, sandboxpolicy.ImplementationTclaudeLayer,
+				local, OpenCodeSandboxTclaudeLayer, platform,
+			)
+			require.NoError(t, err)
+			preview = DescribePredictedAccess(local, prediction).Network
+			assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+			assert.Contains(t, preview.Detail, SandboxCapabilityModelTransport)
+			assert.Contains(t, preview.Detail, "TCL-826")
+		}
+	}
+
+	portScopedLoopback := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true, Ports: []int{11434},
+			}},
+		},
+	}
+	prediction, err = PredictAccessEnforcement(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		portScopedLoopback, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	preview = DescribePredictedAccess(portScopedLoopback, prediction).Network
+	assert.Equal(t, AccessPredictionEnforcedPartial, preview.Outcome,
+		"ordinary explicit-provider loopback lists retain general M3 support")
+	assert.NotContains(t, preview.Detail, "TCL-826")
 }
 
 func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
@@ -495,6 +543,56 @@ func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	assert.Equal(t, "selector_partial", notices[0].Reason)
 	assert.Equal(t, []int{0}, notices[0].Entries)
 	assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
+}
+
+func TestDarwinTclaudeLayerEnforcesOnlyLoopbackOnlyLists(t *testing.T) {
+	local := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true, Ports: []int{11434},
+		}},
+	}}
+	row, err := accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		local, ClaudeSandboxOff, "darwin", true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceFull, row.NetworkList)
+	assert.Equal(t, EnforceFull, row.NetworkPorts)
+	assert.Equal(t, []NetworkSelectorCapability{{
+		Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+		Level:    EnforceFull,
+	}}, row.NetworkSelectors)
+	rendered, notices, err := PlanAccessEnforcement(
+		local, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, local, rendered)
+	assert.Empty(t, notices)
+
+	mixed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true},
+			{Domain: "api.example.com", Ports: []int{443}},
+		},
+	}}
+	row, err = accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		mixed, ClaudeSandboxOff, "darwin", false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, row.NetworkList,
+		"existing mixed Darwin lists must keep their historical NotEnforced result")
+	assert.Empty(t, row.NetworkListRefusal)
+	assert.Empty(t, row.NetworkSelectorRefusal)
+	rendered, notices, err = PlanAccessEnforcement(
+		mixed, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "outbound network access remains open")
 }
 
 func TestClosedPartialEnforcesAndWarnsButClosedNoneRefuses(t *testing.T) {

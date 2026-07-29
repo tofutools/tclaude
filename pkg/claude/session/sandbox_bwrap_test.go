@@ -861,6 +861,161 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "packet-enforced floor")
 }
 
+func TestValidateTclaudeLayerLocalNetworkPresetsKeepModelTransportExplicit(t *testing.T) {
+	strictLocal := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true,
+			}},
+		},
+	}
+	_, err := ValidateTclaudeLayerNetwork(
+		harness.Default(), strictLocal, harness.ResolvedModelTransport{
+			Model: "claude-sonnet", Provider: "anthropic", ProviderResolved: true,
+		})
+	require.Error(t, err)
+	var capabilityErr *harness.SandboxCapabilityError
+	require.ErrorAs(t, err, &capabilityErr)
+	assert.Equal(t, harness.SandboxCapabilityModelTransport, capabilityErr.Kind)
+	assert.Contains(t, err.Error(), "api.anthropic.com:443")
+	assert.Contains(t, err.Error(), "include template net-anthropic")
+	assert.Contains(t, err.Error(), "no hidden model-traffic bypass")
+
+	localBaseURL := "http://host.tclaude.internal:11434/v1"
+	localEndpoint := "host.tclaude.internal:11434"
+	if runtime.GOOS == "darwin" {
+		localBaseURL = "http://localhost:11434/v1"
+		localEndpoint = "localhost:11434"
+	}
+	notices, err := ValidateTclaudeLayerNetwork(
+		harness.Default(), strictLocal, harness.ResolvedModelTransport{
+			Model:            "local/llama",
+			Provider:         "ollama",
+			BaseURL:          localBaseURL,
+			ProviderResolved: true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated, notices[0].Effect)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredModelTraffic, notices[0].Reason)
+	assert.Contains(t, notices[0].Detail, localEndpoint)
+	for _, localHarness := range []*harness.Harness{
+		harness.MustGet(harness.CodexName),
+		harness.MustGet(harness.OpenCodeName),
+	} {
+		got, localErr := ValidateTclaudeLayerNetwork(
+			localHarness, strictLocal, harness.ResolvedModelTransport{
+				Model:            "local/llama",
+				Provider:         "ollama",
+				BaseURL:          localBaseURL,
+				ProviderResolved: true,
+			})
+		require.NoError(t, localErr)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Detail, localEndpoint)
+	}
+
+	localModelAPIs := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Loopback: true},
+				{Domain: "api.anthropic.com", Ports: []int{443}},
+				{Domain: "api.openai.com", Ports: []int{443}},
+			},
+		},
+	}
+	for _, tc := range []struct {
+		name      string
+		harness   *harness.Harness
+		transport harness.ResolvedModelTransport
+		endpoint  string
+	}{
+		{
+			name: "claude", harness: harness.Default(),
+			transport: harness.ResolvedModelTransport{
+				Model: "claude-sonnet", Provider: "anthropic", ProviderResolved: true,
+			},
+			endpoint: "api.anthropic.com:443",
+		},
+		{
+			name: "codex", harness: harness.MustGet(harness.CodexName),
+			transport: harness.ResolvedModelTransport{
+				Model: "gpt-5.4", Provider: "openai", ProviderResolved: true,
+			},
+			endpoint: "api.openai.com:443",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, validateErr := ValidateTclaudeLayerNetwork(
+				tc.harness, localModelAPIs, tc.transport)
+			require.NoError(t, validateErr)
+			require.Len(t, got, 1)
+			assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated, got[0].Effect)
+			assert.Contains(t, got[0].Detail, tc.endpoint)
+			assert.Contains(t, got[0].Detail, "no hidden model-traffic bypass")
+		})
+	}
+}
+
+func TestModelTransportLoopbackInterpretationMatchesPlatform(t *testing.T) {
+	strictLocal := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true,
+		}},
+	}
+	for _, baseURL := range []string{
+		"http://127.0.0.1:11434/v1",
+		"http://[::1]:11434/v1",
+		"http://localhost:11434/v1",
+	} {
+		resolved := harness.ResolvedModelTransport{
+			Model:            "local/llama",
+			Provider:         "ollama",
+			BaseURL:          baseURL,
+			ProviderResolved: true,
+		}
+		linuxErr := validateModelTransportLoopbackForPlatform(
+			harness.Default(), resolved, "linux")
+		require.Error(t, linuxErr)
+		assert.Contains(t, linuxErr.Error(), "sandbox-private localhost on Linux")
+		assert.Contains(t, linuxErr.Error(), sandboxpolicy.FilteredNetworkHostLoopbackName)
+
+		require.NoError(t, validateModelTransportLoopbackForPlatform(
+			harness.Default(), resolved, "darwin"))
+		requirement, err := harness.ResolveModelTransportRequirement(
+			harness.Default(), resolved)
+		require.NoError(t, err)
+		assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true, Ports: []int{11434},
+		}}, requirement.Destinations)
+		require.NoError(t, harness.ValidateModelTransportCoverage(
+			harness.Default(), strictLocal, requirement))
+		detail := describeModelTransportRequirementForPlatform(
+			requirement, "darwin")
+		assert.Contains(t, detail, "localhost:11434")
+		assert.NotContains(t, detail, sandboxpolicy.FilteredNetworkHostLoopbackName)
+	}
+
+	synthetic := harness.ResolvedModelTransport{
+		Model:            "local/llama",
+		Provider:         "ollama",
+		BaseURL:          "http://host.tclaude.internal:11434/v1",
+		ProviderResolved: true,
+	}
+	require.NoError(t, validateModelTransportLoopbackForPlatform(
+		harness.Default(), synthetic, "linux"))
+	darwinErr := validateModelTransportLoopbackForPlatform(
+		harness.Default(), synthetic, "darwin")
+	require.Error(t, darwinErr)
+	assert.Contains(t, darwinErr.Error(), "Linux-only synthetic")
+	assert.Contains(t, darwinErr.Error(), "localhost")
+	assert.Contains(t, darwinErr.Error(), "127.0.0.1")
+	assert.Contains(t, darwinErr.Error(), "::1")
+}
+
 func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)

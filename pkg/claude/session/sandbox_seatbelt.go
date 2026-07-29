@@ -64,11 +64,11 @@ func renderSeatbeltProfile(
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
-		return "", nil, fmt.Errorf(
-			"darwin tclaude-layer does not support reserved filtered networking: "+
-				"network posture %s requires a proxy-backed network applier",
-			plan.NetworkPosture,
-		)
+		if !sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
+			return "", nil, fmt.Errorf(
+				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
+			)
+		}
 	default:
 		return "", nil, fmt.Errorf(
 			"darwin tclaude-layer has invalid network posture %d",
@@ -243,7 +243,7 @@ func renderSeatbeltProfile(
 	profile, params := compileSeatbeltDenyRegions(
 		nodes,
 		runtimeTempDir,
-		plan.NetworkPosture,
+		plan,
 		identity,
 	)
 	return profile, params, nil
@@ -504,7 +504,7 @@ func buildSeatbeltRegionTree(
 func compileSeatbeltDenyRegions(
 	nodes []seatbeltRegionNode,
 	runtimeTempDir string,
-	networkPosture sandboxpolicy.NetworkPosture,
+	plan sandboxpolicy.MountPlan,
 	identity seatbeltIdentityLookup,
 ) (string, []seatbeltProfileParam) {
 	var profile strings.Builder
@@ -515,8 +515,11 @@ func compileSeatbeltDenyRegions(
 	profile.WriteString("; Seatbelt allow/deny rule selection.\n")
 
 	params := []seatbeltProfileParam{}
-	if networkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
+	switch plan.NetworkPosture {
+	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		params = appendSeatbeltIsolatedNetworkRules(&profile, params, nodes)
+	case sandboxpolicy.NetworkFiltered:
+		appendSeatbeltLoopbackNetworkRules(&profile, plan.FilteredNetwork)
 	}
 	writeRules := seatbeltDenyStarts(nodes, func(mode sandboxpolicy.MountMode) bool {
 		return mode != sandboxpolicy.MountRW
@@ -639,6 +642,48 @@ func seatbeltDaemonReopenDescendants(
 		return nodes[out[i]].path < nodes[out[j]].path
 	})
 	return out
+}
+
+// appendSeatbeltLoopbackNetworkRules applies the one network list Seatbelt can
+// represent without a proxy. The remote-ip wildcard confines the deny to IP
+// traffic, preserving the independently authored Unix-socket axis; the more
+// specific localhost allows reopen only the authored destination ports.
+//
+// Outbound exceptions must be remote predicates. A local-ip predicate observes
+// the unbound socket's source address and Seatbelt treats localhost as matching
+// INADDR_ANY, which would admit every destination.
+func appendSeatbeltLoopbackNetworkRules(
+	profile *strings.Builder,
+	rules *sandboxpolicy.FilteredNetworkRuleSet,
+) {
+	allowAllPorts := false
+	portSet := map[int]struct{}{}
+	for _, rule := range rules.Rules {
+		if len(rule.Ports) == 0 {
+			allowAllPorts = true
+			break
+		}
+		for _, port := range rule.Ports {
+			portSet[port] = struct{}{}
+		}
+	}
+	ports := make([]int, 0, len(portSet))
+	for port := range portSet {
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+
+	profile.WriteString("\n; Local access permits only real host-loopback IP destinations.\n")
+	profile.WriteString("; Bind/inbound and Unix sockets retain their independently authored behavior.\n")
+	profile.WriteString("(deny network-outbound (remote ip \"*:*\"))\n")
+	if allowAllPorts {
+		profile.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n")
+	} else {
+		for _, port := range ports {
+			fmt.Fprintf(profile,
+				"(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+		}
+	}
 }
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)

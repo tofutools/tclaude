@@ -81,10 +81,6 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
-		return "", fmt.Errorf(
-			"darwin tclaude-layer does not support reserved filtered networking: " +
-				"Seatbelt has no proxy-backed network applier",
-		)
 	default:
 		return "", fmt.Errorf("darwin tclaude-layer has invalid network posture %d", posture)
 	}
@@ -147,11 +143,11 @@ func tclaudeLayerCommand(
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
-		return "", fmt.Errorf(
-			"darwin tclaude-layer does not support reserved filtered networking: "+
-				"posture %s requires a proxy-backed network applier",
-			plan.NetworkPosture,
-		)
+		if !sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
+			return "", fmt.Errorf(
+				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
+			)
+		}
 	default:
 		return "", fmt.Errorf(
 			"darwin tclaude-layer has invalid network posture %d",
@@ -398,6 +394,14 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 			State:      "on",
 			Source:     "tclaude-layer (Seatbelt/sandbox-exec; host network)",
 			Unverified: true,
+		}
+	case sandboxpolicy.NetworkFiltered:
+		return harness.LaunchOSSandbox{
+			State: "on",
+			Source: "tclaude-layer (Seatbelt/sandbox-exec; local access uses real " +
+				"host loopback and reopens host-local services/IDE bridge)",
+			FilteredNetwork: true,
+			Unverified:      true,
 		}
 	default:
 		return harness.LaunchOSSandbox{

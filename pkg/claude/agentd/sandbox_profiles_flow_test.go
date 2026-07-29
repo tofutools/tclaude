@@ -377,6 +377,76 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testing.T) {
+	f := newFlow(t)
+	profiles := []struct {
+		name  string
+		rules sandboxpolicy.NetworkRules
+	}{
+		{
+			name: "local-access",
+			rules: sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Loopback: true,
+				}},
+			},
+		},
+		{
+			name: "local-model-apis",
+			rules: sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeList,
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "api.anthropic.com", Ports: []int{443}},
+					{Domain: "api.openai.com", Ports: []int{443}},
+					{Loopback: true},
+				},
+			},
+		},
+	}
+	for _, profile := range profiles {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+			"name": profile.name, "filesystem": []any{}, "environment": []any{},
+			"network": profile.rules,
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "%s create body=%s", profile.name, rec.Body.String())
+
+		rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/"+profile.name, nil)
+		require.Equalf(t, http.StatusOK, rec.Code, "%s get body=%s", profile.name, rec.Body.String())
+		var got struct {
+			Network *sandboxpolicy.NetworkRules `json:"network"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.NotNil(t, got.Network)
+		assert.Equal(t, profile.rules, *got.Network)
+	}
+
+	rec := profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/export?name=local-access&name=local-model-apis", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(8), bundle["format_version"],
+		"the presets use the existing access-axis schema")
+
+	for _, profile := range profiles {
+		require.Equal(t, http.StatusNoContent, profileReq(
+			t, f, http.MethodDelete, "/v1/sandbox-profiles/"+profile.name, nil).Code)
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+	for _, profile := range profiles {
+		rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/"+profile.name, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got struct {
+			Network *sandboxpolicy.NetworkRules `json:"network"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.NotNil(t, got.Network)
+		assert.Equal(t, profile.rules, *got.Network)
+	}
+}
+
 func TestSandboxProfilesImportConflictRollsBackWholeBundle(t *testing.T) {
 	f := newFlow(t)
 	require.Equal(t, http.StatusCreated,

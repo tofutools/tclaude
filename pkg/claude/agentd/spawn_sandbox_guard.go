@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -170,6 +171,18 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_profile", err.Error()}
 	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		h.Name == harness.OpenCodeName &&
+		(harness.IsLocalAccessNetworkPreset(axes.Network) ||
+			harness.IsLocalModelAPIsNetworkPreset(axes.Network)) {
+		modelContext.Environment = snapshot.Effective.Environment
+		if modelErr := session.ValidateTclaudeLayerOpenCodeLocalModelTransport(
+			h, snapshot.Effective, modelContext,
+		); modelErr != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				modelErr, harness.SandboxCapabilityModelTransport)
+		}
+	}
 	var verdict harness.LaunchOSSandbox
 	var filteredProbe *session.FilteredNetworkPrerequisite
 	if implementation.UsesTclaudeLayer() {
@@ -178,16 +191,21 @@ func planSandboxProfileAccessForLaunch(
 			posture = sandboxpolicy.NetworkIsolatedWithAgentd
 		} else if axes.Network.Mode == sandboxpolicy.AccessModeList &&
 			implementation == sandboxpolicy.ImplementationTclaudeLayer {
-			probe := probeFilteredNetworkPrerequisite()
-			filteredProbe = &probe
-			if supportErr := session.ValidateFilteredNetworkHarnessSupport(
-				h, implementation, axes, probe,
-			); supportErr != nil {
-				return nil, sandboxCapabilitySpawnFailure(
-					supportErr, "unsupported_sandbox_profile_access")
-			}
-			if probe.Detected {
+			if runtime.GOOS == "darwin" &&
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				posture = sandboxpolicy.NetworkFiltered
+			} else if runtime.GOOS == "linux" {
+				probe := probeFilteredNetworkPrerequisite()
+				filteredProbe = &probe
+				if supportErr := session.ValidateFilteredNetworkHarnessSupport(
+					h, implementation, axes, probe,
+				); supportErr != nil {
+					return nil, sandboxCapabilitySpawnFailure(
+						supportErr, "unsupported_sandbox_profile_access")
+				}
+				if probe.Detected {
+					posture = sandboxpolicy.NetworkFiltered
+				}
 			}
 		}
 		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
@@ -209,7 +227,10 @@ func planSandboxProfileAccessForLaunch(
 			err, "unsupported_sandbox_profile_access")
 	}
 	if implementation.UsesTclaudeLayer() &&
-		axes.Network.Mode == sandboxpolicy.AccessModeList {
+		axes.Network.Mode == sandboxpolicy.AccessModeList &&
+		(runtime.GOOS == "linux" ||
+			(runtime.GOOS == "darwin" &&
+				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network))) {
 		if filteredProbe == nil {
 			probe := probeFilteredNetworkPrerequisite()
 			filteredProbe = &probe

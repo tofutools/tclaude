@@ -41,7 +41,9 @@ const (
 	darwinSmokeRestrictBaselineEnv  = "TCLAUDE_SANDBOX_V2_RESTRICT_BASELINE"
 	darwinSmokeExerciseBrokerEnv    = "TCLAUDE_SANDBOX_V2_EXERCISE_BROKER"
 	darwinSmokeNetworkIsolatedEnv   = "TCLAUDE_SANDBOX_V2_NETWORK_ISOLATED"
+	darwinSmokeNetworkLocalEnv      = "TCLAUDE_SANDBOX_V2_NETWORK_LOCAL"
 	darwinSmokeHostListenerEnv      = "TCLAUDE_SANDBOX_V2_HOST_LISTENER"
+	darwinSmokeDeniedListenerEnv    = "TCLAUDE_SANDBOX_V2_DENIED_LISTENER"
 	darwinSmokeExpectedAgentIDEnv   = "TCLAUDE_SANDBOX_V2_EXPECTED_AGENT_ID"
 	darwinSmokeRuntimeTempDirEnv    = "TCLAUDE_SANDBOX_V2_RUNTIME_TMPDIR"
 	darwinSmokeInheritedFDEnv       = "TCLAUDE_SANDBOX_V2_INHERITED_FD"
@@ -125,6 +127,9 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	hostListener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = hostListener.Close() })
+	deniedHostListener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = deniedHostListener.Close() })
 
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
@@ -196,6 +201,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		false,
 		true,
 		false,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -208,6 +214,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		deniedHostListener.Addr().String(),
 		expectedAgentID,
 	)
 
@@ -223,16 +230,28 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		"the brokered status line must update the host context snapshot")
 	assert.Equal(t, "claude-opus-5", snapshot.ModelID)
 
-	isolatedPlan := plan
-	isolatedPlan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
+	localPort := hostListener.Addr().(*net.TCPAddr).Port
+	localRules, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true, Ports: []int{localPort},
+			}},
+		},
+	)
+	require.NoError(t, err)
+	localPlan := plan
+	localPlan.NetworkPosture = sandboxpolicy.NetworkFiltered
+	localPlan.FilteredNetwork = &localRules
 	runDarwinSeatbeltSmokeHelper(
 		t,
 		binary,
 		helperBinary,
 		phase0,
-		isolatedPlan,
+		localPlan,
 		false,
-		true,
+		false,
+		false,
 		true,
 		allowed,
 		outside,
@@ -246,6 +265,35 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		deniedHostListener.Addr().String(),
+		expectedAgentID,
+	)
+
+	isolatedPlan := plan
+	isolatedPlan.NetworkPosture = sandboxpolicy.NetworkIsolatedWithAgentd
+	runDarwinSeatbeltSmokeHelper(
+		t,
+		binary,
+		helperBinary,
+		phase0,
+		isolatedPlan,
+		false,
+		true,
+		true,
+		false,
+		allowed,
+		outside,
+		readonly,
+		hidden,
+		filepath.Join(aliasTools, "probe"),
+		protectedFile,
+		policySocket,
+		allowedPolicySocket,
+		tmuxSocket,
+		runtimeTempDir,
+		tclaudeBinary,
+		hostListener.Addr().String(),
+		deniedHostListener.Addr().String(),
 		expectedAgentID,
 	)
 	isolatedState, err := LoadSessionState(darwinSmokeSessionID)
@@ -279,6 +327,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		true,
 		false,
 		false,
+		false,
 		allowed,
 		outside,
 		readonly,
@@ -291,6 +340,7 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		runtimeTempDir,
 		tclaudeBinary,
 		hostListener.Addr().String(),
+		deniedHostListener.Addr().String(),
 		expectedAgentID,
 	)
 }
@@ -300,9 +350,9 @@ func runDarwinSeatbeltSmokeHelper(
 	binary, helperBinary string,
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
-	restrictBaseline, exerciseBroker, networkIsolated bool,
+	restrictBaseline, exerciseBroker, networkIsolated, networkLocal bool,
 	allowed, outside, readonly, hidden, aliasFile, protectedFile, policySocket, allowedPolicySocket, tmuxSocket,
-	runtimeTempDir, tclaudeBinary, hostListener, expectedAgentID string,
+	runtimeTempDir, tclaudeBinary, hostListener, deniedListener, expectedAgentID string,
 ) {
 	t.Helper()
 	helperCommand := clcommon.ShellQuoteArg(helperBinary) +
@@ -355,7 +405,9 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeRestrictBaselineEnv+"="+boolString(restrictBaseline),
 		darwinSmokeExerciseBrokerEnv+"="+boolString(exerciseBroker),
 		darwinSmokeNetworkIsolatedEnv+"="+boolString(networkIsolated),
+		darwinSmokeNetworkLocalEnv+"="+boolString(networkLocal),
 		darwinSmokeHostListenerEnv+"="+hostListener,
+		darwinSmokeDeniedListenerEnv+"="+deniedListener,
 		darwinSmokeExpectedAgentIDEnv+"="+expectedAgentID,
 		darwinSmokeRuntimeTempDirEnv+"="+runtimeTempDir,
 		darwinSmokeInheritedFDEnv+"=3",
@@ -433,7 +485,9 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 	restrictBaseline := os.Getenv(darwinSmokeRestrictBaselineEnv) == "1"
 	exerciseBroker := os.Getenv(darwinSmokeExerciseBrokerEnv) == "1"
 	networkIsolated := os.Getenv(darwinSmokeNetworkIsolatedEnv) == "1"
+	networkLocal := os.Getenv(darwinSmokeNetworkLocalEnv) == "1"
 	hostListener := os.Getenv(darwinSmokeHostListenerEnv)
+	deniedListener := os.Getenv(darwinSmokeDeniedListenerEnv)
 	expectedAgentID := os.Getenv(darwinSmokeExpectedAgentIDEnv)
 	runtimeTempDir := os.Getenv(darwinSmokeRuntimeTempDirEnv)
 	inheritedFD := os.Getenv(darwinSmokeInheritedFDEnv)
@@ -514,6 +568,31 @@ func TestTclaudeLayerDarwinSmokeHelper(t *testing.T) {
 			t.Fatal("darwin isolated posture created a host-loopback listener")
 		}
 		assertSeatbeltEPERM(t, listenErr, "host-loopback TCP bind")
+	} else if networkLocal {
+		require.NoError(t, hostDialErr,
+			"darwin Local access must reach the allowed real host-loopback service")
+		require.NoError(t, hostConn.Close())
+
+		deniedConn, deniedDialErr := net.DialTimeout(
+			"tcp4", deniedListener, 500*time.Millisecond)
+		if deniedDialErr == nil {
+			_ = deniedConn.Close()
+			t.Fatal("darwin Local access reached a host-loopback port outside the list")
+		}
+		assertSeatbeltEPERM(t, deniedDialErr, "port-scoped host-loopback TCP connect")
+
+		publicConn, publicDialErr := net.DialTimeout(
+			"tcp4", "1.1.1.1:53", 500*time.Millisecond)
+		if publicDialErr == nil {
+			_ = publicConn.Close()
+			t.Fatal("darwin Local access reached a public DNS endpoint")
+		}
+		assertSeatbeltEPERM(t, publicDialErr, "Local access public-DNS TCP connect")
+
+		localListener, listenErr := net.Listen("tcp4", "127.0.0.1:0")
+		require.NoError(t, listenErr,
+			"darwin Local access must preserve host-loopback bind for local services")
+		require.NoError(t, localListener.Close())
 	} else {
 		require.NoError(t, hostDialErr, "host-open posture must retain host-loopback connectivity")
 		require.NoError(t, hostConn.Close())

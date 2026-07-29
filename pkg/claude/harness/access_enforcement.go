@@ -223,7 +223,9 @@ func PredictAccessEnforcement(
 	}
 	row, err := accessEnforcementTable(
 		h, implementation, axes, validatedBuiltinMode, platform,
-		platform == "linux",
+		platform == "linux" ||
+			(platform == "darwin" &&
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)),
 	)
 	if err != nil {
 		return PredictedAccessEnforcement{}, err
@@ -285,6 +287,34 @@ func accessEnforcementTable(
 			caps.NetworkListCondition =
 				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			goos == "darwin" && filteredNetworkReady &&
+			(h.Name == DefaultName || h.Name == CodexName) &&
+			sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
+			caps.NetworkList = EnforceFull
+			caps.NetworkSelectors = []NetworkSelectorCapability{{
+				Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+				Level:    EnforceFull,
+			}}
+			caps.NetworkPorts = EnforceFull
+			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			h.Name == OpenCodeName &&
+			(IsLocalAccessNetworkPreset(axes.Network) ||
+				IsLocalModelAPIsNetworkPreset(axes.Network)) {
+			// General explicit-provider OpenCode filtering is supported on
+			// Linux. These two convenience presets are narrower: until
+			// TCL-826 resolves OpenCode's effective local-provider endpoint,
+			// advertising their packet capability would make the rendered
+			// surface disagree with the launch-gated model-transport refusal.
+			caps.NetworkList = EnforceNone
+			caps.NetworkSelectors = nil
+			caps.NetworkPorts = EnforceNone
+			caps.NetworkListCondition = ""
+			caps.NetworkListRefusal =
+				"missing capability unsupported_filtered_model_transport: OpenCode local-preset effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull

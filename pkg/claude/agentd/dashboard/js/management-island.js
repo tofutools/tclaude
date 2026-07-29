@@ -8,6 +8,8 @@ import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
+  sandboxNetworkEditorMode,
+  sandboxNetworkRulesForEditorMode,
   sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
   sandboxRuleBuckets,
@@ -57,7 +59,19 @@ const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matc
   + 'policies compose by intersection: destinations and ports must be allowed by every applicable '
   + 'list, and compatible destination selectors and port sets are intersected. The Effective '
   + 'policy preview reports enforcement capability limits for the selected implementation, '
-  + 'harness, and platform.';
+  + 'harness, and platform. Local access is intended for host-loopback model servers such as '
+  + 'Ollama, LM Studio, or llama.cpp, Codex OSS mode, OpenCode local providers, and host-local '
+  + 'development services. OpenCode local-provider launches are currently refused because its '
+  + 'effective provider endpoint is not launch-resolvable; that seam is tracked in TCL-826. On Linux it uses '
+  + 'host.tclaude.internal while 127.0.0.1 and ::1 remain private to the sandbox. On macOS it is '
+  + 'the real host loopback at 127.0.0.1 and ::1, so it also reopens host-local services including '
+  + 'the IDE bridge. A cloud-backed harness refuses at launch unless an Access list, directly or '
+  + 'through Includes, also covers its resolved provider endpoints; no model endpoint is added '
+  + 'implicitly. Local + model APIs adds the direct Anthropic and OpenAI API-key endpoints to '
+  + 'Local access. Linux enforces that list. macOS does not yet enforce mixed destination lists '
+  + 'and launches with the existing Not enforced disclosure and open outbound network. '
+  + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
+  + 'servers, and agent commands need their own Access list destinations.';
 
 const html = htm.bind(h);
 
@@ -176,12 +190,22 @@ const ACCESS_MODE_OPTIONS = [
   ['list', 'Access list'],
 ];
 
+const NETWORK_ACCESS_MODE_OPTIONS = [
+  ['', 'No override'],
+  ['open', 'Full access'],
+  ['closed', 'No access'],
+  ['local', 'Local access'],
+  ['local-model-apis', 'Local + model APIs'],
+  ['list', 'Access list'],
+];
+
 function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   const [helpOpen, setHelpOpen] = useState('');
   // Access-rule arrays are sparse on the wire: Go deliberately omits an empty
   // `allow`, including for list-mode empty intersections. Normalize at the
   // render boundary so legacy and modern-empty payloads share one safe shape.
   const rules = sandboxAccessAxes({ network: draft.network }).network;
+  const editorMode = sandboxNetworkEditorMode(rules);
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   // Prefer the selector that survives wire normalization, then preserve an
@@ -207,8 +231,10 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
   return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend class="sbx-section-legend">Network <${HelpDisclosure}
       id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
       open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
-    <${Select} id="sandbox-profile-editor-network-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
-    ${rules.mode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
+    <${Select} id="sandbox-profile-editor-network-mode" value=${editorMode} onChange=${(mode) => update(sandboxNetworkRulesForEditorMode(rules, mode))} options=${NETWORK_ACCESS_MODE_OPTIONS}/>
+    ${editorMode === 'local' && html`<p class="sbx-axis-help sbx-network-local-help">For host-loopback models and local development services. Linux reaches the host through <code>host.tclaude.internal</code>; sandbox <code>127.0.0.1</code>/<code>::1</code> stays private. macOS reaches the real host <code>127.0.0.1</code>/<code>::1</code>, reopening host-local services including the IDE bridge. Cloud-model launches refuse unless an Access list or included profile also covers the provider endpoints. OpenCode local-provider launches are currently refused pending its effective-config model-transport seam in TCL-826.</p>`}
+    ${editorMode === 'local-model-apis' && html`<p class="sbx-axis-help sbx-network-local-model-apis-help">Local services plus the direct Anthropic and OpenAI API-key endpoints on port 443. Linux enforces this list. macOS does not yet enforce mixed destination lists: the launch preview reports <strong>Not enforced</strong> and outbound network remains open. ChatGPT-auth Codex is refused in filtered mode. OpenCode is also launch-refused pending its effective-config model-transport seam in TCL-826. Custom providers, web search, plugins, MCP servers, and agent commands need their own Access list destinations.</p>`}
+    ${editorMode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
       <${Select} class="sbx-network-selector" value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
       ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
       <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>

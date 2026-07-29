@@ -223,6 +223,68 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *test
 	}
 }
 
+func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true, Ports: []int{11434, 3000}},
+			{Loopback: true, Ports: []int{3000}},
+		},
+	})
+	require.NoError(t, err)
+	profile, _, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture:  sandboxpolicy.NetworkFiltered,
+			FilteredNetwork: &rules,
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Contains(t, profile, `(remote ip "*:*")`)
+	assert.Equal(t, 1, strings.Count(profile,
+		`(allow network-outbound (remote ip "localhost:3000"))`))
+	assert.Equal(t, 1, strings.Count(profile,
+		`(allow network-outbound (remote ip "localhost:11434"))`))
+	assert.NotContains(t, profile, `(local ip `)
+	assert.NotContains(t, profile, `(deny network-bind)`,
+		"the authored list is outbound-only and local services must still bind")
+	assert.NotContains(t, profile, `(deny network-inbound)`)
+}
+
+func TestRenderSeatbeltLoopbackAllPortsCoalescesPortExceptions(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true, Ports: []int{11434}},
+			{Loopback: true},
+		},
+	})
+	require.NoError(t, err)
+	profile, _, err := renderSeatbeltProfile(
+		nil,
+		nil,
+		sandboxpolicy.MountPlan{
+			NetworkPosture:  sandboxpolicy.NetworkFiltered,
+			FilteredNetwork: &rules,
+		},
+		[]string{"/Users/dev/.tclaude/data"},
+		"/private/tmp/tmux-501",
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(profile,
+		`(allow network-outbound (remote ip "localhost:*"))`))
+	assert.NotContains(t, profile, `localhost:11434`)
+}
+
 func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testing.T) {
 	const agentd = "/Users/dev/.tclaude/api/agentd.sock"
 	profile, params, err := renderSeatbeltProfile(
@@ -689,15 +751,23 @@ func TestSeatbeltAliasesRequireAbsoluteParameterizedPaths(t *testing.T) {
 	require.ErrorContains(t, err, "mount alias 0 link has non-absolute path")
 }
 
-func TestRenderSeatbeltProfileRefusesFilteredAndInvalidPostures(t *testing.T) {
-	for _, posture := range []sandboxpolicy.NetworkPosture{
-		sandboxpolicy.NetworkFiltered,
-		sandboxpolicy.NetworkPosture(99),
+func TestRenderSeatbeltProfileRefusesUnsupportedFilteredAndInvalidPostures(t *testing.T) {
+	domainRules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Domain: "api.example.com",
+		}},
+	})
+	require.NoError(t, err)
+	for _, plan := range []sandboxpolicy.MountPlan{
+		{NetworkPosture: sandboxpolicy.NetworkFiltered},
+		{NetworkPosture: sandboxpolicy.NetworkFiltered, FilteredNetwork: &domainRules},
+		{NetworkPosture: sandboxpolicy.NetworkPosture(99)},
 	} {
 		_, _, err := renderSeatbeltProfile(
 			nil,
 			nil,
-			sandboxpolicy.MountPlan{NetworkPosture: posture},
+			plan,
 			[]string{"/Users/dev/.tclaude/data", "/Users/dev/.claude/sessions"},
 			"/private/tmp/tmux-501",
 			"/private/var/folders/ab/runtime/T",

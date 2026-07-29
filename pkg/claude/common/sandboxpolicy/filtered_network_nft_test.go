@@ -34,7 +34,8 @@ func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing
 		"ip6 daddr 2001:db8::/32 ip6 hoplimit 255 "+
 			"icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept",
 	)
-	assert.Contains(t, got, "ip6 daddr 2001:db8::/32 tcp accept")
+	assert.Contains(t, got, "ip6 daddr 2001:db8::/32 meta l4proto tcp accept")
+	assert.Contains(t, got, "ip6 daddr 2001:db8::/32 meta l4proto udp accept")
 	assert.NotContains(t, got, "icmp type echo-request")
 	assert.NotContains(t, got, "icmpv6 type echo-request")
 	assert.Contains(t, got, "ip daddr "+FilteredNetworkLoopbackIPv4+"/32 tcp dport { 3000 } accept")
@@ -51,12 +52,15 @@ func TestRenderFilteredNetworkNFTRendersBoundedTTLLeaseSets(t *testing.T) {
 		Allow: []NetworkAllowEntry{
 			{Host: "api.example.test", Ports: []int{443}},
 			{Domain: "example.test", IncludeSubdomains: true, Ports: []int{443, 8443}},
+			{Host: "all-ports.example.test"},
 		},
 	})
 	require.NoError(t, err)
 	got, err := RenderFilteredNetworkNFT(ir)
 	require.NoError(t, err)
-	for _, setName := range []string{"dns4_0", "dns6_0", "dns4_1", "dns6_1"} {
+	for _, setName := range []string{
+		"dns4_0", "dns6_0", "dns4_1", "dns6_1", "dns4_2", "dns6_2",
+	} {
 		assert.Contains(t, got, "set "+setName+" {")
 		assert.Contains(t, got, "flags timeout")
 		assert.Contains(t, got, "size 4096")
@@ -65,6 +69,8 @@ func TestRenderFilteredNetworkNFTRendersBoundedTTLLeaseSets(t *testing.T) {
 	assert.Contains(t, got, "ip6 daddr @dns6_0 udp dport { 443 } accept")
 	assert.Contains(t, got, "ip daddr @dns4_1 tcp dport { 443, 8443 } accept")
 	assert.Contains(t, got, "ip6 daddr @dns6_1 udp dport { 443, 8443 } accept")
+	assert.Contains(t, got, "ip daddr @dns4_2 meta l4proto tcp accept")
+	assert.Contains(t, got, "ip6 daddr @dns6_2 meta l4proto udp accept")
 }
 
 func TestRenderFilteredNetworkNFTRejectsDuplicateAuthoredIndexes(t *testing.T) {

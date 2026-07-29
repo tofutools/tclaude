@@ -856,6 +856,37 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   };
   assert.deepEqual(model.sandboxAccessDraftErrors(draft), []);
   assert.deepEqual(model.sandboxProfileForWire(draft).network.allow[0].ports, [443, 8443]);
+  const local = { mode: 'list', allow: [{ loopback: true }] };
+  assert.equal(model.sandboxNetworkEditorMode(local), 'local');
+  assert.deepEqual(model.sandboxNetworkRulesForEditorMode({ mode: 'open' }, 'local'), local);
+  const localModelAPIs = {
+    mode: 'list',
+    allow: [
+      { domain: 'api.anthropic.com', ports: [443] },
+      { domain: 'api.openai.com', ports: [443] },
+      { loopback: true },
+    ],
+  };
+  assert.equal(model.sandboxNetworkEditorMode(localModelAPIs), 'local-model-apis');
+  assert.deepEqual(
+    model.sandboxNetworkRulesForEditorMode({ mode: 'open' }, 'local-model-apis'),
+    localModelAPIs,
+  );
+  const reorderedModelAPIs = structuredClone(localModelAPIs);
+  [reorderedModelAPIs.allow[0], reorderedModelAPIs.allow[1]] =
+    [reorderedModelAPIs.allow[1], reorderedModelAPIs.allow[0]];
+  assert.equal(model.sandboxNetworkEditorMode(reorderedModelAPIs), 'list',
+    'reordering the exact provider preset exposes it as Access list');
+  const widenedModelAPIs = structuredClone(localModelAPIs);
+  widenedModelAPIs.allow[0].include_subdomains = true;
+  assert.equal(model.sandboxNetworkEditorMode(widenedModelAPIs), 'list',
+    'subdomain widening is not disguised as the provider preset');
+  assert.equal(model.sandboxNetworkEditorMode({
+    mode: 'list', allow: [{ loopback: true, ports: [11434] }],
+  }), 'list', 'a port-scoped loopback row stays visibly editable');
+  assert.equal(model.sandboxNetworkEditorMode({
+    mode: 'list', allow: [{ loopback: true }, { domain: 'api.example.com' }],
+  }), 'list', 'an additional destination is Access list, not the preset');
   const broken = structuredClone(draft);
   broken.network.allow[0].domain = 'https://example.com';
   broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
@@ -1461,6 +1492,144 @@ test('sandbox network selector retains empty domain and CIDR kinds through save 
     /must set exactly one selector/);
   falseLoopback.unmount();
   falseLoopback.host.remove();
+});
+
+test('Local access round-trips as the exact loopback preset and reveals richer lists', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'local-models', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'open' }, unix_sockets: { mode: '' },
+  }, options: {} });
+  let saved = null;
+  const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const mode = mounted.host.querySelector('#sandbox-profile-editor-network-mode');
+  assert.deepEqual([...mode.options].map((option) => [option.value, option.textContent]), [
+    ['', 'No override'],
+    ['open', 'Full access'],
+    ['closed', 'No access'],
+    ['local', 'Local access'],
+    ['local-model-apis', 'Local + model APIs'],
+    ['list', 'Access list'],
+  ]);
+  await harness.act(() => {
+    choose(mode, 'local');
+    harness.fireEvent(mode, 'change');
+  });
+  assert.ok(mounted.host.querySelector('.sbx-network-local-help'),
+    'selecting Local access switches the controlled editor to the preset');
+  assert.equal(mounted.host.querySelectorAll('.sbx-network-row').length, 0,
+    'the exact preset does not expose a redundant editable row');
+  const copy = mounted.host.querySelector('.sbx-network-local-help').textContent;
+  assert.match(copy, /host-loopback models and local development services/i);
+  assert.match(copy, /host\.tclaude\.internal/);
+  assert.match(copy, /127\.0\.0\.1.*::1/s);
+  assert.match(copy, /IDE bridge/);
+  assert.match(copy, /Cloud-model launches refuse/);
+  assert.match(copy, /OpenCode local-provider launches are currently refused/);
+  assert.match(copy, /TCL-826/);
+  await harness.act(() => harness.fireEvent(
+    mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saved.draft.network, {
+    mode: 'list', allow: [{ loopback: true }],
+  });
+  mounted.unmount();
+  mounted.host.remove();
+
+  const reopenedState = createManagementState();
+  reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
+  const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
+  await harness.act(() => Promise.resolve());
+  const reopenedMode = reopened.host.querySelector('#sandbox-profile-editor-network-mode');
+  assert.equal(selectedValue(reopenedMode), 'local',
+    'the stored exact loopback-only list reopens as Local access');
+  reopened.unmount();
+  reopened.host.remove();
+
+  const richerState = createManagementState();
+  const richerDraft = structuredClone(saved.draft);
+  richerDraft.network.allow.push({ host: 'api.example.com', ports: [] });
+  richerState.openDialog({ kind: 'sandbox-editor', seed: richerDraft, options: {} });
+  const richerReopened = mountSandboxEditor(harness, mountManagementIsland, richerState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(
+    richerReopened.host.querySelector('#sandbox-profile-editor-network-mode')), 'list');
+  assert.equal(richerReopened.host.querySelectorAll('.sbx-network-row').length, 2);
+  richerReopened.unmount();
+  richerReopened.host.remove();
+});
+
+test('Local + model APIs round-trips exactly and reveals any deviation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'local-cloud-models', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'closed' }, unix_sockets: { mode: '' },
+  }, options: {} });
+  let saved = null;
+  const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+  const mode = mounted.host.querySelector('#sandbox-profile-editor-network-mode');
+  await harness.act(() => {
+    choose(mode, 'local-model-apis');
+    harness.fireEvent(mode, 'change');
+  });
+  assert.ok(mounted.host.querySelector('.sbx-network-local-model-apis-help'),
+    'selecting Local + model APIs switches the controlled editor to the preset');
+  assert.equal(mounted.host.querySelectorAll('.sbx-network-row').length, 0);
+  const copy = mounted.host.querySelector('.sbx-network-local-model-apis-help').textContent;
+  assert.match(copy, /Linux enforces this list/);
+  assert.match(copy, /macOS does not yet enforce/);
+  assert.match(copy, /Not enforced/);
+  assert.match(copy, /ChatGPT-auth Codex is refused/);
+  assert.match(copy, /OpenCode is also launch-refused/);
+  assert.match(copy, /TCL-826/);
+  await harness.act(() => harness.fireEvent(
+    mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saved.draft.network, {
+    mode: 'list',
+    allow: [
+      { domain: 'api.anthropic.com', ports: [443] },
+      { domain: 'api.openai.com', ports: [443] },
+      { loopback: true },
+    ],
+  });
+  mounted.unmount();
+  mounted.host.remove();
+
+  const reopenedState = createManagementState();
+  reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
+  const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
+  await harness.act(() => Promise.resolve());
+  const reopenedMode = reopened.host.querySelector('#sandbox-profile-editor-network-mode');
+  assert.equal(selectedValue(reopenedMode), 'local-model-apis');
+  reopened.unmount();
+  reopened.host.remove();
+
+  const changedState = createManagementState();
+  const changedDraft = structuredClone(saved.draft);
+  changedDraft.network.allow[0].ports = [443, 8443];
+  changedState.openDialog({ kind: 'sandbox-editor', seed: changedDraft, options: {} });
+  const changed = mountSandboxEditor(harness, mountManagementIsland, changedState);
+  await harness.act(() => Promise.resolve());
+  assert.equal(selectedValue(
+    changed.host.querySelector('#sandbox-profile-editor-network-mode')), 'list',
+  'editing one provider port reveals the authored list');
+  assert.equal(changed.host.querySelectorAll('.sbx-network-row').length, 3);
+  changed.unmount();
+  changed.host.remove();
 });
 
 test('sandbox access rows expose aligned grid cells for network and Unix sockets', async (t) => {
