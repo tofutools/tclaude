@@ -40,16 +40,9 @@ type ShellSession struct {
 //
 // It is the same launch `tclaude session new --shell --detached` performs,
 // minus the CLI flag rejection: the parameters a shell session cannot carry
-// are simply not accepted here.
-//
-// The label is charset-gated (see ValidateSessionLabel): it is used verbatim as
-// the tmux session name and becomes the session id that reaches tmux's
-// set-titles-string, so this entry point refuses one that is unsafe there
-// rather than trusting each caller to check.
+// are simply not accepted here. The label is charset-gated by the shared
+// launch below.
 func StartShellSession(dir, label string) (ShellSession, error) {
-	if err := ValidateSessionLabel(label); err != nil {
-		return ShellSession{}, err
-	}
 	return startShellSession(&NewParams{
 		Dir:      clcommon.ExpandHomePrefix(dir),
 		Label:    label,
@@ -80,6 +73,17 @@ func runNewShell(params *NewParams) error {
 // StartShellSession. It creates the pane and its session row and returns once
 // both are live; announcing and attaching belong to the caller.
 func startShellSession(params *NewParams) (ShellSession, error) {
+	// The label is charset-gated first, before any guard, probe or state is
+	// touched: it is used verbatim as the tmux session name and becomes the
+	// session id that reaches tmux's set-titles-string (see
+	// ValidateSessionLabel). Gating here rather than at each entry point is
+	// what makes it hold for `session new --shell --label` as well as for
+	// StartShellSession — the two paths build the same tmux name from the same
+	// field.
+	if err := ValidateSessionLabel(params.Label); err != nil {
+		return ShellSession{}, err
+	}
+
 	// Same nested-spawn guard and tmux-presence check as a coding-harness
 	// launch — a plain shell is still a tmux session tclaude is about to
 	// create.

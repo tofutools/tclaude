@@ -1283,7 +1283,7 @@ func (m tuiModel) submitShell() (tuiModel, tea.Cmd) {
 	dir := strings.TrimSpace(m.shell.dir.Value())
 	label := strings.TrimSpace(m.shell.label.Value())
 	// The label is the tmux handle verbatim, so it is charset-gated before the
-	// launch. StartShellSession refuses an unsafe one anyway; checking here
+	// launch. The launch itself refuses an unsafe one anyway; checking here
 	// keeps the form open on the field the operator has to fix, instead of
 	// closing it and reporting the refusal over the listing.
 	if err := session.ValidateSessionLabel(label); err != nil {
