@@ -212,6 +212,19 @@ func TestNetworkPackReferencesNormalizeAndMaterialize(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, NetworkRules{Mode: AccessModeClosed}, closed)
 
+	redundantAllow, _, err := NormalizeForPersistence(Profile{
+		Name: "redundant-allow",
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineAllow, Packs: []string{"net-local"},
+			Allow: []NetworkAllowEntry{{Domain: "already-open.example"}},
+		},
+	})
+	require.NoError(t, err)
+	redundantAxes, err := DeriveAccessAxes(redundantAllow)
+	require.NoError(t, err)
+	assert.Equal(t, NetworkRules{Mode: AccessModeOpen}, redundantAxes.Network,
+		"allow-mode rows remain authorable under Allow all but add no effective authority")
+
 	for _, tc := range []struct {
 		name  string
 		rules NetworkRules
@@ -223,13 +236,6 @@ func TestNetworkPackReferencesNormalizeAndMaterialize(t *testing.T) {
 				Baseline: NetworkBaselineDeny, Packs: []string{"net-missing"},
 			},
 			match: "unknown pack",
-		},
-		{
-			name: "unlock under allow",
-			rules: NetworkRules{
-				Baseline: NetworkBaselineAllow, Packs: []string{"net-local"},
-			},
-			match: `only valid with baseline "deny"`,
 		},
 		{
 			name: "legacy mode with packs",
@@ -251,6 +257,127 @@ func TestNetworkPackReferencesNormalizeAndMaterialize(t *testing.T) {
 			require.ErrorContains(t, err, tc.match)
 		})
 	}
+}
+
+func TestNetworkDenyAuthoringNormalizesWithoutReachingMaterialization(t *testing.T) {
+	input := Profile{
+		Name: "deny-authoring",
+		Network: &NetworkRules{
+			Baseline:  NetworkBaselineAllow,
+			Packs:     []string{"net-local"},
+			DenyPacks: []string{"net-npm", "net-github", "net-github"},
+			Allow: []NetworkAllowEntry{
+				{Domain: "same.example", Ports: []int{443}},
+			},
+			Deny: []NetworkAllowEntry{
+				{Domain: "same.example", Ports: []int{443}},
+				{CIDR: "192.0.2.9/24", Ports: []int{443, 80, 443}},
+			},
+		},
+	}
+	normalized, _, err := NormalizeForPersistence(input)
+	require.NoError(t, err)
+	require.NotNil(t, normalized.Network)
+	assert.Equal(t, []string{"net-github", "net-npm"}, normalized.Network.DenyPacks)
+	assert.Equal(t, []NetworkAllowEntry{
+		{CIDR: "192.0.2.0/24", Ports: []int{80, 443}},
+		{Domain: "same.example", Ports: []int{443}},
+	}, normalized.Network.Deny)
+	assert.Equal(t, normalized.Network.Allow[0], normalized.Network.Deny[1],
+		"the same selector is valid on both sides because deny wins")
+
+	axes, err := DeriveAccessAxes(normalized)
+	require.NoError(t, err)
+	assert.Equal(t, NetworkRules{Mode: AccessModeOpen}, axes.Network,
+		"frontend-first deny state must not reach the existing applier seam")
+
+	denyBaseline := *normalized.Network
+	denyBaseline.Baseline = NetworkBaselineDeny
+	materialized, err := MaterializeNetworkRules(denyBaseline)
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeList, materialized.Mode)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "same.example", Ports: []int{443}},
+		{Loopback: true},
+	}, materialized.Allow,
+		"deny authoring does not change today's allow materialization")
+	assert.Empty(t, materialized.Deny)
+	assert.Empty(t, materialized.DenyPacks)
+}
+
+func TestNetworkDenyAuthoringRejectsAmbiguousOrUnsupportedShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules NetworkRules
+		match string
+	}{
+		{
+			name: "pack in both modes",
+			rules: NetworkRules{
+				Baseline: NetworkBaselineDeny,
+				Packs:    []string{"net-local"}, DenyPacks: []string{"net-local"},
+			},
+			match: `network pack capability "net-local" is authored in both`,
+		},
+		{
+			name: "entries under inherit",
+			rules: NetworkRules{
+				Baseline: NetworkBaselineInherit,
+				Deny:     []NetworkAllowEntry{{Domain: "blocked.example"}},
+			},
+			match: `not valid with baseline "inherit"`,
+		},
+		{
+			name: "deny under legacy mode",
+			rules: NetworkRules{
+				Mode: AccessModeList,
+				Deny: []NetworkAllowEntry{{Domain: "blocked.example"}},
+			},
+			match: "network.deny requires the compositional baseline",
+		},
+		{
+			name: "unknown deny pack",
+			rules: NetworkRules{
+				Baseline:  NetworkBaselineAllow,
+				DenyPacks: []string{"net-missing"},
+			},
+			match: `network.deny_packs[0] references unknown pack "net-missing"`,
+		},
+		{
+			name: "invalid deny selector",
+			rules: NetworkRules{
+				Baseline: NetworkBaselineAllow,
+				Deny:     []NetworkAllowEntry{{Host: "a.example", Domain: "b.example"}},
+			},
+			match: "network.deny[0] must set exactly one",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := NormalizeForPersistence(Profile{Name: tc.name, Network: &tc.rules})
+			require.ErrorContains(t, err, tc.match)
+		})
+	}
+}
+
+func TestNetworkRulesWithoutDenyStateKeepTheirJSONBytes(t *testing.T) {
+	rules := NetworkRules{
+		Baseline: NetworkBaselineDeny,
+		Packs:    []string{"net-local"},
+		Allow: []NetworkAllowEntry{{
+			Domain: "api.example.com", Ports: []int{443},
+		}},
+	}
+	raw, err := json.Marshal(rules)
+	require.NoError(t, err)
+	assert.Equal(t,
+		`{"baseline":"deny","packs":["net-local"],"allow":[{"domain":"api.example.com","ports":[443]}]}`,
+		string(raw),
+	)
+	var decoded NetworkRules
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	roundTrip, err := json.Marshal(decoded)
+	require.NoError(t, err)
+	assert.Equal(t, raw, roundTrip)
 }
 
 func TestNetworkPackMaterializationMatchesManualRules(t *testing.T) {

@@ -552,20 +552,39 @@ lock or changing the recorded OS-sandbox verdict.
 #### Compositional network packs
 
 The profile editor authors a network baseline first: **Deny all**, **Allow
-all**, or **No override**. Only Deny all can add unlocks. Unlocks are either
-stable references to release-owned packs or explicit manual destinations.
-Expanded pack rows are visible but read-only; toggle their pack to add or
-remove them. The saved shape keeps intent rather than copying endpoints:
+all**, or **No override**. Deny all and Allow all can add both Allow and Deny
+rules as stable references to release-owned packs or explicit manual
+destinations. Expanded pack rows are visible but read-only; choose Off, Allow,
+or Deny on their pack to change them. The saved shape keeps intent rather than
+copying endpoints:
 
 ```json
 {
   "network": {
     "baseline": "deny",
     "packs": ["net-local", "net-anthropic", "net-openai-codex"],
-    "allow": [{"domain": "example.internal", "ports": [443]}]
+    "deny_packs": ["net-npm"],
+    "allow": [{"domain": "example.internal", "ports": [443]}],
+    "deny": [{"domain": "telemetry.example.internal", "ports": [443]}]
   }
 }
 ```
+
+`packs` retains the original allow-pack spelling; `deny_packs` is its
+deny-mode counterpart. Traffic matching any Deny rule is denied even when it
+also matches an Allow rule, and rule order does not matter. Under Deny all,
+Allow rules are unlocks while non-overlapping Deny rules are redundant. Under
+Allow all, Deny rules are restrictions while Allow rules are redundant. The
+editor labels either redundant case instead of rejecting it. No override
+carries no rows.
+
+TCL-839 adds this deny state to authoring, validation, portable transfer, and
+the editor before adding it to the launch appliers. Deny destination badges
+therefore report **Not enforced** and state that matching traffic is not
+blocked by that rule. Allow materialization and enforcement remain unchanged:
+Deny all still becomes closed when it has no Allow entries and an allow list
+when it does; Allow all remains open. Deny enforcement and snapshot authority
+land in the follow-up implementation.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local

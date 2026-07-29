@@ -868,28 +868,42 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.deepEqual(model.sandboxNetworkAuthoring({
     network: { mode: 'list', allow: [{ loopback: true }] },
   }), {
-    baseline: 'deny', packs: [], allow: [{ loopback: true }],
+    baseline: 'deny', packs: [], deny_packs: [], allow: [{ loopback: true }], deny: [],
   }, 'legacy lists remain manual and never infer pack references');
   assert.deepEqual(model.sandboxProfileForWire({
     ...draft,
     network: {
       baseline: 'deny',
       packs: ['net-openai-codex', 'net-local'],
+      deny_packs: ['net-npm'],
       allow: [{ host: 'api.example.com', ports: '8443, 443' }],
+      deny: [{ domain: 'blocked.example', ports: '443' }],
     },
   }).network, {
     baseline: 'deny',
     packs: ['net-local', 'net-openai-codex'],
+    deny_packs: ['net-npm'],
     allow: [{ host: 'api.example.com', ports: [8443, 443] }],
+    deny: [{ domain: 'blocked.example', include_subdomains: false, ports: [443] }],
   });
   assert.equal(
     model.sandboxNetworkEntryKey({ host: 'api.example.com', ports: '8443, 443' }),
     model.sandboxNetworkEntryKey({ host: 'api.example.com', ports: [443, 8443] }),
   );
+  assert.notEqual(
+    model.sandboxNetworkModeEntryKey('allow', { host: 'api.example.com' }),
+    model.sandboxNetworkModeEntryKey('deny', { host: 'api.example.com' }),
+  );
   const broken = structuredClone(draft);
   broken.network.allow[0].domain = 'https://example.com';
   broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
   assert.match(model.sandboxAccessDraftErrors(broken).join(' '), /scheme.*absolute.*\*\*/i);
+  assert.match(model.sandboxAccessDraftErrors({
+    network: {
+      baseline: 'deny', packs: ['net-local'], deny_packs: ['net-local'],
+      allow: [], deny: [],
+    },
+  }).join(' '), /must use exactly one Allow or Deny mode/);
   const buckets = model.sandboxRuleBuckets({
     filesystem: { outcome: 'enforced_partial', detail: 'filesystem carve-out detail' },
     environment: { outcome: 'enforced', detail: 'environment detail' },
@@ -1557,7 +1571,7 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
   assert.match(host.querySelector('.sbx-preview-status').textContent,
-    /preview paused: Network row 1 must set exactly one selector/);
+    /preview paused: Network allow row 1 must set exactly one selector/);
 
   const value = network.querySelector('.sbx-network-value');
   value.value = 'api.example.com';
@@ -1682,7 +1696,7 @@ test('new deny drafts apply default pack references once and pack rows stay read
   await harness.act(() => harness.fireEvent(
     mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.deepEqual(saved.draft.network, {
-    baseline: 'deny', packs: [], allow: [{ loopback: true }],
+    baseline: 'deny', packs: [], deny_packs: [], allow: [{ loopback: true }], deny: [],
   });
   mounted.unmount();
   mounted.host.remove();
@@ -1694,14 +1708,15 @@ test('new deny drafts apply default pack references once and pack rows stay read
   const newBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
-  const checked = [...newDraft.host.querySelectorAll('.sbx-network-pack input:checked')]
-    .map((input) => input.closest('label').textContent);
-  assert.equal(checked.length, 3);
-  assert.match(checked.join(' '), /Local access.*Anthropic API.*OpenAI API/s);
+  const packModes = [...newDraft.host.querySelectorAll('.sbx-network-pack-mode')];
+  const allowed = packModes.filter((select) => selectedValue(select) === 'allow');
+  assert.equal(allowed.length, 3);
+  assert.match(allowed.map((select) => select.parentElement.textContent).join(' '),
+    /Local access.*Anthropic API.*OpenAI API/s);
   const packRows = [...newDraft.host.querySelectorAll('.sbx-network-pack')];
   assert.equal(packRows.length, 3);
-  assert.equal(packRows.every((row) => row.querySelectorAll('input[type="checkbox"]').length === 1), true,
-    'built-in packs render as one dense checkbox row each');
+  assert.equal(packRows.every((row) => row.querySelectorAll('.sbx-network-pack-mode').length === 1), true,
+    'built-in packs render as one dense three-state row each');
   assert.equal(packRows.every((row) => row.querySelector('small') === null), true,
     'pack disclosure copy is no longer permanently rendered under the label');
   const localHelp = packRows[0].querySelector('.spawn-field-help-trigger');
@@ -1713,35 +1728,130 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
     'expanded pack destinations are read-only');
   await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 0,
-    'allow-all carries no unlocks in the draft');
-  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack input')]
-    .every((input) => input.hasAttribute('disabled')), true,
-    'allow-all disables pack authoring');
+  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
+    .filter((select) => selectedValue(select) === 'allow').length, 3,
+    'allow-all retains explicitly authored allow packs');
+  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
+    .every((select) => !select.hasAttribute('disabled')), true,
+    'allow-all unlocks pack authoring for deny restrictions');
+  assert.match(newDraft.host.querySelector('.sbx-network-redundant').textContent,
+    /Redundant under Allow all/);
   assert.equal(newDraft.host.querySelector('.sbx-network-pack .spawn-field-help-trigger')
     .hasAttribute('disabled'), false,
-    'pack disclosure stays reachable while its authoring checkbox is gated');
+    'pack disclosure stays reachable');
   assert.equal(newDraft.host.querySelector('.sbx-network-unlocks').hasAttribute('aria-disabled'), false,
     'the container does not contradict its intentionally operable help controls');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 3,
-    'returning to Deny all restores the session-retained unlocks instead of re-deriving defaults');
-  // Clear via the attribute: LinkeDOM inputs have no checked accessor, and an
-  // own-property write would detach this element from attribute-backed
-  // rendering for the rest of the test.
-  const uncheck = newDraft.host.querySelector('.sbx-network-pack input:checked');
+  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
+    .filter((select) => selectedValue(select) === 'allow').length, 3,
+    'returning to Deny all retains authored pack modes');
+  const turnOff = newDraft.host.querySelector('.sbx-network-pack-mode');
   await harness.act(() => {
-    uncheck.removeAttribute('checked');
-    uncheck.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    choose(turnOff, 'off');
+    harness.fireEvent(turnOff, 'change');
   });
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
-    'unchecking a default pack takes effect');
-  await harness.act(() => { choose(newBaseline, 'inherit'); harness.fireEvent(newBaseline, 'change'); });
-  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
-  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 2,
-    'an unchecked default stays unchecked across baseline flips; defaults are never re-applied');
+    'turning off a default pack takes effect');
+  const currentBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
+  await harness.act(() => { choose(currentBaseline, 'inherit'); harness.fireEvent(currentBaseline, 'change'); });
+  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack-mode')]
+    .every((select) => select.hasAttribute('disabled')), true,
+    'No override disables all pack mode controls');
+  const inheritedBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
+  await harness.act(() => { choose(inheritedBaseline, 'deny'); harness.fireEvent(inheritedBaseline, 'change'); });
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 2,
+    'an Off default stays Off across No override flips; defaults are never re-applied');
   newDraft.unmount();
   newDraft.host.remove();
+});
+
+test('network packs and manual destinations author deny mode without implying enforcement', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'deny-modes', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: {
+      baseline: 'allow', packs: [], deny_packs: ['net-local'],
+      allow: [], deny: [{ domain: 'blocked.example', ports: [443] }],
+    },
+    unix_sockets: { mode: '' },
+  }, options: {} });
+  let saved = null;
+  const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() {
+      return {
+        targets: [{
+          network_entries: [
+            {
+              mode: 'deny', entry: { loopback: true },
+              keys: ['deny:{"loopback":true}'],
+              outcome: 'not_enforced',
+              detail: 'This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule.',
+            },
+            {
+              mode: 'deny', entry: { domain: 'blocked.example', ports: [443] },
+              keys: ['deny:{"domain":"blocked.example","ports":[443]}'],
+              outcome: 'not_enforced',
+              detail: 'This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule.',
+            },
+          ],
+        }],
+        contexts: [],
+      };
+    },
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  const network = mounted.host.querySelector('#sandbox-profile-editor-network-section');
+  const localPack = [...network.querySelectorAll('.sbx-network-pack')]
+    .find((row) => /Local access/.test(row.textContent));
+  assert.ok(localPack);
+  assert.equal(selectedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
+  assert.equal(selectedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
+  const badges = [...network.querySelectorAll('.sbx-network-badge')];
+  assert.equal(badges.length, 2);
+  assert.equal(badges.every((badge) => badge.textContent === 'Not enforced'), true);
+  assert.equal(badges.every((badge) => /not blocked by this rule/.test(badge.title)), true);
+
+  const networkHelp = mounted.host.querySelector(
+    '[aria-controls="sandbox-profile-editor-network-help-hint"]');
+  await harness.act(() => harness.fireEvent(networkHelp, 'click'));
+  assert.match(mounted.host.querySelector('#sandbox-profile-editor-network-help-hint').textContent,
+    /Deny wins.*rule order does not matter/);
+
+  const add = network.querySelector('.sbx-add-row');
+  assert.match(add.textContent, /add deny destination/);
+  await harness.act(() => harness.fireEvent(add, 'click'));
+  const manualModes = [...network.querySelectorAll('.sbx-network-rule-mode')];
+  assert.equal(manualModes.length, 2);
+  assert.equal(selectedValue(manualModes[1]), 'deny',
+    'Allow all gives actively added destinations a visible Deny mode');
+  const deleteButtons = [...network.querySelectorAll('[aria-label="Delete network row"]')];
+  await harness.act(() => harness.fireEvent(deleteButtons.at(-1), 'click'));
+
+  const baseline = network.querySelector('#sandbox-profile-editor-network-baseline');
+  await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
+  assert.match(network.querySelector('.sbx-network-redundant').textContent,
+    /Redundant under Deny all/);
+  assert.match(network.querySelector('.sbx-add-row').textContent, /add allow destination/);
+
+  const manualMode = network.querySelector('.sbx-network-rule-mode');
+  await harness.act(() => { choose(manualMode, 'allow'); harness.fireEvent(manualMode, 'change'); });
+  await harness.act(() => harness.fireEvent(
+    mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saved.draft.network, {
+    baseline: 'deny',
+    packs: [],
+    deny_packs: ['net-local'],
+    allow: [{ domain: 'blocked.example', ports: [443] }],
+    deny: [],
+  });
+  mounted.unmount();
+  mounted.host.remove();
 });
 
 test('network row predictions reconcile daemon-normalized entries to authored spellings', async (t) => {

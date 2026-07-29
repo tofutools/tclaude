@@ -5,9 +5,10 @@ import (
 	"sort"
 )
 
-// NetworkPack is one release-owned set of outbound unlocks. Profiles store its
-// stable ID; every resolution expands the current registry entries before
-// policy composition, while snapshots freeze only the expanded authority.
+// NetworkPack is one release-owned set of outbound destinations. Profiles
+// store its stable ID in either the allow or deny pack set; every resolution
+// expands allow-mode references before policy composition. Deny-mode expansion
+// remains authoring/display-only until the enforcement follow-up.
 type NetworkPack struct {
 	ID      string
 	Label   string
@@ -81,7 +82,7 @@ func networkPackByID(id string) (NetworkPack, bool) {
 	return NetworkPack{}, false
 }
 
-func normalizeNetworkPackRefs(in []string) ([]string, error) {
+func normalizeNetworkPackRefs(in []string, field string) ([]string, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
@@ -89,7 +90,7 @@ func normalizeNetworkPackRefs(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for i, id := range in {
 		if _, ok := networkPackByID(id); !ok {
-			return nil, fmt.Errorf("network.packs[%d] references unknown pack %q", i, id)
+			return nil, fmt.Errorf("network.%s[%d] references unknown pack %q", field, i, id)
 		}
 		if _, ok := seen[id]; ok {
 			continue
@@ -101,9 +102,21 @@ func normalizeNetworkPackRefs(in []string) ([]string, error) {
 	return out, nil
 }
 
+// ExpandNetworkPackEntries returns a deep copy of one pack's destinations for
+// editor prediction. It does not confer launch authority.
+func ExpandNetworkPackEntries(id string) ([]NetworkAllowEntry, error) {
+	pack, ok := networkPackByID(id)
+	if !ok {
+		return nil, fmt.Errorf("network pack %q is unknown", id)
+	}
+	return cloneNetworkRules(NetworkRules{Allow: pack.Entries}).Allow, nil
+}
+
 // MaterializeNetworkRules turns the compositional authoring representation
 // into the pre-existing resolved access modes consumed by composition and
-// enforcement. Legacy/effective rules pass through unchanged.
+// enforcement. Deny fields deliberately do not reach this seam yet: TCL-839
+// persists and discloses them, while a follow-up adds enforcement. Legacy and
+// effective rules pass through unchanged.
 func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 	if in.Baseline == "" {
 		return cloneNetworkRules(in), nil

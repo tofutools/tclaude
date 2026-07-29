@@ -84,8 +84,9 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 9
+	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
+	sandboxProfileExportVersion       = 10
+	sandboxProfileExportVersionLegacy = 9
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -683,8 +684,16 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	formatVersion := sandboxProfileExportVersionLegacy
+	for _, profile := range out {
+		if profile.Network != nil &&
+			(len(profile.Network.DenyPacks) > 0 || len(profile.Network.Deny) > 0) {
+			formatVersion = sandboxProfileExportVersion
+			break
+		}
+	}
 	writeJSON(w, http.StatusOK, sandboxProfileExportEnvelope{
-		Format: sandboxProfileExportFormat, FormatVersion: sandboxProfileExportVersion,
+		Format: sandboxProfileExportFormat, FormatVersion: formatVersion,
 		ExportedAt: time.Now().UTC().Format(time.RFC3339), Profiles: out, Assignments: assignments,
 	})
 }
@@ -726,6 +735,10 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 	if !supportedSandboxProfileExport(env.Format, env.FormatVersion) {
 		writeError(w, http.StatusBadRequest, "invalid_format", fmt.Sprintf(
 			"unsupported sandbox-profile export %q version %d", env.Format, env.FormatVersion))
+		return
+	}
+	if fail := validateSandboxProfileExportVersionContent(env); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
 	if fail := rejectBreakGlassEnvelope(env); fail != nil {
@@ -815,6 +828,10 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 			"unsupported sandbox-profile export %q version %d", env.Format, env.FormatVersion))
 		return
 	}
+	if fail := validateSandboxProfileExportVersionContent(env); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	if fail := rejectBreakGlassEnvelope(env); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -883,6 +900,10 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // non-null empty document marks a modern profile with no alternate spellings.
 // Version 9 adds the compositional network baseline and release-owned pack
 // references. Legacy mode-based network rules remain readable.
+// Version 10 adds deny-mode network entries and pack references. Exports remain
+// v9 when every profile is deny-free so older releases can still import them;
+// any deny state requires v10 because an older importer ignoring it would
+// silently widen the authored policy.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -901,4 +922,25 @@ func supportedSandboxProfileExport(format string, version int) bool {
 	// one each time.
 	return format == sandboxProfileExportFormat &&
 		version >= 1 && version <= sandboxProfileExportVersion
+}
+
+func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
+	if env.FormatVersion >= 10 {
+		return nil
+	}
+	for _, profile := range env.Profiles {
+		if profile.Network == nil ||
+			(len(profile.Network.DenyPacks) == 0 && len(profile.Network.Deny) == 0) {
+			continue
+		}
+		return &spawnFailure{
+			Status: http.StatusBadRequest,
+			Kind:   "invalid_format",
+			Msg: fmt.Sprintf(
+				"sandbox profile %q contains network deny state, which requires export format version 10",
+				profile.Name,
+			),
+		}
+	}
+	return nil
 }

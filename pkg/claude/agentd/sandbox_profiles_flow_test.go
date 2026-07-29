@@ -469,6 +469,71 @@ func TestSandboxProfileLegacyAndCompositionalNetworkShapesRoundTrip(t *testing.T
 	}
 }
 
+func TestSandboxProfileDenyAuthoringRoundTripsWithV10Envelope(t *testing.T) {
+	f := newFlow(t)
+	want := sandboxpolicy.NetworkRules{
+		Baseline:  sandboxpolicy.NetworkBaselineAllow,
+		Packs:     []string{"net-local"},
+		DenyPacks: []string{"net-github", "net-npm"},
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Domain: "already-open.example", Ports: []int{443},
+		}},
+		Deny: []sandboxpolicy.NetworkAllowEntry{
+			{CIDR: "192.0.2.0/24", Ports: []int{80, 443}},
+			{Domain: "blocked.example", Ports: []int{443}},
+		},
+	}
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "deny-authoring", "filesystem": []any{}, "environment": []any{},
+		"network": map[string]any{
+			"baseline":   "allow",
+			"packs":      []string{"net-local"},
+			"deny_packs": []string{"net-npm", "net-github", "net-github"},
+			"allow": []any{
+				map[string]any{"domain": "already-open.example", "ports": []int{443}},
+			},
+			"deny": []any{
+				map[string]any{"domain": "blocked.example", "ports": []int{443}},
+				map[string]any{"cidr": "192.0.2.9/24", "ports": []int{443, 80, 443}},
+			},
+		},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	assertStored := func() {
+		rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/deny-authoring", nil)
+		require.Equalf(t, http.StatusOK, rec.Code, "get body=%s", rec.Body.String())
+		var got struct {
+			Network *sandboxpolicy.NetworkRules `json:"network"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.NotNil(t, got.Network)
+		assert.Equal(t, want, *got.Network)
+	}
+	assertStored()
+
+	rec = profileReq(t, f, http.MethodGet,
+		"/v1/sandbox-profiles/export?name=deny-authoring", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
+	var bundle map[string]any
+	testharness.DecodeJSON(t, rec, &bundle)
+	assert.Equal(t, float64(10), bundle["format_version"],
+		"deny fields require v10 so older importers cannot silently widen them")
+
+	require.Equal(t, http.StatusNoContent, profileReq(
+		t, f, http.MethodDelete, "/v1/sandbox-profiles/deny-authoring", nil).Code)
+	bundle["format_version"] = float64(9)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "network deny state")
+	assert.Contains(t, rec.Body.String(), "version 10")
+
+	bundle["format_version"] = float64(10)
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "import body=%s", rec.Body.String())
+	assertStored()
+}
+
 func TestSandboxProfilesImportConflictRollsBackWholeBundle(t *testing.T) {
 	f := newFlow(t)
 	require.Equal(t, http.StatusCreated,

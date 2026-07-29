@@ -9,6 +9,7 @@ import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
   sandboxNetworkEntryKey,
+  sandboxNetworkModeEntryKey,
   sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
@@ -51,11 +52,14 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
-const NETWORK_ACCESS_HELP = 'Deny all starts closed, then releases selected built-in packs and '
-  + 'manual destinations. Pack references are stored by stable ID and expand from the current '
+const NETWORK_ACCESS_HELP = 'Choose Allow or Deny independently for built-in packs and manual '
+  + 'destinations. Deny all starts closed; Allow rules release matching traffic and Deny rules can '
+  + 'narrow those releases. Allow all starts open; Deny rules restrict matching traffic and Allow '
+  + 'rules are redundant. Deny wins whenever traffic matches both an Allow and a Deny rule; rule '
+  + 'order does not matter. Pack references are stored by stable ID and expand from the current '
   + 'tclaude release at policy resolution; their expanded rows are read-only in this editor. '
-  + 'Allow all leaves outbound access open. No override leaves the choice to other profile layers. '
-  + 'Unlock controls are available only under Deny all. Host matches one exact DNS '
+  + 'No override leaves the choice to other profile layers and carries no network rules. '
+  + 'Host matches one exact DNS '
   + 'name. Domain matches the named domain and can optionally include its subdomains. CIDR matches '
   + 'an IP network. Loopback covers connections to the local machine. Ports are optional integer '
   + 'ports; blank allows all ports for that destination. The authored connection contract is '
@@ -81,12 +85,14 @@ const NETWORK_ACCESS_HELP = 'Deny all starts closed, then releases selected buil
   + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
   + 'servers, and agent commands need their own Access list destinations.'
   + ` ${CODEX_BUILTIN_FILTERED_NETWORK_HINT}`;
-const NETWORK_PACKS_HELP = 'Release-owned unlocks are stored as stable pack references and expand '
-  + 'from the current tclaude release. Toggle a pack here to add or remove its read-only '
-  + 'destinations below; future endpoint updates follow the stored pack reference.';
+const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allow or Deny pack '
+  + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
+  + 'future endpoint updates follow the stored pack reference. Deny pack rows are authored but '
+  + 'not enforced in this frontend-first release. Expanded destinations below are read-only.';
 const NETWORK_DESTINATIONS_HELP = 'Destination badges evaluate this profile’s own materialized '
   + 'rows before Includes and assignment intersections. The Effective policy preview remains '
-  + 'authoritative for composed launch behavior.';
+  + 'authoritative for composed launch behavior. Deny destinations always report Not enforced in '
+  + 'this frontend-first release: they are stored but do not yet block traffic.';
 const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
   + 'The tclaude agentd socket is always reachable and is not an editable row.';
 const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
@@ -284,11 +290,14 @@ function NetworkEntryBadge({ verdict, busy }) {
 
 function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
-  const [defaultsAvailable, setDefaultsAvailable] = useState(!!newDraft);
+  const defaultsAvailable = useRef(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
-  const deny = rules.baseline === 'deny';
+  const editable = rules.baseline !== 'inherit';
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
-  const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
+  const rowsFor = (mode) => mode === 'deny' ? rules.deny : rules.allow;
+  const updateRows = (mode, rows) => update({ [mode]: rows });
+  const updateRow = (mode, index, patch) => updateRows(mode,
+    rowsFor(mode).map((row, i) => i === index ? { ...row, ...patch } : row));
   // Prefer the selector that survives wire normalization, then preserve an
   // intentionally empty domain/CIDR key while its value is being authored.
   const selector = (row) => row.domain ? 'domain'
@@ -298,53 +307,88 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
           : Object.hasOwn(row, 'domain') ? 'domain'
             : Object.hasOwn(row, 'cidr') ? 'cidr'
               : 'host';
-  const changeSelector = (index, kind) => {
-    const next = kind === 'loopback' ? { loopback: true, ports: rules.allow[index].ports || [] } : { [kind]: '', ports: rules.allow[index].ports || [] };
-    update({ allow: rules.allow.map((row, i) => i === index ? next : row) });
+  const changeSelector = (mode, index, kind) => {
+    const current = rowsFor(mode)[index];
+    const next = kind === 'loopback' ? { loopback: true, ports: current.ports || [] } : { [kind]: '', ports: current.ports || [] };
+    updateRows(mode, rowsFor(mode).map((row, i) => i === index ? next : row));
   };
-  // Unlocks are retained session-locally across baseline flips so an
+  const changeRowMode = (mode, index, nextMode) => {
+    if (mode === nextMode) return;
+    const row = rowsFor(mode)[index];
+    update({
+      [mode]: rowsFor(mode).filter((_, i) => i !== index),
+      [nextMode]: [...rowsFor(nextMode), row],
+    });
+  };
+  // Rules are retained session-locally across No override flips so an
   // accidental select change is recoverable; the stored draft still carries
-  // no packs or allow rows while the baseline is allow/inherit.
-  const retainedUnlocks = useRef(null);
+  // no pack or destination rows while that baseline is active.
+  const retainedRules = useRef(null);
+  if (rules.baseline !== 'inherit') {
+    retainedRules.current = {
+      packs: rules.packs, deny_packs: rules.deny_packs,
+      allow: rules.allow, deny: rules.deny,
+    };
+  }
   const changeBaseline = (baseline) => {
-    if (deny && baseline !== 'deny') {
-      retainedUnlocks.current = { packs: rules.packs, allow: rules.allow };
-    }
-    let packs = [];
-    let allow = [];
-    if (baseline === 'deny') {
-      if (retainedUnlocks.current) {
-        ({ packs, allow } = retainedUnlocks.current);
-      } else if (defaultsAvailable) {
-        packs = DEFAULT_NETWORK_PACKS;
-        setDefaultsAvailable(false);
+    setDraft((value) => {
+      const current = sandboxNetworkAuthoring(value);
+      let next = {
+        packs: current.packs, deny_packs: current.deny_packs,
+        allow: current.allow, deny: current.deny,
+      };
+      if (baseline === 'inherit') {
+        next = { packs: [], deny_packs: [], allow: [], deny: [] };
+      } else if (current.baseline === 'inherit') {
+        next = retainedRules.current || { packs: [], deny_packs: [], allow: [], deny: [] };
+        if (baseline === 'deny' && defaultsAvailable.current &&
+            !next.packs.length && !next.deny_packs.length && !next.allow.length && !next.deny.length) {
+          next = { ...next, packs: DEFAULT_NETWORK_PACKS };
+          defaultsAvailable.current = false;
+        }
       }
-    }
-    setDraft((value) => ({
-      ...value,
-      network: { baseline, packs, allow },
-    }));
+      return { ...value, network: { baseline, ...next } };
+    });
   };
-  const togglePack = (id, checked) => update({
-    packs: checked
+  const packMode = (id) => rules.packs.includes(id) ? 'allow'
+    : rules.deny_packs.includes(id) ? 'deny' : 'off';
+  const changePackMode = (id, mode) => update({
+    packs: mode === 'allow'
       ? [...new Set([...rules.packs, id])]
       : rules.packs.filter((value) => value !== id),
+    deny_packs: mode === 'deny'
+      ? [...new Set([...rules.deny_packs, id])]
+      : rules.deny_packs.filter((value) => value !== id),
   });
   const packRows = (catalog.network_packs || []).flatMap((pack) =>
-    rules.packs.includes(pack.id)
-      ? (pack.entries || []).map((row) => ({ row, pack }))
+    packMode(pack.id) !== 'off'
+      ? (pack.entries || []).map((row) => ({ row, pack, mode: packMode(pack.id) }))
       : []);
+  const manualRows = [
+    ...rules.allow.map((row, index) => ({ row, index, mode: 'allow' })),
+    ...rules.deny.map((row, index) => ({ row, index, mode: 'deny' })),
+  ];
+  const redundantLabel = (mode) =>
+    (rules.baseline === 'deny' && mode === 'deny') ? 'Redundant under Deny all'
+      : (rules.baseline === 'allow' && mode === 'allow') ? 'Redundant under Allow all'
+        : '';
   const predictionByEntry = new Map((predictions || []).flatMap((value) =>
-    (value.keys?.length ? value.keys : [sandboxNetworkEntryKey(value.entry)])
+    (value.keys?.length ? value.keys : [
+      sandboxNetworkModeEntryKey(value.mode || 'allow', value.entry),
+      sandboxNetworkEntryKey(value.entry),
+    ])
       .map((key) => [key, value])));
+  const verdictFor = (mode, row) =>
+    predictionByEntry.get(sandboxNetworkModeEntryKey(mode, row))
+      || predictionByEntry.get(sandboxNetworkEntryKey(row));
   return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
       attention=${packVisibilityAttention}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
-    <fieldset class=${`sbx-network-unlocks${deny ? '' : ' sbx-disabled'}`}>
-      <legend class="sbx-network-unlocks-legend">Deny-all network unlocks</legend>
+    <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>
+      <legend class="sbx-network-unlocks-legend">Network rules</legend>
       <div class="sbx-network-subhead"><strong>Built-in rule packs</strong><${SandboxHelp}><${HelpDisclosure}
         id="sandbox-profile-editor-network-packs-help" label="built-in network rule packs"
         help=${NETWORK_PACKS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-packs-help'}
@@ -353,37 +397,47 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
         const packHelp = [pack.note || '', pack.warning ? `⚠ ${pack.warning}` : ''].filter(Boolean).join(' ');
         const packHelpID = `sandbox-profile-editor-network-pack-${String(pack.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}-help`;
         return html`<div key=${pack.id} class="sbx-network-pack">
-          <label><input type="checkbox" disabled=${!deny} checked=${rules.packs.includes(pack.id)}
-            onChange=${(event) => togglePack(pack.id, event.currentTarget.checked)}/>
-            <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong></span>
-          </label>
+          <${Select} class="sbx-network-pack-mode" aria-label=${`${pack.label} network pack mode`}
+            disabled=${!editable} value=${packMode(pack.id)} onChange=${(mode) => changePackMode(pack.id, mode)}
+            options=${[['off', 'Off'], ['allow', 'Allow'], ['deny', 'Deny']]}/>
+          <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong></span>
+          ${redundantLabel(packMode(pack.id)) && html`<span class="sbx-network-redundant">${redundantLabel(packMode(pack.id))}</span>`}
           ${packHelp && html`<${SandboxHelp}><${HelpDisclosure} id=${packHelpID}
             label=${`${pack.label} network pack`} help=${packHelp}
             open=${helpOpen === packHelpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
         </div>`;
       })}</div>
-      <div class="sbx-network-subhead"><strong>Access list</strong><${SandboxHelp}><${HelpDisclosure}
+      <div class="sbx-network-subhead"><strong>Destinations</strong><${SandboxHelp}><${HelpDisclosure}
         id="sandbox-profile-editor-network-destinations-help" label="network access list"
         help=${NETWORK_DESTINATIONS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-destinations-help'}
         setOpen=${setHelpOpen}/></${SandboxHelp}></div>
-      <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack }, index) => { const kind = selector(row); return html`<div key=${`${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
+      <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); return html`<div key=${`${mode}:${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
+        <div class="sbx-network-mode-cell"><span class="sbx-network-value-readonly">${mode === 'deny' ? 'Deny' : 'Allow'}</span>
+          ${redundantLabel(mode) && html`<span class="sbx-network-redundant">${redundantLabel(mode)}</span>`}</div>
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
         <span class="sbx-network-modifier">${kind === 'domain' && row.include_subdomains ? 'subdomains' : ''}</span>
         <span class="sbx-network-ports sbx-network-value-readonly">${(row.ports || []).join(', ') || 'all ports'}</span>
-        <${NetworkEntryBadge} verdict=${predictionByEntry.get(sandboxNetworkEntryKey(row))} busy=${predictionBusy}/>
+        <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
         <span class="sbx-network-pack-owner" title="This release-owned row is changed by toggling its pack.">${pack.label}</span>
       </div>`; })}</div>
-      <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
-      <${Select} class="sbx-network-selector" disabled=${!deny} value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
-      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!deny} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
-      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!deny} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
-      <input class="sbx-network-ports" disabled=${!deny} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
-      <${NetworkEntryBadge} verdict=${predictionByEntry.get(sandboxNetworkEntryKey(row))} busy=${predictionBusy}/>
-      <button type="button" disabled=${!deny} aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
+      <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${manualRows.map(({ row, index, mode }) => { const kind = selector(row); return html`<div key=${`${mode}:${index}`} class="sbx-row sbx-access-row sbx-network-row">
+      <div class="sbx-network-mode-cell"><${Select} class="sbx-network-rule-mode" aria-label="Network row mode"
+        disabled=${!editable} value=${mode} onChange=${(value) => changeRowMode(mode, index, value)}
+        options=${[['allow', 'Allow'], ['deny', 'Deny']]}/>
+        ${redundantLabel(mode) && html`<span class="sbx-network-redundant">${redundantLabel(mode)}</span>`}</div>
+      <${Select} class="sbx-network-selector" disabled=${!editable} value=${kind} onChange=${(value) => changeSelector(mode, index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
+      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!editable} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(mode, index, { [kind]: event.currentTarget.value })}/>`}
+      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!editable} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(mode, index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
+      <input class="sbx-network-ports" disabled=${!editable} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank matches all ports for the destination." onInput=${(event) => updateRow(mode, index, { ports: event.currentTarget.value })}/>
+      <${NetworkEntryBadge} verdict=${verdictFor(mode, row)} busy=${predictionBusy}/>
+      <button type="button" disabled=${!editable} aria-label="Delete network row" onClick=${() => updateRows(mode, rowsFor(mode).filter((_, i) => i !== index))}>×</button>
     </div>`; })}</div>
     <datalist id="sandbox-common-ports"><option value="443"/><option value="80, 443"/><option value="22"/></datalist>
-    <button type="button" class="sbx-add-row" disabled=${!deny} onClick=${() => update({ allow: [...rules.allow, { host: '', ports: [] }] })}>＋ add destination</button>
+    <button type="button" class="sbx-add-row" disabled=${!editable} onClick=${() => {
+      const mode = rules.baseline === 'allow' ? 'deny' : 'allow';
+      updateRows(mode, [...rowsFor(mode), { host: '', ports: [] }]);
+    }}>＋ add ${rules.baseline === 'allow' ? 'deny' : 'allow'} destination</button>
     </fieldset>
     ${(catalog.global_network || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global network config (${catalog.global_network.length})</summary>${catalog.global_network.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
   </${SandboxSection}>`;
@@ -1121,7 +1175,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {
