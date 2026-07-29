@@ -223,7 +223,7 @@ function NetworkEntryBadge({ verdict, busy }) {
   </details>`;
 }
 
-function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError }) {
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
   const [defaultsAvailable, setDefaultsAvailable] = useState(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
@@ -267,7 +267,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
       id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
       open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
-    ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert">⚠ ${packVisibilityError}</div>`}
+    ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
+      <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class="sbx-network-unlocks" disabled=${!deny}>
       <legend>Built-in rule packs</legend>
       <p class="sbx-axis-help">Release-owned unlocks expand into the read-only rows below. Stored pack references follow endpoint updates in future tclaude releases.</p>
@@ -879,7 +880,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
       predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
-      packVisibilityError=${networkPackVisibilityError}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+      packVisibilityError=${networkPackVisibilityError} retryPackCatalog=${loadCommonRules}
+      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>

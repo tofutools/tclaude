@@ -4288,10 +4288,13 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin-top: .2rem;
 }
 .sbx-network-pack-visibility-error {
+  align-items: center;
   border: 1px solid #f85149;
   border-radius: .35rem;
   color: #ff7b72;
+  display: flex;
   font-size: .82rem;
+  justify-content: space-between;
   padding: .45rem .55rem;
 }
 .sbx-network-list-title {
