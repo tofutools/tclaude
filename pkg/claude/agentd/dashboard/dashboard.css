@@ -4357,7 +4357,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
     6rem
     6rem
     minmax(5rem, 1fr)
-    minmax(0, 5.5rem)
+    minmax(0, 7rem)
     minmax(6rem, 8rem)
     minmax(4.5rem, 8.5rem);
   min-width: 0;
@@ -4420,6 +4420,13 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   align-items: center;
   min-height: 29px;
   min-width: 0;
+}
+.sbx-network-modifier .sbx-inline-check {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 .sbx-network-pack-owner {
   align-self: start;
