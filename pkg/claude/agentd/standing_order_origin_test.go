@@ -42,16 +42,32 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 
 	var failPrompt atomic.Bool
 	var dropPromptResponse atomic.Bool
+	var exposeAcceptedMessage atomic.Bool
+	var promptPosts atomic.Int32
 	var promptMessageID atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		require.True(t, ok)
 		assert.Equal(t, openCodeServerUsername, user)
 		assert.Equal(t, password, pass)
+		if exposeAcceptedMessage.Load() {
+			if id, ok := promptMessageID.Load().(string); ok {
+				switch r.URL.Path {
+				case "/session/" + convID + "/message/" + id:
+					_, _ = w.Write([]byte(`{"info":{"id":"` + id + `","role":"user"}}`))
+					return
+				case "/session/" + convID + "/message":
+					_, _ = w.Write([]byte(
+						`[{"info":{"id":"` + id + `","role":"user"}}]`))
+					return
+				}
+			}
+		}
 		switch r.URL.Path {
 		case "/global/health":
 			_, _ = w.Write([]byte(`{"healthy":true}`))
 		case "/session/" + convID + "/prompt_async":
+			promptPosts.Add(1)
 			var body struct {
 				MessageID string `json:"messageID"`
 			}
@@ -168,4 +184,16 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	require.NotNil(t, turnOrigin)
 	assert.Equal(t, db.StandingOrderTurnOriginPending, turnOrigin.State,
 		"a transport failure after submission may hide acceptance and must retain suppression")
+
+	postsBeforeReconcile := promptPosts.Load()
+	dropPromptResponse.Store(false)
+	exposeAcceptedMessage.Store(true)
+	assert.True(t, sendNudgeBracket(convID, uncertain, "uncertain reminder"),
+		"an authoritative message lookup confirms the prior accepted attempt")
+	assert.Equal(t, postsBeforeReconcile, promptPosts.Load(),
+		"reconciliation must not resubmit the same OpenCode message ID")
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, turnOrigin)
+	assert.Equal(t, db.StandingOrderTurnOriginPending, turnOrigin.State)
 }

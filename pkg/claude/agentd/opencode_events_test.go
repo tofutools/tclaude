@@ -490,6 +490,62 @@ func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing
 	assert.Nil(t, active, "the successful Stop boundary releases suppression")
 }
 
+func TestOpenCodeStandingOrderOriginReconcilesCompletedTurnAfterSSEGap(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	const (
+		sessionID = "spwn-opencode-standing-origin-gap"
+		convID    = "ses_standing_origin_gap"
+		password  = "private-password"
+	)
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID, Cwd: home,
+		Harness: harness.OpenCodeName, Status: session.StatusIdle,
+	}))
+	messageID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+		ToConv: convID, Subject: "missed reminder", Body: "internal",
+	}, 42, 1)
+	require.NoError(t, err)
+	origin, err := db.AgentMessageStandingOrderOrigin(messageID)
+	require.NoError(t, err)
+	require.NotNil(t, origin)
+	require.NoError(t, db.ArmStandingOrderTurnOrigin(
+		agentID, convID, messageID, origin.OpenCodeMessageID,
+		time.Now(), standingOrderOriginActiveTTL))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/session/"+convID+"/message", r.URL.Path)
+		_, _ = fmt.Fprintf(w,
+			`[{"info":{"id":%q,"sessionID":%q,"role":"user","time":{"created":1}}},`+
+				`{"info":{"id":"msg_assistant","sessionID":%q,"role":"assistant",`+
+				`"parentID":%q,"time":{"created":2,"completed":3}}}]`,
+			origin.OpenCodeMessageID, convID, convID, origin.OpenCodeMessageID)
+	}))
+	defer server.Close()
+
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, Cwd: home,
+		ServerURL: server.URL, Password: password, PID: os.Getpid(),
+	}
+	restartedProjector := newOpenCodeEventProjector(convID, home)
+	applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
+		[]session.HookCallbackInput{{
+			HookEventName: "Stop",
+			ConvID:        convID,
+		}})
+
+	assert.False(t, restartedProjector.standingOrderTurn)
+	current, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	assert.Nil(t, current,
+		"a completed assistant in history settles pending suppression missed by SSE")
+}
+
 func TestConsumeOpenCodeEventWaitsForLaunchSessionRow(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

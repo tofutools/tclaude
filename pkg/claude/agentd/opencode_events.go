@@ -20,6 +20,7 @@ type openCodeEventProjector struct {
 	deferredIdle      bool
 	pendingAttention  bool
 	standingOrderTurn bool
+	originReconciled  bool
 	seenEventIDs      map[string]struct{}
 	seenEventOrder    []string
 }
