@@ -665,8 +665,12 @@ The Linux `filtered` posture enforces the packet and DNS subset for exact
 exact DNS hosts, label-bound domains with optional subdomains, TCP/UDP
 destination ports (including QUIC as UDP), and synthetic host loopback. Raw and
 packet sockets, including authored ICMP access, are not part of the network-list
-contract. Host/domain selectors are `Partial`, because they enforce DNS-derived
-addresses rather than application identity. `stacked` does not claim this cell.
+contract. Host, domain, CIDR, and synthetic host-loopback selectors are rated
+`Full`. Host and domain rules enforce the DNS-to-IP boundary: the sandbox can
+also reach another site hosted on an allowed IP until the DNS answer expires,
+and existing connections may continue after expiry. This is the strongest
+name boundary available for arbitrary TCP/UDP, which carries no SNI or other
+application identity on the wire. `stacked` does not claim this cell.
 
 Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
 `nft` through root-owned, non-group/world-writable paths. The pasta probe also
@@ -697,9 +701,10 @@ nft child exec; the harness receives neither capability. If pasta exits, the
 supervisor kills the sandbox through a pinned pidfd; if the supervisor dies,
 bubblewrap and pasta die with it.
 
-Host loopback uses `host.tclaude.internal`, mapped to fixed synthetic IPv4 and
-IPv6 addresses and filtered by the authored ports. Hard-coded `127.0.0.1` and
-`::1` remain sandbox-private. The sandbox's `/etc/resolv.conf` and `/etc/hosts`
+Local-machine rules use `host.tclaude.internal`, mapped to fixed synthetic IPv4
+and IPv6 addresses and filtered by the authored ports. Inside the sandbox,
+`127.0.0.1` and `::1` refer to the sandbox itself. The sandbox's
+`/etc/resolv.conf` and `/etc/hosts`
 both route through the external DNS broker, so a hosts-file mapping cannot
 bypass the same selector and port checks. A DNS answer containing loopback is
 refused unless the profile also authors loopback; when it does, the
@@ -710,14 +715,15 @@ loopback on its authored ports. See
 [Linux network filtering](linux-network-filtering.md#host-loopback-mapping-and-current-reservation-gap)
 for that security-boundary limitation.
 
-Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved
-shared IP can be reused until its lease expires. The broker follows a bounded
-CNAME chain, filters returned A/AAAA records for the matching authored
-host/domain selector, and adds each admitted address to the matching per-rule
-nft set for no longer than the observed DNS TTL. CIDR rows are IP-literal
-packet authority only; they do not authorize arbitrary DNS queries whose
-answers happen to fall inside the CIDR. Only a fresh DNS answer refreshes the
-lease. There is no timer-driven self-refresh and no fixed grace window.
+Host and domain rules allow IP addresses returned by DNS. The sandbox can also
+reach other sites hosted on that same IP until the DNS answer expires. The
+broker follows a bounded CNAME chain, filters returned A/AAAA records for the
+matching authored host/domain selector, and adds each admitted address to the
+matching per-rule nft set for no longer than the observed DNS TTL. CIDR rows
+are IP-literal packet authority only; they do not authorize arbitrary DNS
+queries whose answers happen to fall inside the CIDR. Only a new DNS lookup
+refreshes the allowed IP. There is no timer-driven self-refresh and no fixed
+grace window.
 
 Expiry has two deliberately different directions. A new TCP or UDP flow needs
 a current lease, so an agent that performs no fresh lookup after expiry cannot

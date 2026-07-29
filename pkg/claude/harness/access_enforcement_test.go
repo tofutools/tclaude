@@ -429,10 +429,10 @@ func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
 	require.NoError(t, err)
 	predicted := DescribePredictedAccess(axes, caps).Network
 	assert.Equal(t, AccessPredictionEnforced, predicted.Outcome)
-	assert.Contains(t, predicted.Detail, "Prerequisite-conditional prediction")
+	assert.Contains(t, predicted.Detail, "At launch, bubblewrap, pasta, and nft must pass live checks")
 	assert.Contains(t, predicted.Detail, "pasta")
 	assert.Contains(t, predicted.Detail, "nft")
-	assert.Contains(t, predicted.Detail, "outbound remains open")
+	assert.Contains(t, predicted.Detail, "outbound traffic is open")
 }
 
 func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
@@ -452,7 +452,7 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	require.NoError(t, err)
 	preview := DescribePredictedAccess(axes, prediction).Network
 	assert.Equal(t, AccessPredictionEnforced, preview.Outcome)
-	assert.Contains(t, preview.Detail, "Prerequisite-conditional prediction")
+	assert.Contains(t, preview.Detail, "At launch, bubblewrap, pasta, and nft must pass live checks")
 
 	row, err := accessEnforcementTable(
 		openCode, sandboxpolicy.ImplementationTclaudeLayer, axes,
@@ -521,12 +521,12 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	)
 	require.NoError(t, err)
 	preview = DescribePredictedAccess(portScopedLoopback, prediction).Network
-	assert.Equal(t, AccessPredictionEnforcedPartial, preview.Outcome,
+	assert.Equal(t, AccessPredictionEnforced, preview.Outcome,
 		"ordinary explicit-provider loopback lists retain general M3 support")
 	assert.NotContains(t, preview.Detail, "TCL-826")
 }
 
-func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
+func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsEnforced(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
 			Mode: sandboxpolicy.AccessModeList,
@@ -543,8 +543,9 @@ func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
 	)
 	require.NoError(t, err)
 	preview := DescribePredictedAccess(axes, prediction).Network
-	assert.Equal(t, AccessPredictionEnforcedPartial, preview.Outcome)
-	assert.Contains(t, preview.Detail, "wider destination")
+	assert.Equal(t, AccessPredictionEnforced, preview.Outcome)
+	assert.Contains(t, preview.Detail, "the network allow list")
+	assert.Contains(t, preview.Detail, "outbound traffic is open")
 
 	launch, err := ResolveAccessEnforcement(
 		Default(),
@@ -562,10 +563,7 @@ func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		require.NoError(t, err)
 		assert.Equal(t, axes, rendered)
-		require.Len(t, notices, 1)
-		assert.Equal(t, "selector_partial", notices[0].Reason)
-		assert.Equal(t, []int{1, 2}, notices[0].Entries)
-		assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
+		assert.Empty(t, notices)
 		return
 	}
 	require.NoError(t, err)

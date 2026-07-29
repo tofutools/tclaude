@@ -584,12 +584,12 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	require.Len(t, got.Targets, 1)
 	assert.True(t, got.Targets[0].Predicted)
 	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Network.Outcome)
-	assert.Contains(t, got.Targets[0].Axes.Network.Detail, "Prerequisite-conditional")
+	assert.Contains(t, got.Targets[0].Axes.Network.Detail, "outbound traffic is open")
 	require.Len(t, got.Targets[0].ContextAxes, 1)
 	assert.Equal(t, harness.AccessPredictionEnforced,
 		got.Targets[0].ContextAxes[0].Network.Outcome)
 	assert.Contains(t, got.Targets[0].ContextAxes[0].Network.Detail,
-		"Prerequisite-conditional")
+		"outbound traffic is open")
 	require.Len(t, got.Contexts, 1)
 	assert.Equal(t, "crew", got.Contexts[0].Context["group_name"])
 	assert.Equal(t, "renamed-in-editor", got.Contexts[0].Context["group"],
@@ -729,8 +729,8 @@ func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *
 				map[string]any{"domain": "api.openai.com", "ports": []int{443}},
 			},
 			platform: "linux",
-			outcome:  harness.AccessPredictionEnforcedPartial,
-			detail:   "Prerequisite-conditional",
+			outcome:  harness.AccessPredictionEnforced,
+			detail:   "If any check fails, these rules are not enforced and outbound traffic is open.",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -830,8 +830,8 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	claudeRows := request(t, "claude")
 	require.Len(t, claudeRows, 3)
 	for _, row := range claudeRows {
-		assert.Equal(t, harness.AccessPredictionEnforcedPartial, row.Outcome)
-		assert.Contains(t, row.Detail, "Prerequisite-conditional prediction")
+		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+		assert.Contains(t, row.Detail, "outbound traffic is open")
 	}
 
 	openCodeRows := request(t, "opencode")

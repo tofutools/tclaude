@@ -125,6 +125,16 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
 		}
 	}
+	for _, disclosure := range []string{
+		`For Linux tclaude-layer filtered networking:`,
+		`Host and domain rules allow IP addresses returned by DNS.`,
+		`If any check fails, these rules are not enforced and outbound traffic is open.`,
+		`local-machine rules use host.tclaude.internal.`,
+	} {
+		if !strings.Contains(dashboardAssets, disclosure) {
+			t.Errorf("dashboard missing filtered-network disclosure %q", disclosure)
+		}
+	}
 	if !strings.Contains(dashboardAssets, `body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type])`) {
 		t.Error("wizard structured sandbox inputs lost the arcane skin")
 	}
