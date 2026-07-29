@@ -4789,6 +4789,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   max-width: 100%;
   width: max-content;
 }
+.sbx-include-warning {
+  align-self: center;
+  overflow-wrap: anywhere;
+}
 .sbx-environment-row {
   display: grid;
   grid-template-columns: 14rem minmax(10rem, 1fr) auto;

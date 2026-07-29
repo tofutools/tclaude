@@ -651,6 +651,47 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	assert.True(t, defaulted.Targets[0].Predicted)
 }
 
+func TestSandboxProfileDraftEnforcementWarnsWhenIncludeIsMissing(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name":       "missing-child",
+			"filesystem": []any{},
+			"environment": []any{
+				map[string]any{"name": "LOCAL_ONLY", "value": "1"},
+			},
+			"includes": []any{"base-caches"},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Predicted bool `json:"predicted"`
+		} `json:"targets"`
+		Contexts []struct {
+			Environment []string                     `json:"environment"`
+			Notices     []sandboxpolicy.AccessNotice `json:"notices"`
+		} `json:"contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.True(t, got.Targets[0].Predicted)
+	require.Len(t, got.Contexts, 1)
+	assert.Equal(t, []string{"LOCAL_ONLY"}, got.Contexts[0].Environment,
+		"inspection still evaluates the resolvable portion of the draft")
+	require.Len(t, got.Contexts[0].Notices, 1)
+	notice := got.Contexts[0].Notices[0]
+	assert.Equal(t, sandboxpolicy.AccessNoticeClassComposition, notice.Class)
+	assert.Equal(t, "includes", notice.Axis)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonMissingInclude, notice.Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectPreviewIncomplete, notice.Effect)
+	assert.Contains(t, notice.Detail, `included sandbox profile "base-caches" was not found in registry`)
+	assert.Contains(t, notice.Detail, "rules are absent from this preview")
+}
+
 func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *testing.T) {
 	f := newFlow(t)
 	for _, tc := range []struct {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -378,9 +379,55 @@ func flattenDraftSandboxProfileForPrediction(draft *db.SandboxProfile) (sandboxp
 	}
 	root := sandboxProfileDBToPolicy(draft)
 	registry[draft.Name] = root
-	return sandboxpolicy.Flatten(*root, func(name string) (*sandboxpolicy.Profile, error) {
-		return registry[name], nil
-	})
+	flattened, _, err := flattenSandboxProfileForDraftInspection(draft, registry)
+	return flattened, err
+}
+
+// flattenSandboxProfileForDraftInspection is deliberately limited to the
+// editor's inspection-only evaluator. A missing include cannot contribute its
+// rules, so the returned policy is necessarily incomplete; the composition
+// notice makes that fact explicit instead of turning the whole preview into an
+// opaque request error. Persistence and launch resolution keep using strict
+// graph validation and strict sandboxpolicy.Flatten.
+func flattenSandboxProfileForDraftInspection(
+	profile *db.SandboxProfile,
+	registry map[string]*sandboxpolicy.Profile,
+) (sandboxpolicy.Profile, []sandboxpolicy.AccessNotice, error) {
+	missing := map[string]struct{}{}
+	root := sandboxProfileDBToPolicy(profile)
+	value, notices, err := sandboxpolicy.FlattenWithNotices(
+		*root,
+		func(name string) (*sandboxpolicy.Profile, error) {
+			if included := registry[name]; included != nil {
+				return included, nil
+			}
+			missing[name] = struct{}{}
+			// An empty stand-in lets inspection continue without pretending the
+			// unresolved layer contributed any authority.
+			return &sandboxpolicy.Profile{Name: name}, nil
+		},
+	)
+	if err != nil {
+		return sandboxpolicy.Profile{}, nil, err
+	}
+	names := make([]string, 0, len(missing))
+	for name := range missing {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		notices = sandboxpolicy.MergeAccessNotices(notices, sandboxpolicy.AccessNotice{
+			Class:  sandboxpolicy.AccessNoticeClassComposition,
+			Axis:   "includes",
+			Reason: sandboxpolicy.AccessNoticeReasonMissingInclude,
+			Effect: sandboxpolicy.AccessNoticeEffectPreviewIncomplete,
+			Detail: fmt.Sprintf(
+				"included sandbox profile %q was not found in registry; its rules are absent from this preview",
+				name,
+			),
+		})
+	}
+	return value, notices, nil
 }
 
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
@@ -546,10 +593,7 @@ func effectiveDraftSandboxProfileContexts(
 			if profile == nil {
 				return nil, nil, nil
 			}
-			root := sandboxProfileDBToPolicy(profile)
-			value, notices, flattenErr := sandboxpolicy.FlattenWithNotices(*root, func(name string) (*sandboxpolicy.Profile, error) {
-				return registry[name], nil
-			})
+			value, notices, flattenErr := flattenSandboxProfileForDraftInspection(profile, registry)
 			return &value, notices, flattenErr
 		}
 		globalPolicy, globalNotices, err := flatten(item.global)
