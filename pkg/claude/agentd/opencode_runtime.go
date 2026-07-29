@@ -2584,10 +2584,9 @@ func reconcileOpenCodeStandingOrderOrigin(
 ) (bool, bool) {
 	if projector == nil || origin == nil ||
 		origin.State != db.StandingOrderTurnOriginPending ||
-		projector.originReconciled || runtime.ServerURL == "" {
-		return false, false
+		runtime.ServerURL == "" {
+		return false, true
 	}
-	projector.originReconciled = true
 	state, err := openCodePromptTurnHistory(runtime, origin.OpenCodeMessageID)
 	if err != nil {
 		slog.Warn("OpenCode standing-order origin: history reconciliation failed",
@@ -2647,9 +2646,10 @@ func applyOpenCodeHooks(
 			// assistant parent arrives; unrelated Stop events cannot clear it.
 			originUncertain =
 				origin != nil && origin.State == db.StandingOrderTurnOriginPending
-			if _, uncertain := reconcileOpenCodeStandingOrderOrigin(
-				runtime, projector, agentID, origin); origin != nil &&
+			if len(projected) > 0 && origin != nil &&
 				origin.State == db.StandingOrderTurnOriginPending {
+				_, uncertain := reconcileOpenCodeStandingOrderOrigin(
+					runtime, projector, agentID, origin)
 				originUncertain = uncertain
 			}
 		}

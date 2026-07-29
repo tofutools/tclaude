@@ -518,8 +518,17 @@ func TestOpenCodeStandingOrderOriginReconcilesCompletedTurnAfterSSEGap(t *testin
 		agentID, convID, messageID, origin.OpenCodeMessageID,
 		time.Now(), standingOrderOriginActiveTTL))
 
+	var completed atomic.Bool
+	var historyReads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/session/"+convID+"/message", r.URL.Path)
+		historyReads.Add(1)
+		if !completed.Load() {
+			_, _ = fmt.Fprintf(w,
+				`[{"info":{"id":%q,"sessionID":%q,"role":"user","time":{"created":1}}}]`,
+				origin.OpenCodeMessageID, convID)
+			return
+		}
 		_, _ = fmt.Fprintf(w,
 			`[{"info":{"id":%q,"sessionID":%q,"role":"user","time":{"created":1}}},`+
 				`{"info":{"id":"msg_assistant","sessionID":%q,"role":"assistant",`+
@@ -533,6 +542,23 @@ func TestOpenCodeStandingOrderOriginReconcilesCompletedTurnAfterSSEGap(t *testin
 		ServerURL: server.URL, Password: password, PID: os.Getpid(),
 	}
 	restartedProjector := newOpenCodeEventProjector(convID, home)
+	for range 2 {
+		applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
+			[]session.HookCallbackInput{{
+				HookEventName: "PreToolUse",
+				ConvID:        convID,
+				ToolName:      "Bash",
+			}})
+		current, getErr := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+		require.NoError(t, getErr)
+		require.NotNil(t, current)
+		assert.Equal(t, db.StandingOrderTurnOriginPending, current.State)
+		assert.False(t, restartedProjector.standingOrderTurn)
+	}
+	assert.Equal(t, int32(2), historyReads.Load(),
+		"pending history must remain retryable and fail closed on every boundary")
+
+	completed.Store(true)
 	applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
 		[]session.HookCallbackInput{{
 			HookEventName: "Stop",
