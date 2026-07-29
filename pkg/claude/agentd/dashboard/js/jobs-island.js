@@ -96,6 +96,78 @@ function CronRow({ job, actions }) {
   </tr>`;
 }
 
+function StandingOrderTarget({ order }) {
+  const target = order.target || {};
+  if (target.kind === 'group') {
+    return html`<${Fragment}>
+      <span class="tag">group:${target.group_name || ('#' + target.group_id)}</span>
+      ${target.role && html`<div class="muted">role:${target.role}</div>`}
+    </${Fragment}>`;
+  }
+  if (target.conv) {
+    return html`<span class="rowname" title=${idTooltip(target.agent, target.conv)}>
+      ${shortAgentId(target.agent, target.conv)}
+    </span>`;
+  }
+  return html`<span class="muted">(no target)</span>`;
+}
+
+function StandingOrderOutcome({ evaluation }) {
+  if (!evaluation) return html`<span class="state-pill state-offline" title="never evaluated">never evaluated</span>`;
+  const outcome = evaluation.outcome || 'unknown';
+  const cls = outcome === 'delivered'
+    ? 'state-working'
+    : outcome === 'no-match' || outcome === 'suppressed-cadence'
+      ? 'state-offline'
+      : outcome === 'not-evaluated-trimmed'
+        ? 'state-error'
+        : 'state-awaiting';
+  return html`<${Fragment}>
+    <span class=${`state-pill ${cls}`} title=${evaluation.detail || outcome}>${outcome}</span>
+    ${evaluation.detail && html`<div class="muted order-evaluation-detail" title=${evaluation.detail}>${evaluation.detail}</div>`}
+  </${Fragment}>`;
+}
+
+function StandingOrderCapability({ capability }) {
+  const value = capability || {};
+  const status = value.status || 'unsupported';
+  const cls = status === 'supported' ? 'state-working' : status === 'degraded' ? 'state-awaiting' : 'state-error';
+  return html`<${Fragment}>
+    <span class=${`state-pill ${cls}`} title=${value.detail || status}>${status}</span>
+    <div class="muted">${value.transport || 'none'}</div>
+  </${Fragment}>`;
+}
+
+function StandingOrderRow({ order }) {
+  const summary = (order.summary || '').replace(/\s+/g, ' ').trim();
+  return html`<tr data-key=${`standing-order-${order.id}`}>
+    <td>${order.enabled
+      ? html`<span class="online" title="enabled">●</span>`
+      : html`<span class="offline" title=${order.disabled_reason || 'disabled'}>○</span>`}</td>
+    <td><span class="tag">📌 order</span></td>
+    <td class="id">${order.id}</td>
+    <td title=${summary}>
+      <div class="rowname">${order.name}</div>
+      <div class="muted">${summary}</div>
+      <div class="muted">revision ${order.revision || 1} · ${order.cadence || 'always'}</div>
+    </td>
+    <td>
+      <${StandingOrderTarget} order=${order} />
+      <div class="muted" title=${order.operator_authored ? 'Authored by the human operator' : idTooltip(order.owner_agent, order.owner_conv)}>
+        by ${order.operator_authored ? 'the operator' : shortAgentId(order.owner_agent, order.owner_conv)}
+      </div>
+    </td>
+    <td><${StandingOrderOutcome} evaluation=${order.last_evaluation} /></td>
+    <td><span class="last-hook">${relTime(order.last_evaluation?.at || order.updated_at) || '—'}</span></td>
+    <td>
+      <div class="rowname">${order.trigger?.label || order.trigger?.event || '—'}</div>
+      <div class="muted">requires ${order.timing || 'next-turn'}</div>
+      <${StandingOrderCapability} capability=${order.capability} />
+    </td>
+    <td><span class="muted" title="Standing-order management is CLI-only in this first prototype">CLI</span></td>
+  </tr>`;
+}
+
 function ExportName({ job }) {
   const name = job.title || job.artifact_name;
   if (!name) return html`<span class="muted">(${job.preset || 'untitled'})</span>`;
@@ -186,7 +258,23 @@ function Pager({ state, paging, refresh, disabled = false }) {
   </div>`;
 }
 
-function EmptyJobs() {
+function EmptyJobs({ kind }) {
+  if (kind === 'standing-order') {
+    return html`<div class="empty">No standing orders yet. The first prototype manages them with
+      <code>tclaude agent orders</code>; matching orders and their latest evaluation appear here.
+    </div>`;
+  }
+  if (kind === 'cron') {
+    return html`<div class="empty">No schedules yet. Use <strong>
+      <span class="cron-open-label-regular">+ new cron job</span>
+      <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> above.
+    </div>`;
+  }
+  if (kind === 'export') {
+    return html`<div class="empty">No export jobs yet. Start one from an agent row's ⚙ menu →
+      <strong>📋 summary…</strong>.
+    </div>`;
+  }
   return html`<div class="empty">No jobs yet. Agent exports appear here when started (an agent row's ⚙ menu →
     <strong>📋 summary…</strong>); schedule a cron job with the <strong>
     <span class="cron-open-label-regular">+ new cron job</span>
@@ -244,11 +332,12 @@ export function JobsApp({ state, actions }) {
       <button class="clear-filter" id="filter-jobs-clear" title="Clear filter" aria-label="Clear job filter"
         onClick=${() => { onQuery(''); inputRef.current?.focus(); }}>×</button>
       <span class="spacer"></span>
-      <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
-        onClick=${() => actions.openCronCreate({})}>
-        <span class="cron-open-label-regular">+ new cron job</span>
-        <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
-      </button>
+      ${(current.kind === 'all' || current.kind === 'cron') && html`
+        <button id="cron-create-open" class="primary" title="Schedule a new recurring cron job"
+          onClick=${() => actions.openCronCreate({})}>
+          <span class="cron-open-label-regular">+ new cron job</span>
+          <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span>
+        </button>`}
     </div>
     <${AsyncLoadState} label="Jobs" request=${current.request}
       retry=${() => void actions.refresh()} errorClass="jobs-error" />
@@ -256,13 +345,15 @@ export function JobsApp({ state, actions }) {
       ${!current.request.hasLoaded
         ? null
         : current.rows.length === 0
-          ? html`<${EmptyJobs} />`
+          ? html`<${EmptyJobs} kind=${current.kind} />`
           : html`<${Fragment}>
             <table>
               <${SortHead} active=${current.sort} onSort=${(col) => state.cycleSort(col)} />
               <tbody>${current.rows.map((row) => row.kind === 'cron'
                 ? html`<${CronRow} key=${`cron-${row.cron?.id}`} job=${row.cron || {}} actions=${actions} />`
-                : html`<${ExportRow} key=${`export-${row.export?.id}`} job=${row.export || {}} actions=${actions} />`
+                : row.kind === 'standing-order'
+                  ? html`<${StandingOrderRow} key=${`standing-order-${row.order?.id}`} order=${row.order || {}} />`
+                  : html`<${ExportRow} key=${`export-${row.export?.id}`} job=${row.export || {}} actions=${actions} />`
               )}</tbody>
             </table>
             <${Pager} state=${state} paging=${paging} refresh=${actions.refresh}

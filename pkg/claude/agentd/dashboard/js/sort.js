@@ -220,7 +220,7 @@ const MEMBER_ACCESSORS = {
 };
 
 // The Jobs tab's unified job table (tabs.js renderJobsTab) — rows are
-// {kind, export?, cron?} from /api/jobs, so every accessor branches on the
+// {kind, export?, cron?, order?} from /api/jobs, so every accessor branches on the
 // kind. Pagination + the text filter are server-side; this sort orders the
 // SERVED WINDOW only, like the retired/conversations/replaced sub-tables.
 // The default server order (newest activity first) is what the third header
@@ -239,25 +239,33 @@ const JOBS_COLS = [
 ];
 const JOBS_ACCESSORS = {
   kind: r => r.kind,
-  id:   r => (r.cron ? r.cron.id : r.export?.id),
+  id:   r => (r.order ? r.order.id : r.cron ? r.cron.id : r.export?.id),
   // export names sort on the same fallback the cell displays (title, else
   // the delivered artifact's filename); still-blank rows sort last.
-  name: r => (r.cron ? r.cron.name : (r.export?.title || r.export?.artifact_name || '')),
-  agent: r => r.cron
-    ? (r.cron.group_name || r.cron.target_label || r.cron.target_agent || r.cron.target_conv)
-    : (r.export?.conv_label || r.export?.conv_id),
+  name: r => (r.order ? r.order.name : r.cron ? r.cron.name : (r.export?.title || r.export?.artifact_name || '')),
+  agent: r => r.order
+    ? (r.order.target?.group_name || r.order.target?.agent || r.order.target?.conv)
+    : r.cron
+      ? (r.cron.group_name || r.cron.target_label || r.cron.target_agent || r.cron.target_conv)
+      : (r.export?.conv_label || r.export?.conv_id),
   // status groups by lifecycle word: cron enabled/disabled, export
   // cloning/requested/running/ready/failed.
-  status: r => (r.cron ? (r.cron.enabled ? 'enabled' : 'disabled') : r.export?.status),
+  status: r => r.order
+    ? (r.order.last_evaluation?.outcome || (r.order.enabled ? 'enabled' : 'disabled'))
+    : (r.cron ? (r.cron.enabled ? 'enabled' : 'disabled') : r.export?.status),
   // when sorts on the raw ISO stamp (lexical ≈ chronological): cron = last
   // run, export = started. Export stamps are RFC3339Nano, whose trimmed
   // trailing zeros can misorder within the same second — fine for a window
   // display sort (never rely on this ordering server-side).
-  when: r => (r.cron ? r.cron.last_run_at : r.export?.created_at),
+  when: r => r.order
+    ? (r.order.last_evaluation?.at || r.order.updated_at)
+    : (r.cron ? r.cron.last_run_at : r.export?.created_at),
   // info is numeric per kind — cron interval seconds vs export artifact
   // bytes. Comparing across kinds is meaningless but stable; within a kind
   // (or with a kind filter) it's the natural magnitude sort.
-  info: r => (r.cron ? r.cron.interval_seconds : r.export?.artifact_size),
+  info: r => r.order
+    ? (r.order.trigger?.label || r.order.trigger?.event)
+    : (r.cron ? r.cron.interval_seconds : r.export?.artifact_size),
 };
 
 const LINK_COLS = [

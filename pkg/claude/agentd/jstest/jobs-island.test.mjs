@@ -25,8 +25,19 @@ function page(name = 'Daily summary') {
         status: 'ready', ready: true, artifact_name: 'summary.md', artifact_size: 2048,
         created_at: '2026-07-11T11:00:00Z',
       } },
+      { kind: 'standing-order', order: {
+        id: 3, name: 'pr-early', revision: 2, enabled: true, operator_authored: true,
+        target: { kind: 'group', group_id: 7, group_name: 'tclaude', role: 'worker' },
+        summary: 'Push the PR early.', trigger: { event: 'session.start', label: 'session start (compact)' },
+        timing: 'same-continuation', cadence: 'once-per-generation',
+        capability: { status: 'degraded', transport: 'hook-context', detail: 'OpenCode uses a queued turn.' },
+        last_evaluation: {
+          at: '2026-07-11T12:00:00Z', outcome: 'not-evaluated-trimmed',
+          detail: 'Tool input was trimmed.',
+        },
+      } },
     ],
-    paging: { jobs: { offset: 0, limit: 50, total: 2, total_unfiltered: 2 } },
+    paging: { jobs: { offset: 0, limit: 50, total: 3, total_unfiltered: 3 } },
   };
 }
 
@@ -68,6 +79,10 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   await harness.act(() => harness.fireEvent(allJobs, 'click'));
   assert.equal(state.kind.value, 'all');
   const cronRow = mounted.container.querySelector('tr[data-key="cron-1"]');
+  const orderRow = mounted.container.querySelector('tr[data-key="standing-order-3"]');
+  assert.match(orderRow.textContent, /pr-early/);
+  assert.match(orderRow.textContent, /not-evaluated-trimmed/);
+  assert.ok(orderRow.querySelector('.state-error'), 'trimmed evaluation is visually distinct');
   const edit = getByRole(cronRow, 'button', { name: 'edit' });
   edit.focus();
   const selectedTextNode = cronRow.querySelector('.rowname').firstChild;
@@ -115,7 +130,7 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
     state.failRequest(3, new Error('network down'));
   });
   assert.match(getByRole(mounted.container, 'alert').textContent, /network down/);
-  assert.equal(mounted.container.querySelectorAll('tbody tr').length, 2, 'stale page remains visible');
+  assert.equal(mounted.container.querySelectorAll('tbody tr').length, 3, 'stale page remains visible');
   assert.equal(nextPage.disabled, true, 'stale-page navigation is disabled until Retry succeeds');
   const retry = getByRole(mounted.container, 'button', { name: 'Retry' });
   const refreshesBeforeRetry = calls.filter((call) => call === 'refresh').length;

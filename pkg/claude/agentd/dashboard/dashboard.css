@@ -7188,6 +7188,9 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 }
 .jobs-subtab:hover { color: #d4d4d4; }
 .jobs-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.order-evaluation-detail {
+  max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .ej-status { font-size: 12px; white-space: nowrap; }
 .ej-status.ready { color: #3fb950; }
 .ej-status.failed { color: #f85149; }
