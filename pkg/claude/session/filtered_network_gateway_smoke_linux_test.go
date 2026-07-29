@@ -684,11 +684,19 @@ func runFilteredNetworkDNSDenyHelper(
 	// They defeat both the CIDR allow and the earlier positive sibling lease.
 	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip4")
 	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip6")
-	filteredSmokeTCPDenied(t, "tcp4", adjacent4Allowed)
-	filteredSmokeUDPDenied(t, "udp4", adjacent4Allowed)
-	filteredSmokeTCPDenied(t, "tcp6", adjacent6Allowed)
-	filteredSmokeUDPDenied(t, "udp6", adjacent6Allowed)
 	filteredSmokeTCPEchoDeniedOnConnection(t, established)
+
+	// Each denied connection probe consumes most of the fixture's deliberately
+	// short two-second TTL. Refresh per family so every assertion measures a
+	// current negative lease rather than racing its intended expiry.
+	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip4")
+	filteredSmokeTCPDenied(t, "tcp4", adjacent4Allowed)
+	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip4")
+	filteredSmokeUDPDenied(t, "udp4", adjacent4Allowed)
+	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip6")
+	filteredSmokeTCPDenied(t, "tcp6", adjacent6Allowed)
+	filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip6")
+	filteredSmokeUDPDenied(t, "udp6", adjacent6Allowed)
 
 	// Exact domains do not deny children; subdomain rules are label-bound.
 	filteredSmokeDNSDenied(t, filteredGatewayExactDomain, "ip4")
