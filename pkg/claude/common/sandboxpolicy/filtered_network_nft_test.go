@@ -1,11 +1,34 @@
 package sandboxpolicy
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRenderFilteredNetworkNFTDenyPrecedesEstablishedAndAllow(t *testing.T) {
+	ir, err := CompileFilteredNetworkRules(NetworkRules{
+		Mode:  AccessModeOpen,
+		Allow: nil,
+		Deny: []NetworkAllowEntry{
+			{CIDR: "192.0.2.0/24"},
+			{Host: "blocked.example.test", Ports: []int{443}},
+		},
+	})
+	require.NoError(t, err)
+	got, err := RenderFilteredNetworkNFT(ir)
+	require.NoError(t, err)
+	assert.Contains(t, got, "policy accept;")
+	staticDeny := "ip daddr 192.0.2.0/24 meta l4proto tcp drop"
+	dnsDeny := "ip daddr @dns4_d_1 tcp dport { 443 } drop"
+	established := "ct state established accept"
+	require.Contains(t, got, staticDeny)
+	require.Contains(t, got, dnsDeny)
+	assert.Less(t, strings.Index(got, staticDeny), strings.Index(got, established))
+	assert.Less(t, strings.Index(got, dnsDeny), strings.Index(got, established))
+}
 
 func TestRenderFilteredNetworkNFTRendersCIDRPortsAndSyntheticLoopback(t *testing.T) {
 	ir, err := CompileFilteredNetworkRules(NetworkRules{
@@ -65,12 +88,12 @@ func TestRenderFilteredNetworkNFTRendersBoundedTTLLeaseSets(t *testing.T) {
 		assert.Contains(t, got, "flags timeout")
 		assert.Contains(t, got, "size 4096")
 	}
-	assert.Contains(t, got, "ip daddr @dns4_0 tcp dport { 443 } accept")
-	assert.Contains(t, got, "ip6 daddr @dns6_0 udp dport { 443 } accept")
-	assert.Contains(t, got, "ip daddr @dns4_1 tcp dport { 443, 8443 } accept")
-	assert.Contains(t, got, "ip6 daddr @dns6_1 udp dport { 443, 8443 } accept")
-	assert.Contains(t, got, "ip daddr @dns4_2 meta l4proto tcp accept")
-	assert.Contains(t, got, "ip6 daddr @dns6_2 meta l4proto udp accept")
+	assert.Contains(t, got, "ip daddr @dns4_0 tcp dport { 443, 8443 } accept")
+	assert.Contains(t, got, "ip6 daddr @dns6_0 udp dport { 443, 8443 } accept")
+	assert.Contains(t, got, "ip daddr @dns4_1 meta l4proto tcp accept")
+	assert.Contains(t, got, "ip6 daddr @dns6_1 meta l4proto udp accept")
+	assert.Contains(t, got, "ip daddr @dns4_2 tcp dport { 443 } accept")
+	assert.Contains(t, got, "ip6 daddr @dns6_2 udp dport { 443 } accept")
 }
 
 func TestRenderFilteredNetworkNFTRejectsDuplicateAuthoredIndexes(t *testing.T) {

@@ -23,8 +23,8 @@ func TestMatchFilteredNetworkDNSNameIsExactAndLabelBound(t *testing.T) {
 		name string
 		want []int
 	}{
-		{"api.example.com.", []int{0}},
-		{"API.EXAMPLE.COM", []int{0}},
+		{"api.example.com.", []int{3}},
+		{"API.EXAMPLE.COM", []int{3}},
 		{"other.example.com", nil},
 		{"example.net", []int{1}},
 		{"child.example.net", nil},

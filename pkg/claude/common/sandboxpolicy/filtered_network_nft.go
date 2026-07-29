@@ -30,88 +30,141 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 	if rules.ProtocolContract != FilteredNetworkProtocolContract {
 		return "", fmt.Errorf("filtered network protocol contract is invalid")
 	}
+	defaultVerdict := FilteredNetworkDefaultVerdictForRules(rules)
+	if defaultVerdict != FilteredNetworkDefaultDrop &&
+		defaultVerdict != FilteredNetworkDefaultAccept {
+		return "", fmt.Errorf("filtered network default verdict %q is invalid",
+			defaultVerdict)
+	}
 	var body strings.Builder
 	body.WriteString("flush ruleset\n")
 	body.WriteString("table inet " + FilteredNetworkNFTTable + " {\n")
-	seenEntryIndexes := make(map[int]struct{}, len(rules.Rules))
-	for i, rule := range rules.Rules {
-		if rule.EntryIndex < 0 {
-			return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
+	for _, polarity := range []struct {
+		deny  bool
+		rules []FilteredNetworkRule
+	}{
+		{rules: rules.Rules},
+		{deny: true, rules: rules.DenyRules},
+	} {
+		seenEntryIndexes := make(map[int]struct{}, len(polarity.rules))
+		for i, rule := range polarity.rules {
+			if rule.EntryIndex < 0 {
+				return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
+			}
+			if _, exists := seenEntryIndexes[rule.EntryIndex]; exists {
+				return "", fmt.Errorf(
+					"filtered network rule %d repeats authored index %d",
+					i, rule.EntryIndex,
+				)
+			}
+			seenEntryIndexes[rule.EntryIndex] = struct{}{}
+			if rule.Selector != NetworkSelectorHost &&
+				rule.Selector != NetworkSelectorDomain {
+				continue
+			}
+			ipv4Set, ipv6Set := FilteredNetworkDNSSetNamesForRule(
+				polarity.deny, rule.EntryIndex)
+			writeFilteredDNSSet(&body, ipv4Set, "ipv4_addr")
+			writeFilteredDNSSet(&body, ipv6Set, "ipv6_addr")
 		}
-		if _, exists := seenEntryIndexes[rule.EntryIndex]; exists {
-			return "", fmt.Errorf(
-				"filtered network rule %d repeats authored index %d",
-				i, rule.EntryIndex,
-			)
-		}
-		seenEntryIndexes[rule.EntryIndex] = struct{}{}
-		if rule.Selector != NetworkSelectorHost &&
-			rule.Selector != NetworkSelectorDomain {
-			continue
-		}
-		ipv4Set, ipv6Set := FilteredNetworkDNSSetNames(rule.EntryIndex)
-		writeFilteredDNSSet(&body, ipv4Set, "ipv4_addr")
-		writeFilteredDNSSet(&body, ipv6Set, "ipv6_addr")
 	}
 	body.WriteString("  chain output {\n")
-	body.WriteString("    type filter hook output priority filter; policy drop;\n")
+	body.WriteString("    type filter hook output priority filter; policy " +
+		string(defaultVerdict) + ";\n")
 	body.WriteString("    oifname \"lo\" accept\n")
-	// Lease expiry stops new flows without tearing down traffic admitted while
-	// the lease was valid. Deliberately omit "related": protocol-created side
-	// channels must satisfy authored destination and port rules of their own.
-	body.WriteString("    ct state established accept\n")
 	// IPv6 needs router and neighbor discovery to configure and reach pasta's
 	// tap gateway. Limit that control plane to link-local destinations and
 	// link-local multicast with the hop limit required by RFC 4861.
-	body.WriteString("    ip6 daddr { fe80::/10, ff02::/16 } ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n")
-	for i, rule := range rules.Rules {
-		for portIndex, port := range rule.Ports {
-			if port < 1 || port > 65535 {
-				return "", fmt.Errorf("filtered network rule %d has invalid port %d", i, port)
-			}
-			if portIndex > 0 && rule.Ports[portIndex-1] >= port {
-				return "", fmt.Errorf("filtered network rule %d ports are not canonical", i)
-			}
+	ndRule := "    ip6 daddr { fe80::/10, ff02::/16 } ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept\n"
+	if len(rules.DenyRules) > 0 {
+		body.WriteString(ndRule)
+		if err := writeFilteredNFTRules(&body, rules.DenyRules, true); err != nil {
+			return "", err
 		}
-		switch rule.Selector {
-		case NetworkSelectorCIDR:
-			prefix, err := netip.ParsePrefix(rule.Value)
-			if err != nil {
-				return "", fmt.Errorf("filtered network rule %d CIDR: %w", i, err)
-			}
-			if prefix.String() != rule.Value {
-				return "", fmt.Errorf("filtered network rule %d CIDR is not canonical", i)
-			}
-			writeFilteredNFTRule(&body, prefix.Addr().Is4(), rule.Value, rule.Ports)
-		case NetworkSelectorLoopback:
-			if rule.Value != FilteredNetworkHostLoopbackName {
-				return "", fmt.Errorf("filtered network rule %d has invalid loopback identity", i)
-			}
-			writeFilteredNFTRule(&body, true, FilteredNetworkLoopbackIPv4+"/32", rule.Ports)
-			writeFilteredNFTRule(&body, false, FilteredNetworkLoopbackIPv6+"/128", rule.Ports)
-		case NetworkSelectorHost, NetworkSelectorDomain:
-			if strings.TrimSpace(rule.Value) == "" {
-				return "", fmt.Errorf(
-					"filtered network rule %d selector %q has no DNS identity",
-					i, rule.Selector,
-				)
-			}
-			ipv4Set, ipv6Set := FilteredNetworkDNSSetNames(rule.EntryIndex)
-			writeFilteredNFTSetRule(&body, true, ipv4Set, rule.Ports)
-			writeFilteredNFTSetRule(&body, false, ipv6Set, rule.Ports)
-		default:
-			return "", fmt.Errorf("filtered network rule %d has unknown selector %q", i, rule.Selector)
-		}
+	}
+	// Denies precede established-flow acceptance so a fresh negative DNS lease
+	// cuts matching established TCP and UDP authority immediately.
+	body.WriteString("    ct state established accept\n")
+	if len(rules.DenyRules) == 0 {
+		body.WriteString(ndRule)
+	}
+	if err := writeFilteredNFTRules(&body, rules.Rules, false); err != nil {
+		return "", err
 	}
 	body.WriteString("  }\n")
 	body.WriteString("}\n")
 	return body.String(), nil
 }
 
+func writeFilteredNFTRules(
+	body *strings.Builder,
+	rules []FilteredNetworkRule,
+	deny bool,
+) error {
+	action := "accept"
+	if deny {
+		action = "drop"
+	}
+	for i, rule := range rules {
+		for portIndex, port := range rule.Ports {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("filtered network rule %d has invalid port %d", i, port)
+			}
+			if portIndex > 0 && rule.Ports[portIndex-1] >= port {
+				return fmt.Errorf("filtered network rule %d ports are not canonical", i)
+			}
+		}
+		switch rule.Selector {
+		case NetworkSelectorCIDR:
+			prefix, err := netip.ParsePrefix(rule.Value)
+			if err != nil {
+				return fmt.Errorf("filtered network rule %d CIDR: %w", i, err)
+			}
+			if prefix.String() != rule.Value {
+				return fmt.Errorf("filtered network rule %d CIDR is not canonical", i)
+			}
+			writeFilteredNFTRule(body, prefix.Addr().Is4(), rule.Value, rule.Ports, action)
+		case NetworkSelectorLoopback:
+			if rule.Value != FilteredNetworkHostLoopbackName {
+				return fmt.Errorf("filtered network rule %d has invalid loopback identity", i)
+			}
+			writeFilteredNFTRule(body, true, FilteredNetworkLoopbackIPv4+"/32", rule.Ports, action)
+			writeFilteredNFTRule(body, false, FilteredNetworkLoopbackIPv6+"/128", rule.Ports, action)
+		case NetworkSelectorHost, NetworkSelectorDomain:
+			if strings.TrimSpace(rule.Value) == "" {
+				return fmt.Errorf(
+					"filtered network rule %d selector %q has no DNS identity",
+					i, rule.Selector,
+				)
+			}
+			ipv4Set, ipv6Set := FilteredNetworkDNSSetNamesForRule(
+				deny, rule.EntryIndex)
+			writeFilteredNFTSetRule(body, true, ipv4Set, rule.Ports, action)
+			writeFilteredNFTSetRule(body, false, ipv6Set, rule.Ports, action)
+		default:
+			return fmt.Errorf("filtered network rule %d has unknown selector %q", i, rule.Selector)
+		}
+	}
+	return nil
+}
+
 // FilteredNetworkDNSSetNames is the single naming contract shared by the
 // launch-time nft renderer and the outer DNS broker.
 func FilteredNetworkDNSSetNames(entryIndex int) (ipv4, ipv6 string) {
 	return "dns4_" + strconv.Itoa(entryIndex), "dns6_" + strconv.Itoa(entryIndex)
+}
+
+// FilteredNetworkDNSSetNamesForRule namespaces deny leases independently while
+// preserving the legacy allow-only naming contract.
+func FilteredNetworkDNSSetNamesForRule(
+	deny bool,
+	entryIndex int,
+) (ipv4, ipv6 string) {
+	if !deny {
+		return FilteredNetworkDNSSetNames(entryIndex)
+	}
+	return "dns4_d_" + strconv.Itoa(entryIndex),
+		"dns6_d_" + strconv.Itoa(entryIndex)
 }
 
 func writeFilteredDNSSet(body *strings.Builder, name, setType string) {
@@ -122,7 +175,13 @@ func writeFilteredDNSSet(body *strings.Builder, name, setType string) {
 	body.WriteString("  }\n")
 }
 
-func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, ports []int) {
+func writeFilteredNFTRule(
+	body *strings.Builder,
+	ipv4 bool,
+	destination string,
+	ports []int,
+	action string,
+) {
 	family := "ip6"
 	if ipv4 {
 		family = "ip"
@@ -149,11 +208,17 @@ func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, 
 			// restriction, preserving the contract's TCP/UDP-only floor.
 			body.WriteString("meta l4proto " + protocol)
 		}
-		body.WriteString(" accept\n")
+		body.WriteString(" " + action + "\n")
 	}
 }
 
-func writeFilteredNFTSetRule(body *strings.Builder, ipv4 bool, setName string, ports []int) {
+func writeFilteredNFTSetRule(
+	body *strings.Builder,
+	ipv4 bool,
+	setName string,
+	ports []int,
+	action string,
+) {
 	family := "ip6"
 	if ipv4 {
 		family = "ip"
@@ -172,7 +237,7 @@ func writeFilteredNFTSetRule(body *strings.Builder, ipv4 bool, setName string, p
 		} else {
 			body.WriteString("meta l4proto " + protocol)
 		}
-		body.WriteString(" accept\n")
+		body.WriteString(" " + action + "\n")
 	}
 }
 

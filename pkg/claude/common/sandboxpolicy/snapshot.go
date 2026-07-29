@@ -159,7 +159,10 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 			}
 			switch notice.Reason {
 			case "no_mechanism", "selector_unsupported", "platform_path_blind":
-				axes.Network = NetworkRules{Mode: AccessModeOpen}
+				axes.Network = NetworkRules{
+					Mode: AccessModeOpen,
+					Deny: cloneNetworkRules(axes.Network).Deny,
+				}
 			case "ports_unsupported":
 				if len(notice.Entries) == 0 {
 					for i := range axes.Network.Allow {
@@ -172,6 +175,9 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 						}
 					}
 				}
+			case "deny_selector_unsupported", "deny_ports_unsupported":
+				axes.Network.Deny = omitNetworkEntries(
+					axes.Network.Deny, notice.Entries)
 			}
 		case "unix_sockets":
 			if axes.UnixSockets.Mode != AccessModeList {
@@ -186,7 +192,37 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 	return axes, nil
 }
 
+func omitNetworkEntries(
+	entries []NetworkAllowEntry,
+	omitted []int,
+) []NetworkAllowEntry {
+	if len(omitted) == 0 {
+		return entries
+	}
+	indices := make(map[int]struct{}, len(omitted))
+	for _, index := range omitted {
+		indices[index] = struct{}{}
+	}
+	out := make([]NetworkAllowEntry, 0, len(entries))
+	for i, entry := range entries {
+		if _, ok := indices[i]; ok {
+			continue
+		}
+		entry.Ports = append([]int(nil), entry.Ports...)
+		out = append(out, entry)
+	}
+	return out
+}
+
 func networkRulesContained(parent, child NetworkRules) bool {
+	// A replacement must retain every launched deny. Requiring explicit
+	// coverage is intentionally conservative even when the child baseline
+	// would happen to make a particular deny redundant.
+	for _, denied := range parent.Deny {
+		if !networkEntryCoveredByAny(denied, child.Deny) {
+			return false
+		}
+	}
 	if child.Mode == AccessModeUnset {
 		return parent.Mode == AccessModeUnset || parent.Mode == AccessModeOpen
 	}
@@ -234,6 +270,27 @@ func networkRulesContained(parent, child NetworkRules) bool {
 		}
 	}
 	return true
+}
+
+func networkEntryCoveredByAny(
+	entry NetworkAllowEntry,
+	covers []NetworkAllowEntry,
+) bool {
+	for _, cover := range covers {
+		selector, ok := intersectNetworkSelector(cover, entry)
+		if !ok {
+			continue
+		}
+		ports, ok := intersectPorts(cover.Ports, entry.Ports)
+		if !ok {
+			continue
+		}
+		selector.Ports = ports
+		if networkEntryKey(selector) == networkEntryKey(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 func unixSocketRulesContained(parent, child UnixSocketRules) bool {

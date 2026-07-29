@@ -934,20 +934,35 @@ func UnixSocketLaunchNotice(result *UnixSocketMaterialization) *AccessNotice {
 }
 
 // intersectNetworkRules composes two already-normalized rules without ever
-// widening either side. Unset is absorbed; closed dominates; two lists retain
-// only selector and port overlap.
+// widening either side. Baseline authority intersects while deny authority
+// unions, so authoring order cannot affect the result:
+// (B1-D1) ∩ (B2-D2) = (B1∩B2) - (D1∪D2).
 func intersectNetworkRules(left, right NetworkRules) NetworkRules {
+	out := intersectNetworkBaselines(left, right)
+	out.Deny = unionNetworkEntries(left.Deny, right.Deny)
+	return out
+}
+
+func intersectNetworkBaselines(left, right NetworkRules) NetworkRules {
 	switch {
 	case left.Mode == AccessModeUnset:
-		return cloneNetworkRules(right)
+		return NetworkRules{
+			Mode: right.Mode, Allow: cloneNetworkRules(right).Allow,
+		}
 	case right.Mode == AccessModeUnset:
-		return cloneNetworkRules(left)
+		return NetworkRules{
+			Mode: left.Mode, Allow: cloneNetworkRules(left).Allow,
+		}
 	case left.Mode == AccessModeClosed || right.Mode == AccessModeClosed:
 		return NetworkRules{Mode: AccessModeClosed}
 	case left.Mode == AccessModeOpen:
-		return cloneNetworkRules(right)
+		return NetworkRules{
+			Mode: right.Mode, Allow: cloneNetworkRules(right).Allow,
+		}
 	case right.Mode == AccessModeOpen:
-		return cloneNetworkRules(left)
+		return NetworkRules{
+			Mode: left.Mode, Allow: cloneNetworkRules(left).Allow,
+		}
 	}
 	out := NetworkRules{Mode: AccessModeList}
 	seen := map[string]struct{}{}
@@ -972,6 +987,29 @@ func intersectNetworkRules(left, right NetworkRules) NetworkRules {
 	}
 	sort.Slice(out.Allow, func(i, j int) bool {
 		return networkEntryKey(out.Allow[i]) < networkEntryKey(out.Allow[j])
+	})
+	return out
+}
+
+func unionNetworkEntries(left, right []NetworkAllowEntry) []NetworkAllowEntry {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	out := make([]NetworkAllowEntry, 0, len(left)+len(right))
+	seen := make(map[string]struct{}, cap(out))
+	for _, entries := range [][]NetworkAllowEntry{left, right} {
+		for _, entry := range entries {
+			key := networkEntryKey(entry)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			entry.Ports = append([]int(nil), entry.Ports...)
+			out = append(out, entry)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return networkEntryKey(out[i]) < networkEntryKey(out[j])
 	})
 	return out
 }

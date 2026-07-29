@@ -24,18 +24,21 @@ type fakeFilteredDNSLeaseStore struct {
 }
 
 type fakeFilteredDNSLeaseCall struct {
-	rules   []sandboxpolicy.FilteredNetworkRule
+	matches sandboxpolicy.FilteredNetworkDNSMatches
 	address netip.Addr
 	ttl     time.Duration
 }
 
 func (f *fakeFilteredDNSLeaseStore) Ensure(
-	rules []sandboxpolicy.FilteredNetworkRule,
+	matches sandboxpolicy.FilteredNetworkDNSMatches,
 	address netip.Addr,
 	ttl time.Duration,
 ) (time.Duration, error) {
 	f.calls = append(f.calls, fakeFilteredDNSLeaseCall{
-		rules:   append([]sandboxpolicy.FilteredNetworkRule(nil), rules...),
+		matches: sandboxpolicy.FilteredNetworkDNSMatches{
+			Allow: append([]sandboxpolicy.FilteredNetworkRule(nil), matches.Allow...),
+			Deny:  append([]sandboxpolicy.FilteredNetworkRule(nil), matches.Deny...),
+		},
 		address: address,
 		ttl:     ttl,
 	})
@@ -100,8 +103,8 @@ func TestFilteredDNSBrokerExactNameCNAMEAndTTLLease(t *testing.T) {
 	assert.Equal(t, netip.MustParseAddr("192.0.2.44"), leases.calls[0].address)
 	assert.Equal(t, 30*time.Second, leases.calls[0].ttl,
 		"the address lease may not outlive the CNAME TTL")
-	require.Len(t, leases.calls[0].rules, 1)
-	assert.Equal(t, 0, leases.calls[0].rules[0].EntryIndex)
+	require.Len(t, leases.calls[0].matches.Allow, 1)
+	assert.Equal(t, 0, leases.calls[0].matches.Allow[0].EntryIndex)
 }
 
 func TestFilteredDNSBrokerRefusesSiblingWithoutUpstreamLookup(t *testing.T) {
@@ -120,6 +123,98 @@ func TestFilteredDNSBrokerRefusesSiblingWithoutUpstreamLookup(t *testing.T) {
 		t, broker, "sibling.example.test.", dnsmessage.TypeA)
 	assert.Equal(t, dnsmessage.RCodeRefused, response.RCode)
 	assert.False(t, upstreamCalled)
+}
+
+func TestFilteredDNSBrokerCNAMEIntoDeniedNameSeedsNegativeLease(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "alias.example.test",
+			}},
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "blocked.example.test",
+			}},
+		})
+	require.NoError(t, err)
+	leases := &fakeFilteredDNSLeaseStore{}
+	broker := testFilteredDNSBroker(rules, leases, func(
+		_ context.Context,
+		request dnsmessage.Message,
+	) (dnsmessage.Message, error) {
+		q := request.Questions[0]
+		response := dnsmessage.Message{
+			Header:    dnsmessage.Header{ID: request.ID, Response: true},
+			Questions: request.Questions,
+		}
+		if q.Name.String() == "alias.example.test." {
+			response.Answers = []dnsmessage.Resource{{
+				Header: dnsmessage.ResourceHeader{
+					Name: q.Name, Type: dnsmessage.TypeCNAME,
+					Class: dnsmessage.ClassINET, TTL: 30,
+				},
+				Body: &dnsmessage.CNAMEResource{
+					CNAME: dnsmessage.MustNewName("blocked.example.test."),
+				},
+			}}
+			return response, nil
+		}
+		response.Answers = []dnsmessage.Resource{{
+			Header: dnsmessage.ResourceHeader{
+				Name: q.Name, Type: dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET, TTL: 30,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 55}},
+		}}
+		return response, nil
+	})
+
+	response := queryFilteredDNSBroker(
+		t, broker, "alias.example.test.", dnsmessage.TypeA)
+	assert.Equal(t, dnsmessage.RCodeRefused, response.RCode)
+	assert.Empty(t, response.Answers)
+	require.Len(t, leases.calls, 1)
+	require.Len(t, leases.calls[0].matches.Allow, 1)
+	require.Len(t, leases.calls[0].matches.Deny, 1)
+	assert.Equal(t, "blocked.example.test",
+		leases.calls[0].matches.Deny[0].Value)
+}
+
+func TestFilteredDNSBrokerDefaultAllowPortDenyReturnsLeasedAnswer(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "blocked.example.test", Ports: []int{443},
+			}},
+		})
+	require.NoError(t, err)
+	leases := &fakeFilteredDNSLeaseStore{}
+	broker := testFilteredDNSBroker(rules, leases, func(
+		_ context.Context,
+		request dnsmessage.Message,
+	) (dnsmessage.Message, error) {
+		q := request.Questions[0]
+		return dnsmessage.Message{
+			Header:    dnsmessage.Header{ID: request.ID, Response: true},
+			Questions: request.Questions,
+			Answers: []dnsmessage.Resource{{
+				Header: dnsmessage.ResourceHeader{
+					Name: q.Name, Type: dnsmessage.TypeA,
+					Class: dnsmessage.ClassINET, TTL: 30,
+				},
+				Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 56}},
+			}},
+		}, nil
+	})
+
+	response := queryFilteredDNSBroker(
+		t, broker, "blocked.example.test.", dnsmessage.TypeA)
+	assert.Equal(t, dnsmessage.RCodeSuccess, response.RCode)
+	require.Len(t, response.Answers, 1)
+	require.Len(t, leases.calls, 1)
+	assert.Empty(t, leases.calls[0].matches.Allow)
+	require.Len(t, leases.calls[0].matches.Deny, 1)
 }
 
 func TestValidateFilteredDNSUpstreamResponseBindsWholeQuestion(t *testing.T) {
@@ -304,7 +399,9 @@ func TestFilteredDNSLeaseRefreshRequiresFreshAnswer(t *testing.T) {
 	leases := &filteredNetworkDNSLeases{
 		authority: authority,
 	}
-	rules := []sandboxpolicy.FilteredNetworkRule{{EntryIndex: 4}}
+	rules := sandboxpolicy.FilteredNetworkDNSMatches{
+		Allow: []sandboxpolicy.FilteredNetworkRule{{EntryIndex: 4}},
+	}
 	address := netip.MustParseAddr("192.0.2.88")
 
 	effective, err := leases.Ensure(rules, address, 30*time.Second)
@@ -314,14 +411,19 @@ func TestFilteredDNSLeaseRefreshRequiresFreshAnswer(t *testing.T) {
 	assert.Equal(t, []string{"dns4_4"}, authority.upserts[0].sets)
 
 	effective, err = leases.Ensure(
-		append(rules, sandboxpolicy.FilteredNetworkRule{EntryIndex: 5}),
+		sandboxpolicy.FilteredNetworkDNSMatches{
+			Allow: append(rules.Allow,
+				sandboxpolicy.FilteredNetworkRule{EntryIndex: 5}),
+			Deny: []sandboxpolicy.FilteredNetworkRule{{EntryIndex: 2}},
+		},
 		address,
 		60*time.Second,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 60*time.Second, effective)
 	require.Len(t, authority.upserts, 2)
-	assert.Equal(t, []string{"dns4_4", "dns4_5"}, authority.upserts[1].sets)
+	assert.Equal(t, []string{"dns4_d_2", "dns4_4", "dns4_5"},
+		authority.upserts[1].sets)
 	assert.Equal(t, 60*time.Second, authority.upserts[1].ttl,
 		"a fresh DNS answer starts a fresh TTL-bound kernel lease")
 }

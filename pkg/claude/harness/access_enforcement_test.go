@@ -305,6 +305,39 @@ func TestPlanAccessEnforcementOnlyWidensAndDisclosesScope(t *testing.T) {
 	assert.Equal(t, "tools_only_scope", notices[1].Reason)
 }
 
+func TestPlanAccessEnforcementOmitsUnsupportedDeniesIndividually(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeOpen,
+		Deny: []sandboxpolicy.NetworkAllowEntry{
+			{CIDR: "192.0.2.0/24"},
+			{Domain: "blocked.example", Ports: []int{443}},
+			{Host: "unsupported.example"},
+		},
+	}}
+	caps := AccessEnforcement{
+		networkDenySelectors: []NetworkSelectorCapability{
+			{Selector: string(sandboxpolicy.NetworkSelectorCIDR), Level: EnforceFull},
+			{Selector: string(sandboxpolicy.NetworkSelectorDomain), Level: EnforceFull},
+		},
+		networkDenyPorts: EnforceNone,
+		mechanism:        "test gateway",
+		scope:            "process",
+	}
+	rendered, notices, err := PlanAccessEnforcement(axes, caps)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+		CIDR: "192.0.2.0/24",
+	}}, rendered.Network.Deny)
+	require.Len(t, notices, 2)
+	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
+	assert.Equal(t, []int{2}, notices[0].Entries)
+	assert.Equal(t, "deny_ports_unsupported", notices[1].Reason)
+	assert.Equal(t, []int{1}, notices[1].Entries)
+	assert.NotContains(t, rendered.Network.Deny,
+		sandboxpolicy.NetworkAllowEntry{Domain: "blocked.example"},
+		"an unsupported port-scoped deny must never widen to all ports")
+}
+
 func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
