@@ -188,6 +188,35 @@ func TestStandingOrderToolInputRegexUsesCompactJSON(t *testing.T) {
 	assert.Contains(t, got, "Push the PR early")
 }
 
+func TestStandingOrderOriginSuppressesEveryDeliveryPath(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.Timing = db.StandingTimingNextTurn
+	})
+	input := HookCallbackInput{
+		HookEventName:       "PreToolUse",
+		ConvID:              "conv-1",
+		ToolName:            "Bash",
+		ToolInput:           json.RawMessage(`{"command":"go test ./..."}`),
+		StandingOrderOrigin: true,
+	}
+
+	assert.Empty(t, dispatch(t, input),
+		"an internal reminder turn must not receive hook-context orders")
+	assert.Empty(t, observe(input),
+		"an internal reminder turn must not queue another reminder")
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest,
+		"origin suppression is not a cadence outcome and must not consume delivery state")
+
+	input.StandingOrderOrigin = false
+	assert.Len(t, observe(input), 1,
+		"the same tool event remains deliverable in an ordinary user turn")
+}
+
 func TestStandingOrderToolNameNormalizesCodexShellToBash(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.CodexName)
 	insertOrder(t, groupID, func(o *db.StandingOrder) {

@@ -1557,6 +1557,40 @@ func sendOpenCodeNudge(convID, nudge string) error {
 	}, runtime.Cwd, nudge, "", "")
 }
 
+// sendOpenCodeStandingOrderNudge wraps prompt submission in a durable origin
+// handshake. The SSE projector activates it on the first event from this turn
+// and suppresses standing-order evaluation until Stop, preventing a queued
+// tool-trigger reminder from recursively triggering itself.
+func sendOpenCodeStandingOrderNudge(
+	convID, targetAgent string,
+	messageID int64,
+	nudge string,
+) error {
+	if targetAgent == "" {
+		var err error
+		targetAgent, err = db.AgentIDForConv(convID)
+		if err != nil {
+			return fmt.Errorf("resolve standing-order target agent: %w", err)
+		}
+	}
+	if targetAgent == "" {
+		return fmt.Errorf("standing-order OpenCode delivery requires a stable target agent")
+	}
+	if err := db.ArmStandingOrderTurnOrigin(
+		targetAgent, messageID, time.Now(), standingOrderOriginPendingTTL); err != nil {
+		return fmt.Errorf("arm standing-order turn origin: %w", err)
+	}
+	if err := sendOpenCodeNudge(convID, nudge); err != nil {
+		if cancelErr := db.CancelPendingStandingOrderTurnOrigin(
+			targetAgent, messageID); cancelErr != nil {
+			slog.Warn("OpenCode standing-order origin: cancel failed prompt handshake",
+				"agent", targetAgent, "message", messageID, "error", cancelErr)
+		}
+		return err
+	}
+	return nil
+}
+
 // sendOpenCodeTUICommand publishes a command through the managed server's TUI
 // event API. Unlike tmux send-keys, command dispatch is independent of prompt
 // mode and user keybinding customizations. expectedSessionID binds lifecycle
@@ -2185,13 +2219,13 @@ func reconcileOpenCodeSSE(
 	// briefly erase the more useful state and re-notify on every reconnect.
 	for _, permission := range permissions {
 		if projected := projector.projectPermission(permission); len(projected) > 0 {
-			applyOpenCodeHooks(ctx, runtime, projected)
+			applyOpenCodeHooks(ctx, runtime, projector, projected)
 			return nil
 		}
 	}
 	for _, question := range questions {
 		if projected := projector.projectQuestion(question); len(projected) > 0 {
-			applyOpenCodeHooks(ctx, runtime, projected)
+			applyOpenCodeHooks(ctx, runtime, projector, projected)
 			return nil
 		}
 	}
@@ -2201,7 +2235,7 @@ func reconcileOpenCodeSSE(
 		// status equals the pre-disconnect value. The tclaude state may still
 		// be awaiting a permission/question that was answered while offline.
 		if projected := projector.projectStatus(status, true); len(projected) > 0 {
-			applyOpenCodeHooks(ctx, runtime, projected)
+			applyOpenCodeHooks(ctx, runtime, projector, projected)
 			return nil
 		}
 	}
@@ -2209,7 +2243,7 @@ func reconcileOpenCodeSSE(
 	// attention snapshots plus no usable status therefore mean "not blocked
 	// and not known busy": settle to idle. The SSE stream is already open, so
 	// genuine concurrent work is buffered and immediately reasserts busy.
-	applyOpenCodeHooks(ctx, runtime,
+	applyOpenCodeHooks(ctx, runtime, projector,
 		projector.projectStatus(openCodeSessionStatus{Type: "idle"}, true))
 	return nil
 }
@@ -2239,7 +2273,7 @@ func consumeOpenCodeEventLocked(
 		slog.Debug("OpenCode SSE event could not be projected",
 			"session", runtime.SessionID, "error", err)
 	} else {
-		applyOpenCodeHooks(ctx, runtime, projected)
+		applyOpenCodeHooks(ctx, runtime, projector, projected)
 	}
 	// A tool-using assistant message can contain several model calls. OpenCode
 	// publishes each call's authoritative token block as a step-finish part;
@@ -2281,16 +2315,53 @@ func consumeOpenCodeEventLocked(
 func applyOpenCodeHooks(
 	ctx context.Context,
 	runtime db.OpenCodeRuntime,
+	projector *openCodeEventProjector,
 	projected []session.HookCallbackInput,
 ) {
+	agentID, agentErr := db.AgentIDForConv(runtime.ConvID)
+	originUncertain := agentErr != nil
+	if agentErr != nil {
+		slog.Warn("OpenCode standing-order origin: resolve stable agent failed",
+			"conv", runtime.ConvID, "error", agentErr)
+	}
+	if projector != nil && !projector.standingOrderTurn && agentID != "" {
+		active, err := db.StandingOrderTurnOriginActive(agentID, time.Now())
+		if err != nil {
+			slog.Warn("OpenCode standing-order origin: restore active turn failed",
+				"agent", agentID, "error", err)
+			originUncertain = true
+		} else {
+			projector.standingOrderTurn = active
+		}
+	}
 	for _, input := range projected {
+		if projector != nil && !projector.standingOrderTurn &&
+			agentID != "" && openCodeTurnActivity(input.HookEventName) {
+			active, err := db.ActivateStandingOrderTurnOrigin(
+				agentID, time.Now(), standingOrderOriginActiveTTL)
+			if err != nil {
+				slog.Warn("OpenCode standing-order origin: activate turn failed",
+					"agent", agentID, "event", input.HookEventName, "error", err)
+				originUncertain = true
+			} else {
+				projector.standingOrderTurn = active
+			}
+		}
+		if projector != nil {
+			input.StandingOrderOrigin =
+				projector.standingOrderTurn || originUncertain
+		} else if originUncertain {
+			input.StandingOrderOrigin = true
+		}
 		deadline := time.Now().Add(openCodeHookRowWait)
+		applied := false
 		for {
 			if ctx.Err() != nil {
 				return
 			}
 			err := session.ApplyHook(input, runtime.SessionID)
 			if err == nil {
+				applied = true
 				deliverOpenCodeStandingOrders(input, runtime.SessionID)
 				break
 			}
@@ -2305,7 +2376,29 @@ func applyOpenCodeHooks(
 			case <-time.After(openCodeHookRowRetryDelay):
 			}
 		}
+		if applied && projector != nil && projector.standingOrderTurn &&
+			openCodeTurnEnd(input.HookEventName) {
+			if err := db.ClearStandingOrderTurnOrigin(agentID); err != nil {
+				slog.Warn("OpenCode standing-order origin: clear turn failed",
+					"agent", agentID, "event", input.HookEventName, "error", err)
+			} else {
+				projector.standingOrderTurn = false
+			}
+		}
 	}
+}
+
+func openCodeTurnActivity(event string) bool {
+	switch event {
+	case "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"PostToolUseFailure", "PermissionRequest", "Notification":
+		return true
+	}
+	return false
+}
+
+func openCodeTurnEnd(event string) bool {
+	return event == "Stop" || event == "StopFailure"
 }
 
 func reapOrphanedOpenCodeRuntimes(states []*session.SessionState) {

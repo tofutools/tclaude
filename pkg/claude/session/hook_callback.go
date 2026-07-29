@@ -50,6 +50,10 @@ type HookCallbackInput struct {
 	// It prevents a payload matcher from turning dropped tool fields or
 	// truncated prompt text into a confident clean no-match.
 	PayloadTrimmed bool `json:"tclaude_payload_trimmed,omitempty"`
+	// StandingOrderOrigin is internal delivery evidence. OpenCode sets it for
+	// every event in a turn started by a queued standing-order message so that
+	// prompt/tool automations cannot recursively trigger themselves.
+	StandingOrderOrigin bool `json:"-"`
 	// ToolResponse is the structured tool RESULT a PostToolUse carries.
 	// Its shape is per-tool; the only field tclaude reads today is Bash's
 	// backgroundTaskId, the handle for a `run_in_background` launch (see

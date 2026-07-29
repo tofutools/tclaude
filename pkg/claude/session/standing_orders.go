@@ -47,6 +47,9 @@ func standingOrderTriggerFor(hookEventName string) string {
 // the message path instead; this function reports that case honestly through
 // the ledger rather than pretending the hook covered it.
 func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSessionID string) HookResponse {
+	if input.StandingOrderOrigin {
+		return HookResponse{}
+	}
 	trigger := standingOrderTriggerFor(input.HookEventName)
 	if trigger == "" {
 		return HookResponse{}
@@ -153,6 +156,9 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 // had never reached anyone.
 func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]PendingStandingMessage, func()) {
 	noop := func() {}
+	if input.StandingOrderOrigin {
+		return nil, noop
+	}
 	trigger := standingOrderTriggerFor(input.HookEventName)
 	if trigger == "" || input.AgentID != "" {
 		return nil, noop

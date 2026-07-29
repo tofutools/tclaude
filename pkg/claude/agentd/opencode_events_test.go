@@ -414,6 +414,59 @@ func TestOpenCodeProjectionDrivesSharedStatusStateMachine(t *testing.T) {
 	assert.Equal(t, harness.OpenCodeName, state.Harness)
 }
 
+func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+
+	const (
+		sessionID = "spwn-opencode-standing-origin"
+		convID    = "ses_standing_origin"
+	)
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID,
+		Harness: harness.OpenCodeName, Status: session.StatusIdle,
+	}))
+	require.NoError(t, db.ArmStandingOrderTurnOrigin(
+		agentID, 41, time.Now(), time.Minute))
+
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
+	firstProjector := newOpenCodeEventProjector(convID, "")
+	applyOpenCodeHooks(context.Background(), runtime, firstProjector,
+		[]session.HookCallbackInput{{
+			HookEventName: "PreToolUse",
+			ConvID:        convID,
+			ToolName:      "Bash",
+		}})
+	assert.True(t, firstProjector.standingOrderTurn)
+	active, err := db.StandingOrderTurnOriginActive(agentID, time.Now())
+	require.NoError(t, err)
+	assert.True(t, active)
+
+	restartedProjector := newOpenCodeEventProjector(convID, "")
+	applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
+		[]session.HookCallbackInput{{
+			HookEventName: "PostToolUse",
+			ConvID:        convID,
+			ToolName:      "Bash",
+		}})
+	assert.True(t, restartedProjector.standingOrderTurn,
+		"the persisted marker must restore suppression after an SSE reconnect")
+
+	applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
+		[]session.HookCallbackInput{{
+			HookEventName: "Stop",
+			ConvID:        convID,
+		}})
+	assert.False(t, restartedProjector.standingOrderTurn)
+	active, err = db.StandingOrderTurnOriginActive(agentID, time.Now())
+	require.NoError(t, err)
+	assert.False(t, active, "the successful Stop boundary releases suppression")
+}
+
 func TestConsumeOpenCodeEventWaitsForLaunchSessionRow(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -1062,3 +1062,18 @@ CREATE INDEX idx_agent_standing_order_deliveries_cooldown
 			order_id, order_revision, target_agent, id
 		);
 
+CREATE TABLE agent_standing_order_messages (
+			message_id     INTEGER PRIMARY KEY
+			               REFERENCES agent_messages(id) ON DELETE CASCADE,
+			order_id       INTEGER NOT NULL,
+			order_revision INTEGER NOT NULL
+		);
+
+CREATE TABLE agent_standing_order_turn_origins (
+			target_agent TEXT PRIMARY KEY,
+			message_id   INTEGER NOT NULL CHECK(message_id > 0),
+			state        TEXT NOT NULL CHECK(state IN ('pending', 'active')),
+			armed_at     TEXT NOT NULL,
+			expires_at   TEXT NOT NULL
+		);
+
