@@ -3,6 +3,7 @@ package standingorders
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -232,6 +233,62 @@ func TestEvaluateCadenceLookupFailureDeliversAnyway(t *testing.T) {
 
 	assert.True(t, d.Deliver)
 	assert.Contains(t, d.Detail, "database is locked")
+}
+
+func TestEvaluateCooldownUsesStableRecipientAndRevision(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 30, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+	var gotOrder, gotRevision int64
+	var gotAgent string
+	d := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(orderID, revision int64, targetAgent string) (time.Time, error) {
+			gotOrder, gotRevision, gotAgent = orderID, revision, targetAgent
+			return now.Add(-30 * time.Second), nil
+		})
+
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeSuppressedCooldown, d.Outcome)
+	assert.True(t, d.ShouldRecord(), "a cooldown suppression is a distinct ledger outcome")
+	assert.Equal(t, o.ID, gotOrder)
+	assert.Equal(t, o.Revision, gotRevision)
+	assert.Equal(t, "agt_aaa", gotAgent)
+	assert.Contains(t, d.Detail, "stable agent agt_aaa")
+	assert.False(t, OutcomeIsProblem(d.Outcome), "a working rate control is not a fault")
+}
+
+func TestEvaluateCooldownExpiresAndFailuresFailOpen(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 2, 0, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+
+	expired := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(int64, int64, string) (time.Time, error) {
+			return now.Add(-61 * time.Second), nil
+		})
+	assert.True(t, expired.Deliver)
+
+	failed := Evaluate(o, event(func(e *Event) { e.OccurredAt = now }), neverDelivered,
+		func(int64, int64, string) (time.Time, error) {
+			return time.Time{}, errors.New("database is locked")
+		})
+	assert.True(t, failed.Deliver)
+	assert.Contains(t, failed.Detail, "database is locked")
+}
+
+func TestEvaluateCooldownNeverUsesAnEmptySharedRecipientBucket(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	o := order(func(o *db.StandingOrder) { o.CooldownSeconds = 60 })
+	consulted := false
+	d := Evaluate(o, event(func(e *Event) {
+		e.AgentID = ""
+		e.OccurredAt = now
+	}), neverDelivered, func(int64, int64, string) (time.Time, error) {
+		consulted = true
+		return now, nil
+	})
+
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeOutOfScope, d.Outcome)
+	assert.False(t, consulted)
 }
 
 func TestRenderContextCarriesProvenanceAndRevision(t *testing.T) {

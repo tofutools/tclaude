@@ -128,6 +128,7 @@ func TestStandingOrderDeliveredOnCompactBoundary(t *testing.T) {
 	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
 	assert.Equal(t, db.StandingTransportHookContext, latest.Transport)
 	assert.Equal(t, harness.DefaultName, latest.Harness)
+	assert.NotEmpty(t, latest.TargetAgent, "the ledger must carry the stable recipient")
 }
 
 func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {
@@ -222,6 +223,23 @@ func TestStandingOrderCadenceOncePerGenerationAndRevisionRearm(t *testing.T) {
 	got := additionalContext(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
 	assert.Contains(t, got, "cold review", "an edited order must reach the agents the edit was for")
 	assert.Contains(t, got, "pr-early@2")
+}
+
+func TestStandingOrderCooldownSuppressesRapidBoundaryForStableAgent(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.CooldownSeconds = 60
+	})
+
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceCompact)), "Push the PR early")
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)),
+		"a boundary inside the minimum interval must not repeat the order")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeSuppressedCooldown, latest.Outcome)
+	assert.NotEmpty(t, latest.TargetAgent)
 }
 
 // Subagent inheritance is deliberately out of v1: an in-harness subagent

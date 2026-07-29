@@ -1153,7 +1153,10 @@ semantics the evaluator already implements:
 - either same-continuation hook context or next-turn message delivery as a
   required guarantee (an unsupported harness reports a visible non-delivery,
   rather than silently weakening the guarantee);
-- every matching boundary or once per conversation generation.
+- every matching boundary or once per conversation generation;
+- an optional minimum interval between successful deliveries to each stable
+  recipient agent. The cooldown follows the agent across `/clear` and
+  reincarnation rather than resetting with its conversation ID.
 
 Single-agent targets are persisted by stable `agt_…` ID, never by conversation
 generation. Editing an agent-authored order preserves its author and lifecycle

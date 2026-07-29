@@ -79,6 +79,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     summary: 'Push the PR early.',
     trigger: { event: 'session.start', sources: ['compact', 'resume'] },
     timing: 'same-continuation', cadence: 'once-per-generation',
+    cooldown_seconds: 90,
   };
   const draft = model.createStandingOrderDraft(model.standingOrderToPrefill(order));
   assert.equal(draft.target.mode, 'group');
@@ -92,7 +93,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
       target: 'group:alpha', role: 'reviewer',
       summary: 'Push the PR early.', trigger_event: 'session.start',
       sources: ['compact', 'resume'], timing: 'same-continuation',
-      cadence: 'once-per-generation', enabled: false,
+      cadence: 'once-per-generation', cooldown_seconds: 90, enabled: false,
     },
   });
 
@@ -105,11 +106,14 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     payload: {
       name: 'all-boundaries', target: 'agt_target', role: '', summary: 'Remember.',
       trigger_event: 'session.start', sources: [], timing: 'same-continuation',
-      cadence: 'always', enabled: true,
+      cadence: 'always', cooldown_seconds: 0, enabled: true,
     },
   });
   any.sourceMode = 'selected';
   assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'sources');
+  any.sourceMode = 'any';
+  any.cooldownSeconds = -1;
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'cooldown');
   assert.equal(model.standingOrderDraftDirty(draft,
     model.createStandingOrderDraft(model.standingOrderToPrefill(order))), false);
 });

@@ -67,7 +67,7 @@ func TestOrdersLsEmptyAndPopulated(t *testing.T) {
 
 func TestOrdersShowRendersCapabilityMatrix(t *testing.T) {
 	setupTestDB(t)
-	o := seedOrder(t)
+	o := seedOrder(t, func(o *db.StandingOrder) { o.CooldownSeconds = 90 })
 
 	var out, errOut bytes.Buffer
 	require.Equal(t, rcOK, runOrdersShow(&out, &errOut, o.Name))
@@ -76,6 +76,7 @@ func TestOrdersShowRendersCapabilityMatrix(t *testing.T) {
 	assert.Contains(t, got, "pr-early")
 	assert.Contains(t, got, "Push the PR early")
 	assert.Contains(t, got, "Author:    operator")
+	assert.Contains(t, got, "Cooldown:  1m30s per stable recipient agent")
 	// The matrix is the point: an operator must be able to see that this
 	// order does not reach OpenCode at all before they rely on it.
 	assert.Contains(t, got, harness.DefaultName)

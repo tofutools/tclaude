@@ -35,7 +35,7 @@ func standingOrderBody(target string, revision int64, updatedAt time.Time) map[s
 		"updated_at": updatedAt.Format(time.RFC3339Nano), "target": target,
 		"summary": "Re-read the durable instructions.", "trigger_event": "session.start",
 		"sources": []string{"compact", "resume"}, "timing": "same-continuation",
-		"cadence": "always", "enabled": true,
+		"cadence": "always", "cooldown_seconds": 60, "enabled": true,
 	}
 }
 
@@ -62,6 +62,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.Equal(t, int64(1), created.Revision)
 	assert.Equal(t, targetAgent, created.Target.Agent)
 	assert.True(t, created.OperatorAuthored)
+	assert.Equal(t, int64(60), created.CooldownSeconds)
 
 	editBody := standingOrderBody(targetAgent, created.Revision, created.UpdatedAt)
 	editBody["name"] = "boundary-reminder-edited"

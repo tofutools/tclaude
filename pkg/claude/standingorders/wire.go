@@ -68,6 +68,8 @@ type OrderView struct {
 
 	Timing  string `json:"timing"`
 	Cadence string `json:"cadence"`
+	// CooldownSeconds is zero when disabled.
+	CooldownSeconds int64 `json:"cooldown_seconds"`
 
 	// Capability is the worst case across the harnesses this order can
 	// ACTUALLY reach, resolved by the caller from a single target agent's
@@ -123,6 +125,7 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		},
 		Timing:              o.Timing,
 		Cadence:             o.Cadence,
+		CooldownSeconds:     o.CooldownSeconds,
 		PlatformCapability:  PlatformCapability(o.Timing, o.TriggerEvent),
 		CapabilityByHarness: CapabilityByHarness(o.Timing, o.TriggerEvent),
 		CreatedAt:           o.CreatedAt,
@@ -156,7 +159,8 @@ func OutcomeIsProblem(outcome string) bool {
 		// Suppressed-by-cadence is a once-per-generation order behaving as
 		// authored, not a fault. Flagging it would mark a correctly working
 		// order as a problem for the rest of the conversation.
-		db.StandingOutcomeSuppressedCadence:
+		db.StandingOutcomeSuppressedCadence,
+		db.StandingOutcomeSuppressedCooldown:
 		return false
 	}
 	return true

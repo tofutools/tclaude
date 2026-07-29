@@ -15,29 +15,29 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestStandingOrderLockIsExclusivePerConv(t *testing.T) {
+func TestStandingOrderLockIsExclusivePerStableAgent(t *testing.T) {
 	standingOrderFixture(t, harness.DefaultName)
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	release, acquired := lockStandingOrderDelivery(context.Background(), "agent", "agt_one")
 	require.True(t, acquired)
 
-	// A second holder for the SAME conversation is refused rather than let
+	// A second holder for the SAME stable agent is refused rather than let
 	// through — that refusal is what stops a duplicate delivery. A short
 	// deadline stands in for the production 3s one so the test does not wait
 	// it out; the caller's context is what bounds the wait either way.
 	busy, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, second := lockStandingOrderDelivery(busy, "conv-1")
-	assert.False(t, second, "the same conversation cannot be delivered twice at once")
+	_, second := lockStandingOrderDelivery(busy, "agent", "agt_one")
+	assert.False(t, second, "the same stable agent cannot be delivered twice at once")
 
-	// A different conversation is unaffected. The lock is per-conv precisely so
+	// A different agent is unaffected. The lock is per-agent precisely so
 	// one busy agent does not stall every other agent's boundary.
-	otherRelease, other := lockStandingOrderDelivery(context.Background(), "conv-2")
-	assert.True(t, other, "a different conversation is not blocked")
+	otherRelease, other := lockStandingOrderDelivery(context.Background(), "agent", "agt_two")
+	assert.True(t, other, "a different stable agent is not blocked")
 	otherRelease()
 
 	release()
-	regained, ok := lockStandingOrderDelivery(context.Background(), "conv-1")
+	regained, ok := lockStandingOrderDelivery(context.Background(), "agent", "agt_one")
 	assert.True(t, ok, "the lock is available again once released")
 	regained()
 }
@@ -110,12 +110,15 @@ func TestStandingOrderAlwaysCadenceSurvivesLostLock(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.DefaultName)
 	insertOrder(t, groupID)
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	recipient, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, recipient)
+	release, acquired := lockStandingOrderDelivery(context.Background(), "agent", recipient)
 	require.True(t, acquired)
 	defer release()
 
-	// The lock is held elsewhere, so this dispatch cannot acquire it. The
-	// always-cadence order still arrives.
+	// An agent-scoped lock is held elsewhere. This order needs no rate lock,
+	// so it still arrives.
 	out := dispatch(t, sessionStart(db.StandingSourceCompact))
 	assert.Contains(t, out, "Push the PR early",
 		"an always-cadence order is delivered even when the delivery lock is unavailable")
@@ -130,7 +133,7 @@ func TestStandingOrderOncePerGenerationDeferredWhenLockHeld(t *testing.T) {
 		o.Cadence = db.StandingCadenceOncePerGeneration
 	})
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	release, acquired := lockStandingOrderDelivery(context.Background(), "conv", "conv-1")
 	require.True(t, acquired)
 
 	out := dispatch(t, sessionStart(db.StandingSourceCompact))
@@ -148,4 +151,41 @@ func TestStandingOrderOncePerGenerationDeferredWhenLockHeld(t *testing.T) {
 	out = dispatch(t, sessionStart(db.StandingSourceCompact))
 	assert.Contains(t, out, "Push the PR early",
 		"a deferred order is delivered at the next boundary")
+}
+
+// A new conversation generation must not inherit the old generation's
+// once-per-generation lock. The old generation can remain alive while its
+// hook response waits for an ACK, so keying ordinary cadence on the stable
+// agent would turn that overlap into a missed reminder in the new generation.
+//
+// Cooldown deliberately does use the stable-agent lock; this zero-cooldown
+// order proves that compatibility is preserved for existing orders.
+func TestStandingOrderRotationOverlapsOldAgentLockWithoutLosingCadence(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	recipient, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, recipient)
+	oldRelease, acquired := lockStandingOrderDelivery(
+		context.Background(), "agent", recipient)
+	require.True(t, acquired)
+	defer oldRelease()
+
+	_, err = db.RotateAgentConv("conv-1", "conv-2", "reincarnate")
+	require.NoError(t, err)
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID:      "sess-1",
+		ConvID:  "conv-2",
+		Status:  StatusIdle,
+		Harness: harness.DefaultName,
+	}))
+
+	input := sessionStart(db.StandingSourceCompact)
+	input.ConvID = "conv-2"
+	out := dispatch(t, input)
+	assert.Contains(t, out, "Push the PR early",
+		"the new generation uses its own cadence lock while the old agent lock remains held")
 }
