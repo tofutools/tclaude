@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,14 +71,18 @@ func TestStandingOrder_NameIsUnique(t *testing.T) {
 
 func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 	cases := map[string]func(*StandingOrder){
-		"no name":          func(o *StandingOrder) { o.Name = "" },
-		"no summary":       func(o *StandingOrder) { o.Summary = "" },
-		"bad target kind":  func(o *StandingOrder) { o.TargetKind = "everyone" },
-		"group without id": func(o *StandingOrder) { o.GroupID = 0 },
-		"unknown trigger":  func(o *StandingOrder) { o.TriggerEvent = "tool.before" },
-		"unknown source":   func(o *StandingOrder) { o.TriggerSources = []string{"whenever"} },
-		"unknown timing":   func(o *StandingOrder) { o.Timing = "immediately" },
-		"unknown cadence":  func(o *StandingOrder) { o.Cadence = "hourly" },
+		"no name":           func(o *StandingOrder) { o.Name = "" },
+		"no summary":        func(o *StandingOrder) { o.Summary = "" },
+		"bad target kind":   func(o *StandingOrder) { o.TargetKind = "everyone" },
+		"group without id":  func(o *StandingOrder) { o.GroupID = 0 },
+		"unknown trigger":   func(o *StandingOrder) { o.TriggerEvent = "tool.before" },
+		"unknown source":    func(o *StandingOrder) { o.TriggerSources = []string{"whenever"} },
+		"unknown timing":    func(o *StandingOrder) { o.Timing = "immediately" },
+		"unknown cadence":   func(o *StandingOrder) { o.Cadence = "hourly" },
+		"negative cooldown": func(o *StandingOrder) { o.CooldownSeconds = -1 },
+		"excessive cooldown": func(o *StandingOrder) {
+			o.CooldownSeconds = StandingCooldownMaxSeconds + 1
+		},
 		"role on conv target": func(o *StandingOrder) {
 			o.TargetKind = StandingTargetConv
 			o.GroupID = 0
@@ -186,6 +191,7 @@ func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
 	replacement.TriggerSources = []string{StandingSourceResume}
 	replacement.Timing = StandingTimingNextTurn
 	replacement.Cadence = StandingCadenceOncePerGeneration
+	replacement.CooldownSeconds = 90
 	replacement.Enabled = false
 	replacement.DisabledReason = StandingDisabledReasonGroupRetired
 	require.NoError(t, UpdateStandingOrder(id, 1, before.UpdatedAt, replacement))
@@ -199,6 +205,7 @@ func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
 	assert.Equal(t, []string{StandingSourceResume}, got.TriggerSources)
 	assert.Equal(t, StandingTimingNextTurn, got.Timing)
 	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
+	assert.Equal(t, int64(90), got.CooldownSeconds)
 	assert.False(t, got.Enabled)
 	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
 
@@ -327,7 +334,8 @@ func TestStandingOrder_DeliveryLedgerAndCadence(t *testing.T) {
 
 	_, err = RecordStandingDelivery(&StandingDelivery{
 		OrderID: id, OrderRevision: 1, TargetConv: "conv-a", Epoch: "conv-a",
-		Outcome: StandingOutcomeDelivered, Transport: StandingTransportHookContext,
+		TargetAgent: "agt_aaa",
+		Outcome:     StandingOutcomeDelivered, Transport: StandingTransportHookContext,
 		Harness: "claude", Detail: "session.start(source=compact)",
 	})
 	require.NoError(t, err)
@@ -346,7 +354,20 @@ func TestStandingOrder_DeliveryLedgerAndCadence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	assert.Equal(t, StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, "agt_aaa", latest.TargetAgent)
 	assert.False(t, latest.CreatedAt.IsZero())
+
+	deliveredAt, err := LatestSuccessfulStandingDeliveryAt(id, 1, "agt_aaa")
+	require.NoError(t, err)
+	assert.WithinDuration(t, latest.CreatedAt, deliveredAt, time.Millisecond)
+
+	otherAgent, err := LatestSuccessfulStandingDeliveryAt(id, 1, "agt_bbb")
+	require.NoError(t, err)
+	assert.True(t, otherAgent.IsZero(), "one stable recipient must not cool down another")
+
+	_, err = LatestSuccessfulStandingDeliveryAt(id, 1, "")
+	assert.ErrorIs(t, err, ErrStandingOrderInvalid,
+		"an empty recipient must not become a shared cooldown bucket")
 }
 
 // An evaluation that never put text in front of the agent must not suppress

@@ -20,17 +20,18 @@ func registerDashboardStandingOrderRoutes(mux *http.ServeMux) {
 }
 
 type dashboardStandingOrderMutation struct {
-	Name         string   `json:"name"`
-	Revision     int64    `json:"revision,omitempty"`
-	UpdatedAt    string   `json:"updated_at,omitempty"`
-	Target       string   `json:"target"`
-	Role         string   `json:"role,omitempty"`
-	Summary      string   `json:"summary"`
-	Sources      []string `json:"sources,omitempty"`
-	Timing       string   `json:"timing"`
-	Cadence      string   `json:"cadence"`
-	Enabled      *bool    `json:"enabled,omitempty"`
-	TriggerEvent string   `json:"trigger_event,omitempty"`
+	Name            string   `json:"name"`
+	Revision        int64    `json:"revision,omitempty"`
+	UpdatedAt       string   `json:"updated_at,omitempty"`
+	Target          string   `json:"target"`
+	Role            string   `json:"role,omitempty"`
+	Summary         string   `json:"summary"`
+	Sources         []string `json:"sources,omitempty"`
+	Timing          string   `json:"timing"`
+	Cadence         string   `json:"cadence"`
+	CooldownSeconds int64    `json:"cooldown_seconds,omitempty"`
+	Enabled         *bool    `json:"enabled,omitempty"`
+	TriggerEvent    string   `json:"trigger_event,omitempty"`
 }
 
 func handleDashboardStandingOrderCreate(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +198,7 @@ func decodeDashboardStandingOrder(
 		TriggerSources:   body.Sources,
 		Timing:           body.Timing,
 		Cadence:          body.Cadence,
+		CooldownSeconds:  body.CooldownSeconds,
 		Enabled:          enabled,
 		OperatorAuthored: true,
 	}

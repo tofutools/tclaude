@@ -178,6 +178,14 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           onChange=${() => update({ cadence: 'once-per-generation' })} />
       </div>
     </div>
+    <label class="cron-create-row"><span class="cron-create-label">Minimum interval</span>
+      <div class="standing-order-field">
+        <input id="standing-order-cooldown" type="number" min="0" max="31536000" step="1"
+          value=${draft.cooldownSeconds}
+          onInput=${(event) => update({ cooldownSeconds: Number(event.currentTarget.value) })} />
+        <div class="muted">Seconds between successful deliveries to each stable recipient agent. 0 disables cooldown.</div>
+      </div>
+    </label>
     <label class="cron-create-row"><span class="cron-create-label">Instruction</span>
       <textarea id="standing-order-summary" rows="6" maxlength="2000" value=${draft.summary}
         placeholder="The short instruction delivered to the agent when this order matches"

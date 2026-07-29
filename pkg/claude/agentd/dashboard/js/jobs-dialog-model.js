@@ -141,6 +141,7 @@ export function standingOrderToPrefill(order = {}) {
     sources: Array.isArray(order.trigger?.sources) ? [...order.trigger.sources] : [],
     timing: text(order.timing),
     cadence: text(order.cadence),
+    cooldownSeconds: Number(order.cooldown_seconds) || 0,
     enabled: !!order.enabled,
   };
 }
@@ -164,6 +165,7 @@ export function createStandingOrderDraft(prefill = {}) {
     sources,
     timing: prefill.timing === 'next-turn' ? 'next-turn' : 'same-continuation',
     cadence: prefill.cadence === 'once-per-generation' ? 'once-per-generation' : 'always',
+    cooldownSeconds: Number(prefill.cooldownSeconds) || 0,
     enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
   };
 }
@@ -188,6 +190,11 @@ export function validateStandingOrderDraft(dialog, draft) {
   if (draft.sourceMode === 'selected' && draft.sources.length === 0) {
     return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
   }
+  if (!Number.isInteger(Number(draft.cooldownSeconds)) ||
+      Number(draft.cooldownSeconds) < 0 ||
+      Number(draft.cooldownSeconds) > 31536000) {
+    return { code: 'cooldown', message: 'Minimum interval must be a whole number of seconds from 0 to 31536000.' };
+  }
   if (dialog.kind === 'edit' && !draft.revision) {
     return { code: 'revision', message: 'This order has no revision; reload the Automations page and try again.' };
   }
@@ -207,6 +214,7 @@ export function buildStandingOrderMutation(dialog, draft) {
     sources: draft.sourceMode === 'any' ? [] : [...draft.sources],
     timing: draft.timing,
     cadence: draft.cadence,
+    cooldown_seconds: Number(draft.cooldownSeconds) || 0,
     enabled: draft.enabled,
   };
   if (dialog.kind === 'edit') {

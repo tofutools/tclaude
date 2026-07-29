@@ -156,7 +156,8 @@ function StandingOrderRow({ order, actions }) {
     <td title=${summary}>
       <div class="rowname">${order.name}</div>
       <div class="muted">${summary}</div>
-      <div class="muted">revision ${order.revision || 1} · ${order.cadence || 'always'}</div>
+      <div class="muted">revision ${order.revision || 1} · ${order.cadence || 'always'}
+        ${Number(order.cooldown_seconds) > 0 ? ` · ${order.cooldown_seconds}s minimum interval` : ''}</div>
     </td>
     <td>
       <${StandingOrderTarget} order=${order} />

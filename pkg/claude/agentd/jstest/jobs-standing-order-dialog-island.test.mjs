@@ -55,7 +55,7 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
       name: 'pr-early', target: 'agt_target', role: '',
       summary: 'Push the PR early.', trigger_event: 'session.start',
       sources: ['compact'], timing: 'same-continuation', cadence: 'always',
-      enabled: true,
+      cooldown_seconds: 0, enabled: true,
     },
   });
   assert.equal(submit.disabled, true);

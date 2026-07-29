@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/standingorders"
@@ -69,14 +70,15 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		return HookResponse{}
 	}
 
-	// Serialize the cadence read-modify-write for this conversation. Held
+	// Serialize cadence/cooldown read-modify-write for this stable agent. Held
 	// until the response has been written AND recorded — see Release below —
 	// because the window that matters spans all three steps, not just the read.
-	release, acquired := lockStandingOrderDelivery(ctx, ev.ConvID)
+	release, acquired := lockStandingOrderDelivery(ctx, ev.AgentID)
 
-	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	decisions := standingorders.EvaluateAll(
+		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	if !acquired {
-		decisions = skipCadenceGated(decisions)
+		decisions = skipRateGated(decisions)
 	}
 
 	// Recording is DEFERRED until the response has actually been written.
@@ -97,6 +99,7 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 				OrderID:       d.Order.ID,
 				OrderRevision: d.Order.Revision,
 				TargetConv:    ev.ConvID,
+				TargetAgent:   ev.AgentID,
 				Epoch:         d.Epoch,
 				Outcome:       d.Outcome,
 				Transport:     d.Capability.Transport,
@@ -154,14 +157,15 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 		return nil, noop
 	}
 
-	// Same serialization as the direct path, and the same lock, so the two
-	// cannot both deliver a once-per-generation order for one conversation.
+	// Same serialization as the direct path, and the same stable-agent lock,
+	// so the two cannot both satisfy one rate-controlled order.
 	// The caller performs the sends, so the release travels out with the work.
-	release, acquired := lockStandingOrderDelivery(context.Background(), ev.ConvID)
+	release, acquired := lockStandingOrderDelivery(context.Background(), ev.AgentID)
 
-	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	decisions := standingorders.EvaluateAll(
+		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	if !acquired {
-		decisions = skipCadenceGated(decisions)
+		decisions = skipRateGated(decisions)
 	}
 
 	var pending []PendingStandingMessage
@@ -175,6 +179,7 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 				Name:          d.Order.Name,
 				Body:          standingorders.RenderContext([]standingorders.Decision{d}),
 				TargetConv:    ev.ConvID,
+				TargetAgent:   ev.AgentID,
 				Epoch:         d.Epoch,
 				Harness:       ev.Harness,
 				Detail:        d.Detail,
@@ -203,7 +208,8 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 		}
 		if _, err := db.RecordStandingDelivery(&db.StandingDelivery{
 			OrderID: d.Order.ID, OrderRevision: d.Order.Revision,
-			TargetConv: ev.ConvID, Epoch: d.Epoch, Outcome: outcome,
+			TargetConv: ev.ConvID, TargetAgent: ev.AgentID,
+			Epoch: d.Epoch, Outcome: outcome,
 			Transport: d.Capability.Transport, Harness: ev.Harness, Detail: detail,
 		}); err != nil {
 			slog.Warn("standing orders: failed to record observed outcome",
@@ -219,24 +225,26 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	return pending, release
 }
 
-// skipCadenceGated turns every deliverable once-per-generation decision into a
-// recorded non-delivery, for use when the delivery lock could not be acquired.
+// skipRateGated turns every deliverable decision with a read-modify-write rate
+// control into a recorded non-delivery when the delivery lock was unavailable.
 //
-// Only cadence-gated orders are affected. An always-cadence order has no
-// read-modify-write to protect — it delivers on every boundary by definition —
-// so suppressing it would drop guidance to prevent a race it cannot lose.
+// Only cadence/cooldown-gated orders are affected. An always-cadence order
+// with no cooldown has no read-modify-write to protect, so suppressing it
+// would drop guidance to prevent a race it cannot lose.
 //
 // The decision is rewritten rather than removed so the skip lands in the
 // ledger. StandingOutcomeNotEvaluatedBusy is not one of the outcomes the
 // cadence check counts as a delivery, so the order stays pending and the next
 // boundary delivers it.
-func skipCadenceGated(decisions []standingorders.Decision) []standingorders.Decision {
+func skipRateGated(decisions []standingorders.Decision) []standingorders.Decision {
 	out := make([]standingorders.Decision, 0, len(decisions))
 	for _, d := range decisions {
-		if d.Deliver && d.Order != nil && d.Order.Cadence == db.StandingCadenceOncePerGeneration {
+		rateGated := d.Order != nil &&
+			(d.Order.Cadence == db.StandingCadenceOncePerGeneration || d.Order.CooldownSeconds > 0)
+		if d.Deliver && rateGated {
 			d.Deliver = false
 			d.Outcome = db.StandingOutcomeNotEvaluatedBusy
-			d.Detail = "another delivery path held this conversation's delivery lock; deferred to the next boundary"
+			d.Detail = "another delivery path held this stable agent's delivery lock; deferred to the next boundary"
 		}
 		out = append(out, d)
 	}
@@ -253,6 +261,7 @@ type PendingStandingMessage struct {
 	Name          string
 	Body          string
 	TargetConv    string
+	TargetAgent   string
 	Epoch         string
 	Harness       string
 	Detail        string
@@ -276,7 +285,8 @@ func RecordStandingMessageDelivery(p PendingStandingMessage, sendErr error) {
 	}
 	if _, err := db.RecordStandingDelivery(&db.StandingDelivery{
 		OrderID: p.OrderID, OrderRevision: p.OrderRevision,
-		TargetConv: p.TargetConv, Epoch: p.Epoch, Outcome: outcome,
+		TargetConv: p.TargetConv, TargetAgent: p.TargetAgent,
+		Epoch: p.Epoch, Outcome: outcome,
 		Transport: db.StandingTransportMessage, Harness: p.Harness, Detail: detail,
 	}); err != nil {
 		slog.Warn("standing orders: failed to record message delivery",
@@ -319,10 +329,12 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	}
 
 	ev := standingorders.Event{
-		Event:   trigger,
-		Source:  strings.ToLower(strings.TrimSpace(input.Source)),
-		ConvID:  convID,
-		Harness: db.DefaultHarness,
+		Event:          trigger,
+		Source:         strings.ToLower(strings.TrimSpace(input.Source)),
+		ConvID:         convID,
+		Harness:        db.DefaultHarness,
+		OccurredAt:     time.Now(),
+		PayloadTrimmed: input.PayloadTrimmed,
 	}
 	if h := strings.TrimSpace(state.Harness); h != "" {
 		ev.Harness = h

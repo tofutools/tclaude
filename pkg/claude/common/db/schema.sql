@@ -1024,7 +1024,7 @@ CREATE TABLE agent_standing_orders (
 			operator_authored INTEGER NOT NULL DEFAULT 0,
 			created_at        TEXT    NOT NULL,
 			updated_at        TEXT    NOT NULL DEFAULT ''
-		);
+		, cooldown_seconds INTEGER NOT NULL DEFAULT 0);
 
 CREATE INDEX idx_agent_standing_orders_owner
 			ON agent_standing_orders(owner_agent);
@@ -1046,11 +1046,16 @@ CREATE TABLE agent_standing_order_deliveries (
 			harness        TEXT    NOT NULL DEFAULT '',
 			detail         TEXT    NOT NULL DEFAULT '',
 			created_at     TEXT    NOT NULL
-		);
+		, target_agent TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_standing_order_deliveries_order
 			ON agent_standing_order_deliveries(order_id, created_at);
 
 CREATE INDEX idx_agent_standing_order_deliveries_epoch
 			ON agent_standing_order_deliveries(order_id, order_revision, target_conv, epoch);
+
+CREATE INDEX idx_agent_standing_order_deliveries_cooldown
+		ON agent_standing_order_deliveries(
+			order_id, order_revision, target_agent, id
+		);
 

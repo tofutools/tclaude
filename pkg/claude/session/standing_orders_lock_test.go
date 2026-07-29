@@ -15,29 +15,29 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestStandingOrderLockIsExclusivePerConv(t *testing.T) {
+func TestStandingOrderLockIsExclusivePerStableAgent(t *testing.T) {
 	standingOrderFixture(t, harness.DefaultName)
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	release, acquired := lockStandingOrderDelivery(context.Background(), "agt_one")
 	require.True(t, acquired)
 
-	// A second holder for the SAME conversation is refused rather than let
+	// A second holder for the SAME stable agent is refused rather than let
 	// through — that refusal is what stops a duplicate delivery. A short
 	// deadline stands in for the production 3s one so the test does not wait
 	// it out; the caller's context is what bounds the wait either way.
 	busy, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, second := lockStandingOrderDelivery(busy, "conv-1")
-	assert.False(t, second, "the same conversation cannot be delivered twice at once")
+	_, second := lockStandingOrderDelivery(busy, "agt_one")
+	assert.False(t, second, "the same stable agent cannot be delivered twice at once")
 
-	// A different conversation is unaffected. The lock is per-conv precisely so
+	// A different agent is unaffected. The lock is per-agent precisely so
 	// one busy agent does not stall every other agent's boundary.
-	otherRelease, other := lockStandingOrderDelivery(context.Background(), "conv-2")
-	assert.True(t, other, "a different conversation is not blocked")
+	otherRelease, other := lockStandingOrderDelivery(context.Background(), "agt_two")
+	assert.True(t, other, "a different stable agent is not blocked")
 	otherRelease()
 
 	release()
-	regained, ok := lockStandingOrderDelivery(context.Background(), "conv-1")
+	regained, ok := lockStandingOrderDelivery(context.Background(), "agt_one")
 	assert.True(t, ok, "the lock is available again once released")
 	regained()
 }
@@ -110,7 +110,10 @@ func TestStandingOrderAlwaysCadenceSurvivesLostLock(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.DefaultName)
 	insertOrder(t, groupID)
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	recipient, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, recipient)
+	release, acquired := lockStandingOrderDelivery(context.Background(), recipient)
 	require.True(t, acquired)
 	defer release()
 
@@ -130,7 +133,10 @@ func TestStandingOrderOncePerGenerationDeferredWhenLockHeld(t *testing.T) {
 		o.Cadence = db.StandingCadenceOncePerGeneration
 	})
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv-1")
+	recipient, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, recipient)
+	release, acquired := lockStandingOrderDelivery(context.Background(), recipient)
 	require.True(t, acquired)
 
 	out := dispatch(t, sessionStart(db.StandingSourceCompact))

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -50,7 +51,8 @@ func ordersCmd() *cobra.Command {
 		Long: "List, show, and dry-run standing orders: durable guidance delivered when a trigger matches " +
 			"rather than on a wall clock. v1 supports the session.start trigger (sources: startup, resume, " +
 			"clear, compact). An order declares the delivery timing it REQUIRES; a harness that cannot meet " +
-			"it reports unsupported rather than downgrading silently.",
+			"it reports unsupported rather than downgrading silently. An optional per-agent cooldown limits " +
+			"successful deliveries without depending on conversation generation.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			ordersLsCmd(),
@@ -164,6 +166,7 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 	fmt.Fprintf(stdout, "Trigger:   %s\n", o.TriggerLabel())
 	fmt.Fprintf(stdout, "Timing:    %s (required — no silent downgrade)\n", o.Timing)
 	fmt.Fprintf(stdout, "Cadence:   %s\n", o.Cadence)
+	fmt.Fprintf(stdout, "Cooldown:  %s\n", ordersCooldownLabel(o.CooldownSeconds))
 	fmt.Fprintf(stdout, "\nText delivered to the agent:\n  %s\n", o.Summary)
 
 	fmt.Fprintln(stdout, "\nPer-harness capability:")
@@ -192,6 +195,13 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 			r.CreatedAt.Format("2006-01-02 15:04:05"), r.Outcome, r.Harness, r.Detail)
 	}
 	return rcOK
+}
+
+func ordersCooldownLabel(seconds int64) string {
+	if seconds <= 0 {
+		return "off"
+	}
+	return (time.Duration(seconds) * time.Second).String() + " per stable recipient agent"
 }
 
 // ---- explain ----
@@ -236,6 +246,7 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 		ConvID:         convID,
 		Harness:        p.Harness,
 		PayloadTrimmed: p.Trimmed,
+		OccurredAt:     time.Now(),
 	}
 
 	agentID, err := db.AgentIDForConv(convID)
@@ -281,7 +292,8 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 	// The real cadence state is consulted so a suppressed order is reported as
 	// suppressed — an explain that ignored the ledger would confidently
 	// predict a delivery that would not happen.
-	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	decisions := standingorders.EvaluateAll(
+		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	for _, d := range decisions {
 		mark := "—"
 		if d.Deliver {

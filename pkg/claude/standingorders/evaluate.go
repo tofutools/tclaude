@@ -3,6 +3,7 @@ package standingorders
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -34,6 +35,9 @@ type Event struct {
 	AgentID string
 	// Harness is the recipient's harness name, which decides capability.
 	Harness string
+	// OccurredAt is the event time used by rate controls. Callers set it once
+	// so a multi-order evaluation is deterministic and tests need no clock.
+	OccurredAt time.Time
 
 	Memberships []Membership
 
@@ -153,6 +157,10 @@ func epochFor(o *db.StandingOrder, ev Event) string {
 // function over its inputs and the whole decision table is unit-testable.
 type DeliveredLookup func(orderID, revision int64, targetConv, epoch string) (bool, error)
 
+// LatestDeliveryLookup returns the last successful delivery time for one
+// order revision and stable recipient agent. Zero means never delivered.
+type LatestDeliveryLookup func(orderID, revision int64, targetAgent string) (time.Time, error)
+
 // Evaluate decides what happens to one order for one event.
 //
 // The check ORDER is deliberate and is the part most worth preserving:
@@ -171,7 +179,12 @@ type DeliveredLookup func(orderID, revision int64, targetConv, epoch string) (bo
 // Step 4 before step 5 matters more than it looks: reversing them would let an
 // unsupported harness mark an order delivered and permanently suppress it for
 // a conversation that never saw the text.
-func Evaluate(o *db.StandingOrder, ev Event, delivered DeliveredLookup) Decision {
+func Evaluate(
+	o *db.StandingOrder,
+	ev Event,
+	delivered DeliveredLookup,
+	latestDelivery ...LatestDeliveryLookup,
+) Decision {
 	d := Decision{Order: o, Epoch: epochFor(o, ev)}
 
 	if !o.Enabled {
@@ -232,6 +245,35 @@ func Evaluate(o *db.StandingOrder, ev Event, delivered DeliveredLookup) Decision
 		}
 	}
 
+	if o.CooldownSeconds > 0 {
+		if ev.AgentID == "" {
+			d.Outcome = db.StandingOutcomeOutOfScope
+			d.Detail = "cooldown requires a stable recipient agent id"
+			return d
+		}
+		if ev.OccurredAt.IsZero() {
+			d.Detail = "cooldown clock was unavailable; delivering anyway"
+		} else if len(latestDelivery) == 0 || latestDelivery[0] == nil {
+			d.Detail = "cooldown history was unavailable; delivering anyway"
+		} else {
+			last, err := latestDelivery[0](o.ID, o.Revision, ev.AgentID)
+			if err != nil {
+				// Same fail-open posture as cadence: a history read failure
+				// may repeat guidance, but must not silently withhold it.
+				d.Detail = "cooldown check failed (" + err.Error() + "); delivering anyway"
+			} else if !last.IsZero() {
+				next := last.Add(time.Duration(o.CooldownSeconds) * time.Second)
+				if ev.OccurredAt.Before(next) {
+					d.Outcome = db.StandingOutcomeSuppressedCooldown
+					d.Detail = fmt.Sprintf(
+						"last delivered to stable agent %s at %s; cooldown ends at %s",
+						ev.AgentID, last.Format(time.RFC3339), next.Format(time.RFC3339))
+					return d
+				}
+			}
+		}
+	}
+
 	d.Deliver = true
 	if d.Capability.Status == StatusDegraded {
 		d.Outcome = db.StandingOutcomeDegradedTransport
@@ -246,10 +288,15 @@ func Evaluate(o *db.StandingOrder, ev Event, delivered DeliveredLookup) Decision
 
 // EvaluateAll runs Evaluate over a set of orders, preserving input order so
 // output is stable for both the ledger and `orders explain`.
-func EvaluateAll(orders []*db.StandingOrder, ev Event, delivered DeliveredLookup) []Decision {
+func EvaluateAll(
+	orders []*db.StandingOrder,
+	ev Event,
+	delivered DeliveredLookup,
+	latestDelivery ...LatestDeliveryLookup,
+) []Decision {
 	out := make([]Decision, 0, len(orders))
 	for _, o := range orders {
-		out = append(out, Evaluate(o, ev, delivered))
+		out = append(out, Evaluate(o, ev, delivered, latestDelivery...))
 	}
 	return out
 }

@@ -24,13 +24,13 @@ const standingOrderLockTimeout = 3 * time.Second
 const standingOrderLockRetryDelay = 20 * time.Millisecond
 
 // lockStandingOrderDelivery serializes the evaluate → deliver → record
-// sequence for one conversation.
+// sequence for one stable recipient agent.
 //
-// The cadence check is a read-modify-write: StandingOrderDeliveredInEpoch asks
-// "has this been delivered", and the ledger row that answers it is written
-// only after delivery succeeds. Two SessionStart events for the same
-// conversation — a compaction racing a resume, or a replay — can otherwise
-// both read "not yet" and both deliver a once-per-generation order.
+// Cadence and cooldown checks are read-modify-write operations: the ledger row
+// that closes either window is written only after delivery succeeds. Two
+// SessionStart events for the same stable agent — a compaction racing a
+// resume, generation rotation, or replay — can otherwise both read "not yet"
+// and both deliver one rate-controlled order.
 //
 // It is a FILE lock rather than a mutex because the two paths that deliver run
 // in different processes: the direct hook callback runs inside the agent's own
@@ -46,17 +46,16 @@ const standingOrderLockRetryDelay = 20 * time.Millisecond
 // Failure to acquire is reported as acquired=false rather than as an error,
 // and the caller must SKIP the boundary for anything cadence-gated instead of
 // proceeding unserialized. Proceeding would knowingly deliver a second copy of
-// a once-per-generation order — the exact race the lock exists to close.
-// Skipping leaves the cadence open, so the order is still pending and the next
-// boundary delivers it; and in the common case the holder we lost the race to
-// is delivering that very order right now, so nothing is lost at all.
-func lockStandingOrderDelivery(ctx context.Context, convID string) (func(), bool) {
-	convID = strings.TrimSpace(convID)
-	if convID == "" {
-		// No conversation, nothing to serialize against. Not a failure: the
-		// callers that reach here have already resolved a real conv, and a
-		// caller that has not cannot deliver anything either.
-		return func() {}, true
+// a rate-controlled order — the exact race the lock exists to close. Skipping
+// leaves the rate window open, so the order is still pending and the next
+// boundary can deliver it; and in the common case the holder we lost the race
+// to is delivering that very order right now, so nothing is lost at all.
+func lockStandingOrderDelivery(ctx context.Context, agentID string) (func(), bool) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		// An empty key must never become one shared bucket for every
+		// actorless conversation. Refuse rate-gated delivery instead.
+		return func() {}, false
 	}
 	lockDir := filepath.Join(common.CacheDir(), "locks")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
@@ -64,13 +63,8 @@ func lockStandingOrderDelivery(ctx context.Context, convID string) (func(), bool
 			"error", err, "module", "hooks")
 		return func() {}, false
 	}
-	// The conversation id is hashed rather than sanitized. It reaches this
-	// function from the resolved session row, but that row's id is ultimately
-	// harness-supplied data, and a lock filename is a path: "..", separators
-	// on either platform convention, and pathological lengths all have to be
-	// impossible, not merely unlikely. A fixed-width hex digest is, and it
-	// still maps one conversation onto exactly one lock.
-	sum := sha256.Sum256([]byte(convID))
+	// Hashing keeps even a malformed persisted id from becoming a path.
+	sum := sha256.Sum256([]byte(agentID))
 	lockPath := filepath.Join(lockDir, "standing-order-"+hex.EncodeToString(sum[:])+".lock")
 	fl := flock.New(lockPath)
 
@@ -78,14 +72,14 @@ func lockStandingOrderDelivery(ctx context.Context, convID string) (func(), bool
 	defer cancel()
 	locked, err := fl.TryLockContext(lockCtx, standingOrderLockRetryDelay)
 	if err != nil || !locked {
-		slog.Info("standing orders: another path holds this conversation's delivery lock, skipping cadence-gated orders",
-			"conv_id", convID, "error", err, "module", "hooks")
+		slog.Info("standing orders: another path holds this agent's delivery lock, skipping rate-gated orders",
+			"agent_id", agentID, "error", err, "module", "hooks")
 		return func() {}, false
 	}
 	return func() {
 		if err := fl.Unlock(); err != nil {
 			slog.Debug("standing orders: failed to release delivery lock",
-				"conv_id", convID, "error", err, "module", "hooks")
+				"agent_id", agentID, "error", err, "module", "hooks")
 		}
 	}, true
 }

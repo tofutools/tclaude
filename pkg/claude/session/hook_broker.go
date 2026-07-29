@@ -278,6 +278,7 @@ func trimOversizedHookBody(req BrokeredHookRequest, body []byte) []byte {
 		"bytes", len(body), "budget", hookBrokerBodyBudget, "module", "hooks")
 	req.Input.ToolInput = nil
 	req.Input.ToolResponse = nil
+	req.Input.PayloadTrimmed = true
 	trimmed, err := json.Marshal(req)
 	if err != nil {
 		return body
