@@ -28,6 +28,8 @@ concurrency:
 jobs:
   sandbox-v2-smoke:
     name: Sandbox v2 bubblewrap smoke
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -444,6 +446,8 @@ jobs:
 
   sandbox-v2-seatbelt-smoke:
     name: Sandbox v2 Seatbelt smoke
+    permissions:
+      contents: read
     runs-on: macos-latest
     steps:
       - name: Checkout code
