@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -948,10 +949,21 @@ func requestOpenCodeLayerSmokeShell(
 	timeout time.Duration,
 	retryInterval time.Duration,
 ) ([]byte, error) {
-	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
-		"/shell?directory=" + url.QueryEscape(runtime.Cwd)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	return requestOpenCodeLayerSmokeShellWithContext(
+		ctx, runtime, command, timeout, retryInterval)
+}
+
+func requestOpenCodeLayerSmokeShellWithContext(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	command string,
+	timeout time.Duration,
+	retryInterval time.Duration,
+) ([]byte, error) {
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
+		"/shell?directory=" + url.QueryEscape(runtime.Cwd)
 	// The preceding model-request assertion proves prompt processing started,
 	// not that OpenCode has released the session for the shell request.
 	var lastBusyBody []byte
@@ -1056,6 +1068,9 @@ func TestRequestOpenCodeLayerSmokeShellRetriesSessionBusy(t *testing.T) {
 func TestRequestOpenCodeLayerSmokeShellBusyTimeoutIncludesLastBody(t *testing.T) {
 	const busyBody = `{"_tag":"SessionBusyError","message":"still busy"}`
 	var requests atomic.Int32
+	secondRequest := make(chan struct{})
+	secondRelease := make(chan struct{})
+	releaseSecond := sync.OnceFunc(func() { close(secondRelease) })
 	server := httptest.NewServer(http.HandlerFunc(func(
 		writer http.ResponseWriter,
 		_ *http.Request,
@@ -1065,18 +1080,46 @@ func TestRequestOpenCodeLayerSmokeShellBusyTimeoutIncludesLastBody(t *testing.T)
 			_, _ = writer.Write([]byte(busyBody))
 			return
 		}
+		close(secondRequest)
+		<-secondRelease
 		time.Sleep(100 * time.Millisecond)
 		_, _ = writer.Write([]byte(`{"parts":[]}`))
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := requestOpenCodeLayerSmokeShell(db.OpenCodeRuntime{
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	t.Cleanup(releaseSecond)
+	runtime := db.OpenCodeRuntime{
 		ConvID:    "conv",
 		ServerURL: server.URL,
 		Password:  "password",
 		PID:       os.Getpid(),
 		Cwd:       t.TempDir(),
-	}, "true", 10*time.Millisecond, time.Millisecond)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := requestOpenCodeLayerSmokeShellWithContext(
+			ctx, runtime, "true", 10*time.Millisecond, time.Millisecond)
+		result <- err
+	}()
+	// Start the timeout only after request two reaches the server. Runner
+	// scheduling before that boundary is not behavior this assertion covers.
+	select {
+	case <-secondRequest:
+	case <-time.After(time.Second):
+		t.Fatal("second OpenCode shell request did not reach the test server")
+	}
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	releaseSecond()
+
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("OpenCode shell request did not stop after context cancellation")
+	}
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), busyBody)
 	assert.Equal(t, int32(2), requests.Load())
