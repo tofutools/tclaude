@@ -960,7 +960,7 @@ func PlanAccessEnforcement(
 
 func closedNetworkRefusal(mechanism, scope string) string {
 	return fmt.Sprintf(
-		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog",
+		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog",
 		mechanism, scope,
 	)
 }

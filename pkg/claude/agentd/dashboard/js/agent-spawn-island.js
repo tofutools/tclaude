@@ -68,6 +68,9 @@ const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new ag
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
   + 'Blank inherits from the spawn-profile chain.';
+const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access cannot '
+  + 'be enforced, launch with outbound network access open. Enforceable filesystem and '
+  + 'Unix-socket rules still apply. This choice is not saved and starts unchecked every time.';
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
@@ -853,36 +856,20 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.sandbox.visible} busy=${busy} />
-    <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
+    <label class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
       title=${SANDBOX_IMPL_TITLE}>
       <span class="cron-create-label">Sandbox impl</span>
-      <div class="cron-create-target">
-        <div class="cron-target-input-row">
-          <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
-            onChange=${(event) => {
-              const value = event.currentTarget.value;
-              touched.current.add('sandboxImpl');
-              setDraft((before) => setSpawnSandboxImpl(before, value));
-            }}>
-            <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
-            ${(view.sandboxImplOptions || []).map((option) => html`
-              <option key=${option.value} value=${option.value}>${option.label}</option>`)}
-          </select>
-          <label class="spawn-unenforced-toggle">
-            <input id="agent-spawn-allow-unenforced-sandbox" type="checkbox"
-              aria-describedby="agent-spawn-allow-unenforced-sandbox-hint"
-              checked=${draft.allowUnenforcedSandbox} disabled=${busy}
-              onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
-            Allow launch WITHOUT an enforced network sandbox
-          </label>
-        </div>
-        <div id="agent-spawn-allow-unenforced-sandbox-hint" class="spawn-field-hint warn">
-          Operator-only escape hatch. If closed network access cannot be enforced, launch with
-          outbound network access open. Enforceable filesystem and Unix-socket rules still apply.
-          This choice is not saved and starts unchecked every time.
-        </div>
-      </div>
-    </div>
+      <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+        onChange=${(event) => {
+          const value = event.currentTarget.value;
+          touched.current.add('sandboxImpl');
+          setDraft((before) => setSpawnSandboxImpl(before, value));
+        }}>
+        <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
+        ${(view.sandboxImplOptions || []).map((option) => html`
+          <option key=${option.value} value=${option.value}>${option.label}</option>`)}
+      </select>
+    </label>
     ${view.showSandboxImpl && sandboxImplHint && html`
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
         <span class="cron-create-label"></span>
@@ -913,6 +900,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         : sandboxPolicy.preview}
       open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
       busy=${busy || view.sandboxProfilesDisabled} />
+    <div class="cron-create-row" id="agent-spawn-allow-unenforced-sandbox-row"
+      hidden=${!view.showSandboxImpl}>
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target">
+        <label class="spawn-unenforced-toggle" title=${UNENFORCED_SANDBOX_TITLE}>
+          <input id="agent-spawn-allow-unenforced-sandbox" type="checkbox"
+            checked=${draft.allowUnenforcedSandbox} disabled=${busy}
+            onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
+          Allow launch without enforcement
+        </label>
+      </div>
+    </div>
     <${HelpField} id="agent-spawn-approval" label=${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}
       title="Controls when the new agent requests approval; it does not change the sandbox."
       value=${draft.approval}

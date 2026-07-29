@@ -810,7 +810,7 @@ is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
 The spawn dialog also contains an operator-only
-**Allow launch WITHOUT an enforced network sandbox** checkbox. It starts
+**Allow launch without enforcement** checkbox. It starts
 unchecked on every open and harness switch, is never saved in a spawn profile
 or launch preferences, and applies only when that fresh spawn's exact
 closed-network request cannot be enforced. Checking it opens outbound network
