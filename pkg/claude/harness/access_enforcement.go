@@ -91,6 +91,15 @@ type PredictedAccessAxes struct {
 	UnixSockets      PredictedAccessAxis `json:"unix_sockets"`
 }
 
+// PredictedNetworkEntry projects the list-wide enforcement plan onto one
+// materialized destination. Entry is included so editor clients can match the
+// verdict after pack expansion without relying on positional indices.
+type PredictedNetworkEntry struct {
+	Entry   sandboxpolicy.NetworkAllowEntry `json:"entry"`
+	Outcome string                          `json:"outcome"`
+	Detail  string                          `json:"detail"`
+}
+
 type accessEnforcementTableRow struct {
 	NetworkClosed           EnforcementLevel
 	NetworkList             EnforcementLevel
@@ -445,6 +454,87 @@ func DescribePredictedAccess(
 		Network:     predictNetworkAxis(axes.Network, caps),
 		UnixSockets: predictSocketAxis(axes.UnixSockets, caps),
 	}
+}
+
+// DescribePredictedNetworkEntries describes the actual list plan per visible
+// row. Some limitations apply to the whole list: an unsupported selector, for
+// example, widens the resolved posture to open, so every row reports that it is
+// not enforced rather than only marking the selector that triggered widening.
+func DescribePredictedNetworkEntries(
+	rules sandboxpolicy.NetworkRules,
+	caps PredictedAccessEnforcement,
+) []PredictedNetworkEntry {
+	if rules.Mode != sandboxpolicy.AccessModeList {
+		return nil
+	}
+	out := make([]PredictedNetworkEntry, len(rules.Allow))
+	setAll := func(outcome, detail string) []PredictedNetworkEntry {
+		for i, entry := range rules.Allow {
+			out[i] = PredictedNetworkEntry{
+				Entry: entry, Outcome: outcome, Detail: detail,
+			}
+		}
+		return out
+	}
+	if caps.NetworkList == EnforceNone {
+		if caps.NetworkListRefusal != "" {
+			return setAll(AccessPredictionRefused, caps.NetworkListRefusal)
+		}
+		return setAll(AccessPredictionNotEnforced, fmt.Sprintf(
+			"%s: no filtered-egress applier exists; all outbound connections are permitted",
+			caps.Mechanism,
+		))
+	}
+	unsupported := networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)
+	if len(unsupported) > 0 {
+		if caps.NetworkSelectorRefusal != "" {
+			return setAll(AccessPredictionRefused, fmt.Sprintf(
+				"%s; affected authored entries: %s",
+				caps.NetworkSelectorRefusal, formatEntryIndices(unsupported),
+			))
+		}
+		return setAll(AccessPredictionNotEnforced, fmt.Sprintf(
+			"%s cannot express one or more destination selectors; all outbound connections are permitted; affected authored entries: %s",
+			caps.Mechanism, formatEntryIndices(unsupported),
+		))
+	}
+	for i, entry := range rules.Allow {
+		capability, _ := networkSelectorCapability(
+			caps.NetworkSelectors, networkSelectorForEntry(entry),
+		)
+		partialReasons := []string{}
+		if caps.NetworkList == EnforcePartial {
+			partialReasons = append(partialReasons, "the destination list is only partially enforced")
+		}
+		if capability.Level == EnforcePartial {
+			detail := capability.Detail
+			if detail == "" {
+				detail = "the destination selector is only partially enforced"
+			}
+			partialReasons = append(partialReasons, detail)
+		}
+		if len(entry.Ports) > 0 && caps.NetworkPorts != EnforceFull {
+			partialReasons = append(partialReasons, "the authored port restriction is not fully enforced")
+		}
+		if caps.Scope == "tools-only" {
+			partialReasons = append(partialReasons,
+				"the restriction applies only to tool execution, not the harness process")
+		}
+		outcome := AccessPredictionEnforced
+		detail := fmt.Sprintf("%s enforces this destination", caps.Mechanism)
+		if len(partialReasons) > 0 {
+			outcome = AccessPredictionEnforcedPartial
+			detail = fmt.Sprintf("%s: %s", caps.Mechanism,
+				strings.Join(partialReasons, " "))
+		}
+		if caps.NetworkListCondition != "" {
+			detail += " " + caps.NetworkListCondition
+		}
+		out[i] = PredictedNetworkEntry{
+			Entry: entry, Outcome: outcome, Detail: detail,
+		}
+	}
+	return out
 }
 
 func predictNetworkAxis(

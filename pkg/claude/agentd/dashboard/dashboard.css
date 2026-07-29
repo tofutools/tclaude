@@ -4245,9 +4245,50 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 
 .sbx-access-axis > select,
+.sbx-network-baseline-label > select,
 .sbx-effective-preview > label > select {
   margin: .25rem 0 .5rem;
   min-width: 13rem;
+}
+.sbx-network-baseline-label {
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  font-size: .82rem;
+  width: max-content;
+}
+.sbx-network-unlocks {
+  border: 1px solid #30363d;
+  border-radius: .4rem;
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  margin: .25rem 0;
+  padding: .65rem;
+}
+.sbx-network-unlocks:disabled {
+  opacity: .55;
+}
+.sbx-network-pack-list {
+  display: grid;
+  gap: .4rem;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+.sbx-network-pack {
+  align-items: flex-start;
+  border: 1px solid #30363d;
+  border-radius: .35rem;
+  display: flex;
+  gap: .5rem;
+  padding: .5rem;
+}
+.sbx-network-pack small {
+  color: var(--text-muted);
+  display: block;
+  margin-top: .2rem;
+}
+.sbx-network-list-title {
+  margin: .35rem 0 0;
 }
 .sbx-evaluation-target-controls {
   display: grid;
@@ -4270,7 +4311,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: grid;
 }
 .sbx-network-row {
-  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem auto;
+  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem 7.5rem auto;
 }
 .sbx-network-value,
 .sbx-socket-value {
@@ -4292,6 +4333,25 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   align-items: center;
   min-width: 0;
 }
+.sbx-network-pack-owner {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: .78rem;
+}
+.sbx-network-badge {
+  align-self: center;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: .75rem;
+  justify-self: start;
+  padding: .15rem .45rem;
+  white-space: nowrap;
+}
+.sbx-network-badge-enforced { color: #3fb950; }
+.sbx-network-badge-partial { color: #d29922; }
+.sbx-network-badge-not-enforced,
+.sbx-network-badge-refused { color: #f85149; }
+.sbx-network-badge-pending { color: var(--text-muted); }
 .sbx-socket-row {
   grid-template-columns: 6rem minmax(14rem, 1fr) auto;
 }

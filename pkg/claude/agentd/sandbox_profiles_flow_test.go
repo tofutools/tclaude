@@ -358,11 +358,12 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
 	// v5 removed read_baseline/read_baseline_exclusions (TCL-623), v6
 	// removed break_glass_filesystem (TCL-791), v7 adds independent
-	// network and Unix-socket axes, and v8 retains filesystem spellings.
+	// network and Unix-socket axes, v8 retains filesystem spellings, and v9
+	// adds authored network baselines plus stable pack references.
 	// Exporting only the newest
 	// version keeps an older importer from silently dropping a
 	// security-significant field as an unknown key; older versions stay importable.
-	assert.Equal(t, float64(8), bundle["format_version"])
+	assert.Equal(t, float64(9), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)
@@ -386,7 +387,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testing.T) {
+func TestSandboxProfileLegacyAndCompositionalNetworkShapesRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	profiles := []struct {
 		name  string
@@ -412,6 +413,18 @@ func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testin
 				},
 			},
 		},
+		{
+			name: "compositional-packs",
+			rules: sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Packs: []string{
+					"net-anthropic", "net-local", "net-openai-codex",
+				},
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Domain: "example.internal", Ports: []int{8443},
+				}},
+			},
+		},
 	}
 	for _, profile := range profiles {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
@@ -431,12 +444,12 @@ func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testin
 	}
 
 	rec := profileReq(t, f, http.MethodGet,
-		"/v1/sandbox-profiles/export?name=local-access&name=local-model-apis", nil)
+		"/v1/sandbox-profiles/export?name=local-access&name=local-model-apis&name=compositional-packs", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
-	assert.Equal(t, float64(8), bundle["format_version"],
-		"the presets use the existing access-axis schema")
+	assert.Equal(t, float64(9), bundle["format_version"],
+		"pack references require the v9 authored-network envelope")
 
 	for _, profile := range profiles {
 		require.Equal(t, http.StatusNoContent, profileReq(

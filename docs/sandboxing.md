@@ -225,8 +225,9 @@ through an owned Unix relay, without exposing the socket path inside the server
 wall or routing agentd through host TCP. That engine does not enable a posture:
 OpenCode isolated profiles still refuse because OpenCode requires hosted model
 traffic. Filtered OpenCode supports inspected explicit-provider configs on
-Linux, while both local convenience presets remain launch-refused pending the
-TCL-826 effective-config seam. The Unix relay remains Linux-only. Linux uses
+Linux, while the release-owned local/model-API pack combination remains
+launch-refused pending the TCL-826 effective-config seam. The Unix relay
+remains Linux-only. Linux uses
 `bwrap` from `PATH` and requires working unprivileged user namespaces. macOS uses
 `/usr/bin/sandbox-exec` for filesystem confinement and for the
 isolated-with-agentd network boundary. If any required capability is missing,
@@ -525,28 +526,40 @@ requires an internal localhost server, the remedy is a harness-descriptor
 capability plus launch-time refusal for Darwin isolated mode. It must not gain a
 loopback exception that silently reopens host services.
 
-#### Local network presets
+#### Compositional network packs
 
-The profile editor offers two conveniences over the existing
-`network.mode: list` schema; neither adds a wire mode or an implicit rule:
+The profile editor authors a network baseline first: **Deny all**, **Allow
+all**, or **No override**. Only Deny all can add unlocks. Unlocks are either
+stable references to release-owned packs or explicit manual destinations.
+Expanded pack rows are visible but read-only; toggle their pack to add or
+remove them. The saved shape keeps intent rather than copying endpoints:
 
-- **Local access** writes exactly one unscoped `{ "loopback": true }` entry.
-  It is intended for local model servers such as Ollama, LM Studio, and
-  llama.cpp, Codex OSS mode, OpenCode local providers, and host-local
-  development services. OpenCode local-provider launches are currently
-  refused because their effective provider endpoint is not yet available at
-  the launch seam; that work is tracked in TCL-826.
-- **Local + model APIs** writes that loopback entry plus
-  `api.anthropic.com:443` and `api.openai.com:443`, matching the built-in
-  `net-anthropic` and `net-openai-codex` templates and the pinned endpoint
-  evidence below.
+```json
+{
+  "network": {
+    "baseline": "deny",
+    "packs": ["net-local", "net-anthropic", "net-openai-codex"],
+    "allow": [{"domain": "example.internal", "ports": [443]}]
+  }
+}
+```
 
-Recognition is deliberately exact. A port-scoped loopback row, changed
-provider row, different ordering, subdomain widening, or any extra destination
-reopens as **Access list**, with every authored row visible. Profiles continue
-to export and import through the existing access-axis format.
+`net-local` provides the unscoped loopback destination for local model servers
+such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local
+providers, and host-local development services. OpenCode local-provider
+launches are currently refused because their effective provider endpoint is
+not yet available at the launch seam; that work is tracked in TCL-826.
+`net-anthropic` and `net-openai-codex` independently provide the direct
+Anthropic and OpenAI API-key endpoints. New drafts select these three packs
+once on their first transition to Deny all; they remain ordinary editable pack
+choices afterward.
 
-On Linux, both presets use the filtered gateway. Local host services are
+Legacy `network.mode: list` profiles remain valid and open as Deny all with
+their exact rows under manual destinations. The editor never infers a pack
+reference from matching endpoints, so opening and saving a legacy policy does
+not silently transfer ownership to a future release registry.
+
+On Linux, pack-backed lists use the filtered gateway. Local host services are
 reached through `host.tclaude.internal`; `127.0.0.1` and `::1` remain private
 to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt
 against real host `127.0.0.1` and `::1`. Port scopes are honored, outbound
@@ -556,7 +569,7 @@ rule uses `remote ip` predicates; an outbound `local ip` predicate would match
 the local side of remote connections and is therefore never used for this
 boundary.
 
-macOS does not yet enforce the mixed Local + model APIs list. It follows the
+macOS does not yet enforce a mixed Local + model-API pack list. It follows the
 same established list-degradation path as any other mixed Darwin list: the
 preview and recorded launch report **Not enforced**, and outbound networking
 remains open. It does not refuse and does not silently pretend to filter;
@@ -567,11 +580,11 @@ harness launch is checked through its resolved model-transport requirement and
 refuses with `unsupported_filtered_model_transport` unless the authored
 Access list, directly or through **Includes**, covers the provider endpoint.
 A concrete provider at `host.tclaude.internal` on Linux, or real
-`localhost`/`127.0.0.1`/`::1` on macOS, passes that same gate. The Local +
-model APIs preset covers first-party Anthropic and OpenAI API-key traffic, but
+`localhost`/`127.0.0.1`/`::1` on macOS, passes that same gate. The Anthropic
+and OpenAI API packs cover first-party API-key traffic, but
 ChatGPT-auth Codex remains refused; custom providers, web search, plugins, MCP
 servers, and commands run by the agent need their own authored destinations.
-OpenCode remains launch-refused under both local presets with
+OpenCode remains launch-refused under the built-in local/model-API combination with
 `unsupported_filtered_model_transport`, naming TCL-826 and the network-open
 remedy; the editor does not advertise its local-provider constituency as
 present-day support.
@@ -724,13 +737,13 @@ For all supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
 boundary and therefore refuses filtered launch until TCL-826 adds proxy-aware
 resolution; remove the proxy variable or use network open.
 
-The built-in `net-anthropic` and `net-openai-codex` templates are backed by the
+The built-in `net-anthropic` and `net-openai-codex` packs are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
 active minimal evidence set is `api.anthropic.com:443` for Claude and
 `api.openai.com:443` for API-key Codex. The same audit separately records
 ChatGPT model and refresh traffic at `chatgpt.com:443` and
 `auth.openai.com:443` for TCL-826, but those destinations are not included in
-the active preset while ChatGPT-auth filtered launches are refused. Any
+the active packs while ChatGPT-auth filtered launches are refused. Any
 undeclared mandatory origin fails the audit.
 Codex's optional plugin-marketplace synchronization is not model transport; it
 may be unavailable unless the authored profile separately admits its

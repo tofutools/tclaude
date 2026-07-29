@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,6 +132,39 @@ func TestSandboxProfileAccessAxesRoundTripWithoutMaterializingAbsentFields(t *te
 	assert.Equal(t, []sandboxpolicy.SocketAllowEntry{{
 		Path: filepath.Join(os.Getenv("HOME"), "service.sock"),
 	}}, scoped.UnixSockets.Allow)
+}
+
+func TestSandboxProfileNetworkPackReferencesRoundTripByteStably(t *testing.T) {
+	setupTestDB(t)
+	id, err := CreateSandboxProfile(&SandboxProfile{
+		Name: "compositional-network",
+		Network: &sandboxpolicy.NetworkRules{
+			Baseline: sandboxpolicy.NetworkBaselineDeny,
+			Packs:    []string{"net-openai-codex", "net-local"},
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "Example.COM", Ports: []int{8443, 443},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	first, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	firstJSON, err := json.Marshal(first.Network)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{
+		"baseline":"deny",
+		"packs":["net-local","net-openai-codex"],
+		"allow":[{"domain":"example.com","ports":[443,8443]}]
+	}`, string(firstJSON))
+
+	require.NoError(t, UpdateSandboxProfile(first))
+	second, err := GetSandboxProfileByID(id)
+	require.NoError(t, err)
+	secondJSON, err := json.Marshal(second.Network)
+	require.NoError(t, err)
+	assert.Equal(t, firstJSON, secondJSON,
+		"read-update-read preserves the authored pack-reference representation byte-for-byte")
 }
 
 func TestUpdateSandboxProfileIfUnchanged(t *testing.T) {

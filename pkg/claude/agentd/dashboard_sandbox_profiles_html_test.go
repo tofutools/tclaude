@@ -35,7 +35,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`if (draft.network !== undefined) body.network = draft.network`:                "network axis persists in save payloads",
 		`if (draft.unix_sockets !== undefined) body.unix_sockets = draft.unix_sockets`: "Unix-socket axis persists in save payloads",
 		`if (draft.filesystem_spellings !== undefined) body.filesystem_spellings`:      "retained spellings persist in save payloads",
-		`id="sandbox-profile-editor-network-mode"`:                                     "structured network posture selector",
+		`id="sandbox-profile-editor-network-baseline"`:                                 "compositional network baseline selector",
 		`id="sandbox-profile-editor-unix-sockets-mode"`:                                "structured Unix-socket posture selector",
 		`id="sandbox-profile-editor-evaluate-harness"`:                                 "target harness prediction picker",
 		`id="sandbox-profile-editor-evaluate-implementation"`:                          "sandbox implementation prediction picker",

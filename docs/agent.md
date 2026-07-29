@@ -503,14 +503,21 @@ are stored and displayed as ordinary **non-secret configuration** — do not put
 credentials in them. Profile payload reads and all mutations require the
 `sandbox-profiles.manage` permission.
 
-`network.mode` and `unix_sockets.mode` accept `open`, `closed`, `list`, or may
-be omitted to preserve the next tier's posture. Network list entries select
-exactly one host, domain, CIDR, or loopback destination and may narrow it to
-integer ports. Unix-socket list entries select an absolute `path` or bounded
-`path_glob` (`**` is refused). The agentd socket is a non-removable floor and
-remains reachable in every mode. Global, group, and explicit list tiers compose
-by intersection; an empty intersection is saved and launched as authored but
-is disclosed as a composition warning.
+New network profiles use `network.baseline`: `deny`, `allow`, or `inherit`.
+Only `deny` may carry `network.packs` and manual `network.allow` entries.
+Profiles store stable pack IDs; resolution expands the current release-owned
+registry before profile composition, while launch snapshots freeze the
+expanded authority. Manual entries select exactly one host, domain, CIDR, or
+loopback destination and may narrow it to integer ports. Legacy `network.mode`
+payloads remain readable, but the editor preserves their list entries as
+manual rows and never infers pack ownership.
+
+`unix_sockets.mode` accepts `open`, `closed`, `list`, or may be omitted to
+preserve the next tier's posture. Unix-socket list entries select an absolute
+`path` or bounded `path_glob` (`**` is refused). The agentd socket is a
+non-removable floor and remains reachable in every mode. Global, group, and
+explicit list tiers compose by intersection; an empty intersection is saved
+and launched as authored but is disclosed as a composition warning.
 
 The network-list protocol contract is ordinary IPv4/IPv6 **TCP and UDP**
 connections. QUIC is UDP. Raw and packet sockets, including authored ICMP

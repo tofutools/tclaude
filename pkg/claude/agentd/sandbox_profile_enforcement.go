@@ -46,11 +46,12 @@ type sandboxProfileDraftEnforcementContextHint struct {
 }
 
 type sandboxProfileDraftEnforcementTarget struct {
-	Target      sandboxProfileEnforcementTargetRequest `json:"target"`
-	ResolvedBy  string                                 `json:"resolved_by,omitempty"`
-	Predicted   bool                                   `json:"predicted"`
-	Axes        harness.PredictedAccessAxes            `json:"axes"`
-	ContextAxes []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
+	Target         sandboxProfileEnforcementTargetRequest `json:"target"`
+	ResolvedBy     string                                 `json:"resolved_by,omitempty"`
+	Predicted      bool                                   `json:"predicted"`
+	Axes           harness.PredictedAccessAxes            `json:"axes"`
+	NetworkEntries []harness.PredictedNetworkEntry        `json:"network_entries,omitempty"`
+	ContextAxes    []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -189,6 +190,11 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 		return
 	}
+	draftAxes, err := sandboxpolicy.DeriveAccessAxes(*sandboxProfileDBToPolicy(draft))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
 
 	targets := body.Targets
 	resolvedBy := ""
@@ -239,6 +245,14 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
+		draftPredicted, predictErr := harness.PredictAccessEnforcement(
+			target.harness, target.implementation, draftAxes,
+			mode, target.platform,
+		)
+		if predictErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
+			return
+		}
 		described, contextAxes, describeErr := describePredictedDraftSandboxProfile(
 			flattened, contexts, target, mode,
 			harness.DescribePredictedAccess(axes, predicted),
@@ -257,9 +271,12 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 				Platform:       target.platform,
 				Sandbox:        mode,
 			},
-			ResolvedBy:  resolvedBy,
-			Predicted:   true,
-			Axes:        described,
+			ResolvedBy: resolvedBy,
+			Predicted:  true,
+			Axes:       described,
+			NetworkEntries: harness.DescribePredictedNetworkEntries(
+				draftAxes.Network, draftPredicted,
+			),
 			ContextAxes: contextAxes,
 		})
 	}
