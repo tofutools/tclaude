@@ -1,10 +1,11 @@
 # TCL-856 Chrome evidence
 
-Production tip: `07745a8544b43ad841f7b98d4bb0c92f2209b2c4`
+Production tip: `3ca77e29618cafa7d686be5e1690d9294f8eab7e`
 
 These screenshots were rendered from the real dashboard handler with host
-Google Chrome at 1280×900 and 720×900, in regular and wizard skins. The fixture
-opens the production sandbox-profile editor with:
+Google Chrome at 1280×900 and 720×900, in regular and wizard skins, with the
+production worktree pinned to the tip above. The fixture opens the production
+sandbox-profile editor with:
 
 - one filesystem row in each Read, Write, and Deny state;
 - Path-selected and Glob-selected Unix-socket rows;
