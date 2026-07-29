@@ -1480,12 +1480,136 @@ func TestTUIViewNamesACoRunningDashboard(t *testing.T) {
 	assert.Contains(t, m.renderHelp(), "permissions grant")
 
 	m.dashboardURL = "http://127.0.0.1:44585"
-	assert.Contains(t, m.renderList(), "web dashboard: http://127.0.0.1:44585")
+	assert.Contains(t, m.renderList(), "web dashboard:")
+	assert.Contains(t, m.renderList(), "http://127.0.0.1:44585")
 	assert.NotContains(t, m.renderList(), "no web dashboard")
 	help := m.renderHelp()
 	assert.Contains(t, help, "http://127.0.0.1:44585")
 	assert.Contains(t, help, "Messages tab")
 	assert.NotContains(t, help, "runs without the web dashboard")
+}
+
+// The address the console prints is meant to be opened as-is: it carries an
+// init token, which is what the dashboard exchanges for a session cookie, so
+// the operator never has to paste the operator token into the sign-in page.
+func TestTUIDashboardLinkCarriesAnInitToken(t *testing.T) {
+	const base = "http://127.0.0.1:44585"
+	m := newTUIModel(nil)
+	m.width = 120
+	m.operator = true
+	m.dashboardURL = base
+	start := time.Now()
+	m = m.refreshDashboardLink(start)
+
+	require.Contains(t, m.dashboardLink, base+"/?init_token=")
+	assert.Contains(t, m.renderList(), m.dashboardLink)
+	assert.Contains(t, m.renderHelp(), m.dashboardLink)
+
+	// The token in it is the real thing the dashboard root accepts, and it is
+	// single-use — which is why the console mints replacements at all.
+	tok := strings.TrimPrefix(m.dashboardLink, base+"/?init_token=")
+	require.NotEmpty(t, tok)
+	assert.True(t, consumeInitToken(tok, initScopeDashboard))
+	assert.False(t, consumeInitToken(tok, initScopeDashboard))
+
+	// A link holds its place for a while: ticking does not rewrite the line
+	// out from under an operator selecting it.
+	held, _ := m.Update(tuiTickMsg(start.Add(tuiRefreshInterval)))
+	assert.Equal(t, m.dashboardLink, held.(tuiModel).dashboardLink)
+
+	// Once it has been up long enough, a fresh token replaces it well before
+	// the one on screen could expire.
+	rotated, _ := m.Update(tuiTickMsg(start.Add(tuiDashboardLinkRotate)))
+	next := rotated.(tuiModel).dashboardLink
+	require.NotEqual(t, m.dashboardLink, next)
+	assert.True(t, consumeInitToken(strings.TrimPrefix(next, base+"/?init_token="), initScopeDashboard))
+	assert.Less(t, tuiDashboardLinkRotate, initTokenTTL,
+		"a rotation must land before the link it replaces expires")
+}
+
+// The link is a capability — redeeming it buys the dashboard session cookie —
+// so it goes on screen only when the screen is the operator's. Everywhere else
+// the console still names the dashboard, just without a token on it.
+func TestTUIDashboardLinkOnlyForAnOperatorConsole(t *testing.T) {
+	const base = "http://127.0.0.1:44585"
+	for _, tc := range []struct {
+		name  string
+		setup func(m *tuiModel)
+		addr  string
+	}{{
+		// agentd started inside a harness pane acts as that agent — which can
+		// read its own pane, so a token there is a token handed to the agent.
+		name:  "agent-classified console",
+		setup: func(m *tuiModel) { m.operator = false },
+		addr:  base,
+	}, {
+		// --no-print-human-token: this terminal's output is scraped or logged.
+		name:  "secrets suppressed",
+		setup: func(m *tuiModel) { m.suppressSecrets = true },
+		addr:  base,
+	}, {
+		// A token from this process's store is worthless to another daemon.
+		name:  "remote console",
+		setup: func(m *tuiModel) { m.connectionLabel = "http://10.0.0.4:8712" },
+		addr:  "",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTUIModel(nil)
+			m.width = 120
+			m.operator = true
+			m.dashboardURL = base
+			tc.setup(&m)
+			m = m.refreshDashboardLink(time.Now())
+
+			assert.False(t, m.canMintDashboardLink())
+			assert.Empty(t, m.dashboardLink)
+			assert.Equal(t, tc.addr, m.dashboardAddressLine())
+			assert.NotContains(t, m.renderList(), "init_token")
+			assert.NotContains(t, m.renderHelp(), "init_token")
+		})
+	}
+}
+
+// A link already on screen is dropped the moment the console stops being
+// allowed to show one, rather than lingering as a live capability.
+func TestTUIDashboardLinkDroppedWhenNoLongerAllowed(t *testing.T) {
+	m := newTUIModel(nil)
+	m.width = 120
+	m.operator = true
+	m.dashboardURL = "http://127.0.0.1:44585"
+	m = m.refreshDashboardLink(time.Now())
+	require.NotEmpty(t, m.dashboardLink)
+
+	m.suppressSecrets = true
+	m = m.refreshDashboardLink(time.Now())
+	assert.Empty(t, m.dashboardLink)
+	assert.True(t, m.dashboardLinkMinted.IsZero())
+}
+
+// The address is one URL that only works whole, so a narrow terminal wraps it
+// — and the row budget has to pay for every row it took, or the list overflows
+// the screen bubbletea is diffing.
+func TestTUIDashboardAddressRowsCountWrapping(t *testing.T) {
+	m := newTUIModel(nil)
+	m.operator = true
+	m.dashboardURL = "http://127.0.0.1:44585"
+	m = m.refreshDashboardLink(time.Now())
+	width := lipgloss.Width(m.dashboardAddressLine()) + dashboardAddressIndent
+
+	m.width = width
+	assert.Equal(t, 1, m.dashboardAddressRows())
+
+	m.width = width - 1
+	assert.Equal(t, 2, m.dashboardAddressRows())
+
+	m.width = (width / 3) + 1
+	assert.Equal(t, 3, m.dashboardAddressRows())
+
+	// Every row the header takes is a row the table cannot have.
+	m.width, m.height = width, 40
+	wide := m.viewportHeight()
+	m.width = width - 1
+	assert.Equal(t, wide-1, m.viewportHeight())
 }
 
 func TestTokenBannerInTUI(t *testing.T) {
