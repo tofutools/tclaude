@@ -52,23 +52,24 @@ type AccessEnforcement struct {
 // inspection has no live LaunchOSSandbox verdict and therefore cannot mint a
 // value accepted by PlanAccessEnforcement.
 type PredictedAccessEnforcement struct {
-	NetworkClosed           EnforcementLevel
-	NetworkList             EnforcementLevel
-	NetworkSelectors        []NetworkSelectorCapability
-	NetworkPorts            EnforcementLevel
-	NetworkListRefusal      string
-	NetworkSelectorRefusal  string
-	NetworkListCondition    string
-	SocketOpen              EnforcementLevel
-	SocketClosed            EnforcementLevel
-	SocketList              EnforcementLevel
-	SocketOpenRefusal       string
-	SocketListRefusal       string
-	SocketCombinationDetail string
-	SocketClosedRefusal     string
-	Scope                   string
-	Mechanism               string
-	MCPBypass               bool
+	NetworkClosed                EnforcementLevel
+	NetworkList                  EnforcementLevel
+	NetworkSelectors             []NetworkSelectorCapability
+	NetworkPorts                 EnforcementLevel
+	NetworkListRefusal           string
+	NetworkListUnavailableDetail string
+	NetworkSelectorRefusal       string
+	NetworkListCondition         string
+	SocketOpen                   EnforcementLevel
+	SocketClosed                 EnforcementLevel
+	SocketList                   EnforcementLevel
+	SocketOpenRefusal            string
+	SocketListRefusal            string
+	SocketCombinationDetail      string
+	SocketClosedRefusal          string
+	Scope                        string
+	Mechanism                    string
+	MCPBypass                    bool
 }
 
 const (
@@ -103,23 +104,24 @@ type PredictedNetworkEntry struct {
 }
 
 type accessEnforcementTableRow struct {
-	NetworkClosed           EnforcementLevel
-	NetworkList             EnforcementLevel
-	NetworkSelectors        []NetworkSelectorCapability
-	NetworkPorts            EnforcementLevel
-	NetworkListRefusal      string
-	NetworkSelectorRefusal  string
-	NetworkListCondition    string
-	SocketOpen              EnforcementLevel
-	SocketClosed            EnforcementLevel
-	SocketList              EnforcementLevel
-	SocketOpenRefusal       string
-	SocketListRefusal       string
-	SocketCombinationDetail string
-	SocketClosedRefusal     string
-	Scope                   string
-	Mechanism               string
-	MCPBypass               bool
+	NetworkClosed                EnforcementLevel
+	NetworkList                  EnforcementLevel
+	NetworkSelectors             []NetworkSelectorCapability
+	NetworkPorts                 EnforcementLevel
+	NetworkListRefusal           string
+	NetworkListUnavailableDetail string
+	NetworkSelectorRefusal       string
+	NetworkListCondition         string
+	SocketOpen                   EnforcementLevel
+	SocketClosed                 EnforcementLevel
+	SocketList                   EnforcementLevel
+	SocketOpenRefusal            string
+	SocketListRefusal            string
+	SocketCombinationDetail      string
+	SocketClosedRefusal          string
+	Scope                        string
+	Mechanism                    string
+	MCPBypass                    bool
 }
 
 // NetworkSelectorCapability is a mechanism's honest rating for one selector
@@ -385,13 +387,14 @@ func accessEnforcementTable(
 		}, nil
 	case CodexName:
 		caps := accessEnforcementTableRow{
-			NetworkClosed: EnforceNone,
-			NetworkList:   EnforceNone,
-			SocketOpen:    EnforceFull,
-			SocketClosed:  EnforceNone,
-			SocketList:    EnforceNone,
-			Scope:         "tools-only",
-			Mechanism:     "Codex builtin sandbox",
+			NetworkClosed:                EnforceNone,
+			NetworkList:                  EnforceNone,
+			NetworkListUnavailableDetail: CodexBuiltinFilteredNetworkDisclosure,
+			SocketOpen:                   EnforceFull,
+			SocketClosed:                 EnforceNone,
+			SocketList:                   EnforceNone,
+			Scope:                        "tools-only",
+			Mechanism:                    "Codex builtin sandbox",
 		}
 		if strings.TrimSpace(validatedBuiltinMode) == SandboxManagedProfile {
 			if goos == "darwin" {
@@ -434,10 +437,11 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		NetworkClosed: row.NetworkClosed, NetworkList: row.NetworkList,
 		NetworkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
 		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
-		NetworkListRefusal:     row.NetworkListRefusal,
-		NetworkSelectorRefusal: row.NetworkSelectorRefusal,
-		NetworkListCondition:   row.NetworkListCondition,
-		SocketClosed:           row.SocketClosed, SocketList: row.SocketList,
+		NetworkListRefusal:           row.NetworkListRefusal,
+		NetworkListUnavailableDetail: row.NetworkListUnavailableDetail,
+		NetworkSelectorRefusal:       row.NetworkSelectorRefusal,
+		NetworkListCondition:         row.NetworkListCondition,
+		SocketClosed:                 row.SocketClosed, SocketList: row.SocketList,
 		SocketOpenRefusal:       row.SocketOpenRefusal,
 		SocketListRefusal:       row.SocketListRefusal,
 		SocketCombinationDetail: row.SocketCombinationDetail,
@@ -483,10 +487,7 @@ func DescribePredictedNetworkEntries(
 		if caps.NetworkListRefusal != "" {
 			return setAll(AccessPredictionRefused, caps.NetworkListRefusal)
 		}
-		return setAll(AccessPredictionNotEnforced, fmt.Sprintf(
-			"%s: no filtered-egress applier exists; all outbound connections are permitted",
-			caps.Mechanism,
-		))
+		return setAll(AccessPredictionNotEnforced, networkListUnavailableDetail(caps))
 	}
 	unsupported := networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)
 	if len(unsupported) > 0 {
@@ -584,8 +585,7 @@ func predictNetworkAxis(
 				return predictedRefused(tier, caps.NetworkListRefusal)
 			}
 			return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionNotEnforced,
-				Detail: fmt.Sprintf("%s: no filtered-egress applier exists; all outbound connections are permitted",
-					caps.Mechanism)}
+				Detail: networkListUnavailableDetail(caps)}
 		}
 		unsupported := networkUnsupportedEntries(rules.Allow, caps.NetworkSelectors)
 		if len(unsupported) > 0 {
@@ -616,6 +616,25 @@ func predictNetworkAxis(
 		return PredictedAccessAxis{Tier: tier, Outcome: AccessPredictionRefused,
 			Detail: "the network tier is invalid"}
 	}
+}
+
+// CodexBuiltinFilteredNetworkDisclosure is display-only copy for the Codex
+// harness-owned target. Codex's upstream proxy cannot honestly satisfy the
+// ordinary TCP/UDP access-list contract, so the capability remains None and
+// launch planning continues to widen to open exactly as before.
+const CodexBuiltinFilteredNetworkDisclosure = "Codex has no filtered network sandbox yet. " +
+	"Its upstream proxy is experimental and off by default; it admits only proxy-aware clients " +
+	"and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile's " +
+	"ordinary TCP/UDP access list. Use tclaude-layer filtering on Linux, or choose network open (Allow all)."
+
+func networkListUnavailableDetail(caps PredictedAccessEnforcement) string {
+	if caps.NetworkListUnavailableDetail != "" {
+		return caps.NetworkListUnavailableDetail
+	}
+	return fmt.Sprintf(
+		"%s: no filtered-egress applier exists; all outbound connections are permitted",
+		caps.Mechanism,
+	)
 }
 
 func withNetworkListCondition(

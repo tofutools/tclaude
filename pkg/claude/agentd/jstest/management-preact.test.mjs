@@ -194,6 +194,15 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   // The label follows the harness selection, which changes in the browser
   // without refetching the host-wide catalog.
   const harnessSelect = host.querySelector('#profile-editor-harness');
+  choose(harnessSelect, 'codex');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(
+    [...host.querySelector('#profile-editor-sandbox-impl').options]
+      .find((option) => option.value === 'harness-builtin').textContent,
+    'Codex built-in (no filtered network sandbox yet)',
+  );
+  assert.match(host.textContent, /upstream proxy is experimental and off by default/);
+
   choose(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.deepEqual(
@@ -936,7 +945,7 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   }]);
   assert.equal(model.sandboxTargetLabel({
     implementation: 'harness-builtin', harness: 'codex', platform: 'darwin',
-  }), 'Codex on macOS · built-in sandbox');
+  }), 'Codex on macOS · built-in sandbox · no filtered network sandbox yet');
 });
 
 test('sandbox import accepts the current v2 export envelope', async (t) => {
@@ -1251,22 +1260,29 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async predictSandbox(draft, targets, context) {
       predictions.push({ draft, targets, context });
+      const target = targets[0]
+        || { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' };
+      const codexBuiltin = target.implementation === 'harness-builtin'
+        && target.harness === 'codex';
+      const networkDetail = codexBuiltin
+        ? 'Codex has no filtered network sandbox yet. Its upstream proxy is experimental and off by default; it admits only proxy-aware clients and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile’s ordinary TCP/UDP access list. Use tclaude-layer filtering on Linux, or choose network open (Allow all).'
+        : 'resolver-owned network detail';
       return {
-        targets: [{ target: { implementation: 'tclaude-layer', harness: 'claude', platform: 'linux' }, resolved_by: 'harness default', predicted: true, axes: {
+        targets: [{ target, resolved_by: 'harness default', predicted: true, axes: {
           filesystem: { tier: '11 effective contexts', outcome: 'refused', detail: 'another assignment refuses its carve-out' },
           environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
           agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
-          network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
+          network: { tier: 'list', outcome: 'not_enforced', detail: networkDetail },
           unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
         }, network_entries: [{
           entry: { domain: 'api.anthropic.com', ports: [443] },
-          outcome: 'enforced_partial',
-          detail: 'DNS identity follows a bounded lease.',
+          outcome: codexBuiltin ? 'not_enforced' : 'enforced_partial',
+          detail: codexBuiltin ? networkDetail : 'DNS identity follows a bounded lease.',
         }], context_axes: [{
           filesystem: { tier: '1 deny · 1 write', outcome: 'enforced_partial', detail: 'built-in tools cannot preserve this carve-out' },
           environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
           agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
-          network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
+          network: { tier: 'list', outcome: 'not_enforced', detail: networkDetail },
           unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
         }] }],
         contexts: [{
@@ -1293,6 +1309,29 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     ['', 'claude', 'codex', 'opencode']);
   assert.equal(evaluationImplementation.disabled, true,
     'the resolved default keeps the other target axes under daemon control');
+  choose(evaluationHarness, 'codex');
+  await harness.act(() => harness.fireEvent(evaluationHarness, 'change'));
+  assert.deepEqual(
+    [...host.querySelector('#sandbox-profile-editor-evaluate-implementation').options]
+      .map((option) => option.textContent),
+    [
+      'Codex built-in sandbox (no filtered network sandbox yet)',
+      'tclaude sandbox',
+      'Stacked sandboxes',
+    ],
+  );
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Not enforced');
+  assert.match(host.querySelector('.sbx-network-badge').title,
+    /upstream proxy is experimental and off by default/);
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
+  assert.match(host.querySelector('.sbx-network-badge-detail').textContent,
+    /tclaude-layer filtering on Linux/);
+  assert.match(host.querySelector('.sbx-policy-target').textContent,
+    /Codex on Linux · built-in sandbox · no filtered network sandbox yet/);
+  assert.match(host.querySelector('.sbx-rule-bucket-not-applied').textContent,
+    /Unsupported:.*ordinary TCP\/UDP access list.*network open \(Allow all\)/s);
+
   choose(evaluationHarness, 'opencode');
   await harness.act(() => harness.fireEvent(evaluationHarness, 'change'));
   assert.deepEqual(
@@ -1319,7 +1358,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.match(host.querySelector('.sbx-network-badge-detail').textContent, /bounded lease/,
     'keyboard-operable native details expose the full row explanation');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
-    /Claude on Linux · tclaude sandbox/);
+    /OpenCode on macOS · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
     'fully supported rules always start folded');
@@ -1650,6 +1689,10 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /Already-established flows may continue after expiry/);
   assert.match(networkHelp.textContent, /new flow needs fresh resolution/);
   assert.match(networkHelp.textContent, /compose by intersection/);
+  assert.match(networkHelp.textContent, /Codex’s built-in filesystem sandbox remains available/);
+  assert.match(networkHelp.textContent, /upstream proxy is experimental and off by default/);
+  assert.match(networkHelp.textContent, /tclaude-layer filtering on Linux/);
+  assert.match(networkHelp.textContent, /network open \(Allow all\)/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 
   unmount();

@@ -720,6 +720,43 @@ func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *
 	}
 }
 
+func TestSandboxProfileDraftEnforcementDisclosesCodexBuiltinFilteredNetworkGap(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "codex-builtin-network", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"mode": "list", "allow": []any{
+					map[string]any{"domain": "api.openai.com", "ports": []int{443}},
+				},
+			},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "harness-builtin",
+			"harness":        "codex",
+			"platform":       "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes           harness.PredictedAccessAxes     `json:"axes"`
+			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionNotEnforced,
+		got.Targets[0].Axes.Network.Outcome)
+	assert.Equal(t, harness.CodexBuiltinFilteredNetworkDisclosure,
+		got.Targets[0].Axes.Network.Detail)
+	require.Len(t, got.Targets[0].NetworkEntries, 1)
+	assert.Equal(t, harness.AccessPredictionNotEnforced,
+		got.Targets[0].NetworkEntries[0].Outcome)
+	assert.Equal(t, harness.CodexBuiltinFilteredNetworkDisclosure,
+		got.Targets[0].NetworkEntries[0].Detail)
+}
+
 func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T) {
 	f := newFlow(t)
 	request := func(t *testing.T, harnessName string) []harness.PredictedNetworkEntry {

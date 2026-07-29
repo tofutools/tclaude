@@ -83,6 +83,21 @@ const profiles = [{
   remote_control: true,
 }];
 
+const sandboxImpl = {
+  options: [
+    { value: 'harness-builtin', label: '{harness} built-in' },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+  ],
+  default: 'harness-builtin',
+  host_available: true,
+  server_host_available: true,
+  stacked: {
+    claude: { available: true },
+    codex: { available: true },
+  },
+};
+
 function deferred() {
   let resolve;
   let reject;
@@ -452,7 +467,9 @@ async function mountSpawn(t, overrides = {}) {
     harness.importDashboardModule('js/agent-spawn-state.js'),
   ]);
   const state = createAgentSpawnState({
-    getSnapshot: () => ({ groups, harnesses, user_default_model: 'sonnet' }),
+    getSnapshot: () => ({
+      groups, harnesses, sandbox_impl: sandboxImpl, user_default_model: 'sonnet',
+    }),
   });
   const calls = [];
   const actions = {
@@ -530,6 +547,22 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
   assert.match(host.querySelector('#agent-spawn-trust-dir-row').textContent, /~\/\.codex\/config\.toml/,
     'codex copy names its own store, not the one the previous harness would edit');
+  assert.equal(
+    [...host.querySelector('#agent-spawn-sandbox-impl').options]
+      .find((option) => option.value === 'harness-builtin').textContent,
+    'Codex built-in (no filtered network sandbox yet)',
+  );
+  assert.match(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
+    /inherit \(profile chain, then harness-builtin \(no filtered network sandbox yet\)\)/);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
+    'an inherited target stays neutral because the profile chain has not resolved yet');
+  const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
+  setValue(codexImpl, 'harness-builtin');
+  await harness.act(() => harness.fireEvent(codexImpl, 'change'));
+  assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
+    /upstream proxy is experimental and off by default/);
+  setValue(codexImpl, '');
+  await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   setValue(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, true,

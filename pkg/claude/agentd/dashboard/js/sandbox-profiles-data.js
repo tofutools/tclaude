@@ -1,3 +1,5 @@
+import { CODEX_BUILTIN_FILTERED_NETWORK_SHORT } from './sandbox-network-disclosure.js';
+
 const API = '/api/sandbox-profiles';
 
 async function request(path, options = {}) {
@@ -332,5 +334,9 @@ export function sandboxTargetLabel(value = {}) {
     'tclaude-layer': 'tclaude sandbox',
     stacked: 'stacked sandboxes',
   }[target.implementation] || target.implementation || 'default sandbox';
-  return `${harness} on ${platform} · ${implementation}`;
+  const networkDisclosure = target.harness === 'codex'
+    && target.implementation === 'harness-builtin'
+    ? ` · ${CODEX_BUILTIN_FILTERED_NETWORK_SHORT}`
+    : '';
+  return `${harness} on ${platform} · ${implementation}${networkDisclosure}`;
 }

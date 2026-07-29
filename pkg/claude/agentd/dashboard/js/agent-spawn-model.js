@@ -1,4 +1,9 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
+import {
+  CODEX_BUILTIN_FILTERED_NETWORK_HINT,
+  CODEX_BUILTIN_FILTERED_NETWORK_SHORT,
+  codexBuiltinSandboxOptionLabel,
+} from './sandbox-network-disclosure.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -206,15 +211,24 @@ function fillHarnessPlaceholder(template, displayName) {
 // sandboxImplOptionsFor names the harness-owned option after the actual harness.
 // Both the spawn dialog and the profile editor render the same catalog, so both
 // call this rather than each rewriting the copy.
-export function sandboxImplOptionsFor(options, displayName, canBuiltinOSSandbox = true) {
+export function sandboxImplOptionsFor(
+  options, displayName, canBuiltinOSSandbox = true, harnessName = '',
+) {
   return (Array.isArray(options) ? options : [])
     .filter((option) => canBuiltinOSSandbox
       || text(option?.value) !== SANDBOX_IMPL_DEFAULT)
-    .map((option) => ({
-      ...option,
-      label: fillHarnessPlaceholder(option?.label, displayName),
-      descr: fillHarnessPlaceholder(option?.descr, displayName),
-    }));
+    .map((option) => {
+      const codexLabel = codexBuiltinSandboxOptionLabel(
+        text(option?.value), text(harnessName),
+      );
+      return {
+        ...option,
+        label: codexLabel || fillHarnessPlaceholder(option?.label, displayName),
+        descr: codexLabel
+          ? CODEX_BUILTIN_FILTERED_NETWORK_HINT
+          : fillHarnessPlaceholder(option?.descr, displayName),
+      };
+    });
 }
 
 // sandboxImplView answers the two halves of "can this launch use the tclaude
@@ -239,14 +253,18 @@ function sandboxImplView(harness, context) {
   return {
     showSandboxImpl: !!harness,
     sandboxImplOptions: sandboxImplOptionsFor(
-      catalog.options, harnessLabel, canBuiltinOSSandbox,
+      catalog.options, harnessLabel, canBuiltinOSSandbox, text(harness?.name),
     ),
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
     sandboxImplInheritLabel: canBuiltinOSSandbox
       ? `profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
+        + (text(harness?.name) === 'codex'
+          ? ` (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
+          : '')
       : 'profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
     sandboxImplHarness: harnessLabel,
+    sandboxImplHarnessName: text(harness?.name),
     sandboxImplCanStacked: !!harness?.can_stacked,
     sandboxImplStackedAvailability: catalog.stacked?.[text(harness?.name)] || {},
     sandboxImplStackedAppArmorLikely: !!catalog.stacked_apparmor_nested_bwrap_likely,
@@ -302,7 +320,11 @@ export function setSpawnSandboxImpl(draft, value) {
 // picks it anyway is choosing a failed launch, not an unnoticed downgrade.
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
-  const value = text(draft.sandboxImpl) || view.sandboxImplDefault;
+  const explicit = text(draft.sandboxImpl);
+  const value = explicit || view.sandboxImplDefault;
+  if (explicit === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
+    return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
+  }
   if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {
     const explicit = text(draft.sandboxImpl) === SANDBOX_IMPL_DEFAULT;
     const harnessLabel = view.sandboxImplHarness || 'this harness';
