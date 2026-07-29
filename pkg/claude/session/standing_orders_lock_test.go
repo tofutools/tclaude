@@ -133,7 +133,8 @@ func TestStandingOrderOncePerGenerationDeferredWhenLockHeld(t *testing.T) {
 		o.Cadence = db.StandingCadenceOncePerGeneration
 	})
 
-	release, acquired := lockStandingOrderDelivery(context.Background(), "conv", "conv-1")
+	release, acquired := lockStandingOrderDelivery(
+		context.Background(), "conv", standingOrderRateLockKey(orderID, "conv-1"))
 	require.True(t, acquired)
 
 	out := dispatch(t, sessionStart(db.StandingSourceCompact))
@@ -151,6 +152,56 @@ func TestStandingOrderOncePerGenerationDeferredWhenLockHeld(t *testing.T) {
 	out = dispatch(t, sessionStart(db.StandingSourceCompact))
 	assert.Contains(t, out, "Push the PR early",
 		"a deferred order is delivered at the next boundary")
+}
+
+func TestStandingOrderBusyRateLockOnlyDefersThatOrder(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	busyID := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Name = "worktrees"
+		o.Summary = "Use a git worktree."
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	release, acquired := lockStandingOrderDelivery(
+		context.Background(), "conv", standingOrderRateLockKey(busyID, "conv-1"))
+	require.True(t, acquired)
+	defer release()
+
+	out := dispatch(t, sessionStart(db.StandingSourceCompact))
+	assert.NotContains(t, out, "Push the PR early",
+		"the order whose own lock is held must be deferred")
+	assert.Contains(t, out, "Use a git worktree",
+		"one busy order must not consume the recipient-wide match occasion for another")
+}
+
+func TestStandingOrderNonMatchDoesNotBecomeRateLockCandidate(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `\bdeploy\b`
+		o.CooldownSeconds = 60
+	})
+	orders, err := db.ListEnabledStandingOrdersForEvent(db.StandingTriggerUserPrompt)
+	require.NoError(t, err)
+	require.Len(t, orders, 1)
+
+	ev, ok := standingOrderEvent(HookCallbackInput{
+		HookEventName: "UserPromptSubmit",
+		ConvID:        "conv-1",
+		Prompt:        "run tests",
+	}, "sess-1", db.StandingTriggerUserPrompt)
+	require.True(t, ok)
+	assert.Empty(t, standingOrderRateCandidates(orders, ev),
+		"a conditional no-match must not hold a rate lock across hook output or ACK")
+
+	ev.Prompt = "deploy now"
+	assert.Equal(t, orders, standingOrderRateCandidates(orders, ev),
+		"the matching occasion still enters the protected rate-control path")
 }
 
 // A new conversation generation must not inherit the old generation's

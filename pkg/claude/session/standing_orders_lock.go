@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,8 +53,8 @@ const standingOrderLockRetryDelay = 20 * time.Millisecond
 // to is delivering that very order right now, so nothing is lost at all.
 type standingOrderRateLocks struct {
 	release          func()
-	cadenceAcquired  bool
-	cooldownAcquired bool
+	cadenceAcquired  map[int64]bool
+	cooldownAcquired map[int64]bool
 }
 
 // lockStandingOrderRateControls acquires only the scopes this order set needs.
@@ -70,33 +71,37 @@ func lockStandingOrderRateControls(
 	orders []*db.StandingOrder,
 	convID, agentID string,
 ) standingOrderRateLocks {
-	needCadence, needCooldown := false, false
-	for _, o := range orders {
-		if o == nil {
-			continue
-		}
-		if o.CooldownSeconds > 0 {
-			needCooldown = true
-		} else if o.Cadence == db.StandingCadenceOncePerGeneration {
-			needCadence = true
-		}
-	}
 	locks := standingOrderRateLocks{
 		release:          func() {},
-		cadenceAcquired:  !needCadence,
-		cooldownAcquired: !needCooldown,
+		cadenceAcquired:  make(map[int64]bool),
+		cooldownAcquired: make(map[int64]bool),
 	}
 	var releases []func()
-	if needCooldown {
-		release, acquired := lockStandingOrderDelivery(ctx, "agent", agentID)
-		locks.cooldownAcquired = acquired
-		if acquired {
-			releases = append(releases, release)
+	// One event can match several orders. A shared recipient lock would let an
+	// unrelated order hold the whole agent across its stdout/ACK window, so
+	// include the durable order id in every key. These per-order attempts use
+	// one retry interval: if the SAME order is already in flight, waiting out
+	// its model ACK would only stall the current hook and hold any other order
+	// locks acquired by this batch.
+	for _, o := range orders {
+		if o == nil || o.ID <= 0 {
+			continue
 		}
-	}
-	if needCadence {
-		release, acquired := lockStandingOrderDelivery(ctx, "conv", convID)
-		locks.cadenceAcquired = acquired
+		scope, recipient := "", ""
+		acquiredMap := locks.cadenceAcquired
+		switch {
+		case o.CooldownSeconds > 0:
+			scope, recipient = "agent", agentID
+			acquiredMap = locks.cooldownAcquired
+		case o.Cadence == db.StandingCadenceOncePerGeneration:
+			scope, recipient = "conv", convID
+		default:
+			continue
+		}
+		release, acquired := lockStandingOrderDeliveryWithin(
+			ctx, scope, standingOrderRateLockKey(o.ID, recipient),
+			standingOrderLockRetryDelay)
+		acquiredMap[o.ID] = acquired
 		if acquired {
 			releases = append(releases, release)
 		}
@@ -109,7 +114,19 @@ func lockStandingOrderRateControls(
 	return locks
 }
 
+func standingOrderRateLockKey(orderID int64, recipient string) string {
+	return strconv.FormatInt(orderID, 10) + ":" + recipient
+}
+
 func lockStandingOrderDelivery(ctx context.Context, scope, key string) (func(), bool) {
+	return lockStandingOrderDeliveryWithin(ctx, scope, key, standingOrderLockTimeout)
+}
+
+func lockStandingOrderDeliveryWithin(
+	ctx context.Context,
+	scope, key string,
+	timeout time.Duration,
+) (func(), bool) {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		// An empty key must never become one shared bucket for every
@@ -127,7 +144,7 @@ func lockStandingOrderDelivery(ctx context.Context, scope, key string) (func(), 
 	lockPath := filepath.Join(lockDir, "standing-order-"+hex.EncodeToString(sum[:])+".lock")
 	fl := flock.New(lockPath)
 
-	lockCtx, cancel := context.WithTimeout(ctx, standingOrderLockTimeout)
+	lockCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	locked, err := fl.TryLockContext(lockCtx, standingOrderLockRetryDelay)
 	if err != nil || !locked {

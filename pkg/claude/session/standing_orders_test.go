@@ -89,6 +89,10 @@ func dispatch(t *testing.T, input HookCallbackInput) string {
 }
 
 func additionalContext(t *testing.T, out string) string {
+	return additionalContextForEvent(t, out, "SessionStart")
+}
+
+func additionalContextForEvent(t *testing.T, out, eventName string) string {
 	t.Helper()
 	var doc struct {
 		HookSpecificOutput struct {
@@ -97,7 +101,7 @@ func additionalContext(t *testing.T, out string) string {
 		} `json:"hookSpecificOutput"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &doc), "output was %q", out)
-	assert.Equal(t, "SessionStart", doc.HookSpecificOutput.HookEventName)
+	assert.Equal(t, eventName, doc.HookSpecificOutput.HookEventName)
 	return doc.HookSpecificOutput.AdditionalContext
 }
 
@@ -108,6 +112,16 @@ func TestStandingOrdersEmptyTableIsCompletelyInert(t *testing.T) {
 		"an opted-out installation must not emit hook context")
 	assert.Empty(t, observe(sessionStart(db.StandingSourceCompact)),
 		"an opted-out installation must not queue a next-turn message")
+	for _, input := range []HookCallbackInput{
+		{HookEventName: "UserPromptSubmit", ConvID: "conv-1", Prompt: "deploy"},
+		{HookEventName: "PreToolUse", ConvID: "conv-1", ToolName: "Bash"},
+		{HookEventName: "PostToolUse", ConvID: "conv-1", ToolName: "Bash"},
+	} {
+		assert.Empty(t, dispatch(t, input),
+			"an opted-out installation must not emit action-trigger context")
+		assert.Empty(t, observe(input),
+			"an opted-out installation must not queue action-trigger messages")
+	}
 }
 
 // The headline path: a compaction boundary re-states the order in the same
@@ -129,6 +143,124 @@ func TestStandingOrderDeliveredOnCompactBoundary(t *testing.T) {
 	assert.Equal(t, db.StandingTransportHookContext, latest.Transport)
 	assert.Equal(t, harness.DefaultName, latest.Harness)
 	assert.NotEmpty(t, latest.TargetAgent, "the ledger must carry the stable recipient")
+}
+
+func TestStandingOrderPromptRegexDeliversOnlyOnMatch(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `(?i)\bdeploy\b`
+	})
+
+	input := HookCallbackInput{
+		HookEventName: "UserPromptSubmit",
+		ConvID:        "conv-1",
+		Prompt:        "Run the tests first",
+	}
+	assert.Empty(t, dispatch(t, input))
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "clean matcher misses are intentionally not ledger noise")
+
+	input.Prompt = "Please DEPLOY after the tests"
+	got := additionalContextForEvent(t, dispatch(t, input), "UserPromptSubmit")
+	assert.Contains(t, got, "Push the PR early")
+}
+
+func TestStandingOrderToolInputRegexUsesCompactJSON(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.CodexName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = `"command":"git push"`
+	})
+
+	input := HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "shell",
+		ToolInput:     json.RawMessage(`{ "command": "git push", "timeout": 30 }`),
+	}
+	got := additionalContextForEvent(t, dispatch(t, input), "PreToolUse")
+	assert.Contains(t, got, "Push the PR early")
+}
+
+func TestStandingOrderToolNameNormalizesCodexShellToBash(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.CodexName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolName
+		o.MatchRegex = `^Bash$`
+	})
+
+	got := additionalContextForEvent(t, dispatch(t, HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "shell",
+	}), "PreToolUse")
+	assert.Contains(t, got, "Push the PR early")
+}
+
+func TestStandingOrderTrimmedToolInputRecordsUnevaluable(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = "deploy"
+	})
+
+	out := dispatch(t, HookCallbackInput{
+		HookEventName:  "PreToolUse",
+		ConvID:         "conv-1",
+		ToolName:       "Bash",
+		PayloadTrimmed: true,
+	})
+	assert.Empty(t, out)
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, latest.Outcome)
+}
+
+func TestStandingOrderOpenCodeActionTriggerIsUnsupportedNotQueued(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolName
+		o.MatchRegex = `(?i)^bash$`
+		o.Timing = db.StandingTimingNextTurn
+	})
+
+	pending := observe(HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "Bash",
+	})
+	assert.Empty(t, pending, "action-trigger messages stay off until origin suppression exists")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
+	assert.Contains(t, latest.Detail, "origin suppression")
+
+	// Capability is unchanged for this order revision and stable recipient.
+	// Repeated high-frequency tool hooks must not append an unbounded ledger.
+	assert.Empty(t, observe(HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "Bash",
+	}))
+	deliveries, err := db.ListStandingDeliveries(id, 10)
+	require.NoError(t, err)
+	assert.Len(t, deliveries, 1)
 }
 
 func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {

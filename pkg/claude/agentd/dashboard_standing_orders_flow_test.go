@@ -68,6 +68,8 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	editBody["name"] = "boundary-reminder-edited"
 	editBody["summary"] = "Updated durable instruction."
 	editBody["timing"] = "next-turn"
+	editBody["match_field"] = "cwd"
+	editBody["match_regex"] = `(?i)/release$`
 	edited, code := mutateStandingOrder(t, dash, http.MethodPatch,
 		fmt.Sprintf("/api/standing-orders/%d", created.ID), editBody)
 	require.Equal(t, http.StatusOK, code)
@@ -75,6 +77,8 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.Equal(t, int64(2), edited.Revision)
 	assert.Equal(t, "boundary-reminder-edited", edited.Name)
 	assert.Equal(t, db.StandingTimingNextTurn, edited.Timing)
+	assert.Equal(t, db.StandingMatchFieldCwd, edited.Trigger.MatchField)
+	assert.Equal(t, `(?i)/release$`, edited.Trigger.MatchRegex)
 
 	_, code = mutateStandingOrder(t, dash, http.MethodPatch,
 		fmt.Sprintf("/api/standing-orders/%d", created.ID), editBody)
@@ -106,6 +110,36 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	gone, err := db.GetStandingOrder(created.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gone)
+}
+
+func TestDashboardStandingOrders_ValidatesActionTriggerMatcher(t *testing.T) {
+	newFlow(t)
+	targetAgent, _, err := db.EnsureAgentForConv("conv-matcher-target", "test")
+	require.NoError(t, err)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	body := standingOrderBody(targetAgent, 0, time.Time{})
+	body["trigger_event"] = db.StandingTriggerUserPrompt
+	body["sources"] = []string{}
+	body["match_field"] = db.StandingMatchFieldPrompt
+	body["match_regex"] = `(?i)\bdeploy\b`
+
+	created, code := mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, created)
+	assert.Equal(t, db.StandingTriggerUserPrompt, created.Trigger.Event)
+	assert.Equal(t, db.StandingMatchFieldPrompt, created.Trigger.MatchField)
+	assert.Equal(t, `(?i)\bdeploy\b`, created.Trigger.MatchRegex)
+	assert.Contains(t, created.Trigger.Label, "prompt matches")
+	assert.Equal(t, standingorders.StatusUnsupported,
+		created.CapabilityByHarness["opencode"].Status)
+
+	body["name"] = "invalid-lookahead"
+	body["match_regex"] = `(?=deploy)`
+	_, code = mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	assert.Equal(t, http.StatusBadRequest, code)
 }
 
 func TestDashboardStandingOrders_EditPreservesAuthorAndRetirementState(t *testing.T) {

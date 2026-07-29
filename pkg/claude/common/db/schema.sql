@@ -1024,7 +1024,7 @@ CREATE TABLE agent_standing_orders (
 			operator_authored INTEGER NOT NULL DEFAULT 0,
 			created_at        TEXT    NOT NULL,
 			updated_at        TEXT    NOT NULL DEFAULT ''
-		, cooldown_seconds INTEGER NOT NULL DEFAULT 0);
+		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_agent_standing_orders_owner
 			ON agent_standing_orders(owner_agent);
@@ -1034,6 +1034,9 @@ CREATE INDEX idx_agent_standing_orders_group
 
 CREATE UNIQUE INDEX idx_agent_standing_orders_name
 			ON agent_standing_orders(name);
+
+CREATE INDEX idx_agent_standing_orders_enabled_trigger
+		ON agent_standing_orders(enabled, trigger_event);
 
 CREATE TABLE agent_standing_order_deliveries (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,

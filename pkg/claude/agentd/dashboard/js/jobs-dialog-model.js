@@ -138,7 +138,10 @@ export function standingOrderToPrefill(order = {}) {
     groupName: groupTarget ? text(target.group_name || target.group_id) : '',
     role: groupTarget ? text(target.role) : '',
     summary: text(order.summary),
+    triggerEvent: text(order.trigger?.event),
     sources: Array.isArray(order.trigger?.sources) ? [...order.trigger.sources] : [],
+    matchField: text(order.trigger?.match_field),
+    matchRegex: text(order.trigger?.match_regex),
     timing: text(order.timing),
     cadence: text(order.cadence),
     cooldownSeconds: Number(order.cooldown_seconds) || 0,
@@ -161,8 +164,12 @@ export function createStandingOrderDraft(prefill = {}) {
     },
     role: text(prefill.role),
     summary: text(prefill.summary),
+    triggerEvent: ['user.prompt', 'tool.before', 'tool.after'].includes(prefill.triggerEvent)
+      ? prefill.triggerEvent : 'session.start',
     sourceMode: sources.length ? 'selected' : 'any',
     sources,
+    matchField: text(prefill.matchField),
+    matchRegex: text(prefill.matchRegex),
     timing: prefill.timing === 'next-turn' ? 'next-turn' : 'same-continuation',
     cadence: prefill.cadence === 'once-per-generation' ? 'once-per-generation' : 'always',
     cooldownSeconds: Number(prefill.cooldownSeconds) || 0,
@@ -173,6 +180,13 @@ export function createStandingOrderDraft(prefill = {}) {
 export function standingOrderDraftDirty(draft, initial) {
   return JSON.stringify(draft) !== JSON.stringify(initial);
 }
+
+export const STANDING_ORDER_MATCH_FIELDS = Object.freeze({
+  'session.start': Object.freeze(['', 'cwd']),
+  'user.prompt': Object.freeze(['', 'prompt', 'cwd']),
+  'tool.before': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+  'tool.after': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+});
 
 export function validateStandingOrderDraft(dialog, draft) {
   const target = cronTargetValue(draft.target);
@@ -187,8 +201,24 @@ export function validateStandingOrderDraft(dialog, draft) {
   }
   if (!draft.name.trim()) return { code: 'name', message: 'Name is required.' };
   if (!draft.summary.trim()) return { code: 'summary', message: 'Instruction is required.' };
-  if (draft.sourceMode === 'selected' && draft.sources.length === 0) {
+  if (draft.triggerEvent === 'session.start' &&
+      draft.sourceMode === 'selected' && draft.sources.length === 0) {
     return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
+  }
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent]) {
+    return { code: 'trigger', message: 'Pick a supported trigger event.' };
+  }
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent].includes(draft.matchField)) {
+    return { code: 'match-field', message: 'Pick a match field supported by this trigger.' };
+  }
+  if (!!draft.matchField !== !!draft.matchRegex.trim()) {
+    return { code: 'match-regex', message: 'Choose a field and enter its RE2 match expression together.' };
+  }
+  if (draft.matchRegex.length > 1024) {
+    return { code: 'match-regex-length', message: 'Match expression must be at most 1024 characters.' };
+  }
+  if (/(\\[1-9]|\\k<|\(\?(?:[=!]|<[=!]))/.test(draft.matchRegex)) {
+    return { code: 'match-regex-re2', message: 'RE2 does not support backreferences or look-around assertions.' };
   }
   if (!Number.isInteger(Number(draft.cooldownSeconds)) ||
       Number(draft.cooldownSeconds) < 0 ||
@@ -210,8 +240,11 @@ export function buildStandingOrderMutation(dialog, draft) {
     target: cronTargetValue(draft.target),
     role: draft.target.mode === 'group' ? draft.role.trim() : '',
     summary: draft.summary.trim(),
-    trigger_event: 'session.start',
-    sources: draft.sourceMode === 'any' ? [] : [...draft.sources],
+    trigger_event: draft.triggerEvent,
+    sources: draft.triggerEvent === 'session.start' && draft.sourceMode !== 'any'
+      ? [...draft.sources] : [],
+    match_field: draft.matchField,
+    match_regex: draft.matchRegex,
     timing: draft.timing,
     cadence: draft.cadence,
     cooldown_seconds: Number(draft.cooldownSeconds) || 0,

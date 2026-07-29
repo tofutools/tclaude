@@ -60,6 +60,31 @@ func TestEvaluateDeliversOnMatchingBoundary(t *testing.T) {
 	assert.True(t, d.ShouldRecord())
 }
 
+func TestEvaluateCorruptMatcherFailsClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		regex string
+	}{
+		{name: "expression without field", regex: `.*`},
+		{name: "field without expression", field: db.StandingMatchFieldCwd},
+		{name: "unknown field matching empty", field: "unknown", regex: `^$`},
+		{name: "field invalid for event", field: db.StandingMatchFieldPrompt, regex: `.*`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Evaluate(order(func(o *db.StandingOrder) {
+				o.MatchField = tt.field
+				o.MatchRegex = tt.regex
+			}), event(), neverDelivered)
+
+			assert.False(t, d.Deliver)
+			assert.Equal(t, db.StandingOutcomeNoMatch, d.Outcome)
+			assert.Contains(t, d.Detail, "stored matcher is invalid")
+		})
+	}
+}
+
 func TestEvaluateDisabledShortCircuitsBeforeScope(t *testing.T) {
 	o := order(func(o *db.StandingOrder) {
 		o.Enabled = false
@@ -150,9 +175,13 @@ func TestEvaluateEmptySourcesMatchesEverySource(t *testing.T) {
 // The distinction this feature most needs to preserve: a payload we could not
 // read is not the same answer as a trigger that did not match.
 func TestEvaluateTrimmedPayloadIsDistinctFromNoMatch(t *testing.T) {
-	o := order(func(o *db.StandingOrder) { o.TriggerEvent = "tool.before" })
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = "deploy"
+	})
 	ev := event(func(e *Event) {
-		e.Event = "tool.before"
+		e.Event = db.StandingTriggerToolBefore
 		e.PayloadTrimmed = true
 	})
 
@@ -162,6 +191,62 @@ func TestEvaluateTrimmedPayloadIsDistinctFromNoMatch(t *testing.T) {
 	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, d.Outcome)
 	assert.NotEqual(t, db.StandingOutcomeNoMatch, d.Outcome)
 	assert.True(t, d.ShouldRecord(), "an unevaluatable trigger must reach the ledger")
+}
+
+func TestEvaluateTrimmedPayloadStillMatchesToolName(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.MatchField = db.StandingMatchFieldToolName
+		o.MatchRegex = `(?i)^bash$`
+	})
+	ev := event(func(e *Event) {
+		e.Event = db.StandingTriggerToolBefore
+		e.ToolName = "Bash"
+		e.PayloadTrimmed = true
+	})
+
+	d := Evaluate(o, ev, neverDelivered)
+	assert.True(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeDelivered, d.Outcome)
+}
+
+func TestEvaluateTrimmedPromptIsUnevaluable(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = "deploy"
+	})
+	ev := event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "truncated prefix"
+		e.PayloadTrimmed = true
+	})
+
+	d := Evaluate(o, ev, neverDelivered)
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeNotEvaluatedTrimmed, d.Outcome)
+}
+
+func TestEvaluateRegexMatcherUsesNormalizedField(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `(?i)\bdeploy\b`
+	})
+
+	matched := Evaluate(o, event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "Please DEPLOY the service"
+	}), neverDelivered)
+	assert.True(t, matched.Deliver)
+
+	missed := Evaluate(o, event(func(e *Event) {
+		e.Event = db.StandingTriggerUserPrompt
+		e.Prompt = "Run the tests"
+	}), neverDelivered)
+	assert.False(t, missed.Deliver)
+	assert.Equal(t, db.StandingOutcomeNoMatch, missed.Outcome)
+	assert.Contains(t, missed.Detail, db.StandingMatchFieldPrompt)
 }
 
 // SessionStart does not read the tool payload, so a trimmed event must not

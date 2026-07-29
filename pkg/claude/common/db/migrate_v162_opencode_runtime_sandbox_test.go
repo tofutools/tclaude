@@ -26,5 +26,5 @@ func TestMigrateV161toV162AddsOpenCodeRuntimeSandboxAuthority(t *testing.T) {
 	assert.Equal(t, "harness-builtin", implementation)
 	assert.Empty(t, spec)
 	require.NoError(t, migrateV161toV162(d), "partially applied migration converges")
-	assert.Equal(t, 170, currentVersion, "tripwire: bump this with the next migration")
+	assert.Equal(t, 171, currentVersion, "tripwire: bump this with the next migration")
 }

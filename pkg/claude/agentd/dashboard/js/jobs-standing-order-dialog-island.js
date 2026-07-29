@@ -9,7 +9,7 @@ import { agentCandidates, groupMembers, groupsForPicker } from './message-access
 import { idTooltip, shortAgentId } from './helpers.js';
 import {
   buildStandingOrderMutation, createStandingOrderDraft,
-  standingOrderDraftDirty, validateStandingOrderDraft,
+  standingOrderDraftDirty, STANDING_ORDER_MATCH_FIELDS, validateStandingOrderDraft,
 } from './jobs-dialog-model.js';
 
 const html = htm.bind(h);
@@ -19,6 +19,30 @@ const SESSION_SOURCES = [
   ['clear', 'Clear / new generation'],
   ['compact', 'Context compaction'],
 ];
+const TRIGGER_EVENTS = [
+  ['session.start', 'Session boundary'],
+  ['user.prompt', 'User prompt submitted'],
+  ['tool.before', 'Before tool use'],
+  ['tool.after', 'After tool use'],
+];
+const MATCH_FIELD_LABELS = {
+  cwd: 'Working directory',
+  prompt: 'Prompt text',
+  tool_name: 'Tool name',
+  tool_input: 'Tool input (compact JSON)',
+};
+const ANY_MATCH_LABELS = {
+  'session.start': 'Any matching boundary',
+  'user.prompt': 'Any submitted prompt',
+  'tool.before': 'Any tool call',
+  'tool.after': 'Any completed tool call',
+};
+const MATCH_FIELDS = Object.fromEntries(
+  Object.entries(STANDING_ORDER_MATCH_FIELDS).map(([trigger, fields]) => [
+    trigger,
+    fields.map((field) => [field, field ? MATCH_FIELD_LABELS[field] : ANY_MATCH_LABELS[trigger]]),
+  ]),
+);
 
 function StandingOrderTargetPicker({ value, onChange, snapshot }) {
   const scope = value.scopeGroup || '';
@@ -137,21 +161,53 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
         onInput=${(event) => update({ role: event.currentTarget.value })} /></label>`}
     <div class="cron-create-row"><span class="cron-create-label">Trigger</span>
       <div class="standing-order-field">
-        <div class="muted">Session boundary</div>
-        <div class="cron-target-modes">
+        <select id="standing-order-trigger" value=${draft.triggerEvent}
+          onChange=${(event) => update({
+            triggerEvent: event.currentTarget.value,
+            matchField: '',
+            matchRegex: '',
+          })}>
+          ${TRIGGER_EVENTS.map(([value, label]) => html`
+            <option key=${value} value=${value}>${label}</option>`)}
+        </select>
+        ${draft.triggerEvent === 'session.start' && html`<div class="cron-target-modes">
           <label><input type="radio" name="standing-order-source-mode" value="any"
             checked=${draft.sourceMode === 'any'} onChange=${() => update({ sourceMode: 'any' })} />
             Any source</label>
           <label><input type="radio" name="standing-order-source-mode" value="selected"
             checked=${draft.sourceMode === 'selected'} onChange=${() => update({ sourceMode: 'selected' })} />
             Selected sources</label>
-        </div>
-        ${draft.sourceMode === 'selected' && html`<div class="standing-order-options" id="standing-order-sources">
+        </div>`}
+        ${draft.triggerEvent === 'session.start' && draft.sourceMode === 'selected' && html`
+        <div class="standing-order-options" id="standing-order-sources">
           ${SESSION_SOURCES.map(([value, label]) => html`<label>
             <input type="checkbox" value=${value} checked=${draft.sources.includes(value)}
               onChange=${(event) => updateSource(value, event.currentTarget.checked)} /> ${label}
           </label>`)}
         </div>`}
+        ${draft.triggerEvent !== 'session.start' && html`<div class="muted">
+          Action triggers currently deliver inline on Claude and Codex. OpenCode is shown as unsupported
+          until queued deliveries can suppress their own trigger origin.
+        </div>`}
+      </div>
+    </div>
+    <div class="cron-create-row"><span class="cron-create-label">Condition</span>
+      <div class="standing-order-field">
+        <select id="standing-order-match-field" value=${draft.matchField}
+          onChange=${(event) => update({
+            matchField: event.currentTarget.value,
+            matchRegex: event.currentTarget.value ? draft.matchRegex : '',
+          })}>
+          ${(MATCH_FIELDS[draft.triggerEvent] || []).map(([value, label]) => html`
+            <option key=${value || 'any'} value=${value}>${label}</option>`)}
+        </select>
+        ${draft.matchField && html`<input id="standing-order-match-regex" type="text"
+          maxlength="1024" value=${draft.matchRegex}
+          placeholder="RE2 expression, e.g. (?i)^bash$ or deploy"
+          autocomplete="off" spellcheck=${false}
+          onInput=${(event) => update({ matchRegex: event.currentTarget.value })} />`}
+        <div class="muted">Optional RE2 match. Expressions are case-sensitive unless they include
+          flags such as <code>(?i)</code>. Tool input is normalized to compact JSON.</div>
       </div>
     </div>
     <div class="cron-create-row"><span class="cron-create-label">Delivery guarantee</span>
