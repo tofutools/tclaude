@@ -236,8 +236,10 @@ type StandingOrder struct {
 	Timing  string
 	Cadence string
 	// CooldownSeconds limits successful deliveries per stable recipient agent.
-	// It is revision-scoped: editing/re-enabling an order deliberately rearms
-	// it, matching the existing once-per-generation cadence semantics.
+	// Its history is delivery-revision-scoped. Model-visible, matching, timing,
+	// and cadence edits plus manual re-enable deliberately re-arm it; changing
+	// the cooldown itself does not, so the new duration applies to the last
+	// successful delivery instead of granting an immediate extra delivery.
 	CooldownSeconds int64
 
 	Enabled        bool

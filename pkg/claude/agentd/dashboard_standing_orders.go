@@ -252,8 +252,13 @@ func dashboardStandingOrderCAS(
 	if rowVersion > 0 {
 		return rowVersion, true
 	}
-	if legacyRevision <= 0 || strings.TrimSpace(legacyUpdatedAt) == "" {
+	if legacyRevision <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "row_version is required")
+		return 0, false
+	}
+	if strings.TrimSpace(legacyUpdatedAt) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"legacy updated_at is required with revision")
 		return 0, false
 	}
 	updatedAt, err := time.Parse(time.RFC3339Nano, legacyUpdatedAt)
