@@ -89,10 +89,10 @@ const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allo
   + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
   + 'future endpoint updates follow the stored pack reference. Deny pack rows are authored but '
   + 'not enforced in this frontend-first release. Expanded destinations below are read-only.';
-const NETWORK_DESTINATIONS_HELP = 'The Effective policy preview below evaluates this profile’s '
-  + 'materialized rows before Includes and assignment intersections and remains authoritative for '
-  + 'composed launch behavior. Not enforced badges on Deny destinations disclose that those rows '
-  + 'are stored but do not yet block traffic in this frontend-first release.';
+const NETWORK_DESTINATIONS_HELP = 'The Effective policy preview below evaluates composed launch '
+  + 'behavior after Includes and assignment intersections. Not enforced badges on Deny destinations '
+  + 'are the authoring-time disclosure that those rows are stored but do not yet block traffic in '
+  + 'this frontend-first release.';
 const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
   + 'The tclaude agentd socket is always reachable and is not an editable row.';
 const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
