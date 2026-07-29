@@ -30,7 +30,10 @@ Captures:
 - `tcl-859-regular-1280.png` — regular dashboard
 - `tcl-859-wizard-1280.png` — wizard dashboard
 
-The optional 720px probe differed from the 1280px layout and exposed existing
-profile-editor modal overflow (259px regular, 362px wizard). Those narrow
-captures are not presented as passing evidence because TCL-859 does not change
-the modal layout.
+The optional 720px probe differed from the 1280px layout. An A/B run with the
+same seed measured identical existing profile-editor modal overflow on
+`origin/main` and this feature tip: 259px regular and 362px wizard in both
+cases. On `origin/main`, the control expanded the Partially supported bucket
+containing the exact same 11 network labels (with the control-socket row in
+Fully supported). Those narrow captures are not presented as passing evidence
+because TCL-859 does not change the modal layout.
