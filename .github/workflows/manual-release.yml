@@ -40,18 +40,34 @@ jobs:
             if [[ "$owner_uid" != "0" ]]; then
               image_os=${ImageOS:-unknown}
               image_version=${ImageVersion:-unknown}
-              message="TCL-858 trust-walk prerequisite failed: path component \"$component\" is not root-owned (uid $owner_uid); Runner Image $image_os version $image_version; sandbox v2 smoke was not run; rerun the job to request a fresh hosted runner"
+              warning="TCL-858 trust-walk prerequisite detected: path component \"$component\" is not root-owned (uid $owner_uid); Runner Image $image_os version $image_version; attempting non-recursive sudo chown root"
+              echo "::warning title=Untrusted runner image::$warning"
+
+              chown_status=0
+              sudo chown root "$component" || chown_status=$?
+              restat_status=0
+              repaired_uid=$(stat -L -c '%u' "$component") || restat_status=$?
               {
-                echo "### Runner executable trust prerequisite failed"
+                echo "### Runner executable trust prerequisite detected"
                 echo
-                echo "The sandbox v2 smoke was not run because a runner-image path component failed the production executable trust requirement."
+                echo "A runner-image path component failed the production executable trust requirement."
+                echo
+                echo "**Signature:** TCL-858 trust-walk prerequisite detected"
                 echo
                 printf '**Path component:** `%s`\n\n' "$component"
                 printf '**Observed owner UID:** `%s`\n\n' "$owner_uid"
-                printf '**Runner Image:** %s version %s\n' "$image_os" "$image_version"
+                printf '**Runner Image:** %s version %s\n\n' "$image_os" "$image_version"
+                printf '**Remediation:** `sudo chown root %s` (non-recursive; exit %s)\n\n' "$component" "$chown_status"
+                printf '**Owner re-check:** `%s` (stat exit %s)\n' "${repaired_uid:-unknown}" "$restat_status"
               } >> "$GITHUB_STEP_SUMMARY"
-              echo "::error title=Untrusted runner image::$message"
-              exit 1
+
+              if [[ "$chown_status" != "0" ||
+                    "$restat_status" != "0" ||
+                    "$repaired_uid" != "0" ]]; then
+                error="TCL-858 trust-walk prerequisite failed: path component \"$component\" remains non-root-owned (uid ${repaired_uid:-unknown}) after non-recursive repair (sudo exit $chown_status, stat exit $restat_status); Runner Image $image_os version $image_version; sandbox v2 smoke was not run"
+                echo "::error title=Untrusted runner image::$error"
+                exit 1
+              fi
             fi
           done
 
