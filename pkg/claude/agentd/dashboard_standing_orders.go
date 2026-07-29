@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -93,7 +94,7 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "unknown standing-order action")
 			return
 		}
-		rowVersion, ok := dashboardStandingOrderCASFromQuery(w, r)
+		rowVersion, ok := dashboardStandingOrderCASFromQuery(w, r, order)
 		if !ok {
 			return
 		}
@@ -116,7 +117,7 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		writeDashboardStandingOrder(w, id)
 	case http.MethodDelete:
-		rowVersion, ok := dashboardStandingOrderCASFromQuery(w, r)
+		rowVersion, ok := dashboardStandingOrderCASFromQuery(w, r, order)
 		if !ok {
 			return
 		}
@@ -148,13 +149,14 @@ func decodeDashboardStandingOrder(
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return nil, 0, false
 	}
-	expectedRowVersion := body.RowVersion
-	if expectedRowVersion <= 0 {
-		expectedRowVersion = body.Revision // one-release compatibility for an already-open dashboard
-	}
-	if !creating && expectedRowVersion <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "row_version is required for edit")
-		return nil, 0, false
+	expectedRowVersion := int64(0)
+	if !creating {
+		var ok bool
+		expectedRowVersion, ok = dashboardStandingOrderCAS(
+			w, body.RowVersion, body.Revision, body.UpdatedAt, existing)
+		if !ok {
+			return nil, 0, false
+		}
 	}
 	body.Target = strings.TrimSpace(body.Target)
 	if body.Target == "" {
@@ -232,18 +234,47 @@ func decodeDashboardStandingOrder(
 }
 
 func dashboardStandingOrderCASFromQuery(
-	w http.ResponseWriter, r *http.Request,
+	w http.ResponseWriter, r *http.Request, current *db.StandingOrder,
 ) (int64, bool) {
-	raw := r.URL.Query().Get("row_version")
-	if raw == "" {
-		raw = r.URL.Query().Get("revision") // one-release compatibility
+	query := r.URL.Query()
+	rowVersion, _ := strconv.ParseInt(query.Get("row_version"), 10, 64)
+	revision, _ := strconv.ParseInt(query.Get("revision"), 10, 64)
+	return dashboardStandingOrderCAS(
+		w, rowVersion, revision, query.Get("updated_at"), current)
+}
+
+func dashboardStandingOrderCAS(
+	w http.ResponseWriter,
+	rowVersion, legacyRevision int64,
+	legacyUpdatedAt string,
+	current *db.StandingOrder,
+) (int64, bool) {
+	if rowVersion > 0 {
+		return rowVersion, true
 	}
-	rowVersion, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || rowVersion <= 0 {
+	if legacyRevision <= 0 || strings.TrimSpace(legacyUpdatedAt) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "row_version is required")
 		return 0, false
 	}
-	return rowVersion, true
+	updatedAt, err := time.Parse(time.RFC3339Nano, legacyUpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "legacy updated_at is invalid")
+		return 0, false
+	}
+	// A dashboard tab opened before row_version existed carries the old
+	// two-part token. Both halves must still match: lifecycle writers used to
+	// advance updated_at without revision, so accepting revision alone could
+	// let a stale tab undo an automatic retirement. Translate only a CURRENT
+	// legacy token to row_version; the database CAS still closes a mutation
+	// that races after this read.
+	if current == nil ||
+		current.Revision != legacyRevision ||
+		!current.UpdatedAt.Equal(updatedAt) {
+		writeDashboardStandingOrderError(
+			w, "legacy concurrency check", db.ErrStandingOrderVersionConflict)
+		return 0, false
+	}
+	return current.RowVersion, true
 }
 
 func writeDashboardStandingOrder(w http.ResponseWriter, id int64) {

@@ -3,7 +3,9 @@ package agentd_test
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,8 +64,9 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRowVersionGuards(t *testing.T) 
 	assert.Equal(t, int64(60), created.CooldownSeconds)
 
 	legacyEnable := fmt.Sprintf(
-		"/api/standing-orders/%d/enable?revision=%d&updated_at=legacy",
+		"/api/standing-orders/%d/enable?revision=%d&updated_at=%s",
 		created.ID, created.Revision,
+		url.QueryEscape(created.UpdatedAt.Format(time.RFC3339Nano)),
 	)
 	rec := testharness.Serve(dash, dashReq(t, http.MethodPost, legacyEnable, nil))
 	require.Equal(t, http.StatusNoContent, rec.Code,
@@ -120,6 +123,63 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRowVersionGuards(t *testing.T) 
 	gone, err := db.GetStandingOrder(created.ID)
 	require.NoError(t, err)
 	assert.Nil(t, gone)
+}
+
+func TestDashboardStandingOrders_LegacyCASTokenCannotUndoLifecycleMutation(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("legacy-cas-team")
+	id, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:       "legacy-cas-retirement",
+		TargetKind: db.StandingTargetGroup, GroupID: group.ID,
+		Summary:      "Remain retired after a stale edit.",
+		TriggerEvent: db.StandingTriggerSessionStart,
+		Timing:       db.StandingTimingNextTurn, Cadence: db.StandingCadenceAlways,
+		Enabled: true, OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	before, err := db.GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+
+	n, err := db.DisableGroupTargetStandingOrdersForRetire(group.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	// Recreate the migration boundary: v171's lifecycle writer changed only
+	// updated_at, then v172 backfilled row_version from the unchanged delivery
+	// revision. A stale v171 tab therefore has the same integer token as the
+	// migrated row, and only the old timestamp distinguishes it.
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(
+		`UPDATE agent_standing_orders SET row_version = revision WHERE id = ?`, id)
+	require.NoError(t, err)
+
+	dash := agentd.BuildDashboardHandlerForTest()
+	legacyBody := standingOrderBody("group:"+group.Name, 0)
+	legacyBody["revision"] = before.Revision
+	legacyBody["updated_at"] = before.UpdatedAt.Format(time.RFC3339Nano)
+	legacyBody["enabled"] = true
+	_, code := mutateStandingOrder(t, dash, http.MethodPatch,
+		fmt.Sprintf("/api/standing-orders/%d", id), legacyBody)
+	assert.Equal(t, http.StatusConflict, code)
+
+	legacyQuery := fmt.Sprintf(
+		"revision=%d&updated_at=%s",
+		before.Revision, url.QueryEscape(before.UpdatedAt.Format(time.RFC3339Nano)),
+	)
+	rec := testharness.Serve(dash, dashReq(t, http.MethodPost,
+		fmt.Sprintf("/api/standing-orders/%d/enable?%s", id, legacyQuery), nil))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	rec = testharness.Serve(dash, dashReq(t, http.MethodDelete,
+		fmt.Sprintf("/api/standing-orders/%d?%s", id, legacyQuery), nil))
+	assert.Equal(t, http.StatusConflict, rec.Code)
+
+	current, err := db.GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, current)
+	assert.False(t, current.Enabled)
+	assert.Equal(t, db.StandingDisabledReasonGroupRetired, current.DisabledReason)
 }
 
 func TestDashboardStandingOrders_ValidatesActionTriggerMatcher(t *testing.T) {
