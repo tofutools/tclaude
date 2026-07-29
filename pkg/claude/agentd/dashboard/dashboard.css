@@ -4321,7 +4321,13 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: grid;
 }
 .sbx-network-row {
-  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem 7.5rem auto;
+  /* The trailing column (pack label / delete button) is fixed: each row is its
+     own grid, so an auto column would size to that row's label and misalign
+     the shared 1fr value column across rows. */
+  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem 7.5rem 8.5rem;
+}
+.sbx-network-row > button:last-child {
+  justify-self: start;
 }
 .sbx-network-value,
 .sbx-socket-value {
@@ -4345,6 +4351,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-network-pack-owner {
   align-self: center;
+  justify-self: end;
+  text-align: right;
   color: var(--text-muted);
   font-size: .78rem;
 }
@@ -4529,6 +4537,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-section-legend .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
 .sbx-section-legend .spawn-field-description:focus {
+  /* Below the legend, not above: section legends sit near the top of the
+     scrollable dialog, where an upward popover clips against the dialog edge. */
+  top: calc(100% + 4px);
+  bottom: auto;
   right: auto;
   width: min(32rem, calc(100vw - 64px));
 }
