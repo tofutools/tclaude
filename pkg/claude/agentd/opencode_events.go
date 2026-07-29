@@ -45,6 +45,13 @@ type openCodeQuestionRequest struct {
 	} `json:"questions"`
 }
 
+type openCodeMessageInfo struct {
+	ID        string `json:"id"`
+	SessionID string `json:"sessionID"`
+	Role      string `json:"role"`
+	ParentID  string `json:"parentID"`
+}
+
 type openCodeEventEnvelope struct {
 	ID         string `json:"id"`
 	Type       string `json:"type"`
@@ -55,6 +62,7 @@ type openCodeEventEnvelope struct {
 		Permission string                   `json:"permission,omitempty"`
 		Action     string                   `json:"action,omitempty"`
 		Questions  []openCodeQuestionPrompt `json:"questions,omitempty"`
+		Info       openCodeMessageInfo      `json:"info"`
 		Part       openCodeMessagePart      `json:"part"`
 		Error      openCodeSessionError     `json:"error"`
 	} `json:"properties"`

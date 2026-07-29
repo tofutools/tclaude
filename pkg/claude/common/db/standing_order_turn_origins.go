@@ -1,15 +1,48 @@
 package db
 
 import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 )
 
 const (
-	standingOrderTurnOriginPending = "pending"
-	standingOrderTurnOriginActive  = "active"
+	StandingOrderTurnOriginPending = "pending"
+	StandingOrderTurnOriginActive  = "active"
 )
+
+// StandingOrderAgentMessageOrigin is trusted metadata written atomically with
+// an internal reminder. OpenCodeMessageID is supplied to prompt_async so SSE
+// can correlate the assistant turn to this exact user message.
+type StandingOrderAgentMessageOrigin struct {
+	MessageID         int64
+	OrderID           int64
+	OrderRevision     int64
+	OpenCodeMessageID string
+}
+
+// StandingOrderTurnOrigin is the one reminder turn currently pending or
+// active for a stable agent. TargetConv is a routing-generation guard, not the
+// durable key: late events from an old generation must not consume a marker
+// armed for the agent's new head.
+type StandingOrderTurnOrigin struct {
+	TargetAgent       string
+	TargetConv        string
+	MessageID         int64
+	OpenCodeMessageID string
+	State             string
+}
+
+func newStandingOrderOpenCodeMessageID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate OpenCode message id: %w", err)
+	}
+	return "msg_tclaude_" + hex.EncodeToString(raw[:]), nil
+}
 
 // InsertStandingOrderAgentMessage atomically records a durable inbox message,
 // its operator-authorship marker when applicable, and the trusted
@@ -21,6 +54,10 @@ func InsertStandingOrderAgentMessage(
 ) (int64, error) {
 	if m == nil || orderID <= 0 || orderRevision <= 0 {
 		return 0, fmt.Errorf("invalid standing-order agent message")
+	}
+	openCodeMessageID, err := newStandingOrderOpenCodeMessageID()
+	if err != nil {
+		return 0, err
 	}
 	d, err := Open()
 	if err != nil {
@@ -45,9 +82,9 @@ func InsertStandingOrderAgentMessage(
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO agent_standing_order_messages
-			(message_id, order_id, order_revision)
-		VALUES (?, ?, ?)`,
-		messageID, orderID, orderRevision); err != nil {
+			(message_id, order_id, order_revision, opencode_message_id)
+		VALUES (?, ?, ?, ?)`,
+		messageID, orderID, orderRevision, openCodeMessageID); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -56,31 +93,46 @@ func InsertStandingOrderAgentMessage(
 	return messageID, nil
 }
 
-// AgentMessageIsStandingOrder reports trusted metadata written by the internal
-// standing-order queue path. It deliberately does not inspect the subject.
-func AgentMessageIsStandingOrder(messageID int64) (bool, error) {
+// AgentMessageStandingOrderOrigin returns trusted metadata written by the
+// internal standing-order queue path. It deliberately does not inspect the
+// sender-controlled subject.
+func AgentMessageStandingOrderOrigin(
+	messageID int64,
+) (*StandingOrderAgentMessageOrigin, error) {
 	d, err := Open()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	var n int
+	var origin StandingOrderAgentMessageOrigin
 	err = d.QueryRow(`
-		SELECT COUNT(*) FROM agent_standing_order_messages WHERE message_id = ?`,
-		messageID).Scan(&n)
-	return n > 0, err
+		SELECT message_id, order_id, order_revision, opencode_message_id
+		  FROM agent_standing_order_messages
+		 WHERE message_id = ?`,
+		messageID).Scan(
+		&origin.MessageID, &origin.OrderID, &origin.OrderRevision,
+		&origin.OpenCodeMessageID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &origin, err
 }
 
 // ArmStandingOrderTurnOrigin durably announces that messageID is about to be
-// submitted as an OpenCode prompt for targetAgent. A live active marker is not
-// overwritten: overlapping internal turns cannot be attributed safely.
+// submitted as one specific OpenCode user message. A live marker is never
+// overwritten: without an authoritative OpenCode message identity, two
+// pending prompts could steal each other's turn attribution.
 func ArmStandingOrderTurnOrigin(
-	targetAgent string,
+	targetAgent, targetConv string,
 	messageID int64,
+	openCodeMessageID string,
 	now time.Time,
 	pendingFor time.Duration,
 ) error {
 	targetAgent = strings.TrimSpace(targetAgent)
-	if targetAgent == "" || messageID <= 0 || pendingFor <= 0 {
+	targetConv = strings.TrimSpace(targetConv)
+	openCodeMessageID = strings.TrimSpace(openCodeMessageID)
+	if targetAgent == "" || targetConv == "" || messageID <= 0 ||
+		!strings.HasPrefix(openCodeMessageID, "msg") || pendingFor <= 0 {
 		return fmt.Errorf("invalid standing-order turn origin")
 	}
 	d, err := Open()
@@ -91,17 +143,19 @@ func ArmStandingOrderTurnOrigin(
 	expiresRaw := formatStandingTime(now.Add(pendingFor))
 	res, err := d.Exec(`
 		INSERT INTO agent_standing_order_turn_origins
-			(target_agent, message_id, state, armed_at, expires_at)
-		VALUES (?, ?, ?, ?, ?)
+			(target_agent, target_conv, message_id, opencode_message_id,
+			 state, armed_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(target_agent) DO UPDATE SET
+			target_conv = excluded.target_conv,
 			message_id = excluded.message_id,
+			opencode_message_id = excluded.opencode_message_id,
 			state = excluded.state,
 			armed_at = excluded.armed_at,
 			expires_at = excluded.expires_at
-		WHERE agent_standing_order_turn_origins.state != ?
-		   OR agent_standing_order_turn_origins.expires_at <= ?`,
-		targetAgent, messageID, standingOrderTurnOriginPending, nowRaw, expiresRaw,
-		standingOrderTurnOriginActive, nowRaw)
+		WHERE agent_standing_order_turn_origins.expires_at <= ?`,
+		targetAgent, targetConv, messageID, openCodeMessageID,
+		StandingOrderTurnOriginPending, nowRaw, expiresRaw, nowRaw)
 	if err != nil {
 		return err
 	}
@@ -110,22 +164,58 @@ func ArmStandingOrderTurnOrigin(
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("standing-order turn already active for agent %s", targetAgent)
+		return fmt.Errorf("standing-order turn already pending or active for agent %s", targetAgent)
 	}
 	return nil
 }
 
-// ActivateStandingOrderTurnOrigin consumes a non-expired pending handshake at
-// the first observed event from that turn. The marker remains active until the
-// projector sees the turn end, so tool events later in the same turn inherit
-// the origin even across a daemon restart.
+// RefreshPendingStandingOrderTurnOrigin extends a known-accepted prompt's
+// marker. It cannot revive an expired marker or modify another message.
+func RefreshPendingStandingOrderTurnOrigin(
+	targetAgent, targetConv string,
+	messageID int64,
+	openCodeMessageID string,
+	now time.Time,
+	pendingFor time.Duration,
+) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`
+		UPDATE agent_standing_order_turn_origins
+		   SET expires_at = ?
+		 WHERE target_agent = ? AND target_conv = ? AND message_id = ?
+		   AND opencode_message_id = ? AND state = ? AND expires_at > ?`,
+		formatStandingTime(now.Add(pendingFor)),
+		strings.TrimSpace(targetAgent), strings.TrimSpace(targetConv), messageID,
+		strings.TrimSpace(openCodeMessageID), StandingOrderTurnOriginPending,
+		formatStandingTime(now))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("standing-order pending turn origin changed or expired")
+	}
+	return nil
+}
+
+// ActivateStandingOrderTurnOrigin promotes only the pending marker whose
+// OpenCode user message is the parent of the observed assistant turn.
 func ActivateStandingOrderTurnOrigin(
-	targetAgent string,
+	targetAgent, targetConv, openCodeMessageID string,
 	now time.Time,
 	activeFor time.Duration,
 ) (bool, error) {
 	targetAgent = strings.TrimSpace(targetAgent)
-	if targetAgent == "" || activeFor <= 0 {
+	targetConv = strings.TrimSpace(targetConv)
+	openCodeMessageID = strings.TrimSpace(openCodeMessageID)
+	if targetAgent == "" || targetConv == "" || openCodeMessageID == "" ||
+		activeFor <= 0 {
 		return false, nil
 	}
 	d, err := Open()
@@ -135,9 +225,11 @@ func ActivateStandingOrderTurnOrigin(
 	res, err := d.Exec(`
 		UPDATE agent_standing_order_turn_origins
 		   SET state = ?, expires_at = ?
-		 WHERE target_agent = ? AND state = ? AND expires_at > ?`,
-		standingOrderTurnOriginActive, formatStandingTime(now.Add(activeFor)),
-		targetAgent, standingOrderTurnOriginPending, formatStandingTime(now))
+		 WHERE target_agent = ? AND target_conv = ?
+		   AND opencode_message_id = ? AND state = ? AND expires_at > ?`,
+		StandingOrderTurnOriginActive, formatStandingTime(now.Add(activeFor)),
+		targetAgent, targetConv, openCodeMessageID,
+		StandingOrderTurnOriginPending, formatStandingTime(now))
 	if err != nil {
 		return false, err
 	}
@@ -145,50 +237,69 @@ func ActivateStandingOrderTurnOrigin(
 	return n > 0, err
 }
 
-// StandingOrderTurnOriginActive reports whether a non-expired active marker
-// survives for targetAgent. It is used when the OpenCode SSE projector
-// reconnects in the middle of a standing-order-originated turn.
-func StandingOrderTurnOriginActive(targetAgent string, now time.Time) (bool, error) {
+// GetStandingOrderTurnOrigin returns a live marker for exactly one stable
+// agent and conversation generation. Expired and other-generation markers are
+// deliberately invisible.
+func GetStandingOrderTurnOrigin(
+	targetAgent, targetConv string,
+	now time.Time,
+) (*StandingOrderTurnOrigin, error) {
 	targetAgent = strings.TrimSpace(targetAgent)
-	if targetAgent == "" {
-		return false, nil
+	targetConv = strings.TrimSpace(targetConv)
+	if targetAgent == "" || targetConv == "" {
+		return nil, nil
 	}
 	d, err := Open()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	var n int
+	var origin StandingOrderTurnOrigin
 	err = d.QueryRow(`
-		SELECT COUNT(*) FROM agent_standing_order_turn_origins
-		 WHERE target_agent = ? AND state = ? AND expires_at > ?`,
-		targetAgent, standingOrderTurnOriginActive, formatStandingTime(now)).Scan(&n)
-	return n > 0, err
+		SELECT target_agent, target_conv, message_id, opencode_message_id, state
+		  FROM agent_standing_order_turn_origins
+		 WHERE target_agent = ? AND target_conv = ? AND expires_at > ?`,
+		targetAgent, targetConv, formatStandingTime(now)).Scan(
+		&origin.TargetAgent, &origin.TargetConv, &origin.MessageID,
+		&origin.OpenCodeMessageID, &origin.State)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &origin, err
 }
 
-// CancelPendingStandingOrderTurnOrigin removes the exact handshake when the
-// prompt submission failed before OpenCode accepted it. It never clears an
-// active turn or a newer message's pending marker.
-func CancelPendingStandingOrderTurnOrigin(targetAgent string, messageID int64) error {
+// CancelPendingStandingOrderTurnOrigin removes the exact handshake after a
+// definitive prompt rejection. It never clears an active turn or another
+// message's marker.
+func CancelPendingStandingOrderTurnOrigin(
+	targetAgent, targetConv string,
+	messageID int64,
+	openCodeMessageID string,
+) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
 	_, err = d.Exec(`
 		DELETE FROM agent_standing_order_turn_origins
-		 WHERE target_agent = ? AND message_id = ? AND state = ?`,
-		strings.TrimSpace(targetAgent), messageID, standingOrderTurnOriginPending)
+		 WHERE target_agent = ? AND target_conv = ? AND message_id = ?
+		   AND opencode_message_id = ? AND state = ?`,
+		strings.TrimSpace(targetAgent), strings.TrimSpace(targetConv), messageID,
+		strings.TrimSpace(openCodeMessageID), StandingOrderTurnOriginPending)
 	return err
 }
 
-// ClearStandingOrderTurnOrigin closes pending or active origin state after the
-// projector observes the turn end.
-func ClearStandingOrderTurnOrigin(targetAgent string) error {
+// CompleteStandingOrderTurnOrigin closes only an active, generation-matched
+// reminder turn after the projector observes its Stop boundary. A Stop from an
+// unrelated turn cannot consume a still-pending marker.
+func CompleteStandingOrderTurnOrigin(targetAgent, targetConv string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(
-		`DELETE FROM agent_standing_order_turn_origins WHERE target_agent = ?`,
-		strings.TrimSpace(targetAgent))
+	_, err = d.Exec(`
+		DELETE FROM agent_standing_order_turn_origins
+		 WHERE target_agent = ? AND target_conv = ? AND state = ?`,
+		strings.TrimSpace(targetAgent), strings.TrimSpace(targetConv),
+		StandingOrderTurnOriginActive)
 	return err
 }

@@ -27,13 +27,14 @@ func TestMigrateV172toV173CreatesStandingOrderTurnOrigins(t *testing.T) {
 	var have int
 	require.NoError(t, d.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('agent_standing_order_turn_origins')
-		 WHERE name IN ('target_agent', 'message_id', 'state', 'armed_at', 'expires_at')
+		 WHERE name IN ('target_agent', 'target_conv', 'message_id',
+			'opencode_message_id', 'state', 'armed_at', 'expires_at')
 	`).Scan(&have))
-	assert.Equal(t, 5, have)
+	assert.Equal(t, 7, have)
 	require.NoError(t, d.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('agent_standing_order_messages')
-		 WHERE name IN ('message_id', 'order_id', 'order_revision')
+		 WHERE name IN ('message_id', 'order_id', 'order_revision', 'opencode_message_id')
 	`).Scan(&have))
-	assert.Equal(t, 3, have)
+	assert.Equal(t, 4, have)
 	require.NoError(t, migrateV172toV173(d), "already-applied migration is a no-op")
 }

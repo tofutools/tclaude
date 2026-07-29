@@ -430,8 +430,16 @@ func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing
 		ID: sessionID, TmuxSession: sessionID, ConvID: convID,
 		Harness: harness.OpenCodeName, Status: session.StatusIdle,
 	}))
+	messageID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+		ToConv: convID, Subject: "restart reminder", Body: "internal",
+	}, 41, 3)
+	require.NoError(t, err)
+	origin, err := db.AgentMessageStandingOrderOrigin(messageID)
+	require.NoError(t, err)
+	require.NotNil(t, origin)
 	require.NoError(t, db.ArmStandingOrderTurnOrigin(
-		agentID, 41, time.Now(), time.Minute))
+		agentID, convID, messageID, origin.OpenCodeMessageID,
+		time.Now(), time.Minute))
 
 	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
 	firstProjector := newOpenCodeEventProjector(convID, "")
@@ -441,10 +449,25 @@ func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing
 			ConvID:        convID,
 			ToolName:      "Bash",
 		}})
+	assert.False(t, firstProjector.standingOrderTurn,
+		"generic tool activity cannot claim a pending reminder")
+
+	require.True(t, consumeOpenCodeEvent(context.Background(), runtime, firstProjector,
+		json.RawMessage(openCodeTestEvent("evt_origin_assistant", "message.updated", convID,
+			`"info":{"id":"msg_assistant","sessionID":"`+convID+
+				`","role":"assistant","parentID":"`+
+				origin.OpenCodeMessageID+`"}`))))
+	applyOpenCodeHooks(context.Background(), runtime, firstProjector,
+		[]session.HookCallbackInput{{
+			HookEventName: "PreToolUse",
+			ConvID:        convID,
+			ToolName:      "Bash",
+		}})
 	assert.True(t, firstProjector.standingOrderTurn)
-	active, err := db.StandingOrderTurnOriginActive(agentID, time.Now())
+	active, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.True(t, active)
+	require.NotNil(t, active)
+	assert.Equal(t, db.StandingOrderTurnOriginActive, active.State)
 
 	restartedProjector := newOpenCodeEventProjector(convID, "")
 	applyOpenCodeHooks(context.Background(), runtime, restartedProjector,
@@ -462,9 +485,9 @@ func TestOpenCodeStandingOrderOriginSurvivesProjectorRestartUntilStop(t *testing
 			ConvID:        convID,
 		}})
 	assert.False(t, restartedProjector.standingOrderTurn)
-	active, err = db.StandingOrderTurnOriginActive(agentID, time.Now())
+	active, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.False(t, active, "the successful Stop boundary releases suppression")
+	assert.Nil(t, active, "the successful Stop boundary releases suppression")
 }
 
 func TestConsumeOpenCodeEventWaitsForLaunchSessionRow(t *testing.T) {

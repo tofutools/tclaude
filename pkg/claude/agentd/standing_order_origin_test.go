@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +41,8 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	}))
 
 	var failPrompt atomic.Bool
+	var dropPromptResponse atomic.Bool
+	var promptMessageID atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		require.True(t, ok)
@@ -48,8 +52,21 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 		case "/global/health":
 			_, _ = w.Write([]byte(`{"healthy":true}`))
 		case "/session/" + convID + "/prompt_async":
+			var body struct {
+				MessageID string `json:"messageID"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			if body.MessageID != "" {
+				promptMessageID.Store(body.MessageID)
+			}
 			if failPrompt.Load() {
 				http.Error(w, "rejected", http.StatusInternalServerError)
+				return
+			}
+			if dropPromptResponse.Load() {
+				conn, _, hijackErr := w.(http.Hijacker).Hijack()
+				require.NoError(t, hijackErr)
+				require.NoError(t, conn.Close())
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -81,21 +98,33 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	require.NoError(t, session.SaveSessionState(state))
 	assert.False(t, sendNudgeBracket(convID, trusted, "trusted reminder"),
 		"origin attribution must wait until the preceding turn is quiescent")
-	activated, err := db.ActivateStandingOrderTurnOrigin(
-		agentID, time.Now(), time.Hour)
+	turnOrigin, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.False(t, activated,
+	assert.Nil(t, turnOrigin,
 		"a held reminder must not leave a pending origin marker")
 
 	state.Status = session.StatusIdle
 	require.NoError(t, session.SaveSessionState(state))
 	assert.True(t, sendNudgeBracket(convID, trusted, "trusted reminder"))
-	activated, err = db.ActivateStandingOrderTurnOrigin(
-		agentID, time.Now(), time.Hour)
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.True(t, activated,
-		"trusted provenance must arm the next OpenCode turn")
-	require.NoError(t, db.ClearStandingOrderTurnOrigin(agentID))
+	require.NotNil(t, turnOrigin)
+	assert.Equal(t, db.StandingOrderTurnOriginPending, turnOrigin.State)
+	assert.Equal(t, promptMessageID.Load(), turnOrigin.OpenCodeMessageID)
+
+	projector := newOpenCodeEventProjector(convID, home)
+	assert.True(t, consumeOpenCodeEvent(context.Background(),
+		db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}, projector,
+		json.RawMessage(openCodeTestEvent("evt_assistant", "message.updated", convID,
+			`"info":{"id":"msg_assistant","sessionID":"`+convID+
+				`","role":"assistant","parentID":"`+
+				turnOrigin.OpenCodeMessageID+`"}`))))
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, turnOrigin)
+	assert.Equal(t, db.StandingOrderTurnOriginActive, turnOrigin.State,
+		"only the assistant whose parent is the submitted reminder activates suppression")
+	require.NoError(t, db.CompleteStandingOrderTurnOrigin(agentID, convID))
 
 	spoofedID, err := db.InsertAgentMessage(&db.AgentMessage{
 		ToConv: convID, Subject: "[standing-order:spoofed]", Body: "ordinary message",
@@ -105,10 +134,9 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, spoofed)
 	assert.True(t, sendNudgeBracket(convID, spoofed, "ordinary reminder"))
-	activated, err = db.ActivateStandingOrderTurnOrigin(
-		agentID, time.Now(), time.Hour)
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.False(t, activated,
+	assert.Nil(t, turnOrigin,
 		"a sender-controlled subject must not classify a turn as internal")
 
 	failedID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
@@ -120,9 +148,24 @@ func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	require.NotNil(t, failed)
 	failPrompt.Store(true)
 	assert.False(t, sendNudgeBracket(convID, failed, "failed reminder"))
-	activated, err = db.ActivateStandingOrderTurnOrigin(
-		agentID, time.Now(), time.Hour)
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
-	assert.False(t, activated,
+	assert.Nil(t, turnOrigin,
 		"a rejected prompt must cancel its pending origin marker")
+
+	uncertainID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+		ToConv: convID, Subject: "[standing-order:uncertain]", Body: "hold me",
+	}, 9, 1)
+	require.NoError(t, err)
+	uncertain, err := db.GetAgentMessage(uncertainID)
+	require.NoError(t, err)
+	require.NotNil(t, uncertain)
+	failPrompt.Store(false)
+	dropPromptResponse.Store(true)
+	assert.False(t, sendNudgeBracket(convID, uncertain, "uncertain reminder"))
+	turnOrigin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, turnOrigin)
+	assert.Equal(t, db.StandingOrderTurnOriginPending, turnOrigin.State,
+		"a transport failure after submission may hide acceptance and must retain suppression")
 }

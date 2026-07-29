@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -1489,7 +1490,26 @@ func openCodePermissionHasSuffix(current, expected []harness.OpenCodePermissionR
 	return true
 }
 
+type openCodePromptAcceptanceUncertainError struct {
+	err error
+}
+
+func (e *openCodePromptAcceptanceUncertainError) Error() string {
+	return e.err.Error()
+}
+
+func (e *openCodePromptAcceptanceUncertainError) Unwrap() error {
+	return e.err
+}
+
 func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort string) error {
+	return sendOpenCodePromptWithMessageID(launch, cwd, prompt, model, effort, "")
+}
+
+func sendOpenCodePromptWithMessageID(
+	launch *openCodeLaunch,
+	cwd, prompt, model, effort, messageID string,
+) error {
 	if launch == nil || prompt == "" {
 		return nil
 	}
@@ -1501,6 +1521,9 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 	}
 	if effort != "" {
 		body["variant"] = effort
+	}
+	if messageID != "" {
+		body["messageID"] = messageID
 	}
 	endpoint := launch.ServerURL + "/session/" + url.PathEscape(launch.ConvID) +
 		"/prompt_async?directory=" + url.QueryEscape(cwd)
@@ -1516,7 +1539,9 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 	}
 	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
 	if err != nil {
-		return fmt.Errorf("submit OpenCode launch prompt: %w", err)
+		return &openCodePromptAcceptanceUncertainError{
+			err: fmt.Errorf("submit OpenCode launch prompt: %w", err),
+		}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
@@ -1558,14 +1583,18 @@ func sendOpenCodeNudge(convID, nudge string) error {
 }
 
 // sendOpenCodeStandingOrderNudge wraps prompt submission in a durable origin
-// handshake. The SSE projector activates it on the first event from this turn
-// and suppresses standing-order evaluation until Stop, preventing a queued
-// tool-trigger reminder from recursively triggering itself.
+// handshake. The SSE projector activates it only when OpenCode publishes an
+// assistant message whose parent is the exact submitted user-message ID, then
+// suppresses standing-order evaluation until Stop. Unrelated queued prompts
+// and late events from an old conversation generation cannot steal the marker.
 func sendOpenCodeStandingOrderNudge(
 	convID, targetAgent string,
-	messageID int64,
+	origin *db.StandingOrderAgentMessageOrigin,
 	nudge string,
 ) error {
+	if origin == nil {
+		return fmt.Errorf("standing-order OpenCode delivery requires trusted provenance")
+	}
 	if targetAgent == "" {
 		var err error
 		targetAgent, err = db.AgentIDForConv(convID)
@@ -1576,17 +1605,48 @@ func sendOpenCodeStandingOrderNudge(
 	if targetAgent == "" {
 		return fmt.Errorf("standing-order OpenCode delivery requires a stable target agent")
 	}
+	runtime, err := readyOpenCodeRuntime(convID)
+	if err != nil {
+		return err
+	}
 	if err := db.ArmStandingOrderTurnOrigin(
-		targetAgent, messageID, time.Now(), standingOrderOriginPendingTTL); err != nil {
+		targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
+		time.Now(), standingOrderOriginPendingTTL); err != nil {
 		return fmt.Errorf("arm standing-order turn origin: %w", err)
 	}
-	if err := sendOpenCodeNudge(convID, nudge); err != nil {
-		if cancelErr := db.CancelPendingStandingOrderTurnOrigin(
-			targetAgent, messageID); cancelErr != nil {
-			slog.Warn("OpenCode standing-order origin: cancel failed prompt handshake",
-				"agent", targetAgent, "message", messageID, "error", cancelErr)
+	err = sendOpenCodePromptWithMessageID(&openCodeLaunch{
+		SessionID:           runtime.SessionID,
+		ConvID:              runtime.ConvID,
+		ServerURL:           runtime.ServerURL,
+		Password:            runtime.Password,
+		PID:                 runtime.PID,
+		Transport:           runtime.Transport,
+		ControlSocketPath:   runtime.ControlSocketPath,
+		ControlSocketDevice: runtime.ControlSocketDevice,
+		ControlSocketInode:  runtime.ControlSocketInode,
+	}, runtime.Cwd, nudge, "", "", origin.OpenCodeMessageID)
+	if err != nil {
+		var uncertain *openCodePromptAcceptanceUncertainError
+		if !errors.As(err, &uncertain) {
+			if cancelErr := db.CancelPendingStandingOrderTurnOrigin(
+				targetAgent, convID, origin.MessageID,
+				origin.OpenCodeMessageID); cancelErr != nil {
+				slog.Warn("OpenCode standing-order origin: cancel failed prompt handshake",
+					"agent", targetAgent, "message", origin.MessageID,
+					"error", cancelErr)
+			}
 		}
 		return err
+	}
+	// A successful response proves acceptance. Give a reminder queued behind a
+	// racing human prompt the same generous bound as an active turn. If SSE
+	// already promoted (or even completed) the marker, the refresh correctly
+	// misses and no delivery retry is needed.
+	if refreshErr := db.RefreshPendingStandingOrderTurnOrigin(
+		targetAgent, convID, origin.MessageID, origin.OpenCodeMessageID,
+		time.Now(), standingOrderOriginActiveTTL); refreshErr != nil {
+		slog.Debug("OpenCode standing-order origin: accepted prompt already advanced",
+			"agent", targetAgent, "message", origin.MessageID, "error", refreshErr)
 	}
 	return nil
 }
@@ -2268,6 +2328,7 @@ func consumeOpenCodeEventLocked(
 	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
+	observeOpenCodeStandingOrderAssistant(runtime, projector, event)
 	projected, err := projector.project(event)
 	if err != nil {
 		slog.Debug("OpenCode SSE event could not be projected",
@@ -2312,6 +2373,43 @@ func consumeOpenCodeEventLocked(
 	applyOpenCodeCost(runtime, event)
 }
 
+func observeOpenCodeStandingOrderAssistant(
+	runtime db.OpenCodeRuntime,
+	projector *openCodeEventProjector,
+	event json.RawMessage,
+) {
+	if projector == nil || !bytes.Contains(event, []byte(`"message.updated"`)) {
+		return
+	}
+	var envelope openCodeEventEnvelope
+	if err := json.Unmarshal(event, &envelope); err != nil ||
+		envelope.Type != "message.updated" ||
+		envelope.Properties.Info.SessionID != runtime.ConvID ||
+		envelope.Properties.Info.Role != "assistant" ||
+		envelope.Properties.Info.ParentID == "" {
+		return
+	}
+	agentID, err := db.AgentIDForConv(runtime.ConvID)
+	if err != nil || agentID == "" {
+		if err != nil {
+			slog.Warn("OpenCode standing-order origin: resolve assistant owner failed",
+				"conv", runtime.ConvID, "error", err)
+		}
+		return
+	}
+	activated, err := db.ActivateStandingOrderTurnOrigin(
+		agentID, runtime.ConvID, envelope.Properties.Info.ParentID,
+		time.Now(), standingOrderOriginActiveTTL)
+	if err != nil {
+		slog.Warn("OpenCode standing-order origin: correlate assistant turn failed",
+			"agent", agentID, "conv", runtime.ConvID, "error", err)
+		return
+	}
+	if activated {
+		projector.standingOrderTurn = true
+	}
+}
+
 func applyOpenCodeHooks(
 	ctx context.Context,
 	runtime db.OpenCodeRuntime,
@@ -2324,29 +2422,24 @@ func applyOpenCodeHooks(
 		slog.Warn("OpenCode standing-order origin: resolve stable agent failed",
 			"conv", runtime.ConvID, "error", agentErr)
 	}
-	if projector != nil && !projector.standingOrderTurn && agentID != "" {
-		active, err := db.StandingOrderTurnOriginActive(agentID, time.Now())
+	if projector != nil && agentID != "" {
+		origin, err := db.GetStandingOrderTurnOrigin(
+			agentID, runtime.ConvID, time.Now())
 		if err != nil {
-			slog.Warn("OpenCode standing-order origin: restore active turn failed",
+			slog.Warn("OpenCode standing-order origin: restore turn failed",
 				"agent", agentID, "error", err)
 			originUncertain = true
 		} else {
-			projector.standingOrderTurn = active
+			projector.standingOrderTurn =
+				origin != nil && origin.State == db.StandingOrderTurnOriginActive
+			// Pending means an accepted prompt may be queued behind another
+			// turn. Suppress all boundaries fail-closed until its exact
+			// assistant parent arrives; unrelated Stop events cannot clear it.
+			originUncertain =
+				origin != nil && origin.State == db.StandingOrderTurnOriginPending
 		}
 	}
 	for _, input := range projected {
-		if projector != nil && !projector.standingOrderTurn &&
-			agentID != "" && openCodeTurnActivity(input.HookEventName) {
-			active, err := db.ActivateStandingOrderTurnOrigin(
-				agentID, time.Now(), standingOrderOriginActiveTTL)
-			if err != nil {
-				slog.Warn("OpenCode standing-order origin: activate turn failed",
-					"agent", agentID, "event", input.HookEventName, "error", err)
-				originUncertain = true
-			} else {
-				projector.standingOrderTurn = active
-			}
-		}
 		if projector != nil {
 			input.StandingOrderOrigin =
 				projector.standingOrderTurn || originUncertain
@@ -2378,7 +2471,8 @@ func applyOpenCodeHooks(
 		}
 		if applied && projector != nil && projector.standingOrderTurn &&
 			openCodeTurnEnd(input.HookEventName) {
-			if err := db.ClearStandingOrderTurnOrigin(agentID); err != nil {
+			if err := db.CompleteStandingOrderTurnOrigin(
+				agentID, runtime.ConvID); err != nil {
 				slog.Warn("OpenCode standing-order origin: clear turn failed",
 					"agent", agentID, "event", input.HookEventName, "error", err)
 			} else {
@@ -2386,15 +2480,6 @@ func applyOpenCodeHooks(
 			}
 		}
 	}
-}
-
-func openCodeTurnActivity(event string) bool {
-	switch event {
-	case "UserPromptSubmit", "PreToolUse", "PostToolUse",
-		"PostToolUseFailure", "PermissionRequest", "Notification":
-		return true
-	}
-	return false
 }
 
 func openCodeTurnEnd(event string) bool {

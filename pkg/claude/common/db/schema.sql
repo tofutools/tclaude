@@ -1066,12 +1066,15 @@ CREATE TABLE agent_standing_order_messages (
 			message_id     INTEGER PRIMARY KEY
 			               REFERENCES agent_messages(id) ON DELETE CASCADE,
 			order_id       INTEGER NOT NULL,
-			order_revision INTEGER NOT NULL
+			order_revision INTEGER NOT NULL,
+			opencode_message_id TEXT NOT NULL UNIQUE
 		);
 
 CREATE TABLE agent_standing_order_turn_origins (
 			target_agent TEXT PRIMARY KEY,
+			target_conv  TEXT NOT NULL,
 			message_id   INTEGER NOT NULL CHECK(message_id > 0),
+			opencode_message_id TEXT NOT NULL,
 			state        TEXT NOT NULL CHECK(state IN ('pending', 'active')),
 			armed_at     TEXT NOT NULL,
 			expires_at   TEXT NOT NULL

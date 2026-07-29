@@ -310,24 +310,23 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
 	if sess.Harness == harness.OpenCodeName {
-		standingOrderMessage, err := db.AgentMessageIsStandingOrder(m.ID)
+		standingOrderOrigin, err := db.AgentMessageStandingOrderOrigin(m.ID)
 		if err != nil {
 			slog.Warn("OpenCode nudge origin lookup failed; holding message",
 				"error", err, "conv", toConv, "msg_id", m.ID)
 			return false
 		}
-		if standingOrderMessage {
-			// A pending marker is consumed by the next projected turn event.
-			// Do not arm it while another turn is active, or that turn's next
-			// tool event could be mistaken for the reminder and clear the
-			// marker before the queued prompt begins. Error is quiescent too:
-			// the failed turn is over and OpenCode is back at its prompt.
+		if standingOrderOrigin != nil {
+			// Do not enqueue behind a known-active turn. Error is quiescent too:
+			// the failed turn is over and OpenCode is back at its prompt. The
+			// durable marker is correlated to the exact OpenCode user-message
+			// ID, so a prompt racing after this check cannot steal attribution.
 			if sess.Status != session.StatusIdle &&
 				sess.Status != session.StatusError {
 				return false
 			}
 			err = sendOpenCodeStandingOrderNudge(
-				toConv, m.ToAgent, m.ID, nudge)
+				toConv, m.ToAgent, standingOrderOrigin, nudge)
 		} else {
 			err = sendOpenCodeNudge(toConv, nudge)
 		}
