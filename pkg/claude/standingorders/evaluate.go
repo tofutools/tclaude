@@ -132,6 +132,9 @@ func matchFieldValue(o *db.StandingOrder, ev Event) string {
 // turn into a delivery-to-the-wrong-agent bug.
 func InScope(o *db.StandingOrder, ev Event) (bool, string) {
 	if o.IsGlobalTarget() {
+		if ev.AgentID == "" {
+			return false, "global target requires an enrolled stable agent id"
+		}
 		return true, ""
 	}
 

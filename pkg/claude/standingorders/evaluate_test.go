@@ -131,6 +131,12 @@ func TestEvaluateGlobalAndAdditionalGroupScopes(t *testing.T) {
 	assert.True(t, Evaluate(global, event(func(e *Event) {
 		e.Memberships = nil
 	}), neverDelivered).Deliver)
+	actorless := Evaluate(global, event(func(e *Event) {
+		e.AgentID = ""
+		e.Memberships = nil
+	}), neverDelivered)
+	assert.Equal(t, db.StandingOutcomeOutOfScope, actorless.Outcome,
+		"global still means every enrolled stable agent, not actorless conversations")
 
 	shared := order(func(o *db.StandingOrder) {
 		o.TargetRole = "reviewer"

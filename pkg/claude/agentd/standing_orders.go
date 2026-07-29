@@ -243,7 +243,7 @@ func standingDebounceInScope(
 	targetAgent string,
 ) (bool, error) {
 	if order.IsGlobalTarget() {
-		return true, nil
+		return targetAgent != "", nil
 	}
 	if !order.IsGroupTarget() && order.TargetAgent == targetAgent {
 		return true, nil
