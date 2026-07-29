@@ -23,10 +23,576 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sandbox-v2-smoke:
+    name: Sandbox v2 bubblewrap smoke
+    if: ${{ inputs.homebrew_only != true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for OpenCode smoke
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Linux sandbox prerequisites
+        run: |
+          sudo apt-get update
+          # Claude's embedded SRT discovers rg and socat at runtime; keep them
+          # explicit so a runner-image change cannot turn the real nested smoke
+          # into an accidental dependency check.
+          sudo apt-get install --yes bubblewrap iproute2 nftables passt ripgrep socat
+          # Ubuntu's packaged pasta predates the synthetic host-loopback
+          # controls required by the filtered gateway. Build a reproducible
+          # smoke prerequisite from the exact upstream release exercised here.
+          git clone --quiet --depth 1 \
+            --branch 2026_07_28.f8df3f1 \
+            https://passt.top/passt \
+            "$RUNNER_TEMP/passt"
+          test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
+            "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+          make -C "$RUNNER_TEMP/passt" pasta
+          # Install into a dedicated root-owned path: hosted runners
+          # deliberately leave /usr/local/bin writable, which must fail the
+          # production executable trust walk. A pasta-only prefix also avoids
+          # shadowing the Actions-managed Go toolchain with /usr/bin/go.
+          sudo install -d -o root -g root -m 0755 \
+            /usr/lib/tclaude-filtered \
+            /usr/lib/tclaude-filtered/bin
+          sudo install -o root -g root -m 0755 \
+            "$RUNNER_TEMP/passt/passt" /usr/lib/tclaude-filtered/bin/pasta
+          # The hosted image also carries an older /usr/local/bin/pasta.
+          # Prepend the secure dedicated path for this and all later steps, and
+          # assert the same resolution the production prerequisite will use.
+          echo "/usr/lib/tclaude-filtered/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/tclaude-filtered/bin:$PATH"
+          test "$(command -v pasta)" = "/usr/lib/tclaude-filtered/bin/pasta"
+          pasta --version
+
+      - name: Install pinned OpenCode smoke binary
+        run: |
+          npm install --global opencode-ai@1.18.6
+          opencode --version
+
+      - name: Install pinned stacked sandbox engines
+        shell: bash
+        run: |
+          npm install --global @openai/codex@0.145.0
+
+          claude_version=2.1.220
+          claude_platform=linux-x64
+          claude_base_url=https://downloads.claude.ai/claude-code-releases
+          claude_manifest="$RUNNER_TEMP/claude-manifest.json"
+          claude_binary="$RUNNER_TEMP/claude-$claude_version"
+          curl_args=(
+            --fail
+            --location
+            --silent
+            --show-error
+            --max-time 60
+            --retry 2
+            --retry-all-errors
+          )
+
+          curl "${curl_args[@]}" \
+            --output "$claude_manifest" \
+            "$claude_base_url/$claude_version/manifest.json"
+          claude_checksum=$(node -e '
+            const fs = require("fs");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            process.stdout.write(manifest.platforms[process.argv[2]]?.checksum ?? "");
+          ' "$claude_manifest" "$claude_platform")
+          if [[ ! "$claude_checksum" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "Missing Claude Code checksum for $claude_platform" >&2
+            exit 1
+          fi
+
+          curl "${curl_args[@]}" \
+            --output "$claude_binary" \
+            "$claude_base_url/$claude_version/$claude_platform/claude"
+          echo "$claude_checksum  $claude_binary" | sha256sum --check
+
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/claude/versions"
+          install -m 0755 \
+            "$claude_binary" \
+            "$HOME/.local/share/claude/versions/$claude_version"
+          ln -sfn \
+            "$HOME/.local/share/claude/versions/$claude_version" \
+            "$HOME/.local/bin/claude"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
+          codex --version
+
+      - name: Unlock and probe bubblewrap user namespace support
+        shell: bash
+        run: |
+          restriction=kernel.apparmor_restrict_unprivileged_userns
+          kernel=$(uname -a)
+
+          set +e
+          before=$(sysctl -n "$restriction" 2>&1)
+          unlock_output=$(sudo sysctl -w "$restriction=0" 2>&1)
+          unlock_status=$?
+          after=$(sysctl -n "$restriction" 2>&1)
+          readback_status=$?
+          bwrap_output=$(bwrap --die-with-parent --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- true 2>&1)
+          bwrap_status=$?
+          set -e
+
+          printf 'before: %s=%s\n' "$restriction" "$before"
+          printf '%s\n' "$unlock_output"
+          printf 'after: %s=%s\n' "$restriction" "$after"
+          printf '%s\n' "$bwrap_output"
+          printf 'bubblewrap exit code: %s\n' "$bwrap_status"
+
+          if [ "$unlock_status" -ne 0 ] ||
+             [ "$readback_status" -ne 0 ] ||
+             [ "$after" != "0" ] ||
+             [ "$bwrap_status" -ne 0 ]; then
+            if [ -z "$bwrap_output" ]; then
+              bwrap_output="<no output>"
+            fi
+            {
+              echo "### Sandbox v2 bubblewrap smoke prerequisite failed"
+              echo
+              echo "The real bubblewrap smoke was not executed. The GitHub runner image or AppArmor policy likely changed."
+              echo
+              printf '**Image:** %s %s\n\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+              echo "**Kernel:**"
+              echo '```text'
+              printf '%s\n' "$kernel"
+              echo '```'
+              printf '**Sysctl before:** %s\n\n' "$before"
+              printf '**Sysctl write exit code:** %s\n\n' "$unlock_status"
+              echo "**Sysctl write output:**"
+              echo '```text'
+              printf '%s\n' "$unlock_output"
+              echo '```'
+              printf '**Sysctl after:** %s (read exit code %s)\n\n' "$after" "$readback_status"
+              printf '**Bubblewrap exit code:** %s\n\n' "$bwrap_status"
+              echo "**Bubblewrap output:**"
+              echo '```text'
+              printf '%s\n' "$bwrap_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::sandbox v2 bubblewrap smoke prerequisite failed; see the step summary for runner diagnostics"
+            exit 1
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run bubblewrap platform assumptions
+        env:
+          TCLAUDE_SANDBOX_ASSUMPTIONS: "1"
+        run: |
+          assumption_log="$RUNNER_TEMP/bubblewrap-assumptions.log"
+          go test ./pkg/claude/sandboxassumptions -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s |
+            tee "$assumption_log"
+          if ! grep -q '^--- PASS: TestBubblewrapAssumptions ' "$assumption_log"; then
+            {
+              echo "### Bubblewrap assumption suite did not complete"
+              echo
+              echo "The hardware-backed bubblewrap contract did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestBubblewrapAssumptions did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run sandbox v2 bubblewrap smoke
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-layer-bubblewrap-smoke.log"
+          go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerHostSmoke ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 bubblewrap smoke did not complete"
+              echo
+              echo "The test command exited successfully without reporting that the named real smoke passed."
+              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Sandbox v2 bubblewrap smoke did not report an explicit pass (TestTclaudeLayerHostSmoke)"
+            exit 1
+          fi
+
+      - name: Run filtered-network gateway smoke
+        shell: bash
+        env:
+          TCLAUDE_FILTERED_NETWORK_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.0.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.0.200
+          TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.0.0/25
+          TCLAUDE_FILTERED_ALLOWED_ADDR6: "fd00:823::10"
+          TCLAUDE_FILTERED_ADJACENT_ADDR6: "fd00:823::200"
+          TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:823::/120"
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
+          TCLAUDE_FILTERED_DENIED_PORT: "41002"
+        run: |
+          namespace=tclaude-filtered-target
+          host_link=tclflt0
+          peer_link=tclflt1
+          hosts_backup="$RUNNER_TEMP/tclaude-filtered-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          server_pids=()
+          cleanup() {
+            for pid in "${server_pids[@]}"; do
+              sudo kill "$pid" 2>/dev/null || true
+            done
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.0.1/24 dev "$host_link"
+          sudo ip -6 address add fe80::823:1/64 dev "$host_link" nodad
+          sudo ip -6 address add fd00:823::1/64 dev "$host_link" nodad
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.0.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.0.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fe80::823:2/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::10/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:823::200/64 dev "$peer_link" nodad
+          {
+            echo "198.18.0.200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+            echo "fd00:823::200 exact-host.filtered.test sibling.filtered.test exact-domain.filtered.test child.exact-domain.filtered.test tree.filtered.test child.tree.filtered.test tree.filtered.test.attacker.invalid"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          sudo ip -6 address show dev "$host_link"
+          sudo ip -6 route show dev "$host_link"
+          sudo ip netns exec "$namespace" ip -6 address show dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 route show dev "$peer_link"
+
+          for address in 198.18.0.10 198.18.0.200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-tcp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/filtered-udp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+          listener_dump=$(sudo ip netns exec "$namespace" ss -lntu6)
+          printf '%s\n' "$listener_dump"
+          for address in fd00:823::10 fd00:823::200; do
+            for port in 41001 41002; do
+              for protocol in tcp udp; do
+                endpoint="[$address]:$port"
+                if ! awk -v protocol="$protocol" -v endpoint="$endpoint" \
+                  '$1 == protocol && $5 == endpoint { found = 1 } END { exit !found }' \
+                  <<<"$listener_dump"; then
+                  echo "::error::IPv6 filtered-network fixture failed to bind $protocol $endpoint"
+                  exit 1
+                fi
+              done
+            done
+          done
+          for protocol in TCP6 UDP6; do
+            token="filtered-fixture-$protocol"
+            reply=$(
+              printf '%s' "$token" |
+                timeout 5 socat -T 2 -t 2 - "$protocol:[fd00:823::10]:41001"
+            )
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::IPv6 filtered-network fixture failed direct $protocol round trip"
+              exit 1
+            fi
+          done
+
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
+          go test ./pkg/claude/session \
+            -run '^TestTclaudeLayerFilteredNetwork(DNS)?Smoke$' \
+            -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network gateway smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute IPv4/IPv6 CIDR+port TCP+UDP allow and deny cases, synthetic host loopback, capability drop, and fail-closed pasta teardown."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network DNS boundary smoke did not complete"
+              echo
+              echo "The named M2c boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute exact host/domain/subdomain and suffix-deny cases, shared-IP reuse, TTL expiry, fresh-answer refresh, and established-flow continuation for both Claude and Codex tclaude-layer launches."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDNSSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned filtered model endpoint evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-model-endpoints.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedFilteredModelEndpointEvidence$' \
+            -count=1 -v -timeout=60s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedFilteredModelEndpointEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned filtered model endpoint evidence did not complete"
+              echo
+              echo "The named real Claude/Codex origin audit did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must execute Claude 2.1.220 API-key traffic and Codex 0.145.0 API-key, ChatGPT, and token-refresh traffic, refusing every undeclared origin."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedFilteredModelEndpointEvidence did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode executor sandbox smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-tclaude-layer-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerExecutorSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeTclaudeLayerExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode executor sandbox smoke did not complete"
+              echo
+              echo "The real OpenCode serve/attach/tool/identity smoke did not report an explicit pass."
+              echo "The job provisions a pinned OpenCode binary and uses the same AppArmor userns unlock as the sandbox v2 host smoke."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeTclaudeLayerExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode filtered-network activation smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-filtered-network-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeFilteredNetworkExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode filtered-network activation smoke did not complete"
+              echo
+              echo "The pinned real OpenCode explicit-provider and packet-boundary proof did not report an explicit pass."
+              echo "A skip, missing/renamed test, config-isolation regression, or zero-test success is a hard failure."
+              echo "The smoke must prove the executing server consumes only the inspected provider route, then allow authored model/TCP/UDP traffic and deny an unauthorised port."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeFilteredNetworkExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run stacked real-engine smoke
+        env:
+          TCLAUDE_STACKED_SANDBOX_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/stacked-sandbox-smoke.log"
+          go test ./pkg/claude/session -run '^TestStackedSandboxHostSmoke$' -count=1 -v -timeout=180s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestStackedSandboxHostSmoke ' "$smoke_log"; then
+            {
+              echo "### Stacked sandbox smoke did not complete"
+              echo
+              echo "The exact Claude embedded-SRT/Codex nested-engine matrix did not report an explicit pass."
+              echo "Both host-open and isolated tclaude outer postures are hard requirements."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestStackedSandboxHostSmoke did not report an explicit pass"
+            exit 1
+          fi
+
+  sandbox-v2-seatbelt-smoke:
+    name: Sandbox v2 Seatbelt smoke
+    if: ${{ inputs.homebrew_only != true }}
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node for OpenCode smoke
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Keep this deliberately aligned with the Linux executor smoke. A pin
+      # bump changes the exercised upstream tool/server contract and must be a
+      # reviewed source change, never runner-image drift.
+      - name: Install pinned OpenCode smoke binary
+        run: |
+          npm install --global opencode-ai@1.18.6
+          opencode --version
+
+      - name: Probe Seatbelt deny-write support
+        shell: bash
+        run: |
+          probe="$RUNNER_TEMP/tclaude-seatbelt-probe"
+          rm -f "$probe"
+          profile='(version 1)
+          (allow default)
+          (deny file-write* (literal (param "TCLAUDE_PROBE")))'
+          kernel=$(uname -a)
+          macos=$(sw_vers)
+
+          set +e
+          probe_output=$(TCLAUDE_PROBE="$probe" /usr/bin/sandbox-exec \
+            -p "$profile" "-DTCLAUDE_PROBE=$probe" -- /bin/sh -c \
+            'test ! -e "$TCLAUDE_PROBE" && ! touch "$TCLAUDE_PROBE"' 2>&1)
+          probe_status=$?
+          set -e
+
+          if [ -e "$probe" ]; then
+            probe_created=yes
+          else
+            probe_created=no
+          fi
+          rm -f "$probe"
+
+          printf '%s\n' "$probe_output"
+          printf 'Seatbelt probe exit code: %s\n' "$probe_status"
+          printf 'Probe path created: %s\n' "$probe_created"
+
+          if [ "$probe_status" -ne 0 ] || [ "$probe_created" != "no" ]; then
+            if [ -z "$probe_output" ]; then
+              probe_output="<no output>"
+            fi
+            {
+              echo "### Sandbox v2 Seatbelt smoke prerequisite failed"
+              echo
+              echo "The real Darwin smoke was not executed. The GitHub runner image or Seatbelt policy likely changed."
+              echo
+              echo "**macOS:**"
+              echo '```text'
+              printf '%s\n' "$macos"
+              echo '```'
+              echo "**Kernel:**"
+              echo '```text'
+              printf '%s\n' "$kernel"
+              echo '```'
+              printf '**Seatbelt probe exit code:** %s\n\n' "$probe_status"
+              printf '**Probe path created:** %s\n\n' "$probe_created"
+              echo "**Seatbelt probe output:**"
+              echo '```text'
+              printf '%s\n' "$probe_output"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::sandbox v2 Seatbelt smoke prerequisite failed; see the step summary for runner diagnostics"
+            exit 1
+          fi
+
+      - name: Build tclaude for authenticated smoke
+        run: go build -o "$RUNNER_TEMP/tclaude-sandbox-v2" .
+
+      - name: Run Seatbelt platform assumptions
+        env:
+          TCLAUDE_SANDBOX_ASSUMPTIONS: "1"
+        run: |
+          assumption_log="$RUNNER_TEMP/seatbelt-assumptions.log"
+          go test ./pkg/claude/sandboxassumptions -run '^TestSeatbeltAssumptions$' -count=1 -v -timeout=180s |
+            tee "$assumption_log"
+          if ! grep -q '^--- PASS: TestSeatbeltAssumptions ' "$assumption_log"; then
+            {
+              echo "### Seatbelt assumption suite did not complete"
+              echo
+              echo "The hardware-backed Seatbelt contract did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestSeatbeltAssumptions did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run sandbox v2 Seatbelt smoke
+        env:
+          TCLAUDE_SANDBOX_V2_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-layer-darwin-smoke.log"
+          go test ./pkg/claude/session -run '^TestTclaudeLayerDarwinSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerDarwinSmoke ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 Seatbelt smoke did not complete"
+              echo
+              echo "The test command exited successfully without reporting that the named real smoke passed."
+              echo "The test name, build constraints, or smoke gate likely changed; see the test log."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerDarwinSmoke did not report an explicit pass"
+            exit 1
+          fi
+          refusal_log="$RUNNER_TEMP/stacked-seatbelt-refusal.log"
+          go test ./pkg/claude/session -run '^TestStackedSandboxDarwinRefusal$' -count=1 -v -timeout=30s |
+            tee "$refusal_log"
+          if ! grep -q '^--- PASS: TestStackedSandboxDarwinRefusal ' "$refusal_log"; then
+            echo "::error::TestStackedSandboxDarwinRefusal did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run OpenCode Seatbelt executor smoke
+        env:
+          TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+        run: |
+          smoke_log="$RUNNER_TEMP/opencode-tclaude-layer-darwin-smoke.log"
+          go test ./pkg/claude/agentd -run '^TestOpenCodeTclaudeLayerDarwinExecutorSmoke$' -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestOpenCodeTclaudeLayerDarwinExecutorSmoke ' "$smoke_log"; then
+            {
+              echo "### OpenCode Seatbelt executor smoke did not complete"
+              echo
+              echo "The real OpenCode serve/attach/tool/identity smoke did not report an explicit pass."
+              echo "The job provisions pinned opencode-ai@1.18.6 and refuses a skipped or renamed test."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestOpenCodeTclaudeLayerDarwinExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+
   # golangci-lint is platform-independent, so run it once on a single runner
-  # rather than duplicating it across the test matrix. lint, test, version, and
-  # build all run in parallel; the release job gates on lint (plus test + build),
-  # so publishing a release still requires lint to pass.
+  # rather than duplicating it across the test matrix. Lint, tests, version,
+  # builds, and the two sandbox smokes all run in parallel; publishing waits
+  # for every one of those boundaries.
   lint:
     name: Lint
     if: ${{ inputs.homebrew_only != true }}
@@ -143,15 +709,16 @@ jobs:
           name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
-  # Publishing gate: only runs once test, lint, version, and build have all
-  # succeeded. This is where the side effects happen — pushing the release tag
-  # and creating the GitHub release — so neither can occur before everything
-  # (tests included) is green.
+  # Publishing gate: only runs once tests, lint, builds, and both real sandbox
+  # smokes have all succeeded. This is where the side effects happen — pushing
+  # the release tag and creating the GitHub release — so neither can occur
+  # before every enforcement boundary is green.
   release:
     name: Release
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ubuntu-latest
-    needs: [test, lint, version, build]
+    needs:
+      [test, lint, version, build, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke]
     permissions:
       contents: write
     steps:
@@ -207,11 +774,11 @@ jobs:
   homebrew:
     name: Update Homebrew tap
     # Runs after a normal release, OR standalone when homebrew_only is set
-    # (in which case test/version/build/release are skipped, so this gates on
-    # !cancelled() rather than success of those jobs).
-    if: ${{ !cancelled() && (inputs.homebrew_only == true || (needs.version.result == 'success' && needs.release.result == 'success')) }}
+    # (in which case test/version/build/smoke/release jobs are skipped, so this
+    # gates on !cancelled() rather than success of those jobs).
+    if: ${{ !cancelled() && (inputs.homebrew_only == true || (needs.version.result == 'success' && needs.release.result == 'success' && needs['sandbox-v2-smoke'].result == 'success' && needs['sandbox-v2-seatbelt-smoke'].result == 'success')) }}
     runs-on: ubuntu-latest
-    needs: [version, release]
+    needs: [version, release, sandbox-v2-smoke, sandbox-v2-seatbelt-smoke]
     permissions:
       contents: read
     steps:
