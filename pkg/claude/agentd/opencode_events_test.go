@@ -399,7 +399,7 @@ func TestOpenCodeNativeHookSessionIdentityUsesEventWireShape(t *testing.T) {
 			assert.Equal(t, tt.want, ok)
 			if ok {
 				assert.Equal(t, convID, native.ConvID)
-				assert.True(t, native.StandingOrderNativeOnly)
+				assert.True(t, native.StandingOrderOnly)
 			}
 		})
 	}
@@ -456,7 +456,8 @@ func TestOpenCodeCompactionProjectsPortableStandingOrderBoundary(t *testing.T) {
 
 	state, err := session.LoadSessionState(sessionID)
 	require.NoError(t, err)
-	assert.False(t, state.LastHook.IsZero())
+	assert.True(t, state.LastHook.IsZero(),
+		"the portable boundary is standing-order-only, not a synthetic status callback")
 	assert.Equal(t, session.StatusWorking, state.Status,
 		"a compact boundary is an in-process continuation, not an idle boundary")
 }

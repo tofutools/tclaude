@@ -147,6 +147,7 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		// orders can use the durable message transport.
 		input := p.hook("SessionStart")
 		input.Source = "compact"
+		input.StandingOrderOnly = true
 		return []session.HookCallbackInput{input}, nil
 	case "session.status":
 		return p.projectStatus(envelope.Properties.Status, false), nil
@@ -397,10 +398,10 @@ func (p *openCodeEventProjector) hook(eventName string) session.HookCallbackInpu
 
 func (p *openCodeEventProjector) nativeHook(eventName string) session.HookCallbackInput {
 	return session.HookCallbackInput{
-		ConvID:                  p.convID,
-		Cwd:                     p.cwd,
-		NativeHookEvent:         eventName,
-		StandingOrderNativeOnly: true,
+		ConvID:            p.convID,
+		Cwd:               p.cwd,
+		NativeHookEvent:   eventName,
+		StandingOrderOnly: true,
 	}
 }
 

@@ -57,9 +57,11 @@ type HookCallbackInput struct {
 	// every event in a turn started by a queued standing-order message so that
 	// prompt/tool automations cannot recursively trigger themselves.
 	StandingOrderOrigin bool `json:"-"`
-	// StandingOrderNativeOnly asks the OpenCode projector to evaluate native
-	// hook selectors without applying a second synthetic status transition.
-	StandingOrderNativeOnly bool `json:"-"`
+	// StandingOrderOnly asks the OpenCode projector to evaluate an observation
+	// solely for standing orders, without applying a synthetic status
+	// transition. It covers both exact native selectors and portable
+	// boundaries (such as OpenCode's session.compacted projection).
+	StandingOrderOnly bool `json:"-"`
 	// ToolResponse is the structured tool RESULT a PostToolUse carries.
 	// Its shape is per-tool; the only field tclaude reads today is Bash's
 	// backgroundTaskId, the handle for a `run_in_background` launch (see
