@@ -887,6 +887,15 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 				slog.Info("resume re-enabled group rhythms", "group", g.Name, "reenabled", n)
 			}
 		}
+		// Standing orders auto-pause with the group's rhythms and must come
+		// back with them. Left out, a group would resume with orders the
+		// operator was told had been paused, delivered to whoever is enrolled
+		// next.
+		if n, err := db.ReenableGroupRetiredStandingOrders(g.ID); err != nil {
+			slog.Warn("resume: could not re-enable group standing orders", "group", g.Name, "err", err)
+		} else if n > 0 {
+			slog.Info("resume re-enabled group standing orders", "group", g.Name, "reenabled", n)
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1674,6 +1683,17 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 	}
 	if live {
 		return 0
+	}
+	// Standing orders share the rhythms' auto-pause semantics, so an emptied
+	// group must pause both. Only rows tclaude itself paused carry the marker,
+	// so a hand-disabled order is untouched and a later resume restores exactly
+	// what this paused.
+	if so, err := db.DisableGroupTargetStandingOrdersForRetire(g.ID); err != nil {
+		slog.Warn("retire: could not disable group standing orders",
+			"group", g.Name, "err", err)
+	} else if so > 0 {
+		slog.Info("retire emptied group — disabled its standing orders",
+			"group", g.Name, "disabled", so)
 	}
 	n, err := db.DisableGroupTargetCronJobsForRetire(g.ID)
 	if err != nil {

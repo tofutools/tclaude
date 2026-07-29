@@ -153,10 +153,7 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 		return rc
 	}
 
-	author := "operator"
-	if !o.OperatorAuthored && o.OwnerAgent != "" {
-		author = "agent " + o.OwnerAgent
-	}
+	author := standingorders.AuthorLabel(o)
 	fmt.Fprintf(stdout, "Order:     %s (id %d, revision %d)\n", o.Name, o.ID, o.Revision)
 	fmt.Fprintf(stdout, "Author:    %s\n", author)
 	fmt.Fprintf(stdout, "Enabled:   %v", o.Enabled)
@@ -235,7 +232,7 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 
 	ev := standingorders.Event{
 		Event:          p.Event,
-		Source:         strings.ToLower(p.Source),
+		Source:         standingorders.NormalizeSource(p.Event, p.Source),
 		ConvID:         convID,
 		Harness:        p.Harness,
 		PayloadTrimmed: p.Trimmed,
@@ -261,7 +258,9 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 		}
 	}
 
-	orders, err := db.ListStandingOrders()
+	// Same filter the hot path applies, so a dry run cannot promise a delivery
+	// the real path would never attempt.
+	orders, err := db.ListStandingOrdersForExplain()
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcIOFailure

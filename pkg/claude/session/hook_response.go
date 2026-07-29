@@ -34,6 +34,20 @@ type HookResponse struct {
 
 	// Reason accompanies a non-empty Decision.
 	Reason string
+
+	// commit is run once the response has been written successfully. It exists
+	// so a producer can defer a durable side effect — recording that a standing
+	// order was delivered — until the bytes are actually out, rather than
+	// claiming a delivery a failed write never made.
+	commit func()
+}
+
+// Commit runs the response's deferred side effect, if it has one. It is called
+// by the edges after a successful Write and is a no-op otherwise.
+func (r HookResponse) Commit() {
+	if r.commit != nil {
+		r.commit()
+	}
 }
 
 // IsEmpty reports whether there is nothing to say. An empty response writes no

@@ -471,7 +471,13 @@ func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	if err != nil {
 		return err
 	}
-	return resp.Write(stdout, input.HookEventName)
+	if err := resp.Write(stdout, input.HookEventName); err != nil {
+		return err
+	}
+	// Only now may a producer record that its content was delivered. A write
+	// that failed must not leave a durable claim that it succeeded.
+	resp.Commit()
+	return nil
 }
 
 // dispatchHookEvent applies one event and reports what tclaude wants the

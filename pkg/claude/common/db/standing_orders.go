@@ -109,6 +109,17 @@ const (
 	// (see trimOversizedHookBody), and "we could not tell" is a different
 	// answer from "it did not fire".
 	StandingOutcomeNotEvaluatedTrimmed = "not-evaluated-trimmed"
+	// StandingOutcomeTransportUnimplemented — the order matched and the
+	// harness could in principle carry it, but the transport its timing
+	// selects is not wired up yet, so nothing was delivered.
+	//
+	// Today this is next-turn timing on a harness reached only through an
+	// observation-only path (OpenCode's SSE projector, which has no response
+	// channel back to the model). It is deliberately its own outcome rather
+	// than being folded into unsupported-timing: the harness is not the
+	// limitation, tclaude is, and an operator deciding whether to re-author
+	// an order needs to be able to tell those apart.
+	StandingOutcomeTransportUnimplemented = "transport-unimplemented"
 )
 
 // Transports a delivery may use.
@@ -445,6 +456,23 @@ func GetStandingOrderByName(name string) (*StandingOrder, error) {
 	return o, err
 }
 
+// ListStandingOrdersForExplain returns the orders a dry-run should evaluate:
+// the same set the hot path would load, minus the enabled filter so a disabled
+// order still reports WHY it did not fire.
+//
+// Sharing the retired-owner condition with ListEnabledStandingOrdersForEvent is
+// the point. `explain` exists to answer "why didn't this fire", and an order
+// whose owner has retired is invisible to the hot path; listing it here would
+// make explain confidently predict a delivery that can never happen.
+func ListStandingOrdersForExplain() ([]*StandingOrder, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	return listStandingOrders(d,
+		standingSelect+` WHERE (o.owner_agent = '' OR ow.retired_at = '') ORDER BY o.id`)
+}
+
 // ListStandingOrders returns every order, ordered by id asc.
 func ListStandingOrders() ([]*StandingOrder, error) {
 	d, err := Open()
@@ -613,9 +641,11 @@ func RecordStandingDelivery(rec *StandingDelivery) (int64, error) {
 // recorded for (order, revision, conv, epoch). It is the cadence check for
 // StandingCadenceOncePerGeneration.
 //
-// It matches only StandingOutcomeDelivered: an evaluation that ended in
-// unsupported-timing or a trimmed payload did not put the text in front of the
-// agent, so it must not suppress the next attempt.
+// It matches the outcomes that actually put text in front of the agent —
+// StandingOutcomeDelivered and StandingOutcomeDegradedTransport (a weaker
+// transport still delivered). An evaluation that ended in unsupported-timing,
+// an unimplemented transport, or a trimmed payload delivered nothing, so it
+// must not suppress the next attempt.
 func StandingOrderDeliveredInEpoch(orderID, revision int64, targetConv, epoch string) (bool, error) {
 	d, err := Open()
 	if err != nil {

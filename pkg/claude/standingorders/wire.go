@@ -149,7 +149,11 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 // have to keep its own copy of that list.
 func OutcomeIsProblem(outcome string) bool {
 	switch outcome {
-	case db.StandingOutcomeDelivered, db.StandingOutcomeNoMatch:
+	case db.StandingOutcomeDelivered, db.StandingOutcomeNoMatch,
+		// Suppressed-by-cadence is a once-per-generation order behaving as
+		// authored, not a fault. Flagging it would mark a correctly working
+		// order as a problem for the rest of the conversation.
+		db.StandingOutcomeSuppressedCadence:
 		return false
 	}
 	return true

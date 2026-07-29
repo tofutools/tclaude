@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,6 +150,13 @@ func TestStandingOrderRoleFilter(t *testing.T) {
 
 // An order requiring same-continuation on a harness that has no such channel
 // delivers NOTHING, and says so in the ledger rather than downgrading quietly.
+//
+// SCOPE OF THIS TEST: it drives DispatchHookEvent, which proves the evaluator
+// and the capability model. The real OpenCode path does not reach
+// DispatchHookEvent — its SSE projector calls ApplyHook — so the integration
+// itself is covered separately by TestObserveStandingOrdersSplitsByRequiredTiming
+// below, which exercises the observation-only entry point OpenCode actually
+// uses. Both are needed: this one pins the decision, that one pins the wiring.
 func TestStandingOrderUnsupportedTimingIsRecordedNotDowngraded(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.OpenCodeName)
 	id := insertOrder(t, groupID)
@@ -234,4 +242,175 @@ func TestStandingOrderMultipleOrdersRenderTogether(t *testing.T) {
 
 func indexOf(haystack, needle string) int {
 	return bytes.Index([]byte(haystack), []byte(needle))
+}
+
+// The observation-only path (OpenCode) must never silently do nothing. An
+// order requiring same-continuation is recorded as unsupported and returns no
+// pending message; one asking for next-turn comes back for the caller to send.
+func TestObserveStandingOrdersSplitsByRequiredTiming(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	sameID := insertOrder(t, groupID)
+
+	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	assert.Empty(t, pending, "a same-continuation order is not satisfiable by a message")
+
+	latest, err := db.LatestStandingDelivery(sameID)
+	require.NoError(t, err)
+	require.NotNil(t, latest, "the degradation must be visible, not silent")
+	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
+}
+
+func TestObserveStandingOrdersReturnsNextTurnOrdersForMessageDelivery(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+	})
+
+	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	require.Len(t, pending, 1)
+	assert.Equal(t, "pr-early", pending[0].Name)
+	assert.Contains(t, pending[0].Body, "Push the PR early")
+	assert.Equal(t, "conv-1", pending[0].TargetConv)
+
+	// Nothing is recorded until the caller reports the send outcome, so a
+	// crash between the two cannot leave a delivery claimed that never went.
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest)
+
+	RecordStandingMessageDelivery(pending[0], nil)
+	latest, err = db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+// A failed send must not satisfy the cadence, or the next boundary would treat
+// an undelivered order as already done.
+func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	require.Len(t, pending, 1)
+	RecordStandingMessageDelivery(pending[0], errors.New("queue full"))
+
+	already, err := db.StandingOrderDeliveredInEpoch(id, 1, "conv-1", "conv-1")
+	require.NoError(t, err)
+	assert.False(t, already, "a failed send must remain retryable")
+
+	again := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	assert.Len(t, again, 1, "the next boundary retries")
+}
+
+// A failed write must NOT burn a once-per-generation cadence slot. Recording
+// before the write would mark the order delivered for a conversation that
+// never saw the text, leaving it permanently silent with a ledger that
+// disagrees — unrecoverable and invisible. Repeating a reminder is the far
+// cheaper failure.
+func TestStandingOrderFailedWriteDoesNotBurnCadence(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	err := DispatchHookEvent(context.Background(), sessionStart(db.StandingSourceCompact),
+		"sess-1", LocalHookAmbient(), failingWriter{})
+	require.Error(t, err, "a write failure must surface")
+
+	already, err := db.StandingOrderDeliveredInEpoch(id, 1, "conv-1", "conv-1")
+	require.NoError(t, err)
+	assert.False(t, already, "an undelivered order must remain deliverable")
+
+	// The next boundary really does retry, end to end.
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceCompact)), "Push the PR early")
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// An agent-authored order must not be delivered as if the human wrote it.
+func TestObserveStandingOrdersCarriesRealAuthorship(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	// The owner must be a real enrolled actor: the read path drops an order
+	// whose owner cannot be resolved as live, exactly as cron's does.
+	ownerAgent, _, err := db.EnsureAgentForConv("conv-author", "test")
+	require.NoError(t, err)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.OperatorAuthored = false
+		o.OwnerAgent = ownerAgent
+	})
+
+	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	require.Len(t, pending, 1)
+	assert.False(t, pending[0].OperatorAuthored,
+		"an agent-authored order must not be stamped operator-authored")
+	assert.Equal(t, "conv-author", pending[0].OwnerConv,
+		"the message must be attributed to the authoring agent's live generation")
+	assert.Contains(t, pending[0].Body, "authored by agent "+ownerAgent)
+}
+
+func TestObserveStandingOrdersOperatorOrderStaysOperatorAuthored(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.OpenCodeName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.OperatorAuthored = true
+	})
+
+	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	require.Len(t, pending, 1)
+	assert.True(t, pending[0].OperatorAuthored)
+}
+
+// An event naming a conversation the caller was NOT resolved as must be
+// refused outright.
+//
+// applyHook returns nil both when it applies an event and when its
+// foreign-process guard drops one, so a payload naming somebody else's conv
+// still reaches the standing-order path. Trusting it would leak the orders
+// targeting that agent to whoever named it, and — worse — write a `delivered`
+// ledger row that consumes the victim's once-per-generation slot, silencing
+// the real agent behind a ledger claiming success.
+func TestStandingOrderRefusesForeignConvInPayload(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Cadence = db.StandingCadenceOncePerGeneration
+	})
+
+	// A second session that is not in the target group, naming conv-1.
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "sess-2", ConvID: "conv-2", Status: StatusIdle, Harness: harness.DefaultName,
+	}))
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "sess-2", LocalHookAmbient(), &buf))
+
+	assert.Empty(t, buf.String(), "an order must not leak to an agent that merely named the conv")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "a foreign event must not consume the victim's cadence slot")
+
+	// The real agent still receives it.
+	assert.Contains(t, dispatch(t, sessionStart(db.StandingSourceStartup)), "Push the PR early")
+}
+
+// Without a resolvable session row there is no authority for which
+// conversation an event is about, so evaluation is refused rather than
+// falling back to the payload.
+func TestStandingOrderRefusesUnresolvableSession(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID)
+
+	var buf bytes.Buffer
+	require.NoError(t, DispatchHookEvent(context.Background(),
+		sessionStart(db.StandingSourceStartup), "", LocalHookAmbient(), &buf))
+	assert.Empty(t, buf.String())
 }

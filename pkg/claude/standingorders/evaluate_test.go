@@ -252,3 +252,43 @@ func TestEvaluateAllPreservesOrder(t *testing.T) {
 	assert.Equal(t, "a", got[0].Order.Name)
 	assert.Equal(t, "b", got[1].Order.Name)
 }
+
+// An order with neither the operator marker nor an owner is UNATTRIBUTED. Both
+// columns default to that state, so inferring "operator" would let any order
+// that failed to stamp an owner read to the model as a human instruction.
+func TestAuthorLabelDoesNotInferOperatorFromEmptyOwner(t *testing.T) {
+	assert.Equal(t, "an unattributed source", AuthorLabel(&db.StandingOrder{}))
+	assert.Equal(t, "operator", AuthorLabel(&db.StandingOrder{OperatorAuthored: true}))
+	assert.Equal(t, "agent agt_x", AuthorLabel(&db.StandingOrder{OwnerAgent: "agt_x"}))
+}
+
+func TestRenderContextUnattributedOrderSaysSo(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.OperatorAuthored = false
+		o.OwnerAgent = ""
+	})
+	text := RenderContext([]Decision{Evaluate(o, event(), neverDelivered)})
+
+	assert.Contains(t, text, "unattributed")
+	assert.NotContains(t, text, "authored by operator")
+}
+
+// The steady state of a once-per-generation order must not append a ledger row
+// at every later boundary of the same conversation.
+func TestSuppressedCadenceIsNotRecorded(t *testing.T) {
+	o := order(func(o *db.StandingOrder) { o.Cadence = db.StandingCadenceOncePerGeneration })
+	d := Evaluate(o, event(), func(int64, int64, string, string) (bool, error) {
+		return true, nil
+	})
+
+	require.Equal(t, db.StandingOutcomeSuppressedCadence, d.Outcome)
+	assert.False(t, d.ShouldRecord(), "the healthy steady state must not grow the ledger")
+}
+
+func TestNormalizeSourceSharedByEveryCaller(t *testing.T) {
+	assert.Equal(t, db.StandingSourceStartup,
+		NormalizeSource(db.StandingTriggerSessionStart, ""))
+	assert.Equal(t, db.StandingSourceCompact,
+		NormalizeSource(db.StandingTriggerSessionStart, "  Compact "))
+	assert.Equal(t, "", NormalizeSource("tool.before", ""))
+}

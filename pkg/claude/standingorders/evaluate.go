@@ -78,6 +78,14 @@ func (d Decision) ShouldRecord() bool {
 	switch d.Outcome {
 	case db.StandingOutcomeOutOfScope, db.StandingOutcomeNoMatch, db.StandingOutcomeDisabled:
 		return false
+	case db.StandingOutcomeSuppressedCadence:
+		// The STEADY STATE of a once-per-generation order, re-reached at every
+		// later boundary of the same conversation. Recording it would append a
+		// row per boundary forever and leave `ls` reporting the order's last
+		// outcome as a suppression when it is working exactly as authored.
+		// `explain` still computes it live, which is where it answers a
+		// question someone actually asked.
+		return false
 	}
 	return true
 }
@@ -248,6 +256,26 @@ func EvaluateAll(orders []*db.StandingOrder, ev Event, delivered DeliveredLookup
 	return out
 }
 
+// AuthorLabel renders an order's authorship for display.
+//
+// "operator" requires the EXPLICIT OperatorAuthored marker. An order with
+// neither the marker nor an owner is unattributed, and must say so: both
+// columns default to exactly that state, so inferring "operator" from an empty
+// owner would let any order that failed to stamp one read to the model as a
+// human instruction — on the one channel where authorship is load-bearing.
+// This is the inference db.StandingOrder.OperatorAuthored's own comment
+// forbids.
+func AuthorLabel(o *db.StandingOrder) string {
+	switch {
+	case o.OperatorAuthored:
+		return "operator"
+	case o.OwnerAgent != "":
+		return "agent " + o.OwnerAgent
+	default:
+		return "an unattributed source"
+	}
+}
+
 // RenderContext builds the text injected into an agent's context for the
 // orders that are being delivered.
 //
@@ -267,10 +295,7 @@ func RenderContext(decisions []Decision) string {
 			continue
 		}
 		o := d.Order
-		author := "operator"
-		if !o.OperatorAuthored && o.OwnerAgent != "" {
-			author = "agent " + o.OwnerAgent
-		}
+		author := AuthorLabel(o)
 		lines = append(lines, fmt.Sprintf("- [%s@%d, authored by %s] %s",
 			o.Name, o.Revision, author, o.Summary))
 	}
@@ -280,4 +305,20 @@ func RenderContext(decisions []Decision) string {
 	return "Standing orders in force for this session:\n" + strings.Join(lines, "\n") +
 		"\n(These are durable operator instructions, not part of the current request. " +
 		"Run `tclaude agent orders ls` to inspect them.)"
+}
+
+// NormalizeSource canonicalizes a harness's event source. An empty
+// SessionStart source is a cold start, which the harnesses spell "startup"
+// when they spell it at all.
+//
+// It lives here rather than at a call site so every caller shares it — the
+// hook path and `orders explain` must not disagree about what `--source ""`
+// means, or the CLI would confidently report a non-match for an order the
+// real path delivers.
+func NormalizeSource(trigger, source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" && trigger == db.StandingTriggerSessionStart {
+		return db.StandingSourceStartup
+	}
+	return source
 }

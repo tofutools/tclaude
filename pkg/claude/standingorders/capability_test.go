@@ -80,13 +80,21 @@ func TestCapabilityByHarnessCoversEveryKnownHarness(t *testing.T) {
 }
 
 func TestOutcomeIsProblem(t *testing.T) {
-	assert.False(t, OutcomeIsProblem(db.StandingOutcomeDelivered))
-	assert.False(t, OutcomeIsProblem(db.StandingOutcomeNoMatch))
+	// Healthy states. suppressed-cadence belongs here: it is the steady state
+	// of a once-per-generation order at every boundary after the first, so
+	// flagging it would mark a correctly working order as a problem forever.
+	for _, ok := range []string{
+		db.StandingOutcomeDelivered,
+		db.StandingOutcomeNoMatch,
+		db.StandingOutcomeSuppressedCadence,
+	} {
+		assert.False(t, OutcomeIsProblem(ok), ok)
+	}
 	for _, bad := range []string{
 		db.StandingOutcomeUnsupportedTiming,
 		db.StandingOutcomeNotEvaluatedTrimmed,
 		db.StandingOutcomeDegradedTransport,
-		db.StandingOutcomeSuppressedCadence,
+		db.StandingOutcomeTransportUnimplemented,
 	} {
 		assert.True(t, OutcomeIsProblem(bad), bad)
 	}
