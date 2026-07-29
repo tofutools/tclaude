@@ -148,22 +148,26 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 	if err != nil {
 		return ResolvedAxes{}, err
 	}
+	networkDenyOmitted := []int{}
 	for _, notice := range effective.AccessNotices {
 		if notice.Class != AccessNoticeClassDegradation {
 			continue
 		}
 		switch notice.Axis {
 		case "network":
-			if axes.Network.Mode != AccessModeList {
-				continue
-			}
 			switch notice.Reason {
 			case "no_mechanism", "selector_unsupported", "platform_path_blind":
+				if axes.Network.Mode != AccessModeList {
+					continue
+				}
 				axes.Network = NetworkRules{
 					Mode: AccessModeOpen,
 					Deny: cloneNetworkRules(axes.Network).Deny,
 				}
 			case "ports_unsupported":
+				if axes.Network.Mode != AccessModeList {
+					continue
+				}
 				if len(notice.Entries) == 0 {
 					for i := range axes.Network.Allow {
 						axes.Network.Allow[i].Ports = nil
@@ -176,8 +180,8 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 					}
 				}
 			case "deny_selector_unsupported", "deny_ports_unsupported":
-				axes.Network.Deny = omitNetworkEntries(
-					axes.Network.Deny, notice.Entries)
+				networkDenyOmitted = append(
+					networkDenyOmitted, notice.Entries...)
 			}
 		case "unix_sockets":
 			if axes.UnixSockets.Mode != AccessModeList {
@@ -189,6 +193,8 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 			}
 		}
 	}
+	axes.Network.Deny = omitNetworkEntries(
+		axes.Network.Deny, networkDenyOmitted)
 	return axes, nil
 }
 
