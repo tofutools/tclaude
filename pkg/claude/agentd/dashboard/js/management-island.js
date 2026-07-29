@@ -81,12 +81,47 @@ const NETWORK_ACCESS_HELP = 'Deny all starts closed, then releases selected buil
   + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
   + 'servers, and agent commands need their own Access list destinations.'
   + ` ${CODEX_BUILTIN_FILTERED_NETWORK_HINT}`;
+const NETWORK_PACKS_HELP = 'Release-owned unlocks are stored as stable pack references and expand '
+  + 'from the current tclaude release. Toggle a pack here to add or remove its read-only '
+  + 'destinations below; future endpoint updates follow the stored pack reference.';
+const NETWORK_DESTINATIONS_HELP = 'Destination badges evaluate this profile’s own materialized '
+  + 'rows before Includes and assignment intersections. The Effective policy preview remains '
+  + 'authoritative for composed launch behavior.';
+const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
+  + 'The tclaude agentd socket is always reachable and is not an editable row.';
+const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
+  + 'can further constrain the effective launch policy; inherited global rows shown here are '
+  + 'read-only context and are never copied into this profile.';
+const ENVIRONMENT_HELP = 'Environment values are injected when the agent launches. Values are '
+  + 'ordinary non-secret configuration; do not store credentials here.';
+const INCLUDES_HELP = 'Included profiles apply first, in order; this profile overrides their '
+  + 'exact-same-path or same-variable values.';
+const AGENT_DIRECTORIES_HELP = 'Environment-variable names backed by fresh isolated writable '
+  + 'directories created for each spawned agent.';
+const EFFECTIVE_POLICY_HELP = 'Evaluates the composed policy for the selected implementation, '
+  + 'harness, platform, and assignment context. This preview reports enforcement capability '
+  + 'limits without changing the authored profile.';
 
 const html = htm.bind(h);
 
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
+
+function SandboxHelp({ children }) {
+  return html`<span class="sbx-section-help" onClick=${(event) => event.stopPropagation()}>${children}</span>`;
+}
+
+function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = false, className = '', children }) {
+  const [helpOpen, setHelpOpen] = useState('');
+  return html`<details id=${id} class=${`sbx-section${className ? ` ${className}` : ''}`} hidden=${hidden}>
+    <summary class="sbx-section-summary sbx-section-legend"><span>${label}</span>
+      ${help && html`<${SandboxHelp}><${HelpDisclosure} id=${helpID} label=${label} help=${help}
+        open=${helpOpen === helpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
+    </summary>
+    <div class="sbx-section-body">${children}</div>
+  </details>`;
+}
 
 const SANDBOX_EVALUATION_FALLBACK_HARNESSES = [
   { name: 'claude', display_name: 'Claude Code', can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true },
@@ -290,21 +325,34 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
   const predictionByEntry = new Map((predictions || []).flatMap((value) =>
     (value.keys?.length ? value.keys : [sandboxNetworkEntryKey(value.entry)])
       .map((key) => [key, value])));
-  return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend class="sbx-section-legend">Network <${HelpDisclosure}
-      id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
-      open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
+  return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
+      label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help">
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
-    <fieldset class="sbx-network-unlocks" disabled=${!deny}>
-      <legend>Built-in rule packs</legend>
-      <p class="sbx-axis-help">Release-owned unlocks expand into the read-only rows below. Stored pack references follow endpoint updates in future tclaude releases.</p>
-      <div class="sbx-network-pack-list">${(catalog.network_packs || []).map((pack) => html`<label key=${pack.id} class="sbx-network-pack">
-        <input type="checkbox" checked=${rules.packs.includes(pack.id)} onChange=${(event) => togglePack(pack.id, event.currentTarget.checked)}/>
-        <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong>${pack.note ? html`<small>${pack.note}</small>` : null}${pack.warning ? html`<small class="sbx-common-rule-warn">⚠ ${pack.warning}</small>` : null}</span>
-      </label>`)}</div>
-      <h4 class="sbx-network-list-title">Access list</h4>
-      <p class="sbx-axis-help">Destination badges evaluate this profile's own materialized rows before Includes and assignment intersections. The Effective policy preview below remains authoritative for composed launch behavior.</p>
+    <fieldset class=${`sbx-network-unlocks${deny ? '' : ' sbx-disabled'}`} aria-disabled=${!deny}>
+      <legend class="sbx-network-unlocks-legend">Deny-all network unlocks</legend>
+      <div class="sbx-network-subhead"><strong>Built-in rule packs</strong><${SandboxHelp}><${HelpDisclosure}
+        id="sandbox-profile-editor-network-packs-help" label="built-in network rule packs"
+        help=${NETWORK_PACKS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-packs-help'}
+        setOpen=${setHelpOpen}/></${SandboxHelp}></div>
+      <div class="sbx-network-pack-list">${(catalog.network_packs || []).map((pack) => {
+        const packHelp = [pack.note || '', pack.warning ? `⚠ ${pack.warning}` : ''].filter(Boolean).join(' ');
+        const packHelpID = `sandbox-profile-editor-network-pack-${String(pack.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}-help`;
+        return html`<div key=${pack.id} class="sbx-network-pack">
+          <label><input type="checkbox" disabled=${!deny} checked=${rules.packs.includes(pack.id)}
+            onChange=${(event) => togglePack(pack.id, event.currentTarget.checked)}/>
+            <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong></span>
+          </label>
+          ${packHelp && html`<${SandboxHelp}><${HelpDisclosure} id=${packHelpID}
+            label=${`${pack.label} network pack`} help=${packHelp}
+            open=${helpOpen === packHelpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
+        </div>`;
+      })}</div>
+      <div class="sbx-network-subhead"><strong>Access list</strong><${SandboxHelp}><${HelpDisclosure}
+        id="sandbox-profile-editor-network-destinations-help" label="network access list"
+        help=${NETWORK_DESTINATIONS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-destinations-help'}
+        setOpen=${setHelpOpen}/></${SandboxHelp}></div>
       <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack }, index) => { const kind = selector(row); return html`<div key=${`${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
         <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
         <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
@@ -314,18 +362,18 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
         <span class="sbx-network-pack-owner" title="This release-owned row is changed by toggling its pack.">${pack.label}</span>
       </div>`; })}</div>
       <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
-      <${Select} class="sbx-network-selector" value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
-      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
-      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
-      <input class="sbx-network-ports" list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
+      <${Select} class="sbx-network-selector" disabled=${!deny} value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
+      ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" disabled=${!deny} value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
+      <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" disabled=${!deny} checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
+      <input class="sbx-network-ports" disabled=${!deny} list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
       <${NetworkEntryBadge} verdict=${predictionByEntry.get(sandboxNetworkEntryKey(row))} busy=${predictionBusy}/>
-      <button type="button" aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
+      <button type="button" disabled=${!deny} aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
     </div>`; })}</div>
     <datalist id="sandbox-common-ports"><option value="443"/><option value="80, 443"/><option value="22"/></datalist>
-    <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { host: '', ports: [] }] })}>＋ add destination</button>
+    <button type="button" class="sbx-add-row" disabled=${!deny} onClick=${() => update({ allow: [...rules.allow, { host: '', ports: [] }] })}>＋ add destination</button>
     </fieldset>
     ${(catalog.global_network || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global network config (${catalog.global_network.length})</summary>${catalog.global_network.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
-  </fieldset>`;
+  </${SandboxSection}>`;
 }
 
 function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
@@ -341,9 +389,9 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     update({ mode, allow: mode === 'list' ? [...rules.allow, ...added] : [] });
     setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '' });
   };
-  return html`<fieldset class="sbx-section sbx-access-axis"><legend>Unix sockets</legend>
+  return html`<${SandboxSection} id="sandbox-profile-editor-unix-sockets-section"
+      className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
-    <p class="sbx-axis-help">The tclaude agentd socket is always reachable and is not an editable row.</p>
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${Select} class="sbx-socket-selector" value=${glob ? 'path_glob' : 'path'} onChange=${(kind) => update({ allow: rules.allow.map((item, i) => i === index ? { [kind]: '' } : item) })} options=${[['path', 'path'], ['path_glob', 'glob']]}/>
       <input class="sbx-socket-value" value=${glob ? row.path_glob || '' : row.path || ''} placeholder=${glob ? '/tmp/ssh-*/agent.*' : '/run/example.sock'} onInput=${(event) => updateRow(index, glob ? { path_glob: event.currentTarget.value } : { path: event.currentTarget.value })}/>
@@ -353,7 +401,7 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     <details class="sbx-common-rules"><summary>＋ insert socket template</summary><div class="sbx-common-rule-list">${(catalog.socket_templates || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} variant="access" entry=${{ ...entry, description: entry.note, paths: (entry.entries || []).map((row) => row.path || row.path_glob) }} onAdd=${() => insert(entry)}/>` )}</div></details>
     ${(catalog.global_unix_sockets || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global socket config (${catalog.global_unix_sockets.length})</summary>${catalog.global_unix_sockets.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
     ${notice && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.removed ? ` ${notice.removed} incompatible existing row${notice.removed === 1 ? '' : 's'} removed.` : ''}${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
-  </fieldset>`;
+  </${SandboxSection}>`;
 }
 
 function commonRulePaths(entry) {
@@ -906,12 +954,13 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
   const submitBlocked = saving || directoryBusy || !!networkPackVisibilityError
     || (!advanced && accessErrors.length > 0);
-  return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
+  return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
       predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
       packVisibilityError=${networkPackVisibilityError} retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
-    <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
+    <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
+      help=${FILESYSTEM_HELP} hidden=${advanced}>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -942,11 +991,16 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         ${commonRuleNotice.warning ? html`<span class="sbx-common-rule-warn">⚠ ${commonRuleNotice.warning}</span>` : null}
         <button type="button" class="sbx-common-rule-dismiss" aria-label="Dismiss common-rule notice" onClick=${() => setCommonRuleNotice(null)}>×</button>
       </div>`}
-    </fieldset>
-    <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
-    <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
-    <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
-    <fieldset class="sbx-section sbx-effective-preview"><legend>Effective policy preview</legend>
+    </${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
+      help=${ENVIRONMENT_HELP} hidden=${advanced}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-includes-section" label="Includes"
+      help=${INCLUDES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-agent-directories-section" label="Agent-owned directories"
+      help=${AGENT_DIRECTORIES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></${SandboxSection}>
+    <${SandboxSection} id="sandbox-profile-editor-effective-policy-section"
+      className="sbx-effective-preview" label="Effective policy preview"
+      help=${EFFECTIVE_POLICY_HELP} hidden=${advanced}>
       <div class="sbx-evaluation-target-controls">
         <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
@@ -995,7 +1049,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         ${(selectedEffective.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}
         ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 assignments; ${prediction.remaining_contexts} more are omitted from this selector but still included in the overall safety check.</div>` : null}
       </details>`}
-    </fieldset>
+    </${SandboxSection}>
     ${!advanced && accessErrors.map((error, index) => html`<div key=${index} class="sbx-access-validation" role="alert">⚠ ${error}</div>`)}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
     <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Filesystem spellings JSON"><textarea id="sandbox-profile-editor-filesystem-spellings" rows="6" value=${rawSpellings} onInput=${(event) => setRawSpellings(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Network JSON"><textarea id="sandbox-profile-editor-network" rows="6" value=${rawNetwork} onInput=${(event) => setRawNetwork(event.currentTarget.value)}/></${Row}><${Row} label="Unix sockets JSON"><textarea id="sandbox-profile-editor-unix-sockets" rows="6" value=${rawSockets} onInput=${(event) => setRawSockets(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
@@ -1094,8 +1148,11 @@ function SandboxDiffModal({ model, close }) {
     <div class="config-diff-modal">
       <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
       <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
-      ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
       <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
+      ${(model.notices || []).length > 0 && html`<section id="sandbox-profile-diff-evaluation" class="sbx-diff-evaluation" aria-labelledby="sandbox-profile-diff-evaluation-title">
+        <h4 id="sandbox-profile-diff-evaluation-title">Evaluation warnings</h4>
+        ${(model.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning" role="alert">⚠ ${notice.detail}</div>`)}
+      </section>`}
       <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>
     </div>
   </div>`;

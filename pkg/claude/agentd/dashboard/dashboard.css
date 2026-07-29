@@ -4240,52 +4240,80 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
    layout + the non-full-width controls (access select, Browse/✕ buttons) need
    overrides here. */
 .sbx-section {
-  border: 0; margin: 0; padding: 0;
-  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid #30363d;
+  border-radius: .35rem;
+  margin: 0;
+  padding: 0;
 }
-
-.sbx-access-axis > select,
-.sbx-network-baseline-label > select,
-.sbx-effective-preview > label > select {
-  margin: .25rem 0 .5rem;
-  min-width: 13rem;
-}
-.sbx-network-baseline-label {
-  color: var(--text-muted);
+.sbx-section-body {
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  padding: .45rem;
+}
+
+.sbx-access-axis > .sbx-section-body > select,
+.sbx-network-baseline-label > select,
+.sbx-effective-preview > .sbx-section-body > label > select {
+  min-width: 11rem;
+}
+.sbx-access-axis > .sbx-section-body > select {
+  align-self: flex-start;
+  flex: 0 0 auto;
+}
+.sbx-network-baseline-label {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
   font-size: .82rem;
+  gap: .5rem;
   width: max-content;
 }
 .sbx-network-unlocks {
-  border: 1px solid #30363d;
-  border-radius: .4rem;
+  border: 0;
   display: flex;
   flex-direction: column;
-  gap: .45rem;
-  margin: .25rem 0;
-  padding: .65rem;
+  gap: .35rem;
+  margin: 0;
+  padding: 0;
 }
-.sbx-network-unlocks:disabled {
+.sbx-network-unlocks.sbx-disabled .sbx-network-pack > label,
+.sbx-network-unlocks.sbx-disabled .sbx-network-rows,
+.sbx-network-unlocks.sbx-disabled > .sbx-add-row {
   opacity: .55;
 }
+.sbx-network-unlocks-legend {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+.sbx-network-subhead {
+  align-items: center;
+  display: flex;
+  font-size: .8rem;
+  gap: .3rem;
+  margin-top: .2rem;
+}
 .sbx-network-pack-list {
-  display: grid;
-  gap: .4rem;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
 }
 .sbx-network-pack {
-  align-items: flex-start;
-  border: 1px solid #30363d;
-  border-radius: .35rem;
+  align-items: center;
   display: flex;
-  gap: .5rem;
-  padding: .5rem;
+  gap: .3rem;
+  min-height: 1.4rem;
 }
-.sbx-network-pack small {
-  color: var(--text-muted);
-  display: block;
-  margin-top: .2rem;
+.sbx-network-pack > label {
+  align-items: center;
+  display: flex;
+  gap: .4rem;
+  min-width: 0;
 }
 .sbx-network-pack-visibility-error {
   align-items: center;
@@ -4296,9 +4324,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-size: .82rem;
   justify-content: space-between;
   padding: .45rem .55rem;
-}
-.sbx-network-list-title {
-  margin: .35rem 0 0;
 }
 .sbx-evaluation-target-controls {
   display: grid;
@@ -4324,10 +4349,17 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   /* The trailing column (pack label / delete button) is fixed: each row is its
      own grid, so an auto column would size to that row's label and misalign
      the shared 1fr value column across rows. */
-  grid-template-columns: 7rem minmax(12rem, 1fr) 7rem 9rem 7.5rem 8.5rem;
+  gap: 4px;
+  grid-template-columns: 6rem minmax(10rem, 1fr) 6.5rem 8rem 7rem 8.5rem;
 }
 .sbx-network-row > button:last-child {
   justify-self: start;
+}
+.sbx-network-row input,
+.sbx-network-row select,
+.sbx-network-row .sbx-network-value-readonly {
+  padding-bottom: 4px;
+  padding-top: 4px;
 }
 .sbx-network-value,
 .sbx-socket-value {
@@ -4518,6 +4550,14 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   color: var(--warning-text, #d99a2b);
   margin-top: .35rem;
 }
+.sbx-diff-evaluation {
+  border-top: 1px solid #30363d;
+  margin-top: .75rem;
+  padding-top: .55rem;
+}
+.sbx-diff-evaluation h4 {
+  margin: 0;
+}
 .sbx-section legend {
   padding: 0; margin-bottom: 2px; color: #8b949e;
   font-size: 12px; font-weight: 600;
@@ -4528,6 +4568,33 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   align-items: center;
   gap: 4px;
 }
+.sbx-section-summary {
+  background: rgba(110, 118, 129, .06);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+  padding: .35rem .45rem;
+}
+.sbx-section-summary::-webkit-details-marker {
+  display: none;
+}
+.sbx-section-summary::before {
+  color: var(--text-muted);
+  content: "▸";
+  flex: 0 0 auto;
+}
+.sbx-section[open] > .sbx-section-summary {
+  border-bottom: 1px solid #30363d;
+}
+.sbx-section[open] > .sbx-section-summary::before {
+  content: "▾";
+}
+.sbx-section-help {
+  align-items: center;
+  display: inline-flex;
+  position: relative;
+}
 .sbx-section-legend .spawn-field-help-trigger {
   flex: 0 0 auto;
   width: 18px;
@@ -4536,7 +4603,9 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   line-height: 1;
 }
 .sbx-section-legend .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
-.sbx-section-legend .spawn-field-description:focus {
+.sbx-section-legend .spawn-field-description:focus,
+.sbx-section-help .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
+.sbx-section-help .spawn-field-description:focus {
   /* Below the legend, not above: section legends sit near the top of the
      scrollable dialog, where an upward popover clips against the dialog edge. */
   top: calc(100% + 4px);

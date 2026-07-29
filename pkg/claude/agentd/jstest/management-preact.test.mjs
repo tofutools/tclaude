@@ -988,7 +988,13 @@ test('sandbox save preview renders a focused line diff and restores the editor o
   const modal = host.querySelector('#sandbox-profile-diff-modal');
   assert.ok(modal); assert.equal(modal.querySelectorAll('.dl.add').length, 1); assert.equal(modal.querySelectorAll('.dl.del').length, 1); assert.ok(modal.querySelectorAll('.dl.ctx').length > 0);
   assert.match(modal.querySelector('#sandbox-profile-diff-sub').textContent, /1 line\(s\) added, 1 removed/);
-  assert.match(modal.querySelector('.sbx-composition-warning').textContent,
+  const diffBody = modal.querySelector('#sandbox-profile-diff-body');
+  const evaluation = modal.querySelector('#sandbox-profile-diff-evaluation');
+  assert.equal(diffBody.nextElementSibling, evaluation,
+    'evaluation warnings render in their bottom section after the diff, never at the top');
+  assert.equal(evaluation.querySelector('h4').textContent, 'Evaluation warnings');
+  assert.equal(evaluation.querySelector('.sbx-composition-warning').getAttribute('role'), 'alert');
+  assert.match(evaluation.querySelector('.sbx-composition-warning').textContent,
     /server-authoritative empty intersection warning/);
   assert.equal(harness.document.activeElement.id, 'sandbox-profile-diff-confirm');
   const editor = host.querySelector('#sandbox-profile-editor-modal'); assert.equal(editor.inert, true); assert.equal(editor.getAttribute('aria-hidden'), 'true');
@@ -1084,6 +1090,60 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
+test('sandbox editor sections start collapsed and keep disclosure help reachable', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'compact', filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: { baseline: 'deny', packs: ['net-local'], allow: [] },
+      unix_sockets: { mode: '' },
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const sectionIDs = [
+    'sandbox-profile-editor-network-section',
+    'sandbox-profile-editor-unix-sockets-section',
+    'sandbox-profile-editor-filesystem-section',
+    'sandbox-profile-editor-environment-section',
+    'sandbox-profile-editor-includes-section',
+    'sandbox-profile-editor-agent-directories-section',
+    'sandbox-profile-editor-effective-policy-section',
+  ];
+  const sections = sectionIDs.map((id) => host.querySelector(`#${id}`));
+  assert.equal(sections.every((section) => section?.tagName === 'DETAILS'), true);
+  assert.equal(sections.every((section) => !section.hasAttribute('open')), true,
+    'every structured section starts collapsed on editor mount');
+
+  const filesystem = sections[2];
+  // LinkeDOM does not implement the browser's native summary-click default
+  // action, so reflect the state transition the platform owns.
+  filesystem.setAttribute('open', '');
+  filesystem.dispatchEvent(new harness.window.Event('toggle'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(filesystem.hasAttribute('open'), true, 'a collapsed section expands without changing draft state');
+  assert.ok(filesystem.querySelector('.sbx-add-row'), 'expanded section controls remain reachable');
+
+  const network = sections[0];
+  const help = network.querySelector('.sbx-section-summary .spawn-field-help-trigger');
+  assert.equal(help.getAttribute('aria-controls'), 'sandbox-profile-editor-network-help-hint');
+  help.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(help.getAttribute('aria-expanded'), 'true');
+  assert.equal(network.hasAttribute('open'), false,
+    'opening associated help does not accidentally expand the section');
+  assert.match(network.querySelector('#sandbox-profile-editor-network-help-hint').textContent,
+    /Deny all starts closed/);
+  unmount();
+});
+
 test('sandbox editor tolerates legacy and modern sparse profile payloads', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
@@ -1167,7 +1227,7 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
       const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
       baseline.querySelector('option[value="deny"]').selected = true;
       await harness.act(() => harness.fireEvent(baseline, 'change'));
-      const networkSection = baseline.closest('fieldset');
+      const networkSection = baseline.closest('#sandbox-profile-editor-network-section');
       await harness.act(() => harness.fireEvent(networkSection.querySelector('.sbx-add-row'), 'click'));
       const hostInput = networkSection.querySelector('.sbx-network-value');
       hostInput.value = 'api.example.com';
@@ -1440,7 +1500,7 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1);
 
-  const network = host.querySelector('#sandbox-profile-editor-network-baseline').closest('fieldset');
+  const network = host.querySelector('#sandbox-profile-editor-network-section');
   await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
@@ -1586,12 +1646,29 @@ test('new deny drafts apply default pack references once and pack rows stay read
     .map((input) => input.closest('label').textContent);
   assert.equal(checked.length, 3);
   assert.match(checked.join(' '), /Local access.*Anthropic API.*OpenAI API/s);
+  const packRows = [...newDraft.host.querySelectorAll('.sbx-network-pack')];
+  assert.equal(packRows.length, 3);
+  assert.equal(packRows.every((row) => row.querySelectorAll('input[type="checkbox"]').length === 1), true,
+    'built-in packs render as one dense checkbox row each');
+  assert.equal(packRows.every((row) => row.querySelector('small') === null), true,
+    'pack disclosure copy is no longer permanently rendered under the label');
+  const localHelp = packRows[0].querySelector('.spawn-field-help-trigger');
+  assert.ok(localHelp, 'a pack with explanatory copy has an associated help trigger');
+  await harness.act(() => harness.fireEvent(localHelp, 'click'));
+  assert.equal(localHelp.getAttribute('aria-expanded'), 'true');
+  assert.match(packRows[0].querySelector('.spawn-field-description').textContent, /local services/);
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 3);
   assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
     'expanded pack destinations are read-only');
   await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 0,
     'allow-all carries no unlocks in the draft');
+  assert.equal([...newDraft.host.querySelectorAll('.sbx-network-pack input')]
+    .every((input) => input.hasAttribute('disabled')), true,
+    'allow-all disables pack authoring');
+  assert.equal(newDraft.host.querySelector('.sbx-network-pack .spawn-field-help-trigger')
+    .hasAttribute('disabled'), false,
+    'pack disclosure stays reachable while its authoring checkbox is gated');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 3,
     'returning to Deny all restores the session-retained unlocks instead of re-deriving defaults');
@@ -1930,7 +2007,8 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   // of its own — there is only one filesystem mechanism now.
   const menu = host.querySelector('#sandbox-profile-editor-common-rules');
   assert.equal(menu.hasAttribute('open'), false, 'the preset menu ships folded');
-  assert.equal(menu.closest('fieldset').querySelector('legend').textContent, 'Filesystem');
+  assert.equal(menu.closest('#sandbox-profile-editor-filesystem-section')
+    .querySelector('.sbx-section-summary > span').textContent, 'Filesystem');
   menu.open = true; menu.dispatchEvent(new harness.window.Event('toggle'));
   await harness.act(() => Promise.resolve());
 
