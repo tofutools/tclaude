@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -445,4 +447,57 @@ func TestTUIConsoleConfirmsQuit(t *testing.T) {
 
 	c.Press(t, "q", "y")
 	assert.True(t, c.Quit)
+}
+
+// Scenario: the SQLite usage_cache carries a fresh subscription reading — the
+// row Claude Code's statusline callback leaves behind — and the operator is
+// looking at the terminal console rather than the web dashboard. The console's
+// status line must show the same figures the dashboard's top bar does, read
+// through the daemon's own /v1/usage handler.
+func TestTUIConsoleShowsTheAccountsUsageLimits(t *testing.T) {
+	newFlow(t)
+	now := time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 42, ResetsAt: now.Add(3*time.Hour + 41*time.Minute)},
+		SevenDay:      &usageapi.CachedBucket{Pct: 18, ResetsAt: now.Add(2*24*time.Hour + 9*time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+
+	c := newTUIConsole(t)
+	c.RefreshUsage()
+
+	view := c.View()
+	assert.Contains(t, view, "usage")
+	assert.Contains(t, view, "5h")
+	assert.Contains(t, view, "42%")
+	assert.Contains(t, view, "(3h40m)", "the daemon's own reset timer, counting down")
+	assert.Contains(t, view, "7d")
+	assert.Contains(t, view, "18%")
+	assert.Contains(t, view, "(2d8h)")
+}
+
+// The readout is the operator's own subscription, so the daemon serves it to
+// the operator only. A console it does not classify as the human is refused,
+// and shows no figures rather than someone else's — or a fabricated blank.
+func TestTUIConsoleUsageIsRefusedForANonOperatorConsole(t *testing.T) {
+	newFlow(t)
+	now := time.Now()
+	seedUsageCache(t, usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 42, ResetsAt: now.Add(time.Hour)},
+		FetchedAt:     now,
+		LastAttemptAt: now,
+	})
+
+	// No live operator token: the console falls back to an unconfirmed caller,
+	// which is what the daemon's own verifier makes of it.
+	t.Cleanup(agentd.SetProcTreeForTest(nil, nil))
+	t.Cleanup(agentd.SetOperatorTokenForTest(""))
+	c := agentd.NewTUIConsoleForTest()
+	c.Resize(140, 30)
+	c.RefreshUsage()
+
+	view := c.View()
+	assert.NotContains(t, view, "42%")
+	assert.NotContains(t, view, "usage ")
 }

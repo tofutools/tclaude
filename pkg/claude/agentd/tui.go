@@ -597,6 +597,18 @@ type tuiModel struct {
 	reconcilingMutation      bool
 	reconciliationRefreshGen uint64
 	lastRefresh              time.Time
+	// usage is the last subscription-usage readout the daemon served — the
+	// account's rolling limits and API spend, shown as the console's status
+	// line. usageLoaded distinguishes "the daemon has answered" from the empty
+	// zero value; usageFailed says every attempt so far has failed, which is
+	// the one thing worth saying out loud in place of the figures.
+	// lastUsageAttempt paces the poll (see tuiUsageInterval) — it is far slower
+	// than the listing's, so it rides the same tick rather than its own timer.
+	usage            tuiUsage
+	usageLoaded      bool
+	usageFailed      bool
+	usageFetching    bool
+	lastUsageAttempt time.Time
 	// lifecycleTarget is the agent the stop/retire confirmation is about,
 	// captured when the prompt opens rather than re-read when it is answered:
 	// the listing re-sorts under the cursor every two seconds, so resolving the
@@ -669,6 +681,12 @@ type (
 		// profilesErr is the profile listing's own failure, kept apart from
 		// err: it costs the spawn form one picker, not the whole console.
 		profilesErr error
+	}
+	// tuiUsageMsg carries one completed usage poll — the account's rolling
+	// limits and API spend, or the error that stopped the read.
+	tuiUsageMsg struct {
+		usage tuiUsage
+		err   error
 	}
 	// tuiSpawnedMsg carries the outcome of one spawn request.
 	tuiSpawnedMsg struct {
@@ -781,6 +799,12 @@ func (m tuiModel) viewportHeight() int {
 	}
 	if m.notice != "" {
 		chrome += lipgloss.Height(m.renderWrapped(m.notice))
+	}
+	// The usage line is one row by contract — fitUsageLine trims it to the
+	// terminal rather than wrapping — and is absent entirely until the console
+	// has a readout to show.
+	if m.usageLine() != "" {
+		chrome++
 	}
 	if m.confirmPrompt() != "" {
 		chrome += 2
@@ -1616,12 +1640,35 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiTickMsg:
-		if m.refreshing {
-			return m, tuiTickCmd()
+		cmds := []tea.Cmd{tuiTickCmd()}
+		// The usage readout rides this tick but on its own much slower cadence
+		// — see tuiUsageInterval — and independently of the listing poll, so a
+		// slow refresh cannot starve it.
+		if m.usageDue() {
+			m.usageFetching = true
+			m.lastUsageAttempt = time.Now()
+			cmds = append(cmds, m.usageCmd())
 		}
-		var refresh tea.Cmd
-		m, refresh = m.beginRefresh()
-		return m, tea.Batch(refresh, tuiTickCmd())
+		if !m.refreshing {
+			var refresh tea.Cmd
+			m, refresh = m.beginRefresh()
+			cmds = append(cmds, refresh)
+		}
+		return m, tea.Batch(cmds...)
+
+	case tuiUsageMsg:
+		m.usageFetching = false
+		if msg.err != nil {
+			// Keep the last good figures if there are any: they are cached
+			// readings to begin with, and one failed poll of an optional
+			// readout must not blank a line the operator is reading.
+			m.usageFailed = !m.usageLoaded
+			return m, nil
+		}
+		m.usage = msg.usage
+		m.usageLoaded = true
+		m.usageFailed = false
+		return m, nil
 
 	case tuiDataMsg:
 		// Tests and other direct model callers may leave the generation at
@@ -2197,7 +2244,11 @@ func (m tuiModel) renderList() string {
 	if m.notice != "" {
 		b.WriteString(m.renderWrapped(m.notice) + "\n")
 	}
-	b.WriteString("\n  " + m.keyHintLine() + "\n")
+	b.WriteString("\n")
+	if usage := m.usageLine(); usage != "" {
+		b.WriteString("  " + usage + "\n")
+	}
+	b.WriteString("  " + m.keyHintLine() + "\n")
 
 	if prompt := m.confirmPrompt(); prompt != "" {
 		b.WriteString("\n  " + prompt + "\n")

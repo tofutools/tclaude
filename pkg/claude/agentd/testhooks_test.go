@@ -1342,6 +1342,15 @@ func (c *TUIConsole) Refresh() {
 	c.send(c.m.refreshCmd()())
 }
 
+// RefreshUsage re-reads the account's subscription usage readout,
+// synchronously. In production that poll rides the periodic tick (on its own
+// slower cadence), which a flow test does not run.
+func (c *TUIConsole) RefreshUsage() {
+	c.m.usageFetching = true
+	c.m.lastUsageAttempt = time.Now()
+	c.send(c.m.usageCmd()())
+}
+
 // Press feeds one keystroke per argument — a single printable character, or
 // one of the named keys below — and runs whatever command the console
 // returns, so an action key finishes its work before the test looks.
