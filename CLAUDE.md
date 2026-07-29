@@ -137,6 +137,14 @@ decision needs. Instead:
 This keeps taste decisions with the human at the cost of minutes, and avoids
 churning production code on designs that may be rejected.
 
+The same loop works agent-to-agent. A lead can ask the implementing agent for
+a mock before green-lighting implementation, or send the implementor a
+rendered mock of what is wanted; either side re-renders and replies with an
+updated image (pass file paths or attach renders via `tclaude agent send`),
+iterating on the design together before any production code is written. Bring
+the human in with notify-human whenever a decision is taste rather than
+mechanics.
+
 ## Git, commits, and PRs
 
 When making feature or fix changes as an agent, use a git worktree and open a
