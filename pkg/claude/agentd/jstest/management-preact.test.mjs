@@ -1055,6 +1055,86 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox filesystem and socket rows reuse accessible segmented controls while compact rows keep their authored shapes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'base' }, { name: 'segments' }]);
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'segments',
+    filesystem: [
+      { path: '/read', access: 'read' },
+      { path: '/write', access: 'write' },
+      { path: '/deny', access: 'deny' },
+    ],
+    environment: [{ name: 'GOCACHE', value: '/cache/go-build' }],
+    includes: ['base'],
+    agent_directories: ['NODE_COMPILE_CACHE'],
+    unix_sockets: {
+      mode: 'list',
+      allow: [{ path: '/run/example.sock' }, { path_glob: '/tmp/ssh-*/agent.*' }],
+    },
+  }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const filesystemRows = [...host.querySelectorAll('.sbx-filesystem-row')];
+  const filesystemControls = filesystemRows.map((row) => row.querySelector('.sbx-filesystem-access'));
+  assert.equal(filesystemRows.length, 3);
+  assert.deepEqual(filesystemControls.map(segmentedValue), ['read', 'write', 'deny']);
+  assert.equal(filesystemControls.every((control) => control.getAttribute('role') === 'radiogroup'), true);
+  assert.deepEqual([...filesystemControls[0].querySelectorAll('[role="radio"]')].map((radio) => radio.textContent),
+    ['Read', 'Write', 'Deny']);
+  for (const [control, value] of filesystemControls.map((item) => [item, segmentedValue(item)])) {
+    assert.equal(segment(control, value).classList.contains(`sbx-state-${value}`), true,
+      `${value} filesystem state exposes its permission-color CSS class`);
+    assert.equal(segment(control, value).classList.contains('is-selected'), true);
+  }
+  const readRadio = segment(filesystemControls[0], 'read');
+  readRadio.focus();
+  await harness.act(() => harness.fireEvent(readRadio, 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'write');
+  assert.equal(harness.document.activeElement, segment(filesystemControls[0], 'write'));
+  await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'write'), 'keydown', { key: 'End' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'deny');
+  await harness.act(() => harness.fireEvent(segment(filesystemControls[0], 'deny'), 'keydown', { key: 'Home' }));
+  assert.equal(segmentedValue(filesystemControls[0]), 'read');
+  assert.equal(segment(filesystemControls[0], 'read').getAttribute('tabindex'), '0');
+  assert.equal(segment(filesystemControls[0], 'write').getAttribute('tabindex'), '-1');
+
+  const socketMode = host.querySelector('#sandbox-profile-editor-unix-sockets-mode');
+  const socketControls = [...host.querySelectorAll('.sbx-socket-selector')];
+  assert.equal(socketMode.tagName, 'SELECT', 'the three-state section posture remains a dropdown');
+  assert.deepEqual(socketControls.map(segmentedValue), ['path', 'path_glob']);
+  assert.deepEqual([...socketControls[0].querySelectorAll('[role="radio"]')].map((radio) => radio.textContent),
+    ['Path', 'Glob']);
+  assert.equal(segment(socketControls[0], 'path').classList.contains('sbx-state-path'), true);
+  assert.equal(segment(socketControls[1], 'path_glob').classList.contains('sbx-state-path_glob'), true);
+  const socketValue = host.querySelector('.sbx-socket-value');
+  await harness.act(() => harness.fireEvent(segment(socketControls[0], 'path'), 'click'));
+  assert.equal(socketValue.value, '/run/example.sock',
+    'reactivating the selected syntax does not clear the authored socket value');
+  await harness.act(() => harness.fireEvent(segment(socketControls[0], 'path'), 'keydown', { key: 'ArrowRight' }));
+  assert.equal(segmentedValue(socketControls[0]), 'path_glob');
+  assert.equal(segment(socketControls[0], 'path_glob').classList.contains('is-selected'), true);
+
+  const include = host.querySelector('.sbx-inc-name');
+  assert.equal(include.tagName, 'SELECT');
+  assert.ok(include.closest('.sbx-include-row'), 'includes opt into the intrinsic-width row hook');
+  const environmentRow = host.querySelector('.sbx-environment-row');
+  assert.ok(environmentRow.querySelector('.sbx-env-name'));
+  assert.ok(environmentRow.querySelector('.sbx-env-value'));
+  assert.equal(environmentRow.querySelectorAll('input').length, 2,
+    'environment keeps free-form name/value controls under the fixed-grid hooks');
+  const agentRow = host.querySelector('.sbx-agent-name').closest('.sbx-row');
+  assert.equal(agentRow.querySelector('.sbx-segmented-control'), null,
+    'agent-owned directory rows remain exactly the free-form input control');
+  unmount();
+  host.remove();
+});
+
 const COMMON_RULES = {
   version: 1,
   home: '/home/op',
@@ -2306,7 +2386,7 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   const rows = [...host.querySelectorAll('.sbx-section .sbx-row')].filter((row) => row.querySelector('.sbx-path'));
   const inserted = rows[rows.length - 1];
   assert.equal(inserted.querySelector('.sbx-path').value, '/home/op');
-  assert.equal(inserted.querySelector('.sbx-access').getAttribute('value'), 'deny');
+  assert.equal(segmentedValue(inserted.querySelector('.sbx-access')), 'deny');
   assert.notEqual(inserted.querySelector('.sbx-path').disabled, true, 'inserted rows stay ordinary editable rows');
   const notice = host.querySelector('#sandbox-profile-editor-common-rule-notice');
   assert.match(notice.textContent, /Added 1 deny row from “Deny home directory”: \/home\/op/);
