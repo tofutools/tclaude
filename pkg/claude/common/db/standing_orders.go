@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// Standing-order target kinds. These are deliberately the SAME string values
-// as the cron target kinds (CronTargetConv / CronTargetGroup) rather than a
-// parallel vocabulary: a standing order is a scheduled job whose clock is an
-// event predicate, and the operator should not have to learn "conv" twice.
+// Standing-order target kinds. These deliberately reuse cron's persisted
+// string values for compatibility, but "conv" is only the historical spelling
+// for a SINGLE STABLE AGENT target. The durable key is always target_agent;
+// the current conversation is resolved from that actor at read/delivery time.
 const (
 	StandingTargetConv  = CronTargetConv
 	StandingTargetGroup = CronTargetGroup
@@ -156,9 +156,10 @@ var ErrStandingOrderInvalid = errors.New("invalid standing order")
 // when a trigger matches rather than on a wall clock.
 //
 // The target fields mirror AgentCronJob exactly — OwnerAgent / TargetAgent are
-// the stable, rotation-immune actor keys; OwnerConv / TargetConv are the
-// current generations resolved at read time; TargetKind discriminates and
-// TargetRole filters a group fan-out against the live roster at delivery time.
+// the stable, rotation-immune actor keys; OwnerConv / TargetConv are read-only
+// current-generation routing facts resolved at read time; TargetKind
+// discriminates and TargetRole filters a group fan-out against the live roster
+// at delivery time.
 // Reusing that shape is what lets the group retire/resume hygiene, the
 // operator-attribution stamp, and the dashboard's target column serve both
 // tables.
@@ -172,7 +173,7 @@ type StandingOrder struct {
 
 	OwnerAgent  string
 	OwnerConv   string
-	TargetKind  string // StandingTargetConv | StandingTargetGroup
+	TargetKind  string // StandingTargetConv (single stable agent) | StandingTargetGroup
 	TargetAgent string
 	TargetConv  string
 	GroupID     int64
@@ -206,7 +207,7 @@ type StandingOrder struct {
 }
 
 // IsGroupTarget reports whether the order fans out to a group. Callers MUST
-// use this rather than GroupID > 0 — exactly as for cron, a conv-targeted
+// use this rather than GroupID > 0 — exactly as for cron, a single-agent
 // order routed through a shared group also carries a non-zero GroupID.
 func (o *StandingOrder) IsGroupTarget() bool {
 	return o.TargetKind == StandingTargetGroup
@@ -312,11 +313,21 @@ func (o *StandingOrder) Validate() error {
 	default:
 		return fmt.Errorf("%w: target kind %q", ErrStandingOrderInvalid, o.TargetKind)
 	}
-	if o.IsGroupTarget() && o.GroupID <= 0 {
+	o.OwnerAgent = strings.TrimSpace(o.OwnerAgent)
+	o.TargetAgent = strings.TrimSpace(o.TargetAgent)
+	switch {
+	case o.OwnerAgent == "" && strings.TrimSpace(o.OwnerConv) != "":
+		return fmt.Errorf("%w: owner conversation cannot replace a stable owner agent id", ErrStandingOrderInvalid)
+	case o.OwnerAgent != "" && !strings.HasPrefix(o.OwnerAgent, AgentIDPrefix):
+		return fmt.Errorf("%w: owner agent %q is not a stable agent id", ErrStandingOrderInvalid, o.OwnerAgent)
+	case o.IsGroupTarget() && o.GroupID <= 0:
 		return fmt.Errorf("%w: group target needs a group id", ErrStandingOrderInvalid)
-	}
-	if !o.IsGroupTarget() && strings.TrimSpace(o.TargetConv) == "" && strings.TrimSpace(o.TargetAgent) == "" {
-		return fmt.Errorf("%w: conv target needs a recipient", ErrStandingOrderInvalid)
+	case o.IsGroupTarget() && o.TargetAgent != "":
+		return fmt.Errorf("%w: group target cannot carry a single target agent", ErrStandingOrderInvalid)
+	case !o.IsGroupTarget() && o.TargetAgent == "":
+		return fmt.Errorf("%w: single-agent target needs a stable agent id", ErrStandingOrderInvalid)
+	case !o.IsGroupTarget() && !strings.HasPrefix(o.TargetAgent, AgentIDPrefix):
+		return fmt.Errorf("%w: target agent %q is not a stable agent id", ErrStandingOrderInvalid, o.TargetAgent)
 	}
 	if !o.IsGroupTarget() && strings.TrimSpace(o.TargetRole) != "" {
 		return fmt.Errorf("%w: target role applies only to a group target", ErrStandingOrderInvalid)
@@ -350,7 +361,7 @@ func (o *StandingOrder) Validate() error {
 // cronSelect, owner/target are keyed on agent_id and each LEFT JOIN resolves
 // the actor back to its CURRENT conv, so a reincarnation or /clear does not
 // strand an order pointed at a dead generation. LEFT JOIN + COALESCE so a
-// group-target order (target_agent ”) or an owner-less operator order keeps
+// group-target order (target_agent "") or an owner-less operator order keeps
 // an empty string rather than dropping the row.
 const standingSelect = `SELECT o.id, o.name, o.revision,
 	o.owner_agent, COALESCE(ow.current_conv_id, ''),

@@ -99,6 +99,124 @@ func postBrokeredHook(t *testing.T, f *testharness.Flow, callerPID int, body ses
 	return rec.Code, out
 }
 
+// A broker writes hook output into an HTTP response buffer first; that is not
+// delivery. Only the sandboxed callback knows whether it subsequently wrote
+// those bytes to the harness's stdout, so once-per-generation cadence must
+// remain open until its explicit acknowledgement arrives.
+func TestHookBroker_StandingOrderCommitRequiresRelayAck(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	group := f.HaveGroup("standing-order-broker")
+	f.HaveMember(group.Name, brokerLayerConv)
+
+	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:             "broker-ack",
+		TargetKind:       db.StandingTargetGroup,
+		GroupID:          group.ID,
+		Summary:          "Do not claim delivery before stdout relay.",
+		TriggerEvent:     db.StandingTriggerSessionStart,
+		TriggerSources:   []string{db.StandingSourceStartup},
+		Timing:           db.StandingTimingSameContinuation,
+		Cadence:          db.StandingCadenceOncePerGeneration,
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+
+	event := session.BrokeredHookRequest{Input: session.HookCallbackInput{
+		ConvID: brokerLayerConv, HookEventName: "SessionStart",
+		Source: db.StandingSourceStartup, Cwd: f.World.HomeDir,
+	}}
+	code, resp := postBrokeredHook(t, f, callerPID, event)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, resp.Stdout, "Do not claim delivery")
+	require.NotEmpty(t, resp.AckToken)
+
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "buffering an HTTP response is not harness delivery")
+	delivered, err := db.StandingOrderDeliveredInEpoch(
+		orderID, 1, brokerLayerConv, brokerLayerConv)
+	require.NoError(t, err)
+	assert.False(t, delivered, "a failed/disconnected relay must leave cadence retryable")
+
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: brokerLayerLabel,
+		AckToken:         resp.AckToken,
+	})
+	require.Equal(t, http.StatusOK, code)
+	latest, err = db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: brokerLayerLabel,
+		AckToken:         resp.AckToken,
+	})
+	assert.Equal(t, http.StatusConflict, code, "an acknowledgement is one-shot")
+}
+
+// A stdout write failure is an explicit negative acknowledgement: it must
+// release the cadence lock without recording delivery, so the next boundary
+// can retry immediately rather than waiting for the acknowledgement TTL.
+func TestHookBroker_StandingOrderRelayFailureReleasesWithoutCommit(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+	group := f.HaveGroup("standing-order-relay-failure")
+	f.HaveMember(group.Name, brokerLayerConv)
+
+	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:             "broker-relay-failure",
+		TargetKind:       db.StandingTargetGroup,
+		GroupID:          group.ID,
+		Summary:          "Retry after a failed stdout relay.",
+		TriggerEvent:     db.StandingTriggerSessionStart,
+		TriggerSources:   []string{db.StandingSourceStartup},
+		Timing:           db.StandingTimingSameContinuation,
+		Cadence:          db.StandingCadenceOncePerGeneration,
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+
+	event := session.BrokeredHookRequest{Input: session.HookCallbackInput{
+		ConvID: brokerLayerConv, HookEventName: "SessionStart",
+		Source: db.StandingSourceStartup, Cwd: f.World.HomeDir,
+	}}
+	code, first := postBrokeredHook(t, f, callerPID, event)
+	require.Equal(t, http.StatusOK, code)
+	require.NotEmpty(t, first.AckToken)
+
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: brokerLayerLabel,
+		AckToken:         first.AckToken,
+		RelayFailed:      true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "a failed relay must not be recorded as delivery")
+
+	code, retry := postBrokeredHook(t, f, callerPID, event)
+	require.Equal(t, http.StatusOK, code)
+	assert.Contains(t, retry.Stdout, "Retry after a failed stdout relay")
+	require.NotEmpty(t, retry.AckToken,
+		"the failed relay must release its lock so the next boundary can retry")
+
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: brokerLayerLabel,
+		AckToken:         retry.AckToken,
+	})
+	require.Equal(t, http.StatusOK, code)
+	latest, err = db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+}
+
 // TestHookBroker_ParityWithDirectCallback is the acceptance property from
 // TCL-754: a tclaude-layer agent has hook parity with a harness-builtin
 // one. Two sessions get the same event sequence by the two different

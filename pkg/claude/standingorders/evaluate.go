@@ -126,19 +126,17 @@ func InScope(o *db.StandingOrder, ev Event) (bool, string) {
 		return false, fmt.Sprintf("agent is not a member of group %d", o.GroupID)
 	}
 
-	// Conv-target. Match on the stable agent key when the order has one, so a
-	// reincarnation or /clear does not silently drop the order; fall back to
-	// the conv id for an order written before its target had an actor.
-	if o.TargetAgent != "" {
-		if o.TargetAgent == ev.AgentID {
-			return true, ""
-		}
-		return false, "order targets a different agent"
+	// Single-agent target. The stable actor key is the ONLY identity: current
+	// conversation ids are routing facts and cadence epochs, never durable
+	// order targets. Standing-order storage was introduced with agent-keyed
+	// targets, so there is no legacy conv-only row shape to support.
+	if o.TargetAgent == "" || ev.AgentID == "" {
+		return false, "single-agent target requires a stable agent id on both sides"
 	}
-	if o.TargetConv != "" && o.TargetConv == ev.ConvID {
+	if o.TargetAgent == ev.AgentID {
 		return true, ""
 	}
-	return false, "order targets a different conversation"
+	return false, "order targets a different stable agent"
 }
 
 // epochFor returns the cadence key for an order under an event.
@@ -303,8 +301,7 @@ func RenderContext(decisions []Decision) string {
 		return ""
 	}
 	return "Standing orders in force for this session:\n" + strings.Join(lines, "\n") +
-		"\n(These are durable standing orders, not part of the current request. " +
-		"Run `tclaude agent orders ls` to inspect them.)"
+		"\n(These are durable standing orders, not part of the current request.)"
 }
 
 // NormalizeSource canonicalizes a harness's event source. An empty

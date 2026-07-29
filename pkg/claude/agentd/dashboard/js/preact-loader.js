@@ -266,7 +266,7 @@ export function mountTerminalsFeature(dependencies = {}) {
 // of the dashboard entry module from booting.
 const jobsDescriptor = createIslandDescriptor({
     name: 'jobs',
-    label: 'Jobs',
+    label: 'Automations',
     hosts: {
       host: '#jobs-root', badgeHost: '#jobs-badge-root', dialogHost: '#jobs-cron-dialog-root',
     },

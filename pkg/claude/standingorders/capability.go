@@ -137,12 +137,12 @@ func CapabilityByHarness(timing, event string) map[string]Capability {
 // to avoid is an operator believing guidance reached agents it never reached.
 //
 // The caller supplies the harnesses that are ACTUALLY REACHABLE by the order —
-// resolved from the conv target, or from the live group roster for a group
-// target. That distinction is the whole point of this function existing
-// separately from PlatformCapability: rolling up across every harness tclaude
-// knows about would mark a conv-targeted Claude order "unsupported" because
-// some other agent somewhere runs OpenCode, which is not a fact about that
-// order at all.
+// resolved from a single target agent's current generation, or from the live
+// group roster for a group target. That distinction is the whole point of this
+// function existing separately from PlatformCapability: rolling up across
+// every harness tclaude knows about would mark a Claude-only single-agent order
+// "unsupported" because some other agent somewhere runs OpenCode, which is not
+// a fact about that order at all.
 //
 // An empty list reduces to unsupported-with-no-detail rather than to
 // "supported": if nothing is reachable, nothing is delivered.

@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 )
 
 // dashboard_jobs.go — the Jobs tab's unified job listing.
 //
-// GET /api/jobs?offset=&limit=&q= returns ONE list merging every job kind the
+// GET /api/jobs?offset=&limit=&q=&kind= returns ONE list merging every job kind the
 // dashboard tracks — per-agent export jobs (export.go) and recurring cron
 // schedules — discriminated by a `kind` field, newest-activity-first. It
 // shares the offset/limit/q contract and response envelope of the /api/retired
@@ -30,15 +32,21 @@ import (
 // existing per-kind views verbatim so the front-end renders each kind with the
 // same cell builders (and hands Cron straight to the cron edit modal).
 type dashboardJobRow struct {
-	Kind   string              `json:"kind"`
-	Export *dashboardExportJob `json:"export,omitempty"`
-	Cron   *dashboardCronJob   `json:"cron,omitempty"`
+	Kind   string                    `json:"kind"`
+	Export *dashboardExportJob       `json:"export,omitempty"`
+	Cron   *dashboardCronJob         `json:"cron,omitempty"`
+	Order  *standingorders.OrderView `json:"order,omitempty"`
 }
 
 const (
-	jobKindExport = "export"
-	jobKindCron   = "cron"
+	jobKindExport        = "export"
+	jobKindCron          = "cron"
+	jobKindStandingOrder = "standing-order"
 )
+
+func validJobKind(kind string) bool {
+	return kind == "" || kind == jobKindExport || kind == jobKindCron || kind == jobKindStandingOrder
+}
 
 // handleDashboardJobs serves GET /api/jobs — the Jobs tab's unified window.
 func handleDashboardJobs(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +58,22 @@ func handleDashboardJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offset, limit, q := listPageParams(r)
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if !validJobKind(kind) {
+		http.Error(w, "unknown job kind", http.StatusBadRequest)
+		return
+	}
 
 	rows := collectJobRows()
+	if kind != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.Kind == kind {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
 	totalUnfiltered := len(rows)
 	if q != "" {
 		filtered := rows[:0]
@@ -83,6 +105,7 @@ func collectJobRows() []dashboardJobRow {
 		at  time.Time
 	}
 	var all []keyed
+	groupNames := map[int64]string{}
 
 	if exports, err := db.ListExportJobs(0); err == nil {
 		for _, j := range exports {
@@ -97,7 +120,6 @@ func collectJobRows() []dashboardJobRow {
 		}
 	}
 	if crons, err := db.ListAgentCronJobs(); err == nil {
-		groupNames := map[int64]string{}
 		for _, j := range crons {
 			view := cronJobToView(j, groupNames)
 			at := j.LastRunAt
@@ -106,6 +128,32 @@ func collectJobRows() []dashboardJobRow {
 			}
 			all = append(all, keyed{
 				row: dashboardJobRow{Kind: jobKindCron, Cron: &view},
+				at:  at,
+			})
+		}
+	}
+	if orders, err := db.ListStandingOrders(); err == nil {
+		for _, order := range orders {
+			groupName := ""
+			if order.IsGroupTarget() && order.GroupID > 0 {
+				var ok bool
+				groupName, ok = groupNames[order.GroupID]
+				if !ok {
+					if group, groupErr := db.GetAgentGroupByID(order.GroupID); groupErr == nil && group != nil {
+						groupName = group.Name
+					}
+					groupNames[order.GroupID] = groupName
+				}
+			}
+			latest, _ := db.LatestStandingDelivery(order.ID)
+			view := standingorders.NewOrderView(
+				order, groupName, latest, standingOrderTargetHarnesses(order))
+			at := order.UpdatedAt
+			if latest != nil {
+				at = latest.CreatedAt
+			}
+			all = append(all, keyed{
+				row: dashboardJobRow{Kind: jobKindStandingOrder, Order: &view},
 				at:  at,
 			})
 		}
@@ -131,12 +179,59 @@ func collectJobRows() []dashboardJobRow {
 	return out
 }
 
+// standingOrderTargetHarnesses resolves only the live recipients this order
+// can actually reach. nil means resolution was incomplete (capability unknown);
+// a non-nil empty slice means resolution succeeded and found no recipients.
+func standingOrderTargetHarnesses(order *db.StandingOrder) []string {
+	var convs []string
+	if order.IsGroupTarget() {
+		members, err := db.ListAgentGroupMembers(order.GroupID)
+		if err != nil {
+			return nil
+		}
+		convs = make([]string, 0, len(members))
+		for _, member := range members {
+			if order.TargetRole != "" && !strings.EqualFold(order.TargetRole, member.Role) {
+				continue
+			}
+			convs = append(convs, member.ConvID)
+		}
+	} else {
+		convs = make([]string, 0, 1)
+		if order.TargetConv != "" {
+			convs = append(convs, order.TargetConv)
+		}
+	}
+
+	out := make([]string, 0, len(convs))
+	seen := map[string]struct{}{}
+	for _, convID := range convs {
+		sessionRow, err := db.FindSessionByConvID(convID)
+		if err != nil || sessionRow == nil {
+			return nil
+		}
+		name := sessionRow.Harness
+		if name == "" {
+			name = harness.DefaultName
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
 func jobRowID(r dashboardJobRow) int64 {
 	if r.Export != nil {
 		return r.Export.ID
 	}
 	if r.Cron != nil {
 		return r.Cron.ID
+	}
+	if r.Order != nil {
+		return r.Order.ID
 	}
 	return 0
 }
@@ -158,6 +253,21 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 			c.OwnerLabel, c.OwnerAgent, c.OwnerConv,
 			c.TargetLabel, c.TargetAgent, c.TargetConv,
 			c.GroupName, c.LastRunStatus}
+	case r.Order != nil:
+		o := r.Order
+		hay = []string{jobKindStandingOrder, o.Name, o.Summary,
+			o.OwnerAgent, o.OwnerConv,
+			o.Target.Kind, o.Target.Agent, o.Target.Conv,
+			o.Target.GroupName, o.Target.Role,
+			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence}
+		if o.Capability != nil {
+			hay = append(hay, string(o.Capability.Status),
+				o.Capability.Transport, o.Capability.Detail)
+		}
+		if o.LastEvaluation != nil {
+			hay = append(hay, o.LastEvaluation.Outcome, o.LastEvaluation.Transport,
+				o.LastEvaluation.Harness, o.LastEvaluation.Detail, o.LastEvaluation.TargetConv)
+		}
 	}
 	for _, h := range hay {
 		if h != "" && strings.Contains(strings.ToLower(h), needle) {

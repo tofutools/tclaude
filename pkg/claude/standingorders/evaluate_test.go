@@ -97,7 +97,7 @@ func TestEvaluateRoleFilterIsResolvedAgainstLiveRoster(t *testing.T) {
 	assert.Contains(t, missed.Detail, "reviewer")
 }
 
-func TestEvaluateConvTargetFollowsStableAgentKey(t *testing.T) {
+func TestEvaluateSingleTargetFollowsStableAgentKey(t *testing.T) {
 	// The order was authored against an older generation. Matching on the
 	// stable agent key is what keeps a reincarnated agent covered.
 	o := order(func(o *db.StandingOrder) {
@@ -109,6 +109,26 @@ func TestEvaluateConvTargetFollowsStableAgentKey(t *testing.T) {
 	d := Evaluate(o, event(func(e *Event) { e.ConvID = "conv-NEW" }), neverDelivered)
 
 	assert.True(t, d.Deliver, "a conv rotation must not strand the order")
+}
+
+func TestEvaluateSingleTargetNeverFallsBackToConversationIDOrEmptyIdentity(t *testing.T) {
+	// Invalid or old data that lacks a stable target must fail closed. A
+	// matching generation id is never a substitute for the persistent actor.
+	o := order(func(o *db.StandingOrder) {
+		o.TargetKind = db.StandingTargetConv
+		o.GroupID = 0
+		o.TargetAgent = ""
+		o.TargetConv = "conv-a"
+	})
+	d := Evaluate(o, event(), neverDelivered)
+
+	assert.False(t, d.Deliver)
+	assert.Equal(t, db.StandingOutcomeOutOfScope, d.Outcome)
+	assert.Contains(t, d.Detail, "stable agent")
+
+	actorless := Evaluate(o, event(func(e *Event) { e.AgentID = "" }), neverDelivered)
+	assert.False(t, actorless.Deliver, "two empty agent ids must not compare as a valid target")
+	assert.Equal(t, db.StandingOutcomeOutOfScope, actorless.Outcome)
 }
 
 func TestEvaluateSourceFilter(t *testing.T) {
@@ -271,6 +291,8 @@ func TestRenderContextUnattributedOrderSaysSo(t *testing.T) {
 
 	assert.Contains(t, text, "unattributed")
 	assert.NotContains(t, text, "authored by operator")
+	assert.NotContains(t, text, "tclaude agent orders",
+		"model-visible context must not advertise a host-only DB command to sandboxed agents")
 }
 
 // The steady state of a once-per-generation order must not append a ledger row

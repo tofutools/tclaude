@@ -7192,6 +7192,19 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .export-stepper .export-spinner { width: 11px; height: 11px; }
 
 /* --- Jobs tab (the unified export + cron job table) --- */
+.jobs-subnav {
+  display: inline-flex; gap: 2px; margin: 0 0 12px;
+  background: #161b22; border: 1px solid #2a3340; border-radius: 6px; padding: 2px;
+}
+.jobs-subtab {
+  background: none; border: none; color: #7d8590; cursor: pointer;
+  font-family: inherit; font-size: 13px; padding: 6px 14px; border-radius: 4px;
+}
+.jobs-subtab:hover { color: #d4d4d4; }
+.jobs-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }
+.order-evaluation-detail {
+  max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .ej-status { font-size: 12px; white-space: nowrap; }
 .ej-status.ready { color: #3fb950; }
 .ej-status.failed { color: #f85149; }
@@ -11605,9 +11618,18 @@ body.wizard #tab-debug .empty { color: #8f7bbf; }
 body.wizard .access-subnav {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5);
 }
-body.wizard .access-subtab { color: #b39ddb; }
-body.wizard .access-subtab:hover { color: #f3e6c0; }
+body.wizard .jobs-subnav {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard .access-subtab,
+body.wizard .jobs-subtab { color: #b39ddb; }
+body.wizard .access-subtab:hover,
+body.wizard .jobs-subtab:hover { color: #f3e6c0; }
 body.wizard .access-subtab.active {
+  background: #3a2a63; color: #f3e6c0;
+  text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
+}
+body.wizard .jobs-subtab.active {
   background: #3a2a63; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.55);
 }

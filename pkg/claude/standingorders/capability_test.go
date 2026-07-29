@@ -93,6 +93,7 @@ func TestOutcomeIsProblem(t *testing.T) {
 	for _, bad := range []string{
 		db.StandingOutcomeUnsupportedTiming,
 		db.StandingOutcomeNotEvaluatedTrimmed,
+		db.StandingOutcomeNotEvaluatedBusy,
 		db.StandingOutcomeDegradedTransport,
 		db.StandingOutcomeTransportUnimplemented,
 		db.StandingOutcomeDeliveryFailed,
@@ -101,8 +102,8 @@ func TestOutcomeIsProblem(t *testing.T) {
 	}
 }
 
-// The distinction this pair of functions exists to preserve: a conv-targeted
-// Claude order is not "unsupported" merely because OpenCode exists somewhere.
+// The distinction this pair of functions exists to preserve: a single-agent
+// order is not "unsupported" merely because OpenCode exists somewhere.
 func TestReduceCapabilityUsesOnlyReachableHarnesses(t *testing.T) {
 	timing, event := db.StandingTimingSameContinuation, db.StandingTriggerSessionStart
 

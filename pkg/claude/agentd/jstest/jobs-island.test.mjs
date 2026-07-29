@@ -25,8 +25,19 @@ function page(name = 'Daily summary') {
         status: 'ready', ready: true, artifact_name: 'summary.md', artifact_size: 2048,
         created_at: '2026-07-11T11:00:00Z',
       } },
+      { kind: 'standing-order', order: {
+        id: 3, name: 'pr-early', revision: 2, enabled: true, operator_authored: true,
+        target: { kind: 'group', group_id: 7, group_name: 'tclaude', role: 'worker' },
+        summary: 'Push the PR early.', trigger: { event: 'session.start', label: 'session start (compact)' },
+        timing: 'same-continuation', cadence: 'once-per-generation',
+        capability: { status: 'degraded', transport: 'hook-context', detail: 'OpenCode uses a queued turn.' },
+        last_evaluation: {
+          at: '2026-07-11T12:00:00Z', outcome: 'not-evaluated-trimmed',
+          problem: true, detail: 'Tool input was trimmed.',
+        },
+      } },
     ],
-    paging: { jobs: { offset: 0, limit: 50, total: 2, total_unfiltered: 2 } },
+    paging: { jobs: { offset: 0, limit: 50, total: 3, total_unfiltered: 3 } },
   };
 }
 
@@ -56,9 +67,22 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   assert.equal(badge.container.querySelector('#jobs-badge').textContent, '1');
   assert.equal(badge.container.querySelector('#jobs-badge').hidden, false);
 
-  const filter = getByRole(mounted.container, 'textbox', { name: 'Filter jobs' });
+  const filter = getByRole(mounted.container, 'textbox', { name: 'Filter automations' });
   assert.equal(filter.value, '');
+  const standingOrders = getByRole(mounted.container, 'tab', { name: 'Standing orders' });
+  await harness.act(() => harness.fireEvent(standingOrders, 'click'));
+  assert.equal(state.kind.value, 'standing-order');
+  assert.match(state.params.value, /kind=standing-order/);
+  assert.equal(standingOrders.getAttribute('aria-selected'), 'true');
+  assert.ok(calls.includes('refresh'));
+  const allJobs = getByRole(mounted.container, 'tab', { name: 'All' });
+  await harness.act(() => harness.fireEvent(allJobs, 'click'));
+  assert.equal(state.kind.value, 'all');
   const cronRow = mounted.container.querySelector('tr[data-key="cron-1"]');
+  const orderRow = mounted.container.querySelector('tr[data-key="standing-order-3"]');
+  assert.match(orderRow.textContent, /pr-early/);
+  assert.match(orderRow.textContent, /not-evaluated-trimmed/);
+  assert.ok(orderRow.querySelector('.state-error'), 'trimmed evaluation is visually distinct');
   const edit = getByRole(cronRow, 'button', { name: 'edit' });
   edit.focus();
   const selectedTextNode = cronRow.querySelector('.rowname').firstChild;
@@ -106,7 +130,7 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
     state.failRequest(3, new Error('network down'));
   });
   assert.match(getByRole(mounted.container, 'alert').textContent, /network down/);
-  assert.equal(mounted.container.querySelectorAll('tbody tr').length, 2, 'stale page remains visible');
+  assert.equal(mounted.container.querySelectorAll('tbody tr').length, 3, 'stale page remains visible');
   assert.equal(nextPage.disabled, true, 'stale-page navigation is disabled until Retry succeeds');
   const retry = getByRole(mounted.container, 'button', { name: 'Retry' });
   const refreshesBeforeRetry = calls.filter((call) => call === 'refresh').length;
@@ -115,6 +139,32 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   assert.equal(nextPage.disabled, true, 'pager stays inert while displayed and requested pages differ');
   assert.match(state.params.value, /offset=50/, 'Retry keeps targeting the failed requested page');
   await badge.unmount();
+  await mounted.unmount();
+});
+
+test('Standing-order target renders from the stable agent without a live conversation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal(null);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  const data = page();
+  data.jobs[2].order.target = { kind: 'conv', agent: 'agt_persistent', conv: '' };
+  snapshot.value = data;
+  state.beginRequest(1);
+  state.commitRequest(1);
+
+  const actions = {
+    refresh: () => {}, openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
+    toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const row = mounted.container.querySelector('tr[data-key="standing-order-3"]');
+  assert.match(row.textContent, /agt_persiste/);
+  assert.doesNotMatch(row.textContent, /no target/);
   await mounted.unmount();
 });
 
@@ -133,11 +183,12 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
     toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
   };
   const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
-  assert.match(mounted.container.textContent, /Loading jobs/);
+  assert.match(mounted.container.textContent, /Loading automations/);
 
   await harness.act(() => state.failRequest(1, new Error('offline')));
   assert.match(getByRole(mounted.container, 'alert').textContent, /offline/);
-  assert.doesNotMatch(mounted.container.textContent, /No jobs yet/, 'a failed first load is not an empty result');
+  assert.doesNotMatch(mounted.container.textContent, /No exports, schedules, or standing orders yet/,
+    'a failed first load is not an empty result');
 
   state.beginRequest(2);
 
@@ -145,8 +196,8 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
     snapshot.value = { jobs: [], export_jobs_active: 0, paging: { jobs: { total: 0, total_unfiltered: 0 } } };
     state.commitRequest(2);
   });
-  assert.match(mounted.container.textContent, /No jobs yet/);
-  assert.equal(mounted.container.querySelector('#filter-jobs-count').textContent, '0 jobs');
+  assert.match(mounted.container.textContent, /No exports, schedules, or standing orders yet/);
+  assert.equal(mounted.container.querySelector('#filter-jobs-count').textContent, '0 items');
   await mounted.unmount();
 });
 

@@ -19,6 +19,12 @@ func TestMigrateV168toV169CreatesStandingOrderTables(t *testing.T) {
 	require.NoError(t, migrateV168toV169(d))
 	assert.Equal(t, 169, schemaVersion(d))
 
+	var emptyOrders, emptyDeliveries int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_standing_orders`).Scan(&emptyOrders))
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_standing_order_deliveries`).Scan(&emptyDeliveries))
+	assert.Zero(t, emptyOrders, "the migration must not opt existing users into an order")
+	assert.Zero(t, emptyDeliveries, "the migration must not synthesize delivery history")
+
 	mustExec(t, d, `INSERT INTO agent_standing_orders
 		(name, target_kind, group_id, summary, trigger_event, trigger_sources,
 		 timing, cadence, created_at)

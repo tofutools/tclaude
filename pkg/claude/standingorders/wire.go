@@ -13,6 +13,8 @@ import (
 // spellings from the raw row.
 
 // TargetView is an order's scope, in the same vocabulary as a cron job's.
+// Agent is the durable single-agent target. Conv is only that actor's current
+// routing generation, resolved at read time for diagnostics and capability.
 type TargetView struct {
 	Kind      string `json:"kind"`
 	Agent     string `json:"agent,omitempty"`
@@ -68,10 +70,11 @@ type OrderView struct {
 	Cadence string `json:"cadence"`
 
 	// Capability is the worst case across the harnesses this order can
-	// ACTUALLY reach, resolved by the caller from the conv target or the live
-	// group roster. It is null when the caller could not resolve them, because
-	// "we don't know who this reaches" is a different answer from "it reaches
-	// nobody" and the UI should not render one as the other.
+	// ACTUALLY reach, resolved by the caller from a single target agent's
+	// current generation or the live group roster. It is null when the caller
+	// could not resolve them, because "we don't know who this reaches" is a
+	// different answer from "it reaches nobody" and the UI should not render
+	// one as the other.
 	Capability *Capability `json:"capability"`
 	// PlatformCapability is the worst case across every harness tclaude
 	// supports. It answers "could this order be authored to work everywhere",
@@ -90,10 +93,10 @@ type OrderView struct {
 // groupName is resolved by the caller (which has the group registry) and may
 // be empty; latest may be nil when the order has never produced a ledger row.
 //
-// targetHarnesses are the harnesses the order can actually reach — the
-// recipient's harness for a conv target, or the distinct harnesses on the live
-// roster for a group target. Pass nil when they cannot be resolved; Capability
-// is then null rather than a guess.
+// targetHarnesses are the harnesses the order can actually reach — the current
+// harness of a single stable-agent target, or the distinct harnesses on the
+// live roster for a group target. Pass nil when they cannot be resolved;
+// Capability is then null rather than a guess.
 func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDelivery, targetHarnesses []string) OrderView {
 	v := OrderView{
 		ID:               o.ID,

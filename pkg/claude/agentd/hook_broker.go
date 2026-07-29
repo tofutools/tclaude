@@ -3,12 +3,15 @@ package agentd
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -44,6 +47,70 @@ import (
 // daemon goroutine. Deliberately under the client's own 20s give-up, so
 // the daemon frees the goroutine while the client is still listening.
 const hookBrokerApplyTimeout = 15 * time.Second
+
+const hookBrokerAckTTL = time.Minute
+
+type pendingHookAck struct {
+	sessionID string
+	commit    func()
+	release   func()
+	timer     *time.Timer
+}
+
+var hookAckRegistry = struct {
+	sync.Mutex
+	pending map[string]*pendingHookAck
+}{pending: make(map[string]*pendingHookAck)}
+
+func registerHookAck(sessionID string, commit, release func()) (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(raw[:])
+	entry := &pendingHookAck{sessionID: sessionID, commit: commit, release: release}
+	// Publish while holding the same lock the expiry callback takes. If the
+	// process is suspended for longer than the TTL immediately after starting
+	// the timer, the callback must wait until the entry is visible rather than
+	// observe no entry and leave a subsequently published lock owner immortal.
+	hookAckRegistry.Lock()
+	entry.timer = time.AfterFunc(hookBrokerAckTTL, func() {
+		var release func()
+		hookAckRegistry.Lock()
+		if hookAckRegistry.pending[token] == entry {
+			delete(hookAckRegistry.pending, token)
+			release = entry.release
+		}
+		hookAckRegistry.Unlock()
+		if release != nil {
+			release()
+		}
+	})
+	hookAckRegistry.pending[token] = entry
+	hookAckRegistry.Unlock()
+	return token, nil
+}
+
+func resolveHookAck(sessionID, token string, delivered bool) bool {
+	hookAckRegistry.Lock()
+	entry := hookAckRegistry.pending[token]
+	if entry == nil || entry.sessionID != sessionID {
+		hookAckRegistry.Unlock()
+		return false
+	}
+	delete(hookAckRegistry.pending, token)
+	_ = entry.timer.Stop()
+	hookAckRegistry.Unlock()
+	defer func() {
+		if entry.release != nil {
+			entry.release()
+		}
+	}()
+	if delivered && entry.commit != nil {
+		entry.commit()
+	}
+	return true
+}
 
 // safeBrokeredConvID rejects a conversation id that is not a single
 // path-safe segment.
@@ -160,6 +227,15 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			"claimed session id does not match the session resolved for this caller")
 		return
 	}
+	if req.AckToken != "" {
+		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {
+			writeError(w, http.StatusConflict, "ack",
+				"hook delivery acknowledgement is invalid, expired, or already consumed")
+			return
+		}
+		writeJSON(w, http.StatusOK, session.BrokeredHookResponse{})
+		return
+	}
 
 	if !safeBrokeredConvID(req.Input.ConvID) {
 		writeError(w, http.StatusBadRequest, "body",
@@ -188,8 +264,14 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), hookBrokerApplyTimeout)
 	defer cancel()
 
-	var stdout bytes.Buffer
-	if err := session.DispatchHookEvent(ctx, req.Input, row.ID, amb, &stdout); err != nil {
+	resp, err := session.PrepareHookEvent(ctx, req.Input, row.ID, amb)
+	releaseOwned := true
+	defer func() {
+		if releaseOwned {
+			resp.Release()
+		}
+	}()
+	if err != nil {
 		slog.Warn("hook broker: applying brokered hook event failed",
 			"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
 		if ctx.Err() != nil {
@@ -200,12 +282,33 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to apply hook event")
 		return
 	}
+	var stdout bytes.Buffer
+	if err := resp.Write(&stdout, req.Input.HookEventName); err != nil {
+		writeError(w, http.StatusInternalServerError, "hook", "failed to encode hook response")
+		return
+	}
 	if req.Input.HookEventName == "UserPromptSubmit" {
 		if harnessName, cwd, ok := brokeredAutoNameTarget(row.ID, req.Input.ConvID); ok {
 			scheduleAutoName(req.Input.ConvID, harnessName, cwd, req.Input.Prompt)
 		}
 	}
-	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{Stdout: stdout.String()})
+	var ackToken string
+	if resp.HasCommit() || resp.HasRelease() {
+		ackToken, err = registerHookAck(row.ID, resp.Commit, resp.Release)
+		if err != nil {
+			slog.Warn("hook broker: could not register delivery acknowledgement",
+				"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
+			writeError(w, http.StatusInternalServerError, "hook",
+				"could not prepare hook delivery acknowledgement")
+			return
+		}
+		// The registry now owns Release and runs it after a successful or
+		// failed acknowledgement, or when the token expires.
+		releaseOwned = false
+	}
+	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{
+		Stdout: stdout.String(), AckToken: ackToken,
+	})
 }
 
 // brokeredAutoNameTarget re-resolves the row after dispatch and proves the
