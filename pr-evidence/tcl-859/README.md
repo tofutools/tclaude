@@ -1,7 +1,7 @@
 # TCL-859 real-dashboard evidence
 
 These captures were produced by the production dashboard handler at feature
-tip `5df2206f3a8e74a0279cdd515328d6215059ef62`. The visual-smoke harness opened
+tip `bf8d3e38cdfd974e109a9085ba2ce59623598caa`. The visual-smoke harness opened
 the real profile editor with `module.openSandboxProfileEditor(seed)`, selected
 Claude + tclaude-layer + Linux, and expanded the effective-policy preview's
 Fully supported bucket.
