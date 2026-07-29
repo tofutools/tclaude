@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -934,15 +935,20 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeList {
-			probe := ProbeFilteredNetworkPrerequisite()
-			filteredNetworkProbe = &probe
-			if supportErr := ValidateFilteredNetworkHarnessSupport(
-				h, sandboxImplementation, axes, probe,
-			); supportErr != nil {
-				return supportErr
-			}
-			if probe.Detected {
+			if runtime.GOOS == "darwin" &&
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
+			} else if runtime.GOOS == "linux" {
+				probe := ProbeFilteredNetworkPrerequisite()
+				filteredNetworkProbe = &probe
+				if supportErr := ValidateFilteredNetworkHarnessSupport(
+					h, sandboxImplementation, axes, probe,
+				); supportErr != nil {
+					return supportErr
+				}
+				if probe.Detected {
+					tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
+				}
 			}
 		}
 	}
@@ -1134,16 +1140,18 @@ func runNew(params *NewParams) error {
 		}
 		filteredEnforcing := rendered.Network.Mode == sandboxpolicy.AccessModeList &&
 			launchOSSandbox.FilteredNetwork
-		notices = appendFilteredNetworkPrerequisiteNotice(
-			notices, outerLayer, axes.Network,
-			filteredEnforcing,
-			func() FilteredNetworkPrerequisite {
-				if filteredNetworkProbe != nil {
-					return *filteredNetworkProbe
-				}
-				return ProbeFilteredNetworkPrerequisite()
-			},
-		)
+		if runtime.GOOS == "linux" {
+			notices = appendFilteredNetworkPrerequisiteNotice(
+				notices, outerLayer, axes.Network,
+				filteredEnforcing,
+				func() FilteredNetworkPrerequisite {
+					if filteredNetworkProbe != nil {
+						return *filteredNetworkProbe
+					}
+					return ProbeFilteredNetworkPrerequisite()
+				},
+			)
+		}
 		if tclaudeLayerPosture == sandboxpolicy.NetworkFiltered && !filteredEnforcing {
 			tclaudeLayerPosture = sandboxpolicy.NetworkHostOpen
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(

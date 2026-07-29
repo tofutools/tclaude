@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -178,16 +179,21 @@ func planSandboxProfileAccessForLaunch(
 			posture = sandboxpolicy.NetworkIsolatedWithAgentd
 		} else if axes.Network.Mode == sandboxpolicy.AccessModeList &&
 			implementation == sandboxpolicy.ImplementationTclaudeLayer {
-			probe := probeFilteredNetworkPrerequisite()
-			filteredProbe = &probe
-			if supportErr := session.ValidateFilteredNetworkHarnessSupport(
-				h, implementation, axes, probe,
-			); supportErr != nil {
-				return nil, sandboxCapabilitySpawnFailure(
-					supportErr, "unsupported_sandbox_profile_access")
-			}
-			if probe.Detected {
+			if runtime.GOOS == "darwin" &&
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				posture = sandboxpolicy.NetworkFiltered
+			} else if runtime.GOOS == "linux" {
+				probe := probeFilteredNetworkPrerequisite()
+				filteredProbe = &probe
+				if supportErr := session.ValidateFilteredNetworkHarnessSupport(
+					h, implementation, axes, probe,
+				); supportErr != nil {
+					return nil, sandboxCapabilitySpawnFailure(
+						supportErr, "unsupported_sandbox_profile_access")
+				}
+				if probe.Detected {
+					posture = sandboxpolicy.NetworkFiltered
+				}
 			}
 		}
 		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
@@ -208,7 +214,7 @@ func planSandboxProfileAccessForLaunch(
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
-	if implementation.UsesTclaudeLayer() &&
+	if runtime.GOOS == "linux" && implementation.UsesTclaudeLayer() &&
 		axes.Network.Mode == sandboxpolicy.AccessModeList {
 		if filteredProbe == nil {
 			probe := probeFilteredNetworkPrerequisite()

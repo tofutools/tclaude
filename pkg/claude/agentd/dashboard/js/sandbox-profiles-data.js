@@ -71,6 +71,57 @@ export function sandboxAccessAxes(profile = {}) {
   return { network, unix_sockets: unixSockets };
 }
 
+const LOCAL_MODEL_APIS_ALLOW = [
+  { loopback: true },
+  { domain: 'api.anthropic.com', ports: [443] },
+  { domain: 'api.openai.com', ports: [443] },
+];
+
+function isExactLocalEntry(entry = {}) {
+  const selectors = ['host', 'domain', 'cidr'].filter((key) => !!entry[key]).length
+    + (entry.loopback === true ? 1 : 0);
+  const ports = Array.isArray(entry.ports) ? entry.ports
+    : String(entry.ports || '').split(',').filter((part) => part.trim());
+  return selectors === 1 && entry.loopback === true && ports.length === 0;
+}
+
+function isExactModelAPIEntry(entry = {}, domain = '') {
+  const selectors = ['host', 'domain', 'cidr'].filter((key) => !!entry[key]).length
+    + (entry.loopback === true ? 1 : 0);
+  return selectors === 1
+    && entry.domain === domain
+    && entry.include_subdomains !== true
+    && Array.isArray(entry.ports)
+    && entry.ports.length === 1
+    && Number(entry.ports[0]) === 443;
+}
+
+// These are editor presets, not wire modes. Keep recognition deliberately
+// exact so any port, selector, ordering, or destination edit remains visibly
+// editable as Access list instead of hiding authored detail.
+export function sandboxNetworkEditorMode(network = {}) {
+  const rules = sandboxAccessAxes({ network }).network;
+  if (rules.mode === 'list') {
+    if (rules.allow.length === 1 && isExactLocalEntry(rules.allow[0])) return 'local';
+    if (rules.allow.length === LOCAL_MODEL_APIS_ALLOW.length
+        && isExactLocalEntry(rules.allow[0])
+        && isExactModelAPIEntry(rules.allow[1], LOCAL_MODEL_APIS_ALLOW[1].domain)
+        && isExactModelAPIEntry(rules.allow[2], LOCAL_MODEL_APIS_ALLOW[2].domain)) {
+      return 'local-model-apis';
+    }
+  }
+  return rules.mode || '';
+}
+
+export function sandboxNetworkRulesForEditorMode(network = {}, mode = '') {
+  const rules = sandboxAccessAxes({ network }).network;
+  if (mode === 'local') return { mode: 'list', allow: [{ loopback: true }] };
+  if (mode === 'local-model-apis') {
+    return { mode: 'list', allow: structuredClone(LOCAL_MODEL_APIS_ALLOW) };
+  }
+  return { mode, allow: mode === 'list' ? rules.allow : [] };
+}
+
 function portsForWire(value) {
   if (Array.isArray(value)) return value.map(Number);
   const text = String(value || '').trim();

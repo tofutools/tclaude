@@ -497,6 +497,56 @@ func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	assert.Contains(t, notices[0].Detail, FilteredNetworkDNSIdentityCaveat)
 }
 
+func TestDarwinTclaudeLayerEnforcesOnlyLoopbackOnlyLists(t *testing.T) {
+	local := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true, Ports: []int{11434},
+		}},
+	}}
+	row, err := accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		local, ClaudeSandboxOff, "darwin", true,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceFull, row.NetworkList)
+	assert.Equal(t, EnforceFull, row.NetworkPorts)
+	assert.Equal(t, []NetworkSelectorCapability{{
+		Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+		Level:    EnforceFull,
+	}}, row.NetworkSelectors)
+	rendered, notices, err := PlanAccessEnforcement(
+		local, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, local, rendered)
+	assert.Empty(t, notices)
+
+	mixed := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true},
+			{Domain: "api.example.com", Ports: []int{443}},
+		},
+	}}
+	row, err = accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		mixed, ClaudeSandboxOff, "darwin", false,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, row.NetworkList,
+		"existing mixed Darwin lists must keep their historical NotEnforced result")
+	assert.Empty(t, row.NetworkListRefusal)
+	assert.Empty(t, row.NetworkSelectorRefusal)
+	rendered, notices, err = PlanAccessEnforcement(
+		mixed, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	require.Len(t, notices, 1)
+	assert.Equal(t, "no_mechanism", notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "outbound network access remains open")
+}
+
 func TestClosedPartialEnforcesAndWarnsButClosedNoneRefuses(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeClosed},

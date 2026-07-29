@@ -51,6 +51,41 @@ func TestCompileFilteredNetworkRulesRejectsNonListAndAmbiguousEntries(t *testing
 	require.ErrorContains(t, err, "exactly one")
 }
 
+func TestLoopbackOnlyClassifiersRequireNonEmptyAllLoopbackRules(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules NetworkRules
+		want  bool
+	}{
+		{"preset", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Loopback: true}}}, true},
+		{"port scoped", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{{Loopback: true, Ports: []int{11434}}}}, true},
+		{"multiple port rows", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{
+			{Loopback: true, Ports: []int{3000}},
+			{Loopback: true, Ports: []int{11434}},
+		}}, true},
+		{"empty list", NetworkRules{Mode: AccessModeList}, false},
+		{"closed", NetworkRules{Mode: AccessModeClosed}, false},
+		{"mixed", NetworkRules{Mode: AccessModeList, Allow: []NetworkAllowEntry{
+			{Loopback: true}, {Domain: "api.example.com"},
+		}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, NetworkRulesAreLoopbackOnly(tc.rules))
+			if tc.rules.Mode != AccessModeList {
+				return
+			}
+			ir, err := CompileFilteredNetworkRules(tc.rules)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, FilteredNetworkRulesAreLoopbackOnly(&ir))
+		})
+	}
+	assert.False(t, FilteredNetworkRulesAreLoopbackOnly(nil))
+	assert.False(t, FilteredNetworkRulesAreLoopbackOnly(&FilteredNetworkRuleSet{
+		ProtocolContract: "future",
+		Rules:            []FilteredNetworkRule{{Selector: NetworkSelectorLoopback}},
+	}))
+}
+
 func TestFilteredNetworkProtocolContractStaysBounded(t *testing.T) {
 	assert.Contains(t, FilteredNetworkProtocolContract, "IPv4/IPv6 TCP and UDP")
 	assert.Contains(t, FilteredNetworkProtocolContract, "QUIC is UDP")

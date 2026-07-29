@@ -15,26 +15,33 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-func TestResolveTclaudeLayerDarwinRefusesUnsupportedNetworkBeforeProbe(t *testing.T) {
+func TestResolveTclaudeLayerDarwinAcceptsFilteredSeatbeltCapability(t *testing.T) {
 	oldStat := statDarwinSeatbelt
 	oldProbe := probeDarwinSeatbelt
 	t.Cleanup(func() {
 		statDarwinSeatbelt = oldStat
 		probeDarwinSeatbelt = oldProbe
 	})
-	statDarwinSeatbelt = func(string) (os.FileInfo, error) {
-		t.Fatal("unsupported posture must refuse before inspecting sandbox-exec")
-		return nil, nil
+	executable, err := os.Stat(os.Args[0])
+	require.NoError(t, err)
+	statDarwinSeatbelt = func(path string) (os.FileInfo, error) {
+		assert.Equal(t, darwinSeatbeltExecutable, path)
+		return executable, nil
 	}
-	probeDarwinSeatbelt = func(string) error {
-		t.Fatal("unsupported posture must refuse before probing sandbox-exec")
+	probed := false
+	probeDarwinSeatbelt = func(path string) error {
+		probed = true
+		assert.Equal(t, darwinSeatbeltExecutable, path)
 		return nil
 	}
 
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
-	require.ErrorContains(t, err, "does not support reserved filtered networking")
-	assert.Equal(t, "off", verdict.State)
-	assert.Equal(t, "tclaude-layer unavailable", verdict.Source)
+	binary, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	require.NoError(t, err)
+	assert.Equal(t, darwinSeatbeltExecutable, binary)
+	assert.True(t, probed)
+	assert.Equal(t, "on", verdict.State)
+	assert.True(t, verdict.FilteredNetwork)
+	assert.Contains(t, verdict.Source, "local access")
 }
 
 func TestResolveTclaudeLayerDarwinAcceptsIsolatedNetwork(t *testing.T) {
@@ -186,6 +193,13 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 		isolated.Source,
 	)
 	assert.True(t, isolated.Unverified)
+
+	local := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered)
+	assert.Equal(t, "on", local.State)
+	assert.True(t, local.FilteredNetwork)
+	assert.Contains(t, local.Source, "real host loopback")
+	assert.Contains(t, local.Source, "IDE bridge")
+	assert.True(t, local.Unverified)
 
 	openCode := TclaudeLayerLaunchOSSandboxForHarness(
 		"opencode", sandboxpolicy.NetworkHostOpen)

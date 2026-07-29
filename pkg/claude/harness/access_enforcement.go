@@ -223,7 +223,9 @@ func PredictAccessEnforcement(
 	}
 	row, err := accessEnforcementTable(
 		h, implementation, axes, validatedBuiltinMode, platform,
-		platform == "linux",
+		platform == "linux" ||
+			(platform == "darwin" &&
+				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network)),
 	)
 	if err != nil {
 		return PredictedAccessEnforcement{}, err
@@ -285,6 +287,18 @@ func accessEnforcementTable(
 			caps.NetworkListCondition =
 				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			goos == "darwin" && filteredNetworkReady &&
+			(h.Name == DefaultName || h.Name == CodexName) &&
+			sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
+			caps.NetworkList = EnforceFull
+			caps.NetworkSelectors = []NetworkSelectorCapability{{
+				Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+				Level:    EnforceFull,
+			}}
+			caps.NetworkPorts = EnforceFull
+			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull

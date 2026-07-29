@@ -37,6 +37,37 @@ type FilteredNetworkRule struct {
 	Ports             []int               `json:"ports,omitempty"`
 }
 
+// NetworkRulesAreLoopbackOnly identifies the one filtered-list shape Darwin
+// can enforce natively without a proxy. The list must be non-empty: an empty
+// list is "nothing allowed", not the editor's Local access preset.
+func NetworkRulesAreLoopbackOnly(rules NetworkRules) bool {
+	if rules.Mode != AccessModeList || len(rules.Allow) == 0 {
+		return false
+	}
+	for _, entry := range rules.Allow {
+		if !entry.Loopback || entry.Host != "" || entry.Domain != "" || entry.CIDR != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// FilteredNetworkRulesAreLoopbackOnly is the launch-IR equivalent of
+// NetworkRulesAreLoopbackOnly. Appliers use it as a final fail-closed check:
+// capability planning may select Darwin's native path only for this shape.
+func FilteredNetworkRulesAreLoopbackOnly(rules *FilteredNetworkRuleSet) bool {
+	if rules == nil || rules.ProtocolContract != FilteredNetworkProtocolContract ||
+		len(rules.Rules) == 0 {
+		return false
+	}
+	for _, rule := range rules.Rules {
+		if rule.Selector != NetworkSelectorLoopback {
+			return false
+		}
+	}
+	return true
+}
+
 // CompileFilteredNetworkRules creates the stable gateway IR from a validated
 // list. It reuses profile normalization so callers cannot smuggle an ambiguous
 // selector into the future data plane.
