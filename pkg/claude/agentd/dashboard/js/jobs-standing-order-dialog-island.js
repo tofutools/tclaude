@@ -9,7 +9,7 @@ import { agentCandidates, groupMembers, groupsForPicker } from './message-access
 import { idTooltip, shortAgentId } from './helpers.js';
 import {
   buildStandingOrderMutation, createStandingOrderDraft,
-  standingOrderDraftDirty, validateStandingOrderDraft,
+  standingOrderDraftDirty, STANDING_ORDER_MATCH_FIELDS, validateStandingOrderDraft,
 } from './jobs-dialog-model.js';
 
 const html = htm.bind(h);
@@ -25,12 +25,24 @@ const TRIGGER_EVENTS = [
   ['tool.before', 'Before tool use'],
   ['tool.after', 'After tool use'],
 ];
-const MATCH_FIELDS = {
-  'session.start': [['', 'Any matching boundary'], ['cwd', 'Working directory']],
-  'user.prompt': [['', 'Any submitted prompt'], ['prompt', 'Prompt text'], ['cwd', 'Working directory']],
-  'tool.before': [['', 'Any tool call'], ['tool_name', 'Tool name'], ['tool_input', 'Tool input (compact JSON)'], ['cwd', 'Working directory']],
-  'tool.after': [['', 'Any completed tool call'], ['tool_name', 'Tool name'], ['tool_input', 'Tool input (compact JSON)'], ['cwd', 'Working directory']],
+const MATCH_FIELD_LABELS = {
+  cwd: 'Working directory',
+  prompt: 'Prompt text',
+  tool_name: 'Tool name',
+  tool_input: 'Tool input (compact JSON)',
 };
+const ANY_MATCH_LABELS = {
+  'session.start': 'Any matching boundary',
+  'user.prompt': 'Any submitted prompt',
+  'tool.before': 'Any tool call',
+  'tool.after': 'Any completed tool call',
+};
+const MATCH_FIELDS = Object.fromEntries(
+  Object.entries(STANDING_ORDER_MATCH_FIELDS).map(([trigger, fields]) => [
+    trigger,
+    fields.map((field) => [field, field ? MATCH_FIELD_LABELS[field] : ANY_MATCH_LABELS[trigger]]),
+  ]),
+);
 
 function StandingOrderTargetPicker({ value, onChange, snapshot }) {
   const scope = value.scopeGroup || '';

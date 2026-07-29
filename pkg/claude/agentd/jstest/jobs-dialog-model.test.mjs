@@ -130,6 +130,9 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     sources: [], match_field: 'prompt', match_regex: '(?i)\\bdeploy\\b',
     timing: 'same-continuation', cadence: 'always', cooldown_seconds: 0, enabled: true,
   });
+  prompt.matchRegex = ' deploy ';
+  assert.equal(model.buildStandingOrderMutation({ kind: 'create' }, prompt).payload.match_regex,
+    ' deploy ', 'regex whitespace is meaningful and must be preserved');
   prompt.matchRegex = '(?=deploy)';
   assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, prompt).code, 'match-regex-re2');
 });

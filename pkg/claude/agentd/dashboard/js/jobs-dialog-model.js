@@ -181,6 +181,13 @@ export function standingOrderDraftDirty(draft, initial) {
   return JSON.stringify(draft) !== JSON.stringify(initial);
 }
 
+export const STANDING_ORDER_MATCH_FIELDS = Object.freeze({
+  'session.start': Object.freeze(['', 'cwd']),
+  'user.prompt': Object.freeze(['', 'prompt', 'cwd']),
+  'tool.before': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+  'tool.after': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
+});
+
 export function validateStandingOrderDraft(dialog, draft) {
   const target = cronTargetValue(draft.target);
   if (!target) {
@@ -198,16 +205,10 @@ export function validateStandingOrderDraft(dialog, draft) {
       draft.sourceMode === 'selected' && draft.sources.length === 0) {
     return { code: 'sources', message: 'Select at least one session-boundary source, or choose Any source.' };
   }
-  const matchFields = {
-    'session.start': ['', 'cwd'],
-    'user.prompt': ['', 'prompt', 'cwd'],
-    'tool.before': ['', 'tool_name', 'tool_input', 'cwd'],
-    'tool.after': ['', 'tool_name', 'tool_input', 'cwd'],
-  };
-  if (!matchFields[draft.triggerEvent]) {
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent]) {
     return { code: 'trigger', message: 'Pick a supported trigger event.' };
   }
-  if (!matchFields[draft.triggerEvent].includes(draft.matchField)) {
+  if (!STANDING_ORDER_MATCH_FIELDS[draft.triggerEvent].includes(draft.matchField)) {
     return { code: 'match-field', message: 'Pick a match field supported by this trigger.' };
   }
   if (!!draft.matchField !== !!draft.matchRegex.trim()) {

@@ -205,6 +205,23 @@ func TestOrdersExplainSuppliesRegexMatcherInputs(t *testing.T) {
 	assert.Contains(t, out.String(), db.StandingOutcomeNoMatch)
 }
 
+func TestOrdersExplainNormalizesCwdLikeLiveHooks(t *testing.T) {
+	setupTestDB(t)
+	groupID, convID := seedGroupWithMember(t)
+	seedOrder(t, func(o *db.StandingOrder) {
+		o.GroupID = groupID
+		o.MatchField = db.StandingMatchFieldCwd
+		o.MatchRegex = `^/work/project$`
+	})
+
+	var out, errOut bytes.Buffer
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerSessionStart, Source: db.StandingSourceCompact,
+		Conv: convID, Harness: harness.DefaultName, Cwd: "  /work/project  ",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeDelivered)
+}
+
 func TestOrdersExplainNoOrders(t *testing.T) {
 	setupTestDB(t)
 	_, convID := seedGroupWithMember(t)

@@ -252,7 +252,7 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 		Harness:        p.Harness,
 		PayloadTrimmed: p.Trimmed,
 		OccurredAt:     time.Now(),
-		Cwd:            p.Cwd,
+		Cwd:            strings.TrimSpace(p.Cwd),
 		Prompt:         p.Prompt,
 		ToolName:       standingorders.NormalizeToolName(p.Tool),
 		ToolInput:      standingorders.NormalizeToolInput([]byte(p.Input)),
