@@ -724,6 +724,19 @@ func TestNetworkPostureForAccess(t *testing.T) {
 	}
 }
 
+func TestNetworkPostureForOpenDenyUsesFilteredGateway(t *testing.T) {
+	got, err := NetworkPostureForRules(NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != NetworkFiltered {
+		t.Fatalf("open network with deny posture = %s, want filtered", got)
+	}
+}
+
 // TestMountPlanSnapshot pins the diffable rendering. These strings are the
 // groundwork for a dry-run/effective-plan surface, so a change to them is a
 // change to an operator-facing contract and should be deliberate.

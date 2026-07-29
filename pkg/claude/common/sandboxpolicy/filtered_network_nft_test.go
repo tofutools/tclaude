@@ -96,7 +96,7 @@ func TestRenderFilteredNetworkNFTRendersBoundedTTLLeaseSets(t *testing.T) {
 	assert.Contains(t, got, "ip6 daddr @dns6_2 udp dport { 443 } accept")
 }
 
-func TestRenderFilteredNetworkNFTRejectsDuplicateAuthoredIndexes(t *testing.T) {
+func TestRenderFilteredNetworkNFTRejectsDuplicateStableIndexes(t *testing.T) {
 	_, err := RenderFilteredNetworkNFT(FilteredNetworkRuleSet{
 		ProtocolContract: FilteredNetworkProtocolContract,
 		Rules: []FilteredNetworkRule{
@@ -104,7 +104,7 @@ func TestRenderFilteredNetworkNFTRejectsDuplicateAuthoredIndexes(t *testing.T) {
 			{EntryIndex: 4, Selector: NetworkSelectorDomain, Value: "two.example"},
 		},
 	})
-	require.ErrorContains(t, err, "repeats authored index 4")
+	require.ErrorContains(t, err, "repeats stable index 4")
 }
 
 func TestFilteredNetworkHostsFileMovesHostRowsBehindBroker(t *testing.T) {

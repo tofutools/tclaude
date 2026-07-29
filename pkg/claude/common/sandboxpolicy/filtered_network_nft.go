@@ -49,11 +49,11 @@ func RenderFilteredNetworkNFT(rules FilteredNetworkRuleSet) (string, error) {
 		seenEntryIndexes := make(map[int]struct{}, len(polarity.rules))
 		for i, rule := range polarity.rules {
 			if rule.EntryIndex < 0 {
-				return "", fmt.Errorf("filtered network rule %d has invalid authored index", i)
+				return "", fmt.Errorf("filtered network rule %d has invalid stable index", i)
 			}
 			if _, exists := seenEntryIndexes[rule.EntryIndex]; exists {
 				return "", fmt.Errorf(
-					"filtered network rule %d repeats authored index %d",
+					"filtered network rule %d repeats stable index %d",
 					i, rule.EntryIndex,
 				)
 			}

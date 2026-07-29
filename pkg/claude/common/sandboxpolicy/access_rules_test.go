@@ -457,6 +457,33 @@ func TestReplacingLaunchDegradationsCannotWidenNewIntent(t *testing.T) {
 		"a stale list degradation must not override newly closed intent")
 }
 
+func TestPlannedEffectiveAccessAxesOmitsOnlyDisclosedDenyRows(t *testing.T) {
+	effective := EffectiveProfile{
+		Network: &NetworkRules{
+			Mode: AccessModeOpen,
+			Deny: []NetworkAllowEntry{
+				{CIDR: "192.0.2.0/24"},
+				{Host: "ports.example", Ports: []int{443}},
+				{Host: "kept.example"},
+			},
+		},
+		AccessNotices: []AccessNotice{
+			{
+				Class: AccessNoticeClassDegradation, Axis: "network",
+				Reason: "deny_selector_unsupported", Entries: []int{0},
+			},
+			{
+				Class: AccessNoticeClassDegradation, Axis: "network",
+				Reason: "deny_ports_unsupported", Entries: []int{1},
+			},
+		},
+	}
+	planned, err := PlannedEffectiveAccessAxes(effective)
+	require.NoError(t, err)
+	assert.Equal(t, []NetworkAllowEntry{{Host: "kept.example"}},
+		planned.Network.Deny)
+}
+
 func TestNetworkAccessCompatibilityDerivation(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -650,6 +677,29 @@ func TestAccessAxisSnapshotContainmentPreservesSelectorsPortsAndAmbientBoundary(
 		NetworkRules{Mode: AccessModeClosed},
 		NetworkRules{Mode: AccessModeList},
 	), "an empty network list carries no more authority than closed")
+	denyParent := NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+			Ports: []int{443},
+		}},
+	}
+	assert.False(t, networkRulesContained(
+		denyParent, NetworkRules{Mode: AccessModeClosed}),
+		"containment conservatively requires launched denies to persist")
+	assert.True(t, networkRulesContained(denyParent, NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+		}},
+	}), "a broader child deny preserves the parent's denied authority")
+	assert.False(t, networkRulesContained(denyParent, NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+			Ports: []int{8443},
+		}},
+	}), "a disjoint child deny port does not preserve the parent deny")
 
 	socketParent := UnixSocketRules{Mode: AccessModeList, Allow: []SocketAllowEntry{{
 		PathGlob: "/tmp/service-*.sock",

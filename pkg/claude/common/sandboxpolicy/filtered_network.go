@@ -30,8 +30,8 @@ const (
 )
 
 // FilteredNetworkRuleSet is the normalized, harness-independent control-plane
-// input for the future filtered gateway. It is inert until a launch adapter
-// consumes it: compiling this IR does not establish enforcement.
+// input for the filtered gateway. It is inert until a launch adapter consumes
+// it: compiling this IR does not establish enforcement.
 type FilteredNetworkRuleSet struct {
 	ProtocolContract string `json:"protocol_contract"`
 	// DefaultVerdict is omitted by legacy allow-only relays. An absent value
@@ -41,8 +41,9 @@ type FilteredNetworkRuleSet struct {
 	DenyRules      []FilteredNetworkRule         `json:"deny_rules,omitempty"`
 }
 
-// FilteredNetworkRule preserves the authored entry index so capability and
-// launch disclosures can identify exactly which rule carries a caveat.
+// FilteredNetworkRule uses a stable polarity-local index after canonical
+// sorting. Capability disclosures retain their separate authored-row indices
+// before this launch IR is compiled.
 type FilteredNetworkRule struct {
 	EntryIndex        int                 `json:"entry_index"`
 	Selector          NetworkSelectorKind `json:"selector"`
