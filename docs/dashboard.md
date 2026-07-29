@@ -204,7 +204,18 @@ started. Add any of `--dashboard-port`, `--dashboard-bind` or
 `--auto-launch-dashboard` and you get **both** surfaces over the same daemon —
 the text UI in your terminal and the web dashboard in the browser, showing the
 same agents. The console names the dashboard's URL in its header when one is
-running.
+running, and on an operator console that URL is ready to open: like the
+`--print` one it carries a single-use init token, so the browser lands in the
+dashboard already signed in instead of on its sign-in page. The console
+replaces the link as it ages, so open the one on screen rather than a copy you
+kept — and if the browser says the link was already used, come back for the
+next one.
+
+The token is only ever put on screen for a console the daemon classifies as the
+operator. A console that is [classified as an agent](#output-under---tui) — and
+so can read its own pane — gets the plain URL and no token, as does a console
+started with `--no-print-human-token`, which says this terminal's output is
+scraped or logged. Sign in with the operator token in those cases.
 
 ```bash
 tclaude agentd serve --tui                        # terminal UI only

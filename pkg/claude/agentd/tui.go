@@ -77,6 +77,11 @@ type tuiStartup struct {
 	// --no-print-human-token suppressed it entirely.
 	operatorToken string
 	tokenSource   tokenSource
+	// suppressSecrets is --no-print-human-token: the operator has said this
+	// terminal's output is scraped or logged, so nothing the console can put on
+	// the screen may be a credential. It already covers the token banner by
+	// leaving operatorToken empty; it covers the dashboard sign-in link too.
+	suppressSecrets bool
 }
 
 func startServeTUI(quit *quitter, startup tuiStartup) func() error {
@@ -88,6 +93,9 @@ func startServeTUI(quit *quitter, startup tuiStartup) func() error {
 
 	m := newTUIModel(newInProcessTUIAPI())
 	m.dashboardURL = startup.dashboardURL
+	m.suppressSecrets = startup.suppressSecrets
+	// The first screen is drawn before the first tick.
+	m = m.refreshDashboardLink(time.Now())
 	m.tokenLines = tuiOperatorTokenLines(startup.operatorToken, startup.tokenSource)
 	m.showTokenBanner = len(m.tokenLines) > 0
 
@@ -575,6 +583,16 @@ type tuiModel struct {
 	// when --tui is the only surface. It changes what the console can honestly
 	// say about approvals and deep links.
 	dashboardURL string
+	// dashboardLink is dashboardURL carrying a fresh init token, so opening it
+	// lands in the dashboard already signed in instead of on its sign-in page.
+	// dashboardLinkMinted is when its token was minted, which is what decides
+	// when refreshDashboardLink replaces it. Both are empty on a console that
+	// may not put a credential on the screen — see canMintDashboardLink.
+	dashboardLink       string
+	dashboardLinkMinted time.Time
+	// suppressSecrets is --no-print-human-token: this terminal's output is
+	// scraped or logged, so the console shows no credential of any kind.
+	suppressSecrets bool
 	// tokenLines is the operator-token block this console shows in place of
 	// the stdout banner, empty when stdout printed it. showTokenBanner is the
 	// startup presentation of that block; it goes away on the first keystroke,
@@ -773,6 +791,102 @@ func newTUIModel(api tuiAPI) tuiModel {
 	return m
 }
 
+// remoteConsole reports whether this console drives a daemon in another
+// process. A remote operator is still the operator, but the daemon's host,
+// terminal and in-memory state are not this process's.
+func (m tuiModel) remoteConsole() bool {
+	return m.connectionLabel != "" && m.connectionLabel != "in-process"
+}
+
+// tuiDashboardLinkRotate is how long a minted sign-in link stays on screen
+// before the console replaces it. Well under initTokenTTL, so the link being
+// looked at always has time left to be opened; well over tuiRefreshInterval,
+// so the line is not rewritten under a mouse dragging a selection across it.
+const tuiDashboardLinkRotate = 40 * time.Second
+
+// canMintDashboardLink reports whether this console may put a dashboard
+// sign-in link on its screen.
+//
+// The link is a capability: redeeming it at the dashboard root buys a session
+// cookie, and with it the whole authenticated /api surface that
+// handleDashboardOpen guards with peer-cred requireHuman precisely so agents
+// cannot reach it. So it goes on screen only when the screen is the human's:
+//
+//   - m.operator — the daemon classifies this console as the human. An agentd
+//     started from inside a harness pane is classified as that agent instead
+//     (see identityWarning), and that agent can read the pane it is running in:
+//     minting there would hand it, via tmux capture-pane, the very authority
+//     the permission system exists to withhold. Such a console still gets the
+//     dashboard's address, just no token on it.
+//   - not --no-print-human-token, whose whole point is that this terminal's
+//     output is scraped or logged, so no credential may appear on it.
+//
+// A remote console is excluded for a different reason: mintInitToken writes
+// this process's in-memory store, which is the dashboard's store exactly when
+// the daemon is this process. A token from here would be worthless there.
+func (m tuiModel) canMintDashboardLink() bool {
+	return m.dashboardURL != "" && !m.remoteConsole() && m.operator && !m.suppressSecrets
+}
+
+// refreshDashboardLink keeps the console's ready-to-open dashboard link
+// openable, minting a replacement once the current one has been up for
+// tuiDashboardLinkRotate.
+//
+// Init tokens are single-use and expire in a minute (see inittoken.go), so one
+// minted at startup and left there would be dead long before the operator got
+// round to it. Rotating on age rather than on every tick is what keeps the
+// line stable enough to select and copy, and leaves at most a couple of
+// unredeemed tokens in the store at a time; the cost is that the link visibly
+// on screen may already have been spent by an earlier open, which the
+// dashboard answers with its "expired or was already used" sign-in page rather
+// than a dead end.
+func (m tuiModel) refreshDashboardLink(now time.Time) tuiModel {
+	if !m.canMintDashboardLink() {
+		m.dashboardLink, m.dashboardLinkMinted = "", time.Time{}
+		return m
+	}
+	if m.dashboardLink != "" && now.Sub(m.dashboardLinkMinted) < tuiDashboardLinkRotate {
+		return m
+	}
+	m.dashboardLink = m.dashboardURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+	m.dashboardLinkMinted = now
+	return m
+}
+
+// dashboardAddressLine is the address the console prints for the co-running
+// web dashboard: the signed-in link when it has one, the bare URL otherwise.
+// Empty means there is nothing to print — no dashboard, or a remote console,
+// which names its connection instead.
+func (m tuiModel) dashboardAddressLine() string {
+	if m.dashboardURL == "" || m.remoteConsole() {
+		return ""
+	}
+	if m.dashboardLink != "" {
+		return m.dashboardLink
+	}
+	return m.dashboardURL
+}
+
+// dashboardAddressIndent is the address line's leading indent, counted into
+// its width because the terminal wraps on the whole line.
+const dashboardAddressIndent = 4
+
+// dashboardAddressRows is how many terminal rows the address line occupies. A
+// URL only works whole, so a narrow terminal wraps it rather than the console
+// truncating it — and then the row budget has to pay for every row it took,
+// or the list overflows the alt screen (see viewportHeight).
+func (m tuiModel) dashboardAddressRows() int {
+	addr := m.dashboardAddressLine()
+	if addr == "" {
+		return 0
+	}
+	w := lipgloss.Width(addr) + dashboardAddressIndent
+	if m.width <= 0 || w <= m.width {
+		return 1
+	}
+	return (w + m.width - 1) / m.width
+}
+
 func (m tuiModel) visibleAgents() []tuiAgentRow {
 	if !m.filterActive {
 		return m.agents
@@ -799,6 +913,8 @@ const tuiListChrome = 9
 // lines.
 func (m tuiModel) viewportHeight() int {
 	chrome := tuiListChrome
+	// The dashboard address takes header lines of its own when there is one.
+	chrome += m.dashboardAddressRows()
 	if m.showTokenBanner {
 		chrome += len(m.tokenLines) + 2
 	}
@@ -1652,6 +1768,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuiTickMsg:
 		cmds := []tea.Cmd{tuiTickCmd()}
+		// Keep the header's dashboard link openable: a one-minute token has to
+		// be replaced before it expires under the operator.
+		m = m.refreshDashboardLink(time.Time(msg))
 		// The usage readout rides this tick but on its own much slower cadence
 		// — see tuiUsageInterval — and independently of the listing poll, so a
 		// slow refresh cannot starve it.
@@ -2214,10 +2333,13 @@ func writeTokenBlock(b *strings.Builder, lines []string, indent string) {
 func (m tuiModel) renderList() string {
 	var b strings.Builder
 	b.WriteString("\n  tclaude terminal dashboard")
-	if m.connectionLabel != "" && m.connectionLabel != "in-process" {
+	if m.remoteConsole() {
 		b.WriteString(" • connected to " + m.connectionLabel)
-	} else if m.dashboardURL != "" {
-		b.WriteString(" • web dashboard: " + m.dashboardURL)
+	} else if addr := m.dashboardAddressLine(); addr != "" {
+		// Its own line: with the init token on it the address is too long to
+		// share the title line without wrapping, and a wrapped header throws
+		// off the row budget viewportHeight computes.
+		b.WriteString(" • web dashboard:\n    " + addr)
 	} else {
 		b.WriteString(" (no web dashboard in this mode)")
 	}
@@ -2738,12 +2860,18 @@ func (m tuiModel) renderHelp() string {
 		b.WriteString("               makes on an agent's row\n")
 		b.WriteString("    esc        Cancel\n\n")
 	}
-	if m.connectionLabel != "" && m.connectionLabel != "in-process" {
+	if m.remoteConsole() {
 		b.WriteString("  Connected to " + m.connectionLabel + ". The console keeps polling\n")
 		b.WriteString("  through outages and reconnects when agentd returns at this address.\n\n")
-	} else if m.dashboardURL != "" {
+	} else if addr := m.dashboardAddressLine(); addr != "" {
 		b.WriteString("  The web dashboard is running alongside this console:\n")
-		b.WriteString("    " + m.dashboardURL + "\n")
+		b.WriteString("    " + addr + "\n")
+		if m.dashboardLink != "" {
+			b.WriteString("  That link signs you in as you open it, so there is no token to\n")
+			b.WriteString("  paste. It is good for one use and about a minute, and the console\n")
+			b.WriteString("  replaces it as it ages — so open the one on screen, and if the\n")
+			b.WriteString("  browser says the link was already used, come back for the next.\n")
+		}
 		b.WriteString("  Both drive the same daemon, so human-approval requests still\n")
 		b.WriteString("  appear in its Messages tab.\n\n")
 	} else {

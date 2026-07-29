@@ -42,7 +42,7 @@ type serveParams struct {
 	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Additional host/interface the dashboard + approval server binds to (host only; set the port via --dashboard-port). The 127.0.0.1 loopback endpoint remains available when a concrete non-loopback interface is selected. Set e.g. 0.0.0.0 or :: to expose the dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
 	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
 	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
-	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
+	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup, and keep the --tui console's dashboard sign-in link off the screen with it. The token is still minted and honored — this only suppresses what is shown. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
 	TUI                          bool   `long:"tui" help:"Run a terminal UI in this window — a simplified dashboard that lists agents, starts new ones, and goes to an agent's tmux session with enter. On its own it REPLACES the web dashboard: no loopback dashboard listener is started, so browser deep links and human-approval requests are unavailable (grant access with 'tclaude agent permissions grant' instead). Pass --dashboard-port, --dashboard-bind or --auto-launch-dashboard alongside it to run the web dashboard as well. Startup output other than schema migrations goes to output.log instead of stdout, which the UI owns, and the operator token is shown inside the UI. Quitting the TUI shuts the daemon down."`
 }
 
@@ -689,7 +689,10 @@ func runServe(p *serveParams) error {
 	// screen restores on exit.
 	stopTUI := func() error { return nil }
 	if p.TUI {
-		startup := tuiStartup{dashboardURL: popupBaseURL}
+		startup := tuiStartup{
+			dashboardURL:    popupBaseURL,
+			suppressSecrets: p.NoPrintHumanToken,
+		}
 		if tokenBannerInTUI(p) {
 			startup.operatorToken, startup.tokenSource = operatorTok, tokenSrc
 		}
