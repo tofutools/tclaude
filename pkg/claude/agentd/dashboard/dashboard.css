@@ -5210,6 +5210,18 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: flex; flex-direction: column; gap: 2px; line-height: 1.35;
 }
 .standing-order-choice strong { color: #c9d1d9; font-weight: 600; }
+.group-standing-orders-list {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: min(52vh, 520px); overflow: auto;
+  padding: 2px;
+}
+.group-standing-order-choice {
+  padding: 8px 10px; border: 1px solid #2a3340;
+  border-radius: 4px; background: #0d1117;
+}
+.group-standing-order-choice:hover { border-color: #3d4b5d; }
+.group-standing-order-choice.disabled { opacity: 0.7; }
+.group-standing-order-choice input:disabled { cursor: not-allowed; }
 .standing-order-retirement-warning { margin: 0; }
 .spawn-unenforced-toggle {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;

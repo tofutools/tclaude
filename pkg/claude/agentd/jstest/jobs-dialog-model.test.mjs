@@ -123,6 +123,18 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
   assert.equal(model.standingOrderDraftDirty(draft,
     model.createStandingOrderDraft(model.standingOrderToPrefill(order))), false);
 
+  const global = model.createStandingOrderDraft(model.standingOrderToPrefill({
+    name: 'global-order', target: { kind: 'global' }, summary: 'For everyone.',
+    trigger: { event: 'session.start', sources: [] },
+    timing: 'same-continuation', cadence: 'always', enabled: true,
+  }));
+  assert.equal(global.target.mode, 'global');
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, global), null);
+  assert.equal(
+    model.buildStandingOrderMutation({ kind: 'create' }, global).payload.target,
+    'global',
+  );
+
   const prompt = model.createStandingOrderDraft({
     name: 'deploy-prompt', target: 'agt_target', summary: 'Use the release checklist.',
     triggerEvent: 'user.prompt', matchField: 'prompt', matchRegex: '(?i)\\bdeploy\\b',

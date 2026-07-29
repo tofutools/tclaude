@@ -1098,3 +1098,15 @@ CREATE TABLE agent_standing_order_debounce (
 CREATE INDEX idx_agent_standing_order_debounce_due
 			ON agent_standing_order_debounce(due_at);
 
+CREATE TABLE agent_standing_order_group_scopes (
+			order_id  INTEGER NOT NULL
+			          REFERENCES agent_standing_orders(id) ON DELETE CASCADE,
+			group_id  INTEGER NOT NULL
+			          REFERENCES agent_groups(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (order_id, group_id)
+		);
+
+CREATE INDEX idx_agent_standing_order_group_scopes_group
+			ON agent_standing_order_group_scopes(group_id, order_id);
+

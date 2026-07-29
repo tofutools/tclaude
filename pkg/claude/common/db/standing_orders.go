@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,8 +17,9 @@ import (
 // for a SINGLE STABLE AGENT target. The durable key is always target_agent;
 // the current conversation is resolved from that actor at read/delivery time.
 const (
-	StandingTargetConv  = CronTargetConv
-	StandingTargetGroup = CronTargetGroup
+	StandingTargetConv   = CronTargetConv
+	StandingTargetGroup  = CronTargetGroup
+	StandingTargetGlobal = "global"
 )
 
 // Standing-order disabled_reason markers. Same values and same meaning as the
@@ -226,6 +228,10 @@ type StandingOrder struct {
 	TargetConv  string
 	GroupID     int64
 	TargetRole  string
+	// AdditionalGroupIDs are reusable group activations attached to this
+	// definition from the Groups tab. They fan out to the whole group; the
+	// primary group target above remains the role-filtered authoring scope.
+	AdditionalGroupIDs []int64
 
 	// Summary is the text injected into the agent's context. Short by
 	// construction (StandingSummaryMaxLen).
@@ -274,6 +280,13 @@ type StandingOrder struct {
 // order routed through a shared group also carries a non-zero GroupID.
 func (o *StandingOrder) IsGroupTarget() bool {
 	return o.TargetKind == StandingTargetGroup
+}
+
+// IsGlobalTarget reports whether the primary scope reaches every active
+// enrolled agent. Global is explicit and opt-in; no legacy row is migrated
+// into this target kind.
+func (o *StandingOrder) IsGlobalTarget() bool {
+	return o.TargetKind == StandingTargetGlobal
 }
 
 // TriggerLabel renders the trigger for display. Exposed here so the CLI and
@@ -384,7 +397,7 @@ func (o *StandingOrder) Validate() error {
 	}
 
 	switch o.TargetKind {
-	case StandingTargetConv, StandingTargetGroup:
+	case StandingTargetConv, StandingTargetGroup, StandingTargetGlobal:
 	default:
 		return fmt.Errorf("%w: target kind %q", ErrStandingOrderInvalid, o.TargetKind)
 	}
@@ -399,9 +412,17 @@ func (o *StandingOrder) Validate() error {
 		return fmt.Errorf("%w: group target needs a group id", ErrStandingOrderInvalid)
 	case o.IsGroupTarget() && o.TargetAgent != "":
 		return fmt.Errorf("%w: group target cannot carry a single target agent", ErrStandingOrderInvalid)
+	case o.IsGlobalTarget() && o.TargetAgent != "":
+		return fmt.Errorf("%w: global target cannot carry a single target agent", ErrStandingOrderInvalid)
+	case o.IsGlobalTarget() && o.GroupID != 0:
+		return fmt.Errorf("%w: global target cannot carry a group id", ErrStandingOrderInvalid)
 	case !o.IsGroupTarget() && o.TargetAgent == "":
+		if o.IsGlobalTarget() {
+			break
+		}
 		return fmt.Errorf("%w: single-agent target needs a stable agent id", ErrStandingOrderInvalid)
-	case !o.IsGroupTarget() && !strings.HasPrefix(o.TargetAgent, AgentIDPrefix):
+	case !o.IsGroupTarget() && !o.IsGlobalTarget() &&
+		!strings.HasPrefix(o.TargetAgent, AgentIDPrefix):
 		return fmt.Errorf("%w: target agent %q is not a stable agent id", ErrStandingOrderInvalid, o.TargetAgent)
 	}
 	if !o.IsGroupTarget() && strings.TrimSpace(o.TargetRole) != "" {
@@ -508,19 +529,25 @@ const standingSelect = `SELECT o.id, o.name, o.revision, o.row_version,
 	o.trigger_event, o.trigger_sources, o.match_field, o.match_regex,
 	o.timing, o.cadence, o.cooldown_seconds, o.debounce_seconds,
 	o.enabled, o.disabled_reason, o.operator_authored,
-	o.created_at, o.updated_at
+	o.created_at, o.updated_at,
+	COALESCE((
+		SELECT GROUP_CONCAT(scope.group_id, ',')
+		  FROM agent_standing_order_group_scopes scope
+		 WHERE scope.order_id = o.id
+	), '')
 	FROM agent_standing_orders o
 	LEFT JOIN agents ow ON ow.agent_id = o.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = o.target_agent`
 
 func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 	var (
-		o          StandingOrder
-		sources    string
-		enabled    int
-		operator   int
-		createdRaw string
-		updatedRaw string
+		o              StandingOrder
+		sources        string
+		enabled        int
+		operator       int
+		createdRaw     string
+		updatedRaw     string
+		groupScopesRaw string
 	)
 	if err := s.Scan(
 		&o.ID, &o.Name, &o.Revision, &o.RowVersion,
@@ -530,7 +557,7 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		&o.TriggerEvent, &sources, &o.MatchField, &o.MatchRegex,
 		&o.Timing, &o.Cadence, &o.CooldownSeconds, &o.DebounceSeconds,
 		&enabled, &o.DisabledReason, &operator,
-		&createdRaw, &updatedRaw,
+		&createdRaw, &updatedRaw, &groupScopesRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -539,6 +566,15 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 	o.OperatorAuthored = operator != 0
 	o.CreatedAt = parseStandingTime(createdRaw)
 	o.UpdatedAt = parseStandingTime(updatedRaw)
+	for _, raw := range strings.Split(groupScopesRaw, ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		if err == nil && id > 0 {
+			o.AdditionalGroupIDs = append(o.AdditionalGroupIDs, id)
+		}
+	}
+	sort.Slice(o.AdditionalGroupIDs, func(i, j int) bool {
+		return o.AdditionalGroupIDs[i] < o.AdditionalGroupIDs[j]
+	})
 	return &o, nil
 }
 
@@ -644,6 +680,142 @@ func ListStandingOrders() ([]*StandingOrder, error) {
 	return listStandingOrders(d, standingSelect+` ORDER BY o.id`)
 }
 
+// SetStandingOrderGroupScope attaches or detaches one reusable standing-order
+// definition from a group. The order's primary target remains independently
+// editable in Automations; an additional scope always reaches the whole group.
+//
+// Scope changes advance row version only. Cadence and cooldown are already
+// recipient-scoped, so a newly included agent has no prior delivery to
+// suppress it while an agent already reached through an overlapping group
+// must not receive the same text again merely because another path to it was
+// attached. The row-version CAS prevents a stale Groups tab from racing an
+// Automations edit.
+func SetStandingOrderGroupScope(
+	orderID, groupID, expectedRowVersion int64,
+	assigned bool,
+) (*StandingOrder, error) {
+	if orderID <= 0 || groupID <= 0 || expectedRowVersion <= 0 {
+		return nil, fmt.Errorf("%w: order, group, and row version are required",
+			ErrStandingOrderInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var (
+		currentRowVersion int64
+		targetKind        string
+		primaryGroupID    int64
+	)
+	err = tx.QueryRow(`
+		SELECT row_version, target_kind, group_id
+		  FROM agent_standing_orders
+		 WHERE id = ?`, orderID).Scan(
+		&currentRowVersion, &targetKind, &primaryGroupID)
+	if errors.Is(err, sql.ErrNoRows) || currentRowVersion != expectedRowVersion {
+		return nil, ErrStandingOrderVersionConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	var groupExists int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM agent_groups WHERE id = ?`, groupID,
+	).Scan(&groupExists); err != nil {
+		return nil, err
+	}
+	if groupExists == 0 {
+		return nil, fmt.Errorf("%w: group %d does not exist",
+			ErrStandingOrderInvalid, groupID)
+	}
+
+	// A global target already includes every group. Treat assigning it as an
+	// idempotent success, but do not persist a redundant scope row that could
+	// later make a global-to-group edit unexpectedly retain this group.
+	if targetKind == StandingTargetGlobal {
+		if !assigned {
+			return nil, fmt.Errorf("%w: global scope must be changed in Automations",
+				ErrStandingOrderInvalid)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return GetStandingOrder(orderID)
+	}
+
+	// The primary group target already supplies this activation. It cannot be
+	// removed from the Groups tab because doing so would leave the definition
+	// with an invalid primary target; the operator edits that target instead.
+	if targetKind == StandingTargetGroup && primaryGroupID == groupID {
+		if !assigned {
+			return nil, fmt.Errorf("%w: primary group scope must be changed in Automations",
+				ErrStandingOrderInvalid)
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return GetStandingOrder(orderID)
+	}
+
+	var changed bool
+	if assigned {
+		res, err := tx.Exec(`
+			INSERT OR IGNORE INTO agent_standing_order_group_scopes
+				(order_id, group_id, created_at)
+			VALUES (?, ?, ?)`,
+			orderID, groupID, formatStandingTime(time.Now()))
+		if err != nil {
+			return nil, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		changed = n > 0
+	} else {
+		res, err := tx.Exec(`
+			DELETE FROM agent_standing_order_group_scopes
+			 WHERE order_id = ? AND group_id = ?`,
+			orderID, groupID)
+		if err != nil {
+			return nil, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		changed = n > 0
+	}
+	if changed {
+		res, err := tx.Exec(`
+			UPDATE agent_standing_orders
+			   SET row_version = row_version + 1,
+			       updated_at = ?
+			 WHERE id = ? AND row_version = ?`,
+			formatStandingTime(time.Now()), orderID, expectedRowVersion)
+		if err != nil {
+			return nil, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, ErrStandingOrderVersionConflict
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return GetStandingOrder(orderID)
+}
+
 // ListEnabledStandingOrdersForEvent returns the enabled orders whose trigger
 // event matches. This is the hot read on the hook path, so it is a single
 // indexed query rather than a full list plus a filter — and callers are
@@ -703,7 +875,12 @@ func UpdateStandingOrder(
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(`UPDATE agent_standing_orders SET
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`UPDATE agent_standing_orders SET
 		name = ?, revision = revision + ?, row_version = row_version + 1,
 		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
 		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
@@ -728,7 +905,24 @@ func UpdateStandingOrder(
 	if n == 0 {
 		return ErrStandingOrderVersionConflict
 	}
-	return nil
+	if o.IsGlobalTarget() {
+		if _, err := tx.Exec(`
+			DELETE FROM agent_standing_order_group_scopes WHERE order_id = ?`,
+			id); err != nil {
+			return err
+		}
+	} else if o.IsGroupTarget() {
+		// The primary group already supplies this scope. Drop a formerly
+		// additional copy so later retargeting cannot unexpectedly reveal a
+		// stale hidden activation.
+		if _, err := tx.Exec(`
+			DELETE FROM agent_standing_order_group_scopes
+			 WHERE order_id = ? AND group_id = ?`,
+			id, o.GroupID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func standingOrderDeliveryChanged(a, b *StandingOrder) bool {
@@ -835,7 +1029,11 @@ func DisableGroupTargetStandingOrdersForRetire(groupID int64) (int, error) {
 	res, err := d.Exec(
 		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?,
 		 row_version = row_version + 1, updated_at = ?
-		 WHERE target_kind = ? AND group_id = ? AND enabled = 1`,
+		 WHERE target_kind = ? AND group_id = ? AND enabled = 1
+		 AND NOT EXISTS (
+			SELECT 1 FROM agent_standing_order_group_scopes scope
+			 WHERE scope.order_id = agent_standing_orders.id
+		 )`,
 		StandingDisabledReasonGroupRetired, formatStandingTime(time.Now()),
 		StandingTargetGroup, groupID)
 	if err != nil {

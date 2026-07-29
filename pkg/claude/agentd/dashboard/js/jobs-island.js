@@ -100,16 +100,32 @@ function CronRow({ job, actions }) {
 
 function StandingOrderTarget({ order }) {
   const target = order.target || {};
+  if (target.kind === 'global') {
+    return html`<${Fragment}>
+      <span class="tag">global</span>
+      ${(order.additional_groups || []).map((group) => html`
+        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+      `)}
+    </${Fragment}>`;
+  }
   if (target.kind === 'group') {
     return html`<${Fragment}>
       <span class="tag">group:${target.group_name || ('#' + target.group_id)}</span>
       ${target.role && html`<div class="muted">role:${target.role}</div>`}
+      ${(order.additional_groups || []).map((group) => html`
+        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+      `)}
     </${Fragment}>`;
   }
   if (target.agent) {
-    return html`<span class="rowname" title=${idTooltip(target.agent, target.conv)}>
-      ${shortAgentId(target.agent, target.conv)}
-    </span>`;
+    return html`<${Fragment}>
+      <span class="rowname" title=${idTooltip(target.agent, target.conv)}>
+        ${shortAgentId(target.agent, target.conv)}
+      </span>
+      ${(order.additional_groups || []).map((group) => html`
+        <div class="muted" key=${group.group_id}>also group:${group.group_name || ('#' + group.group_id)}</div>
+      `)}
+    </${Fragment}>`;
   }
   return html`<span class="muted">(no target)</span>`;
 }

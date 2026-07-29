@@ -131,29 +131,42 @@ func matchFieldValue(o *db.StandingOrder, ev Event) string {
 // matching, which is a pattern question. Mixing them would let a matching bug
 // turn into a delivery-to-the-wrong-agent bug.
 func InScope(o *db.StandingOrder, ev Event) (bool, string) {
-	if o.IsGroupTarget() {
-		for _, m := range ev.Memberships {
-			if m.GroupID != o.GroupID {
-				continue
-			}
+	if o.IsGlobalTarget() {
+		return true, ""
+	}
+
+	// Scope is the union of the primary target authored in Automations and
+	// any whole-group activations attached from the Groups tab. The stable
+	// actor key remains the ONLY identity for a single-agent primary target;
+	// conversation ids are routing facts and cadence epochs, never durable
+	// scope keys.
+	if !o.IsGroupTarget() && o.TargetAgent != "" && o.TargetAgent == ev.AgentID {
+		return true, ""
+	}
+	primaryRoleMismatch := ""
+	for _, m := range ev.Memberships {
+		if o.IsGroupTarget() && m.GroupID == o.GroupID {
 			if o.TargetRole == "" || strings.EqualFold(o.TargetRole, m.Role) {
 				return true, ""
 			}
-			return false, fmt.Sprintf("agent is in group %d but holds role %q, order filters on %q",
+			primaryRoleMismatch = fmt.Sprintf(
+				"agent is in primary group %d but holds role %q; order filters on %q",
 				o.GroupID, m.Role, o.TargetRole)
 		}
-		return false, fmt.Sprintf("agent is not a member of group %d", o.GroupID)
+		for _, groupID := range o.AdditionalGroupIDs {
+			if m.GroupID == groupID {
+				return true, ""
+			}
+		}
 	}
-
-	// Single-agent target. The stable actor key is the ONLY identity: current
-	// conversation ids are routing facts and cadence epochs, never durable
-	// order targets. Standing-order storage was introduced with agent-keyed
-	// targets, so there is no legacy conv-only row shape to support.
+	if primaryRoleMismatch != "" {
+		return false, primaryRoleMismatch
+	}
+	if o.IsGroupTarget() || len(o.AdditionalGroupIDs) > 0 {
+		return false, "agent is not a member of any group activated for this order"
+	}
 	if o.TargetAgent == "" || ev.AgentID == "" {
 		return false, "single-agent target requires a stable agent id on both sides"
-	}
-	if o.TargetAgent == ev.AgentID {
-		return true, ""
 	}
 	return false, "order targets a different stable agent"
 }

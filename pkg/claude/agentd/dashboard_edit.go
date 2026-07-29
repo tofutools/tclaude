@@ -711,6 +711,12 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/groups/{name}/owners/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardRemoveOwner(w, g, r.PathValue("conv"))
 	}))
+	mux.HandleFunc("GET /api/groups/{name}/standing-orders",
+		groupRoute(dashboardListGroupStandingOrders))
+	mux.HandleFunc("POST /api/groups/{name}/standing-orders/{id}",
+		groupRoute(dashboardSetGroupStandingOrder))
+	mux.HandleFunc("DELETE /api/groups/{name}/standing-orders/{id}",
+		groupRoute(dashboardSetGroupStandingOrder))
 	// Advisory process runtime (JOH-242): read the current phase, advance to
 	// the next / a named phase. asDashboardHumanPeer so the shared,
 	// permission-checked handler sees the cookie-authed dashboard caller as the

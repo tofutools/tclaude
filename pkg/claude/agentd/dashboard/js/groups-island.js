@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { GroupsNativeList } from './groups-list.js';
+import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
@@ -255,6 +256,13 @@ export function GroupsList({ host, state, actions }) {
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />
+    ${state.standingOrdersDialog.value && html`
+      <${GroupStandingOrdersDialog}
+        key=${state.standingOrdersDialog.value.launchID}
+        descriptor=${state.standingOrdersDialog.value}
+        actions=${actions}
+      />
+    `}
   <//>`;
 }
 

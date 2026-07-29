@@ -67,6 +67,9 @@ type OrderView struct {
 	OwnerConv  string `json:"owner_conv,omitempty"`
 
 	Target TargetView `json:"target"`
+	// AdditionalGroups are reusable whole-group activations attached from the
+	// Groups tab. Target remains the primary authoring scope.
+	AdditionalGroups []TargetView `json:"additional_groups,omitempty"`
 
 	Summary string      `json:"summary"`
 	Trigger TriggerView `json:"trigger"`
@@ -105,7 +108,13 @@ type OrderView struct {
 // harness of a single stable-agent target, or the distinct harnesses on the
 // live roster for a group target. Pass nil when they cannot be resolved;
 // Capability is then null rather than a guess.
-func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDelivery, targetHarnesses []string) OrderView {
+func NewOrderView(
+	o *db.StandingOrder,
+	groupNames map[int64]string,
+	latest *db.StandingDelivery,
+	targetHarnesses []string,
+) OrderView {
+	groupName := groupNames[o.GroupID]
 	v := OrderView{
 		ID:               o.ID,
 		Name:             o.Name,
@@ -140,6 +149,13 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		CapabilityByHarness: CapabilityByHarnessForOrder(o),
 		CreatedAt:           o.CreatedAt,
 		UpdatedAt:           o.UpdatedAt,
+	}
+	for _, groupID := range o.AdditionalGroupIDs {
+		v.AdditionalGroups = append(v.AdditionalGroups, TargetView{
+			Kind:      db.StandingTargetGroup,
+			GroupID:   groupID,
+			GroupName: groupNames[groupID],
+		})
 	}
 	if len(targetHarnesses) > 0 {
 		reachable := ReduceCapabilityForOrder(o, targetHarnesses)

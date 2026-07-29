@@ -129,12 +129,13 @@ export function resetCronDraftForAnother(draft) {
 export function standingOrderToPrefill(order = {}) {
   const target = order.target || {};
   const groupTarget = target.kind === 'group';
+  const globalTarget = target.kind === 'global';
   return {
     name: text(order.name),
     revision: Number(order.revision) || 0,
     rowVersion: Number(order.row_version) || 0,
-    targetMode: groupTarget ? 'group' : 'solo',
-    target: groupTarget ? '' : text(target.agent),
+    targetMode: globalTarget ? 'global' : (groupTarget ? 'group' : 'solo'),
+    target: groupTarget || globalTarget ? '' : text(target.agent),
     groupName: groupTarget ? text(target.group_name || target.group_id) : '',
     role: groupTarget ? text(target.role) : '',
     summary: text(order.summary),
@@ -151,7 +152,8 @@ export function standingOrderToPrefill(order = {}) {
 }
 
 export function createStandingOrderDraft(prefill = {}) {
-  const mode = prefill.targetMode === 'group' ? 'group' : 'solo';
+  const mode = ['global', 'group'].includes(prefill.targetMode)
+    ? prefill.targetMode : 'solo';
   const sources = Array.isArray(prefill.sources) ? [...prefill.sources] : [];
   return {
     name: text(prefill.name),
@@ -190,8 +192,13 @@ export const STANDING_ORDER_MATCH_FIELDS = Object.freeze({
   'tool.after': Object.freeze(['', 'tool_name', 'tool_input', 'cwd']),
 });
 
+export function standingOrderTargetValue(target = {}) {
+  if (target.mode === 'global') return 'global';
+  return cronTargetValue(target);
+}
+
 export function validateStandingOrderDraft(dialog, draft) {
-  const target = cronTargetValue(draft.target);
+  const target = standingOrderTargetValue(draft.target);
   if (!target) {
     if (draft.target.mode === 'group') {
       return { code: 'group-target', message: 'Pick a group from the dropdown (or create one first via the Groups tab).' };
@@ -244,7 +251,7 @@ export function validateStandingOrderDraft(dialog, draft) {
 export function buildStandingOrderMutation(dialog, draft) {
   const payload = {
     name: draft.name.trim(),
-    target: cronTargetValue(draft.target),
+    target: standingOrderTargetValue(draft.target),
     role: draft.target.mode === 'group' ? draft.role.trim() : '',
     summary: draft.summary.trim(),
     trigger_event: draft.triggerEvent,

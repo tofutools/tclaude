@@ -164,12 +164,20 @@ func decodeDashboardStandingOrder(
 		writeError(w, http.StatusBadRequest, "invalid_arg", "target is required")
 		return nil, 0, false
 	}
-	target, err := resolveCronTarget(body.Target)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
-		return nil, 0, false
+	var target cronTarget
+	if strings.EqualFold(body.Target, db.StandingTargetGlobal) {
+		target.Kind = db.StandingTargetGlobal
+	} else {
+		var err error
+		target, err = resolveCronTarget(body.Target)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+			return nil, 0, false
+		}
 	}
-	if target.Kind != db.StandingTargetGroup && target.Agent == "" {
+	if target.Kind != db.StandingTargetGroup &&
+		target.Kind != db.StandingTargetGlobal &&
+		target.Agent == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"target must resolve to an enrolled agent with a stable agt_ id")
 		return nil, 0, false
@@ -224,6 +232,8 @@ func decodeDashboardStandingOrder(
 		order.TargetKind = db.StandingTargetGroup
 		order.GroupID = target.Group.ID
 		order.TargetRole = role
+	} else if target.Kind == db.StandingTargetGlobal {
+		order.TargetKind = db.StandingTargetGlobal
 	} else {
 		order.TargetKind = db.StandingTargetConv
 		order.TargetAgent = target.Agent

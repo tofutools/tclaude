@@ -123,6 +123,34 @@ func TestEvaluateRoleFilterIsResolvedAgainstLiveRoster(t *testing.T) {
 	assert.Contains(t, missed.Detail, "reviewer")
 }
 
+func TestEvaluateGlobalAndAdditionalGroupScopes(t *testing.T) {
+	global := order(func(o *db.StandingOrder) {
+		o.TargetKind = db.StandingTargetGlobal
+		o.GroupID = 0
+	})
+	assert.True(t, Evaluate(global, event(func(e *Event) {
+		e.Memberships = nil
+	}), neverDelivered).Deliver)
+
+	shared := order(func(o *db.StandingOrder) {
+		o.TargetRole = "reviewer"
+		o.AdditionalGroupIDs = []int64{99}
+	})
+	fromAdditional := Evaluate(shared, event(func(e *Event) {
+		e.Memberships = []Membership{
+			{GroupID: 7, Role: "worker"},
+			{GroupID: 99, Role: "anything"},
+		}
+	}), neverDelivered)
+	assert.True(t, fromAdditional.Deliver,
+		"an additional whole-group scope is an OR branch, even when the primary role does not match")
+
+	outside := Evaluate(shared, event(func(e *Event) {
+		e.Memberships = []Membership{{GroupID: 100, Role: "reviewer"}}
+	}), neverDelivered)
+	assert.Equal(t, db.StandingOutcomeOutOfScope, outside.Outcome)
+}
+
 func TestEvaluateSingleTargetFollowsStableAgentKey(t *testing.T) {
 	// The order was authored against an older generation. Matching on the
 	// stable agent key is what keeps a reincarnated agent covered.

@@ -179,3 +179,79 @@ func TestStandingOrder_DeleteGroupSweepsOrdersAndLedger(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, deliveries, "the ledger rows go with the order they describe")
 }
+
+func TestStandingOrder_DeletePrimaryGroupPromotesReusableScope(t *testing.T) {
+	setupTestDB(t)
+	primaryID, err := CreateAgentGroup("standing-primary-group", "")
+	require.NoError(t, err)
+	secondaryID, err := CreateAgentGroup("standing-secondary-group", "")
+	require.NoError(t, err)
+
+	o := sampleOrder("reusable-group-order")
+	o.GroupID = primaryID
+	o.TargetRole = "reviewer"
+	id, err := InsertStandingOrder(o)
+	require.NoError(t, err)
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	current, err = SetStandingOrderGroupScope(
+		id, secondaryID, current.RowVersion, true)
+	require.NoError(t, err)
+	_, err = RecordStandingDelivery(&StandingDelivery{
+		OrderID: id, OrderRevision: current.Revision, TargetConv: "someone",
+		Epoch: "e1", Outcome: StandingOutcomeDelivered,
+		Transport: StandingTransportHookContext, Harness: DefaultHarness,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, DeleteAgentGroup("standing-primary-group"))
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got, "an order activated on another group remains reusable")
+	assert.Equal(t, StandingTargetGroup, got.TargetKind)
+	assert.Equal(t, secondaryID, got.GroupID)
+	assert.Empty(t, got.TargetRole,
+		"an additional whole-group activation becomes a whole-group primary target")
+	assert.Empty(t, got.AdditionalGroupIDs,
+		"the promoted activation is not also retained as an additional scope")
+	assert.Equal(t, current.Revision, got.Revision,
+		"target administration does not re-arm existing recipients")
+	assert.Equal(t, current.RowVersion+1, got.RowVersion,
+		"promotion invalidates stale dashboard writers")
+
+	deliveries, err := ListStandingDeliveries(id, 10)
+	require.NoError(t, err)
+	assert.Len(t, deliveries, 1,
+		"the delivery history remains attached to the surviving definition")
+}
+
+func TestStandingOrder_RetiringPrimaryGroupLeavesReusableOrderEnabled(t *testing.T) {
+	setupTestDB(t)
+	primaryID, err := CreateAgentGroup("standing-retire-primary", "")
+	require.NoError(t, err)
+	secondaryID, err := CreateAgentGroup("standing-retire-secondary", "")
+	require.NoError(t, err)
+
+	o := sampleOrder("reusable-retire-order")
+	o.GroupID = primaryID
+	id, err := InsertStandingOrder(o)
+	require.NoError(t, err)
+	current, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	current, err = SetStandingOrderGroupScope(
+		id, secondaryID, current.RowVersion, true)
+	require.NoError(t, err)
+
+	disabled, err := DisableGroupTargetStandingOrdersForRetire(primaryID)
+	require.NoError(t, err)
+	assert.Zero(t, disabled,
+		"retiring one group must not pause guidance still active for another")
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.Enabled)
+	assert.Equal(t, current.RowVersion, got.RowVersion,
+		"a skipped retirement does not create a spurious write conflict")
+}
