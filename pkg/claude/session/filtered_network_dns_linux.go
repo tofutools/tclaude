@@ -441,12 +441,28 @@ func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 		if !sandboxpolicy.FilteredNetworkAllowsDNSLoopbackAnswer(b.rules) {
 			return dnsmessage.Resource{}, false, nil
 		}
-		if len(matches.Allow) == 0 &&
-			sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) !=
-				sandboxpolicy.FilteredNetworkDefaultAccept {
-			return dnsmessage.Resource{}, false, nil
-		}
+		baseAllows := len(matches.Allow) > 0 ||
+			sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) ==
+				sandboxpolicy.FilteredNetworkDefaultAccept
 		if len(matches.Deny) > 0 {
+			synthetic := netip.MustParseAddr(
+				sandboxpolicy.FilteredNetworkLoopbackIPv6)
+			if address.Is4() {
+				synthetic = netip.MustParseAddr(
+					sandboxpolicy.FilteredNetworkLoopbackIPv4)
+			}
+			effectiveTTL, err := b.leases.Ensure(
+				sandboxpolicy.FilteredNetworkDNSMatches{Deny: matches.Deny},
+				synthetic, ttl,
+			)
+			if err != nil {
+				return dnsmessage.Resource{}, false,
+					&filteredDNSFatalError{err: fmt.Errorf(
+						"install filtered DNS nft lease: %w", err)}
+			}
+			ttl = effectiveTTL
+		}
+		if !baseAllows || filteredNetworkHasUnscopedDeny(matches.Deny) {
 			return dnsmessage.Resource{}, false, nil
 		}
 		record.Header.TTL = uint32(ttl / time.Second)

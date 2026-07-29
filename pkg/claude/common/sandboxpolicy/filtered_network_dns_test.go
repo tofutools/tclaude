@@ -76,4 +76,24 @@ func TestFilteredNetworkAllowsDNSLoopbackAnswerRequiresAuthoredSelector(t *testi
 	})
 	require.NoError(t, err)
 	assert.True(t, FilteredNetworkAllowsDNSLoopbackAnswer(with))
+
+	scopedDeny, err := CompileFilteredNetworkRules(NetworkRules{
+		Mode: AccessModeList,
+		Allow: []NetworkAllowEntry{
+			{Domain: "example.com"},
+			{Loopback: true},
+		},
+		Deny: []NetworkAllowEntry{{Loopback: true, Ports: []int{443}}},
+	})
+	require.NoError(t, err)
+	assert.True(t, FilteredNetworkAllowsDNSLoopbackAnswer(scopedDeny),
+		"a scoped deny leaves nftables as the port authority")
+
+	unscopedDeny, err := CompileFilteredNetworkRules(NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Loopback: true}},
+		Deny:  []NetworkAllowEntry{{Loopback: true}},
+	})
+	require.NoError(t, err)
+	assert.False(t, FilteredNetworkAllowsDNSLoopbackAnswer(unscopedDeny))
 }

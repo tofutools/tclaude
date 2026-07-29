@@ -476,11 +476,24 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		Filesystem:    in.Effective.Filesystem,
 		Environment:   in.Effective.Environment,
 		NetworkAccess: in.Effective.NetworkAccess,
-		Network:       in.Effective.Network,
 		UnixSockets:   in.Effective.UnixSockets,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
+	}
+	normalized.Network, err = normalizeEffectiveNetworkRules(
+		in.Effective.Network)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf(
+			"revalidate effective sandbox network rules: %w", err)
+	}
+	if normalized.Network != nil {
+		if err := validateLegacyNetworkAgreement(
+			normalized.NetworkAccess, normalized.Network.Mode,
+		); err != nil {
+			return Snapshot{}, fmt.Errorf(
+				"revalidate effective sandbox network rules: %w", err)
+		}
 	}
 	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")

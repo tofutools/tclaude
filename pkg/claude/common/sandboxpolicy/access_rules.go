@@ -299,6 +299,44 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	return out, nil
 }
 
+// normalizeEffectiveNetworkRules validates the materialized representation
+// frozen into snapshots. Denies are authoring-only unless paired with a
+// compositional baseline, but resolution deliberately replaces that baseline
+// with its concrete legacy mode before snapshotting.
+func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
+	if in == nil {
+		return nil, nil
+	}
+	if in.Baseline != "" || len(in.Packs) > 0 || len(in.DenyPacks) > 0 {
+		return nil, fmt.Errorf(
+			"effective network rules must be materialized before snapshotting")
+	}
+	if len(in.Deny) == 0 {
+		return normalizeNetworkRules(in)
+	}
+
+	authored := cloneNetworkRules(*in)
+	authored.Mode = AccessModeUnset
+	switch in.Mode {
+	case AccessModeOpen:
+		authored.Baseline = NetworkBaselineAllow
+	case AccessModeList, AccessModeClosed:
+		authored.Baseline = NetworkBaselineDeny
+	default:
+		return nil, fmt.Errorf(
+			"effective network denies require a concrete mode")
+	}
+	normalized, err := normalizeNetworkRules(&authored)
+	if err != nil {
+		return nil, err
+	}
+	materialized, err := MaterializeNetworkRules(*normalized)
+	if err != nil {
+		return nil, err
+	}
+	return &materialized, nil
+}
+
 func normalizeNetworkEntries(in []NetworkAllowEntry, field string) ([]NetworkAllowEntry, error) {
 	if in == nil {
 		return nil, nil

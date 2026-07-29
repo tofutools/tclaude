@@ -84,7 +84,8 @@ func matchFilteredNetworkDNSRules(
 func FilteredNetworkAllowsDNSLoopbackAnswer(rules FilteredNetworkRuleSet) bool {
 	for _, rule := range rules.DenyRules {
 		if rule.Selector == NetworkSelectorLoopback &&
-			rule.Value == FilteredNetworkHostLoopbackName {
+			rule.Value == FilteredNetworkHostLoopbackName &&
+			len(rule.Ports) == 0 {
 			return false
 		}
 	}

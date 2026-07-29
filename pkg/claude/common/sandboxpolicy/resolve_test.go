@@ -94,13 +94,15 @@ func TestResolveEmptyScopesReturnsNonNilCollections(t *testing.T) {
 	assert.NotNil(t, got.Provenance.Environment)
 }
 
-func TestResolveMaterializesNetworkPacksBeforeSnapshot(t *testing.T) {
+func TestResolveMaterializesNetworkPacksBeforeSnapshotHandoff(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	effective, err := Resolve(Scopes{Explicit: &Profile{
 		Name: "packed",
 		Network: &NetworkRules{
-			Baseline: NetworkBaselineDeny,
-			Packs:    []string{"net-local", "net-anthropic"},
+			Baseline:  NetworkBaselineDeny,
+			Packs:     []string{"net-local", "net-anthropic"},
+			DenyPacks: []string{"net-npm"},
+			Deny:      []NetworkAllowEntry{{Host: "blocked.example"}},
 		},
 	}})
 	require.NoError(t, err)
@@ -112,11 +114,25 @@ func TestResolveMaterializesNetworkPacksBeforeSnapshot(t *testing.T) {
 		{Domain: "api.anthropic.com", Ports: []int{443}},
 		{Loopback: true},
 	}, effective.Network.Allow)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "registry.npmjs.org"},
+		{Host: "blocked.example"},
+	}, effective.Network.Deny)
 
 	snapshot := NewSnapshot(effective, nil)
 	require.NotNil(t, snapshot.Effective.Network)
 	assert.Equal(t, effective.Network, snapshot.Effective.Network,
 		"the immutable launch snapshot freezes expanded authority, not pack references")
+
+	revalidated, err := RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.Network, revalidated.Effective.Network)
+
+	path, digest, err := WriteSnapshotFile(t.TempDir(), snapshot)
+	require.NoError(t, err)
+	handedOff, err := ReadSnapshotFile(path, digest)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.Network, handedOff.Effective.Network)
 }
 
 func TestResolveRetainsCanonicalMissingFilesystemRule(t *testing.T) {

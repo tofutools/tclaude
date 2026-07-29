@@ -344,6 +344,64 @@ func TestFilteredDNSBrokerLoopbackRebindingRequiresSelectorAndRewrites(t *testin
 	)
 	assert.Empty(t, leases.calls,
 		"the static loopback rule, not a domain lease, remains port authority")
+
+	staticScopedDeny, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Host: "rebinding.example.test"},
+				{Loopback: true},
+			},
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true, Ports: []int{443},
+			}},
+		})
+	require.NoError(t, err)
+	response = queryFilteredDNSBroker(
+		t, testFilteredDNSBroker(
+			staticScopedDeny, &fakeFilteredDNSLeaseStore{}, answer),
+		"rebinding.example.test.", dnsmessage.TypeA,
+	)
+	assert.Equal(t, dnsmessage.RCodeSuccess, response.RCode,
+		"a scoped static loopback deny leaves nftables as port authority")
+
+	nameScopedDeny, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Host: "rebinding.example.test"},
+				{Loopback: true},
+			},
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "rebinding.example.test", Ports: []int{443},
+			}},
+		})
+	require.NoError(t, err)
+	leases = &fakeFilteredDNSLeaseStore{}
+	response = queryFilteredDNSBroker(
+		t, testFilteredDNSBroker(nameScopedDeny, leases, answer),
+		"rebinding.example.test.", dnsmessage.TypeA,
+	)
+	assert.Equal(t, dnsmessage.RCodeSuccess, response.RCode)
+	require.Len(t, leases.calls, 1)
+	assert.Empty(t, leases.calls[0].matches.Allow,
+		"positive DNS sets must not bypass the static loopback port authority")
+	require.Len(t, leases.calls[0].matches.Deny, 1)
+	assert.Equal(t,
+		netip.MustParseAddr(sandboxpolicy.FilteredNetworkLoopbackIPv4),
+		leases.calls[0].address,
+		"a scoped name deny leases the synthetic address nftables observes")
+
+	nameUnscopedDeny := nameScopedDeny
+	nameUnscopedDeny.DenyRules[0].Ports = nil
+	leases = &fakeFilteredDNSLeaseStore{}
+	response = queryFilteredDNSBroker(
+		t, testFilteredDNSBroker(nameUnscopedDeny, leases, answer),
+		"rebinding.example.test.", dnsmessage.TypeA,
+	)
+	assert.Equal(t, dnsmessage.RCodeRefused, response.RCode)
+	require.Len(t, leases.calls, 1,
+		"a suppressed loopback answer still seeds its negative lease")
 }
 
 func TestFilteredDNSBrokerCIDROnlyRefusesNamesWithoutUpstreamLookup(t *testing.T) {
