@@ -519,6 +519,12 @@ test('Preact agent-spawn renders the unenforced-network checkbox under the sandb
     assert.match(label.title, /Operator-only escape hatch/);
     assert.match(label.title, /outbound network access open/);
     assert.match(label.title, /not saved and starts unchecked every time/);
+    const description = host.querySelector('#agent-spawn-allow-unenforced-sandbox-description');
+    assert.equal(checkbox.getAttribute('aria-describedby'), description.id);
+    assert.match(description.className, /spawn-field-description/);
+    assert.equal(description.textContent, label.title);
+    assert.equal(label.contains(description), false,
+      'the description must not become part of the checkbox accessible name');
     assert.equal(host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint'), null);
 
     Object.defineProperty(checkbox, 'checked', {

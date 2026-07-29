@@ -906,10 +906,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <div class="cron-create-target">
         <label class="spawn-unenforced-toggle" title=${UNENFORCED_SANDBOX_TITLE}>
           <input id="agent-spawn-allow-unenforced-sandbox" type="checkbox"
+            aria-describedby="agent-spawn-allow-unenforced-sandbox-description"
             checked=${draft.allowUnenforcedSandbox} disabled=${busy}
             onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
           Allow launch without enforcement
         </label>
+        <span id="agent-spawn-allow-unenforced-sandbox-description"
+          class="spawn-field-description">${UNENFORCED_SANDBOX_TITLE}</span>
       </div>
     </div>
     <${HelpField} id="agent-spawn-approval" label=${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}
