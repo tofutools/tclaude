@@ -148,19 +148,26 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 	if err != nil {
 		return ResolvedAxes{}, err
 	}
+	networkDenyOmitted := []int{}
 	for _, notice := range effective.AccessNotices {
 		if notice.Class != AccessNoticeClassDegradation {
 			continue
 		}
 		switch notice.Axis {
 		case "network":
-			if axes.Network.Mode != AccessModeList {
-				continue
-			}
 			switch notice.Reason {
 			case "no_mechanism", "selector_unsupported", "platform_path_blind":
-				axes.Network = NetworkRules{Mode: AccessModeOpen}
+				if axes.Network.Mode != AccessModeList {
+					continue
+				}
+				axes.Network = NetworkRules{
+					Mode: AccessModeOpen,
+					Deny: cloneNetworkRules(axes.Network).Deny,
+				}
 			case "ports_unsupported":
+				if axes.Network.Mode != AccessModeList {
+					continue
+				}
 				if len(notice.Entries) == 0 {
 					for i := range axes.Network.Allow {
 						axes.Network.Allow[i].Ports = nil
@@ -172,6 +179,9 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 						}
 					}
 				}
+			case "deny_selector_unsupported", "deny_ports_unsupported":
+				networkDenyOmitted = append(
+					networkDenyOmitted, notice.Entries...)
 			}
 		case "unix_sockets":
 			if axes.UnixSockets.Mode != AccessModeList {
@@ -183,10 +193,42 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 			}
 		}
 	}
+	axes.Network.Deny = omitNetworkEntries(
+		axes.Network.Deny, networkDenyOmitted)
 	return axes, nil
 }
 
+func omitNetworkEntries(
+	entries []NetworkAllowEntry,
+	omitted []int,
+) []NetworkAllowEntry {
+	if len(omitted) == 0 {
+		return entries
+	}
+	indices := make(map[int]struct{}, len(omitted))
+	for _, index := range omitted {
+		indices[index] = struct{}{}
+	}
+	out := make([]NetworkAllowEntry, 0, len(entries))
+	for i, entry := range entries {
+		if _, ok := indices[i]; ok {
+			continue
+		}
+		entry.Ports = append([]int(nil), entry.Ports...)
+		out = append(out, entry)
+	}
+	return out
+}
+
 func networkRulesContained(parent, child NetworkRules) bool {
+	// A replacement must retain every launched deny. Requiring explicit
+	// coverage is intentionally conservative even when the child baseline
+	// would happen to make a particular deny redundant.
+	for _, denied := range parent.Deny {
+		if !networkEntryCoveredByAny(denied, child.Deny) {
+			return false
+		}
+	}
 	if child.Mode == AccessModeUnset {
 		return parent.Mode == AccessModeUnset || parent.Mode == AccessModeOpen
 	}
@@ -234,6 +276,27 @@ func networkRulesContained(parent, child NetworkRules) bool {
 		}
 	}
 	return true
+}
+
+func networkEntryCoveredByAny(
+	entry NetworkAllowEntry,
+	covers []NetworkAllowEntry,
+) bool {
+	for _, cover := range covers {
+		selector, ok := intersectNetworkSelector(cover, entry)
+		if !ok {
+			continue
+		}
+		ports, ok := intersectPorts(cover.Ports, entry.Ports)
+		if !ok {
+			continue
+		}
+		selector.Ports = ports
+		if networkEntryKey(selector) == networkEntryKey(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 func unixSocketRulesContained(parent, child UnixSocketRules) bool {
@@ -413,11 +476,24 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		Filesystem:    in.Effective.Filesystem,
 		Environment:   in.Effective.Environment,
 		NetworkAccess: in.Effective.NetworkAccess,
-		Network:       in.Effective.Network,
 		UnixSockets:   in.Effective.UnixSockets,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
+	}
+	normalized.Network, err = normalizeEffectiveNetworkRules(
+		in.Effective.Network)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf(
+			"revalidate effective sandbox network rules: %w", err)
+	}
+	if normalized.Network != nil {
+		if err := validateLegacyNetworkAgreement(
+			normalized.NetworkAccess, normalized.Network.Mode,
+		); err != nil {
+			return Snapshot{}, fmt.Errorf(
+				"revalidate effective sandbox network rules: %w", err)
+		}
 	}
 	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")

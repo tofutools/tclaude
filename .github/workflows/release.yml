@@ -374,7 +374,7 @@ jobs:
 
           smoke_log="$RUNNER_TEMP/tclaude-filtered-network-smoke.log"
           go test ./pkg/claude/session \
-            -run '^TestTclaudeLayerFilteredNetwork(DNS)?Smoke$' \
+            -run '^TestTclaudeLayerFilteredNetwork(DNS)?(Deny)?Smoke$' \
             -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkSmoke ' "$smoke_log"; then
@@ -397,6 +397,28 @@ jobs:
               echo "The smoke must execute exact host/domain/subdomain and suffix-deny cases, shared-IP reuse, TTL expiry, fresh-answer refresh, and established-flow continuation for both Claude and Codex tclaude-layer launches."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestTclaudeLayerFilteredNetworkDNSSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDenySmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network deny boundary smoke did not complete"
+              echo
+              echo "The named deny boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute deny-wins CIDR overlap and port cases for IPv4/IPv6 TCP+UDP across Claude and Codex tclaude-layer launches, plus fail-closed teardown."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDenySmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerFilteredNetworkDNSDenySmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network DNS deny boundary smoke did not complete"
+              echo
+              echo "The named DNS deny boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute deny-wins name/port/shared-IP cases, negative TTL expiry and refresh, and established-TCP cuts across Claude and Codex tclaude-layer launches."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerFilteredNetworkDNSDenySmoke did not report an explicit pass"
             exit 1
           fi
 

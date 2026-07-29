@@ -70,8 +70,9 @@ func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
 		"github": {
 			Name: "github",
 			Network: &NetworkRules{
-				Baseline: NetworkBaselineDeny,
-				Packs:    []string{"net-github"},
+				Baseline:  NetworkBaselineDeny,
+				Packs:     []string{"net-github"},
+				DenyPacks: []string{"net-npm"},
 			},
 		},
 	}
@@ -83,16 +84,35 @@ func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
 			Allow: []NetworkAllowEntry{{
 				Domain: "api.github.com",
 			}},
+			Deny: []NetworkAllowEntry{{
+				Domain: "telemetry.example",
+			}},
 		},
 	}, registryLookup(registry))
 	require.NoError(t, err)
 	require.NotNil(t, got.Network)
 	assert.Equal(t, NetworkRules{
-		Mode: AccessModeList,
+		Baseline: NetworkBaselineDeny,
 		Allow: []NetworkAllowEntry{{
 			Domain: "api.github.com",
 		}},
+		Deny: []NetworkAllowEntry{
+			{Domain: "registry.npmjs.org"},
+			{Domain: "telemetry.example"},
+		},
 	}, *got.Network)
+	effective, err := Resolve(Scopes{Explicit: &got})
+	require.NoError(t, err)
+	snapshot := NewSnapshot(effective, nil)
+	require.NotNil(t, snapshot.Effective.Network)
+	assert.Empty(t, snapshot.Effective.Network.DenyPacks)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "registry.npmjs.org"},
+		{Domain: "telemetry.example"},
+	}, snapshot.Effective.Network.Deny,
+		"the snapshot freezes expanded deny destinations, not pack references")
+	_, err = RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
 }
 
 func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {
@@ -168,6 +188,68 @@ func TestFlattenNetworkAccessUsesLastExplicitLayer(t *testing.T) {
 	got, err = Flatten(Profile{Name: "top", Includes: []string{"offline"}, NetworkAccess: NetworkAccessInternet}, registryLookup(registry))
 	require.NoError(t, err)
 	assert.Equal(t, NetworkAccessInternet, got.NetworkAccess)
+}
+
+func TestFlattenNetworkDeniesRemainResolvable(t *testing.T) {
+	child := &Profile{
+		Name: "child",
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineAllow,
+			Deny:     []NetworkAllowEntry{{Host: "blocked.example"}},
+		},
+	}
+	flattened, err := Flatten(
+		Profile{Name: "root", Includes: []string{"child"}},
+		registryLookup(map[string]*Profile{"child": child}),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, flattened.Network)
+	assert.Equal(t, NetworkBaselineAllow, flattened.Network.Baseline)
+	assert.Equal(t, AccessModeUnset, flattened.Network.Mode)
+
+	effective, err := Resolve(Scopes{Explicit: &flattened})
+	require.NoError(t, err)
+	require.NotNil(t, effective.Network)
+	assert.Equal(t, AccessModeOpen, effective.Network.Mode)
+	assert.Equal(t,
+		[]NetworkAllowEntry{{Host: "blocked.example"}},
+		effective.Network.Deny)
+	_, err = RevalidateSnapshot(NewSnapshot(effective, nil))
+	require.NoError(t, err)
+}
+
+func TestFlattenRejectsAggregateNetworkDeniesBeyondProfileLimit(t *testing.T) {
+	denyEntries := func(prefix string, count int) []NetworkAllowEntry {
+		out := make([]NetworkAllowEntry, count)
+		for i := range count {
+			out[i] = NetworkAllowEntry{
+				Host: fmt.Sprintf("%s-%03d.example", prefix, i),
+			}
+		}
+		return out
+	}
+	registry := map[string]*Profile{
+		"left": {
+			Name: "left",
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineAllow,
+				Deny:     denyEntries("left", 65),
+			},
+		},
+		"right": {
+			Name: "right",
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineAllow,
+				Deny:     denyEntries("right", 65),
+			},
+		},
+	}
+	_, err := Flatten(
+		Profile{Name: "root", Includes: []string{"left", "right"}},
+		registryLookup(registry),
+	)
+	require.ErrorContains(t, err,
+		"flattened network.deny has too many entries")
 }
 
 func TestFlattenAgentDirectoriesParticipateInEnvironmentOverrideOrder(t *testing.T) {

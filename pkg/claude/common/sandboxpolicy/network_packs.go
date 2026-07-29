@@ -7,8 +7,7 @@ import (
 
 // NetworkPack is one release-owned set of outbound destinations. Profiles
 // store its stable ID in either the allow or deny pack set; every resolution
-// expands allow-mode references before policy composition. Deny-mode expansion
-// remains authoring/display-only until the enforcement follow-up.
+// expands both polarities before policy composition.
 type NetworkPack struct {
 	ID      string
 	Label   string
@@ -113,47 +112,64 @@ func ExpandNetworkPackEntries(id string) ([]NetworkAllowEntry, error) {
 }
 
 // MaterializeNetworkRules turns the compositional authoring representation
-// into the pre-existing resolved access modes consumed by composition and
-// enforcement. Deny fields deliberately do not reach this seam yet: TCL-839
-// persists and discloses them, while a follow-up adds enforcement. Legacy and
-// effective rules pass through unchanged.
+// into resolved launch intent. Legacy and already-effective rules pass through
+// unchanged.
 func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 	if in.Baseline == "" {
 		return cloneNetworkRules(in), nil
+	}
+	denyEntries, err := expandNetworkRuleEntries(in.DenyPacks, in.Deny, "deny")
+	if err != nil {
+		return NetworkRules{}, err
 	}
 	switch in.Baseline {
 	case NetworkBaselineInherit:
 		return NetworkRules{}, nil
 	case NetworkBaselineAllow:
-		return NetworkRules{Mode: AccessModeOpen}, nil
+		return NetworkRules{Mode: AccessModeOpen, Deny: denyEntries}, nil
 	case NetworkBaselineDeny:
 	default:
 		return NetworkRules{}, fmt.Errorf("network.baseline %q is invalid", in.Baseline)
 	}
 
-	entries := make([]NetworkAllowEntry, 0, len(in.Allow))
-	for _, id := range in.Packs {
-		pack, ok := networkPackByID(id)
-		if !ok {
-			return NetworkRules{}, fmt.Errorf("network pack %q is unknown", id)
-		}
-		entries = append(entries, pack.Entries...)
-	}
-	entries = append(entries, in.Allow...)
-	if len(entries) == 0 {
-		return NetworkRules{Mode: AccessModeClosed}, nil
-	}
-	if len(entries) > MaxNetworkAllowEntries {
-		return NetworkRules{}, fmt.Errorf(
-			"materialized network allow list has too many entries (maximum %d)",
-			MaxNetworkAllowEntries,
-		)
-	}
-	resolved, err := normalizeNetworkRules(&NetworkRules{
-		Mode: AccessModeList, Allow: entries,
-	})
+	allowEntries, err := expandNetworkRuleEntries(in.Packs, in.Allow, "allow")
 	if err != nil {
 		return NetworkRules{}, err
 	}
-	return *resolved, nil
+	if len(allowEntries) == 0 {
+		return NetworkRules{Mode: AccessModeClosed, Deny: denyEntries}, nil
+	}
+	return NetworkRules{
+		Mode: AccessModeList, Allow: allowEntries, Deny: denyEntries,
+	}, nil
+}
+
+func expandNetworkRuleEntries(
+	packIDs []string,
+	authored []NetworkAllowEntry,
+	field string,
+) ([]NetworkAllowEntry, error) {
+	entries := make([]NetworkAllowEntry, 0, len(authored))
+	for _, id := range packIDs {
+		pack, ok := networkPackByID(id)
+		if !ok {
+			return nil, fmt.Errorf("network pack %q is unknown", id)
+		}
+		entries = append(entries, pack.Entries...)
+	}
+	entries = append(entries, authored...)
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	if len(entries) > MaxNetworkAllowEntries {
+		return nil, fmt.Errorf(
+			"materialized network %s list has too many entries (maximum %d)",
+			field, MaxNetworkAllowEntries,
+		)
+	}
+	resolved, err := normalizeNetworkEntries(entries, field)
+	if err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }

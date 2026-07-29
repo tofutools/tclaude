@@ -132,26 +132,43 @@ widen one another:
 - `open` yields to the more restrictive side;
 - two lists keep only their overlapping selectors and ports.
 
+Effective deny rows compose independently as a union. Equivalently,
+`(B1 - D1) ∩ (B2 - D2) = (B1 ∩ B2) - (D1 ∪ D2)`: allow authority intersects,
+deny authority accumulates, deny wins an overlap, and authoring order cannot
+change the result.
+
 For example, a global rule allowing `example.com` and all its subdomains,
 intersected with an explicit rule allowing only `api.example.com:443`, becomes
 the exact host and port rule. Disjoint lists produce an empty list, which
 allows no new external flow.
 
+The deny-capable gateway described below is staged dark until its per-surface
+capability cells are activated. Capability planning currently omits each deny
+row with a persisted disclosure, so ordinary launches keep the released
+behavior while the CI-only boundary tests exercise this backend directly.
+
 ## Compiling the packet policy
 
-Each filtered launch compiles the resolved list into an nftables batch. The
+Each filtered launch compiles the resolved policy into an nftables batch. The
 batch:
 
 - flushes the fresh namespace's ruleset;
 - creates an `inet tclaude_filter` table;
 - creates separate timed IPv4 and IPv6 sets for every host/domain rule;
-- installs an output base chain with `policy drop`;
+- installs an output base chain with the resolved default verdict;
 - permits sandbox-private loopback;
-- permits established, but not generically related, conntrack traffic;
 - permits only the IPv6 neighbor/router discovery needed to reach the
   namespace gateway;
+- emits TCP and UDP drop rules for each denied CIDR, host-loopback mapping, or
+  negative DNS set;
+- permits established, but not generically related, conntrack traffic;
 - emits TCP and UDP accept rules for each CIDR, host-loopback mapping, or DNS
   set, narrowed by the authored ports.
+
+Deny rules are before established-flow acceptance and allow rules. A static
+CIDR deny therefore defeats every overlapping allow. A newly observed denied
+DNS answer installs a negative timed-set lease at that same priority and cuts
+matching established TCP/UDP authority as well as new flows.
 
 Conceptually, a host rule becomes:
 
@@ -169,9 +186,11 @@ The sets start empty. DNS answers populate them later. Separate sets per
 authored entry preserve port distinctions when two names resolve to the same
 address.
 
-`ct state established accept` deliberately lets a connection admitted while a
-DNS lease was current continue after that lease expires. A new flow must match
-current authority. The policy does not accept all `related` traffic: a
+Without a matching deny, `ct state established accept` deliberately lets a
+connection admitted while a positive DNS lease was current continue after that
+lease expires. A new flow must match current authority. A negative DNS lease is
+different: its earlier drop rule cuts the matching established flow for the
+negative lease lifetime. The policy does not accept all `related` traffic: a
 protocol-created side channel must satisfy its own destination and port rule.
 
 ## Gated launch sequence

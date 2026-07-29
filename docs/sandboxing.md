@@ -578,13 +578,14 @@ Allow all, Deny rules are restrictions while Allow rules are redundant. The
 editor labels either redundant case instead of rejecting it. No override
 carries no rows.
 
-TCL-839 adds this deny state to authoring, validation, portable transfer, and
-the editor before adding it to the launch appliers. Deny destination badges
-therefore report **Not enforced** and state that matching traffic is not
-blocked by that rule. Allow materialization and enforcement remain unchanged:
-Deny all still becomes closed when it has no Allow entries and an allow list
-when it does; Allow all remains open. Deny enforcement and snapshot authority
-land in the follow-up implementation.
+The Linux filtered gateway now has a dark deny-capable backend, including
+snapshot authority and deny-wins policy compilation, but its production
+capability cells remain disabled until the executing CI boundaries pass.
+Deny destination badges therefore still report **Not enforced** and state that
+matching traffic is not blocked by that rule. Capability planning omits
+unsupported deny rows individually; a port-scoped deny is never widened into a
+whole-destination block. The follow-up activation changes only the verified
+surface cells and their disclosures.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local

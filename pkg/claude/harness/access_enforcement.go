@@ -41,6 +41,8 @@ type AccessEnforcement struct {
 	networkList             EnforcementLevel
 	networkSelectors        []NetworkSelectorCapability
 	networkPorts            EnforcementLevel
+	networkDenySelectors    []NetworkSelectorCapability
+	networkDenyPorts        EnforcementLevel
 	networkListRefusal      string
 	networkSelectorRefusal  string
 	socketOpen              EnforcementLevel
@@ -119,6 +121,8 @@ type accessEnforcementTableRow struct {
 	NetworkList                  EnforcementLevel
 	NetworkSelectors             []NetworkSelectorCapability
 	NetworkPorts                 EnforcementLevel
+	NetworkDenySelectors         []NetworkSelectorCapability
+	NetworkDenyPorts             EnforcementLevel
 	NetworkListRefusal           string
 	NetworkListUnavailableDetail string
 	NetworkSelectorRefusal       string
@@ -431,7 +435,11 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 	return AccessEnforcement{
 		networkClosed: row.NetworkClosed, networkList: row.NetworkList,
 		networkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
-		networkPorts:     row.NetworkPorts, socketOpen: row.SocketOpen,
+		networkPorts:     row.NetworkPorts,
+		networkDenySelectors: cloneNetworkSelectorCapabilities(
+			row.NetworkDenySelectors),
+		networkDenyPorts:       row.NetworkDenyPorts,
+		socketOpen:             row.SocketOpen,
 		networkListRefusal:     row.NetworkListRefusal,
 		networkSelectorRefusal: row.NetworkSelectorRefusal,
 		socketClosed:           row.SocketClosed, socketList: row.SocketList,
@@ -890,7 +898,10 @@ func PlanAccessEnforcement(
 					Message: caps.networkListRefusal,
 				}
 			}
-			rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
+			rendered.Network = sandboxpolicy.NetworkRules{
+				Mode: sandboxpolicy.AccessModeOpen,
+				Deny: cloneNetworkEntries(axes.Network.Deny),
+			}
 			notices = append(notices, degradationNotice(
 				"network", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,
 				caps, "the network allow list is not enforced; outbound network access remains open", nil,
@@ -908,7 +919,10 @@ func PlanAccessEnforcement(
 						),
 					}
 				}
-				rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
+				rendered.Network = sandboxpolicy.NetworkRules{
+					Mode: sandboxpolicy.AccessModeOpen,
+					Deny: cloneNetworkEntries(axes.Network.Deny),
+				}
 				notices = append(notices, degradationNotice(
 					"network", "selector_unsupported", sandboxpolicy.AccessNoticeEffectNotEnforced,
 					caps, "the network allow list contains selectors this mechanism cannot express; outbound network access remains open",
@@ -955,6 +969,66 @@ func PlanAccessEnforcement(
 			notices = append(notices, degradationNotice(
 				"network", "tools_only_scope", sandboxpolicy.AccessNoticeEffectEnforcedWider,
 				caps, "the network allow list applies only to tool execution, not the harness process", nil,
+			))
+		}
+	}
+
+	if len(axes.Network.Deny) > 0 {
+		kept := make([]sandboxpolicy.NetworkAllowEntry, 0, len(axes.Network.Deny))
+		selectorOmitted := []int{}
+		portOmitted := []int{}
+		selectorPartial := []int{}
+		portPartial := []int{}
+		for i, entry := range axes.Network.Deny {
+			capability, ok := networkSelectorCapability(
+				caps.networkDenySelectors, networkSelectorForEntry(entry))
+			if !ok || capability.Level == EnforceNone {
+				selectorOmitted = append(selectorOmitted, i)
+				continue
+			}
+			if len(entry.Ports) > 0 && caps.networkDenyPorts == EnforceNone {
+				portOmitted = append(portOmitted, i)
+				continue
+			}
+			kept = append(kept, cloneNetworkEntry(entry))
+			if capability.Level == EnforcePartial {
+				selectorPartial = append(selectorPartial, i)
+			}
+			if len(entry.Ports) > 0 && caps.networkDenyPorts == EnforcePartial {
+				portPartial = append(portPartial, i)
+			}
+		}
+		rendered.Network.Deny = kept
+		if len(selectorOmitted) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", "deny_selector_unsupported",
+				sandboxpolicy.AccessNoticeEffectNotEnforced,
+				caps, "the listed deny destinations cannot be expressed and are omitted; other supported deny entries remain active",
+				selectorOmitted,
+			))
+		}
+		if len(portOmitted) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", "deny_ports_unsupported",
+				sandboxpolicy.AccessNoticeEffectNotEnforced,
+				caps, "the listed port-scoped deny destinations cannot be expressed and are omitted; they are not widened into whole-destination blocks",
+				portOmitted,
+			))
+		}
+		if len(selectorPartial) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", "deny_selector_partial",
+				sandboxpolicy.AccessNoticeEffectEnforcedWider,
+				caps, "the listed deny destinations are only partially enforced",
+				selectorPartial,
+			))
+		}
+		if len(portPartial) > 0 {
+			notices = append(notices, degradationNotice(
+				"network", "deny_ports_partial",
+				sandboxpolicy.AccessNoticeEffectEnforcedWider,
+				caps, "the listed deny port constraints are only partially enforced",
+				portPartial,
 			))
 		}
 	}
@@ -1102,14 +1176,32 @@ func cloneNetworkSelectorCapabilities(
 
 func cloneResolvedAxes(in sandboxpolicy.ResolvedAxes) sandboxpolicy.ResolvedAxes {
 	out := in
-	out.Network.Allow = make([]sandboxpolicy.NetworkAllowEntry, len(in.Network.Allow))
-	for i, entry := range in.Network.Allow {
-		out.Network.Allow[i] = entry
-		out.Network.Allow[i].Ports = append([]int(nil), entry.Ports...)
-	}
+	out.Network.Allow = cloneNetworkEntries(in.Network.Allow)
+	out.Network.Deny = cloneNetworkEntries(in.Network.Deny)
 	out.UnixSockets.Allow = append(
 		[]sandboxpolicy.SocketAllowEntry(nil),
 		in.UnixSockets.Allow...,
 	)
+	return out
+}
+
+func cloneNetworkEntries(
+	in []sandboxpolicy.NetworkAllowEntry,
+) []sandboxpolicy.NetworkAllowEntry {
+	if in == nil {
+		return nil
+	}
+	out := make([]sandboxpolicy.NetworkAllowEntry, len(in))
+	for i, entry := range in {
+		out[i] = cloneNetworkEntry(entry)
+	}
+	return out
+}
+
+func cloneNetworkEntry(
+	in sandboxpolicy.NetworkAllowEntry,
+) sandboxpolicy.NetworkAllowEntry {
+	out := in
+	out.Ports = append([]int(nil), in.Ports...)
 	return out
 }

@@ -225,6 +225,11 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			result.Provenance.UnixSockets = &socketSource
 		}
 	}
+	if len(networkRules.Deny) > MaxEffectiveNetworkDenyEntries {
+		return EffectiveProfile{}, fmt.Errorf(
+			"effective network.deny has too many entries (maximum %d)",
+			MaxEffectiveNetworkDenyEntries)
+	}
 
 	// Re-resolve the already-merged path set. Besides enforcing aggregate
 	// invariants, this closes the window in which a path component changes

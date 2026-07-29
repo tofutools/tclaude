@@ -94,13 +94,15 @@ func TestResolveEmptyScopesReturnsNonNilCollections(t *testing.T) {
 	assert.NotNil(t, got.Provenance.Environment)
 }
 
-func TestResolveMaterializesNetworkPacksBeforeSnapshot(t *testing.T) {
+func TestResolveMaterializesNetworkPacksBeforeSnapshotHandoff(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	effective, err := Resolve(Scopes{Explicit: &Profile{
 		Name: "packed",
 		Network: &NetworkRules{
-			Baseline: NetworkBaselineDeny,
-			Packs:    []string{"net-local", "net-anthropic"},
+			Baseline:  NetworkBaselineDeny,
+			Packs:     []string{"net-local", "net-anthropic"},
+			DenyPacks: []string{"net-npm"},
+			Deny:      []NetworkAllowEntry{{Host: "blocked.example"}},
 		},
 	}})
 	require.NoError(t, err)
@@ -112,11 +114,61 @@ func TestResolveMaterializesNetworkPacksBeforeSnapshot(t *testing.T) {
 		{Domain: "api.anthropic.com", Ports: []int{443}},
 		{Loopback: true},
 	}, effective.Network.Allow)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "registry.npmjs.org"},
+		{Host: "blocked.example"},
+	}, effective.Network.Deny)
 
 	snapshot := NewSnapshot(effective, nil)
 	require.NotNil(t, snapshot.Effective.Network)
 	assert.Equal(t, effective.Network, snapshot.Effective.Network,
 		"the immutable launch snapshot freezes expanded authority, not pack references")
+
+	revalidated, err := RevalidateSnapshot(snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.Network, revalidated.Effective.Network)
+
+	path, digest, err := WriteSnapshotFile(t.TempDir(), snapshot)
+	require.NoError(t, err)
+	handedOff, err := ReadSnapshotFile(path, digest)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Effective.Network, handedOff.Effective.Network)
+}
+
+func TestResolveEffectiveDenyAggregateRevalidates(t *testing.T) {
+	profile := func(name string, count int) *Profile {
+		denies := make([]NetworkAllowEntry, count)
+		for i := range count {
+			denies[i] = NetworkAllowEntry{
+				Host: fmt.Sprintf("%s-%03d.example", name, i),
+			}
+		}
+		return &Profile{
+			Name: name,
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineAllow,
+				Deny:     denies,
+			},
+		}
+	}
+	effective, err := Resolve(Scopes{
+		Global: profile("global", 100),
+		Group:  profile("group", 100),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, effective.Network)
+	assert.Len(t, effective.Network.Deny, 200)
+
+	revalidated, err := RevalidateSnapshot(NewSnapshot(effective, nil))
+	require.NoError(t, err)
+	assert.Equal(t, effective.Network, revalidated.Effective.Network)
+
+	overflow := NewSnapshot(effective, nil)
+	overflow.Effective.Network.Deny =
+		profile("overflow", MaxEffectiveNetworkDenyEntries+1).Network.Deny
+	_, err = RevalidateSnapshot(overflow)
+	require.ErrorContains(t, err,
+		"effective network.deny has too many entries")
 }
 
 func TestResolveRetainsCanonicalMissingFilesystemRule(t *testing.T) {

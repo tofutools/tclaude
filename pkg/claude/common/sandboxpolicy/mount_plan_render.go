@@ -149,7 +149,12 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 // refuse contract, never permission to silently approximate.
 func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
 	switch rules.Mode {
-	case AccessModeUnset, AccessModeOpen:
+	case AccessModeUnset:
+		return NetworkHostOpen, nil
+	case AccessModeOpen:
+		if len(rules.Deny) > 0 {
+			return NetworkFiltered, nil
+		}
 		return NetworkHostOpen, nil
 	case AccessModeClosed:
 		return NetworkIsolatedWithAgentd, nil

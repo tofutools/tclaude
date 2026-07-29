@@ -259,7 +259,7 @@ func TestNetworkPackReferencesNormalizeAndMaterialize(t *testing.T) {
 	}
 }
 
-func TestNetworkDenyAuthoringNormalizesWithoutReachingMaterialization(t *testing.T) {
+func TestNetworkDenyAuthoringNormalizesAndMaterializes(t *testing.T) {
 	input := Profile{
 		Name: "deny-authoring",
 		Network: &NetworkRules{
@@ -288,8 +288,15 @@ func TestNetworkDenyAuthoringNormalizesWithoutReachingMaterialization(t *testing
 
 	axes, err := DeriveAccessAxes(normalized)
 	require.NoError(t, err)
-	assert.Equal(t, NetworkRules{Mode: AccessModeOpen}, axes.Network,
-		"frontend-first deny state must not reach the existing applier seam")
+	assert.Equal(t, AccessModeOpen, axes.Network.Mode)
+	assert.Equal(t, []NetworkAllowEntry{
+		{CIDR: "192.0.2.0/24", Ports: []int{80, 443}},
+		{Domain: "api.github.com"},
+		{Domain: "codeload.github.com"},
+		{Domain: "github.com"},
+		{Domain: "registry.npmjs.org"},
+		{Domain: "same.example", Ports: []int{443}},
+	}, axes.Network.Deny)
 
 	denyBaseline := *normalized.Network
 	denyBaseline.Baseline = NetworkBaselineDeny
@@ -301,8 +308,34 @@ func TestNetworkDenyAuthoringNormalizesWithoutReachingMaterialization(t *testing
 		{Loopback: true},
 	}, materialized.Allow,
 		"deny authoring does not change today's allow materialization")
-	assert.Empty(t, materialized.Deny)
+	assert.Equal(t, axes.Network.Deny, materialized.Deny)
 	assert.Empty(t, materialized.DenyPacks)
+}
+
+func TestNetworkCompositionIntersectsAllowsAndUnionsDenies(t *testing.T) {
+	left := NetworkRules{
+		Mode: AccessModeList,
+		Allow: []NetworkAllowEntry{{
+			Domain: "example.test", IncludeSubdomains: true,
+		}},
+		Deny: []NetworkAllowEntry{{Host: "one.example.test"}},
+	}
+	right := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Host: "api.example.test"}},
+		Deny: []NetworkAllowEntry{
+			{Host: "two.example.test"},
+			{Host: "one.example.test"},
+		},
+	}
+	forward := intersectNetworkRules(left, right)
+	reverse := intersectNetworkRules(right, left)
+	assert.Equal(t, forward, reverse)
+	assert.Equal(t, []NetworkAllowEntry{{Host: "api.example.test"}}, forward.Allow)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Host: "one.example.test"},
+		{Host: "two.example.test"},
+	}, forward.Deny)
 }
 
 func TestNetworkDenyAuthoringRejectsAmbiguousOrUnsupportedShapes(t *testing.T) {
@@ -422,6 +455,33 @@ func TestReplacingLaunchDegradationsCannotWidenNewIntent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, AccessModeClosed, planned.Network.Mode,
 		"a stale list degradation must not override newly closed intent")
+}
+
+func TestPlannedEffectiveAccessAxesOmitsOnlyDisclosedDenyRows(t *testing.T) {
+	effective := EffectiveProfile{
+		Network: &NetworkRules{
+			Mode: AccessModeOpen,
+			Deny: []NetworkAllowEntry{
+				{CIDR: "192.0.2.0/24"},
+				{Host: "ports.example", Ports: []int{443}},
+				{Host: "kept.example"},
+			},
+		},
+		AccessNotices: []AccessNotice{
+			{
+				Class: AccessNoticeClassDegradation, Axis: "network",
+				Reason: "deny_selector_unsupported", Entries: []int{0},
+			},
+			{
+				Class: AccessNoticeClassDegradation, Axis: "network",
+				Reason: "deny_ports_unsupported", Entries: []int{1},
+			},
+		},
+	}
+	planned, err := PlannedEffectiveAccessAxes(effective)
+	require.NoError(t, err)
+	assert.Equal(t, []NetworkAllowEntry{{Host: "kept.example"}},
+		planned.Network.Deny)
 }
 
 func TestNetworkAccessCompatibilityDerivation(t *testing.T) {
@@ -617,6 +677,29 @@ func TestAccessAxisSnapshotContainmentPreservesSelectorsPortsAndAmbientBoundary(
 		NetworkRules{Mode: AccessModeClosed},
 		NetworkRules{Mode: AccessModeList},
 	), "an empty network list carries no more authority than closed")
+	denyParent := NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+			Ports: []int{443},
+		}},
+	}
+	assert.False(t, networkRulesContained(
+		denyParent, NetworkRules{Mode: AccessModeClosed}),
+		"containment conservatively requires launched denies to persist")
+	assert.True(t, networkRulesContained(denyParent, NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+		}},
+	}), "a broader child deny preserves the parent's denied authority")
+	assert.False(t, networkRulesContained(denyParent, NetworkRules{
+		Mode: AccessModeOpen,
+		Deny: []NetworkAllowEntry{{
+			Domain: "example.com", IncludeSubdomains: true,
+			Ports: []int{8443},
+		}},
+	}), "a disjoint child deny port does not preserve the parent deny")
 
 	socketParent := UnixSocketRules{Mode: AccessModeList, Allow: []SocketAllowEntry{{
 		PathGlob: "/tmp/service-*.sock",

@@ -1,6 +1,9 @@
 package sandboxpolicy
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // FilteredNetworkProtocolContract is the authored network-list contract. It is
 // deliberately narrower than "all IP": profiles describe ordinary IPv4/IPv6
@@ -9,6 +12,13 @@ import "fmt"
 const FilteredNetworkProtocolContract = "ordinary IPv4/IPv6 TCP and UDP connections (QUIC is UDP; raw and packet sockets are not an authored class)"
 
 const FilteredNetworkHostLoopbackName = "host.tclaude.internal"
+
+type FilteredNetworkDefaultVerdict string
+
+const (
+	FilteredNetworkDefaultDrop   FilteredNetworkDefaultVerdict = "drop"
+	FilteredNetworkDefaultAccept FilteredNetworkDefaultVerdict = "accept"
+)
 
 type NetworkSelectorKind string
 
@@ -20,15 +30,20 @@ const (
 )
 
 // FilteredNetworkRuleSet is the normalized, harness-independent control-plane
-// input for the future filtered gateway. It is inert until a launch adapter
-// consumes it: compiling this IR does not establish enforcement.
+// input for the filtered gateway. It is inert until a launch adapter consumes
+// it: compiling this IR does not establish enforcement.
 type FilteredNetworkRuleSet struct {
-	ProtocolContract string                `json:"protocol_contract"`
-	Rules            []FilteredNetworkRule `json:"rules"`
+	ProtocolContract string `json:"protocol_contract"`
+	// DefaultVerdict is omitted by legacy allow-only relays. An absent value
+	// therefore means drop forever.
+	DefaultVerdict FilteredNetworkDefaultVerdict `json:"default_verdict,omitempty"`
+	Rules          []FilteredNetworkRule         `json:"rules"`
+	DenyRules      []FilteredNetworkRule         `json:"deny_rules,omitempty"`
 }
 
-// FilteredNetworkRule preserves the authored entry index so capability and
-// launch disclosures can identify exactly which rule carries a caveat.
+// FilteredNetworkRule uses a stable polarity-local index after canonical
+// sorting. Capability disclosures retain their separate authored-row indices
+// before this launch IR is compiled.
 type FilteredNetworkRule struct {
 	EntryIndex        int                 `json:"entry_index"`
 	Selector          NetworkSelectorKind `json:"selector"`
@@ -57,7 +72,8 @@ func NetworkRulesAreLoopbackOnly(rules NetworkRules) bool {
 // capability planning may select Darwin's native path only for this shape.
 func FilteredNetworkRulesAreLoopbackOnly(rules *FilteredNetworkRuleSet) bool {
 	if rules == nil || rules.ProtocolContract != FilteredNetworkProtocolContract ||
-		len(rules.Rules) == 0 {
+		len(rules.Rules) == 0 || len(rules.DenyRules) > 0 ||
+		FilteredNetworkDefaultVerdictForRules(*rules) != FilteredNetworkDefaultDrop {
 		return false
 	}
 	for _, rule := range rules.Rules {
@@ -68,36 +84,50 @@ func FilteredNetworkRulesAreLoopbackOnly(rules *FilteredNetworkRuleSet) bool {
 	return true
 }
 
-// CompileFilteredNetworkRules creates the stable gateway IR from a validated
-// list. It reuses profile normalization so callers cannot smuggle an ambiguous
-// selector into the future data plane.
+// CompileFilteredNetworkRules creates stable gateway IR from effective launch
+// intent. Rows are canonicalized before stable polarity-local indices are
+// assigned, so authoring order cannot perturb the rendered IR or nft policy.
 func CompileFilteredNetworkRules(rules NetworkRules) (FilteredNetworkRuleSet, error) {
-	normalized, err := normalizeNetworkRules(&rules)
+	if rules.Baseline != "" || len(rules.Packs) > 0 || len(rules.DenyPacks) > 0 {
+		return FilteredNetworkRuleSet{}, fmt.Errorf(
+			"filtered network rules require materialized launch intent")
+	}
+	if err := validateAccessMode("network", rules.Mode); err != nil {
+		return FilteredNetworkRuleSet{}, err
+	}
+	if rules.Mode == AccessModeUnset {
+		return FilteredNetworkRuleSet{}, fmt.Errorf(
+			"filtered network rules require an explicit network mode")
+	}
+	if rules.Mode != AccessModeList && len(rules.Allow) > 0 {
+		return FilteredNetworkRuleSet{}, fmt.Errorf(
+			`network.allow is only valid with mode "list"`)
+	}
+	allow, err := normalizeNetworkEntries(rules.Allow, "allow")
 	if err != nil {
 		return FilteredNetworkRuleSet{}, err
 	}
-	if normalized.Mode != AccessModeList {
-		return FilteredNetworkRuleSet{}, fmt.Errorf(
-			`filtered network rules require network.mode "list" (got %q)`,
-			normalized.Mode,
-		)
+	deny, err := normalizeNetworkEntries(rules.Deny, "deny")
+	if err != nil {
+		return FilteredNetworkRuleSet{}, err
 	}
 	out := FilteredNetworkRuleSet{
 		ProtocolContract: FilteredNetworkProtocolContract,
-		Rules:            make([]FilteredNetworkRule, 0, len(normalized.Allow)),
+		DefaultVerdict:   FilteredNetworkDefaultDrop,
 	}
-	// Normalize each original row again so the IR retains authored indices.
-	// normalizeNetworkRules sorts a complete list for stable policy storage;
-	// that ordering is useful there but would make a persisted Entries warning
-	// point at the wrong editor row here.
-	for i, authored := range rules.Allow {
-		single, singleErr := normalizeNetworkRules(&NetworkRules{
-			Mode: AccessModeList, Allow: []NetworkAllowEntry{authored},
-		})
-		if singleErr != nil {
-			return FilteredNetworkRuleSet{}, singleErr
-		}
-		entry := single.Allow[0]
+	if rules.Mode == AccessModeOpen {
+		out.DefaultVerdict = FilteredNetworkDefaultAccept
+	}
+	out.Rules = compileFilteredNetworkEntries(allow)
+	out.DenyRules = compileFilteredNetworkEntries(deny)
+	return out, nil
+}
+
+func compileFilteredNetworkEntries(
+	entries []NetworkAllowEntry,
+) []FilteredNetworkRule {
+	out := make([]FilteredNetworkRule, 0, len(entries))
+	for i, entry := range entries {
 		rule := FilteredNetworkRule{
 			EntryIndex: i,
 			Ports:      append([]int(nil), entry.Ports...),
@@ -116,12 +146,43 @@ func CompileFilteredNetworkRules(rules NetworkRules) (FilteredNetworkRuleSet, er
 		case entry.Loopback:
 			rule.Selector = NetworkSelectorLoopback
 			rule.Value = FilteredNetworkHostLoopbackName
-		default:
-			return FilteredNetworkRuleSet{}, fmt.Errorf(
-				"network.allow[%d] has no destination selector", i,
-			)
 		}
-		out.Rules = append(out.Rules, rule)
+		out = append(out, rule)
 	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool {
+		return filteredNetworkRuleKey(out[i]) < filteredNetworkRuleKey(out[j])
+	})
+	for i := range out {
+		out[i].EntryIndex = i
+	}
+	return out
+}
+
+func filteredNetworkRuleKey(rule FilteredNetworkRule) string {
+	entry := NetworkAllowEntry{
+		IncludeSubdomains: rule.IncludeSubdomains,
+		Ports:             rule.Ports,
+	}
+	switch rule.Selector {
+	case NetworkSelectorHost:
+		entry.Host = rule.Value
+	case NetworkSelectorDomain:
+		entry.Domain = rule.Value
+	case NetworkSelectorCIDR:
+		entry.CIDR = rule.Value
+	case NetworkSelectorLoopback:
+		entry.Loopback = true
+	}
+	return networkEntryKey(entry)
+}
+
+// FilteredNetworkDefaultVerdictForRules applies the forever-compatibility
+// meaning of legacy IR: an omitted default verdict is drop.
+func FilteredNetworkDefaultVerdictForRules(
+	rules FilteredNetworkRuleSet,
+) FilteredNetworkDefaultVerdict {
+	if rules.DefaultVerdict == "" {
+		return FilteredNetworkDefaultDrop
+	}
+	return rules.DefaultVerdict
 }

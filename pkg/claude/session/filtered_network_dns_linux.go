@@ -60,7 +60,7 @@ type filteredNetworkDNSBroker struct {
 
 type filteredNetworkDNSLeaseStore interface {
 	Ensure(
-		[]sandboxpolicy.FilteredNetworkRule,
+		sandboxpolicy.FilteredNetworkDNSMatches,
 		netip.Addr,
 		time.Duration,
 	) (time.Duration, error)
@@ -241,13 +241,16 @@ func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
 		return packFilteredDNSResponse(
 			request, dnsmessage.RCodeRefused, nil), nil
 	}
-	matches, err := sandboxpolicy.MatchFilteredNetworkDNSName(
+	matches, err := sandboxpolicy.MatchFilteredNetworkDNSPolicy(
 		b.rules, question.Name.String())
 	if err != nil {
 		return packFilteredDNSResponse(
 			request, dnsmessage.RCodeRefused, nil), nil
 	}
-	if len(matches) == 0 {
+	defaultAccept :=
+		sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) ==
+			sandboxpolicy.FilteredNetworkDefaultAccept
+	if !defaultAccept && len(matches.Allow) == 0 && len(matches.Deny) == 0 {
 		return packFilteredDNSResponse(
 			request, dnsmessage.RCodeRefused, nil), nil
 	}
@@ -264,9 +267,8 @@ func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
 		}
 		return packFilteredDNSResponse(request, rcode, answers), nil
 	default:
-		if len(matches) == 0 {
-			return packFilteredDNSResponse(
-				request, dnsmessage.RCodeRefused, nil), nil
+		if len(matches.Deny) > 0 {
+			return packFilteredDNSResponse(request, dnsmessage.RCodeRefused, nil), nil
 		}
 		response, upstreamErr := b.exchange(request)
 		if upstreamErr != nil {
@@ -285,9 +287,10 @@ func (b *filteredNetworkDNSBroker) handlePacket(packet []byte) ([]byte, error) {
 
 func (b *filteredNetworkDNSBroker) resolveAddresses(
 	question dnsmessage.Question,
-	matches []sandboxpolicy.FilteredNetworkRule,
+	initial sandboxpolicy.FilteredNetworkDNSMatches,
 ) ([]dnsmessage.Resource, dnsmessage.RCode, error) {
 	current := question.Name
+	matches := initial
 	seen := make(map[string]struct{}, filteredNetworkDNSMaxChain+1)
 	answers := make([]dnsmessage.Resource, 0, 4)
 	chainTTL := uint32(filteredNetworkDNSMaxLease / time.Second)
@@ -298,6 +301,15 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 				fmt.Errorf("filtered DNS CNAME loop")
 		}
 		seen[currentKey] = struct{}{}
+		currentMatches, matchErr := sandboxpolicy.MatchFilteredNetworkDNSPolicy(
+			b.rules, current.String())
+		if matchErr != nil {
+			return nil, dnsmessage.RCodeRefused, matchErr
+		}
+		matches.Allow = appendFilteredNetworkDNSMatches(
+			matches.Allow, currentMatches.Allow)
+		matches.Deny = appendFilteredNetworkDNSMatches(
+			matches.Deny, currentMatches.Deny)
 
 		queryID, randomErr := filteredNetworkDNSQuestionID()
 		if randomErr != nil {
@@ -325,6 +337,7 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 			return nil, dnsmessage.RCodeServerFailure, collectErr
 		}
 		if len(records) > 0 {
+			leasedAnswers := 0
 			for _, record := range records {
 				record.Header.TTL = minUint32(record.Header.TTL, chainTTL)
 				leased, allowed, leaseErr := b.leaseAddressRecord(record, matches)
@@ -333,9 +346,10 @@ func (b *filteredNetworkDNSBroker) resolveAddresses(
 				}
 				if allowed {
 					answers = append(answers, leased)
+					leasedAnswers++
 				}
 			}
-			if len(answers) == 0 {
+			if leasedAnswers == 0 {
 				return nil, dnsmessage.RCodeRefused, nil
 			}
 			if len(answers) > filteredNetworkDNSMaxAnswers {
@@ -403,7 +417,7 @@ func collectFilteredDNSAnswers(
 
 func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 	record dnsmessage.Resource,
-	matches []sandboxpolicy.FilteredNetworkRule,
+	matches sandboxpolicy.FilteredNetworkDNSMatches,
 ) (dnsmessage.Resource, bool, error) {
 	var address netip.Addr
 	switch body := record.Body.(type) {
@@ -427,7 +441,30 @@ func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 		if !sandboxpolicy.FilteredNetworkAllowsDNSLoopbackAnswer(b.rules) {
 			return dnsmessage.Resource{}, false, nil
 		}
-		if len(matches) == 0 {
+		baseAllows := len(matches.Allow) > 0 ||
+			sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) ==
+				sandboxpolicy.FilteredNetworkDefaultAccept
+		if len(matches.Deny) > 0 {
+			// All loopback names share this address, so a scoped name deny
+			// intentionally over-blocks that port like any shared-IP lease.
+			synthetic := netip.MustParseAddr(
+				sandboxpolicy.FilteredNetworkLoopbackIPv6)
+			if address.Is4() {
+				synthetic = netip.MustParseAddr(
+					sandboxpolicy.FilteredNetworkLoopbackIPv4)
+			}
+			effectiveTTL, err := b.leases.Ensure(
+				sandboxpolicy.FilteredNetworkDNSMatches{Deny: matches.Deny},
+				synthetic, ttl,
+			)
+			if err != nil {
+				return dnsmessage.Resource{}, false,
+					&filteredDNSFatalError{err: fmt.Errorf(
+						"install filtered DNS nft lease: %w", err)}
+			}
+			ttl = effectiveTTL
+		}
+		if !baseAllows || filteredNetworkHasUnscopedDeny(matches.Deny) {
 			return dnsmessage.Resource{}, false, nil
 		}
 		record.Header.TTL = uint32(ttl / time.Second)
@@ -448,7 +485,38 @@ func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 			"install filtered DNS nft lease: %w", err)}
 	}
 	record.Header.TTL = uint32(effectiveTTL / time.Second)
-	return record, true, nil
+	baseAllows := len(matches.Allow) > 0 ||
+		sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) ==
+			sandboxpolicy.FilteredNetworkDefaultAccept
+	return record, baseAllows && !filteredNetworkHasUnscopedDeny(matches.Deny), nil
+}
+
+func appendFilteredNetworkDNSMatches(
+	dst, src []sandboxpolicy.FilteredNetworkRule,
+) []sandboxpolicy.FilteredNetworkRule {
+	seen := make(map[int]struct{}, len(dst)+len(src))
+	for _, rule := range dst {
+		seen[rule.EntryIndex] = struct{}{}
+	}
+	for _, rule := range src {
+		if _, ok := seen[rule.EntryIndex]; ok {
+			continue
+		}
+		seen[rule.EntryIndex] = struct{}{}
+		dst = append(dst, rule)
+	}
+	return dst
+}
+
+func filteredNetworkHasUnscopedDeny(
+	rules []sandboxpolicy.FilteredNetworkRule,
+) bool {
+	for _, rule := range rules {
+		if len(rule.Ports) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *filteredNetworkDNSBroker) exchange(
@@ -549,7 +617,7 @@ func (l *filteredNetworkDNSLeases) Close() error {
 }
 
 func (l *filteredNetworkDNSLeases) Ensure(
-	rules []sandboxpolicy.FilteredNetworkRule,
+	matches sandboxpolicy.FilteredNetworkDNSMatches,
 	address netip.Addr,
 	ttl time.Duration,
 ) (time.Duration, error) {
@@ -558,14 +626,26 @@ func (l *filteredNetworkDNSLeases) Ensure(
 		return 0, fmt.Errorf("filtered DNS lease is invalid")
 	}
 	effective := ttl.Truncate(time.Second)
-	sets := make([]string, 0, len(rules))
-	for _, rule := range rules {
-		ipv4Set, ipv6Set := sandboxpolicy.FilteredNetworkDNSSetNames(rule.EntryIndex)
-		setName := ipv6Set
-		if address.Is4() {
-			setName = ipv4Set
+	sets := make([]string, 0, len(matches.Deny)+len(matches.Allow))
+	// The single netfilter batch lists negative leases first. Combined with
+	// deny rules preceding established/allow rules, there is no positive-only
+	// window for a newly observed denied address.
+	for _, polarity := range []struct {
+		deny  bool
+		rules []sandboxpolicy.FilteredNetworkRule
+	}{
+		{deny: true, rules: matches.Deny},
+		{rules: matches.Allow},
+	} {
+		for _, rule := range polarity.rules {
+			ipv4Set, ipv6Set := sandboxpolicy.FilteredNetworkDNSSetNamesForRule(
+				polarity.deny, rule.EntryIndex)
+			setName := ipv6Set
+			if address.Is4() {
+				setName = ipv4Set
+			}
+			sets = append(sets, setName)
 		}
-		sets = append(sets, setName)
 	}
 	if err := l.authority.Upsert(sets, address, effective); err != nil {
 		return 0, err
