@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	FilteredNetworkDNSIdentityCaveat = "Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved shared IP can be reused until its lease expires."
-	FilteredNetworkDNSLeaseCaveat    = "Only fresh DNS answers refresh the lease; there is no fixed grace window. Already-established flows may continue after lease expiry, while new flows require fresh resolution."
-	FilteredNetworkLoopbackCaveat    = "Host loopback uses host.tclaude.internal; 127.0.0.1 and ::1 remain sandbox-private."
+	FilteredNetworkDNSIdentityCaveat = "Host and domain rules allow IP addresses returned by DNS. The sandbox can also reach other sites hosted on that same IP until the DNS answer expires."
+	FilteredNetworkDNSLeaseCaveat    = "Only a new DNS lookup refreshes the allowed IP. Existing connections may continue after the DNS answer expires; new connections need another lookup."
+	FilteredNetworkLoopbackCaveat    = "Local-machine rules use host.tclaude.internal. Inside the sandbox, 127.0.0.1 and ::1 refer to the sandbox itself."
 	FilteredNetworkPortDetail        = "TCP and UDP destination ports are enforced; QUIC is covered as UDP."
 )
 
@@ -21,7 +21,8 @@ func filteredNetworkDNSCaveat() string {
 // FilteredNetworkRuleAssessment describes the honest target rating for one IR
 // entry. It is control-plane data, not a capability flip: NetworkList remains
 // EnforceNone until a launch adapter and its named CI smoke establish the
-// corresponding data-plane claim.
+// corresponding data-plane claim. DestinationDetail remains informational
+// when DestinationLevel is Full.
 type FilteredNetworkRuleAssessment struct {
 	EntryIndex        int              `json:"entry_index"`
 	Selector          string           `json:"selector"`
@@ -32,9 +33,10 @@ type FilteredNetworkRuleAssessment struct {
 }
 
 // AssessFilteredNetworkRules gives future launch adapters one stable source for
-// per-selector capability details. Host/domain identity is Partial because the
-// DNS broker leases destination IPs rather than asserting application identity;
-// synthetic host-loopback remains Partial.
+// per-selector capability details. DNS-to-IP is the strongest enforceable
+// name boundary for arbitrary TCP/UDP, and the synthetic host-loopback mapping
+// enforces its authored destination and ports. Their caveats remain
+// informational details rather than downgrading the capability rating.
 func AssessFilteredNetworkRules(
 	rules sandboxpolicy.FilteredNetworkRuleSet,
 ) ([]FilteredNetworkRuleAssessment, EnforcementLevel, error) {
@@ -52,14 +54,14 @@ func AssessFilteredNetworkRules(
 		}
 		switch rule.Selector {
 		case sandboxpolicy.NetworkSelectorHost, sandboxpolicy.NetworkSelectorDomain:
-			assessment.DestinationLevel = EnforcePartial
+			assessment.DestinationLevel = EnforceFull
 			assessment.DestinationDetail = filteredNetworkDNSCaveat()
 		case sandboxpolicy.NetworkSelectorCIDR:
 			assessment.DestinationLevel = EnforceFull
 			assessment.DestinationDetail =
 				"IPv4/IPv6 CIDR destination identity is enforced for the authored TCP/UDP contract."
 		case sandboxpolicy.NetworkSelectorLoopback:
-			assessment.DestinationLevel = EnforcePartial
+			assessment.DestinationLevel = EnforceFull
 			assessment.DestinationDetail = FilteredNetworkLoopbackCaveat
 		default:
 			return nil, EnforceNone, fmt.Errorf(

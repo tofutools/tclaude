@@ -289,12 +289,12 @@ func accessEnforcementTable(
 			caps.NetworkSelectors = []NetworkSelectorCapability{
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorHost),
-					Level:    EnforcePartial,
+					Level:    EnforceFull,
 					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorDomain),
-					Level:    EnforcePartial,
+					Level:    EnforceFull,
 					Detail:   filteredNetworkDNSCaveat(),
 				},
 				{
@@ -303,13 +303,13 @@ func accessEnforcementTable(
 				},
 				{
 					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
-					Level:    EnforcePartial,
+					Level:    EnforceFull,
 					Detail:   FilteredNetworkLoopbackCaveat,
 				},
 			}
 			caps.NetworkPorts = EnforceFull
 			caps.NetworkListCondition =
-				"Prerequisite-conditional prediction: the exact launch must pass live bubblewrap namespace, trusted pasta, and trusted nft probes; otherwise the authored allow list remains unenforced and outbound remains open."
+				"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
@@ -649,7 +649,7 @@ func predictNetworkAxis(
 			caps.Scope == "tools-only" {
 			return withNetworkListCondition(
 				predictedPartial(tier, caps.Mechanism,
-					"the allow list is enforced with wider destination, port, or process scope"),
+					"some rules allow more traffic than requested because this sandbox cannot narrow every destination, port, or process"),
 				caps.NetworkListCondition,
 			)
 		}
