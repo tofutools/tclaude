@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	MaxNetworkAllowEntries = 128
-	MaxSocketAllowEntries  = 64
-	MaxPortsPerEntry       = 16
-	MaxHostBytes           = 253
+	MaxNetworkAllowEntries         = 128
+	MaxEffectiveNetworkDenyEntries = 3 * MaxNetworkAllowEntries
+	MaxSocketAllowEntries          = 64
+	MaxPortsPerEntry               = 16
+	MaxHostBytes                   = 253
 )
 
 // AccessMode is one access axis's posture. The empty value is deliberately a
@@ -300,9 +301,8 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 }
 
 // normalizeEffectiveNetworkRules validates the materialized representation
-// frozen into snapshots. Denies are authoring-only unless paired with a
-// compositional baseline, but resolution deliberately replaces that baseline
-// with its concrete legacy mode before snapshotting.
+// frozen into snapshots. Its deny limit is aggregate rather than per-profile:
+// resolution may union one complete deny set from each of its three scopes.
 func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if in == nil {
 		return nil, nil
@@ -311,30 +311,36 @@ func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 		return nil, fmt.Errorf(
 			"effective network rules must be materialized before snapshotting")
 	}
-	if len(in.Deny) == 0 {
-		return normalizeNetworkRules(in)
+	if err := validateAccessMode("network", in.Mode); err != nil {
+		return nil, err
 	}
-
-	authored := cloneNetworkRules(*in)
-	authored.Mode = AccessModeUnset
-	switch in.Mode {
-	case AccessModeOpen:
-		authored.Baseline = NetworkBaselineAllow
-	case AccessModeList, AccessModeClosed:
-		authored.Baseline = NetworkBaselineDeny
-	default:
+	if in.Mode != AccessModeList && len(in.Allow) > 0 {
+		return nil, fmt.Errorf(`network.allow is only valid with mode "list"`)
+	}
+	if in.Mode == AccessModeUnset && len(in.Deny) > 0 {
 		return nil, fmt.Errorf(
 			"effective network denies require a concrete mode")
 	}
-	normalized, err := normalizeNetworkRules(&authored)
+	if len(in.Allow) > MaxNetworkAllowEntries {
+		return nil, fmt.Errorf("network.allow has too many entries (maximum %d)",
+			MaxNetworkAllowEntries)
+	}
+	if len(in.Deny) > MaxEffectiveNetworkDenyEntries {
+		return nil, fmt.Errorf(
+			"effective network.deny has too many entries (maximum %d)",
+			MaxEffectiveNetworkDenyEntries)
+	}
+	out := &NetworkRules{Mode: in.Mode}
+	var err error
+	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
 		return nil, err
 	}
-	materialized, err := MaterializeNetworkRules(*normalized)
+	out.Deny, err = normalizeNetworkEntries(in.Deny, "deny")
 	if err != nil {
 		return nil, err
 	}
-	return &materialized, nil
+	return out, nil
 }
 
 func normalizeNetworkEntries(in []NetworkAllowEntry, field string) ([]NetworkAllowEntry, error) {

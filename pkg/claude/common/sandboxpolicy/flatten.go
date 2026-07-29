@@ -80,6 +80,11 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		return Profile{}, nil, fmt.Errorf("sandbox profile %q nests includes deeper than %d levels", root.Name, MaxIncludeDepth)
 	}
 	parts := f.compose(root)
+	if len(parts.network.Deny) > MaxNetworkAllowEntries {
+		return Profile{}, nil, fmt.Errorf(
+			"flattened network.deny has too many entries (maximum %d)",
+			MaxNetworkAllowEntries)
+	}
 	out := Profile{
 		Name:             root.Name,
 		Filesystem:       make([]FilesystemGrant, 0, len(parts.filesystem)),
@@ -95,6 +100,22 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	}
 	if parts.hasNewNetwork {
 		network := cloneNetworkRules(parts.network)
+		// Flatten returns a self-contained authoring profile that Resolve will
+		// normalize again. Reconstruct the compositional baseline whenever the
+		// merged result carries denies; Mode+Deny is reserved for effective
+		// snapshots and must remain invalid at the authoring boundary.
+		if len(network.Deny) > 0 {
+			switch network.Mode {
+			case AccessModeOpen:
+				network.Baseline = NetworkBaselineAllow
+			case AccessModeList, AccessModeClosed:
+				network.Baseline = NetworkBaselineDeny
+			default:
+				return Profile{}, nil, fmt.Errorf(
+					"flattened network denies require a concrete baseline")
+			}
+			network.Mode = AccessModeUnset
+		}
 		out.Network = &network
 		out.NetworkAccess = LegacyNetworkAccessForExport(out.Network, out.NetworkAccess)
 	}

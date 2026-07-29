@@ -135,6 +135,42 @@ func TestResolveMaterializesNetworkPacksBeforeSnapshotHandoff(t *testing.T) {
 	assert.Equal(t, snapshot.Effective.Network, handedOff.Effective.Network)
 }
 
+func TestResolveEffectiveDenyAggregateRevalidates(t *testing.T) {
+	profile := func(name string, count int) *Profile {
+		denies := make([]NetworkAllowEntry, count)
+		for i := range count {
+			denies[i] = NetworkAllowEntry{
+				Host: fmt.Sprintf("%s-%03d.example", name, i),
+			}
+		}
+		return &Profile{
+			Name: name,
+			Network: &NetworkRules{
+				Baseline: NetworkBaselineAllow,
+				Deny:     denies,
+			},
+		}
+	}
+	effective, err := Resolve(Scopes{
+		Global: profile("global", 100),
+		Group:  profile("group", 100),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, effective.Network)
+	assert.Len(t, effective.Network.Deny, 200)
+
+	revalidated, err := RevalidateSnapshot(NewSnapshot(effective, nil))
+	require.NoError(t, err)
+	assert.Equal(t, effective.Network, revalidated.Effective.Network)
+
+	overflow := NewSnapshot(effective, nil)
+	overflow.Effective.Network.Deny =
+		profile("overflow", MaxEffectiveNetworkDenyEntries+1).Network.Deny
+	_, err = RevalidateSnapshot(overflow)
+	require.ErrorContains(t, err,
+		"effective network.deny has too many entries")
+}
+
 func TestResolveRetainsCanonicalMissingFilesystemRule(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
