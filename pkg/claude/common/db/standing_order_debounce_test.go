@@ -44,6 +44,7 @@ func TestStandingDebounceTrailingEdgeAndRevisionReplacement(t *testing.T) {
 
 	capped := second
 	capped.DueAt = base.Add(2 * time.Minute)
+	capped.MaxDueAt = base.Add(3 * time.Minute)
 	capped.UpdatedAt = base.Add(40 * time.Second)
 	require.NoError(t, ScheduleStandingDebounce(&capped))
 	got = mustDueStandingDebounces(t, base.Add(time.Minute))
