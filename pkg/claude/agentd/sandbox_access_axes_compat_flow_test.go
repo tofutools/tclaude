@@ -729,8 +729,8 @@ func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *
 				map[string]any{"domain": "api.openai.com", "ports": []int{443}},
 			},
 			platform: "linux",
-			outcome:  harness.AccessPredictionEnforcedPartial,
-			detail:   "Prerequisite-conditional",
+			outcome:  harness.AccessPredictionEnforced,
+			detail:   "If any check fails, these rules are not enforced and outbound traffic is open.",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
