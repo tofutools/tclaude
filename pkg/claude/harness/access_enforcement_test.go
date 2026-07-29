@@ -516,6 +516,55 @@ func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {
 	assert.Equal(t, "no_mechanism", notices[0].Reason)
 }
 
+func TestPredictedNetworkEntriesProjectListWideAndPerEntryOutcomes(t *testing.T) {
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{CIDR: "192.0.2.0/24", Ports: []int{443}},
+			{Domain: "example.test", Ports: []int{443}},
+		},
+	}
+	caps := PredictedAccessEnforcement{
+		NetworkList: EnforceFull,
+		NetworkSelectors: []NetworkSelectorCapability{
+			{Selector: string(sandboxpolicy.NetworkSelectorCIDR), Level: EnforceFull},
+			{
+				Selector: string(sandboxpolicy.NetworkSelectorDomain),
+				Level:    EnforcePartial, Detail: "DNS identity is lease-bound.",
+			},
+		},
+		NetworkPorts:         EnforceFull,
+		NetworkListCondition: "Live network probes must pass.",
+		Scope:                "process",
+		Mechanism:            "test filter",
+	}
+	rows := DescribePredictedNetworkEntries(rules, caps)
+	require.Len(t, rows, 2)
+	assert.Equal(t, AccessPredictionEnforced, rows[0].Outcome)
+	assert.Equal(t, []string{`{"cidr":"192.0.2.0/24","ports":[443]}`}, rows[0].Keys)
+	assert.Contains(t, rows[0].Detail, "Live network probes must pass")
+	assert.Equal(t, AccessPredictionEnforcedPartial, rows[1].Outcome)
+	assert.Contains(t, rows[1].Detail, "DNS identity is lease-bound")
+
+	caps.NetworkSelectors = caps.NetworkSelectors[:1]
+	rows = DescribePredictedNetworkEntries(rules, caps)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, AccessPredictionNotEnforced, row.Outcome,
+			"one unsupported selector widens the whole list to open")
+		assert.Contains(t, row.Detail, "all outbound connections are permitted")
+	}
+
+	caps.NetworkList = EnforceNone
+	caps.NetworkListRefusal = "the target refuses this list"
+	rows = DescribePredictedNetworkEntries(rules, caps)
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, AccessPredictionRefused, row.Outcome)
+		assert.Equal(t, "the target refuses this list", row.Detail)
+	}
+}
+
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{

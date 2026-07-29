@@ -21,17 +21,20 @@ import (
 // preset field remains named "categories" so an older dashboard build keeps
 // rendering that portion of the feed.
 type sandboxCommonRuleCatalogJSON struct {
-	Version              int                               `json:"version"`
-	Platform             string                            `json:"platform"`
-	Home                 string                            `json:"home"`
-	Categories           []sandboxpolicy.CommonRule        `json:"categories"`
-	Informational        []map[string]any                  `json:"informational"`
-	GlobalFilesystem     []sandboxGlobalFilesystemRuleJSON `json:"global_filesystem"`
-	GlobalNetwork        []sandboxGlobalAccessRuleJSON     `json:"global_network"`
-	GlobalUnixSockets    []sandboxGlobalAccessRuleJSON     `json:"global_unix_sockets"`
-	NetworkTemplates     []sandboxAccessTemplateJSON       `json:"network_templates"`
-	SocketTemplates      []sandboxAccessTemplateJSON       `json:"socket_templates"`
-	GlobalConfigWarnings []string                          `json:"global_config_warnings"`
+	Version           int                               `json:"version"`
+	Platform          string                            `json:"platform"`
+	Home              string                            `json:"home"`
+	Categories        []sandboxpolicy.CommonRule        `json:"categories"`
+	Informational     []map[string]any                  `json:"informational"`
+	GlobalFilesystem  []sandboxGlobalFilesystemRuleJSON `json:"global_filesystem"`
+	GlobalNetwork     []sandboxGlobalAccessRuleJSON     `json:"global_network"`
+	GlobalUnixSockets []sandboxGlobalAccessRuleJSON     `json:"global_unix_sockets"`
+	NetworkPacks      []sandboxAccessTemplateJSON       `json:"network_packs"`
+	// NetworkTemplates is a compatibility alias for older dashboards. New
+	// editors persist pack IDs from NetworkPacks instead of inserting rows.
+	NetworkTemplates     []sandboxAccessTemplateJSON `json:"network_templates"`
+	SocketTemplates      []sandboxAccessTemplateJSON `json:"socket_templates"`
+	GlobalConfigWarnings []string                    `json:"global_config_warnings"`
 }
 
 func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +71,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		GlobalFilesystem:     global.Filesystem,
 		GlobalNetwork:        globalAccess.Network,
 		GlobalUnixSockets:    globalAccess.UnixSockets,
+		NetworkPacks:         sandboxNetworkPacks(),
 		NetworkTemplates:     sandboxNetworkTemplates(),
 		SocketTemplates:      sandboxSocketTemplates(),
 		GlobalConfigWarnings: append(global.Warnings, globalAccess.Warnings...),
@@ -81,7 +85,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 8
+	sandboxProfileExportVersion = 9
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -877,6 +881,8 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // their profile meant before those axes existed. Version 8 adds the versioned
 // filesystem_spellings sidecar; null means legacy spelling behavior, while a
 // non-null empty document marks a modern profile with no alternate spellings.
+// Version 9 adds the compositional network baseline and release-owned pack
+// references. Legacy mode-based network rules remain readable.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -46,11 +47,12 @@ type sandboxProfileDraftEnforcementContextHint struct {
 }
 
 type sandboxProfileDraftEnforcementTarget struct {
-	Target      sandboxProfileEnforcementTargetRequest `json:"target"`
-	ResolvedBy  string                                 `json:"resolved_by,omitempty"`
-	Predicted   bool                                   `json:"predicted"`
-	Axes        harness.PredictedAccessAxes            `json:"axes"`
-	ContextAxes []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
+	Target         sandboxProfileEnforcementTargetRequest `json:"target"`
+	ResolvedBy     string                                 `json:"resolved_by,omitempty"`
+	Predicted      bool                                   `json:"predicted"`
+	Axes           harness.PredictedAccessAxes            `json:"axes"`
+	NetworkEntries []harness.PredictedNetworkEntry        `json:"network_entries,omitempty"`
+	ContextAxes    []harness.PredictedAccessAxes          `json:"context_axes,omitempty"`
 }
 
 type sandboxProfileEffectiveContext struct {
@@ -189,6 +191,11 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
 		return
 	}
+	draftAxes, err := sandboxpolicy.DeriveAccessAxes(*sandboxProfileDBToPolicy(draft))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", err.Error())
+		return
+	}
 
 	targets := body.Targets
 	resolvedBy := ""
@@ -239,6 +246,14 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
 			return
 		}
+		draftPredicted, predictErr := harness.PredictAccessEnforcement(
+			target.harness, target.implementation, draftAxes,
+			mode, target.platform,
+		)
+		if predictErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", predictErr.Error())
+			return
+		}
 		described, contextAxes, describeErr := describePredictedDraftSandboxProfile(
 			flattened, contexts, target, mode,
 			harness.DescribePredictedAccess(axes, predicted),
@@ -257,13 +272,48 @@ func handleSandboxProfileDraftEnforcement(w http.ResponseWriter, r *http.Request
 				Platform:       target.platform,
 				Sandbox:        mode,
 			},
-			ResolvedBy:  resolvedBy,
-			Predicted:   true,
-			Axes:        described,
+			ResolvedBy: resolvedBy,
+			Predicted:  true,
+			Axes:       described,
+			NetworkEntries: predictedDraftNetworkEntries(
+				draftAxes.Network, draftPredicted, body.Draft.Network,
+			),
 			ContextAxes: contextAxes,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func predictedDraftNetworkEntries(
+	rules sandboxpolicy.NetworkRules,
+	caps harness.PredictedAccessEnforcement,
+	authored *sandboxpolicy.NetworkRules,
+) []harness.PredictedNetworkEntry {
+	rows := harness.DescribePredictedNetworkEntries(rules, caps)
+	if authored == nil || len(rows) == 0 {
+		return rows
+	}
+	for _, entry := range authored.Allow {
+		materialized, err := sandboxpolicy.MaterializeNetworkRules(
+			sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Allow:    []sandboxpolicy.NetworkAllowEntry{entry},
+			},
+		)
+		if err != nil || len(materialized.Allow) != 1 {
+			continue
+		}
+		canonicalKey := harness.NetworkEntryPredictionKey(materialized.Allow[0])
+		authoredKey := harness.NetworkEntryPredictionKey(entry)
+		for i := range rows {
+			if harness.NetworkEntryPredictionKey(rows[i].Entry) != canonicalKey ||
+				slices.Contains(rows[i].Keys, authoredKey) {
+				continue
+			}
+			rows[i].Keys = append(rows[i].Keys, authoredKey)
+		}
+	}
+	return rows
 }
 
 func flattenDraftSandboxProfileForPrediction(draft *db.SandboxProfile) (sandboxpolicy.Profile, error) {

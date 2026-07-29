@@ -52,10 +52,34 @@ export function sandboxProfileSummary(profile) {
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
+  const authoredNetwork = sandboxNetworkAuthoring(profile);
+  if (authoredNetwork.baseline === 'allow') parts.push('network allow all');
+  if (authoredNetwork.baseline === 'deny') {
+    const unlocks = authoredNetwork.packs.length + authoredNetwork.allow.length;
+    parts.push(`network deny all${unlocks ? ` (${unlocks} unlock${unlocks === 1 ? '' : 's'})` : ''}`);
+  }
   const axes = sandboxAccessAxes(profile);
-  if (axes.network.mode) parts.push(`network ${axes.network.mode}${axes.network.mode === 'list' ? ` (${axes.network.allow.length})` : ''}`);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
+}
+
+// The editor always authors the compositional baseline shape. Legacy mode-based
+// payloads remain loadable and become manual rows; no pack reference is inferred
+// from an exact materialized entry set.
+export function sandboxNetworkAuthoring(profile = {}) {
+  const network = profile.network ? structuredClone(profile.network) : null;
+  if (network?.baseline) {
+    network.packs ||= [];
+    network.allow ||= [];
+    return network;
+  }
+  const legacy = profile.network_access || '';
+  const mode = network?.mode || (legacy === 'internet' ? 'open' : legacy === 'none' ? 'closed' : '');
+  return {
+    baseline: mode === 'open' ? 'allow' : mode === 'closed' || mode === 'list' ? 'deny' : 'inherit',
+    packs: [],
+    allow: network?.allow || [],
+  };
 }
 
 export function sandboxAccessAxes(profile = {}) {
@@ -71,61 +95,24 @@ export function sandboxAccessAxes(profile = {}) {
   return { network, unix_sockets: unixSockets };
 }
 
-const LOCAL_MODEL_APIS_ALLOW = [
-  { domain: 'api.anthropic.com', ports: [443] },
-  { domain: 'api.openai.com', ports: [443] },
-  { loopback: true },
-];
-
-function isExactLocalEntry(entry = {}) {
-  const selectors = ['host', 'domain', 'cidr'].filter((key) => !!entry[key]).length
-    + (entry.loopback === true ? 1 : 0);
-  const ports = Array.isArray(entry.ports) ? entry.ports
-    : String(entry.ports || '').split(',').filter((part) => part.trim());
-  return selectors === 1 && entry.loopback === true && ports.length === 0;
-}
-
-function isExactModelAPIEntry(entry = {}, domain = '') {
-  const selectors = ['host', 'domain', 'cidr'].filter((key) => !!entry[key]).length
-    + (entry.loopback === true ? 1 : 0);
-  return selectors === 1
-    && entry.domain === domain
-    && entry.include_subdomains !== true
-    && Array.isArray(entry.ports)
-    && entry.ports.length === 1
-    && Number(entry.ports[0]) === 443;
-}
-
-// These are editor presets, not wire modes. Keep recognition deliberately
-// exact so any port, selector, ordering, or destination edit remains visibly
-// editable as Access list instead of hiding authored detail.
-export function sandboxNetworkEditorMode(network = {}) {
-  const rules = sandboxAccessAxes({ network }).network;
-  if (rules.mode === 'list') {
-    if (rules.allow.length === 1 && isExactLocalEntry(rules.allow[0])) return 'local';
-    if (rules.allow.length === LOCAL_MODEL_APIS_ALLOW.length
-        && isExactModelAPIEntry(rules.allow[0], LOCAL_MODEL_APIS_ALLOW[0].domain)
-        && isExactModelAPIEntry(rules.allow[1], LOCAL_MODEL_APIS_ALLOW[1].domain)
-        && isExactLocalEntry(rules.allow[2])) {
-      return 'local-model-apis';
-    }
-  }
-  return rules.mode || '';
-}
-
-export function sandboxNetworkRulesForEditorMode(network = {}, mode = '') {
-  const rules = sandboxAccessAxes({ network }).network;
-  if (mode === 'local') return { mode: 'list', allow: [{ loopback: true }] };
-  if (mode === 'local-model-apis') {
-    return { mode: 'list', allow: structuredClone(LOCAL_MODEL_APIS_ALLOW) };
-  }
-  return { mode, allow: mode === 'list' ? rules.allow : [] };
-}
-
 function portsForWire(value) {
   if (Array.isArray(value)) return value.map(Number);
   const text = String(value || '').trim();
   return text ? text.split(',').map((part) => Number(part.trim())) : [];
+}
+
+export function sandboxNetworkEntryKey(entry = {}) {
+  const ports = [...new Set(portsForWire(entry.ports))].sort((a, b) => a - b);
+  return JSON.stringify({
+    ...(entry.host ? { host: entry.host } : {}),
+    ...(entry.domain ? {
+      domain: entry.domain,
+      ...(entry.include_subdomains ? { include_subdomains: true } : {}),
+    } : {}),
+    ...(entry.cidr ? { cidr: entry.cidr } : {}),
+    ...(entry.loopback ? { loopback: true } : {}),
+    ...(ports.length ? { ports } : {}),
+  });
 }
 
 export function sandboxProfileForWire(draft) {
@@ -133,13 +120,22 @@ export function sandboxProfileForWire(draft) {
   if (!Object.hasOwn(value, 'network') && !Object.hasOwn(value, 'unix_sockets')) return value;
   value.network ||= { mode: '', allow: [] };
   value.unix_sockets ||= { mode: '', allow: [] };
-  value.network.allow = (value.network.allow || []).map((entry) => ({
+  if (value.network.baseline) {
+    value.network = {
+      baseline: value.network.baseline,
+      ...(value.network.packs?.length ? { packs: [...value.network.packs].sort() } : {}),
+      ...((value.network.allow || []).length ? { allow: value.network.allow } : {}),
+    };
+  }
+  const networkAllow = (value.network.allow || []).map((entry) => ({
     ...(entry.host ? { host: entry.host } : {}),
     ...(entry.domain ? { domain: entry.domain, include_subdomains: !!entry.include_subdomains } : {}),
     ...(entry.cidr ? { cidr: entry.cidr } : {}),
     ...(entry.loopback ? { loopback: true } : {}),
     ...(portsForWire(entry.ports).length ? { ports: portsForWire(entry.ports) } : {}),
   }));
+  if (networkAllow.length) value.network.allow = networkAllow;
+  else delete value.network.allow;
   value.unix_sockets.allow = (value.unix_sockets.allow || []).map((entry) =>
     entry.path_glob ? { path_glob: entry.path_glob } : { path: entry.path || '' });
   value.network_access = '';
@@ -160,12 +156,15 @@ function dnsError(value) {
 
 export function sandboxAccessDraftErrors(draft) {
   const errors = [];
+  const authoredNetwork = sandboxNetworkAuthoring(draft);
   const axes = sandboxAccessAxes(draft);
-  if (!['', 'open', 'closed', 'list'].includes(axes.network.mode)) errors.push('Network mode is invalid.');
+  if (!['inherit', 'allow', 'deny'].includes(authoredNetwork.baseline)) errors.push('Network baseline is invalid.');
+  if (authoredNetwork.baseline !== 'deny' && (authoredNetwork.packs.length || authoredNetwork.allow.length)) {
+    errors.push('Network packs and entries require Deny all baseline.');
+  }
   if (!['', 'open', 'closed', 'list'].includes(axes.unix_sockets.mode)) errors.push('Unix-socket mode is invalid.');
-  if (axes.network.mode !== 'list' && axes.network.allow.length) errors.push('Network entries require Access list mode.');
   if (axes.unix_sockets.mode !== 'list' && axes.unix_sockets.allow.length) errors.push('Unix-socket entries require Access list mode.');
-  axes.network.allow.forEach((entry, index) => {
+  authoredNetwork.allow.forEach((entry, index) => {
     const selectors = ['host', 'domain', 'cidr'].filter((key) => entry[key]).length + (entry.loopback ? 1 : 0);
     if (selectors !== 1) errors.push(`Network row ${index + 1} must set exactly one selector.`);
     if (entry.host && dnsError(entry.host)) errors.push(`Network row ${index + 1} host ${dnsError(entry.host)}.`);

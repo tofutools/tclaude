@@ -180,6 +180,97 @@ func TestNormalizeAccessRules(t *testing.T) {
 	}
 }
 
+func TestNetworkPackReferencesNormalizeAndMaterialize(t *testing.T) {
+	normalized, _, err := NormalizeForPersistence(Profile{
+		Name: "packed",
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineDeny,
+			Packs:    []string{"net-openai-codex", "net-local", "net-local"},
+			Allow: []NetworkAllowEntry{{
+				Domain: "example.com", Ports: []int{443},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, normalized.Network)
+	assert.Equal(t, []string{"net-local", "net-openai-codex"}, normalized.Network.Packs)
+	assert.Equal(t, NetworkBaselineDeny, normalized.Network.Baseline)
+	assert.Empty(t, normalized.Network.Mode)
+
+	axes, err := DeriveAccessAxes(normalized)
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeList, axes.Network.Mode)
+	assert.Empty(t, axes.Network.Baseline)
+	assert.Empty(t, axes.Network.Packs)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "api.openai.com", Ports: []int{443}},
+		{Domain: "example.com", Ports: []int{443}},
+		{Loopback: true},
+	}, axes.Network.Allow)
+
+	closed, err := MaterializeNetworkRules(NetworkRules{Baseline: NetworkBaselineDeny})
+	require.NoError(t, err)
+	assert.Equal(t, NetworkRules{Mode: AccessModeClosed}, closed)
+
+	for _, tc := range []struct {
+		name  string
+		rules NetworkRules
+		match string
+	}{
+		{
+			name: "unknown pack",
+			rules: NetworkRules{
+				Baseline: NetworkBaselineDeny, Packs: []string{"net-missing"},
+			},
+			match: "unknown pack",
+		},
+		{
+			name: "unlock under allow",
+			rules: NetworkRules{
+				Baseline: NetworkBaselineAllow, Packs: []string{"net-local"},
+			},
+			match: `only valid with baseline "deny"`,
+		},
+		{
+			name: "legacy mode with packs",
+			rules: NetworkRules{
+				Mode: AccessModeList, Packs: []string{"net-local"},
+			},
+			match: "requires the compositional baseline",
+		},
+		{
+			name: "baseline and mode",
+			rules: NetworkRules{
+				Mode: AccessModeClosed, Baseline: NetworkBaselineDeny,
+			},
+			match: "not both",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := NormalizeForPersistence(Profile{Name: tc.name, Network: &tc.rules})
+			require.ErrorContains(t, err, tc.match)
+		})
+	}
+}
+
+func TestNetworkPackMaterializationMatchesManualRules(t *testing.T) {
+	packed, err := MaterializeNetworkRules(NetworkRules{
+		Baseline: NetworkBaselineDeny,
+		Packs:    []string{"net-local", "net-anthropic", "net-openai-codex"},
+	})
+	require.NoError(t, err)
+	manual, err := normalizeNetworkRules(&NetworkRules{
+		Mode: AccessModeList,
+		Allow: []NetworkAllowEntry{
+			{Loopback: true},
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "api.openai.com", Ports: []int{443}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, *manual, packed)
+}
+
 func TestReplacingLaunchDegradationsCannotWidenNewIntent(t *testing.T) {
 	stale := AccessNotice{
 		Class: AccessNoticeClassDegradation, Axis: "network",

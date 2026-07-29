@@ -90,6 +90,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
 			Warning string                            `json:"warning"`
 		} `json:"network_templates"`
+		NetworkPacks []struct {
+			ID      string                            `json:"id"`
+			Entries []sandboxpolicy.NetworkAllowEntry `json:"entries"`
+			Warning string                            `json:"warning"`
+		} `json:"network_packs"`
 		SocketTemplates []struct {
 			ID string `json:"id"`
 		} `json:"socket_templates"`
@@ -106,15 +111,19 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)
-	assert.Equal(t, []string{"net-github", "net-openai-codex", "net-anthropic", "net-go-modules", "net-npm"},
-		[]string{catalog.NetworkTemplates[0].ID, catalog.NetworkTemplates[1].ID, catalog.NetworkTemplates[2].ID, catalog.NetworkTemplates[3].ID, catalog.NetworkTemplates[4].ID})
+	assert.Equal(t, []string{"net-local", "net-anthropic", "net-openai-codex", "net-github", "net-go-modules", "net-npm"},
+		[]string{catalog.NetworkPacks[0].ID, catalog.NetworkPacks[1].ID, catalog.NetworkPacks[2].ID, catalog.NetworkPacks[3].ID, catalog.NetworkPacks[4].ID, catalog.NetworkPacks[5].ID})
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
+		catalog.NetworkPacks[0].Entries)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
 		{Domain: "api.openai.com", Ports: []int{443}},
-	}, catalog.NetworkTemplates[1].Entries)
-	assert.Contains(t, catalog.NetworkTemplates[1].Warning, "ChatGPT-auth Codex is refused")
+	}, catalog.NetworkPacks[2].Entries)
+	assert.Contains(t, catalog.NetworkPacks[2].Warning, "ChatGPT-auth Codex is refused")
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
 		Domain: "api.anthropic.com", Ports: []int{443},
-	}}, catalog.NetworkTemplates[2].Entries)
+	}}, catalog.NetworkPacks[1].Entries)
+	assert.Equal(t, catalog.NetworkPacks, catalog.NetworkTemplates,
+		"legacy insertion catalog remains a compatibility alias")
 	assert.NotContains(t, rec.Body.String(), "net-pypi")
 	assert.Equal(t, []string{"sockets-agentd-only", "sockets-ssh-agent"},
 		[]string{catalog.SocketTemplates[0].ID, catalog.SocketTemplates[1].ID})
@@ -349,11 +358,12 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
 	// v5 removed read_baseline/read_baseline_exclusions (TCL-623), v6
 	// removed break_glass_filesystem (TCL-791), v7 adds independent
-	// network and Unix-socket axes, and v8 retains filesystem spellings.
+	// network and Unix-socket axes, v8 retains filesystem spellings, and v9
+	// adds authored network baselines plus stable pack references.
 	// Exporting only the newest
 	// version keeps an older importer from silently dropping a
 	// security-significant field as an unknown key; older versions stay importable.
-	assert.Equal(t, float64(8), bundle["format_version"])
+	assert.Equal(t, float64(9), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)
@@ -377,7 +387,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testing.T) {
+func TestSandboxProfileLegacyAndCompositionalNetworkShapesRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	profiles := []struct {
 		name  string
@@ -403,6 +413,18 @@ func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testin
 				},
 			},
 		},
+		{
+			name: "compositional-packs",
+			rules: sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Packs: []string{
+					"net-anthropic", "net-local", "net-openai-codex",
+				},
+				Allow: []sandboxpolicy.NetworkAllowEntry{{
+					Domain: "example.internal", Ports: []int{8443},
+				}},
+			},
+		},
 	}
 	for _, profile := range profiles {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
@@ -422,12 +444,12 @@ func TestSandboxProfileLocalNetworkShapesRoundTripWithoutSchemaChanges(t *testin
 	}
 
 	rec := profileReq(t, f, http.MethodGet,
-		"/v1/sandbox-profiles/export?name=local-access&name=local-model-apis", nil)
+		"/v1/sandbox-profiles/export?name=local-access&name=local-model-apis&name=compositional-packs", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
-	assert.Equal(t, float64(8), bundle["format_version"],
-		"the presets use the existing access-axis schema")
+	assert.Equal(t, float64(9), bundle["format_version"],
+		"pack references require the v9 authored-network envelope")
 
 	for _, profile := range profiles {
 		require.Equal(t, http.StatusNoContent, profileReq(

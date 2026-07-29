@@ -37,7 +37,7 @@ func TestLegacyEnvelopeVersionsRenderByteIdenticallyAcrossBothNetworkPostures(t 
 		expectedBytes, err := json.Marshal(expectedPlan)
 		require.NoError(t, err)
 
-		for version := 1; version <= 8; version++ {
+		for version := 1; version <= 9; version++ {
 			rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
 				"format":         "tclaude-sandbox-profiles",
 				"format_version": version,
@@ -718,6 +718,82 @@ func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *
 			assert.Contains(t, got.Targets[0].Axes.Network.Detail, tc.detail)
 		})
 	}
+}
+
+func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T) {
+	f := newFlow(t)
+	request := func(t *testing.T, harnessName string) []harness.PredictedNetworkEntry {
+		t.Helper()
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+			"draft": map[string]any{
+				"name": "pack-preview", "filesystem": []any{}, "environment": []any{},
+				"network": map[string]any{
+					"baseline": "deny",
+					"packs":    []string{"net-local", "net-anthropic", "net-openai-codex"},
+				},
+			},
+			"targets": []any{map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        harnessName,
+				"platform":       "linux",
+			}},
+		})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var got struct {
+			Targets []struct {
+				NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+			} `json:"targets"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.Len(t, got.Targets, 1)
+		return got.Targets[0].NetworkEntries
+	}
+
+	claudeRows := request(t, "claude")
+	require.Len(t, claudeRows, 3)
+	for _, row := range claudeRows {
+		assert.Equal(t, harness.AccessPredictionEnforcedPartial, row.Outcome)
+		assert.Contains(t, row.Detail, "Prerequisite-conditional prediction")
+	}
+
+	openCodeRows := request(t, "opencode")
+	require.Len(t, openCodeRows, 3)
+	for _, row := range openCodeRows {
+		assert.Equal(t, harness.AccessPredictionRefused, row.Outcome,
+			"the exact built-in local/model combination refuses as a whole")
+		assert.Contains(t, row.Detail, "TCL-826")
+	}
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "authored-aliases", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline": "deny",
+				"allow": []any{
+					map[string]any{"domain": "API.EXAMPLE.COM", "ports": []int{443, 443}},
+					map[string]any{"cidr": "192.0.2.9/24"},
+				},
+			},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer", "harness": "claude", "platform": "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var aliases struct {
+		Targets []struct {
+			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &aliases)
+	require.Len(t, aliases.Targets, 1)
+	require.Len(t, aliases.Targets[0].NetworkEntries, 2)
+	allKeys := []string{}
+	for _, row := range aliases.Targets[0].NetworkEntries {
+		allKeys = append(allKeys, row.Keys...)
+	}
+	assert.Contains(t, allKeys, `{"domain":"API.EXAMPLE.COM","ports":[443]}`)
+	assert.Contains(t, allKeys, `{"cidr":"192.0.2.9/24"}`)
 }
 
 func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {

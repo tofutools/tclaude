@@ -856,37 +856,27 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   };
   assert.deepEqual(model.sandboxAccessDraftErrors(draft), []);
   assert.deepEqual(model.sandboxProfileForWire(draft).network.allow[0].ports, [443, 8443]);
-  const local = { mode: 'list', allow: [{ loopback: true }] };
-  assert.equal(model.sandboxNetworkEditorMode(local), 'local');
-  assert.deepEqual(model.sandboxNetworkRulesForEditorMode({ mode: 'open' }, 'local'), local);
-  const localModelAPIs = {
-    mode: 'list',
-    allow: [
-      { domain: 'api.anthropic.com', ports: [443] },
-      { domain: 'api.openai.com', ports: [443] },
-      { loopback: true },
-    ],
-  };
-  assert.equal(model.sandboxNetworkEditorMode(localModelAPIs), 'local-model-apis');
-  assert.deepEqual(
-    model.sandboxNetworkRulesForEditorMode({ mode: 'open' }, 'local-model-apis'),
-    localModelAPIs,
+  assert.deepEqual(model.sandboxNetworkAuthoring({
+    network: { mode: 'list', allow: [{ loopback: true }] },
+  }), {
+    baseline: 'deny', packs: [], allow: [{ loopback: true }],
+  }, 'legacy lists remain manual and never infer pack references');
+  assert.deepEqual(model.sandboxProfileForWire({
+    ...draft,
+    network: {
+      baseline: 'deny',
+      packs: ['net-openai-codex', 'net-local'],
+      allow: [{ host: 'api.example.com', ports: '8443, 443' }],
+    },
+  }).network, {
+    baseline: 'deny',
+    packs: ['net-local', 'net-openai-codex'],
+    allow: [{ host: 'api.example.com', ports: [8443, 443] }],
+  });
+  assert.equal(
+    model.sandboxNetworkEntryKey({ host: 'api.example.com', ports: '8443, 443' }),
+    model.sandboxNetworkEntryKey({ host: 'api.example.com', ports: [443, 8443] }),
   );
-  const reorderedModelAPIs = structuredClone(localModelAPIs);
-  [reorderedModelAPIs.allow[0], reorderedModelAPIs.allow[1]] =
-    [reorderedModelAPIs.allow[1], reorderedModelAPIs.allow[0]];
-  assert.equal(model.sandboxNetworkEditorMode(reorderedModelAPIs), 'list',
-    'reordering the exact provider preset exposes it as Access list');
-  const widenedModelAPIs = structuredClone(localModelAPIs);
-  widenedModelAPIs.allow[0].include_subdomains = true;
-  assert.equal(model.sandboxNetworkEditorMode(widenedModelAPIs), 'list',
-    'subdomain widening is not disguised as the provider preset');
-  assert.equal(model.sandboxNetworkEditorMode({
-    mode: 'list', allow: [{ loopback: true, ports: [11434] }],
-  }), 'list', 'a port-scoped loopback row stays visibly editable');
-  assert.equal(model.sandboxNetworkEditorMode({
-    mode: 'list', allow: [{ loopback: true }, { domain: 'api.example.com' }],
-  }), 'list', 'an additional destination is Access list, not the preset');
   const broken = structuredClone(draft);
   broken.network.allow[0].domain = 'https://example.com';
   broken.unix_sockets.allow[0].path_glob = 'relative/**/agent';
@@ -1008,8 +998,8 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
-  const network = host.querySelector('#sandbox-profile-editor-network-mode'); assert.ok(network.querySelector('option[value="open"]')); network.querySelector('option[value="closed"]').selected = true; network.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  host.querySelector('.sbx-section .sbx-add-row').click(); await harness.act(() => Promise.resolve());
+  const network = host.querySelector('#sandbox-profile-editor-network-baseline'); assert.ok(network.querySelector('option[value="allow"]')); network.querySelector('option[value="deny"]').selected = true; network.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
+  [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click(); await harness.act(() => Promise.resolve());
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
   host.querySelector('.sbx-include-add').click(); host.querySelector('.sbx-agent-add').click(); await harness.act(() => Promise.resolve());
@@ -1024,7 +1014,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   assert.match(host.querySelector('[role="alert"]').textContent, /JSON|position|property/i); assert.equal(saved, null);
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
-  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.mode, 'closed'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
+  assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network.baseline, 'deny'); assert.equal(scribe.value.network_access, ''); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -1052,6 +1042,11 @@ const COMMON_RULES = {
   ],
   global_network: [{ mode: 'list', entry: { domain: 'global.example' }, origin: { harness: 'claude', setting: 'sandbox.network.allowedDomains' } }],
   global_unix_sockets: [{ mode: 'list', entry: { path: '/tmp/global.sock' }, origin: { harness: 'claude', setting: 'sandbox.network.allowUnixSockets' } }],
+  network_packs: [
+    { id: 'net-local', label: 'Local access', entries: [{ loopback: true }], note: 'local services' },
+    { id: 'net-anthropic', label: 'Anthropic API', group: 'Cloud model APIs', entries: [{ domain: 'api.anthropic.com', ports: [443] }] },
+    { id: 'net-openai-codex', label: 'OpenAI API', group: 'Cloud model APIs', entries: [{ domain: 'api.openai.com', ports: [443] }] },
+  ],
   network_templates: [{ id: 'net-anthropic', label: 'Anthropic API', mode: 'list', entries: [{ domain: 'api.anthropic.com' }], note: 'official API endpoint' }],
   socket_templates: [{ id: 'sockets-agentd-only', label: 'tclaude agentd only', mode: 'closed', entries: [], note: 'floor is always reachable' }],
   global_config_warnings: [],
@@ -1160,10 +1155,10 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
       `${label} keeps an empty unsupported category visible`);
 
     if (label === 'legacy') {
-      const mode = host.querySelector('#sandbox-profile-editor-network-mode');
-      mode.querySelector('option[value="list"]').selected = true;
-      await harness.act(() => harness.fireEvent(mode, 'change'));
-      const networkSection = mode.closest('fieldset');
+      const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
+      baseline.querySelector('option[value="deny"]').selected = true;
+      await harness.act(() => harness.fireEvent(baseline, 'change'));
+      const networkSection = baseline.closest('fieldset');
       await harness.act(() => harness.fireEvent(networkSection.querySelector('.sbx-add-row'), 'click'));
       const hostInput = networkSection.querySelector('.sbx-network-value');
       hostInput.value = 'api.example.com';
@@ -1171,7 +1166,8 @@ test('sandbox editor tolerates legacy and modern sparse profile payloads', async
       assert.equal(networkSection.querySelectorAll('.sbx-network-row').length, 1,
         'a legacy profile can add a network destination');
       await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
-      assert.equal(saved.draft.network.mode, 'list');
+      assert.equal(saved.draft.network.baseline, 'deny');
+      assert.deepEqual(saved.draft.network.packs, []);
       assert.equal(saved.draft.network.allow[0].host, 'api.example.com');
     }
 
@@ -1262,7 +1258,11 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
           agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
           network: { tier: 'list', outcome: 'not_enforced', detail: 'resolver-owned network detail' },
           unix_sockets: { tier: 'closed', outcome: 'enforced', detail: 'resolver-owned socket detail' },
-        }, context_axes: [{
+        }, network_entries: [{
+          entry: { domain: 'api.anthropic.com', ports: [443] },
+          outcome: 'enforced_partial',
+          detail: 'DNS identity follows a bounded lease.',
+        }], context_axes: [{
           filesystem: { tier: '1 deny · 1 write', outcome: 'enforced_partial', detail: 'built-in tools cannot preserve this carve-out' },
           environment: { tier: '1 variable', outcome: 'enforced', detail: 'resolver-owned environment detail' },
           agent_directories: { tier: '1 directory', outcome: 'enforced', detail: 'resolver-owned agent-directory detail' },
@@ -1282,7 +1282,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     },
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.ok(host.querySelector('#sandbox-profile-editor-network-mode'));
+  assert.ok(host.querySelector('#sandbox-profile-editor-network-baseline'));
   assert.ok(host.querySelector('#sandbox-profile-editor-unix-sockets-mode'));
   assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-for'), null,
     'the preview does not encode every target permutation in one selector');
@@ -1303,6 +1303,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   );
   choose(evaluationPlatform, 'darwin');
   await harness.act(() => harness.fireEvent(evaluationPlatform, 'change'));
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Evaluating…',
+    'a target change never leaves the previous target verdict visible');
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.deepEqual(predictions.at(-1).targets, [{
     implementation: 'tclaude-layer',
@@ -1311,6 +1313,11 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     sandbox: 'tclaude-layer',
   }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Partial');
+  assert.match(host.querySelector('.sbx-network-badge').title, /bounded lease/);
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-network-badge'), 'click'));
+  assert.match(host.querySelector('.sbx-network-badge-detail').textContent, /bounded lease/,
+    'keyboard-operable native details expose the full row explanation');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /Claude on Linux · tclaude sandbox/);
   const applied = host.querySelector('.sbx-rule-bucket-applied');
@@ -1394,7 +1401,7 @@ test('sandbox enforcement preview pauses for an incomplete access row and resume
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1);
 
-  const network = host.querySelector('#sandbox-profile-editor-network-mode').closest('fieldset');
+  const network = host.querySelector('#sandbox-profile-editor-network-baseline').closest('fieldset');
   await harness.act(() => harness.fireEvent(network.querySelector('.sbx-add-row'), 'click'));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(predictions.length, 1, 'an incomplete row never reaches the enforcement endpoint');
@@ -1494,15 +1501,15 @@ test('sandbox network selector retains empty domain and CIDR kinds through save 
   falseLoopback.host.remove();
 });
 
-test('Local access round-trips as the exact loopback preset and reveals richer lists', async (t) => {
+test('new deny drafts apply default pack references once and pack rows stay read-only', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: {
-    name: 'local-models', filesystem: [], environment: [], includes: [], agent_directories: [],
-    network: { mode: 'open' }, unix_sockets: { mode: '' },
+    name: 'existing-list', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ loopback: true }] }, unix_sockets: { mode: '' },
   }, options: {} });
   let saved = null;
   const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
@@ -1510,126 +1517,81 @@ test('Local access round-trips as the exact loopback preset and reveals richer l
   });
   await harness.act(() => Promise.resolve());
 
-  const mode = mounted.host.querySelector('#sandbox-profile-editor-network-mode');
-  assert.deepEqual([...mode.options].map((option) => [option.value, option.textContent]), [
-    ['', 'No override'],
-    ['open', 'Full access'],
-    ['closed', 'No access'],
-    ['local', 'Local access'],
-    ['local-model-apis', 'Local + model APIs'],
-    ['list', 'Access list'],
+  const baseline = mounted.host.querySelector('#sandbox-profile-editor-network-baseline');
+  assert.deepEqual([...baseline.options].map((option) => [option.value, option.textContent]), [
+    ['deny', 'Deny all'],
+    ['allow', 'Allow all'],
+    ['inherit', 'No override'],
   ]);
-  await harness.act(() => {
-    choose(mode, 'local');
-    harness.fireEvent(mode, 'change');
-  });
-  assert.ok(mounted.host.querySelector('.sbx-network-local-help'),
-    'selecting Local access switches the controlled editor to the preset');
-  assert.equal(mounted.host.querySelectorAll('.sbx-network-row').length, 0,
-    'the exact preset does not expose a redundant editable row');
-  const copy = mounted.host.querySelector('.sbx-network-local-help').textContent;
-  assert.match(copy, /host-loopback models and local development services/i);
-  assert.match(copy, /host\.tclaude\.internal/);
-  assert.match(copy, /127\.0\.0\.1.*::1/s);
-  assert.match(copy, /IDE bridge/);
-  assert.match(copy, /Cloud-model launches refuse/);
-  assert.match(copy, /OpenCode local-provider launches are currently refused/);
-  assert.match(copy, /TCL-826/);
+  assert.equal(selectedValue(baseline), 'deny');
+  assert.equal(mounted.host.querySelectorAll('.sbx-network-manual-rows .sbx-network-row').length, 1,
+    'a legacy list stays authored as a manual row');
+  assert.equal(mounted.host.querySelectorAll('.sbx-network-pack-rows .sbx-network-row').length, 0,
+    'an exact legacy preset never infers a stored pack reference');
   await harness.act(() => harness.fireEvent(
     mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.deepEqual(saved.draft.network, {
-    mode: 'list', allow: [{ loopback: true }],
+    baseline: 'deny', packs: [], allow: [{ loopback: true }],
   });
   mounted.unmount();
   mounted.host.remove();
 
-  const reopenedState = createManagementState();
-  reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
-  const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
-  await harness.act(() => Promise.resolve());
-  const reopenedMode = reopened.host.querySelector('#sandbox-profile-editor-network-mode');
-  assert.equal(selectedValue(reopenedMode), 'local',
-    'the stored exact loopback-only list reopens as Local access');
-  reopened.unmount();
-  reopened.host.remove();
-
-  const richerState = createManagementState();
-  const richerDraft = structuredClone(saved.draft);
-  richerDraft.network.allow.push({ host: 'api.example.com', ports: [] });
-  richerState.openDialog({ kind: 'sandbox-editor', seed: richerDraft, options: {} });
-  const richerReopened = mountSandboxEditor(harness, mountManagementIsland, richerState);
-  await harness.act(() => Promise.resolve());
-  assert.equal(selectedValue(
-    richerReopened.host.querySelector('#sandbox-profile-editor-network-mode')), 'list');
-  assert.equal(richerReopened.host.querySelectorAll('.sbx-network-row').length, 2);
-  richerReopened.unmount();
-  richerReopened.host.remove();
+  const newState = createManagementState();
+  newState.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
+  const newDraft = mountSandboxEditor(harness, mountManagementIsland, newState);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  const newBaseline = newDraft.host.querySelector('#sandbox-profile-editor-network-baseline');
+  assert.equal(selectedValue(newBaseline), 'inherit');
+  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
+  const checked = [...newDraft.host.querySelectorAll('.sbx-network-pack input:checked')]
+    .map((input) => input.closest('label').textContent);
+  assert.equal(checked.length, 3);
+  assert.match(checked.join(' '), /Local access.*Anthropic API.*OpenAI API/s);
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(newDraft.host.querySelector('.sbx-network-pack-row input'), null,
+    'expanded pack destinations are read-only');
+  await harness.act(() => { choose(newBaseline, 'allow'); harness.fireEvent(newBaseline, 'change'); });
+  await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
+  assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 0,
+    'defaults are applied only on the first transition to Deny all');
+  newDraft.unmount();
+  newDraft.host.remove();
 });
 
-test('Local + model APIs round-trips exactly and reveals any deviation', async (t) => {
+test('network row predictions reconcile daemon-normalized entries to authored spellings', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: {
-    name: 'local-cloud-models', filesystem: [], environment: [], includes: [], agent_directories: [],
-    network: { mode: 'closed' }, unix_sockets: { mode: '' },
+    name: 'noncanonical-network', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: { mode: 'list', allow: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }] },
+    unix_sockets: { mode: '' },
   }, options: {} });
-  let saved = null;
-  const mounted = mountSandboxEditor(harness, mountManagementIsland, state, {
-    async saveSandbox(value) { saved = value; },
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() {
+      return {
+        targets: [{
+          network_entries: [{
+            entry: { domain: 'api.example.com', ports: [443] },
+            keys: [
+              '{"domain":"api.example.com","ports":[443]}',
+              '{"domain":"API.EXAMPLE.COM","ports":[443]}',
+            ],
+            outcome: 'enforced',
+            detail: 'normalized destination is enforced',
+          }],
+        }],
+        contexts: [],
+      };
+    },
   });
-  await harness.act(() => Promise.resolve());
-  const mode = mounted.host.querySelector('#sandbox-profile-editor-network-mode');
-  await harness.act(() => {
-    choose(mode, 'local-model-apis');
-    harness.fireEvent(mode, 'change');
-  });
-  assert.ok(mounted.host.querySelector('.sbx-network-local-model-apis-help'),
-    'selecting Local + model APIs switches the controlled editor to the preset');
-  assert.equal(mounted.host.querySelectorAll('.sbx-network-row').length, 0);
-  const copy = mounted.host.querySelector('.sbx-network-local-model-apis-help').textContent;
-  assert.match(copy, /Linux enforces this list/);
-  assert.match(copy, /macOS does not yet enforce/);
-  assert.match(copy, /Not enforced/);
-  assert.match(copy, /ChatGPT-auth Codex is refused/);
-  assert.match(copy, /OpenCode is also launch-refused/);
-  assert.match(copy, /TCL-826/);
-  await harness.act(() => harness.fireEvent(
-    mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
-  assert.deepEqual(saved.draft.network, {
-    mode: 'list',
-    allow: [
-      { domain: 'api.anthropic.com', ports: [443] },
-      { domain: 'api.openai.com', ports: [443] },
-      { loopback: true },
-    ],
-  });
-  mounted.unmount();
-  mounted.host.remove();
-
-  const reopenedState = createManagementState();
-  reopenedState.openDialog({ kind: 'sandbox-editor', seed: saved.draft, options: {} });
-  const reopened = mountSandboxEditor(harness, mountManagementIsland, reopenedState);
-  await harness.act(() => Promise.resolve());
-  const reopenedMode = reopened.host.querySelector('#sandbox-profile-editor-network-mode');
-  assert.equal(selectedValue(reopenedMode), 'local-model-apis');
-  reopened.unmount();
-  reopened.host.remove();
-
-  const changedState = createManagementState();
-  const changedDraft = structuredClone(saved.draft);
-  changedDraft.network.allow[0].ports = [443, 8443];
-  changedState.openDialog({ kind: 'sandbox-editor', seed: changedDraft, options: {} });
-  const changed = mountSandboxEditor(harness, mountManagementIsland, changedState);
-  await harness.act(() => Promise.resolve());
-  assert.equal(selectedValue(
-    changed.host.querySelector('#sandbox-profile-editor-network-mode')), 'list',
-  'editing one provider port reveals the authored list');
-  assert.equal(changed.host.querySelectorAll('.sbx-network-row').length, 3);
-  changed.unmount();
-  changed.host.remove();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
+  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Enforced');
+  assert.match(host.querySelector('.sbx-network-badge').title, /normalized destination/);
+  unmount();
 });
 
 test('sandbox access rows expose aligned grid cells for network and Unix sockets', async (t) => {
@@ -2001,13 +1963,13 @@ test('a profile carrying retired baseline fields loads with no baseline UI at al
 
 // The catalog is a convenience, not a dependency: a feed that fails must never
 // block editing the table by hand.
-test('a failing common-rule feed leaves the filesystem table usable', async (t) => {
+test('a failing common-rule feed blocks hidden pack authority but leaves manual filesystem editing usable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  state.openDialog({ kind: 'sandbox-editor', seed: null, options: {} });
   let feedOffline = true;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
     async loadCommonRuleCatalog() { if (feedOffline) throw new Error('feed offline'); return COMMON_RULES; },
@@ -2023,7 +1985,15 @@ test('a failing common-rule feed leaves the filesystem table usable', async (t) 
   // Nothing inside a closed <details> is visible or announced, so the summary
   // itself has to say the presets are unavailable.
   assert.match(host.querySelector('.sbx-common-rule-summary').textContent, /unavailable/);
-  host.querySelector('.sbx-section .sbx-add-row').click();
+  const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
+  await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
+  assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
+    /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
+  assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,
+    'the authority warning is rendered and announced exactly once');
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
+    'unrendered release-owned network authority cannot be saved');
+  [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, 1, 'rows can still be added by hand');
   // Retry recovers the menu without a reopen.
@@ -2032,6 +2002,9 @@ test('a failing common-rule feed leaves the filesystem table usable', async (t) 
   assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-feed-error'), null);
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
   assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
+  assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
+  assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();
 });
 

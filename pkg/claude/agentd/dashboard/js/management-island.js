@@ -8,8 +8,8 @@ import { registerManagementController } from './management-controller.js';
 import {
   sandboxAccessAxes,
   sandboxAccessDraftErrors,
-  sandboxNetworkEditorMode,
-  sandboxNetworkRulesForEditorMode,
+  sandboxNetworkEntryKey,
+  sandboxNetworkAuthoring,
   sandboxOtherAssignmentWarnings,
   sandboxProfileSummary,
   sandboxRuleBuckets,
@@ -47,7 +47,11 @@ const AUTO_COMPACT_WINDOW_TITLE = 'Context capacity in tokens for Claude Code\'s
   + '(CLAUDE_CODE_AUTO_COMPACT_WINDOW). Accepts 450000, 450k or 0.5M; blank uses the model default. '
   + 'Pin it below a 1M model\'s real window so a long-lived agent compacts while it is still sharp. '
   + 'Capped at the model\'s actual context window.';
-const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matches one exact DNS '
+const NETWORK_ACCESS_HELP = 'Deny all starts closed, then releases selected built-in packs and '
+  + 'manual destinations. Pack references are stored by stable ID and expand from the current '
+  + 'tclaude release at policy resolution; their expanded rows are read-only in this editor. '
+  + 'Allow all leaves outbound access open. No override leaves the choice to other profile layers. '
+  + 'Unlock controls are available only under Deny all. Host matches one exact DNS '
   + 'name. Domain matches the named domain and can optionally include its subdomains. CIDR matches '
   + 'an IP network. Loopback covers connections to the local machine. Ports are optional integer '
   + 'ports; blank allows all ports for that destination. The authored connection contract is '
@@ -58,8 +62,8 @@ const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matc
   + 'but a new flow needs fresh resolution. Applied global, group, and explicit list '
   + 'policies compose by intersection: destinations and ports must be allowed by every applicable '
   + 'list, and compatible destination selectors and port sets are intersected. The Effective '
-  + 'policy preview reports enforcement capability limits for the selected implementation, '
-  + 'harness, and platform. Local access is intended for host-loopback model servers such as '
+  + 'policy preview reports enforcement capability limits for every destination on the selected '
+  + 'implementation, harness, and platform. The Local access pack is intended for host-loopback model servers such as '
   + 'Ollama, LM Studio, or llama.cpp, Codex OSS mode, OpenCode local providers, and host-local '
   + 'development services. OpenCode local-provider launches are currently refused because its '
   + 'effective provider endpoint is not launch-resolvable; that seam is tracked in TCL-826. On Linux it uses '
@@ -67,8 +71,8 @@ const NETWORK_ACCESS_HELP = 'List rows describe outbound destinations. Host matc
   + 'the real host loopback at 127.0.0.1 and ::1, so it also reopens host-local services including '
   + 'the IDE bridge. A cloud-backed harness refuses at launch unless an Access list, directly or '
   + 'through Includes, also covers its resolved provider endpoints; no model endpoint is added '
-  + 'implicitly. Local + model APIs adds the direct Anthropic and OpenAI API-key endpoints to '
-  + 'Local access. Linux enforces that list. macOS does not yet enforce mixed destination lists '
+  + 'implicitly. The Anthropic API and OpenAI API packs add the direct API-key endpoints separately. '
+  + 'Linux enforces those lists. macOS does not yet enforce mixed destination lists '
   + 'and launches with the existing Not enforced disclosure and open outbound network. '
   + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
   + 'servers, and agent commands need their own Access list destinations.';
@@ -190,22 +194,40 @@ const ACCESS_MODE_OPTIONS = [
   ['list', 'Access list'],
 ];
 
-const NETWORK_ACCESS_MODE_OPTIONS = [
-  ['', 'No override'],
-  ['open', 'Full access'],
-  ['closed', 'No access'],
-  ['local', 'Local access'],
-  ['local-model-apis', 'Local + model APIs'],
-  ['list', 'Access list'],
+const NETWORK_BASELINE_OPTIONS = [
+  ['deny', 'Deny all'],
+  ['allow', 'Allow all'],
+  ['inherit', 'No override'],
 ];
 
-function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
+const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
+
+const NETWORK_ENTRY_OUTCOMES = {
+  enforced: ['Enforced', 'enforced'],
+  enforced_partial: ['Partial', 'partial'],
+  not_enforced: ['Not enforced', 'not-enforced'],
+  refused: ['Refused', 'refused'],
+};
+
+function NetworkEntryBadge({ verdict, busy }) {
+  const current = busy ? null : verdict;
+  const [label, tone] = busy
+    ? ['Evaluating…', 'pending']
+    : NETWORK_ENTRY_OUTCOMES[current?.outcome] || ['Not evaluated', 'pending'];
+  const detail = current?.detail
+    || (busy ? 'Enforcement prediction is updating.' : 'Complete the profile to evaluate this destination.');
+  return html`<details class="sbx-network-verdict">
+    <summary class=${`sbx-network-badge sbx-network-badge-${tone}`} title=${detail}
+      aria-label=${`${label}: ${detail}`}>${label}</summary>
+    <span class="sbx-network-badge-detail">${detail}</span>
+  </details>`;
+}
+
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
-  // Access-rule arrays are sparse on the wire: Go deliberately omits an empty
-  // `allow`, including for list-mode empty intersections. Normalize at the
-  // render boundary so legacy and modern-empty payloads share one safe shape.
-  const rules = sandboxAccessAxes({ network: draft.network }).network;
-  const editorMode = sandboxNetworkEditorMode(rules);
+  const [defaultsAvailable, setDefaultsAvailable] = useState(!!newDraft);
+  const rules = sandboxNetworkAuthoring(draft);
+  const deny = rules.baseline === 'deny';
   const update = (patch) => setDraft((value) => ({ ...value, network: { ...value.network, ...patch } }));
   const updateRow = (index, patch) => update({ allow: rules.allow.map((row, i) => i === index ? { ...row, ...patch } : row) });
   // Prefer the selector that survives wire normalization, then preserve an
@@ -221,31 +243,61 @@ function NetworkAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     const next = kind === 'loopback' ? { loopback: true, ports: rules.allow[index].ports || [] } : { [kind]: '', ports: rules.allow[index].ports || [] };
     update({ allow: rules.allow.map((row, i) => i === index ? next : row) });
   };
-  const insert = (entry) => {
-    const incoming = clone(entry.entries || []);
-    const existing = new Set(rules.allow.map((row) => JSON.stringify(row)));
-    const added = incoming.filter((row) => !existing.has(JSON.stringify(row)));
-    update({ mode: entry.mode || 'list', allow: [...rules.allow, ...added] });
-    setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, warning: entry.warning || '', note: entry.note || '' });
+  const changeBaseline = (baseline) => {
+    const packs = baseline === 'deny' && defaultsAvailable ? DEFAULT_NETWORK_PACKS : [];
+    if (baseline === 'deny' && defaultsAvailable) setDefaultsAvailable(false);
+    setDraft((value) => ({
+      ...value,
+      network: { baseline, packs, allow: [] },
+    }));
   };
+  const togglePack = (id, checked) => update({
+    packs: checked
+      ? [...new Set([...rules.packs, id])]
+      : rules.packs.filter((value) => value !== id),
+  });
+  const packRows = (catalog.network_packs || []).flatMap((pack) =>
+    rules.packs.includes(pack.id)
+      ? (pack.entries || []).map((row) => ({ row, pack }))
+      : []);
+  const predictionByEntry = new Map((predictions || []).flatMap((value) =>
+    (value.keys?.length ? value.keys : [sandboxNetworkEntryKey(value.entry)])
+      .map((key) => [key, value])));
   return html`<fieldset class="sbx-section sbx-access-axis" hidden=${false}><legend class="sbx-section-legend">Network <${HelpDisclosure}
       id="sandbox-profile-editor-network-help" label="Network access" help=${NETWORK_ACCESS_HELP}
       open=${helpOpen === 'sandbox-profile-editor-network-help'} setOpen=${setHelpOpen}/></legend>
-    <${Select} id="sandbox-profile-editor-network-mode" value=${editorMode} onChange=${(mode) => update(sandboxNetworkRulesForEditorMode(rules, mode))} options=${NETWORK_ACCESS_MODE_OPTIONS}/>
-    ${editorMode === 'local' && html`<p class="sbx-axis-help sbx-network-local-help">For host-loopback models and local development services. Linux reaches the host through <code>host.tclaude.internal</code>; sandbox <code>127.0.0.1</code>/<code>::1</code> stays private. macOS reaches the real host <code>127.0.0.1</code>/<code>::1</code>, reopening host-local services including the IDE bridge. Cloud-model launches refuse unless an Access list or included profile also covers the provider endpoints. OpenCode local-provider launches are currently refused pending its effective-config model-transport seam in TCL-826.</p>`}
-    ${editorMode === 'local-model-apis' && html`<p class="sbx-axis-help sbx-network-local-model-apis-help">Local services plus the direct Anthropic and OpenAI API-key endpoints on port 443. Linux enforces this list. macOS does not yet enforce mixed destination lists: the launch preview reports <strong>Not enforced</strong> and outbound network remains open. ChatGPT-auth Codex is refused in filtered mode. OpenCode is also launch-refused pending its effective-config model-transport seam in TCL-826. Custom providers, web search, plugins, MCP servers, and agent commands need their own Access list destinations.</p>`}
-    ${editorMode === 'list' && html`<div class="sbx-rows sbx-network-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
+    <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
+    ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
+      <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
+    <fieldset class="sbx-network-unlocks" disabled=${!deny}>
+      <legend>Built-in rule packs</legend>
+      <p class="sbx-axis-help">Release-owned unlocks expand into the read-only rows below. Stored pack references follow endpoint updates in future tclaude releases.</p>
+      <div class="sbx-network-pack-list">${(catalog.network_packs || []).map((pack) => html`<label key=${pack.id} class="sbx-network-pack">
+        <input type="checkbox" checked=${rules.packs.includes(pack.id)} onChange=${(event) => togglePack(pack.id, event.currentTarget.checked)}/>
+        <span><strong>${pack.group ? `${pack.group} · ` : ''}${pack.label}</strong>${pack.note ? html`<small>${pack.note}</small>` : null}${pack.warning ? html`<small class="sbx-common-rule-warn">⚠ ${pack.warning}</small>` : null}</span>
+      </label>`)}</div>
+      <h4 class="sbx-network-list-title">Access list</h4>
+      <p class="sbx-axis-help">Destination badges evaluate this profile's own materialized rows before Includes and assignment intersections. The Effective policy preview below remains authoritative for composed launch behavior.</p>
+      <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack }, index) => { const kind = selector(row); return html`<div key=${`${pack.id}:${index}`} class="sbx-row sbx-access-row sbx-network-row sbx-network-pack-row">
+        <span class="sbx-network-selector sbx-network-value-readonly">${kind}</span>
+        <span class="sbx-network-value sbx-network-value-readonly">${kind === 'loopback' ? '—' : row[kind]}</span>
+        <span class="sbx-network-modifier">${kind === 'domain' && row.include_subdomains ? 'subdomains' : ''}</span>
+        <span class="sbx-network-ports sbx-network-value-readonly">${(row.ports || []).join(', ') || 'all ports'}</span>
+        <${NetworkEntryBadge} verdict=${predictionByEntry.get(sandboxNetworkEntryKey(row))} busy=${predictionBusy}/>
+        <span class="sbx-network-pack-owner" title="This release-owned row is changed by toggling its pack.">${pack.label}</span>
+      </div>`; })}</div>
+      <div class="sbx-rows sbx-network-rows sbx-network-manual-rows">${rules.allow.map((row, index) => { const kind = selector(row); return html`<div key=${index} class="sbx-row sbx-access-row sbx-network-row">
       <${Select} class="sbx-network-selector" value=${kind} onChange=${(value) => changeSelector(index, value)} options=${[['host', 'host'], ['domain', 'domain'], ['cidr', 'CIDR'], ['loopback', 'loopback']]}/>
       ${kind === 'loopback' ? html`<span class="sbx-network-value sbx-network-value-readonly" aria-hidden="true">—</span>` : html`<input class="sbx-network-value" value=${row[kind] || ''} placeholder=${kind === 'cidr' ? '192.0.2.0/24' : 'example.com'} onInput=${(event) => updateRow(index, { [kind]: event.currentTarget.value })}/>`}
       <span class="sbx-network-modifier">${kind === 'domain' && html`<label class="sbx-inline-check"><input type="checkbox" checked=${!!row.include_subdomains} onChange=${(event) => updateRow(index, { include_subdomains: event.currentTarget.checked })}/> subdomains</label>`}</span>
       <input class="sbx-network-ports" list="sandbox-common-ports" value=${Array.isArray(row.ports) ? row.ports.join(', ') : row.ports || ''} placeholder="ports (optional)" title="Comma-separated ports. Common suggestions are 22, 80, and 443; leaving this blank allows all ports for the destination." onInput=${(event) => updateRow(index, { ports: event.currentTarget.value })}/>
+      <${NetworkEntryBadge} verdict=${predictionByEntry.get(sandboxNetworkEntryKey(row))} busy=${predictionBusy}/>
       <button type="button" aria-label="Delete network row" onClick=${() => update({ allow: rules.allow.filter((_, i) => i !== index) })}>×</button>
     </div>`; })}</div>
     <datalist id="sandbox-common-ports"><option value="443"/><option value="80, 443"/><option value="22"/></datalist>
-    <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { host: '', ports: [] }] })}>＋ add destination</button>`}
-    <details class="sbx-common-rules"><summary>＋ insert network template</summary><div class="sbx-common-rule-list">${(catalog.network_templates || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} variant="access" entry=${{ ...entry, description: entry.note, paths: (entry.entries || []).map((row) => row.domain || row.host || row.cidr || 'loopback') }} onAdd=${() => insert(entry)}/>` )}</div></details>
+    <button type="button" class="sbx-add-row" onClick=${() => update({ allow: [...rules.allow, { host: '', ports: [] }] })}>＋ add destination</button>
+    </fieldset>
     ${(catalog.global_network || []).length > 0 && html`<details class="sbx-inherited-access"><summary>Inherited global network config (${catalog.global_network.length})</summary>${catalog.global_network.map((row, index) => html`<div key=${index} class="sbx-rule-note"><strong>${row.origin?.harness} · ${row.origin?.setting}:</strong> ${JSON.stringify(row.entry || { mode: row.mode })}</div>`)}</details>`}
-    ${notice && html`<div class="sbx-common-rule-notice" role="status">Inserted “${notice.label}”: ${notice.added} added, ${notice.skipped} already present.${notice.warning ? ` ⚠ ${notice.warning}` : ''}</div>`}
   </fieldset>`;
 }
 
@@ -660,14 +712,15 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const evaluationHarnesses = sandboxEvaluationHarnesses(descriptor.catalog);
   const baseline = useMemo(() => {
     const axes = sandboxAccessAxes(seed || {});
+    const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network: axes.network, unix_sockets: axes.unix_sockets };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2));
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
-  const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
+  const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
   // Global harness rows are context, not draft state. Keep the potentially
   // long ambient list folded until the operator asks to inspect it.
   const [showGlobalFilesystem, setShowGlobalFilesystem] = useState(false);
@@ -677,7 +730,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // What the last insertion did, including the entry's warning — the operator
   // must see the consequence of the rows that just appeared in the table.
   const [commonRuleNotice, setCommonRuleNotice] = useState(null);
-  const [networkTemplateNotice, setNetworkTemplateNotice] = useState(null);
   const [socketTemplateNotice, setSocketTemplateNotice] = useState(null);
   const [evaluateHarness, setEvaluateHarness] = useState('');
   const [evaluateImplementation, setEvaluateImplementation] = useState('harness-builtin');
@@ -704,7 +756,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     // must land in the catch like any other failure, or the busy flag sticks.
     Promise.resolve().then(() => actions.loadCommonRuleCatalog()).then((value) => {
       if (generation !== commonRuleGeneration.current) return;
-      setCommonRules(value || { version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
+      setCommonRules(value || { version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
       setCommonRuleFeedError(''); setCommonRuleFeedBusy(false);
     }).catch((error) => {
       if (generation !== commonRuleGeneration.current) return;
@@ -719,7 +771,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs)) throw new Error('network packs must be an array'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
@@ -741,12 +793,28 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     try { predictionDraft = { ...draft, ...parseRaw() }; }
     catch (error) { predictionDraftError = message(error); }
   }
+  const authoredNetwork = sandboxNetworkAuthoring(
+    advanced && !predictionDraftError ? predictionDraft : draft,
+  );
+  const knownNetworkPacks = new Set((commonRules.network_packs || []).map((pack) => pack.id));
+  const hiddenNetworkPacks = authoredNetwork.baseline === 'deny'
+    ? authoredNetwork.packs.filter((id) => !knownNetworkPacks.has(id))
+    : [];
+  const networkPackVisibilityError = hiddenNetworkPacks.length
+    ? `Saving is paused because release-owned authority cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
+    : '';
   const accessErrors = sandboxAccessDraftErrors(draft);
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
   // can resume preview even if the hidden structured draft remains invalid.
   const predictionAccessErrors = predictionDraftError ? [] : advanced
-    ? sandboxAccessDraftErrors(predictionDraft)
-    : accessErrors;
+    ? [
+      ...sandboxAccessDraftErrors(predictionDraft),
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ]
+    : [
+      ...accessErrors,
+      ...(networkPackVisibilityError ? [networkPackVisibilityError] : []),
+    ];
   const predictionPauseReason = predictionDraftError || predictionAccessErrors[0] || '';
   const predictionPaused = !!predictionDraft.name.trim() && !!predictionPauseReason;
   const evaluationImplementations = sandboxEvaluationImplementations(
@@ -807,9 +875,13 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses.
   const selectedEffective = prediction?.contexts?.[effectiveContext] || null;
-  const submitBlocked = saving || directoryBusy || (!advanced && accessErrors.length > 0);
+  const submitBlocked = saving || directoryBusy || !!networkPackVisibilityError
+    || (!advanced && accessErrors.length > 0);
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network and Unix-socket fields compose by intersection. The tclaude agent socket remains reachable independently of editable socket policy.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
-    ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${networkTemplateNotice} setNotice=${setNetworkTemplateNotice}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
+    ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
+      predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
+      packVisibilityError=${networkPackVisibilityError} retryPackCatalog=${loadCommonRules}
+      packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
@@ -939,7 +1011,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {
