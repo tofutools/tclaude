@@ -27,6 +27,20 @@ type jobsPage struct {
 			Name       string `json:"name"`
 			TargetRole string `json:"target_role"`
 		} `json:"cron"`
+		Order *struct {
+			ID      int64  `json:"id"`
+			Name    string `json:"name"`
+			Summary string `json:"summary"`
+			Target  struct {
+				GroupName string `json:"group_name"`
+			} `json:"target"`
+			Trigger struct {
+				Label string `json:"label"`
+			} `json:"trigger"`
+			LastEvaluation *struct {
+				Outcome string `json:"outcome"`
+			} `json:"last_evaluation"`
+		} `json:"order"`
 	} `json:"rows"`
 	Offset          int `json:"offset"`
 	Limit           int `json:"limit"`
@@ -68,12 +82,35 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 		IntervalSeconds: 300, Subject: "ping", Body: "status?", Enabled: true,
 	})
 	require.NoError(t, err)
+	orderID, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:             "pr-early",
+		TargetKind:       db.StandingTargetGroup,
+		GroupID:          group.ID,
+		Summary:          "Push the pull request early.",
+		TriggerEvent:     db.StandingTriggerSessionStart,
+		TriggerSources:   []string{db.StandingSourceCompact},
+		Timing:           db.StandingTimingSameContinuation,
+		Cadence:          db.StandingCadenceAlways,
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	_, err = db.RecordStandingDelivery(&db.StandingDelivery{
+		OrderID:       orderID,
+		OrderRevision: 1,
+		TargetConv:    "jjj00000-0000-4000-8000-000000000002",
+		Outcome:       db.StandingOutcomeDelivered,
+		Transport:     db.StandingTransportHookContext,
+		Harness:       "codex",
+		Detail:        "SessionStart(source=compact) → hook-context",
+	})
+	require.NoError(t, err)
 
-	// Unfiltered: every job of both kinds, one list.
+	// Unfiltered: every job kind in one list.
 	all := getJobs(t, dash, "")
-	assert.Equal(t, 3, all.Total)
-	assert.Equal(t, 3, all.TotalUnfiltered)
-	require.Len(t, all.Rows, 3)
+	assert.Equal(t, 4, all.Total)
+	assert.Equal(t, 4, all.TotalUnfiltered)
+	require.Len(t, all.Rows, 4)
 	kinds := map[string]int{}
 	for _, r := range all.Rows {
 		kinds[r.Kind]++
@@ -86,14 +123,23 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 			assert.Nil(t, r.Export)
 			assert.Equal(t, "gamma-ping", r.Cron.Name)
 			assert.Equal(t, "reviewer", r.Cron.TargetRole, "group role is available for edit prefill")
+		case "standing-order":
+			require.NotNil(t, r.Order, "a standing-order row must carry its order payload")
+			assert.Nil(t, r.Export)
+			assert.Nil(t, r.Cron)
+			assert.Equal(t, "pr-early", r.Order.Name)
+			assert.Equal(t, "gamma-team", r.Order.Target.GroupName)
+			assert.Equal(t, "session.start (compact)", r.Order.Trigger.Label)
+			require.NotNil(t, r.Order.LastEvaluation)
+			assert.Equal(t, db.StandingOutcomeDelivered, r.Order.LastEvaluation.Outcome)
 		}
 	}
-	assert.Equal(t, map[string]int{"export": 2, "cron": 1}, kinds)
+	assert.Equal(t, map[string]int{"export": 2, "cron": 1, "standing-order": 1}, kinds)
 
-	// The q filter is server-side and spans both kinds' text fields.
-	cronOnly := getJobs(t, dash, "?q=gamma")
+	// The q filter is server-side and spans every kind's text fields.
+	cronOnly := getJobs(t, dash, "?q=gamma-ping")
 	assert.Equal(t, 1, cronOnly.Total)
-	assert.Equal(t, 3, cronOnly.TotalUnfiltered, "total_unfiltered ignores q")
+	assert.Equal(t, 4, cronOnly.TotalUnfiltered, "total_unfiltered ignores q")
 	require.Len(t, cronOnly.Rows, 1)
 	assert.Equal(t, "cron", cronOnly.Rows[0].Kind)
 
@@ -115,8 +161,13 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	assert.Equal(t, "cron", schedules.Rows[0].Kind)
 
 	standingOrders := getJobs(t, dash, "?kind=standing-order")
-	assert.Zero(t, standingOrders.Total)
-	assert.Zero(t, standingOrders.TotalUnfiltered)
+	assert.Equal(t, 1, standingOrders.Total)
+	assert.Equal(t, 1, standingOrders.TotalUnfiltered)
+	require.Len(t, standingOrders.Rows, 1)
+	assert.Equal(t, "pr-early", standingOrders.Rows[0].Order.Name)
+
+	explained := getJobs(t, dash, "?kind=standing-order&q=hook-context")
+	require.Len(t, explained.Rows, 1, "latest evaluation fields participate in search")
 
 	unknown := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/jobs?kind=surprise", nil))
 	assert.Equal(t, http.StatusBadRequest, unknown.Code)
@@ -124,11 +175,11 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	// Windowing: limit bounds the page, total still counts everything.
 	page1 := getJobs(t, dash, "?offset=0&limit=2")
 	assert.Len(t, page1.Rows, 2)
-	assert.Equal(t, 3, page1.Total)
+	assert.Equal(t, 4, page1.Total)
 	assert.Equal(t, 0, page1.Offset)
 
 	// A stale offset past the end is clamped back to the last page.
 	clamped := getJobs(t, dash, "?offset=99&limit=2")
 	assert.Equal(t, 2, clamped.Offset, "stale offset clamps to the last page start")
-	assert.Len(t, clamped.Rows, 1)
+	assert.Len(t, clamped.Rows, 2)
 }

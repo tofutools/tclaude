@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 )
 
 // dashboard_jobs.go — the Jobs tab's unified job listing.
@@ -30,18 +31,20 @@ import (
 // existing per-kind views verbatim so the front-end renders each kind with the
 // same cell builders (and hands Cron straight to the cron edit modal).
 type dashboardJobRow struct {
-	Kind   string              `json:"kind"`
-	Export *dashboardExportJob `json:"export,omitempty"`
-	Cron   *dashboardCronJob   `json:"cron,omitempty"`
+	Kind   string                    `json:"kind"`
+	Export *dashboardExportJob       `json:"export,omitempty"`
+	Cron   *dashboardCronJob         `json:"cron,omitempty"`
+	Order  *standingorders.OrderView `json:"order,omitempty"`
 }
 
 const (
-	jobKindExport = "export"
-	jobKindCron   = "cron"
+	jobKindExport        = "export"
+	jobKindCron          = "cron"
+	jobKindStandingOrder = "standing-order"
 )
 
 func validJobKind(kind string) bool {
-	return kind == "" || kind == jobKindExport || kind == jobKindCron || kind == "standing-order"
+	return kind == "" || kind == jobKindExport || kind == jobKindCron || kind == jobKindStandingOrder
 }
 
 // handleDashboardJobs serves GET /api/jobs — the Jobs tab's unified window.
@@ -101,6 +104,7 @@ func collectJobRows() []dashboardJobRow {
 		at  time.Time
 	}
 	var all []keyed
+	groupNames := map[int64]string{}
 
 	if exports, err := db.ListExportJobs(0); err == nil {
 		for _, j := range exports {
@@ -115,7 +119,6 @@ func collectJobRows() []dashboardJobRow {
 		}
 	}
 	if crons, err := db.ListAgentCronJobs(); err == nil {
-		groupNames := map[int64]string{}
 		for _, j := range crons {
 			view := cronJobToView(j, groupNames)
 			at := j.LastRunAt
@@ -124,6 +127,31 @@ func collectJobRows() []dashboardJobRow {
 			}
 			all = append(all, keyed{
 				row: dashboardJobRow{Kind: jobKindCron, Cron: &view},
+				at:  at,
+			})
+		}
+	}
+	if orders, err := db.ListStandingOrders(); err == nil {
+		for _, order := range orders {
+			groupName := ""
+			if order.IsGroupTarget() && order.GroupID > 0 {
+				var ok bool
+				groupName, ok = groupNames[order.GroupID]
+				if !ok {
+					if group, groupErr := db.GetAgentGroupByID(order.GroupID); groupErr == nil && group != nil {
+						groupName = group.Name
+					}
+					groupNames[order.GroupID] = groupName
+				}
+			}
+			latest, _ := db.LatestStandingDelivery(order.ID)
+			view := standingorders.NewOrderView(order, groupName, latest)
+			at := order.UpdatedAt
+			if latest != nil {
+				at = latest.CreatedAt
+			}
+			all = append(all, keyed{
+				row: dashboardJobRow{Kind: jobKindStandingOrder, Order: &view},
 				at:  at,
 			})
 		}
@@ -156,6 +184,9 @@ func jobRowID(r dashboardJobRow) int64 {
 	if r.Cron != nil {
 		return r.Cron.ID
 	}
+	if r.Order != nil {
+		return r.Order.ID
+	}
 	return 0
 }
 
@@ -176,6 +207,18 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 			c.OwnerLabel, c.OwnerAgent, c.OwnerConv,
 			c.TargetLabel, c.TargetAgent, c.TargetConv,
 			c.GroupName, c.LastRunStatus}
+	case r.Order != nil:
+		o := r.Order
+		hay = []string{jobKindStandingOrder, o.Name, o.Summary,
+			o.OwnerAgent, o.OwnerConv,
+			o.Target.Kind, o.Target.Agent, o.Target.Conv,
+			o.Target.GroupName, o.Target.Role,
+			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence,
+			string(o.Capability.Status), o.Capability.Transport, o.Capability.Detail}
+		if o.LastEvaluation != nil {
+			hay = append(hay, o.LastEvaluation.Outcome, o.LastEvaluation.Transport,
+				o.LastEvaluation.Harness, o.LastEvaluation.Detail, o.LastEvaluation.TargetConv)
+		}
 	}
 	for _, h := range hay {
 		if h != "" && strings.Contains(strings.ToLower(h), needle) {
