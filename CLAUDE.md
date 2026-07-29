@@ -140,8 +140,10 @@ churning production code on designs that may be rejected.
 The same loop works agent-to-agent. A lead can ask the implementing agent for
 a mock before green-lighting implementation, or send the implementor a
 rendered mock of what is wanted; either side re-renders and replies with an
-updated image (pass file paths or attach renders via `tclaude agent send`),
-iterating on the design together before any production code is written. Bring
+updated image, passing an absolute path the peer can read in the message body
+(`tclaude agent send` carries text only — attachments exist only on
+notify-human), iterating on the design together before any production code is
+written. Bring
 the human in with notify-human whenever a decision is taste rather than
 mechanics.
 
