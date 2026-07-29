@@ -166,15 +166,19 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   const codexView = model.spawnCapabilityView(
     { harness: 'codex' }, { harnesses, sandboxImpl },
   );
-  for (const value of ['', 'harness-builtin']) {
-    const codexHint = model.sandboxImplHintFor({ sandboxImpl: value }, codexView);
-    assert.equal(codexHint.warn, true);
-    assert.match(codexHint.text, /built-in filesystem sandbox remains available/);
-    assert.match(codexHint.text, /no filtered network sandbox yet/);
-    assert.match(codexHint.text, /upstream proxy is experimental and off by default/);
-    assert.match(codexHint.text, /tclaude-layer filtering on Linux/);
-    assert.match(codexHint.text, /network open \(Allow all\)/);
-  }
+  assert.match(codexView.sandboxImplInheritLabel,
+    /profile chain, then harness-builtin \(no filtered network sandbox yet\)/);
+  assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, codexView), null,
+    'inherit leaves the profile chain in control and must not claim the builtin target won');
+  const codexHint = model.sandboxImplHintFor(
+    { sandboxImpl: 'harness-builtin' }, codexView,
+  );
+  assert.equal(codexHint.warn, true);
+  assert.match(codexHint.text, /built-in filesystem sandbox remains available/);
+  assert.match(codexHint.text, /no filtered network sandbox yet/);
+  assert.match(codexHint.text, /upstream proxy is experimental and off by default/);
+  assert.match(codexHint.text, /tclaude-layer filtering on Linux/);
+  assert.match(codexHint.text, /network open \(Allow all\)/);
 
   const openCodeView = model.spawnCapabilityView(
     { harness: 'opencode' }, { harnesses, sandboxImpl },

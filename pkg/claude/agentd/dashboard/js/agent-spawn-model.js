@@ -1,6 +1,7 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import {
   CODEX_BUILTIN_FILTERED_NETWORK_HINT,
+  CODEX_BUILTIN_FILTERED_NETWORK_SHORT,
   codexBuiltinSandboxOptionLabel,
 } from './sandbox-network-disclosure.js';
 
@@ -258,6 +259,9 @@ function sandboxImplView(harness, context) {
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
     sandboxImplInheritLabel: canBuiltinOSSandbox
       ? `profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
+        + (text(harness?.name) === 'codex'
+          ? ` (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
+          : '')
       : 'profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
     sandboxImplHarness: harnessLabel,
     sandboxImplHarnessName: text(harness?.name),
@@ -316,8 +320,9 @@ export function setSpawnSandboxImpl(draft, value) {
 // picks it anyway is choosing a failed launch, not an unnoticed downgrade.
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
-  const value = text(draft.sandboxImpl) || view.sandboxImplDefault;
-  if (value === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
+  const explicit = text(draft.sandboxImpl);
+  const value = explicit || view.sandboxImplDefault;
+  if (explicit === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
     return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
   }
   if (value === SANDBOX_IMPL_DEFAULT && !view.sandboxImplCanBuiltin) {

@@ -552,8 +552,17 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
       .find((option) => option.value === 'harness-builtin').textContent,
     'Codex built-in (no filtered network sandbox yet)',
   );
+  assert.match(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
+    /inherit \(profile chain, then harness-builtin \(no filtered network sandbox yet\)\)/);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
+    'an inherited target stays neutral because the profile chain has not resolved yet');
+  const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
+  setValue(codexImpl, 'harness-builtin');
+  await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
     /upstream proxy is experimental and off by default/);
+  setValue(codexImpl, '');
+  await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   setValue(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, true,
