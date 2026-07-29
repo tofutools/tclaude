@@ -651,6 +651,75 @@ func TestSandboxProfileDraftEnforcementSeparatesPredictionFromCompositionContext
 	assert.True(t, defaulted.Targets[0].Predicted)
 }
 
+func TestSandboxProfileDraftEnforcementDistinguishesDarwinLocalAndMixedLists(t *testing.T) {
+	f := newFlow(t)
+	for _, tc := range []struct {
+		name     string
+		allow    []any
+		platform string
+		outcome  string
+		detail   string
+	}{
+		{
+			name: "darwin-local",
+			allow: []any{
+				map[string]any{"loopback": true},
+			},
+			platform: "darwin",
+			outcome:  harness.AccessPredictionEnforced,
+			detail:   "host-loopback",
+		},
+		{
+			name: "darwin-local-model-apis",
+			allow: []any{
+				map[string]any{"loopback": true},
+				map[string]any{"domain": "api.anthropic.com", "ports": []int{443}},
+				map[string]any{"domain": "api.openai.com", "ports": []int{443}},
+			},
+			platform: "darwin",
+			outcome:  harness.AccessPredictionNotEnforced,
+			detail:   "all outbound connections are permitted",
+		},
+		{
+			name: "linux-local-model-apis",
+			allow: []any{
+				map[string]any{"loopback": true},
+				map[string]any{"domain": "api.anthropic.com", "ports": []int{443}},
+				map[string]any{"domain": "api.openai.com", "ports": []int{443}},
+			},
+			platform: "linux",
+			outcome:  harness.AccessPredictionEnforcedPartial,
+			detail:   "Prerequisite-conditional",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+				"draft": map[string]any{
+					"name": tc.name, "filesystem": []any{}, "environment": []any{},
+					"network": map[string]any{
+						"mode": "list", "allow": tc.allow,
+					},
+				},
+				"targets": []any{map[string]any{
+					"implementation": "tclaude-layer",
+					"harness":        "claude",
+					"platform":       tc.platform,
+				}},
+			})
+			require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+			var got struct {
+				Targets []struct {
+					Axes harness.PredictedAccessAxes `json:"axes"`
+				} `json:"targets"`
+			}
+			testharness.DecodeJSON(t, rec, &got)
+			require.Len(t, got.Targets, 1)
+			assert.Equal(t, tc.outcome, got.Targets[0].Axes.Network.Outcome)
+			assert.Contains(t, got.Targets[0].Axes.Network.Detail, tc.detail)
+		})
+	}
+}
+
 func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {
 	f := newFlow(t)
 	for _, body := range []map[string]any{

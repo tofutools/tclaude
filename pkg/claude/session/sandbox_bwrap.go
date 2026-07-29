@@ -2,9 +2,13 @@ package session
 
 import (
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
@@ -455,6 +459,11 @@ func ValidateTclaudeLayerNetwork(
 	case sandboxpolicy.AccessModeUnset, sandboxpolicy.AccessModeOpen:
 		return nil, nil
 	case sandboxpolicy.AccessModeList:
+		if endpointErr := validateModelTransportLoopbackForPlatform(
+			h, resolvedModel, runtime.GOOS,
+		); endpointErr != nil {
+			return nil, endpointErr
+		}
 		requirement, resolveErr := harness.ResolveModelTransportRequirement(h, resolvedModel)
 		if resolveErr != nil {
 			return nil, resolveErr
@@ -463,7 +472,8 @@ func ValidateTclaudeLayerNetwork(
 			h, axes.Network, requirement); coverageErr != nil {
 			return nil, coverageErr
 		}
-		detail := harness.DescribeModelTransportRequirement(requirement)
+		detail := describeModelTransportRequirementForPlatform(
+			requirement, runtime.GOOS)
 		if requirement.Template != "" {
 			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
 		}
@@ -1508,6 +1518,83 @@ func (r *tclaudeLayerHideRemounts) noteReplacement(path string) {
 	r.noteAncestorReplacement(path)
 	if _, tracked := r.active[path]; tracked {
 		r.active[path] = false
+	}
+}
+
+func describeModelTransportRequirementForPlatform(
+	requirement harness.ModelTransportRequirement,
+	goos string,
+) string {
+	detail := harness.DescribeModelTransportRequirement(requirement)
+	if goos == "darwin" {
+		detail = strings.ReplaceAll(
+			detail,
+			sandboxpolicy.FilteredNetworkHostLoopbackName,
+			"localhost",
+		)
+	}
+	return detail
+}
+
+// validateModelTransportLoopbackForPlatform keeps the abstract loopback
+// selector honest at the platform boundary. Linux's network namespace owns
+// 127.0.0.1/::1 and reaches the host only through the synthetic mapping;
+// Darwin Seatbelt filters the real host loopback directly and does not install
+// the Linux-only synthetic hostname.
+func validateModelTransportLoopbackForPlatform(
+	h *harness.Harness,
+	resolved harness.ResolvedModelTransport,
+	goos string,
+) error {
+	if strings.TrimSpace(resolved.BaseURL) == "" {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(resolved.BaseURL))
+	if err != nil || parsed.Hostname() == "" {
+		return nil // The harness-owned resolver reports the malformed endpoint.
+	}
+	host := strings.ToLower(parsed.Hostname())
+	harnessName := ""
+	if h != nil {
+		harnessName = h.Name
+	}
+	if goos == "darwin" &&
+		host == sandboxpolicy.FilteredNetworkHostLoopbackName {
+		return &harness.SandboxCapabilityError{
+			Harness: harnessName,
+			Kind:    harness.SandboxCapabilityModelTransport,
+			Message: fmt.Sprintf(
+				"resolved provider endpoint %q uses the Linux-only synthetic host-loopback name; on macOS configure the provider for localhost, 127.0.0.1, or ::1 at the same port, choose a resolvable non-loopback provider, or use network open",
+				resolved.BaseURL,
+			),
+		}
+	}
+	if goos != "linux" {
+		return nil
+	}
+	isLoopback := host == "localhost"
+	if address, parseErr := netip.ParseAddr(host); parseErr == nil {
+		isLoopback = address.IsLoopback()
+	}
+	if !isLoopback {
+		return nil
+	}
+	port := 443
+	if parsed.Scheme == "http" {
+		port = 80
+	}
+	if rawPort := parsed.Port(); rawPort != "" {
+		if parsedPort, parseErr := strconv.Atoi(rawPort); parseErr == nil {
+			port = parsedPort
+		}
+	}
+	return &harness.SandboxCapabilityError{
+		Harness: harnessName,
+		Kind:    harness.SandboxCapabilityModelTransport,
+		Message: fmt.Sprintf(
+			"resolved provider endpoint %q uses sandbox-private localhost on Linux; configure the provider for %s:%d to reach an explicitly allowed host-loopback service, choose a resolvable non-loopback provider, or use network open",
+			resolved.BaseURL, sandboxpolicy.FilteredNetworkHostLoopbackName, port,
+		),
 	}
 }
 

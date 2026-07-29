@@ -418,6 +418,54 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
 	require.Len(t, notices, 1)
 	assert.Equal(t, "no_mechanism", notices[0].Reason)
+
+	localPresets := []sandboxpolicy.ResolvedAxes{
+		{Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true,
+			}},
+		}},
+		{Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "api.anthropic.com", Ports: []int{443}},
+				{Domain: "api.openai.com", Ports: []int{443}},
+				{Loopback: true},
+			},
+		}},
+	}
+	for _, local := range localPresets {
+		for _, platform := range []string{"linux", "darwin"} {
+			prediction, err = PredictAccessEnforcement(
+				openCode, sandboxpolicy.ImplementationTclaudeLayer,
+				local, OpenCodeSandboxTclaudeLayer, platform,
+			)
+			require.NoError(t, err)
+			preview = DescribePredictedAccess(local, prediction).Network
+			assert.Equal(t, AccessPredictionRefused, preview.Outcome)
+			assert.Contains(t, preview.Detail, SandboxCapabilityModelTransport)
+			assert.Contains(t, preview.Detail, "TCL-826")
+		}
+	}
+
+	portScopedLoopback := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true, Ports: []int{11434},
+			}},
+		},
+	}
+	prediction, err = PredictAccessEnforcement(
+		openCode, sandboxpolicy.ImplementationTclaudeLayer,
+		portScopedLoopback, OpenCodeSandboxTclaudeLayer, "linux",
+	)
+	require.NoError(t, err)
+	preview = DescribePredictedAccess(portScopedLoopback, prediction).Network
+	assert.Equal(t, AccessPredictionEnforcedPartial, preview.Outcome,
+		"ordinary explicit-provider loopback lists retain general M3 support")
+	assert.NotContains(t, preview.Detail, "TCL-826")
 }
 
 func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsPartial(t *testing.T) {

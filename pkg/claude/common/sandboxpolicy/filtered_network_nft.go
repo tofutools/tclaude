@@ -133,9 +133,9 @@ func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, 
 		body.WriteString("    ip6 daddr " + destination + " ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept\n")
 	}
 	for _, protocol := range []string{"tcp", "udp"} {
-		body.WriteString("    " + family + " daddr " + destination + " " + protocol)
+		body.WriteString("    " + family + " daddr " + destination + " ")
 		if len(ports) > 0 {
-			body.WriteString(" dport { ")
+			body.WriteString(protocol + " dport { ")
 			for i, port := range ports {
 				if i > 0 {
 					body.WriteString(", ")
@@ -143,6 +143,11 @@ func writeFilteredNFTRule(body *strings.Builder, ipv4 bool, destination string, 
 				body.WriteString(strconv.Itoa(port))
 			}
 			body.WriteString(" }")
+		} else {
+			// A bare "tcp" or "udp" expression is invalid nft syntax.
+			// meta l4proto selects that protocol without adding a port
+			// restriction, preserving the contract's TCP/UDP-only floor.
+			body.WriteString("meta l4proto " + protocol)
 		}
 		body.WriteString(" accept\n")
 	}
@@ -154,9 +159,9 @@ func writeFilteredNFTSetRule(body *strings.Builder, ipv4 bool, setName string, p
 		family = "ip"
 	}
 	for _, protocol := range []string{"tcp", "udp"} {
-		body.WriteString("    " + family + " daddr @" + setName + " " + protocol)
+		body.WriteString("    " + family + " daddr @" + setName + " ")
 		if len(ports) > 0 {
-			body.WriteString(" dport { ")
+			body.WriteString(protocol + " dport { ")
 			for i, port := range ports {
 				if i > 0 {
 					body.WriteString(", ")
@@ -164,6 +169,8 @@ func writeFilteredNFTSetRule(body *strings.Builder, ipv4 bool, setName string, p
 				body.WriteString(strconv.Itoa(port))
 			}
 			body.WriteString(" }")
+		} else {
+			body.WriteString("meta l4proto " + protocol)
 		}
 		body.WriteString(" accept\n")
 	}

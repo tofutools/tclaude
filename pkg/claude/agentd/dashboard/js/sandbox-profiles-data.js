@@ -72,9 +72,9 @@ export function sandboxAccessAxes(profile = {}) {
 }
 
 const LOCAL_MODEL_APIS_ALLOW = [
-  { loopback: true },
   { domain: 'api.anthropic.com', ports: [443] },
   { domain: 'api.openai.com', ports: [443] },
+  { loopback: true },
 ];
 
 function isExactLocalEntry(entry = {}) {
@@ -104,9 +104,9 @@ export function sandboxNetworkEditorMode(network = {}) {
   if (rules.mode === 'list') {
     if (rules.allow.length === 1 && isExactLocalEntry(rules.allow[0])) return 'local';
     if (rules.allow.length === LOCAL_MODEL_APIS_ALLOW.length
-        && isExactLocalEntry(rules.allow[0])
+        && isExactModelAPIEntry(rules.allow[0], LOCAL_MODEL_APIS_ALLOW[0].domain)
         && isExactModelAPIEntry(rules.allow[1], LOCAL_MODEL_APIS_ALLOW[1].domain)
-        && isExactModelAPIEntry(rules.allow[2], LOCAL_MODEL_APIS_ALLOW[2].domain)) {
+        && isExactLocalEntry(rules.allow[2])) {
       return 'local-model-apis';
     }
   }

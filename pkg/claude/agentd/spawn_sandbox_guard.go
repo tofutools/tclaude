@@ -171,6 +171,18 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_profile", err.Error()}
 	}
+	if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+		h.Name == harness.OpenCodeName &&
+		(harness.IsLocalAccessNetworkPreset(axes.Network) ||
+			harness.IsLocalModelAPIsNetworkPreset(axes.Network)) {
+		modelContext.Environment = snapshot.Effective.Environment
+		if modelErr := session.ValidateTclaudeLayerOpenCodeLocalModelTransport(
+			h, snapshot.Effective, modelContext,
+		); modelErr != nil {
+			return nil, sandboxCapabilitySpawnFailure(
+				modelErr, harness.SandboxCapabilityModelTransport)
+		}
+	}
 	var verdict harness.LaunchOSSandbox
 	var filteredProbe *session.FilteredNetworkPrerequisite
 	if implementation.UsesTclaudeLayer() {
@@ -214,8 +226,11 @@ func planSandboxProfileAccessForLaunch(
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
-	if runtime.GOOS == "linux" && implementation.UsesTclaudeLayer() &&
-		axes.Network.Mode == sandboxpolicy.AccessModeList {
+	if implementation.UsesTclaudeLayer() &&
+		axes.Network.Mode == sandboxpolicy.AccessModeList &&
+		(runtime.GOOS == "linux" ||
+			(runtime.GOOS == "darwin" &&
+				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network))) {
 		if filteredProbe == nil {
 			probe := probeFilteredNetworkPrerequisite()
 			filteredProbe = &probe

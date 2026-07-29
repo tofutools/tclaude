@@ -862,9 +862,9 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   const localModelAPIs = {
     mode: 'list',
     allow: [
-      { loopback: true },
       { domain: 'api.anthropic.com', ports: [443] },
       { domain: 'api.openai.com', ports: [443] },
+      { loopback: true },
     ],
   };
   assert.equal(model.sandboxNetworkEditorMode(localModelAPIs), 'local-model-apis');
@@ -873,12 +873,12 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
     localModelAPIs,
   );
   const reorderedModelAPIs = structuredClone(localModelAPIs);
-  [reorderedModelAPIs.allow[1], reorderedModelAPIs.allow[2]] =
-    [reorderedModelAPIs.allow[2], reorderedModelAPIs.allow[1]];
+  [reorderedModelAPIs.allow[0], reorderedModelAPIs.allow[1]] =
+    [reorderedModelAPIs.allow[1], reorderedModelAPIs.allow[0]];
   assert.equal(model.sandboxNetworkEditorMode(reorderedModelAPIs), 'list',
     'reordering the exact provider preset exposes it as Access list');
   const widenedModelAPIs = structuredClone(localModelAPIs);
-  widenedModelAPIs.allow[1].include_subdomains = true;
+  widenedModelAPIs.allow[0].include_subdomains = true;
   assert.equal(model.sandboxNetworkEditorMode(widenedModelAPIs), 'list',
     'subdomain widening is not disguised as the provider preset');
   assert.equal(model.sandboxNetworkEditorMode({
@@ -1533,6 +1533,8 @@ test('Local access round-trips as the exact loopback preset and reveals richer l
   assert.match(copy, /127\.0\.0\.1.*::1/s);
   assert.match(copy, /IDE bridge/);
   assert.match(copy, /Cloud-model launches refuse/);
+  assert.match(copy, /OpenCode local-provider launches are currently refused/);
+  assert.match(copy, /TCL-826/);
   await harness.act(() => harness.fireEvent(
     mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.deepEqual(saved.draft.network, {
@@ -1592,14 +1594,16 @@ test('Local + model APIs round-trips exactly and reveals any deviation', async (
   assert.match(copy, /macOS does not yet enforce/);
   assert.match(copy, /Not enforced/);
   assert.match(copy, /ChatGPT-auth Codex is refused/);
+  assert.match(copy, /OpenCode is also launch-refused/);
+  assert.match(copy, /TCL-826/);
   await harness.act(() => harness.fireEvent(
     mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.deepEqual(saved.draft.network, {
     mode: 'list',
     allow: [
-      { loopback: true },
       { domain: 'api.anthropic.com', ports: [443] },
       { domain: 'api.openai.com', ports: [443] },
+      { loopback: true },
     ],
   });
   mounted.unmount();
@@ -1616,7 +1620,7 @@ test('Local + model APIs round-trips exactly and reveals any deviation', async (
 
   const changedState = createManagementState();
   const changedDraft = structuredClone(saved.draft);
-  changedDraft.network.allow[1].ports = [443, 8443];
+  changedDraft.network.allow[0].ports = [443, 8443];
   changedState.openDialog({ kind: 'sandbox-editor', seed: changedDraft, options: {} });
   const changed = mountSandboxEditor(harness, mountManagementIsland, changedState);
   await harness.act(() => Promise.resolve());

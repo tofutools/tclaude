@@ -198,6 +198,19 @@ func resolveOpenCodeModelTransport(
 	}, nil
 }
 
+// ValidateTclaudeLayerOpenCodeLocalModelTransport keeps the local convenience
+// presets behind the existing model-transport launch gate. General OpenCode
+// explicit-provider filtering is supported, but resolving an effective local
+// provider for these presets belongs to TCL-826.
+func ValidateTclaudeLayerOpenCodeLocalModelTransport(
+	h *harness.Harness,
+	_ sandboxpolicy.EffectiveProfile,
+	_ ModelTransportLaunchContext,
+) error {
+	return modelTransportLaunchError(h,
+		"OpenCode local-preset effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open")
+}
+
 func resolveClaudeModelTransport(
 	h *harness.Harness,
 	context ModelTransportLaunchContext,

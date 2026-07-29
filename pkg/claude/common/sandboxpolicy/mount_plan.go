@@ -46,8 +46,9 @@ const (
 	// constructed filesystem root. Only explicitly bound pathname sockets,
 	// including agentd, remain visible.
 	NetworkIsolatedWithAgentd
-	// NetworkFiltered is reserved for a future proxy-backed intermediate
-	// posture. No current profile value renders it and appliers must refuse it.
+	// NetworkFiltered applies the compiled allow list. Linux uses its
+	// supervised filtered gateway; Darwin currently accepts only loopback-only
+	// lists and renders them as native Seatbelt remote-IP rules.
 	NetworkFiltered
 )
 

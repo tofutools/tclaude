@@ -223,9 +223,10 @@ than its attach pane. Its Linux control-plane engine can cross an isolated names
 through an owned Unix relay, without exposing the socket path inside the server
 wall or routing agentd through host TCP. That engine does not enable a posture:
 OpenCode isolated profiles still refuse because OpenCode requires hosted model
-traffic. Filtered OpenCode remains refused until the pinned real-OpenCode M3
-smoke, and the Unix relay remains Linux-only. Linux uses `bwrap` from `PATH` and requires
-working unprivileged user namespaces. macOS uses
+traffic. Filtered OpenCode supports inspected explicit-provider configs on
+Linux, while both local convenience presets remain launch-refused pending the
+TCL-826 effective-config seam. The Unix relay remains Linux-only. Linux uses
+`bwrap` from `PATH` and requires working unprivileged user namespaces. macOS uses
 `/usr/bin/sandbox-exec` for filesystem confinement and for the
 isolated-with-agentd network boundary. If any required capability is missing,
 tclaude refuses the launch instead of silently falling back.
@@ -523,6 +524,57 @@ requires an internal localhost server, the remedy is a harness-descriptor
 capability plus launch-time refusal for Darwin isolated mode. It must not gain a
 loopback exception that silently reopens host services.
 
+#### Local network presets
+
+The profile editor offers two conveniences over the existing
+`network.mode: list` schema; neither adds a wire mode or an implicit rule:
+
+- **Local access** writes exactly one unscoped `{ "loopback": true }` entry.
+  It is intended for local model servers such as Ollama, LM Studio, and
+  llama.cpp, Codex OSS mode, OpenCode local providers, and host-local
+  development services. OpenCode local-provider launches are currently
+  refused because their effective provider endpoint is not yet available at
+  the launch seam; that work is tracked in TCL-826.
+- **Local + model APIs** writes that loopback entry plus
+  `api.anthropic.com:443` and `api.openai.com:443`, matching the built-in
+  `net-anthropic` and `net-openai-codex` templates and the pinned endpoint
+  evidence below.
+
+Recognition is deliberately exact. A port-scoped loopback row, changed
+provider row, different ordering, subdomain widening, or any extra destination
+reopens as **Access list**, with every authored row visible. Profiles continue
+to export and import through the existing access-axis format.
+
+On Linux, both presets use the filtered gateway. Local host services are
+reached through `host.tclaude.internal`; `127.0.0.1` and `::1` remain private
+to the sandbox. On macOS, strict Local access is enforced natively by Seatbelt
+against real host `127.0.0.1` and `::1`. Port scopes are honored, outbound
+non-loopback IP connections are denied, and bind/inbound behavior is left
+alone so local services and the IDE bridge can work. The Seatbelt outbound
+rule uses `remote ip` predicates; an outbound `local ip` predicate would match
+the local side of remote connections and is therefore never used for this
+boundary.
+
+macOS does not yet enforce the mixed Local + model APIs list. It follows the
+same established list-degradation path as any other mixed Darwin list: the
+preview and recorded launch report **Not enforced**, and outbound networking
+remains open. It does not refuse and does not silently pretend to filter;
+mixed-list enforcement is tracked separately in TCL-827.
+
+Strict Local access never gains a hidden cloud endpoint. A cloud-backed
+harness launch is checked through its resolved model-transport requirement and
+refuses with `unsupported_filtered_model_transport` unless the authored
+Access list, directly or through **Includes**, covers the provider endpoint.
+A concrete provider at `host.tclaude.internal` on Linux, or real
+`localhost`/`127.0.0.1`/`::1` on macOS, passes that same gate. The Local +
+model APIs preset covers first-party Anthropic and OpenAI API-key traffic, but
+ChatGPT-auth Codex remains refused; custom providers, web search, plugins, MCP
+servers, and commands run by the agent need their own authored destinations.
+OpenCode remains launch-refused under both local presets with
+`unsupported_filtered_model_transport`, naming TCL-826 and the network-open
+remedy; the editor does not advertise its local-provider constituency as
+present-day support.
+
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep
 using that spelling while the mount plan binds the resolved target. Registry
@@ -678,9 +730,11 @@ Codex's optional plugin-marketplace synchronization is not model transport; it
 may be unavailable unless the authored profile separately admits its
 destinations.
 
-Host-loopback isolation also severs editor integrations that connect over a
-localhost WebSocket, including Claude Code's IDE bridge. Choosing this posture
-therefore gives up that integration as well as host-local model servers.
+The fully isolated `network_access: none` posture also severs editor
+integrations that connect over a localhost WebSocket, including Claude Code's
+IDE bridge, as well as host-local model servers. Strict Local access is the
+explicit posture that restores those host-loopback services under the
+platform-specific semantics above.
 
 `network_access: none` also isolates the harness's own model transport.
 Claude Code and other hosted-only harnesses are refused because they would be
@@ -856,8 +910,11 @@ TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
 ```
 
 The Darwin job likewise verifies that Seatbelt enforces its deny-write probe
-before running the real filesystem smoke and the OpenCode executor smoke, and
-fails if either named test does not report its explicit top-level PASS line.
+before running the real filesystem/network smoke and the OpenCode executor
+smoke, and fails if either named test does not report its explicit top-level
+PASS line. `TestTclaudeLayerDarwinSmoke` includes strict Local access: an
+allowed real-host loopback port connects, another listening loopback port and
+public egress fail with `EPERM`, and local bind remains available.
 The CI job installs the deliberately pinned `opencode-ai@1.18.6` used by the
 Linux executor smoke. To repeat the filesystem smoke on a macOS host:
 

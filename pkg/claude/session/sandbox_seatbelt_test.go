@@ -246,12 +246,11 @@ func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	assertSeatbeltAllowDenyOrder(t, profile)
 	assert.Contains(t, profile, `(remote ip "*:*")`)
 	assert.Equal(t, 1, strings.Count(profile,
-		`(require-not (remote ip "localhost:3000"))`))
+		`(allow network-outbound (remote ip "localhost:3000"))`))
 	assert.Equal(t, 1, strings.Count(profile,
-		`(require-not (remote ip "localhost:11434"))`))
+		`(allow network-outbound (remote ip "localhost:11434"))`))
 	assert.NotContains(t, profile, `(local ip `)
 	assert.NotContains(t, profile, `(deny network-bind)`,
 		"the authored list is outbound-only and local services must still bind")
@@ -282,7 +281,7 @@ func TestRenderSeatbeltLoopbackAllPortsCoalescesPortExceptions(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 1, strings.Count(profile,
-		`(require-not (remote ip "localhost:*"))`))
+		`(allow network-outbound (remote ip "localhost:*"))`))
 	assert.NotContains(t, profile, `localhost:11434`)
 }
 

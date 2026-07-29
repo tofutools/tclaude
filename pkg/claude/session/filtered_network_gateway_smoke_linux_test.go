@@ -40,6 +40,7 @@ const (
 	filteredGatewayReadyPathEnv      = "TCLAUDE_FILTERED_READY_PATH"
 	filteredGatewayHoldEnv           = "TCLAUDE_FILTERED_HOLD"
 	filteredGatewayDNSSmokeEnv       = "TCLAUDE_FILTERED_DNS_HELPER"
+	filteredGatewayLocalBaselineEnv  = "TCLAUDE_FILTERED_LOCAL_BASELINE"
 	filteredGatewayTclaudeBinaryEnv  = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	filteredGatewayConnectionTimeout = 900 * time.Millisecond
 	filteredGatewayExactHost         = "exact-host.filtered.test"
@@ -219,6 +220,51 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, dnsSmoke bool) {
 	if dnsSmoke {
 		return
 	}
+	runFilteredLocalPresetSmoke(
+		t, bwrapBinary, helperBinary, helperDir, smokeHome,
+		allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+		allowedPort, deniedPort, hostAllowedPort, hostDeniedPort,
+		"local-access", harness.Default(),
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Loopback: true,
+			}},
+		},
+		harness.ResolvedModelTransport{
+			Model:            "local/llama",
+			Provider:         "ollama",
+			BaseURL:          fmt.Sprintf("http://%s:%d/v1", sandboxpolicy.FilteredNetworkHostLoopbackName, hostAllowedPort),
+			ProviderResolved: true,
+		},
+	)
+	localModelAPIRules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Loopback: true},
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "api.openai.com", Ports: []int{443}},
+		},
+	}
+	runFilteredLocalPresetSmoke(
+		t, bwrapBinary, helperBinary, helperDir, smokeHome,
+		allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+		allowedPort, deniedPort, hostAllowedPort, hostDeniedPort,
+		"local-model-apis-claude", harness.Default(), localModelAPIRules,
+		harness.ResolvedModelTransport{
+			Model: "claude-sonnet", Provider: "anthropic", ProviderResolved: true,
+		},
+	)
+	runFilteredLocalPresetSmoke(
+		t, bwrapBinary, helperBinary, helperDir, smokeHome,
+		allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+		allowedPort, deniedPort, hostAllowedPort, hostDeniedPort,
+		"local-model-apis-codex", harness.MustGet(harness.CodexName), localModelAPIRules,
+		harness.ResolvedModelTransport{
+			Model: "gpt-5.4", Provider: "openai", ProviderResolved: true,
+		},
+	)
+
 	readyPath := filepath.Join(helperDir, "fail-closed-ready")
 	logPath := filepath.Join(root, "fail-closed.log")
 	logFile, err := os.Create(logPath)
@@ -256,6 +302,69 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, dnsSmoke bool) {
 	assert.Contains(t, string(logData), "sandbox terminated fail-closed")
 }
 
+func runFilteredLocalPresetSmoke(
+	t *testing.T,
+	bwrapBinary, helperBinary, helperDir, smokeHome string,
+	allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6 string,
+	allowedPort, deniedPort, hostAllowedPort, hostDeniedPort int,
+	name string,
+	h *harness.Harness,
+	rules sandboxpolicy.NetworkRules,
+	transport harness.ResolvedModelTransport,
+) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) {
+		snapshot := sandboxpolicy.EmptySnapshot()
+		snapshot.Effective.Network = &rules
+		notices, err := ValidateTclaudeLayerNetwork(h, snapshot.Effective, transport)
+		require.NoError(t, err)
+		require.Len(t, notices, 1)
+		assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated, notices[0].Effect)
+		assert.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredModelTraffic, notices[0].Reason)
+
+		axes := sandboxpolicy.ResolvedAxes{Network: rules}
+		launchCaps, err := harness.ResolveAccessEnforcement(
+			h,
+			sandboxpolicy.ImplementationTclaudeLayer,
+			axes,
+			TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered),
+			"",
+		)
+		require.NoError(t, err)
+		rendered, _, err := harness.PlanAccessEnforcement(axes, launchCaps)
+		require.NoError(t, err)
+		assert.Equal(t, rules, rendered.Network)
+
+		stateRoot := filepath.Join(smokeHome, "."+name)
+		require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+		spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+			HarnessName: h.Name,
+			Cwd:         helperDir,
+			Snapshot:    &snapshot,
+			StateRoot:   stateRoot,
+		})
+		require.NoError(t, err)
+		command, err := WrapTclaudeLayerSpec(
+			bwrapBinary,
+			spec,
+			clcommon.ShellQuoteArg(helperBinary)+" -test.run=^TestFilteredNetworkGatewayHelper$",
+		)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		cmd.Env = append(filteredSmokeHelperEnv(
+			os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
+			allowedPort, deniedPort,
+			hostAllowedPort, hostDeniedPort, "", false, false,
+		), filteredGatewayLocalBaselineEnv+"=1")
+		output, runErr := cmd.CombinedOutput()
+		require.NoErrorf(t, runErr, "%s filtered smoke output:\n%s", name, output)
+		require.NoError(t, ctx.Err())
+	})
+}
+
 func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	if os.Getenv(filteredGatewayHelperEnv) != "1" {
 		t.Skip("filtered-network smoke helper")
@@ -291,6 +400,41 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	deniedPort := requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv)
 	loopbackPort := requireFilteredSmokePort(t, filteredGatewayLoopbackPortEnv)
 	loopbackDeniedPort := requireFilteredSmokePort(t, filteredGatewayLoopbackDenyEnv)
+
+	if os.Getenv(filteredGatewayLocalBaselineEnv) == "1" {
+		for _, port := range []int{loopbackPort, loopbackDeniedPort} {
+			synthetic := net.JoinHostPort(
+				sandboxpolicy.FilteredNetworkHostLoopbackName,
+				strconv.Itoa(port),
+			)
+			filteredSmokeTCPRoundTrip(t, "tcp4", synthetic)
+			filteredSmokeUDPRoundTrip(t, "udp4", synthetic)
+			filteredSmokeTCPRoundTrip(t, "tcp6", synthetic)
+			filteredSmokeUDPRoundTrip(t, "udp6", synthetic)
+		}
+		filteredSmokeTCPDenied(t, "tcp4", net.JoinHostPort(
+			"127.0.0.1", strconv.Itoa(loopbackPort)))
+		filteredSmokeUDPDenied(t, "udp4", net.JoinHostPort(
+			"127.0.0.1", strconv.Itoa(loopbackPort)))
+		filteredSmokeTCPDenied(t, "tcp6", net.JoinHostPort(
+			"::1", strconv.Itoa(loopbackPort)))
+		filteredSmokeUDPDenied(t, "udp6", net.JoinHostPort(
+			"::1", strconv.Itoa(loopbackPort)))
+		for _, endpoint := range []struct {
+			network string
+			address string
+		}{
+			{"tcp4", net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort))},
+			{"tcp4", net.JoinHostPort(adjacentAddr, strconv.Itoa(allowedPort))},
+			{"tcp6", net.JoinHostPort(allowedAddr6, strconv.Itoa(allowedPort))},
+			{"tcp6", net.JoinHostPort(adjacentAddr6, strconv.Itoa(allowedPort))},
+		} {
+			filteredSmokeTCPDenied(t, endpoint.network, endpoint.address)
+			filteredSmokeUDPDenied(t, "udp"+strings.TrimPrefix(endpoint.network, "tcp"), endpoint.address)
+		}
+		filteredSmokeDNSDenied(t, filteredGatewayExactHost, "ip4")
+		return
+	}
 
 	filteredSmokeTCPRoundTrip(t, "tcp4", net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))
 	filteredSmokeUDPRoundTrip(t, "udp4", net.JoinHostPort(allowedAddr, strconv.Itoa(allowedPort)))

@@ -116,6 +116,22 @@ func TestOpenCodeModelTransportRequiresResolvedProviderEndpoint(t *testing.T) {
 	require.True(t, errors.As(err, &capability))
 	assert.Equal(t, SandboxCapabilityModelTransport, capability.Kind)
 	assert.Contains(t, err.Error(), "resolved provider endpoint")
+	assert.Contains(t, err.Error(), "TCL-826")
+	assert.Contains(t, err.Error(), "network open")
+}
+
+func TestLocalModelAPIsNetworkPresetUsesExactExistingWireShape(t *testing.T) {
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{
+			{Domain: "api.anthropic.com", Ports: []int{443}},
+			{Domain: "api.openai.com", Ports: []int{443}},
+			{Loopback: true},
+		},
+	}
+	assert.True(t, IsLocalModelAPIsNetworkPreset(rules))
+	rules.Allow[0].Ports = []int{443, 8443}
+	assert.False(t, IsLocalModelAPIsNetworkPreset(rules))
 }
 
 func TestModelTransportRequiresProviderResolutionAndUsesConcreteCustomEndpoint(t *testing.T) {
@@ -172,7 +188,7 @@ func TestModelTransportRequiresProviderResolutionAndUsesConcreteCustomEndpoint(t
 		"http://[::1]:11434/v1",
 		"http://localhost:11434/v1",
 	} {
-		_, loopbackErr := ResolveModelTransportRequirement(
+		loopback, loopbackErr := ResolveModelTransportRequirement(
 			MustGet(OpenCodeName),
 			ResolvedModelTransport{
 				Model:            "custom/model",
@@ -181,8 +197,24 @@ func TestModelTransportRequiresProviderResolutionAndUsesConcreteCustomEndpoint(t
 				ProviderResolved: true,
 			},
 		)
-		require.Error(t, loopbackErr)
-		assert.Contains(t, loopbackErr.Error(), "sandbox-private localhost")
-		assert.Contains(t, loopbackErr.Error(), sandboxpolicy.FilteredNetworkHostLoopbackName)
+		require.NoError(t, loopbackErr)
+		assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true, Ports: []int{11434},
+		}}, loopback.Destinations)
 	}
+}
+
+func TestLocalAccessNetworkPresetUsesExactExistingWireShape(t *testing.T) {
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			Loopback: true,
+		}},
+	}
+	assert.True(t, IsLocalAccessNetworkPreset(rules))
+	rules.Allow[0].Ports = []int{11434}
+	assert.False(t, IsLocalAccessNetworkPreset(rules))
+	rules.Allow[0].Ports = nil
+	rules.Allow = append(rules.Allow, sandboxpolicy.NetworkAllowEntry{Loopback: true})
+	assert.False(t, IsLocalAccessNetworkPreset(rules))
 }
