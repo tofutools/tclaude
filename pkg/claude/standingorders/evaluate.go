@@ -126,19 +126,14 @@ func InScope(o *db.StandingOrder, ev Event) (bool, string) {
 		return false, fmt.Sprintf("agent is not a member of group %d", o.GroupID)
 	}
 
-	// Conv-target. Match on the stable agent key when the order has one, so a
-	// reincarnation or /clear does not silently drop the order; fall back to
-	// the conv id for an order written before its target had an actor.
-	if o.TargetAgent != "" {
-		if o.TargetAgent == ev.AgentID {
-			return true, ""
-		}
-		return false, "order targets a different agent"
-	}
-	if o.TargetConv != "" && o.TargetConv == ev.ConvID {
+	// Single-agent target. The stable actor key is the ONLY identity: current
+	// conversation ids are routing facts and cadence epochs, never durable
+	// order targets. Standing-order storage was introduced with agent-keyed
+	// targets, so there is no legacy conv-only row shape to support.
+	if o.TargetAgent == ev.AgentID {
 		return true, ""
 	}
-	return false, "order targets a different conversation"
+	return false, "order targets a different stable agent"
 }
 
 // epochFor returns the cadence key for an order under an event.

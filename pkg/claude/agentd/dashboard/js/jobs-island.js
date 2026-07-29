@@ -104,7 +104,7 @@ function StandingOrderTarget({ order }) {
       ${target.role && html`<div class="muted">role:${target.role}</div>`}
     </${Fragment}>`;
   }
-  if (target.conv) {
+  if (target.agent) {
     return html`<span class="rowname" title=${idTooltip(target.agent, target.conv)}>
       ${shortAgentId(target.agent, target.conv)}
     </span>`;

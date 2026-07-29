@@ -142,6 +142,32 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   await mounted.unmount();
 });
 
+test('Standing-order target renders from the stable agent without a live conversation', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createJobsState }, { JobsApp }] = await Promise.all([
+    harness.importDashboardModule('js/jobs-state.js'),
+    harness.importDashboardModule('js/jobs-island.js'),
+  ]);
+  const snapshot = harness.signals.signal(null);
+  const state = createJobsState({ snapshot, prefs: prefs() });
+  state.initialize();
+  const data = page();
+  data.jobs[2].order.target = { kind: 'conv', agent: 'agt_persistent', conv: '' };
+  snapshot.value = data;
+  state.beginRequest(1);
+  state.commitRequest(1);
+
+  const actions = {
+    refresh: () => {}, openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, runCron: () => {},
+    toggleCron: () => {}, deleteCron: () => {}, downloadExport: () => {}, dismissExport: () => {},
+  };
+  const mounted = await harness.mount(harness.html`<${JobsApp} state=${state} actions=${actions} />`);
+  const row = mounted.container.querySelector('tr[data-key="standing-order-3"]');
+  assert.match(row.textContent, /agt_persiste/);
+  assert.doesNotMatch(row.textContent, /no target/);
+  await mounted.unmount();
+});
+
 test('Jobs island exposes loading, empty, badge, and retry states', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createJobsState }, { JobsApp }] = await Promise.all([

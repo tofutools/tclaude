@@ -199,10 +199,12 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 
 func TestDashboardJobs_SearchHandlesUnresolvedStandingOrderCapability(t *testing.T) {
 	newFlow(t)
-	_, err := db.InsertStandingOrder(&db.StandingOrder{
+	targetAgent, _, err := db.EnsureAgentForConv("conv-with-no-session", "test")
+	require.NoError(t, err)
+	_, err = db.InsertStandingOrder(&db.StandingOrder{
 		Name:             "unresolved-target",
 		TargetKind:       db.StandingTargetConv,
-		TargetConv:       "conv-with-no-session",
+		TargetAgent:      targetAgent,
 		Summary:          "Still searchable while its target is offline.",
 		TriggerEvent:     db.StandingTriggerSessionStart,
 		Timing:           db.StandingTimingNextTurn,

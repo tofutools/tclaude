@@ -120,7 +120,7 @@ func ordersTargetLabel(o *db.StandingOrder) string {
 	if o.TargetAgent != "" {
 		return shortID(o.TargetAgent)
 	}
-	return shortID(o.TargetConv)
+	return "(unresolved stable agent)"
 }
 
 func shortID(id string) string {

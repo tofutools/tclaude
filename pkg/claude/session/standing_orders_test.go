@@ -101,6 +101,15 @@ func additionalContext(t *testing.T, out string) string {
 	return doc.HookSpecificOutput.AdditionalContext
 }
 
+func TestStandingOrdersEmptyTableIsCompletelyInert(t *testing.T) {
+	standingOrderFixture(t, harness.DefaultName)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)),
+		"an opted-out installation must not emit hook context")
+	assert.Empty(t, observe(sessionStart(db.StandingSourceCompact)),
+		"an opted-out installation must not queue a next-turn message")
+}
+
 // The headline path: a compaction boundary re-states the order in the same
 // continuation, which is the whole reason this feature exists.
 func TestStandingOrderDeliveredOnCompactBoundary(t *testing.T) {

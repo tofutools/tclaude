@@ -72,8 +72,24 @@ func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 		"role on conv target": func(o *StandingOrder) {
 			o.TargetKind = StandingTargetConv
 			o.GroupID = 0
-			o.TargetConv = "conv-a"
+			o.TargetAgent = "agt_aaa"
 			o.TargetRole = "reviewer"
+		},
+		"single target without stable agent": func(o *StandingOrder) {
+			o.TargetKind = StandingTargetConv
+			o.GroupID = 0
+			o.TargetConv = "conv-a"
+		},
+		"single target with non-agent id": func(o *StandingOrder) {
+			o.TargetKind = StandingTargetConv
+			o.GroupID = 0
+			o.TargetAgent = "conv-a"
+		},
+		"owner conv without stable agent": func(o *StandingOrder) {
+			o.OwnerConv = "conv-owner"
+		},
+		"group with single target agent": func(o *StandingOrder) {
+			o.TargetAgent = "agt_aaa"
 		},
 	}
 	for name, mut := range cases {
@@ -85,6 +101,35 @@ func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 			assert.True(t, errors.Is(err, ErrStandingOrderInvalid), "got %v", err)
 		})
 	}
+}
+
+func TestStandingOrder_SingleTargetFollowsStableAgentAcrossRotation(t *testing.T) {
+	setupTestDB(t)
+
+	agentID, _, err := EnsureAgentForConv("conv-old", "test")
+	require.NoError(t, err)
+	o := sampleOrder("stable-target")
+	o.TargetKind = StandingTargetConv
+	o.GroupID = 0
+	o.TargetAgent = agentID
+
+	id, err := InsertStandingOrder(o)
+	require.NoError(t, err)
+
+	before, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	assert.Equal(t, agentID, before.TargetAgent)
+	assert.Equal(t, "conv-old", before.TargetConv)
+
+	_, err = RotateAgentConv("conv-old", "conv-new", "reincarnate")
+	require.NoError(t, err)
+
+	after, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	assert.Equal(t, agentID, after.TargetAgent, "the durable target never changes")
+	assert.Equal(t, "conv-new", after.TargetConv, "routing follows the agent's current generation")
 }
 
 // The cap exists because the text is re-injected at every boundary; an
