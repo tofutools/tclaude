@@ -298,6 +298,9 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 }
 
 func normalizeNetworkEntries(in []NetworkAllowEntry, field string) ([]NetworkAllowEntry, error) {
+	if in == nil {
+		return nil, nil
+	}
 	seen := make(map[string]struct{}, len(in))
 	out := make([]NetworkAllowEntry, 0, len(in))
 	for i, entry := range in {
