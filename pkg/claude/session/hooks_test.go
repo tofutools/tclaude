@@ -118,6 +118,31 @@ func TestInstallHooksAddsAndPrunesOnlyEnabledNativeSelectorHooks(t *testing.T) {
 	assert.False(t, exists, "disabled selector must remove its optional callback")
 }
 
+func TestInstallHooksPreservesSettingsSymlink(t *testing.T) {
+	setTestHookCommand(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	claudeDir := filepath.Join(home, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	target := filepath.Join(claudeDir, "managed-settings.json")
+	link := filepath.Join(claudeDir, "settings.json")
+	require.NoError(t, os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o600))
+	require.NoError(t, os.Symlink(target, link))
+
+	require.NoError(t, InstallHooks())
+	info, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink,
+		"settings.json must remain a symlink")
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"theme": "dark"`)
+	assert.Contains(t, string(data), `"hooks"`)
+}
+
 func TestNeedsHookCleanup(t *testing.T) {
 	setTestHookCommand(t)
 	currentCmd := HookCommand

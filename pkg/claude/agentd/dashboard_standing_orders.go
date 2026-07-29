@@ -379,6 +379,12 @@ func reconcileStandingOrderHookHarnesses(harnesses map[string]bool) string {
 			problems = append(problems, "Codex hook registration is unavailable")
 		} else if err := codex.Hooks.Install(); err != nil {
 			problems = append(problems, "Codex hook registration failed: "+err.Error())
+		} else if trusted, ok := codex.Hooks.(harness.TrustedHookInstaller); ok && !trusted.Trusted() {
+			// Dashboard authoring is allowed to declare the selected callback,
+			// but execution trust remains the explicit setup boundary. Surface
+			// that boundary on the mutation instead of reporting a healthy
+			// automation whose newly selected event cannot run.
+			problems = append(problems, trusted.TrustNote())
 		}
 	}
 	return strings.Join(problems, "; ")

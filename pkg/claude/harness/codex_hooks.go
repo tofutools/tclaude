@@ -215,6 +215,22 @@ type codexHookInstallPlan struct {
 // Codex event, preserving any other top-level keys and non-tclaude matcher
 // groups. Idempotent.
 func (codexHookInstaller) Install() error {
+	return withCodexHooksInstallLock(func() error {
+		plan, err := planCodexHookInstall()
+		if err != nil {
+			return err
+		}
+		if err := atomicWritePreservingMode(plan.path, plan.out, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", plan.path, err)
+		}
+		return nil
+	})
+}
+
+// withCodexHooksInstallLock serializes every read-modify-write of hooks.json,
+// including the trusted installer. The process mutex handles goroutines while
+// the flock coordinates independent tclaude processes.
+func withCodexHooksInstallLock(fn func() error) error {
 	installCodexHooksMu.Lock()
 	defer installCodexHooksMu.Unlock()
 
@@ -237,15 +253,7 @@ func (codexHookInstaller) Install() error {
 		return fmt.Errorf("lock Codex hooks: timed out")
 	}
 	defer func() { _ = fileLock.Unlock() }()
-
-	plan, err := planCodexHookInstall()
-	if err != nil {
-		return err
-	}
-	if err := atomicWritePreservingMode(plan.path, plan.out, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", plan.path, err)
-	}
-	return nil
+	return fn()
 }
 
 func planCodexHookInstall() (codexHookInstallPlan, error) {

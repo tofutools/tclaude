@@ -249,7 +249,11 @@ func InstallHooks() error {
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
-	fileLock := flock.New(settingsPath + ".tclaude.lock")
+	settingsTarget, err := claudeSettingsWriteTarget(settingsPath)
+	if err != nil {
+		return fmt.Errorf("resolve Claude hook settings: %w", err)
+	}
+	fileLock := flock.New(settingsTarget + ".tclaude.lock")
 	lockCtx, cancelLock := context.WithTimeout(
 		context.Background(), installClaudeHooksLockTimeout)
 	defer cancelLock()
@@ -263,7 +267,7 @@ func InstallHooks() error {
 	defer func() { _ = fileLock.Unlock() }()
 
 	var settings map[string]json.RawMessage
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(settingsTarget)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to read settings: %w", err)
@@ -339,11 +343,29 @@ func InstallHooks() error {
 		return fmt.Errorf("failed to serialize settings: %w", err)
 	}
 
-	if err := atomicWriteClaudeSettings(settingsPath, output); err != nil {
+	if err := atomicWriteClaudeSettings(settingsTarget, output); err != nil {
 		return fmt.Errorf("failed to write settings: %w", err)
 	}
 
 	return nil
+}
+
+func claudeSettingsWriteTarget(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlink %s: %w", path, err)
+	}
+	return target, nil
 }
 
 func atomicWriteClaudeSettings(path string, data []byte) error {
