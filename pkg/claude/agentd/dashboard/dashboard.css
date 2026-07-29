@@ -4298,10 +4298,25 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   gap: .3rem;
   margin-top: .2rem;
 }
+.sbx-network-packs > .sbx-network-subhead {
+  cursor: pointer;
+  list-style: none;
+}
+.sbx-network-packs > .sbx-network-subhead::-webkit-details-marker {
+  display: none;
+}
+.sbx-network-packs > .sbx-network-subhead::before {
+  color: var(--text-muted);
+  content: "▸";
+}
+.sbx-network-packs[open] > .sbx-network-subhead::before {
+  content: "▾";
+}
 .sbx-network-pack-list {
   display: flex;
   flex-direction: column;
   gap: .15rem;
+  margin-top: .35rem;
 }
 .sbx-network-pack {
   align-items: center;
@@ -4318,6 +4333,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-network-pack > span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.sbx-network-pack > .sbx-network-pack-label {
+  font-size: .82rem;
+  font-weight: 400;
 }
 .sbx-network-pack-visibility-error {
   align-items: center;
@@ -4370,15 +4389,31 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-network-table .sbx-network-row {
   display: contents;
 }
-.sbx-network-row > button:last-child {
-  justify-self: start;
+.sbx-network-row > * {
+  max-width: 100%;
+  min-width: 0;
 }
-.sbx-network-row input,
-.sbx-network-row select,
+.sbx-network-row > button:last-child {
+  align-self: center;
+  box-sizing: border-box;
+  height: 29px;
+  justify-self: start;
+  padding: 0;
+  width: 29px;
+}
+.sbx-network-row > input,
+.sbx-network-row > select,
+.sbx-network-mode-cell > select,
 .sbx-network-row .sbx-network-value-readonly {
   align-self: start;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: hidden;
   padding-bottom: 4px;
   padding-top: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
 }
 .sbx-network-value,
 .sbx-socket-value {
@@ -4404,8 +4439,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   overflow-wrap: anywhere;
 }
 .sbx-network-value-readonly {
-  display: flex;
-  align-items: center;
+  display: block;
   background: #0d1117;
   border: 1px solid #2a3340;
   border-radius: 4px;
@@ -4440,39 +4474,11 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sbx-network-deny-disclosure {
-  align-self: center;
-  min-width: 0;
-  position: relative;
-}
-.sbx-network-badge {
-  align-self: center;
-  border: 1px solid currentcolor;
-  border-radius: 999px;
-  font-size: .75rem;
-  justify-self: start;
-  padding: .15rem .45rem;
-  white-space: nowrap;
-}
-.sbx-network-badge::marker {
-  content: "";
-}
-.sbx-network-badge-detail {
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: .35rem;
-  box-shadow: 0 4px 14px #0008;
-  color: var(--text);
-  display: block;
+.sbx-network-deny-note {
+  color: var(--text-muted);
   font-size: .78rem;
-  margin-top: .3rem;
-  max-width: 28rem;
-  padding: .45rem .55rem;
-  position: absolute;
-  width: max-content;
-  z-index: 3;
+  line-height: 1.35;
 }
-.sbx-network-badge-not-enforced { color: #f85149; }
 .sbx-socket-row {
   grid-template-columns: 6rem minmax(14rem, 1fr) auto;
 }

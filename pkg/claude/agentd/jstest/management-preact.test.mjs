@@ -1700,6 +1700,9 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(selectedValue(newBaseline), 'inherit');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   const packModes = [...newDraft.host.querySelectorAll('.sbx-network-pack-mode')];
+  const packDisclosure = newDraft.host.querySelector('.sbx-network-packs');
+  assert.equal(packDisclosure.hasAttribute('open'), false,
+    'built-in packs use the editor collapsed-by-default disclosure pattern');
   const allowed = packModes.filter((select) => selectedValue(select) === 'allow');
   assert.equal(allowed.length, 3);
   assert.match(allowed.map((select) => select.parentElement.textContent).join(' '),
@@ -1708,6 +1711,8 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(packRows.length, 3);
   assert.equal(packRows.every((row) => row.querySelectorAll('.sbx-network-pack-mode').length === 1), true,
     'built-in packs render as one dense three-state row each');
+  assert.equal(packRows.every((row) => row.querySelector('.sbx-network-pack-label strong') === null), true,
+    'pack labels use normal body typography instead of heading emphasis');
   assert.equal(packRows.every((row) => row.querySelector('small') === null), true,
     'pack disclosure copy is no longer permanently rendered under the label');
   const localHelp = packRows[0].querySelector('.spawn-field-help-trigger');
@@ -1804,11 +1809,12 @@ test('network packs and manual destinations author deny mode without implying en
   assert.ok(localPack);
   assert.equal(selectedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
   assert.equal(selectedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
-  const badges = [...network.querySelectorAll('.sbx-network-badge')];
-  assert.equal(badges.length, 2);
-  assert.deepEqual(badges.map((badge) => badge.textContent),
-    ['Not enforced', 'Not enforced']);
-  assert.equal(badges.every((badge) => /not blocked by this rule/.test(badge.title)), true);
+  assert.equal(network.querySelector('.sbx-network-badge'), null,
+    'deny destinations do not duplicate evaluation-style verdict chips');
+  const denyNote = network.querySelector('.sbx-network-deny-note');
+  assert.equal(denyNote.textContent, 'Deny rules are authoring-only and not enforced yet.');
+  assert.equal(network.querySelectorAll('.sbx-network-deny-note').length, 1,
+    'one section-level disclosure covers deny packs and manual rows');
 
   const networkHelp = mounted.host.querySelector(
     '[aria-controls="sandbox-profile-editor-network-help-hint"]');
@@ -1862,7 +1868,7 @@ test('network packs and manual destinations author deny mode without implying en
   mounted.host.remove();
 });
 
-test('deny disclosures reconcile daemon-normalized entries without restoring row evaluation verdicts', async (t) => {
+test('deny disclosure is section-level and independent of normalized prediction entries', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1897,10 +1903,9 @@ test('deny disclosures reconcile daemon-normalized entries without restoring row
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
-  assert.equal(host.querySelector('.sbx-network-badge').textContent, 'Not enforced');
-  assert.match(host.querySelector('.sbx-network-badge').title, /normalized deny destination/);
-  assert.equal(host.querySelector('.sbx-network-badge').closest('.sbx-network-mode-cell') !== null, true,
-    'the enforcement disclosure lives with the mode instead of occupying an evaluation column');
+  assert.equal(host.querySelector('.sbx-network-badge'), null);
+  assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
+    'Deny rules are authoring-only and not enforced yet.');
   unmount();
 });
 
@@ -2340,6 +2345,8 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true,
     'a blocking catalog diagnostic exposes its explanation and retry control');
+  assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
+    'a blocking pack-catalog diagnostic opens the nested pack disclosure');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
   assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,
@@ -2383,6 +2390,8 @@ test('a failing common-rule feed also blocks hidden deny-pack intent under Allow
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true);
+  assert.equal(host.querySelector('.sbx-network-packs').hasAttribute('open'), true,
+    'hidden deny-pack diagnostics auto-open the folded pack controls');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local/s);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
