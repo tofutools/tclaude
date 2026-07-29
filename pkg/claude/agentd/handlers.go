@@ -3357,9 +3357,15 @@ func handleGroupDelete(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	if _, ok := requirePermission(w, r, PermGroupsRm); !ok {
 		return
 	}
+	hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(g.ID)
 	if err := db.DeleteAgentGroup(g.Name); err != nil {
 		writeError(w, http.StatusConflict, "constraint", err.Error())
 		return
+	}
+	if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
+		w.Header().Set("X-Tclaude-Hook-Warning", warning)
+		slog.Warn("group delete: standing-order hook reconciliation failed",
+			"group", g.Name, "warning", warning)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

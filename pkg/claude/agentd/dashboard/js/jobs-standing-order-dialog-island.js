@@ -1,5 +1,5 @@
 import { Fragment, h } from 'preact';
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   ManagementOverlay as Overlay,
@@ -36,6 +36,7 @@ const ANY_MATCH_LABELS = {
   'user.prompt': 'Any submitted prompt',
   'tool.before': 'Any tool call',
   'tool.after': 'Any completed tool call',
+  'hook.event': 'Every selected harness hook',
 };
 const MATCH_FIELDS = Object.fromEntries(
   Object.entries(STANDING_ORDER_MATCH_FIELDS).map(([trigger, fields]) => [
@@ -108,6 +109,8 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
   const [draft, setDraft] = useState(() => createStandingOrderDraft(descriptor.prefill));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [hookCatalog, setHookCatalog] = useState([]);
+  const [hookCatalogError, setHookCatalogError] = useState('');
   const busyRef = useRef(false);
   const nameRef = useRef(null);
   const editing = descriptor.kind === 'edit';
@@ -119,6 +122,41 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
       : draft.sources.filter((value) => value !== source);
     update({ sources: next });
   };
+  const updateHookSelector = (selector, checked) => {
+    const same = (value) =>
+      value.harness === selector.harness && value.event === selector.event;
+    const next = checked
+      ? [...draft.hookSelectors.filter((value) => !same(value)), {
+        harness: selector.harness, event: selector.event,
+      }]
+      : draft.hookSelectors.filter((value) => !same(value));
+    next.sort((a, b) =>
+      a.harness.localeCompare(b.harness) || a.event.localeCompare(b.event));
+    update({ hookSelectors: next });
+  };
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/standing-order-hooks', { headers: { Accept: 'application/json' } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`hook catalog request failed (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        if (!cancelled) setHookCatalog(Array.isArray(payload?.hooks) ? payload.hooks : []);
+      })
+      .catch((loadError) => {
+        if (!cancelled) setHookCatalogError(loadError?.message || String(loadError));
+      });
+    return () => { cancelled = true; };
+  }, []);
+  const hooksByHarness = useMemo(() => {
+    const out = {};
+    for (const hook of hookCatalog) {
+      if (!out[hook.harness]) out[hook.harness] = [];
+      out[hook.harness].push(hook);
+    }
+    return out;
+  }, [hookCatalog]);
   const submit = async () => {
     if (busyRef.current) return;
     const problem = validateStandingOrderDraft(descriptor, draft);
@@ -166,7 +204,23 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
         onInput=${(event) => update({ role: event.currentTarget.value })} /></label>`}
     <div class="cron-create-row"><span class="cron-create-label">Trigger</span>
       <div class="standing-order-field">
-        <select id="standing-order-trigger" value=${draft.triggerEvent}
+        <div class="cron-target-modes">
+          <label><input type="radio" name="standing-order-trigger-mode" value="portable"
+            checked=${draft.triggerMode === 'portable'}
+            onChange=${() => update({
+              triggerMode: 'portable',
+              matchField: '',
+              matchRegex: '',
+            })} /> Portable event</label>
+          <label><input type="radio" name="standing-order-trigger-mode" value="native"
+            checked=${draft.triggerMode === 'native'}
+            onChange=${() => update({
+              triggerMode: 'native',
+              matchField: '',
+              matchRegex: '',
+            })} /> Harness hooks (OR)</label>
+        </div>
+        ${draft.triggerMode === 'portable' && html`<select id="standing-order-trigger" value=${draft.triggerEvent}
           onChange=${(event) => update({
             triggerEvent: event.currentTarget.value,
             matchField: '',
@@ -174,8 +228,8 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           })}>
           ${TRIGGER_EVENTS.map(([value, label]) => html`
             <option key=${value} value=${value}>${label}</option>`)}
-        </select>
-        ${draft.triggerEvent === 'session.start' && html`<div class="cron-target-modes">
+        </select>`}
+        ${draft.triggerMode === 'portable' && draft.triggerEvent === 'session.start' && html`<div class="cron-target-modes">
           <label><input type="radio" name="standing-order-source-mode" value="any"
             checked=${draft.sourceMode === 'any'} onChange=${() => update({ sourceMode: 'any' })} />
             Any source</label>
@@ -183,16 +237,41 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
             checked=${draft.sourceMode === 'selected'} onChange=${() => update({ sourceMode: 'selected' })} />
             Selected sources</label>
         </div>`}
-        ${draft.triggerEvent === 'session.start' && draft.sourceMode === 'selected' && html`
+        ${draft.triggerMode === 'portable' && draft.triggerEvent === 'session.start' && draft.sourceMode === 'selected' && html`
         <div class="standing-order-options" id="standing-order-sources">
           ${SESSION_SOURCES.map(([value, label]) => html`<label>
             <input type="checkbox" value=${value} checked=${draft.sources.includes(value)}
               onChange=${(event) => updateSource(value, event.currentTarget.checked)} /> ${label}
           </label>`)}
         </div>`}
-        ${draft.triggerEvent !== 'session.start' && html`<div class="muted">
+        ${draft.triggerMode === 'portable' && draft.triggerEvent !== 'session.start' && html`<div class="muted">
           Action triggers deliver inline on Claude and Codex. OpenCode supports tool triggers as queued
           next turns; prompt-text triggers remain unsupported because its event stream omits the prompt.
+        </div>`}
+        ${draft.triggerMode === 'native' && html`<div class="standing-order-native-hooks">
+          <div class="muted">Select any number of exact harness hooks. They are OR branches:
+            the same order fires when any checked hook occurs. Non-baseline Claude/Codex
+            callbacks are installed only while an enabled order selects them.</div>
+          ${hookCatalogError && html`<div class="jobs-error">${hookCatalogError}</div>`}
+          ${!hookCatalogError && hookCatalog.length === 0 && html`
+            <div class="muted">Loading hook catalog…</div>`}
+          ${Object.entries(hooksByHarness).map(([harness, hooks]) => html`
+            <details key=${harness} open>
+              <summary><strong>${harness}</strong> · ${hooks.length} hooks</summary>
+              <div class="standing-order-options">
+                ${hooks.map((hook) => {
+                  const checked = draft.hookSelectors.some((selector) =>
+                    selector.harness === hook.harness && selector.event === hook.event);
+                  return html`<label key=${`${hook.harness}:${hook.event}`}>
+                    <input type="checkbox" checked=${checked}
+                      onChange=${(event) => updateHookSelector(hook, event.currentTarget.checked)} />
+                    <code>${hook.event}</code>
+                    ${hook.baseline ? html` <span class="muted">(already captured)</span>` : ''}
+                    ${hook.same_continuation ? '' : html` <span class="muted">(next-turn message)</span>`}
+                  </label>`;
+                })}
+              </div>
+            </details>`)}
         </div>`}
       </div>
     </div>
@@ -203,7 +282,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
             matchField: event.currentTarget.value,
             matchRegex: event.currentTarget.value ? draft.matchRegex : '',
           })}>
-          ${(MATCH_FIELDS[draft.triggerEvent] || []).map(([value, label]) => html`
+          ${(MATCH_FIELDS[draft.triggerMode === 'native' ? 'hook.event' : draft.triggerEvent] || []).map(([value, label]) => html`
             <option key=${value || 'any'} value=${value}>${label}</option>`)}
         </select>
         ${draft.matchField && html`<input id="standing-order-match-regex" type="text"
@@ -212,7 +291,8 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ matchRegex: event.currentTarget.value })} />`}
         <div class="muted">Optional RE2 match. Expressions are case-sensitive unless they include
-          flags such as <code>(?i)</code>. Tool input is normalized to compact JSON.</div>
+          flags such as <code>(?i)</code>. Tool input is normalized to compact JSON.
+          Native hook OR branches share the portable working-directory field.</div>
       </div>
     </div>
     <div class="cron-create-row"><span class="cron-create-label">Delivery guarantee</span>

@@ -1,13 +1,26 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
+)
+
+var installClaudeHooksMu sync.Mutex
+
+const (
+	installClaudeHooksLockTimeout = 5 * time.Second
+	installClaudeHooksLockRetry   = 10 * time.Millisecond
 )
 
 // isOurHook returns true if a hook command belongs to tclaude (any binary variant,
@@ -19,6 +32,26 @@ func isOurHook(command string) bool {
 	}
 	base := filepath.Base(fields[0])
 	return base == "tclaude"
+}
+
+func desiredClaudeHooks() map[string][]HookMatcher {
+	out := make(map[string][]HookMatcher, len(RequiredHooks))
+	for event, matchers := range RequiredHooks {
+		out[event] = matchers
+	}
+	events, err := db.EnabledStandingOrderHookEvents(hookevents.HarnessClaude)
+	if err != nil {
+		// Database trouble must not make setup remove the baseline status
+		// hooks. It merely postpones optional standing-order declarations.
+		return out
+	}
+	hook := HookConfig{Type: "command", Command: HookCommand}
+	for _, event := range events {
+		if _, baseline := out[event]; !baseline {
+			out[event] = []HookMatcher{{Hooks: []HookConfig{hook}}}
+		}
+	}
+	return out
 }
 
 // HookMatcher represents a hook matcher configuration
@@ -193,7 +226,7 @@ func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) 
 	}
 
 	// Check each required hook event
-	for event := range RequiredHooks {
+	for event := range desiredClaudeHooks() {
 		eventHooks, ok := hooks[event]
 		if !ok || !containsCurrentHook(string(eventHooks)) {
 			missing = append(missing, event)
@@ -205,18 +238,36 @@ func CheckHooksInstalled() (installed bool, missing []string, needsRepair bool) 
 
 // InstallHooks adds tclaude hooks to Claude settings, replacing any existing tclaude hooks
 func InstallHooks() error {
+	installClaudeHooksMu.Lock()
+	defer installClaudeHooksMu.Unlock()
+
 	settingsPath := ClaudeSettingsPath()
 	if settingsPath == "" {
 		return fmt.Errorf("cannot determine Claude settings path")
 	}
-
 	claudeDir := filepath.Dir(settingsPath)
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create .claude directory: %w", err)
 	}
+	settingsTarget, err := claudeSettingsWriteTarget(settingsPath)
+	if err != nil {
+		return fmt.Errorf("resolve Claude hook settings: %w", err)
+	}
+	fileLock := flock.New(settingsTarget + ".tclaude.lock")
+	lockCtx, cancelLock := context.WithTimeout(
+		context.Background(), installClaudeHooksLockTimeout)
+	defer cancelLock()
+	locked, err := fileLock.TryLockContext(lockCtx, installClaudeHooksLockRetry)
+	if err != nil {
+		return fmt.Errorf("lock Claude hook settings: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("lock Claude hook settings: timed out")
+	}
+	defer func() { _ = fileLock.Unlock() }()
 
 	var settings map[string]json.RawMessage
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(settingsTarget)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to read settings: %w", err)
@@ -253,7 +304,7 @@ func InstallHooks() error {
 	}
 
 	// Second pass: add current hooks for all required events
-	for event, requiredMatchers := range RequiredHooks {
+	for event, requiredMatchers := range desiredClaudeHooks() {
 		eventHooksRaw, exists := hooks[event]
 		if exists {
 			var existingMatchers []json.RawMessage
@@ -292,11 +343,60 @@ func InstallHooks() error {
 		return fmt.Errorf("failed to serialize settings: %w", err)
 	}
 
-	if err := os.WriteFile(settingsPath, output, 0644); err != nil {
+	if err := atomicWriteClaudeSettings(settingsTarget, output); err != nil {
 		return fmt.Errorf("failed to write settings: %w", err)
 	}
 
 	return nil
+}
+
+func claudeSettingsWriteTarget(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlink %s: %w", path, err)
+	}
+	return target, nil
+}
+
+func atomicWriteClaudeSettings(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tclaude-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // EnsureHooksInstalled checks and optionally installs hooks, returning true if ready.

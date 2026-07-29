@@ -8,6 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // These are hashes produced by Codex CLI 0.144.1 for tclaude's normalized
@@ -26,6 +29,7 @@ func TestCodexCommandHookHash_MatchesCodex(t *testing.T) {
 		"SubagentStart":     "sha256:c4d98aa42973379b1afac8074318bdb3b3db55863d12ebf20561b58eeab02ea2",
 		"SubagentStop":      "sha256:c6fc15f4cbc9d1bee08c3105eccd54da292789d8b67d78e78624e32b68a0b1e5",
 		"Stop":              "sha256:f436f2d9b7539704b18d1a4122d4251fdac1c378f0741f40a7a329584d507c2a",
+		"SessionEnd":        "sha256:3e46a74f8ca1ddc19eccbd273bc2a661001bd08e6fe183c04a482b10b7282b4f",
 	}
 	for event, expected := range want {
 		t.Run(event, func(t *testing.T) {
@@ -34,6 +38,39 @@ func TestCodexCommandHookHash_MatchesCodex(t *testing.T) {
 			assert.Equal(t, expected, got)
 		})
 	}
+}
+
+func TestCodexHookInstaller_TrustsEnabledNativeSelectorHooks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedTclaudeOnPath(t)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	_, err := db.InsertStandingOrder(&db.StandingOrder{
+		Name:         "trusted-codex-session-end",
+		TargetKind:   db.StandingTargetGroup,
+		GroupID:      1,
+		Summary:      "Close out the session.",
+		TriggerEvent: db.StandingTriggerHookEvent,
+		HookSelectors: []hookevents.Selector{{
+			Harness: hookevents.HarnessCodex,
+			Event:   "SessionEnd",
+		}},
+		Timing: db.StandingTimingNextTurn, Cadence: db.StandingCadenceAlways,
+		Enabled: true,
+	})
+	require.NoError(t, err)
+
+	inst := codexHookInstaller{}
+	require.NoError(t, inst.InstallTrusted())
+	assert.True(t, inst.Trusted())
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(config), ":session_end:")
+	sessionEndHash, err := codexCommandHookHash("SessionEnd", codexHookCommandStr())
+	require.NoError(t, err)
+	assert.Contains(t, string(config), sessionEndHash)
 }
 
 func TestPlanCodexHookTrust_AddsPreservesAndIsIdempotent(t *testing.T) {

@@ -39,6 +39,7 @@ var codexHookEventLabels = map[string]string{
 	"SubagentStart":     "subagent_start",
 	"SubagentStop":      "subagent_stop",
 	"Stop":              "stop",
+	"SessionEnd":        "session_end",
 }
 
 var (
@@ -108,8 +109,9 @@ func codexTclaudeHookTrustEntries(
 	hooks map[string]json.RawMessage,
 	want string,
 ) ([]codexHookTrustEntry, error) {
-	entries := make([]codexHookTrustEntry, 0, len(codexHookEvents))
-	for _, event := range codexHookEvents {
+	events := desiredCodexHookEvents()
+	entries := make([]codexHookTrustEntry, 0, len(events))
+	for _, event := range events {
 		groupsRaw, ok := hooks[event]
 		if !ok {
 			return nil, fmt.Errorf("codex hook event %s is missing after install", event)
@@ -150,55 +152,60 @@ func (codexHookInstaller) InstallTrusted() error {
 	if ok, reason := (codexHookInstaller{}).AutoTrustSupported(); !ok {
 		return fmt.Errorf("automatic Codex hook trust is unavailable: %s", reason)
 	}
-	hookPlan, err := planCodexHookInstall()
-	if err != nil {
-		return err
-	}
-	if err := validateTrustedCodexHookCommand(hookPlan.want); err != nil {
-		return err
-	}
-	entries, err := codexTclaudeHookTrustEntries(hookPlan.path, hookPlan.hooks, hookPlan.want)
-	if err != nil {
-		return err
-	}
-	configPath, err := codexConfigTomlPath()
-	if err != nil {
-		return err
-	}
-	// Trust first. If the later atomic hooks.json write fails, the hash has no
-	// matching declaration and is inert; writing in the opposite order can
-	// leave Codex blocked on startup review.
-	if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
-		return fmt.Errorf("write Codex hook trust: %w", err)
-	}
-	if err := atomicWritePreservingMode(hookPlan.path, hookPlan.out, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", hookPlan.path, err)
-	}
-	return nil
+	return withCodexHooksInstallLock(func() error {
+		hookPlan, err := planCodexHookInstall()
+		if err != nil {
+			return err
+		}
+		if err := validateTrustedCodexHookCommand(hookPlan.want); err != nil {
+			return err
+		}
+		entries, err := codexTclaudeHookTrustEntries(
+			hookPlan.path, hookPlan.hooks, hookPlan.want)
+		if err != nil {
+			return err
+		}
+		configPath, err := codexConfigTomlPath()
+		if err != nil {
+			return err
+		}
+		// Trust first. If the later atomic hooks.json write fails, the hash has
+		// no matching declaration and is inert; writing in the opposite order
+		// can leave Codex blocked on startup review.
+		if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
+			return fmt.Errorf("write Codex hook trust: %w", err)
+		}
+		if err := atomicWritePreservingMode(hookPlan.path, hookPlan.out, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", hookPlan.path, err)
+		}
+		return nil
+	})
 }
 
 func (codexHookInstaller) TrustInstalled() error {
 	if ok, reason := (codexHookInstaller{}).AutoTrustSupported(); !ok {
 		return fmt.Errorf("automatic Codex hook trust is unavailable: %s", reason)
 	}
-	path := codexHooksPath()
-	hooks, _, err := readCodexHooks(path)
-	if err != nil {
-		return err
-	}
-	want := codexHookCommandStr()
-	if err := validateTrustedCodexHookCommand(want); err != nil {
-		return err
-	}
-	entries, err := codexTclaudeHookTrustEntries(path, hooks, want)
-	if err != nil {
-		return err
-	}
-	configPath, err := codexConfigTomlPath()
-	if err != nil {
-		return err
-	}
-	return ensureCodexHookTrustInFile(configPath, entries)
+	return withCodexHooksInstallLock(func() error {
+		path := codexHooksPath()
+		hooks, _, err := readCodexHooks(path)
+		if err != nil {
+			return err
+		}
+		want := codexHookCommandStr()
+		if err := validateTrustedCodexHookCommand(want); err != nil {
+			return err
+		}
+		entries, err := codexTclaudeHookTrustEntries(path, hooks, want)
+		if err != nil {
+			return err
+		}
+		configPath, err := codexConfigTomlPath()
+		if err != nil {
+			return err
+		}
+		return ensureCodexHookTrustInFile(configPath, entries)
+	})
 }
 
 func (codexHookInstaller) Trusted() bool {

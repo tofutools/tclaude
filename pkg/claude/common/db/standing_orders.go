@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // Standing-order target kinds. These deliberately reuse cron's persisted
@@ -44,6 +46,10 @@ const (
 	// lifecycle boundaries before and after execution.
 	StandingTriggerToolBefore = "tool.before"
 	StandingTriggerToolAfter  = "tool.after"
+	// StandingTriggerHookEvent is the matcher family for explicit
+	// harness-native selectors. The exact event branches live in
+	// HookSelectors and use OR semantics.
+	StandingTriggerHookEvent = "hook.event"
 )
 
 // Match fields expose a deliberately small normalized projection of hook
@@ -238,6 +244,10 @@ type StandingOrder struct {
 	Summary string
 
 	TriggerEvent string
+	// HookSelectors are exact harness-native OR branches. Empty preserves the
+	// legacy normalized TriggerEvent behavior. Non-empty selectors make the
+	// order fire only for one of these (harness,event) pairs.
+	HookSelectors []hookevents.Selector
 	// TriggerSources filters a lifecycle trigger to particular sources. Empty
 	// means "every source".
 	TriggerSources []string
@@ -293,6 +303,17 @@ func (o *StandingOrder) IsGlobalTarget() bool {
 // the dashboard print the same string rather than each composing their own
 // from event + sources.
 func (o *StandingOrder) TriggerLabel() string {
+	if len(o.HookSelectors) > 0 {
+		labels := make([]string, 0, len(o.HookSelectors))
+		for _, selector := range o.HookSelectors {
+			labels = append(labels, selector.Harness+":"+selector.Event)
+		}
+		label := strings.Join(labels, " OR ")
+		if o.MatchField != "" {
+			label += " where " + o.MatchField + " matches /" + o.MatchRegex + "/"
+		}
+		return label
+	}
 	label := o.TriggerEvent
 	if o.TriggerEvent == StandingTriggerSessionStart {
 		if len(o.TriggerSources) == 0 {
@@ -426,9 +447,25 @@ func (o *StandingOrder) Validate() error {
 		return fmt.Errorf("%w: target role applies only to a group target", ErrStandingOrderInvalid)
 	}
 
+	o.HookSelectors = hookevents.NormalizeSelectors(o.HookSelectors)
+	for _, selector := range o.HookSelectors {
+		if !hookevents.Valid(selector) {
+			return fmt.Errorf("%w: unknown hook selector %q:%q",
+				ErrStandingOrderInvalid, selector.Harness, selector.Event)
+		}
+	}
 	switch o.TriggerEvent {
 	case StandingTriggerSessionStart, StandingTriggerUserPrompt,
 		StandingTriggerToolBefore, StandingTriggerToolAfter:
+		if len(o.HookSelectors) > 0 {
+			return fmt.Errorf("%w: native hook selectors require trigger event %q",
+				ErrStandingOrderInvalid, StandingTriggerHookEvent)
+		}
+	case StandingTriggerHookEvent:
+		if len(o.HookSelectors) == 0 {
+			return fmt.Errorf("%w: trigger event %q requires at least one native hook selector",
+				ErrStandingOrderInvalid, StandingTriggerHookEvent)
+		}
 	default:
 		return fmt.Errorf("%w: unknown trigger event %q",
 			ErrStandingOrderInvalid, o.TriggerEvent)
@@ -509,6 +546,11 @@ func validStandingMatchField(event, field string) bool {
 		return field == StandingMatchFieldToolName ||
 			field == StandingMatchFieldToolInput ||
 			field == StandingMatchFieldCwd
+	case StandingTriggerHookEvent:
+		// Cwd is the one normalized field present across every native hook
+		// vocabulary. Event-specific payload matching remains available via
+		// the portable prompt/tool trigger families.
+		return field == StandingMatchFieldCwd
 	}
 	return false
 }
@@ -531,6 +573,11 @@ const standingSelect = `SELECT o.id, o.name, o.revision, o.row_version,
 		SELECT GROUP_CONCAT(scope.group_id, ',')
 		  FROM agent_standing_order_group_scopes scope
 		 WHERE scope.order_id = o.id
+	), ''),
+	COALESCE((
+		SELECT GROUP_CONCAT(selector.harness || ':' || selector.event, ',')
+		  FROM agent_standing_order_hook_selectors selector
+		 WHERE selector.order_id = o.id
 	), '')
 	FROM agent_standing_orders o
 	LEFT JOIN agents ow ON ow.agent_id = o.owner_agent
@@ -545,6 +592,7 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		createdRaw     string
 		updatedRaw     string
 		groupScopesRaw string
+		selectorsRaw   string
 	)
 	if err := s.Scan(
 		&o.ID, &o.Name, &o.Revision, &o.RowVersion,
@@ -554,7 +602,7 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		&o.TriggerEvent, &sources, &o.MatchField, &o.MatchRegex,
 		&o.Timing, &o.Cadence, &o.CooldownSeconds, &o.DebounceSeconds,
 		&enabled, &o.DisabledReason, &operator,
-		&createdRaw, &updatedRaw, &groupScopesRaw,
+		&createdRaw, &updatedRaw, &groupScopesRaw, &selectorsRaw,
 	); err != nil {
 		return nil, err
 	}
@@ -572,6 +620,16 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 	sort.Slice(o.AdditionalGroupIDs, func(i, j int) bool {
 		return o.AdditionalGroupIDs[i] < o.AdditionalGroupIDs[j]
 	})
+	for _, raw := range strings.Split(selectorsRaw, ",") {
+		harnessName, event, ok := strings.Cut(raw, ":")
+		if ok {
+			o.HookSelectors = append(o.HookSelectors, hookevents.Selector{
+				Harness: harnessName,
+				Event:   event,
+			})
+		}
+	}
+	o.HookSelectors = hookevents.NormalizeSelectors(o.HookSelectors)
 	return &o, nil
 }
 
@@ -605,7 +663,12 @@ func InsertStandingOrder(o *StandingOrder) (int64, error) {
 		return 0, err
 	}
 	now := formatStandingTime(time.Now())
-	res, err := d.Exec(`INSERT INTO agent_standing_orders
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`INSERT INTO agent_standing_orders
 		(name, revision, row_version, owner_agent, target_kind, target_agent, group_id, target_role,
 		 summary, trigger_event, trigger_sources, timing, cadence, cooldown_seconds, debounce_seconds,
 		 match_field, match_regex,
@@ -621,7 +684,17 @@ func InsertStandingOrder(o *StandingOrder) (int64, error) {
 		}
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := replaceStandingOrderHookSelectors(tx, id, o.HookSelectors); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // GetStandingOrder reads one order by id. Returns (nil, nil) when absent.
@@ -817,15 +890,70 @@ func SetStandingOrderGroupScope(
 // event matches. This is the hot read on the hook path, so it is a single
 // indexed query rather than a full list plus a filter — and callers are
 // expected to hold the result rather than re-issue it per event.
-func ListEnabledStandingOrdersForEvent(event string) ([]*StandingOrder, error) {
+func ListEnabledStandingOrdersForEvent(
+	event string,
+	hookIdentity ...string,
+) ([]*StandingOrder, error) {
+	var harnessName, nativeEvent string
+	if len(hookIdentity) > 0 {
+		harnessName = hookIdentity[0]
+	}
+	if len(hookIdentity) > 1 {
+		nativeEvent = hookIdentity[1]
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	return listStandingOrders(d,
-		standingSelect+` WHERE o.enabled = 1 AND o.trigger_event = ?
+		standingSelect+` WHERE o.enabled = 1 AND (
+			(o.trigger_event = ? AND NOT EXISTS (
+				SELECT 1 FROM agent_standing_order_hook_selectors legacy
+				 WHERE legacy.order_id = o.id
+			))
+			OR EXISTS (
+				SELECT 1 FROM agent_standing_order_hook_selectors native
+				 WHERE native.order_id = o.id
+				   AND native.harness = ?
+				   AND native.event = ?
+			)
+		)
 		AND (o.owner_agent = '' OR ow.retired_at = '')
-		ORDER BY o.id`, event)
+		ORDER BY o.id`, event, harnessName, nativeEvent)
+}
+
+// EnabledStandingOrderHookEvents returns the distinct native events that
+// enabled orders explicitly select for one harness. Hook installers union this
+// set with their baseline declarations. Empty means the standing-orders
+// feature adds no callbacks for that harness.
+func EnabledStandingOrderHookEvents(harnessName string) ([]string, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`
+		SELECT DISTINCT selector.event
+		  FROM agent_standing_order_hook_selectors selector
+		  JOIN agent_standing_orders o ON o.id = selector.order_id
+		  LEFT JOIN agents owner ON owner.agent_id = o.owner_agent
+		 WHERE selector.harness = ?
+		   AND o.enabled = 1
+		   AND (o.owner_agent = '' OR owner.retired_at = '')
+		 ORDER BY selector.event`,
+		strings.ToLower(strings.TrimSpace(harnessName)))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var event string
+		if err := rows.Scan(&event); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
 }
 
 func listStandingOrders(d *sql.DB, query string, args ...any) ([]*StandingOrder, error) {
@@ -919,12 +1047,38 @@ func UpdateStandingOrder(
 			return err
 		}
 	}
+	if err := replaceStandingOrderHookSelectors(tx, id, o.HookSelectors); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func replaceStandingOrderHookSelectors(
+	tx *sql.Tx,
+	orderID int64,
+	selectors []hookevents.Selector,
+) error {
+	if _, err := tx.Exec(
+		`DELETE FROM agent_standing_order_hook_selectors WHERE order_id = ?`,
+		orderID); err != nil {
+		return err
+	}
+	for _, selector := range selectors {
+		if _, err := tx.Exec(`
+			INSERT INTO agent_standing_order_hook_selectors
+				(order_id, harness, event)
+			VALUES (?, ?, ?)`,
+			orderID, selector.Harness, selector.Event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func standingOrderDeliveryChanged(a, b *StandingOrder) bool {
 	return a.Summary != b.Summary ||
 		a.TriggerEvent != b.TriggerEvent ||
+		!slices.Equal(a.HookSelectors, b.HookSelectors) ||
 		!slices.Equal(a.TriggerSources, b.TriggerSources) ||
 		a.MatchField != b.MatchField ||
 		a.MatchRegex != b.MatchRegex ||

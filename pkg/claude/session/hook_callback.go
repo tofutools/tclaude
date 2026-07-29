@@ -31,11 +31,14 @@ var agentMessagePromptRe = regexp.MustCompile(`\[system: new agent message #([0-
 
 // HookCallbackInput represents the JSON input from any Claude Code hook
 type HookCallbackInput struct {
-	ConvID           string          `json:"session_id"` // claude's session id, what we call conv_id
-	TranscriptPath   string          `json:"transcript_path"`
-	Cwd              string          `json:"cwd"`
-	PermissionMode   string          `json:"permission_mode,omitempty"`
-	HookEventName    string          `json:"hook_event_name"`
+	ConvID         string `json:"session_id"` // claude's session id, what we call conv_id
+	TranscriptPath string `json:"transcript_path"`
+	Cwd            string `json:"cwd"`
+	PermissionMode string `json:"permission_mode,omitempty"`
+	HookEventName  string `json:"hook_event_name"`
+	// NativeHookEvent is internal event-stream identity used by OpenCode.
+	// Claude/Codex callbacks use HookEventName directly.
+	NativeHookEvent  string          `json:"-"`
 	NotificationType string          `json:"notification_type,omitempty"`
 	Reason           string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
 	Source           string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
@@ -54,6 +57,9 @@ type HookCallbackInput struct {
 	// every event in a turn started by a queued standing-order message so that
 	// prompt/tool automations cannot recursively trigger themselves.
 	StandingOrderOrigin bool `json:"-"`
+	// StandingOrderNativeOnly asks the OpenCode projector to evaluate native
+	// hook selectors without applying a second synthetic status transition.
+	StandingOrderNativeOnly bool `json:"-"`
 	// ToolResponse is the structured tool RESULT a PostToolUse carries.
 	// Its shape is per-tool; the only field tclaude reads today is Bash's
 	// backgroundTaskId, the handle for a `run_in_background` launch (see
@@ -531,9 +537,21 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 			persistCodexHookModel(state, input)
 		}
 		resp, err := decidePreCompact(input, envSessionID, amb)
-		if err != nil || resp.Decision != "" || stateErr != nil ||
+		if err != nil || stateErr != nil ||
 			!hookBelongsToTrackedMainConversation(state, input) {
 			return resp, err
+		}
+		// PreCompact bypasses the ordinary ApplyHook path because it may carry
+		// a gate decision, but it is still a selectable native hook. It has no
+		// tested same-continuation context channel, so a supported selector can
+		// only queue a next-turn message here. Keep that side effect separate
+		// from the gate document: a block decision remains the sole stdout
+		// response, byte-for-byte.
+		input = applyStandingOrderTurnOrigin(input, envSessionID)
+		orderResp := standingOrderResponse(ctx, input, envSessionID)
+		orderResp.Release()
+		if resp.Decision != "" {
+			return resp, nil
 		}
 		state.Status = StatusWorking
 		state.StatusDetail = "compacting"

@@ -5229,6 +5229,20 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .standing-order-choice {
   display: flex; align-items: flex-start; gap: 7px; cursor: pointer;
 }
+.standing-order-native-hooks {
+  display: flex; flex-direction: column; gap: 7px;
+  max-height: min(42vh, 440px); overflow: auto;
+  padding-right: 3px;
+}
+.standing-order-native-hooks details {
+  border: 1px solid #2a3340; border-radius: 4px; background: #0d1117;
+}
+.standing-order-native-hooks summary {
+  cursor: pointer; padding: 7px 9px; color: #c9d1d9;
+}
+.standing-order-native-hooks .standing-order-options {
+  border: 0; border-top: 1px solid #2a3340; border-radius: 0;
+}
 .standing-order-choice input { margin-top: 2px; }
 .standing-order-choice > span {
   display: flex; flex-direction: column; gap: 2px; line-height: 1.35;

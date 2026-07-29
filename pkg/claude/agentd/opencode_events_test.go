@@ -343,6 +343,53 @@ func TestOpenCodeEventProjectorSessionFilteringIsStateIsolated(t *testing.T) {
 		"a foreign session's running tool must not defer the target session's idle")
 }
 
+func TestOpenCodeNativeHookSessionIdentityUsesEventWireShape(t *testing.T) {
+	const convID = "ses_target"
+	tests := []struct {
+		name  string
+		event string
+		want  bool
+	}{
+		{
+			name: "message info session",
+			event: `{"id":"evt_message","type":"message.updated","properties":{` +
+				`"info":{"id":"msg_1","sessionID":"` + convID + `","role":"assistant"}}}`,
+			want: true,
+		},
+		{
+			name: "part session",
+			event: `{"id":"evt_part","type":"message.part.updated","properties":{` +
+				`"part":{"id":"prt_1","sessionID":"` + convID + `","type":"text"}}}`,
+			want: true,
+		},
+		{
+			name: "session info id",
+			event: `{"id":"evt_session","type":"session.updated","properties":{` +
+				`"info":{"id":"` + convID + `"}}}`,
+			want: true,
+		},
+		{
+			name: "foreign nested session",
+			event: `{"id":"evt_foreign_message","type":"message.updated","properties":{` +
+				`"info":{"id":"msg_2","sessionID":"ses_other","role":"assistant"}}}`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projector := newOpenCodeEventProjector(convID, "/tmp/project")
+			_, err := projector.project(json.RawMessage(tt.event))
+			require.NoError(t, err)
+			native, ok := projector.takeNativeHook()
+			assert.Equal(t, tt.want, ok)
+			if ok {
+				assert.Equal(t, convID, native.ConvID)
+				assert.True(t, native.StandingOrderNativeOnly)
+			}
+		})
+	}
+}
+
 func TestOpenCodeProjectionDrivesSharedStatusStateMachine(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

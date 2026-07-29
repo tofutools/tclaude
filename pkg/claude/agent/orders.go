@@ -50,7 +50,7 @@ func ordersCmd() *cobra.Command {
 		Short: "Inspect trigger-driven standing orders",
 		Long: "List, show, and dry-run standing orders: durable guidance delivered when a trigger matches " +
 			"rather than on a wall clock. Supported triggers are session.start, user.prompt, tool.before, " +
-			"and tool.after, with optional validated RE2 matching over normalized event fields. " +
+			"tool.after, and harness-tagged native hook OR branches, with optional validated RE2 matching over normalized event fields. " +
 			"An order declares the delivery timing it REQUIRES; a harness that cannot meet " +
 			"it reports unsupported rather than downgrading silently. An optional per-agent cooldown limits " +
 			"successful deliveries without depending on conversation generation; optional trailing-edge " +
@@ -234,6 +234,7 @@ type ordersExplainParams struct {
 	Source  string `long:"source" optional:"true" default:"startup" help:"Event source: startup | resume | clear | compact."`
 	Conv    string `long:"conv" optional:"true" help:"Conversation to evaluate as. Defaults to the current one."`
 	Harness string `long:"harness" optional:"true" default:"claude" help:"Harness to evaluate as: claude | codex | opencode. Decides which timing guarantees are available."`
+	Hook    string `long:"hook" optional:"true" help:"Exact harness-native hook name to simulate (for selector orders), e.g. PostCompact or session.compacted."`
 	Trimmed bool   `long:"trimmed" optional:"true" help:"Simulate a hook payload whose tool fields were dropped for size, to see which orders could not be evaluated at all."`
 	Cwd     string `long:"cwd" optional:"true" help:"Working directory matcher input."`
 	Prompt  string `long:"prompt" optional:"true" help:"Prompt matcher input for user.prompt."`
@@ -269,6 +270,7 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 
 	ev := standingorders.Event{
 		Event:          p.Event,
+		NativeEvent:    strings.TrimSpace(p.Hook),
 		Source:         standingorders.NormalizeSource(p.Event, p.Source),
 		ConvID:         convID,
 		Harness:        p.Harness,
@@ -314,6 +316,9 @@ func runOrdersExplain(stdout, stderr io.Writer, p *ordersExplainParams) int {
 
 	fmt.Fprintf(stdout, "Simulating %s(source=%s) for conv %s as harness %q",
 		ev.Event, ev.Source, shortID(convID), ev.Harness)
+	if ev.NativeEvent != "" {
+		fmt.Fprintf(stdout, ", native hook %q", ev.NativeEvent)
+	}
 	if ev.PayloadTrimmed {
 		fmt.Fprint(stdout, ", payload trimmed")
 	}

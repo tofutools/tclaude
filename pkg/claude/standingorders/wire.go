@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // The types below are the read-only wire shape the dashboard renders
@@ -27,11 +28,12 @@ type TargetView struct {
 // TriggerView carries a pre-rendered label so every surface prints the same
 // string instead of composing its own from event + sources.
 type TriggerView struct {
-	Event      string   `json:"event"`
-	Sources    []string `json:"sources,omitempty"`
-	MatchField string   `json:"match_field,omitempty"`
-	MatchRegex string   `json:"match_regex,omitempty"`
-	Label      string   `json:"label"`
+	Event      string                `json:"event"`
+	Sources    []string              `json:"sources,omitempty"`
+	Selectors  []hookevents.Selector `json:"selectors,omitempty"`
+	MatchField string                `json:"match_field,omitempty"`
+	MatchRegex string                `json:"match_regex,omitempty"`
+	Label      string                `json:"label"`
 }
 
 // EvaluationView is the most recent ledger row for an order.
@@ -94,6 +96,10 @@ type OrderView struct {
 	CapabilityByHarness map[string]Capability `json:"capability_by_harness"`
 
 	LastEvaluation *EvaluationView `json:"last_evaluation"`
+	// HookSetupWarning is populated only on a mutation response when the
+	// order was saved but optional native hook declarations could not be
+	// reconciled. It is never persisted.
+	HookSetupWarning string `json:"hook_setup_warning,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -137,6 +143,7 @@ func NewOrderView(
 		Trigger: TriggerView{
 			Event:      o.TriggerEvent,
 			Sources:    o.TriggerSources,
+			Selectors:  o.HookSelectors,
 			MatchField: o.MatchField,
 			MatchRegex: o.MatchRegex,
 			Label:      o.TriggerLabel(),

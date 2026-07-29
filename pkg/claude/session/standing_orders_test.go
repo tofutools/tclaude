@@ -13,6 +13,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // standingOrderFixture wires up a real session row, a real group with the
@@ -537,6 +538,85 @@ func TestObserveStandingOrdersReturnsNextTurnOrdersForMessageDelivery(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+func TestHarnessHookSelectorUsesInlineContextWhenThatExactEventSupportsIt(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerHookEvent
+		o.TriggerSources = nil
+		o.HookSelectors = []hookevents.Selector{{
+			Harness: hookevents.HarnessClaude,
+			Event:   "PreToolUse",
+		}}
+	})
+
+	got := additionalContextForEvent(t, dispatch(t, HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "Bash",
+	}), "PreToolUse")
+	assert.Contains(t, got, "Push the PR early")
+}
+
+func TestHarnessHookSelectorQueuesDirectCallbackWhenEventHasNoInlineContext(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	orderID := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerHookEvent
+		o.TriggerSources = nil
+		o.Timing = db.StandingTimingNextTurn
+		o.HookSelectors = []hookevents.Selector{{
+			Harness: hookevents.HarnessClaude,
+			Event:   "PostCompact",
+		}}
+	})
+
+	assert.Empty(t, dispatch(t, HookCallbackInput{
+		HookEventName: "PostCompact",
+		ConvID:        "conv-1",
+	}), "message transport must not emit an unsupported hook response")
+
+	messages, err := db.ListAgentMessagesForConv("conv-1", 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "[standing-order:pr-early]", messages[0].Subject)
+	origin, err := db.AgentMessageStandingOrderOrigin(messages[0].ID)
+	require.NoError(t, err)
+	require.NotNil(t, origin)
+	assert.Equal(t, orderID, origin.OrderID)
+
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+func TestHarnessHookSelectorQueuesFromPreCompactGatePath(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	orderID := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.TriggerEvent = db.StandingTriggerHookEvent
+		o.TriggerSources = nil
+		o.Timing = db.StandingTimingNextTurn
+		o.HookSelectors = []hookevents.Selector{{
+			Harness: hookevents.HarnessClaude,
+			Event:   "PreCompact",
+		}}
+	})
+
+	assert.Empty(t, dispatch(t, HookCallbackInput{
+		HookEventName: "PreCompact",
+		ConvID:        "conv-1",
+		Trigger:       "manual",
+	}))
+	messages, err := db.ListAgentMessagesForConv("conv-1", 10)
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, "[standing-order:pr-early]", messages[0].Subject)
+	latest, err := db.LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
 	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
 }
 

@@ -1110,3 +1110,14 @@ CREATE TABLE agent_standing_order_group_scopes (
 CREATE INDEX idx_agent_standing_order_group_scopes_group
 			ON agent_standing_order_group_scopes(group_id, order_id);
 
+CREATE TABLE agent_standing_order_hook_selectors (
+			order_id INTEGER NOT NULL
+			         REFERENCES agent_standing_orders(id) ON DELETE CASCADE,
+			harness  TEXT NOT NULL,
+			event    TEXT NOT NULL,
+			PRIMARY KEY (order_id, harness, event)
+		);
+
+CREATE INDEX idx_agent_standing_order_hook_selectors_event
+			ON agent_standing_order_hook_selectors(harness, event, order_id);
+

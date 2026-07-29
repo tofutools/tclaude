@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 func sampleOrder(name string) *StandingOrder {
@@ -58,6 +60,70 @@ func TestStandingOrder_InsertAndRead(t *testing.T) {
 	missing, err := GetStandingOrder(id + 999)
 	require.NoError(t, err)
 	assert.Nil(t, missing, "absent order should read as (nil, nil)")
+}
+
+func TestStandingOrder_HarnessHookSelectorsRoundTripAndMatchAsOR(t *testing.T) {
+	setupTestDB(t)
+
+	order := sampleOrder("native-hooks")
+	order.TriggerEvent = StandingTriggerHookEvent
+	order.TriggerSources = nil
+	order.HookSelectors = []hookevents.Selector{
+		{Harness: hookevents.HarnessCodex, Event: "SessionEnd"},
+		{Harness: hookevents.HarnessClaude, Event: "PostCompact"},
+		{Harness: hookevents.HarnessClaude, Event: "PostCompact"},
+	}
+	id, err := InsertStandingOrder(order)
+	require.NoError(t, err)
+
+	got, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.Equal(t, []hookevents.Selector{
+		{Harness: hookevents.HarnessClaude, Event: "PostCompact"},
+		{Harness: hookevents.HarnessCodex, Event: "SessionEnd"},
+	}, got.HookSelectors)
+	assert.Contains(t, got.TriggerLabel(), "claude:PostCompact OR codex:SessionEnd")
+
+	claude, err := ListEnabledStandingOrdersForEvent(
+		StandingTriggerHookEvent, hookevents.HarnessClaude, "PostCompact")
+	require.NoError(t, err)
+	require.Len(t, claude, 1)
+	assert.Equal(t, id, claude[0].ID)
+
+	codex, err := ListEnabledStandingOrdersForEvent(
+		StandingTriggerHookEvent, hookevents.HarnessCodex, "SessionEnd")
+	require.NoError(t, err)
+	require.Len(t, codex, 1)
+	assert.Equal(t, id, codex[0].ID)
+
+	noMatch, err := ListEnabledStandingOrdersForEvent(
+		StandingTriggerHookEvent, hookevents.HarnessClaude, "SessionEnd")
+	require.NoError(t, err)
+	assert.Empty(t, noMatch)
+
+	required, err := EnabledStandingOrderHookEvents(hookevents.HarnessClaude)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"PostCompact"}, required)
+	setStandingOrderEnabledForTest(t, id, false)
+	required, err = EnabledStandingOrderHookEvents(hookevents.HarnessClaude)
+	require.NoError(t, err)
+	assert.Empty(t, required, "disabled orders must add no hook declarations")
+}
+
+func TestStandingOrder_RejectsUnknownOrMixedNativeHookSelectors(t *testing.T) {
+	order := sampleOrder("invalid-native")
+	order.TriggerEvent = StandingTriggerHookEvent
+	order.TriggerSources = nil
+	order.HookSelectors = []hookevents.Selector{{
+		Harness: hookevents.HarnessClaude,
+		Event:   "NotARealHook",
+	}}
+	assert.ErrorIs(t, order.Validate(), ErrStandingOrderInvalid)
+
+	order.HookSelectors[0].Event = "PostCompact"
+	order.TriggerEvent = StandingTriggerSessionStart
+	assert.ErrorIs(t, order.Validate(), ErrStandingOrderInvalid,
+		"native selectors cannot accidentally retain legacy trigger semantics")
 }
 
 func TestStandingOrder_GlobalTargetAndAdditionalGroupScopes(t *testing.T) {

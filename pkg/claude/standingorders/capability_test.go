@@ -7,6 +7,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 func TestCapabilitySameContinuationOnHookHarnesses(t *testing.T) {
@@ -15,6 +16,33 @@ func TestCapabilitySameContinuationOnHookHarnesses(t *testing.T) {
 		assert.Equal(t, StatusSupported, c.Status, h)
 		assert.Equal(t, db.StandingTransportHookContext, c.Transport, h)
 	}
+}
+
+func TestCapabilityHarnessHookSelectorsAreTaggedAndEventSpecific(t *testing.T) {
+	order := &db.StandingOrder{
+		TriggerEvent: db.StandingTriggerHookEvent,
+		Timing:       db.StandingTimingNextTurn,
+		HookSelectors: []hookevents.Selector{
+			{Harness: hookevents.HarnessClaude, Event: "PreToolUse"},
+			{Harness: hookevents.HarnessClaude, Event: "PostCompact"},
+			{Harness: hookevents.HarnessOpenCode, Event: "session.compacted"},
+		},
+	}
+	claude := CapabilityForOrder(order, hookevents.HarnessClaude)
+	assert.Equal(t, StatusSupported, claude.Status)
+	assert.Equal(t, db.StandingTransportMessage, claude.Transport,
+		"aggregate reports the weakest transport among its OR branches")
+
+	inline := CapabilityForOrderEvent(
+		order, hookevents.HarnessClaude, "PreToolUse")
+	assert.Equal(t, db.StandingTransportHookContext, inline.Transport)
+	queued := CapabilityForOrderEvent(
+		order, hookevents.HarnessClaude, "PostCompact")
+	assert.Equal(t, db.StandingTransportMessage, queued.Transport)
+
+	codex := CapabilityForOrder(order, hookevents.HarnessCodex)
+	assert.Equal(t, StatusUnsupported, codex.Status,
+		"a selector order cannot imply reach on an unselected harness")
 }
 
 // OpenCode's SSE projection has no response channel, so a same-continuation

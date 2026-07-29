@@ -25,6 +25,10 @@ type Membership struct {
 type Event struct {
 	// Event is the normalized trigger event, e.g. db.StandingTriggerSessionStart.
 	Event string
+	// NativeEvent is the exact harness event name when this evaluation came
+	// from a harness-tagged selector (for example PostCompact or
+	// session.compacted). Legacy normalized events may leave it empty.
+	NativeEvent string
 	// Source is the harness's own source value for the event
 	// (startup / resume / clear / compact for SessionStart).
 	Source string
@@ -233,7 +237,21 @@ func Evaluate(
 		return d
 	}
 
-	if o.TriggerEvent != ev.Event {
+	if len(o.HookSelectors) > 0 {
+		matched := false
+		for _, selector := range o.HookSelectors {
+			if selector.Harness == ev.Harness && selector.Event == ev.NativeEvent {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			d.Outcome = db.StandingOutcomeNoMatch
+			d.Detail = fmt.Sprintf(
+				"order has no hook selector for %s:%s", ev.Harness, ev.NativeEvent)
+			return d
+		}
+	} else if o.TriggerEvent != ev.Event {
 		d.Outcome = db.StandingOutcomeNoMatch
 		d.Detail = fmt.Sprintf("order triggers on %s, event was %s", o.TriggerEvent, ev.Event)
 		return d
@@ -278,7 +296,7 @@ func Evaluate(
 		}
 	}
 
-	d.Capability = CapabilityForOrder(o, ev.Harness)
+	d.Capability = CapabilityForOrderEvent(o, ev.Harness, ev.NativeEvent)
 	if !d.Capability.Supported() {
 		d.Outcome = db.StandingOutcomeUnsupportedTiming
 		d.Detail = d.Capability.Detail

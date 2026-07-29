@@ -18,6 +18,7 @@ package standingorders
 import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // Status is how well a harness can honour an order's required timing.
@@ -148,6 +149,28 @@ func CapabilityFor(timing, event, harnessName string) Capability {
 // transport. Trailing-edge debounce always uses a queued message: an inline
 // hook response cannot wait for future events without blocking the harness.
 func CapabilityForOrder(o *db.StandingOrder, harnessName string) Capability {
+	if o != nil && len(o.HookSelectors) > 0 {
+		var branches []Capability
+		for _, selector := range o.HookSelectors {
+			if selector.Harness == harnessName {
+				branches = append(branches,
+					capabilityForNativeHook(o.Timing, selector))
+			}
+		}
+		base := reduceBranchCapabilities(branches)
+		if o.DebounceSeconds == 0 || !base.Supported() {
+			return base
+		}
+		if o.Timing != db.StandingTimingNextTurn {
+			return Capability{
+				Status: StatusUnsupported, Transport: db.StandingTransportNone,
+				Detail: "trailing-edge debounce requires next-turn timing",
+			}
+		}
+		base.Transport = db.StandingTransportMessage
+		base.Detail = "trailing-edge debounce delivers as a queued message after the quiet window"
+		return base
+	}
 	if o == nil || o.DebounceSeconds == 0 {
 		if o == nil {
 			return Capability{Status: StatusUnsupported, Transport: db.StandingTransportNone}
@@ -167,6 +190,106 @@ func CapabilityForOrder(o *db.StandingOrder, harnessName string) Capability {
 	base.Transport = db.StandingTransportMessage
 	base.Detail = "trailing-edge debounce delivers as a queued message after the quiet window"
 	return base
+}
+
+// CapabilityForOrderEvent resolves the exact branch that matched at runtime.
+// Aggregate dashboard capability uses CapabilityForOrder; delivery must not
+// inherit the transport of another OR branch on the same order.
+func CapabilityForOrderEvent(
+	o *db.StandingOrder,
+	harnessName, nativeEvent string,
+) Capability {
+	if o == nil || len(o.HookSelectors) == 0 {
+		return CapabilityForOrder(o, harnessName)
+	}
+	selector := hookevents.Selector{Harness: harnessName, Event: nativeEvent}
+	selected := false
+	for _, candidate := range o.HookSelectors {
+		if candidate == selector {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "order does not select this harness-native hook",
+		}
+	}
+	base := capabilityForNativeHook(o.Timing, selector)
+	if o.DebounceSeconds > 0 && base.Supported() {
+		base.Transport = db.StandingTransportMessage
+		base.Detail = "trailing-edge debounce delivers as a queued message after the quiet window"
+	}
+	return base
+}
+
+func capabilityForNativeHook(
+	timing string,
+	selector hookevents.Selector,
+) Capability {
+	if !hookevents.Valid(selector) {
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "unknown harness-native hook " + selector.Harness + ":" + selector.Event,
+		}
+	}
+	switch timing {
+	case db.StandingTimingSameContinuation:
+		if hookevents.SupportsSameContinuation(selector) {
+			return Capability{
+				Status: StatusSupported, Transport: db.StandingTransportHookContext,
+			}
+		}
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: selector.Harness + ":" + selector.Event +
+				" has no tested same-continuation context channel; " +
+				"re-author it with next-turn timing to use a durable message",
+		}
+	case db.StandingTimingNextTurn:
+		if hookevents.SupportsSameContinuation(selector) {
+			return Capability{
+				Status: StatusSupported, Transport: db.StandingTransportHookContext,
+			}
+		}
+		return Capability{
+			Status: StatusSupported, Transport: db.StandingTransportMessage,
+			Detail: selector.Harness + ":" + selector.Event +
+				" delivers through the durable next-turn message transport",
+		}
+	default:
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "unknown timing " + timing,
+		}
+	}
+}
+
+func reduceBranchCapabilities(branches []Capability) Capability {
+	if len(branches) == 0 {
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "this order has no hook selector for the target harness",
+		}
+	}
+	rank := map[Status]int{StatusSupported: 0, StatusDegraded: 1, StatusUnsupported: 2}
+	worst := branches[0]
+	for _, branch := range branches[1:] {
+		if rank[branch.Status] > rank[worst.Status] {
+			worst = branch
+			continue
+		}
+		if branch.Status == worst.Status {
+			if branch.Transport == db.StandingTransportMessage &&
+				worst.Transport == db.StandingTransportHookContext {
+				worst = branch
+			} else if worst.Detail == "" && branch.Detail != "" {
+				worst.Detail = branch.Detail
+			}
+		}
+	}
+	return worst
 }
 
 // CapabilityByHarness reports capability for every known harness. The

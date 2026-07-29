@@ -54,6 +54,7 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
     payload: {
       name: 'pr-early', target: 'agt_target', role: '',
       summary: 'Push the PR early.', trigger_event: 'session.start',
+      hook_selectors: [],
       sources: ['compact'], match_field: '', match_regex: '',
       timing: 'same-continuation', cadence: 'always',
       cooldown_seconds: 0, debounce_seconds: 0, enabled: true,
