@@ -237,8 +237,8 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 			require.NoError(t, planErr)
 			assert.Equal(t, sandboxpolicy.AccessModeList, rendered.Network.Mode)
 			if denySmoke {
-				assert.Empty(t, rendered.Network.Deny,
-					"PR1 keeps production deny capability cells dark")
+				assert.Equal(t, rules.Deny, rendered.Network.Deny,
+					"PR2 activates the exact deny plan exercised by this boundary")
 			}
 
 			stateRoot := filepath.Join(smokeHome, "."+harnessName)
