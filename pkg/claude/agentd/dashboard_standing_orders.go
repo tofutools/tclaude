@@ -228,13 +228,14 @@ func decodeDashboardStandingOrder(
 			order.DisabledReason = ""
 		}
 	}
-	if target.Kind == db.StandingTargetGroup {
+	switch target.Kind {
+	case db.StandingTargetGroup:
 		order.TargetKind = db.StandingTargetGroup
 		order.GroupID = target.Group.ID
 		order.TargetRole = role
-	} else if target.Kind == db.StandingTargetGlobal {
+	case db.StandingTargetGlobal:
 		order.TargetKind = db.StandingTargetGlobal
-	} else {
+	default:
 		order.TargetKind = db.StandingTargetConv
 		order.TargetAgent = target.Agent
 	}
