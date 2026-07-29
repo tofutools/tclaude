@@ -62,8 +62,8 @@ function tabAvailable(tab) {
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
-// DOM: the active top-level nav button, plus the active subtab for the two tabs
-// that have one. Everything is normalized through the core so an unexpected DOM
+// DOM: the active top-level nav button, plus the active subtab for tabs that
+// have one. Everything is normalized through the core so an unexpected DOM
 // state degrades to a valid location rather than a bogus one.
 function activeLocationFromDOM() {
   const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
@@ -333,9 +333,9 @@ export function initNavHistory() {
 
   window.addEventListener('popstate', onPopstate);
 
-  // Subtab switches (Access / Processes) emit `tclaude:navigated` after they set
-  // their active class — record them as user navigation, so /access/sudo and
-  // /processes/runs update the URL just like a top-level tab switch.
+  // Subtab switches (Access / Automations / Processes) emit
+  // `tclaude:navigated` after they update their view — record them as user
+  // navigation, so their deep paths update just like a top-level tab switch.
   document.addEventListener('tclaude:navigated', recordCurrentLocation);
 
   // Each snapshot poll fires `tclaude:snapshot`; reconcile the URL then, so an
