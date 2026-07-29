@@ -221,7 +221,7 @@ type PendingStandingMessage struct {
 func RecordStandingMessageDelivery(p PendingStandingMessage, sendErr error) {
 	outcome, detail := db.StandingOutcomeDelivered, p.Detail
 	if sendErr != nil {
-		outcome = db.StandingOutcomeTransportUnimplemented
+		outcome = db.StandingOutcomeDeliveryFailed
 		detail = "message send failed: " + sendErr.Error()
 	}
 	if _, err := db.RecordStandingDelivery(&db.StandingDelivery{

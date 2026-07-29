@@ -299,6 +299,11 @@ func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {
 	require.Len(t, pending, 1)
 	RecordStandingMessageDelivery(pending[0], errors.New("queue full"))
 
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, db.StandingOutcomeDeliveryFailed, latest.Outcome)
+
 	already, err := db.StandingOrderDeliveredInEpoch(id, 1, "conv-1", "conv-1")
 	require.NoError(t, err)
 	assert.False(t, already, "a failed send must remain retryable")

@@ -112,14 +112,13 @@ const (
 	// StandingOutcomeTransportUnimplemented — the order matched and the
 	// harness could in principle carry it, but the transport its timing
 	// selects is not wired up yet, so nothing was delivered.
-	//
-	// Today this is next-turn timing on a harness reached only through an
-	// observation-only path (OpenCode's SSE projector, which has no response
-	// channel back to the model). It is deliberately its own outcome rather
-	// than being folded into unsupported-timing: the harness is not the
-	// limitation, tclaude is, and an operator deciding whether to re-author
-	// an order needs to be able to tell those apart.
+	// It is deliberately its own outcome rather than being folded into
+	// unsupported-timing: the harness is not the limitation, tclaude is.
 	StandingOutcomeTransportUnimplemented = "transport-unimplemented"
+	// StandingOutcomeDeliveryFailed — a supported transport was attempted but
+	// failed before the reminder was durably queued or written. It remains
+	// retryable and must not satisfy cadence.
+	StandingOutcomeDeliveryFailed = "delivery-failed"
 )
 
 // Transports a delivery may use.
@@ -129,7 +128,7 @@ const (
 	StandingTransportNone        = "none"
 )
 
-// StandingSummaryMaxLen caps the operator-authored text that becomes
+// StandingSummaryMaxLen caps the standing-order text that becomes
 // model-visible context. Long orders re-injected at every boundary would
 // recreate exactly the context bloat this feature exists to reduce, and the
 // full text of anything longer belongs behind `orders show`.

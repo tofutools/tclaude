@@ -95,6 +95,7 @@ func TestOutcomeIsProblem(t *testing.T) {
 		db.StandingOutcomeNotEvaluatedTrimmed,
 		db.StandingOutcomeDegradedTransport,
 		db.StandingOutcomeTransportUnimplemented,
+		db.StandingOutcomeDeliveryFailed,
 	} {
 		assert.True(t, OutcomeIsProblem(bad), bad)
 	}
