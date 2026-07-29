@@ -15,6 +15,10 @@ import {
   sandboxRuleBuckets,
   sandboxTargetLabel,
 } from './sandbox-profiles-data.js';
+import {
+  CODEX_BUILTIN_FILTERED_NETWORK_HINT,
+  CODEX_BUILTIN_FILTERED_NETWORK_SHORT,
+} from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -75,7 +79,8 @@ const NETWORK_ACCESS_HELP = 'Deny all starts closed, then releases selected buil
   + 'Linux enforces those lists. macOS does not yet enforce mixed destination lists '
   + 'and launches with the existing Not enforced disclosure and open outbound network. '
   + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
-  + 'servers, and agent commands need their own Access list destinations.';
+  + 'servers, and agent commands need their own Access list destinations.'
+  + ` ${CODEX_BUILTIN_FILTERED_NETWORK_HINT}`;
 
 const html = htm.bind(h);
 
@@ -104,7 +109,14 @@ function sandboxEvaluationImplementations(harness, platform, catalog) {
     .find((candidate) => candidate.name === harness);
   if (!entry) return [];
   const options = [];
-  if (entry.can_builtin_os_sandbox) options.push(['harness-builtin', 'Harness built-in sandbox']);
+  if (entry.can_builtin_os_sandbox) {
+    options.push([
+      'harness-builtin',
+      harness === 'codex'
+        ? `Codex built-in sandbox (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
+        : 'Harness built-in sandbox',
+    ]);
+  }
   if (entry.can_tclaude_layer) options.push(['tclaude-layer', 'tclaude sandbox']);
   if (entry.can_stacked && platform === 'linux') options.push(['stacked', 'Stacked sandboxes']);
   return options;
@@ -525,6 +537,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const harnessLabel = hEntry?.display_name || hEntry?.name || '';
   const sandboxImplOptions = sandboxImplOptionsFor(
     sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
+    hEntry?.name || '',
   );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
@@ -536,6 +549,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
       sandboxImplCanBuiltin: hEntry?.can_builtin_os_sandbox !== false,
       sandboxImplHarness: harnessLabel,
+      sandboxImplHarnessName: hEntry?.name || '',
       sandboxImplCanStacked: !!hEntry?.can_stacked,
       sandboxImplStackedAvailability: sandboxImpl?.stacked?.[hEntry?.name] || {},
       // A profile may legitimately pin stacked for a DIFFERENT machine — that

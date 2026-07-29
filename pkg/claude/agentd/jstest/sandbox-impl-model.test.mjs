@@ -34,6 +34,10 @@ const harnesses = [
     can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
   },
   {
+    name: 'codex', display_name: 'Codex CLI', models: [],
+    can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
+  },
+  {
     name: 'opencode', display_name: 'OpenCode', models: [], can_tclaude_layer: true,
     can_builtin_os_sandbox: false, tclaude_layer_server_boundary: true,
   },
@@ -138,6 +142,14 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   const orphan = model.sandboxImplOptionsFor(sandboxImpl.options, '');
   assert.equal(orphan[0].label, 'The harness built-in');
   assert.equal(orphan[0].descr, 'Current behavior: the harness owns containment.');
+
+  const codex = model.spawnCapabilityView({ harness: 'codex' }, { harnesses, sandboxImpl });
+  const codexBuiltin = codex.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
+  assert.equal(
+    codexBuiltin.label,
+    'Codex built-in (no filtered network sandbox yet)',
+  );
+  assert.match(codexBuiltin.descr, /upstream proxy is experimental and off by default/);
 });
 
 test('sandbox-implementation hint stays silent for the default and warns honestly', async (t) => {
@@ -150,6 +162,19 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // on the legacy path would be noise on every spawn.
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, view), null);
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'harness-builtin' }, view), null);
+
+  const codexView = model.spawnCapabilityView(
+    { harness: 'codex' }, { harnesses, sandboxImpl },
+  );
+  for (const value of ['', 'harness-builtin']) {
+    const codexHint = model.sandboxImplHintFor({ sandboxImpl: value }, codexView);
+    assert.equal(codexHint.warn, true);
+    assert.match(codexHint.text, /built-in filesystem sandbox remains available/);
+    assert.match(codexHint.text, /no filtered network sandbox yet/);
+    assert.match(codexHint.text, /upstream proxy is experimental and off by default/);
+    assert.match(codexHint.text, /tclaude-layer filtering on Linux/);
+    assert.match(codexHint.text, /network open \(Allow all\)/);
+  }
 
   const openCodeView = model.spawnCapabilityView(
     { harness: 'opencode' }, { harnesses, sandboxImpl },

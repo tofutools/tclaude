@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func TestSandboxProfilesCommandHelpDocumentsNonSecretEnvironment(t *testing.T) {
@@ -223,13 +224,13 @@ func TestSandboxProfileAxisLabelsDeriveLegacySocketPosture(t *testing.T) {
 func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {
 	var calls []capturedReq
 	const prediction = `{"profile":"scoped","targets":[{
-		"implementation":"tclaude-layer","harness":"claude","platform":"linux",
+		"implementation":"harness-builtin","harness":"codex","platform":"linux",
 		"predicted":true,
 		"axes":{
 			"filesystem":{"tier":"1 deny · 1 write","outcome":"enforced","detail":"bubblewrap supports the carve-out"},
 			"environment":{"tier":"1 variable","outcome":"enforced","detail":"literal environment is injected"},
 			"agent_directories":{"tier":"1 directory","outcome":"enforced","detail":"private cache is materialized"},
-			"network":{"tier":"list","outcome":"not_enforced","detail":"bubblewrap has no filtered-egress applier"},
+			"network":{"tier":"list","outcome":"not_enforced","detail":"` + harness.CodexBuiltinFilteredNetworkDisclosure + `"},
 			"unix_sockets":{"tier":"closed","outcome":"refused","detail":"closed sockets cannot be enforced"}
 		},
 		"caveat":"(prediction for a non-host platform; host capability probes did not run)"
@@ -243,15 +244,16 @@ func TestSandboxProfileShowForPrintsPredictionsAndJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	params := &sandboxProfilesShowParams{
-		Name: "scoped", For: []string{"tclaude-layer/claude/linux"},
+		Name: "scoped", For: []string{"harness-builtin/codex/linux"},
 	}
 	require.Equal(t, rcOK, runSandboxProfilesShow(params, &stdout, &stderr))
-	assert.Contains(t, calls[0].path, "for=tclaude-layer%2Fclaude%2Flinux")
+	assert.Contains(t, calls[0].path, "for=harness-builtin%2Fcodex%2Flinux")
 	assert.Contains(t, stdout.String(), "directories:")
 	assert.Contains(t, stdout.String(), "bubblewrap supports the carve-out")
 	assert.Contains(t, stdout.String(), "environment:")
 	assert.Contains(t, stdout.String(), "agent dirs:")
 	assert.Contains(t, stdout.String(), "NOT ENFORCED")
+	assert.Contains(t, stdout.String(), harness.CodexBuiltinFilteredNetworkDisclosure)
 	assert.Contains(t, stdout.String(), "REFUSED at launch")
 	assert.Contains(t, stdout.String(), "prediction for a non-host platform")
 

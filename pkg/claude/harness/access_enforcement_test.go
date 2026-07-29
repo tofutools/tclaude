@@ -355,6 +355,64 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 		"a host-open verdict must not mint filtered enforcement")
 }
 
+func TestCodexBuiltinFilteredNetworkPredictionDisclosesUnavailableCapability(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "api.openai.com", Ports: []int{443},
+			}},
+		},
+	}
+	codex := MustGet(CodexName)
+	for _, platform := range []string{"linux", "darwin"} {
+		t.Run(platform, func(t *testing.T) {
+			prediction, err := PredictAccessEnforcement(
+				codex, sandboxpolicy.ImplementationHarnessBuiltin,
+				axes, SandboxManagedProfile, platform,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, EnforceNone, prediction.NetworkList)
+			assert.Equal(t, CodexBuiltinFilteredNetworkDisclosure,
+				prediction.NetworkListUnavailableDetail)
+
+			axis := DescribePredictedAccess(axes, prediction).Network
+			assert.Equal(t, AccessPredictionNotEnforced, axis.Outcome)
+			assert.Equal(t, CodexBuiltinFilteredNetworkDisclosure, axis.Detail)
+
+			rows := DescribePredictedNetworkEntries(axes.Network, prediction)
+			require.Len(t, rows, 1)
+			assert.Equal(t, AccessPredictionNotEnforced, rows[0].Outcome)
+			assert.Equal(t, CodexBuiltinFilteredNetworkDisclosure, rows[0].Detail)
+
+			launchRow, err := accessEnforcementTable(
+				codex, sandboxpolicy.ImplementationHarnessBuiltin,
+				axes, SandboxManagedProfile, platform, true,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, EnforceNone, launchRow.NetworkList)
+			rendered, notices, err := PlanAccessEnforcement(
+				axes, accessEnforcementFromTable(launchRow),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode,
+				"the disclosure must not activate or narrow launch enforcement")
+			require.Len(t, notices, 1)
+			assert.Equal(t, "no_mechanism", notices[0].Reason)
+		})
+	}
+
+	claudePrediction, err := PredictAccessEnforcement(
+		Default(), sandboxpolicy.ImplementationHarnessBuiltin,
+		axes, ClaudeSandboxOn, "linux",
+	)
+	require.NoError(t, err)
+	assert.Empty(t, claudePrediction.NetworkListUnavailableDetail,
+		"the Codex-specific disclosure must not attach to other None rows")
+	assert.Contains(t, DescribePredictedAccess(axes, claudePrediction).Network.Detail,
+		"no filtered-egress applier exists")
+}
+
 func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
