@@ -126,6 +126,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		}
 	}
 	for _, disclosure := range []string{
+		`For Linux tclaude-layer filtered networking:`,
 		`Host and domain rules allow IP addresses returned by DNS.`,
 		`If any check fails, these rules are not enforced and outbound traffic is open.`,
 		`local-machine rules use host.tclaude.internal.`,

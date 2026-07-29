@@ -2132,6 +2132,7 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /ordinary IPv4\/IPv6 TCP and UDP/);
   assert.match(networkHelp.textContent, /QUIC is UDP/);
   assert.match(networkHelp.textContent, /Raw and packet sockets are not an authored class/);
+  assert.match(networkHelp.textContent, /For Linux tclaude-layer filtered networking/);
   assert.match(networkHelp.textContent, /Host and domain rules allow IP addresses returned by DNS/);
   assert.match(networkHelp.textContent, /sandbox can also reach other sites hosted on that same IP/);
   assert.match(networkHelp.textContent, /Only a new DNS lookup refreshes the allowed IP/);
