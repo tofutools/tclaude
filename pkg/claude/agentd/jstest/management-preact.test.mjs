@@ -1448,7 +1448,14 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     /Policy composition warning:.*leaves no network destinations/);
   const composition = host.querySelector('.sbx-composition-details');
   assert.equal(composition.hasAttribute('open'), false);
-  assert.match(composition.textContent, /How these rules were combined.*leaves no network destinations/s);
+  assert.match(composition.textContent, /How these rules were combined/);
+  assert.doesNotMatch(composition.textContent, /leaves no network destinations/,
+    'evaluation warnings are not buried in the secondary composition disclosure');
+  const effectiveSection = host.querySelector('#sandbox-profile-editor-effective-policy-section');
+  assert.equal(effectiveSection.open, true,
+    'a composition warning opens its owning evaluation section');
+  assert.match(effectiveSection.querySelector('.sbx-section-body').textContent,
+    /leaves no network destinations/);
   assert.equal(host.querySelector('.sbx-capability-preview'), null,
     'raw evaluator axes are not exposed in the primary read model');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
@@ -1669,6 +1676,8 @@ test('new deny drafts apply default pack references once and pack rows stay read
   assert.equal(newDraft.host.querySelector('.sbx-network-pack .spawn-field-help-trigger')
     .hasAttribute('disabled'), false,
     'pack disclosure stays reachable while its authoring checkbox is gated');
+  assert.equal(newDraft.host.querySelector('.sbx-network-unlocks').hasAttribute('aria-disabled'), false,
+    'the container does not contradict its intentionally operable help controls');
   await harness.act(() => { choose(newBaseline, 'deny'); harness.fireEvent(newBaseline, 'change'); });
   assert.equal(newDraft.host.querySelectorAll('.sbx-network-pack input:checked').length, 3,
     'returning to Deny all restores the session-retained unlocks instead of re-deriving defaults');
@@ -1911,6 +1920,8 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null);
   assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), null, 'the harness filter only appears with inherited rows enabled');
   assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible while inherited rows are folded');
+  assert.equal(host.querySelector('#sandbox-profile-editor-filesystem-section').open, true,
+    'a runtime config warning opens its owning collapsed section');
 
   toggle.checked = true;
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
@@ -2124,6 +2135,8 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   assert.match(host.querySelector('.sbx-common-rule-summary').textContent, /unavailable/);
   const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
   await harness.act(() => { choose(baseline, 'deny'); harness.fireEvent(baseline, 'change'); });
+  assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true,
+    'a blocking catalog diagnostic exposes its explanation and retry control');
   assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
     /Saving is paused.*net-local.*net-anthropic.*net-openai-codex/s);
   assert.equal(host.querySelectorAll('.sbx-network-pack-visibility-error').length, 1,

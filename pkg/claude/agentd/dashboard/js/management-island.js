@@ -112,9 +112,15 @@ function SandboxHelp({ children }) {
   return html`<span class="sbx-section-help" onClick=${(event) => event.stopPropagation()}>${children}</span>`;
 }
 
-function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = false, className = '', children }) {
+function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = false, className = '', attention = false, children }) {
   const [helpOpen, setHelpOpen] = useState('');
-  return html`<details id=${id} class=${`sbx-section${className ? ` ${className}` : ''}`} hidden=${hidden}>
+  const sectionRef = useRef(null);
+  const hadAttention = useRef(false);
+  useEffect(() => {
+    if (attention && !hadAttention.current && sectionRef.current) sectionRef.current.open = true;
+    hadAttention.current = !!attention;
+  }, [attention]);
+  return html`<details ref=${sectionRef} id=${id} class=${`sbx-section${className ? ` ${className}` : ''}`} hidden=${hidden}>
     <summary class="sbx-section-summary sbx-section-legend"><span>${label}</span>
       ${help && html`<${SandboxHelp}><${HelpDisclosure} id=${helpID} label=${label} help=${help}
         open=${helpOpen === helpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
@@ -270,7 +276,7 @@ function NetworkEntryBadge({ verdict, busy }) {
   </details>`;
 }
 
-function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, retryPackCatalog, packCatalogBusy }) {
+function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, predictionBusy, packVisibilityError, packVisibilityAttention, retryPackCatalog, packCatalogBusy }) {
   const [helpOpen, setHelpOpen] = useState('');
   const [defaultsAvailable, setDefaultsAvailable] = useState(!!newDraft);
   const rules = sandboxNetworkAuthoring(draft);
@@ -326,11 +332,12 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, predictions, 
     (value.keys?.length ? value.keys : [sandboxNetworkEntryKey(value.entry)])
       .map((key) => [key, value])));
   return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
-      label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help">
+      label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
+      attention=${packVisibilityAttention}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
-    <fieldset class=${`sbx-network-unlocks${deny ? '' : ' sbx-disabled'}`} aria-disabled=${!deny}>
+    <fieldset class=${`sbx-network-unlocks${deny ? '' : ' sbx-disabled'}`}>
       <legend class="sbx-network-unlocks-legend">Deny-all network unlocks</legend>
       <div class="sbx-network-subhead"><strong>Built-in rule packs</strong><${SandboxHelp}><${HelpDisclosure}
         id="sandbox-profile-editor-network-packs-help" label="built-in network rule packs"
@@ -821,6 +828,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // with an explanation of a convenience the operator did not ask for.
   const [commonRuleFeedError, setCommonRuleFeedError] = useState('');
   const [commonRuleFeedBusy, setCommonRuleFeedBusy] = useState(false);
+  const [commonRuleFeedSettled, setCommonRuleFeedSettled] = useState(
+    typeof actions.loadCommonRuleCatalog !== 'function',
+  );
   const commonRuleGeneration = useRef(0);
   // Retry stays live even while a load is in flight: a request that never
   // settles would otherwise leave the only way back permanently disabled. A
@@ -828,16 +838,16 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const loadCommonRules = () => {
     if (typeof actions.loadCommonRuleCatalog !== 'function') return;
     const generation = ++commonRuleGeneration.current;
-    setCommonRuleFeedBusy(true);
+    setCommonRuleFeedBusy(true); setCommonRuleFeedSettled(false);
     // Resolve.then rather than a bare call: a feed that throws synchronously
     // must land in the catch like any other failure, or the busy flag sticks.
     Promise.resolve().then(() => actions.loadCommonRuleCatalog()).then((value) => {
       if (generation !== commonRuleGeneration.current) return;
       setCommonRules(value || { version: 0, categories: [], informational: [], global_filesystem: [], global_network: [], global_unix_sockets: [], network_packs: [], network_templates: [], socket_templates: [], global_config_warnings: [] });
-      setCommonRuleFeedError(''); setCommonRuleFeedBusy(false);
+      setCommonRuleFeedError(''); setCommonRuleFeedBusy(false); setCommonRuleFeedSettled(true);
     }).catch((error) => {
       if (generation !== commonRuleGeneration.current) return;
-      setCommonRuleFeedError(message(error)); setCommonRuleFeedBusy(false);
+      setCommonRuleFeedError(message(error)); setCommonRuleFeedBusy(false); setCommonRuleFeedSettled(true);
     });
   };
   // Unmount bumps the generation so an in-flight load resolves into nothing.
@@ -957,10 +967,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}>
     ${!advanced && html`<${NetworkAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} newDraft=${!seed}
       predictions=${prediction?.targets?.[0]?.network_entries || []} predictionBusy=${predictionBusy}
-      packVisibilityError=${networkPackVisibilityError} retryPackCatalog=${loadCommonRules}
+      packVisibilityError=${networkPackVisibilityError}
+      packVisibilityAttention=${!!networkPackVisibilityError && commonRuleFeedSettled}
+      retryPackCatalog=${loadCommonRules}
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
-      help=${FILESYSTEM_HELP} hidden=${advanced}>
+      help=${FILESYSTEM_HELP} hidden=${advanced} attention=${globalConfigWarnings.length > 0}>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -1000,7 +1012,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       help=${AGENT_DIRECTORIES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-effective-policy-section"
       className="sbx-effective-preview" label="Effective policy preview"
-      help=${EFFECTIVE_POLICY_HELP} hidden=${advanced}>
+      help=${EFFECTIVE_POLICY_HELP} hidden=${advanced}
+      attention=${!!predictionError || (selectedEffective?.notices || []).length > 0}>
       <div class="sbx-evaluation-target-controls">
         <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
@@ -1046,9 +1059,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
       ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
         <div><strong>Profile layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
-        ${(selectedEffective.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}
         ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 assignments; ${prediction.remaining_contexts} more are omitted from this selector but still included in the overall safety check.</div>` : null}
       </details>`}
+      ${(selectedEffective?.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}
     </${SandboxSection}>
     ${!advanced && accessErrors.map((error, index) => html`<div key=${index} class="sbx-access-validation" role="alert">⚠ ${error}</div>`)}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
