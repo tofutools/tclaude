@@ -91,6 +91,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
       name: 'pr-early', row_version: 5,
       target: 'group:alpha', role: 'reviewer',
       summary: 'Push the PR early.', trigger_event: 'session.start',
+      hook_selectors: [],
       sources: ['compact', 'resume'], match_field: '', match_regex: '',
       timing: 'same-continuation',
       cadence: 'once-per-generation', cooldown_seconds: 90, debounce_seconds: 0, enabled: false,
@@ -105,7 +106,8 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     path: '/api/standing-orders', method: 'POST',
     payload: {
       name: 'all-boundaries', target: 'agt_target', role: '', summary: 'Remember.',
-      trigger_event: 'session.start', sources: [], match_field: '', match_regex: '',
+      trigger_event: 'session.start', hook_selectors: [],
+      sources: [], match_field: '', match_regex: '',
       timing: 'same-continuation',
       cadence: 'always', cooldown_seconds: 0, debounce_seconds: 0, enabled: true,
     },
@@ -143,6 +145,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
   assert.deepEqual(model.buildStandingOrderMutation({ kind: 'create' }, prompt).payload, {
     name: 'deploy-prompt', target: 'agt_target', role: '',
     summary: 'Use the release checklist.', trigger_event: 'user.prompt',
+    hook_selectors: [],
     sources: [], match_field: 'prompt', match_regex: '(?i)\\bdeploy\\b',
     timing: 'same-continuation', cadence: 'always', cooldown_seconds: 0,
     debounce_seconds: 0, enabled: true,
