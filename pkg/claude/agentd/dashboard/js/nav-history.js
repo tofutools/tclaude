@@ -62,8 +62,8 @@ function tabAvailable(tab) {
 }
 
 // activeLocationFromDOM reads the current dashboard location out of the live
-// DOM: the active top-level nav button, plus the active subtab for the two tabs
-// that have one. Everything is normalized through the core so an unexpected DOM
+// DOM: the active top-level nav button, plus the active subtab for tabs that
+// have one. Everything is normalized through the core so an unexpected DOM
 // state degrades to a valid location rather than a bogus one.
 function activeLocationFromDOM() {
   const navBtn = $$('nav [data-tab]').find(b => b.classList.contains('active'));
@@ -72,6 +72,9 @@ function activeLocationFromDOM() {
   if (tab === 'access') {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
+  } else if (tab === 'jobs') {
+    const island = featureState('jobs');
+    if (island) return normalizeLocation(island.location.value);
   } else if (tab === 'processes') {
     // Ask the island directly: an open template editor's id (the
     // /processes/templates/<id> segment) is state the DOM never spells out, so
@@ -100,6 +103,12 @@ function requestProcessesLocation(loc) {
   }));
 }
 
+function requestJobsLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
+}
+
 // activate brings `loc` forward in the UI by clicking the matching controls,
 // under the `applying` guard so the resulting clicks don't re-enter the
 // observer. Going through the real nav button's .click() (rather than poking
@@ -114,6 +123,8 @@ function activate(loc) {
     if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
+    } else if (loc.tab === 'jobs') {
+      requestJobsLocation(loc);
     } else if (loc.tab === 'processes') {
       // Processes restores through its island rather than a subtab click, for
       // two reasons. A click can only pick a subtab — it can never reopen the
@@ -126,8 +137,8 @@ function activate(loc) {
       // long gone by the time an async answer arrives.
       //
       // Note this guards discarding an unsaved editor only for history
-      // navigation WITHIN Processes. Leaving the tab entirely (Back to /jobs,
-      // or a nav click) does not prompt — the island stays mounted and its
+      // navigation WITHIN Processes. Leaving the tab entirely (Back to
+      // /automations, or a nav click) does not prompt — the island stays mounted and its
       // section is merely CSS-hidden, so nothing is lost, and that has always
       // been true of tab switches here.
       requestProcessesLocation(loc);
@@ -322,9 +333,9 @@ export function initNavHistory() {
 
   window.addEventListener('popstate', onPopstate);
 
-  // Subtab switches (Access / Processes) emit `tclaude:navigated` after they set
-  // their active class — record them as user navigation, so /access/sudo and
-  // /processes/runs update the URL just like a top-level tab switch.
+  // Subtab switches (Access / Automations / Processes) emit
+  // `tclaude:navigated` after they update their view — record them as user
+  // navigation, so their deep paths update just like a top-level tab switch.
   document.addEventListener('tclaude:navigated', recordCurrentLocation);
 
   // Each snapshot poll fires `tclaude:snapshot`; reconcile the URL then, so an

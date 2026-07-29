@@ -45,6 +45,16 @@ func TestDashboardJobsPreactBoundary(t *testing.T) {
 			t.Errorf("Jobs island bypasses its component/action boundary with %q", forbidden)
 		}
 	}
+	css := read("dashboard.css")
+	subtabStart := strings.Index(css, ".jobs-subtab {")
+	subtabEnd := -1
+	if subtabStart >= 0 {
+		subtabEnd = strings.Index(css[subtabStart:], "}")
+	}
+	if subtabStart < 0 || subtabEnd < 0 ||
+		!strings.Contains(css[subtabStart:subtabStart+subtabEnd], "text-decoration: none;") {
+		t.Error("Jobs anchor subtabs must retain their button-like appearance")
+	}
 	for _, coreModule := range []string{"js/refresh.js", "js/dashboard.js"} {
 		if strings.Contains(read(coreModule), "./jobs-state.js") {
 			t.Errorf("%s statically imports Jobs state outside the guarded loader", coreModule)

@@ -42,13 +42,15 @@ export const KNOWN_TABS = new Set([
 ]);
 
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
-// sub-navigation. Only these two tabs have one today:
+// sub-navigation. These tabs have one today:
 //   - Access: the segmented control (permissions / slugs / sudo).
+//   - Automations (historical internal tab id: jobs): kind views.
 //   - Processes: the template library/editor.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
   access: new Set(['permissions', 'slugs', 'sudo']),
+  jobs: new Set(['exports', 'cron-jobs', 'standing-orders']),
   processes: new Set(['templates']),
 };
 
@@ -234,6 +236,11 @@ export function reviveState(raw, loc) {
 // concern — the DOM layer merges them onto the result.
 export function toPath(loc) {
   const l = normalizeLocation(loc);
+  // "jobs" remains the historical internal tab/API identifier, but the
+  // user-facing workspace and canonical browser route are Automations.
+  if (l.tab === 'jobs') {
+    return '/automations' + (l.subtab ? '/' + l.subtab : '');
+  }
   const segs = [l.tab];
   if (l.subtab) segs.push(l.subtab);
   if (l.selection) segs.push(encodeURIComponent(l.selection));
@@ -266,7 +273,10 @@ export function fromPath(pathname) {
   const clean = String(pathname || '').split('?')[0].split('#')[0];
   const parts = clean.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
-  const [tab, subtab, selection] = parts;
+  let [tab, subtab, selection] = parts;
+  // /jobs is retained as a reload-safe legacy alias. toPath always emits the
+  // canonical /automations route, so init/popstate heals old URLs in place.
+  if (tab === 'automations') tab = 'jobs';
   return normalizeLocation({ tab, subtab, selection: decodeSelection(selection) });
 }
 

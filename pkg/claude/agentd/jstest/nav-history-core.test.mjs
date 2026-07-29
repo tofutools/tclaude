@@ -28,6 +28,7 @@ import {
 // model.
 const groups = { tab: 'groups' };
 const jobs = { tab: 'jobs' };
+const standingOrders = { tab: 'jobs', subtab: 'standing-orders' };
 const config = { tab: 'config' };
 const accessSudo = { tab: 'access', subtab: 'sudo' };
 const run = { tab: 'processes', subtab: 'runs', selection: 'run-42' };
@@ -193,8 +194,16 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(fromPath('/'), { tab: 'groups' });
   assert.deepEqual(fromPath('/dashboard'), { tab: 'groups' });
 
-  assert.equal(toPath(jobs), '/jobs');
+  assert.equal(toPath(jobs), '/automations');
+  assert.equal(toPath(standingOrders), '/automations/standing-orders');
+  assert.deepEqual(fromPath('/automations/standing-orders'), standingOrders);
+  assert.deepEqual(fromPath('/automations/cron-jobs'),
+    { tab: 'jobs', subtab: 'cron-jobs' });
+  assert.deepEqual(fromPath('/automations/exports'),
+    { tab: 'jobs', subtab: 'exports' });
+  // Historical links remain reload-safe, but every serialization is canonical.
   assert.deepEqual(fromPath('/jobs'), { tab: 'jobs' });
+  assert.equal(toPath(fromPath('/jobs')), '/automations');
 
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
@@ -207,15 +216,16 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
     { tab: 'processes', subtab: 'templates', selection: 'release-train' });
 
   // Round-trip every fixture.
-  for (const loc of [groups, jobs, config, accessSudo, run, editingTemplate]) {
+  for (const loc of [groups, jobs, standingOrders, config, accessSudo, run, editingTemplate]) {
     assert.ok(locEquals(fromPath(toPath(loc)), loc), `round-trip ${JSON.stringify(loc)}`);
   }
 });
 
 test('fromPath tolerates query, hash, trailing slashes and unknown paths (AC #5)', () => {
-  assert.deepEqual(fromPath('/jobs?slop=1'), { tab: 'jobs' }, 'query stripped');
+  assert.deepEqual(fromPath('/automations/standing-orders?slop=1'),
+    standingOrders, 'query stripped');
   assert.deepEqual(fromPath('/access/sudo#frag'), { tab: 'access', subtab: 'sudo' });
-  assert.deepEqual(fromPath('//jobs//'), { tab: 'jobs' }, 'empty segments ignored');
+  assert.deepEqual(fromPath('//automations//'), { tab: 'jobs' }, 'empty segments ignored');
   assert.deepEqual(fromPath('/totally/unknown'), { tab: 'groups' }, 'unknown tab -> default');
   assert.deepEqual(fromPath(''), { tab: 'groups' });
   assert.deepEqual(fromPath(null), { tab: 'groups' });
@@ -267,10 +277,10 @@ test('resolvePopstate ignores a stale cross-instance index (reload + double Back
   // against the smaller fresh stack.
   let s = initialState({ tab: 'costs' });        // fresh post-reload stack: [costs] @0
 
-  // Back → URL /jobs, stale navIndex 1 (out of range for size-1 stack).
+  // Back → URL /automations, stale navIndex 1 (out of range for size-1 stack).
   s = resolvePopstate(s, jobs, 1);
   assert.equal(current(s).tab, 'jobs', 'lands on the popped URL, not a stale index');
-  assert.ok(locEquals(current(s), fromPath('/jobs')), 'tab matches URL');
+  assert.ok(locEquals(current(s), fromPath('/automations')), 'tab matches URL');
 
   // Back → URL /, stale navIndex 0. It is now IN RANGE for the [jobs] stack, but
   // entries[0] is jobs, not groups — so it must be rejected (this is the bug the

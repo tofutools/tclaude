@@ -344,7 +344,7 @@ func handleDashboardStatic() http.Handler {
 //
 // dashboardAppTabs are the top-level dashboard "location" path segments the
 // SPA owns (TCL-317 back/forward navigation). A deep browser path like /access
-// or /jobs must serve the same index HTML so the client router
+// or /automations must serve the same index HTML so the client router
 // (js/nav-history.js) can restore the view on reload or a bookmarked deep link.
 // Only the FIRST path segment is validated here; the client normalizes any
 // deeper subtab/selection segments (/access/sudo,
@@ -355,7 +355,7 @@ func handleDashboardStatic() http.Handler {
 // (handleDashboardTerminals) — and Vegas is a conditional soundtrack tab that
 // is not URL-routed; neither is a bookmarkable location.
 var dashboardAppTabs = map[string]bool{
-	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
+	"groups": true, "automations": true, "jobs": true, "processes": true, "plugins": true, "access": true,
 	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
 	"debug": true,
 }

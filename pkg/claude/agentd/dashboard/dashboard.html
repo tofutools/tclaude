@@ -274,7 +274,7 @@
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
   <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
-  <a data-tab="jobs" href="/jobs" title="Automations — agent exports, recurring schedules, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
+  <a data-tab="jobs" href="/automations" title="Automations — agent exports, recurring cron jobs, and trigger-driven standing orders"><span class="tab-label-regular">Automations</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
   <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔧</span> <span class="tab-title">Contraptions</span></span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
@@ -356,7 +356,7 @@
   </section>
   <!-- The Jobs tab: the old Cron tab, extended into one job workspace —
        per-agent export jobs (async "📋 summary…" work; the nav badge counts
-       the in-flight ones), recurring cron schedules, and trigger-driven
+       the in-flight ones), recurring cron jobs, and trigger-driven
        standing orders. Kind views, pagination, and text filtering are
        server-side (/api/jobs,
        fetched alongside the 2s poll while this tab is active); column sorting

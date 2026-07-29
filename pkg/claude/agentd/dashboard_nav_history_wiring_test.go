@@ -59,7 +59,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// Top-level tabs are anchors whose href is the location's real path
 		// (toPath): Groups → "/", the rest → "/<tab>".
 		`<a class="active" data-tab="groups" href="/">`,
-		`<a data-tab="jobs" href="/jobs"`,
+		`<a data-tab="jobs" href="/automations"`,
 		`<a data-tab="access" href="/access"`,
 		`<a data-tab="usage" href="/usage"`,
 		`<a data-tab="config" href="/config"`,
@@ -69,6 +69,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// /processes/templates) while keeping tablist ARIA.
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
 		`data-process-subtab="templates" href="/processes/templates" role="tab"`,
+		`href=${toPath(jobsLocation(kind))}`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()
 		// returns false and the handler preventDefaults + switches in place.

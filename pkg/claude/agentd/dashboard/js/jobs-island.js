@@ -2,10 +2,11 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { JOBS_COLS } from './sort.js';
-import { JOBS_KINDS, JOBS_PAGE_SIZES } from './jobs-state.js';
+import { JOBS_KINDS, JOBS_PAGE_SIZES, jobsLocation } from './jobs-state.js';
+import { toPath } from './nav-history-core.js';
 import { formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
-import { idTooltip, relTime, shortAgentId } from './helpers.js';
+import { idTooltip, isModifiedClick, relTime, shortAgentId } from './helpers.js';
 import { AsyncLoadState } from './async-load-state.js';
 import { JobsCronDialogRoot } from './jobs-dialog-island.js';
 import { JobsStandingOrderDialogRoot } from './jobs-standing-order-dialog-island.js';
@@ -285,7 +286,7 @@ function EmptyJobs({ kind }) {
       above to add a session-boundary reminder.</div>`;
   }
   if (kind === 'cron') {
-    return html`<div class="empty">No schedules yet. Use <strong>
+    return html`<div class="empty">No cron jobs yet. Use <strong>
       <span class="cron-open-label-regular">+ new cron job</span>
       <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> above.
     </div>`;
@@ -295,8 +296,8 @@ function EmptyJobs({ kind }) {
       <strong>📋 summary…</strong>.
     </div>`;
   }
-  return html`<div class="empty">No exports, schedules, or standing orders yet. Agent exports appear here
-    when started (an agent row's ⚙ menu → <strong>📋 summary…</strong>); schedule a cron job with the <strong>
+  return html`<div class="empty">No exports, cron jobs, or standing orders yet. Agent exports appear here
+    when started (an agent row's ⚙ menu → <strong>📋 summary…</strong>); create a cron job with the <strong>
     <span class="cron-open-label-regular">+ new cron job</span>
     <span class="cron-open-label-wizard">⏳ Bind a recurring ritual</span></strong> button above.
   </div>`;
@@ -305,12 +306,12 @@ function EmptyJobs({ kind }) {
 const JOB_KIND_LABELS = {
   all: 'All',
   'export': 'Exports',
-  cron: 'Schedules',
+  cron: 'Cron jobs',
   'standing-order': 'Standing orders',
 };
 const JOB_KIND_COUNT_LABELS = {
   'export': ['export', 'exports'],
-  cron: ['schedule', 'schedules'],
+  cron: ['cron job', 'cron jobs'],
   'standing-order': ['standing order', 'standing orders'],
 };
 
@@ -337,16 +338,30 @@ export function JobsApp({ state, actions }) {
       ? `item${totalAll === 1 ? '' : 's'}`
       : JOB_KIND_COUNT_LABELS[current.kind][totalAll === 1 ? 0 : 1]}`;
 
-  const selectKind = (value) => {
+  const activateKind = (value) => {
     if (state.setKind(value)) void actions.refresh();
+    document.dispatchEvent(new CustomEvent('tclaude:navigated', {
+      detail: { location: state.location.value },
+    }));
+  };
+  const selectKind = (event, value) => {
+    if (isModifiedClick(event)) return;
+    event.preventDefault();
+    activateKind(value);
+  };
+  const keyDownKind = (event, value) => {
+    if (event.key !== ' ' && event.key !== 'Spacebar') return;
+    event.preventDefault();
+    activateKind(value);
   };
 
   return html`<div class="jobs-island">
     <div class="jobs-subnav" role="tablist" aria-label="Automation views">
-      ${JOBS_KINDS.map((kind) => html`<button type="button"
+      ${JOBS_KINDS.map((kind) => html`<a href=${toPath(jobsLocation(kind))}
         class=${`jobs-subtab${current.kind === kind ? ' active' : ''}`}
         role="tab" aria-selected=${current.kind === kind ? 'true' : 'false'}
-        onClick=${() => selectKind(kind)}>${JOB_KIND_LABELS[kind]}</button>`)}
+        onClick=${(event) => selectKind(event, kind)}
+        onKeyDown=${(event) => keyDownKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
     </div>
     <div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
@@ -402,6 +417,12 @@ export function mountJobsIsland({
   host, badgeHost, dialogHost, state, actions, confirmDiscard, registerCleanup,
 }) {
   state.initialize();
+  const restore = (event) => {
+    const loc = event.detail?.location;
+    if (loc?.tab === 'jobs' && state.applyLocation(loc)) void actions.refresh();
+  };
+  document.addEventListener('tclaude:restore-location', restore);
+  registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
   const controller = {
     openCreate: state.openCronCreate,
     openEdit: state.openCronEdit,

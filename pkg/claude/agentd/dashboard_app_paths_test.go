@@ -14,7 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// TCL-317 makes the dashboard path-routed: deep dashboard paths (/jobs,
+// TCL-317 makes the dashboard path-routed: deep dashboard paths (/automations,
 // /access/sudo, …) must serve the SPA index HTML so the client router can
 // restore the view on reload / a bookmarked deep link, while genuinely unknown
 // paths still 404. This exercises the real auth path (cookie required) so it
@@ -58,7 +58,9 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 
 	// Deep dashboard paths — top-level and nested — serve the SPA HTML.
 	for _, path := range []string{
-		"/", "/dashboard", "/jobs", "/processes", "/access", "/access/sudo",
+		"/", "/dashboard", "/automations", "/automations/standing-orders",
+		"/jobs", // historical alias remains reload-safe
+		"/processes", "/access", "/access/sudo",
 		"/processes/runs/run-42", "/usage", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",
 	} {
 		rec := authedGet(path)

@@ -1083,7 +1083,7 @@ func TestDashboardHTML_WizardCronDialog(t *testing.T) {
 
 	// The same span pair swaps the Jobs island's "No jobs yet…" hint. The label
 	// spans above already pin both variants; this pins their empty-state context.
-	must("schedule a cron job with the", "the empty-state hint names the create control")
+	must("create a cron job with the", "the empty-state hint names the create control")
 
 	// The dialog surface + title are re-skinned, scoped to #cron-create-modal so
 	// the sibling .cron-create-modal dialogs keep the default chrome.
