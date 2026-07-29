@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -97,6 +98,53 @@ func TestTUIShellFormStartsAndAttaches(t *testing.T) {
 	attachCmd()
 	assert.True(t, attached.called)
 	assert.Equal(t, "tc-scratch", attached.session)
+}
+
+// The label is used verbatim as the tmux session name and becomes the session
+// id that reaches tmux's set-titles-string — a format string where "#(cmd)"
+// runs cmd — so an unsafe one is refused before the launch, with the form left
+// open on the field to fix.
+func TestTUIShellRejectsAnUnsafeLabel(t *testing.T) {
+	rec := stubStartShell(t, session.ShellSession{}, nil)
+
+	for _, label := range []string{"my.label", "a:b", "#(touch /tmp/pwned)", "back`tick`"} {
+		m := operatorShellModel("/home/op")
+		updated, _ := m.handleKey(tuiKey("s"))
+		got := updated.(tuiModel)
+		got = got.moveShellField(1)
+		got.shell.label.SetValue(label)
+
+		submitted, cmd := got.handleKey(tuiEnterKey())
+		final := submitted.(tuiModel)
+		assert.Equal(t, tuiModeShell, final.mode, "the form stays open on %q", label)
+		assert.False(t, final.startingShell)
+		assert.Contains(t, final.notice, "Cannot use that label")
+		assert.Nil(t, cmd)
+	}
+	assert.False(t, rec.called, "no launch may be attempted with an unsafe label")
+}
+
+// The gate lives at the launch entry point too, so it does not depend on every
+// caller remembering to check.
+func TestStartShellSessionRefusesAnUnsafeLabel(t *testing.T) {
+	_, err := session.StartShellSession(t.TempDir(), "#(touch /tmp/pwned)")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "letters, digits")
+}
+
+// Quitting while a shell launch is in flight can cut it off mid-create — the
+// launch runs in this process, unlike an agent spawn — so the prompt says so.
+func TestTUIQuitPromptWarnsAboutAnInFlightShellLaunch(t *testing.T) {
+	m := operatorShellModel("/home/op")
+	m.mode = tuiModeConfirmQuit
+	assert.NotContains(t, m.confirmPrompt(), "still starting")
+
+	m.startingShell = true
+	prompt := m.confirmPrompt()
+	assert.Contains(t, prompt, "Shell still starting")
+	assert.Contains(t, prompt, "shut down agentd")
+	assert.LessOrEqual(t, lipgloss.Width("  "+prompt), 80,
+		"confirmPrompt is budgeted as exactly one line")
 }
 
 // A launch that fails says why and leaves the console usable, rather than

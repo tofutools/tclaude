@@ -144,7 +144,11 @@ behind the form; find it again with `tclaude session ls` and
 opens on the directory the console itself was started in, with the same **tab**
 contract as the spawn form (it completes a path you have typed into, and stays
 next-field navigation on the field as the form left it). **Label** names the
-tmux handle; blank generates one. Enter starts it and hands you the pane, the
+tmux handle and is used verbatim, so it is charset-gated to letters, digits,
+`-` and `_` — tmux refuses `.` and `:` in a session name outright, and the
+label also reaches tmux's `set-titles-string`, which is a format string. A
+rejected label keeps the form open on the field; blank generates a handle
+instead. Enter starts it and hands you the pane, the
 same handover **enter** makes on an agent's row. Like attaching, this is
 operator consoles only, and only on the daemon's own host — see the identity
 note below.

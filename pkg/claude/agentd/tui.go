@@ -1282,6 +1282,14 @@ func (m tuiModel) submitShell() (tuiModel, tea.Cmd) {
 	}
 	dir := strings.TrimSpace(m.shell.dir.Value())
 	label := strings.TrimSpace(m.shell.label.Value())
+	// The label is the tmux handle verbatim, so it is charset-gated before the
+	// launch. StartShellSession refuses an unsafe one anyway; checking here
+	// keeps the form open on the field the operator has to fix, instead of
+	// closing it and reporting the refusal over the listing.
+	if err := session.ValidateSessionLabel(label); err != nil {
+		m.notice = "Cannot use that label: " + err.Error()
+		return m, nil
+	}
 	m.mode = tuiModeList
 	m.startingShell = true
 	m.notice = "Starting a shell session…"
@@ -2207,6 +2215,16 @@ func (m tuiModel) confirmPrompt() string {
 		if !m.capabilities.shutdownOnQuit {
 			return "Quit this remote console? [y / any other key = cancel]"
 		}
+		if m.startingShell {
+			// A shell launch runs in THIS process, unlike an agent spawn — which
+			// forks its own `tclaude session new` and outlives the daemon. Quitting
+			// mid-launch kills it between writing its session row and arming the
+			// pane's exit guard, so the rollback never runs and a launch-pending
+			// row is left behind. Cheap to clean up, worth a word before it
+			// happens. Kept inside 80 columns: confirmPrompt is budgeted as
+			// exactly one line.
+			return "Shell still starting — quit and shut down agentd? [y / any other key = cancel]"
+		}
 		return "Quit and shut down agentd? [y / any other key = cancel]"
 	case tuiModeConfirmStop:
 		const prefix = "Take "
@@ -2441,7 +2459,8 @@ func (m tuiModel) renderShellForm() string {
 	// disappearing doesn't shift the fields below it up and down.
 	b.WriteString(m.dirSuggestionLine(m.shell.dirSuggestions) + "\n")
 	b.WriteString(m.shell.label.View() +
-		tuiHint(m.shell.label.Value() == "", "  (blank = an auto-generated handle)"))
+		tuiHint(m.shell.label.Value() == "",
+			"  (the tmux handle: letters, digits, '-' and '_'; blank generates one)"))
 	b.WriteString("\n")
 
 	if m.notice != "" {
@@ -2641,7 +2660,8 @@ func (m tuiModel) renderHelp() string {
 			b.WriteString("               instead, exactly as in the new-agent form. Directory\n")
 			b.WriteString("               starts on the directory this console was started in.\n")
 		}
-		b.WriteString("    Label names the tmux handle; blank generates one.\n")
+		b.WriteString("    Label names the tmux handle — letters, digits, '-' and '_', since\n")
+		b.WriteString("               it is used verbatim; blank generates one.\n")
 		b.WriteString("    enter      Start it, then go to its pane — the same handover enter\n")
 		b.WriteString("               makes on an agent's row\n")
 		b.WriteString("    esc        Cancel\n\n")

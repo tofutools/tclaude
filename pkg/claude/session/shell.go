@@ -41,7 +41,15 @@ type ShellSession struct {
 // It is the same launch `tclaude session new --shell --detached` performs,
 // minus the CLI flag rejection: the parameters a shell session cannot carry
 // are simply not accepted here.
+//
+// The label is charset-gated (see ValidateSessionLabel): it is used verbatim as
+// the tmux session name and becomes the session id that reaches tmux's
+// set-titles-string, so this entry point refuses one that is unsafe there
+// rather than trusting each caller to check.
 func StartShellSession(dir, label string) (ShellSession, error) {
+	if err := ValidateSessionLabel(label); err != nil {
+		return ShellSession{}, err
+	}
 	return startShellSession(&NewParams{
 		Dir:      clcommon.ExpandHomePrefix(dir),
 		Label:    label,

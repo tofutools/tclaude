@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -46,6 +47,37 @@ var tmuxNameStyleFn = func() string {
 // the interesting part of even long worktree names; if a cut collides,
 // UniqueTmuxSessionName's -N suffix restores uniqueness.
 const tmuxNameMax = 32
+
+// ValidateSessionLabel accepts a label that is safe to use verbatim as a tmux
+// session name, and explains the rejection otherwise. TmuxNameBase passes a
+// label through unsanitized (it is the operator's chosen handle, not a derived
+// one), so every hazard sanitizeTmuxName exists to remove is a hazard a label
+// still carries: tmux refuses '.' and ':' in a session name outright, other
+// punctuation makes `-t` targets fragile through shell quoting and tmux's
+// fnmatch prefix-match fallback, and the label becomes the session id that
+// applyTmuxWindowTitle interpolates into set-titles-string — a tmux FORMAT
+// string, where a "#(...)" sequence is expanded by running the command inside
+// it.
+//
+// It is a gate rather than a sanitizer on purpose: a label is a handle the
+// operator types and then uses to find the session again, so quietly launching
+// under a different name than the one they asked for is worse than saying no.
+func ValidateSessionLabel(label string) error {
+	if label == "" {
+		return nil
+	}
+	if len(label) > tmuxNameMax {
+		return fmt.Errorf("label %q is %d characters; the limit is %d", label, len(label), tmuxNameMax)
+	}
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return fmt.Errorf("label %q contains %q; use only letters, digits, '-' and '_'", label, r)
+		}
+	}
+	return nil
+}
 
 // sanitizeTmuxName maps a raw string onto a safe tmux session-name
 // charset. tmux rejects '.' and ':' in session names outright ("bad
