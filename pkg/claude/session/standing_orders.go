@@ -572,25 +572,31 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 			"error", err, "conv_id", convID, "module", "hooks")
 		return standingorders.Event{}, false
 	}
+	if agentID == "" {
+		return standingorders.Event{}, false
+	}
+	recipient, err := db.GetAgent(agentID)
+	if err != nil {
+		slog.Warn("standing orders: failed to resolve recipient activity",
+			"error", err, "agent", agentID, "module", "hooks")
+		return standingorders.Event{}, false
+	}
+	if recipient == nil || !recipient.Active() {
+		return standingorders.Event{}, false
+	}
 	ev.AgentID = agentID
 
-	// A conversation with no actor cannot satisfy any durable order scope:
-	// direct and global scopes require a stable agent id, and it cannot belong
-	// to a group. Leave memberships empty and let the evaluator report that
-	// authority boundary rather than failing event construction.
-	if agentID != "" {
-		groups, err := db.ListGroupsForAgent(agentID)
-		if err != nil {
-			slog.Warn("standing orders: failed to read group memberships",
-				"error", err, "agent", agentID, "module", "hooks")
-			return standingorders.Event{}, false
-		}
-		for _, g := range groups {
-			ev.Memberships = append(ev.Memberships, standingorders.Membership{
-				GroupID: g.ID,
-				Role:    roleInGroup(g.ID, convID),
-			})
-		}
+	groups, err := db.ListGroupsForAgent(agentID)
+	if err != nil {
+		slog.Warn("standing orders: failed to read group memberships",
+			"error", err, "agent", agentID, "module", "hooks")
+		return standingorders.Event{}, false
+	}
+	for _, g := range groups {
+		ev.Memberships = append(ev.Memberships, standingorders.Membership{
+			GroupID: g.ID,
+			Role:    roleInGroup(g.ID, convID),
+		})
 	}
 	return ev, true
 }
