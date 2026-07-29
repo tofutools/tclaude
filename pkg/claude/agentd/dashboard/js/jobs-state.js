@@ -7,9 +7,11 @@ import {
 import { cronJobToPrefill } from './jobs-dialog-model.js';
 
 const FILTER_KEY = 'tclaude.dash.filter.jobs';
+const KIND_KEY = 'tclaude.dash.jobs.kind';
 const PAGE_SIZE_KEY = 'tclaude.dash.list.jobs.pagesize';
 const SORT_KEY = 'tclaude.dash.sort';
 export const JOBS_PAGE_SIZES = [25, 50, 100, 200];
+export const JOBS_KINDS = ['all', 'export', 'cron', 'standing-order'];
 const DEFAULT_PAGE_SIZE = 50;
 
 function errorMessage(error) {
@@ -24,6 +26,7 @@ function nextSort(current, col) {
 
 export function createJobsState({ snapshot = dashboardState.snapshot, prefs = dashPrefs } = {}) {
   const query = signal('');
+  const kind = signal('all');
   const offset = signal(0);
   const limit = signal(DEFAULT_PAGE_SIZE);
   const sort = signal(null);
@@ -42,6 +45,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       offset: String(offset.value),
       limit: String(limit.value),
     });
+    if (kind.value !== 'all') search.set('kind', kind.value);
     const value = query.value.trim();
     if (value) search.set('q', value);
     return search.toString();
@@ -61,6 +65,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
       paging,
       activeExports: value?.export_jobs_active || 0,
       query: query.value,
+      kind: kind.value,
       sort: sort.value,
       request: request.value,
       dialog: dialog.value,
@@ -72,6 +77,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     if (initialized) return false;
     initialized = true;
     query.value = prefs.getItem(FILTER_KEY) || '';
+    const savedKind = prefs.getItem(KIND_KEY) || '';
+    kind.value = JOBS_KINDS.includes(savedKind) ? savedKind : 'all';
     const savedLimit = Number.parseInt(prefs.getItem(PAGE_SIZE_KEY) || '', 10);
     limit.value = JOBS_PAGE_SIZES.includes(savedLimit) ? savedLimit : DEFAULT_PAGE_SIZE;
     const savedSort = prefs === dashPrefs
@@ -96,6 +103,19 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     if (next) prefs.setItem(FILTER_KEY, next);
     else prefs.removeItem(FILTER_KEY);
     invalidateRequest();
+  }
+
+  function setKind(value) {
+    const next = JOBS_KINDS.includes(value) ? value : 'all';
+    if (kind.value === next) return false;
+    batch(() => {
+      kind.value = next;
+      offset.value = 0;
+    });
+    if (next === 'all') prefs.removeItem(KIND_KEY);
+    else prefs.setItem(KIND_KEY, next);
+    invalidateRequest();
+    return true;
   }
 
   function cycleSort(col) {
@@ -229,8 +249,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   }
 
   return Object.freeze({
-    query, offset, limit, sort, request, dialog, params, view,
-    initialize, setQuery, cycleSort, page, setPageSize, syncServedOffset,
+    query, kind, offset, limit, sort, request, dialog, params, view,
+    initialize, setQuery, setKind, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
     openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,

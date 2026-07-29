@@ -106,6 +106,21 @@ func TestDashboardJobs_UnifiedListing(t *testing.T) {
 	byKind := getJobs(t, dash, "?q=export")
 	assert.Equal(t, 2, byKind.Total)
 
+	// Kind is a separate server-side view filter, applied before q and paging.
+	// total_unfiltered is therefore the size of the selected view, not all jobs.
+	schedules := getJobs(t, dash, "?kind=cron")
+	assert.Equal(t, 1, schedules.Total)
+	assert.Equal(t, 1, schedules.TotalUnfiltered)
+	require.Len(t, schedules.Rows, 1)
+	assert.Equal(t, "cron", schedules.Rows[0].Kind)
+
+	standingOrders := getJobs(t, dash, "?kind=standing-order")
+	assert.Zero(t, standingOrders.Total)
+	assert.Zero(t, standingOrders.TotalUnfiltered)
+
+	unknown := testharness.Serve(dash, dashReq(t, http.MethodGet, "/api/jobs?kind=surprise", nil))
+	assert.Equal(t, http.StatusBadRequest, unknown.Code)
+
 	// Windowing: limit bounds the page, total still counts everything.
 	page1 := getJobs(t, dash, "?offset=0&limit=2")
 	assert.Len(t, page1.Rows, 2)

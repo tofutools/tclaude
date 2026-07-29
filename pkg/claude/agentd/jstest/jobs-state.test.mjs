@@ -18,6 +18,7 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   const snapshot = harness.signals.signal(null);
   const prefs = fakePrefs({
     'tclaude.dash.filter.jobs': 'agent one',
+    'tclaude.dash.jobs.kind': 'cron',
     'tclaude.dash.list.jobs.pagesize': '25',
     'tclaude.dash.sort': JSON.stringify({ jobs: { col: 'name', dir: 'desc' }, sudo: { col: 'slug', dir: 'asc' } }),
   });
@@ -26,8 +27,16 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.initialize(), true);
   assert.equal(state.initialize(), false);
   assert.equal(state.query.value, 'agent one');
+  assert.equal(state.kind.value, 'cron');
   assert.equal(state.limit.value, 25);
-  assert.equal(state.params.value, 'offset=0&limit=25&q=agent+one');
+  assert.equal(state.params.value, 'offset=0&limit=25&kind=cron&q=agent+one');
+
+  assert.equal(state.setKind('standing-order'), true);
+  assert.equal(state.kind.value, 'standing-order');
+  assert.equal(state.offset.value, 0);
+  assert.equal(prefs.values.get('tclaude.dash.jobs.kind'), 'standing-order');
+  assert.match(state.params.value, /kind=standing-order/);
+  assert.equal(state.setKind('standing-order'), false);
 
   state.setQuery('cron & owner');
   assert.equal(state.offset.value, 0);

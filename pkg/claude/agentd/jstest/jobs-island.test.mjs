@@ -58,6 +58,15 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter jobs' });
   assert.equal(filter.value, '');
+  const standingOrders = getByRole(mounted.container, 'tab', { name: 'Standing orders' });
+  await harness.act(() => harness.fireEvent(standingOrders, 'click'));
+  assert.equal(state.kind.value, 'standing-order');
+  assert.match(state.params.value, /kind=standing-order/);
+  assert.equal(standingOrders.getAttribute('aria-selected'), 'true');
+  assert.ok(calls.includes('refresh'));
+  const allJobs = getByRole(mounted.container, 'tab', { name: 'All' });
+  await harness.act(() => harness.fireEvent(allJobs, 'click'));
+  assert.equal(state.kind.value, 'all');
   const cronRow = mounted.container.querySelector('tr[data-key="cron-1"]');
   const edit = getByRole(cronRow, 'button', { name: 'edit' });
   edit.focus();

@@ -11,7 +11,7 @@ import (
 
 // dashboard_jobs.go — the Jobs tab's unified job listing.
 //
-// GET /api/jobs?offset=&limit=&q= returns ONE list merging every job kind the
+// GET /api/jobs?offset=&limit=&q=&kind= returns ONE list merging every job kind the
 // dashboard tracks — per-agent export jobs (export.go) and recurring cron
 // schedules — discriminated by a `kind` field, newest-activity-first. It
 // shares the offset/limit/q contract and response envelope of the /api/retired
@@ -40,6 +40,10 @@ const (
 	jobKindCron   = "cron"
 )
 
+func validJobKind(kind string) bool {
+	return kind == "" || kind == jobKindExport || kind == jobKindCron || kind == "standing-order"
+}
+
 // handleDashboardJobs serves GET /api/jobs — the Jobs tab's unified window.
 func handleDashboardJobs(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
@@ -50,8 +54,22 @@ func handleDashboardJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offset, limit, q := listPageParams(r)
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if !validJobKind(kind) {
+		http.Error(w, "unknown job kind", http.StatusBadRequest)
+		return
+	}
 
 	rows := collectJobRows()
+	if kind != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.Kind == kind {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
 	totalUnfiltered := len(rows)
 	if q != "" {
 		filtered := rows[:0]

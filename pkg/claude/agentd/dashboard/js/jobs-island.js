@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { JOBS_COLS } from './sort.js';
-import { JOBS_PAGE_SIZES } from './jobs-state.js';
+import { JOBS_KINDS, JOBS_PAGE_SIZES } from './jobs-state.js';
 import { formatJobInterval } from './jobs-format.js';
 import { EXPORT_STEPS, activeExportStepIndex, fmtBytes } from './export-progress.js';
 import { idTooltip, relTime, shortAgentId } from './helpers.js';
@@ -194,6 +194,13 @@ function EmptyJobs() {
   </div>`;
 }
 
+const JOB_KIND_LABELS = {
+  all: 'All',
+  export: 'Exports',
+  cron: 'Schedules',
+  'standing-order': 'Standing orders',
+};
+
 export function JobsApp({ state, actions }) {
   const current = state.view.value;
   const inputRef = useRef(null);
@@ -213,12 +220,24 @@ export function JobsApp({ state, actions }) {
   const totalAll = paging.total_unfiltered || 0;
   const count = current.query
     ? `${total} / ${totalAll}`
-    : `${totalAll} job${totalAll === 1 ? '' : 's'}`;
+    : `${totalAll} ${current.kind === 'all'
+      ? `job${totalAll === 1 ? '' : 's'}`
+      : JOB_KIND_LABELS[current.kind].toLowerCase()}`;
+
+  const selectKind = (value) => {
+    if (state.setKind(value)) void actions.refresh();
+  };
 
   return html`<div class="jobs-island">
+    <div class="jobs-subnav" role="tablist" aria-label="Job views">
+      ${JOBS_KINDS.map((kind) => html`<button type="button"
+        class=${`jobs-subtab${current.kind === kind ? ' active' : ''}`}
+        role="tab" aria-selected=${current.kind === kind ? 'true' : 'false'}
+        onClick=${() => selectKind(kind)}>${JOB_KIND_LABELS[kind]}</button>`)}
+    </div>
     <div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter jobs"
-        placeholder="Filter (kind + name + agent/owner/target + subject + body + status)"
+        placeholder="Filter this view (name + agent/owner/target + subject + body + status)"
         autocomplete="off" spellcheck=${false} value=${current.query}
         onInput=${(event) => onQuery(event.currentTarget.value)} />
       <span class="filter-count" id="filter-jobs-count" aria-live="polite">${count}</span>
