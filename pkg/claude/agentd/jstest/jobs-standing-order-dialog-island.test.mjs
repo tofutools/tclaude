@@ -56,7 +56,7 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
       summary: 'Push the PR early.', trigger_event: 'session.start',
       sources: ['compact'], match_field: '', match_regex: '',
       timing: 'same-continuation', cadence: 'always',
-      cooldown_seconds: 0, enabled: true,
+      cooldown_seconds: 0, debounce_seconds: 0, enabled: true,
     },
   });
   assert.equal(submit.disabled, true);
@@ -89,7 +89,8 @@ test('standing-order dialog authors a prompt RE2 condition', async (t) => {
   });
   await harness.act(() => harness.fireEvent(trigger, 'change'));
   assert.equal(mounted.container.querySelector('#standing-order-sources'), null);
-  assert.match(mounted.container.textContent, /OpenCode is shown as unsupported/);
+  assert.match(mounted.container.textContent,
+    /prompt-text triggers remain unsupported because its event stream omits the prompt/);
 
   const field = mounted.container.querySelector('#standing-order-match-field');
   Object.defineProperty(field, 'value', {

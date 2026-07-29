@@ -158,7 +158,8 @@ function StandingOrderRow({ order, actions }) {
       <div class="rowname">${order.name}</div>
       <div class="muted">${summary}</div>
       <div class="muted">revision ${order.revision || 1} · ${order.cadence || 'always'}
-        ${Number(order.cooldown_seconds) > 0 ? ` · ${order.cooldown_seconds}s minimum interval` : ''}</div>
+        ${Number(order.cooldown_seconds) > 0 ? ` · ${order.cooldown_seconds}s minimum interval` : ''}
+        ${Number(order.debounce_seconds) > 0 ? ` · ${order.debounce_seconds}s trailing-edge debounce` : ''}</div>
     </td>
     <td>
       <${StandingOrderTarget} order=${order} />

@@ -78,7 +78,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     summary: 'Push the PR early.',
     trigger: { event: 'session.start', sources: ['compact', 'resume'] },
     timing: 'same-continuation', cadence: 'once-per-generation',
-    cooldown_seconds: 90,
+    cooldown_seconds: 90, debounce_seconds: 0,
   };
   const draft = model.createStandingOrderDraft(model.standingOrderToPrefill(order));
   assert.equal(draft.target.mode, 'group');
@@ -93,7 +93,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
       summary: 'Push the PR early.', trigger_event: 'session.start',
       sources: ['compact', 'resume'], match_field: '', match_regex: '',
       timing: 'same-continuation',
-      cadence: 'once-per-generation', cooldown_seconds: 90, enabled: false,
+      cadence: 'once-per-generation', cooldown_seconds: 90, debounce_seconds: 0, enabled: false,
     },
   });
 
@@ -107,7 +107,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
       name: 'all-boundaries', target: 'agt_target', role: '', summary: 'Remember.',
       trigger_event: 'session.start', sources: [], match_field: '', match_regex: '',
       timing: 'same-continuation',
-      cadence: 'always', cooldown_seconds: 0, enabled: true,
+      cadence: 'always', cooldown_seconds: 0, debounce_seconds: 0, enabled: true,
     },
   });
   any.sourceMode = 'selected';
@@ -115,6 +115,11 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
   any.sourceMode = 'any';
   any.cooldownSeconds = -1;
   assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'cooldown');
+  any.cooldownSeconds = 0;
+  any.debounceSeconds = 5;
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any).code, 'debounce-timing');
+  any.timing = 'next-turn';
+  assert.equal(model.validateStandingOrderDraft({ kind: 'create' }, any), null);
   assert.equal(model.standingOrderDraftDirty(draft,
     model.createStandingOrderDraft(model.standingOrderToPrefill(order))), false);
 
@@ -127,7 +132,8 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
     name: 'deploy-prompt', target: 'agt_target', role: '',
     summary: 'Use the release checklist.', trigger_event: 'user.prompt',
     sources: [], match_field: 'prompt', match_regex: '(?i)\\bdeploy\\b',
-    timing: 'same-continuation', cadence: 'always', cooldown_seconds: 0, enabled: true,
+    timing: 'same-continuation', cadence: 'always', cooldown_seconds: 0,
+    debounce_seconds: 0, enabled: true,
   });
   prompt.matchRegex = ' deploy ';
   assert.equal(model.buildStandingOrderMutation({ kind: 'create' }, prompt).payload.match_regex,

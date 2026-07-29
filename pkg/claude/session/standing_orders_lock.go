@@ -90,7 +90,7 @@ func lockStandingOrderRateControls(
 		scope, recipient := "", ""
 		acquiredMap := locks.cadenceAcquired
 		switch {
-		case o.CooldownSeconds > 0:
+		case o.DebounceSeconds > 0 || o.CooldownSeconds > 0:
 			scope, recipient = "agent", agentID
 			acquiredMap = locks.cooldownAcquired
 		case o.Cadence == db.StandingCadenceOncePerGeneration:
@@ -112,6 +112,18 @@ func lockStandingOrderRateControls(
 		}
 	}
 	return locks
+}
+
+// LockStandingOrderAgentDelivery is the scheduler-side half of the same
+// cross-process lock used by hook evaluation. The caller must re-read the
+// pending row after acquiring it.
+func LockStandingOrderAgentDelivery(
+	ctx context.Context,
+	orderID int64,
+	agentID string,
+) (func(), bool) {
+	return lockStandingOrderDelivery(
+		ctx, "agent", standingOrderRateLockKey(orderID, agentID))
 }
 
 func standingOrderRateLockKey(orderID int64, recipient string) string {

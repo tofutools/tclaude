@@ -75,6 +75,7 @@ type OrderView struct {
 	Cadence string `json:"cadence"`
 	// CooldownSeconds is zero when disabled.
 	CooldownSeconds int64 `json:"cooldown_seconds"`
+	DebounceSeconds int64 `json:"debounce_seconds"`
 
 	// Capability is the worst case across the harnesses this order can
 	// ACTUALLY reach, resolved by the caller from a single target agent's
@@ -134,13 +135,14 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		Timing:              o.Timing,
 		Cadence:             o.Cadence,
 		CooldownSeconds:     o.CooldownSeconds,
-		PlatformCapability:  PlatformCapability(o.Timing, o.TriggerEvent),
-		CapabilityByHarness: CapabilityByHarness(o.Timing, o.TriggerEvent),
+		DebounceSeconds:     o.DebounceSeconds,
+		PlatformCapability:  PlatformCapabilityForOrder(o),
+		CapabilityByHarness: CapabilityByHarnessForOrder(o),
 		CreatedAt:           o.CreatedAt,
 		UpdatedAt:           o.UpdatedAt,
 	}
 	if len(targetHarnesses) > 0 {
-		reachable := ReduceCapability(o.Timing, o.TriggerEvent, targetHarnesses)
+		reachable := ReduceCapabilityForOrder(o, targetHarnesses)
 		v.Capability = &reachable
 	}
 	if latest != nil {
@@ -168,7 +170,8 @@ func OutcomeIsProblem(outcome string) bool {
 		// authored, not a fault. Flagging it would mark a correctly working
 		// order as a problem for the rest of the conversation.
 		db.StandingOutcomeSuppressedCadence,
-		db.StandingOutcomeSuppressedCooldown:
+		db.StandingOutcomeSuppressedCooldown,
+		db.StandingOutcomeDeferredDebounce:
 		return false
 	}
 	return true

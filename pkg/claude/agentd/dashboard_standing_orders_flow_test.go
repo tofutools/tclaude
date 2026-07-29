@@ -76,6 +76,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRowVersionGuards(t *testing.T) 
 	editBody["name"] = "boundary-reminder-edited"
 	editBody["summary"] = "Updated durable instruction."
 	editBody["timing"] = "next-turn"
+	editBody["debounce_seconds"] = 5
 	editBody["match_field"] = "cwd"
 	editBody["match_regex"] = `(?i)/release$`
 	edited, code := mutateStandingOrder(t, dash, http.MethodPatch,
@@ -86,6 +87,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRowVersionGuards(t *testing.T) 
 	assert.Equal(t, int64(2), edited.RowVersion)
 	assert.Equal(t, "boundary-reminder-edited", edited.Name)
 	assert.Equal(t, db.StandingTimingNextTurn, edited.Timing)
+	assert.Equal(t, int64(5), edited.DebounceSeconds)
 	assert.Equal(t, db.StandingMatchFieldCwd, edited.Trigger.MatchField)
 	assert.Equal(t, `(?i)/release$`, edited.Trigger.MatchRegex)
 
@@ -210,6 +212,27 @@ func TestDashboardStandingOrders_ValidatesActionTriggerMatcher(t *testing.T) {
 	_, code = mutateStandingOrder(t, dash, http.MethodPost,
 		"/api/standing-orders", body)
 	assert.Equal(t, http.StatusBadRequest, code)
+}
+
+func TestDashboardStandingOrders_ValidatesDebounceTiming(t *testing.T) {
+	newFlow(t)
+	targetAgent, _, err := db.EnsureAgentForConv("conv-debounce-target", "test")
+	require.NoError(t, err)
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	body := standingOrderBody(targetAgent, 0)
+	body["debounce_seconds"] = 5
+	_, code := mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	assert.Equal(t, http.StatusBadRequest, code,
+		"an inline hook response cannot implement a future trailing edge")
+
+	body["timing"] = db.StandingTimingNextTurn
+	created, code := mutateStandingOrder(t, dash, http.MethodPost,
+		"/api/standing-orders", body)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, created)
+	assert.Equal(t, int64(5), created.DebounceSeconds)
 }
 
 func TestDashboardStandingOrders_EditPreservesAuthorAndRetirementState(t *testing.T) {

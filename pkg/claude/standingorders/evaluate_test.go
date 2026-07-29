@@ -277,6 +277,19 @@ func TestEvaluateNextTurnOrderReachesOpenCodeOnTheMessagePath(t *testing.T) {
 	assert.Equal(t, db.StandingTransportMessage, d.Capability.Transport)
 }
 
+func TestEvaluateDebouncedOrderSelectsMessageTransport(t *testing.T) {
+	o := order(func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.DebounceSeconds = 5
+	})
+	d := Evaluate(o, event(func(e *Event) {
+		e.Harness = harness.DefaultName
+	}), neverDelivered)
+
+	assert.True(t, d.Deliver)
+	assert.Equal(t, db.StandingTransportMessage, d.Capability.Transport)
+}
+
 func TestEvaluateCadenceSuppressesSecondDeliveryInSameGeneration(t *testing.T) {
 	o := order(func(o *db.StandingOrder) { o.Cadence = db.StandingCadenceOncePerGeneration })
 

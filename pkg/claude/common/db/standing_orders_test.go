@@ -105,6 +105,15 @@ func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 		"excessive cooldown": func(o *StandingOrder) {
 			o.CooldownSeconds = StandingCooldownMaxSeconds + 1
 		},
+		"negative debounce": func(o *StandingOrder) {
+			o.DebounceSeconds = -1
+		},
+		"excessive debounce": func(o *StandingOrder) {
+			o.DebounceSeconds = StandingDebounceMaxSeconds + 1
+		},
+		"debounce on same continuation": func(o *StandingOrder) {
+			o.DebounceSeconds = 5
+		},
 		"role on conv target": func(o *StandingOrder) {
 			o.TargetKind = StandingTargetConv
 			o.GroupID = 0
@@ -217,6 +226,7 @@ func TestStandingOrder_FullUpdateUsesRowVersionCAS(t *testing.T) {
 	replacement.Timing = StandingTimingNextTurn
 	replacement.Cadence = StandingCadenceOncePerGeneration
 	replacement.CooldownSeconds = 90
+	replacement.DebounceSeconds = 12
 	replacement.Enabled = false
 	replacement.DisabledReason = StandingDisabledReasonGroupRetired
 	require.NoError(t, UpdateStandingOrder(id, before.RowVersion, replacement))
@@ -234,6 +244,7 @@ func TestStandingOrder_FullUpdateUsesRowVersionCAS(t *testing.T) {
 	assert.Equal(t, StandingTimingNextTurn, got.Timing)
 	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
 	assert.Equal(t, int64(90), got.CooldownSeconds)
+	assert.Equal(t, int64(12), got.DebounceSeconds)
 	assert.False(t, got.Enabled)
 	assert.Equal(t, StandingDisabledReasonGroupRetired, got.DisabledReason)
 

@@ -144,6 +144,31 @@ func CapabilityFor(timing, event, harnessName string) Capability {
 	}
 }
 
+// CapabilityForOrder includes delivery controls that change the usable
+// transport. Trailing-edge debounce always uses a queued message: an inline
+// hook response cannot wait for future events without blocking the harness.
+func CapabilityForOrder(o *db.StandingOrder, harnessName string) Capability {
+	if o == nil || o.DebounceSeconds == 0 {
+		if o == nil {
+			return Capability{Status: StatusUnsupported, Transport: db.StandingTransportNone}
+		}
+		return CapabilityFor(o.Timing, o.TriggerEvent, harnessName)
+	}
+	if o.Timing != db.StandingTimingNextTurn {
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "trailing-edge debounce requires next-turn timing",
+		}
+	}
+	base := CapabilityFor(db.StandingTimingNextTurn, o.TriggerEvent, harnessName)
+	if !base.Supported() {
+		return base
+	}
+	base.Transport = db.StandingTransportMessage
+	base.Detail = "trailing-edge debounce delivers as a queued message after the quiet window"
+	return base
+}
+
 // CapabilityByHarness reports capability for every known harness. The
 // dashboard uses it to show, per order, which members of a mixed-harness group
 // actually get what the operator asked for.
@@ -151,6 +176,14 @@ func CapabilityByHarness(timing, event string) map[string]Capability {
 	out := make(map[string]Capability, len(KnownHarnesses))
 	for _, h := range KnownHarnesses {
 		out[h] = CapabilityFor(timing, event, h)
+	}
+	return out
+}
+
+func CapabilityByHarnessForOrder(o *db.StandingOrder) map[string]Capability {
+	out := make(map[string]Capability, len(KnownHarnesses))
+	for _, h := range KnownHarnesses {
+		out[h] = CapabilityForOrder(o, h)
 	}
 	return out
 }
@@ -194,6 +227,33 @@ func ReduceCapability(timing, event string, harnesses []string) Capability {
 	}
 	worst.Detail = detail
 	return worst
+}
+
+func ReduceCapabilityForOrder(o *db.StandingOrder, harnesses []string) Capability {
+	if len(harnesses) == 0 {
+		return Capability{
+			Status: StatusUnsupported, Transport: db.StandingTransportNone,
+			Detail: "no reachable target",
+		}
+	}
+	rank := map[Status]int{StatusSupported: 0, StatusDegraded: 1, StatusUnsupported: 2}
+	worst := Capability{Status: StatusSupported, Transport: db.StandingTransportMessage}
+	var detail string
+	for i, h := range harnesses {
+		c := CapabilityForOrder(o, h)
+		if i == 0 || rank[c.Status] > rank[worst.Status] {
+			worst = c
+			detail = c.Detail
+		} else if c.Status == worst.Status && c.Detail != "" && detail == "" {
+			detail = c.Detail
+		}
+	}
+	worst.Detail = detail
+	return worst
+}
+
+func PlatformCapabilityForOrder(o *db.StandingOrder) Capability {
+	return ReduceCapabilityForOrder(o, KnownHarnesses)
 }
 
 // PlatformCapability is the worst case across every harness tclaude supports.

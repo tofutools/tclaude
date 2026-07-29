@@ -43,6 +43,33 @@ func TestCapabilityNextTurnOnHookHarnessIsNotDegraded(t *testing.T) {
 	assert.Equal(t, db.StandingTransportHookContext, c.Transport)
 }
 
+func TestCapabilityDebounceAlwaysUsesMessageTransport(t *testing.T) {
+	for _, harnessName := range []string{harness.DefaultName, harness.CodexName} {
+		order := &db.StandingOrder{
+			Timing: db.StandingTimingNextTurn, TriggerEvent: db.StandingTriggerToolBefore,
+			DebounceSeconds: 5,
+		}
+		c := CapabilityForOrder(order, harnessName)
+		assert.Equal(t, StatusSupported, c.Status, harnessName)
+		assert.Equal(t, db.StandingTransportMessage, c.Transport, harnessName)
+	}
+
+	toolOrder := &db.StandingOrder{
+		Timing: db.StandingTimingNextTurn, TriggerEvent: db.StandingTriggerToolAfter,
+		DebounceSeconds: 5,
+	}
+	assert.Equal(t, StatusSupported,
+		CapabilityForOrder(toolOrder, harness.OpenCodeName).Status)
+	assert.Equal(t, db.StandingTransportMessage,
+		CapabilityForOrder(toolOrder, harness.OpenCodeName).Transport)
+
+	promptOrder := *toolOrder
+	promptOrder.TriggerEvent = db.StandingTriggerUserPrompt
+	prompt := CapabilityForOrder(&promptOrder, harness.OpenCodeName)
+	assert.Equal(t, StatusUnsupported, prompt.Status)
+	assert.Equal(t, db.StandingTransportNone, prompt.Transport)
+}
+
 // An unknown harness is never assumed capable — guessing upward would promise
 // a timing guarantee tclaude has never tested there.
 func TestCapabilityUnknownHarnessIsMessageOnly(t *testing.T) {

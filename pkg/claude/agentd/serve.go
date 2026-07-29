@@ -486,6 +486,7 @@ func runServe(p *serveParams) error {
 	cronStop := make(chan struct{})
 	defer close(cronStop)
 	startCronScheduler(cronStop)
+	startStandingOrderDebounceScheduler(cronStop)
 	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
 	// Each actively advancing run is claimed by exactly one daemon-owned drive;
 	// SQLite remains the only authoritative checkpoint writer.

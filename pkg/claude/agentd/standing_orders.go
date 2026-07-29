@@ -1,11 +1,14 @@
 package agentd
 
 import (
+	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/standingorders"
 )
 
 const (
@@ -42,33 +45,227 @@ func deliverOpenCodeStandingOrders(input session.HookCallbackInput, envSessionID
 		if p.Body == "" {
 			continue
 		}
-		// The subject is tagged like a cron nudge so a recipient can tell a
-		// standing-order reminder from a hand-typed peer message, and so the
-		// dashboard groups them recognisably.
-		message := &db.AgentMessage{
-			ToConv:       p.TargetConv,
-			ToRecipients: []string{p.TargetConv},
-			Subject:      "[standing-order:" + p.Name + "]",
-			Body:         p.Body,
-			// Authorship comes from the order, never assumed. Stamping every
-			// standing-order message operator-authored would present one
-			// agent's guidance to another as the human's instruction.
-			FromConv:         p.OwnerConv,
-			OperatorAuthored: p.OperatorAuthored,
-		}
-		_, err := db.InsertStandingOrderAgentMessage(
-			message, p.OrderID, p.OrderRevision)
-		if err == nil {
-			// The trusted origin row is durable before the async nudge worker
-			// can submit the prompt. It re-arms the turn handshake on every
-			// retry, so an expired failed attempt can never deliver without
-			// origin suppression.
-			enqueueDeliveryForConv(p.TargetConv)
-		}
+		err := queueStandingOrderMessage(p, nil)
 		if err != nil {
 			slog.Warn("standing orders: OpenCode message delivery failed",
 				"order", p.Name, "target", p.TargetConv, "error", err, "module", "hooks")
 		}
 		session.RecordStandingMessageDelivery(p, err)
 	}
+}
+
+func standingOrderAgentMessage(p session.PendingStandingMessage) *db.AgentMessage {
+	return &db.AgentMessage{
+		ToConv: p.TargetConv, ToRecipients: []string{p.TargetConv},
+		Subject: "[standing-order:" + p.Name + "]", Body: p.Body,
+		FromConv: p.OwnerConv, OperatorAuthored: p.OperatorAuthored,
+	}
+}
+
+func queueStandingOrderMessage(
+	p session.PendingStandingMessage,
+	debounce *db.StandingDebounce,
+) error {
+	if p.Body == "" {
+		return nil
+	}
+	message := standingOrderAgentMessage(p)
+	var err error
+	if debounce == nil {
+		_, err = db.InsertStandingOrderAgentMessage(
+			message, p.OrderID, p.OrderRevision)
+	} else {
+		_, err = db.ConsumeStandingDebounceIntoAgentMessage(
+			debounce, message, p.OrderID, p.OrderRevision)
+	}
+	if err == nil {
+		enqueueDeliveryForConv(p.TargetConv)
+	}
+	return err
+}
+
+const standingOrderDebounceTick = time.Second
+
+func startStandingOrderDebounceScheduler(stop <-chan struct{}) {
+	go func() {
+		runStandingOrderDebounceTick(time.Now())
+		ticker := time.NewTicker(standingOrderDebounceTick)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-ticker.C:
+				runStandingOrderDebounceTick(now)
+			}
+		}
+	}()
+}
+
+func runStandingOrderDebounceTick(now time.Time) {
+	due, err := db.ListDueStandingDebounces(now)
+	if err != nil {
+		slog.Warn("standing orders: list due debounce failed", "error", err)
+		return
+	}
+	for _, candidate := range due {
+		fireStandingOrderDebounce(candidate.OrderID, candidate.TargetAgent, now)
+	}
+}
+
+func fireStandingOrderDebounce(orderID int64, targetAgent string, now time.Time) {
+	release, acquired := session.LockStandingOrderAgentDelivery(
+		context.Background(), orderID, targetAgent)
+	if !acquired {
+		return
+	}
+	defer release()
+
+	pending, err := db.GetDueStandingDebounce(orderID, targetAgent, now)
+	if err != nil || pending == nil {
+		return
+	}
+	order, err := db.GetStandingOrder(orderID)
+	if err != nil {
+		return
+	}
+	if order == nil || !order.Enabled ||
+		order.Revision != pending.OrderRevision ||
+		order.DebounceSeconds <= 0 ||
+		order.Timing != db.StandingTimingNextTurn {
+		_ = db.DeleteStandingDebounce(orderID, targetAgent)
+		return
+	}
+	if order.OwnerAgent != "" {
+		owner, ownerErr := db.GetAgent(order.OwnerAgent)
+		if ownerErr != nil {
+			return
+		}
+		if !owner.Active() {
+			_ = db.DeleteStandingDebounce(orderID, targetAgent)
+			return
+		}
+	}
+	recipient, err := db.GetAgent(targetAgent)
+	if err != nil {
+		return
+	}
+	if !recipient.Active() {
+		_ = db.DeleteStandingDebounce(orderID, targetAgent)
+		return
+	}
+	currentConv := recipient.CurrentConvID
+	inScope, scopeErr := standingDebounceInScope(order, targetAgent, currentConv)
+	if scopeErr != nil {
+		return
+	}
+	if currentConv == "" || !inScope {
+		_ = db.DeleteStandingDebounce(orderID, targetAgent)
+		return
+	}
+	harnessName := pending.Harness
+	state, stateErr := session.FindSessionByConvID(currentConv)
+	if stateErr != nil {
+		return
+	}
+	if state != nil && strings.TrimSpace(state.Harness) != "" {
+		harnessName = state.Harness
+	}
+	capability := standingorders.CapabilityForOrder(order, harnessName)
+	if !capability.Supported() || capability.Transport != db.StandingTransportMessage {
+		_ = db.DeleteStandingDebounce(orderID, targetAgent)
+		recordStandingDebounceOutcome(order, pending, currentConv, harnessName,
+			db.StandingOutcomeUnsupportedTiming, capability, capability.Detail)
+		return
+	}
+	epoch := ""
+	if order.Cadence == db.StandingCadenceOncePerGeneration {
+		epoch = currentConv
+		already, checkErr := db.StandingOrderDeliveredInEpoch(
+			order.ID, order.Revision, currentConv, epoch)
+		if checkErr != nil {
+			return
+		}
+		if already {
+			_ = db.DeleteStandingDebounce(orderID, targetAgent)
+			recordStandingDebounceOutcome(order, pending, currentConv, harnessName,
+				db.StandingOutcomeSuppressedCadence, capability,
+				"debounced candidate was already delivered in this conversation generation")
+			return
+		}
+	}
+	if order.CooldownSeconds > 0 {
+		last, checkErr := db.LatestSuccessfulStandingDeliveryAt(
+			order.ID, order.Revision, targetAgent)
+		if checkErr != nil {
+			return
+		}
+		if !last.IsZero() &&
+			now.Before(last.Add(time.Duration(order.CooldownSeconds)*time.Second)) {
+			_ = db.DeleteStandingDebounce(orderID, targetAgent)
+			recordStandingDebounceOutcome(order, pending, currentConv, harnessName,
+				db.StandingOutcomeSuppressedCooldown, capability,
+				"debounced candidate reached its quiet edge during cooldown")
+			return
+		}
+	}
+	decision := standingorders.Decision{
+		Order: order, Deliver: true, Outcome: db.StandingOutcomeDelivered,
+		Capability: capability, Epoch: epoch,
+		Detail: "trailing-edge debounce window completed",
+	}
+	message := session.PendingStandingMessage{
+		OrderID: order.ID, OrderRevision: order.Revision, Name: order.Name,
+		Body:       standingorders.RenderContext([]standingorders.Decision{decision}),
+		TargetConv: currentConv, TargetAgent: targetAgent, Epoch: epoch,
+		Harness: harnessName, Detail: decision.Detail,
+		OperatorAuthored: order.OperatorAuthored, OwnerConv: order.OwnerConv,
+	}
+	err = queueStandingOrderMessage(message, pending)
+	if err != nil {
+		slog.Warn("standing orders: debounced message delivery failed",
+			"order", order.Name, "agent", targetAgent, "error", err)
+		return
+	}
+	session.RecordStandingMessageDelivery(message, nil)
+}
+
+func standingDebounceInScope(
+	order *db.StandingOrder,
+	targetAgent, currentConv string,
+) (bool, error) {
+	if !order.IsGroupTarget() {
+		return order.TargetAgent == targetAgent, nil
+	}
+	members, err := db.ListAgentGroupMembers(order.GroupID)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if member.ConvID == currentConv &&
+			(order.TargetRole == "" ||
+				strings.EqualFold(order.TargetRole, member.Role)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func recordStandingDebounceOutcome(
+	order *db.StandingOrder,
+	pending *db.StandingDebounce,
+	convID, harnessName, outcome string,
+	capability standingorders.Capability,
+	detail string,
+) {
+	_, _ = db.RecordStandingDelivery(&db.StandingDelivery{
+		OrderID: order.ID, OrderRevision: order.Revision,
+		TargetConv: convID, TargetAgent: pending.TargetAgent,
+		Epoch: pending.Epoch, Outcome: outcome,
+		Transport: capability.Transport, Harness: harnessName, Detail: detail,
+	})
+}
+
+func RunStandingOrderDebounceTickForTest(now time.Time) {
+	runStandingOrderDebounceTick(now)
 }
