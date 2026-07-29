@@ -646,8 +646,9 @@ func seatbeltDaemonReopenDescendants(
 
 // appendSeatbeltLoopbackNetworkRules applies the one network list Seatbelt can
 // represent without a proxy. The remote-ip wildcard confines the deny to IP
-// traffic, preserving the independently authored Unix-socket axis; the more
-// specific localhost allows reopen only the authored destination ports.
+// traffic, preserving the independently authored Unix-socket axis. Port-scoped
+// exceptions use the narrower TCP/UDP predicates so Seatbelt selects them over
+// the IP-wide deny; a portless loopback rule can use the IP predicate directly.
 //
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
@@ -681,7 +682,9 @@ func appendSeatbeltLoopbackNetworkRules(
 	} else {
 		for _, port := range ports {
 			fmt.Fprintf(profile,
-				"(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+				"(allow network-outbound (remote tcp \"localhost:%d\"))\n", port)
+			fmt.Fprintf(profile,
+				"(allow network-outbound (remote udp \"localhost:%d\"))\n", port)
 		}
 	}
 }

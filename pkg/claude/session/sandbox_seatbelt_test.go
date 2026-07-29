@@ -223,7 +223,7 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *test
 	}
 }
 
-func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
+func TestRenderSeatbeltLoopbackOnlyNetworkUsesProtocolSpecificPortPredicates(t *testing.T) {
 	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
@@ -246,11 +246,17 @@ func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	assert.Contains(t, profile, `(remote ip "*:*")`)
+	assert.Contains(t, profile, `(deny network-outbound (remote ip "*:*"))`)
 	assert.Equal(t, 1, strings.Count(profile,
-		`(allow network-outbound (remote ip "localhost:3000"))`))
+		`(allow network-outbound (remote tcp "localhost:3000"))`))
 	assert.Equal(t, 1, strings.Count(profile,
-		`(allow network-outbound (remote ip "localhost:11434"))`))
+		`(allow network-outbound (remote tcp "localhost:11434"))`))
+	assert.Equal(t, 1, strings.Count(profile,
+		`(allow network-outbound (remote udp "localhost:3000"))`))
+	assert.Equal(t, 1, strings.Count(profile,
+		`(allow network-outbound (remote udp "localhost:11434"))`))
+	assert.NotContains(t, profile, `(remote ip "localhost:3000")`,
+		"port-scoped exceptions need a narrower protocol predicate than the IP-wide deny")
 	assert.NotContains(t, profile, `(local ip `)
 	assert.NotContains(t, profile, `(deny network-bind)`,
 		"the authored list is outbound-only and local services must still bind")
