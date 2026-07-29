@@ -182,6 +182,11 @@ function sandboxIndicator(member) {
   const mode = member.state?.sandbox_mode || '';
   const offline = !member.online;
   const stacked = member.state?.sandbox_implementation === 'stacked';
+  const unenforcedOverride = (member.state?.sandbox_access_notices || []).some((notice) =>
+    notice?.class === 'degradation'
+      && notice?.axis === 'network'
+      && notice?.reason === 'operator_unenforced_launch_override'
+      && notice?.effect === 'not_enforced');
   // A recorded verdict wins: it is the resolved outcome, where the mode is only
   // the request. Absent one (a pre-column row, or Codex — whose --sandbox mode
   // IS its posture) the mode-driven branch below is unchanged.
@@ -190,6 +195,9 @@ function sandboxIndicator(member) {
     const badge = osSandboxBadge(mode, state,
       !!member.state?.os_sandbox_unverified, member.state?.sandbox_implementation || '');
     if (!badge) return null;
+    if (unenforcedOverride) {
+      return { status: 'NOT ENFORCED', danger: true, offline, glyph: '' };
+    }
     return {
       status: badge.status, danger: badge.danger, offline,
       glyph: stacked && !badge.danger ? '🔒²' : '',
@@ -199,8 +207,12 @@ function sandboxIndicator(member) {
   // `off` is Claude-only (no other harness offers it) and means the OS sandbox
   // is disabled outright, so it is a danger glyph on a pre-verdict row too —
   // otherwise every legacy `off` agent keeps a padlock it has not earned.
-  const danger = mode === 'danger-full-access' || mode === 'off';
-  return { status: danger ? 'OFF' : 'ON', danger, offline };
+  const danger = mode === 'danger-full-access' || mode === 'off' || unenforcedOverride;
+  return {
+    status: unenforcedOverride ? 'NOT ENFORCED' : danger ? 'OFF' : 'ON',
+    danger,
+    offline,
+  };
 }
 
 function sandboxImplementationLabel(member, badge) {

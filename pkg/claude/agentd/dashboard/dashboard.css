@@ -5013,6 +5013,11 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-family: inherit; cursor: pointer;
 }
 .cron-create-target .cron-target-input-row button:hover { background: #2d333b; }
+.spawn-unenforced-toggle {
+  flex: 0 1 260px; display: inline-flex; align-items: center; gap: 6px;
+  color: #f0b45a; font-size: 11px; line-height: 1.25; cursor: pointer;
+}
+.spawn-unenforced-toggle input { flex: 0 0 auto; margin: 0; }
 .cron-create-schedule {
   flex: 1; display: flex; flex-direction: column; gap: 6px;
 }

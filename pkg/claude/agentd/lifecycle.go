@@ -1243,6 +1243,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			Model: launchConfig.Model,
 			Cwd:   cwd,
 		},
+		false,
 	); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
@@ -2525,6 +2526,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			return
 		}
 	}
+	if body.AllowUnenforcedSandbox && !isDashboardSpawnPeer(r) {
+		writeError(w, http.StatusForbidden, "unenforced_sandbox_override_restricted",
+			"only the human operator may allow an unenforced sandbox through the dashboard spawn dialog")
+		return
+	}
 	if fail := rejectBreakGlassSpawn(body.BreakGlassAcknowledged); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -3107,6 +3113,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			Model: body.Model,
 			Cwd:   cwd,
 		},
+		body.AllowUnenforcedSandbox,
 	); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -3360,6 +3367,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		SandboxMode:                sandboxMode,
 		SandboxModeSource:          sandboxSource,
 		SandboxImplementation:      body.SandboxImplementation,
+		AllowUnenforcedSandbox:     body.AllowUnenforcedSandbox,
 		AskUserQuestionTimeout:     askTimeout,
 		ApprovalPolicy:             approvalPolicy,
 		ToolGovernance:             toolGovernance,
@@ -3560,6 +3568,11 @@ type spawnParams struct {
 	// (see appendSandboxImplementationFlag). Resolved and host-gated at the
 	// spawn boundary before the params are built.
 	SandboxImplementation string
+	// AllowUnenforcedSandbox is the already-authorized dashboard-only decision
+	// to widen the exact closed-network/EnforceNone refusal. It is birth-only:
+	// resume, reincarnate, clone, and every non-dashboard spawn path leave it
+	// false and therefore retain fail-closed behavior.
+	AllowUnenforcedSandbox bool
 	// ApprovalPolicy is the resolved launch approval policy for a harness that
 	// takes one (Codex: "never" by default — non-escalating so the unattended
 	// pane can't deadlock), or "" to omit the flag (Claude Code, or no
@@ -4357,6 +4370,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			Model: p.Model,
 			Cwd:   p.Cwd,
 		},
+		p.AllowUnenforcedSandbox,
 	); fail != nil {
 		return nil, fail
 	}

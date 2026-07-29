@@ -526,6 +526,29 @@ requires an internal localhost server, the remedy is a harness-descriptor
 capability plus launch-time refusal for Darwin isolated mode. It must not gain a
 loopback exception that silently reopens host services.
 
+If a fresh dashboard spawn requests closed network access on an implementation
+that cannot enforce it, the launch normally refuses with:
+
+```text
+<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog
+```
+
+The human operator may explicitly check that named dashboard escape hatch for
+one fresh launch. Only this exact closed-network capability gap is widened:
+network access becomes open, while enforceable filesystem and Unix-socket rules
+keep their planned posture. Protected-root checks, filtered model-transport
+gates, implementation availability, and every other launch refusal remain
+non-overridable. Raw API callers, including agents and human-class credentials,
+cannot set the override.
+
+The authorization is deliberately neither saved nor inherited. Resume,
+reincarnate, and clone of an overridden agent do not carry it forward and refuse
+again unless a future fresh spawn is explicitly authorized in the dashboard.
+The launch snapshot records a degradation notice with network reason
+`operator_unenforced_launch_override` and effect `not_enforced`; the dashboard
+renders a warning badge and the exact notice rather than claiming a sandbox
+lock or changing the recorded OS-sandbox verdict.
+
 #### Compositional network packs
 
 The profile editor authors a network baseline first: **Deny all**, **Allow

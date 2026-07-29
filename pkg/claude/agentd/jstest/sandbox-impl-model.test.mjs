@@ -398,6 +398,40 @@ test('the spawn request omits an untouched row and sends an explicit one', async
   assert.equal(unsupported.body.sandbox_implementation, 'stacked');
 });
 
+test('the unenforced-network override is wire-sparse and fresh-dialog only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { harnesses, sandboxImpl, groups: [{ name: 'crew' }] };
+  const draft = model.createSpawnDraft({
+    groups: context.groups,
+    harnesses,
+    groupName: 'crew',
+  });
+  const base = { ...draft, name: 'w', cwd: '/repo', wtRepo: '/repo' };
+
+  assert.equal(draft.allowUnenforcedSandbox, false);
+  const plain = model.buildSpawnRequest(base, context, null);
+  assert.equal('allow_unenforced_sandbox' in plain.body, false,
+    'an untouched dialog sends no override');
+
+  const allowed = model.buildSpawnRequest(
+    { ...base, allowUnenforcedSandbox: true }, context, null,
+  );
+  assert.equal(allowed.body.allow_unenforced_sandbox, true);
+
+  const seed = model.spawnProfileSeed(
+    { ...base, allowUnenforcedSandbox: true }, context,
+  );
+  assert.equal('allow_unenforced_sandbox' in seed, false,
+    'the one-launch authorization is never persisted into a profile');
+
+  const switched = model.selectSpawnHarness(
+    { ...base, allowUnenforcedSandbox: true }, 'codex', context,
+  );
+  assert.equal(switched.allowUnenforcedSandbox, false,
+    'a harness switch requires a fresh explicit authorization');
+});
+
 test('switching to an incapable harness preserves stacked and keeps its warning visible', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');

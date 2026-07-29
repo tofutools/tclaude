@@ -501,6 +501,42 @@ async function mountSpawn(t, overrides = {}) {
   return { harness, host, state, actions, calls, cleanup: mounted.unmount };
 }
 
+test('Preact agent-spawn renders the operator-only unenforced-network warning unchecked', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+
+    const checkbox = host.querySelector('#agent-spawn-allow-unenforced-sandbox');
+    assert.ok(checkbox);
+    assert.equal(checkbox.hasAttribute('checked'), false);
+    assert.equal(checkbox.getAttribute('aria-describedby'),
+      'agent-spawn-allow-unenforced-sandbox-hint');
+    assert.match(checkbox.closest('label').textContent,
+      /Allow launch WITHOUT an enforced network sandbox/);
+    const hint = host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint');
+    assert.match(hint.textContent, /Operator-only escape hatch/);
+    assert.match(hint.textContent, /outbound network access open/);
+    assert.match(hint.textContent, /not saved and starts unchecked every time/);
+
+    Object.defineProperty(checkbox, 'checked', {
+      configurable: true, writable: true, value: true,
+    });
+    await harness.act(() => harness.fireEvent(checkbox, 'change'));
+    assert.equal(checkbox.checked, true);
+
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'codex');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    assert.equal(
+      host.querySelector('#agent-spawn-allow-unenforced-sandbox').hasAttribute('checked'), false,
+      'switching harnesses consumes the UI authorization');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
 test('Preact agent-spawn owner renders profile/custom/capability states without remounting on refresh', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
@@ -878,9 +914,10 @@ test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe h
 });
 
 // Every dropdown whose help is static per-mode documentation collapses behind a
-// [?]; nothing but the name hint (live validation feedback) and a ⚠ caveat is
-// allowed to sit permanently under a control. Regressing any of these back to a
-// paragraph is what padded the dialog in the first place.
+// [?]; nothing but live validation, the deliberate unenforced-network warning,
+// and a ⚠ caveat is allowed to sit permanently under a control. Regressing any
+// mode documentation back to a paragraph is what padded the dialog in the
+// first place.
 test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ caveats visible', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
@@ -913,13 +950,14 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
       ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
   }
 
-  // The name hint is the sole surviving inline hint: it reports what the name
-  // will be normalized to, which is feedback rather than documentation. Count
-  // the nodes rather than their ids — an id-less paragraph is exactly the shape
-  // this dialog used to render.
+  // The name normalization feedback and the explicit operator-only warning are
+  // the only surviving inline hints. Count exact ids so an accidental id-less
+  // help paragraph cannot ride along.
   const persistent = [...host.querySelectorAll('.spawn-field-hint')];
-  assert.equal(persistent.length, 1, 'exactly one persistent hint survives');
-  assert.equal(persistent[0].id, 'agent-spawn-name-hint');
+  assert.deepEqual(persistent.map((node) => node.id).sort(), [
+    'agent-spawn-allow-unenforced-sandbox-hint',
+    'agent-spawn-name-hint',
+  ]);
 
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in

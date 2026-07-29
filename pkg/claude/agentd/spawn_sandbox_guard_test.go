@@ -38,6 +38,7 @@ func TestPlanSandboxProfileAccessDisclosesUnmaterializedSocketEntries(t *testing
 		snapshot,
 		string(sandboxpolicy.ImplementationHarnessBuiltin),
 		session.ModelTransportLaunchContext{},
+		false,
 	)
 	require.Nil(t, failure)
 	var notice *sandboxpolicy.AccessNotice
@@ -96,6 +97,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		snapshot,
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		session.ModelTransportLaunchContext{},
+		false,
 	)
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
@@ -156,6 +158,7 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 		newSnapshot(),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		session.ModelTransportLaunchContext{},
+		false,
 	)
 	require.Nil(t, failure)
 	require.Len(t, notices, 2)
@@ -174,6 +177,7 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 		newSnapshot(),
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		session.ModelTransportLaunchContext{Model: "corp/model"},
+		false,
 	)
 	require.Nil(t, failure)
 }
@@ -224,6 +228,7 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 		session.ModelTransportLaunchContext{
 			Model: "gpt-5.4", Cwd: t.TempDir(),
 		},
+		false,
 	)
 	require.Nil(t, failure)
 	var found bool

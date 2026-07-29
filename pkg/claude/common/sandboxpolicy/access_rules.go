@@ -93,6 +93,12 @@ const (
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
 	AccessNoticeReasonFilteredModelTraffic  = "filtered_model_transport"
+	// AccessNoticeReasonOperatorUnenforcedLaunchOverride records the
+	// dashboard-only, fresh-spawn authorization to widen an otherwise-refused
+	// closed network posture to open. The daemon-written one-shot launch
+	// snapshot carries this exact notice through the forked session launcher;
+	// profiles cannot author it.
+	AccessNoticeReasonOperatorUnenforcedLaunchOverride = "operator_unenforced_launch_override"
 
 	AccessNoticeEffectNotEnforced     = "not_enforced"
 	AccessNoticeEffectEnforcedWider   = "enforced_wider"

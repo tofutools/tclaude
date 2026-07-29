@@ -853,20 +853,36 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.sandbox.visible} busy=${busy} />
-    <label class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
+    <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
       title=${SANDBOX_IMPL_TITLE}>
       <span class="cron-create-label">Sandbox impl</span>
-      <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
-        onChange=${(event) => {
-          const value = event.currentTarget.value;
-          touched.current.add('sandboxImpl');
-          setDraft((before) => setSpawnSandboxImpl(before, value));
-        }}>
-        <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
-        ${(view.sandboxImplOptions || []).map((option) => html`
-          <option key=${option.value} value=${option.value}>${option.label}</option>`)}
-      </select>
-    </label>
+      <div class="cron-create-target">
+        <div class="cron-target-input-row">
+          <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+            onChange=${(event) => {
+              const value = event.currentTarget.value;
+              touched.current.add('sandboxImpl');
+              setDraft((before) => setSpawnSandboxImpl(before, value));
+            }}>
+            <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
+            ${(view.sandboxImplOptions || []).map((option) => html`
+              <option key=${option.value} value=${option.value}>${option.label}</option>`)}
+          </select>
+          <label class="spawn-unenforced-toggle">
+            <input id="agent-spawn-allow-unenforced-sandbox" type="checkbox"
+              aria-describedby="agent-spawn-allow-unenforced-sandbox-hint"
+              checked=${draft.allowUnenforcedSandbox} disabled=${busy}
+              onChange=${(event) => update('allowUnenforcedSandbox', event.currentTarget.checked)} />
+            Allow launch WITHOUT an enforced network sandbox
+          </label>
+        </div>
+        <div id="agent-spawn-allow-unenforced-sandbox-hint" class="spawn-field-hint warn">
+          Operator-only escape hatch. If closed network access cannot be enforced, launch with
+          outbound network access open. Enforceable filesystem and Unix-socket rules still apply.
+          This choice is not saved and starts unchecked every time.
+        </div>
+      </div>
+    </div>
     ${view.showSandboxImpl && sandboxImplHint && html`
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
         <span class="cron-create-label"></span>
