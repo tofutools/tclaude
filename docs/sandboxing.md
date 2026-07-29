@@ -14,6 +14,7 @@ lives elsewhere and is not repeated here:
 | The full harness capability matrix | [Harnesses](harnesses.md#capability-matrix) |
 | Locking agents out of agentd's own state | [Sandbox hardening](sandbox-hardening.md) |
 | The dashboard editor and the sandbox scribe | [Dashboard → Sandbox Profiles](dashboard.md#sandbox-profiles) |
+| tclaude's Linux egress-filter implementation | [Linux network filtering in `tclaude-layer`](linux-network-filtering.md) |
 
 Start here, then go to those.
 
@@ -571,7 +572,7 @@ verdict can mint enforcement.
 
 On a positive launch, bubblewrap creates the constructed network/PID namespace
 without connectivity. Rootless bubblewrap maps the invoking host user to
-namespace UID/GID 0 so the sealed bootstrap can receive namespace-local
+namespace UID/GID 0 so the pinned bootstrap can receive namespace-local
 `CAP_NET_ADMIN` for the atomic nft policy and `CAP_NET_BIND_SERVICE` for the
 private port-53 DNS listener; host file ownership remains mapped to the
 invoking user. The final harness also runs as namespace UID/GID 0 after the
@@ -594,8 +595,13 @@ IPv6 addresses and filtered by the authored ports. Hard-coded `127.0.0.1` and
 `::1` remain sandbox-private. The sandbox's `/etc/resolv.conf` and `/etc/hosts`
 both route through the external DNS broker, so a hosts-file mapping cannot
 bypass the same selector and port checks. A DNS answer containing loopback is
-refused unless the matching rule also authors loopback; when it does, the
+refused unless the profile also authors loopback; when it does, the
 broker rewrites the answer to the same synthetic host-loopback addresses.
+The current implementation does not reserve those synthetic addresses from
+CIDR or DNS-derived rules, however, so either kind of rule can also reach host
+loopback on its authored ports. See
+[Linux network filtering](linux-network-filtering.md#host-loopback-mapping-and-current-reservation-gap)
+for that security-boundary limitation.
 
 Host/domain enforcement is DNS-to-IP, not SNI/application identity; a resolved
 shared IP can be reused until its lease expires. The broker follows a bounded
