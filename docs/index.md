@@ -219,6 +219,8 @@ focus on workflows and the behavior that is easy to miss from help text.
   a LAN, mesh VPN, or tunnel.
 - [Sandboxing](sandboxing.md) — how the sandbox actually behaves: enforcement
   layers, deny + reopen, gotchas, and symptom-to-cause triage.
+- [Linux network filtering](linux-network-filtering.md) — how tclaude's own
+  bubblewrap, nftables, DNS, and `pasta` egress boundary works.
 - [Sandbox hardening](sandbox-hardening.md) — protect agentd state while keeping
   the coordination socket available.
 - [Processes](processes.md) — opt-in process templates, runs, evidence, and

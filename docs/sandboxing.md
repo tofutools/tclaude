@@ -14,6 +14,7 @@ lives elsewhere and is not repeated here:
 | The full harness capability matrix | [Harnesses](harnesses.md#capability-matrix) |
 | Locking agents out of agentd's own state | [Sandbox hardening](sandbox-hardening.md) |
 | The dashboard editor and the sandbox scribe | [Dashboard → Sandbox Profiles](dashboard.md#sandbox-profiles) |
+| tclaude's Linux egress-filter implementation | [Linux network filtering in `tclaude-layer`](linux-network-filtering.md) |
 
 Start here, then go to those.
 
