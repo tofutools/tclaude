@@ -520,23 +520,28 @@ API operations.
 
 The Linux `tclaude-layer` gateway enforces CIDR destinations, exact hosts,
 label-bound domains with optional subdomains, TCP/UDP destination ports, and
-the synthetic `host.tclaude.internal` host-loopback identity for Claude Code
-Codex, and OpenCode. Host/domain rows are Partial because their enforcement is DNS-to-IP,
-not SNI/application identity: a shared resolved IP can be reused until its DNS
-lease expires. Only a fresh DNS answer refreshes the lease; there is no fixed
-grace window. Established flows may continue after expiry, while new flows
-require fresh resolution. CIDR rows authorize direct IP packet destinations,
-not arbitrary DNS names whose answers land inside the CIDR. OpenCode filtered
-supports strict explicit-provider configs only: the launch model and frozen
-`OPENCODE_CONFIG_CONTENT` must name one inspected openai-compatible provider,
-one model, and a concrete covered `options.baseURL`; opaque/default/dynamic
-routes, model-level provider overrides, and active persistent account/org
-configuration refuse or require network open. The provider-empty private config
-directories are read-only inside the executor, and both those directories and account state
-are rechecked before every initial server exec or restart. Its built-in
-webfetch/websearch network rules remain soft tool policy, distinct from the
-packet-enforced nft floor.
-Codex filtered launches also refuse ChatGPT or opaque
+the synthetic `host.tclaude.internal` host-loopback identity for Claude Code,
+Codex, and OpenCode. Host/domain rows are Partial because their enforcement is
+DNS-to-IP, not SNI/application identity: a shared resolved IP can be reused
+until its DNS lease expires. Only a fresh DNS answer refreshes the lease; there
+is no fixed grace window. Established flows may continue after expiry, while
+new flows require fresh resolution. CIDR rows authorize direct IP packet
+destinations, not arbitrary DNS names whose answers land inside the CIDR. The
+fixed synthetic host-loopback addresses are not currently reserved from CIDR
+and DNS-derived rules, so the dedicated loopback selector is not exclusive;
+see
+[Linux network filtering](linux-network-filtering.md#host-loopback-mapping-and-current-reservation-gap).
+
+OpenCode filtered supports strict explicit-provider configs only: the launch
+model and frozen `OPENCODE_CONFIG_CONTENT` must name one inspected
+openai-compatible provider, one model, and a concrete covered
+`options.baseURL`; opaque/default/dynamic routes, model-level provider
+overrides, and active persistent account/org configuration refuse or require
+network open. The provider-empty private config directories are read-only
+inside the executor, and both those directories and account state are rechecked
+before every initial server exec or restart. Its built-in webfetch/websearch
+network rules remain soft tool policy, distinct from the packet-enforced nft
+floor. Codex filtered launches also refuse ChatGPT or opaque
 authentication because those routes can load provider overrides after
 preflight; use inspectable file-backed API-key authentication or network open
 until TCL-826 adds dynamic resolution. Claude continues from its inspected

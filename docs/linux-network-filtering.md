@@ -9,6 +9,10 @@ Codex's managed sandbox or proxy, or the permission rules either harness
 applies to tool calls. In this mode tclaude wraps the complete tool-executing
 harness process in its own Linux boundary.
 
+Filtered `list` enforcement is currently enabled for exact `tclaude-layer`
+Claude Code, Codex, and OpenCode launches. The `stacked` implementation does
+not claim this filtered-network boundary.
+
 For the filesystem side of that boundary, profile composition, and the
 differences between sandbox implementations, read
 [How sandboxing works](sandboxing.md).
@@ -104,7 +108,7 @@ Selectors mean:
 | `host` | One exact DNS name. |
 | `domain` | The exact domain apex, plus label-bound children when `include_subdomains` is true. |
 | `cidr` | Direct IPv4 or IPv6 packet destinations in the prefix. It grants no DNS-name authority. |
-| `loopback` | Host loopback through the synthetic `host.tclaude.internal` mapping. It does not expose host loopback as `127.0.0.1` or `::1`. |
+| `loopback` | The explicit profile spelling for host loopback through the synthetic `host.tclaude.internal` mapping. It does not expose host loopback as `127.0.0.1` or `::1`. See the synthetic-address reservation gap below. |
 
 `ports` apply to both TCP and UDP. QUIC is therefore covered as UDP. An omitted
 or empty port list permits every TCP and UDP destination port for that
@@ -113,7 +117,10 @@ connection classes.
 
 Host and domain values are normalized to ASCII DNS names. Suffix matching is
 label-bound, so `badexample.com` does not match `example.com`. IP literals must
-use `cidr`, and loopback ranges must use the dedicated `loopback` selector.
+use `cidr`, and the real IPv4/IPv6 loopback ranges must use the dedicated
+`loopback` selector. The two synthetic addresses used by `pasta` are not
+currently rejected from CIDR or DNS-derived rules; see
+[Host-loopback mapping and current reservation gap](#host-loopback-mapping-and-current-reservation-gap).
 
 ### Composition across profiles
 
@@ -204,7 +211,7 @@ For filtered mode, rootless bubblewrap maps the invoking host user to UID/GID
 the invoking user, and files created by the harness map back to that host
 UID/GID.
 
-The sealed bootstrap temporarily receives:
+The namespace bootstrap temporarily receives:
 
 - `CAP_NET_BIND_SERVICE`, to bind the private DNS listener on port 53;
 - `CAP_NET_ADMIN`, to install the namespace-local nftables policy.
@@ -214,19 +221,19 @@ capability sets so only `CAP_NET_ADMIN` crosses that trusted child exec. Before
 executing the harness it clears ambient capabilities, drops every capability
 set, verifies the drop, and removes the bootstrap and policy paths.
 
-### Sealed launch material
+### Pinned executable and sealed launch data
 
 The outer supervisor opens the running tclaude executable through
-`/proc/self/exe` and creates sealed memory files containing:
+`/proc/self/exe`, pinning the selected executable through an open descriptor.
+Separately, it creates sealed memory files containing:
 
-- the bootstrap image;
 - the rendered nftables batch;
 - the sandbox `/etc/hosts`;
 - the sandbox resolver configuration.
 
-Bubblewrap installs these descriptors as read-only files in the constructed
-root. The seals prevent the data from being changed between validation and
-use.
+Bubblewrap installs the executable descriptor and sealed data descriptors as
+read-only files in the constructed root. The memory-file seals prevent the
+three data artifacts from being changed between validation and use.
 
 The bootstrap signals readiness over a launch-private Unix packet socket. The
 outer supervisor checks the peer credentials and verifies through `/proc` that
@@ -290,27 +297,41 @@ expires. This matters for providers that use shared IP addresses.
 CIDR rules are different: they create static packet authority and never
 authorize a DNS query merely because its answer lies in the prefix.
 
-## Host-loopback filtering
+## Host-loopback mapping and current reservation gap
 
 `127.0.0.1` and `::1` remain sandbox-private. They cannot name a service
 listening on the host.
 
-For explicit host-loopback access, tclaude reserves:
+For explicit host-loopback access, tclaude uses:
 
 ```text
 169.254.2.2  host.tclaude.internal
 fd00::2      host.tclaude.internal
 ```
 
-`pasta` maps those synthetic destinations to host loopback, while nftables
-applies the ports from the authored `loopback` rule. Hard-coded host-loopback
-addresses therefore do not escape the namespace.
+`pasta` maps those synthetic destinations to host loopback. In the intended
+and explicit form, nftables applies the ports from an authored `loopback`
+rule. Hard-coded `127.0.0.1` and `::1` still cannot escape the namespace.
 
-If an allowed DNS name resolves to a loopback address, the broker refuses the
-answer unless loopback authority is also authored. When it is authorized, the
-broker rewrites the answer to the corresponding synthetic address, leaving
-the loopback nft rule as the final port authority. This prevents a permitted
-public name from becoming an unchecked DNS-rebinding route to host services.
+If an allowed DNS name resolves to a real loopback address, the broker refuses
+the answer unless loopback authority is also authored. When it is authorized,
+the broker rewrites the answer to the corresponding synthetic address, leaving
+the loopback nft rule as the final port authority.
+
+The current implementation does **not** reserve `169.254.2.2` and `fd00::2`
+against other selector kinds:
+
+- a CIDR rule that contains either synthetic address can reach host loopback on
+  that CIDR rule's ports;
+- an allowed host or domain whose DNS answer is either synthetic address can
+  place it in that rule's timed nft set and reach host loopback on that rule's
+  ports.
+
+The dedicated `loopback` selector is therefore not presently the sole
+host-loopback authority. Operators should treat any rule capable of admitting
+either synthetic address as host-loopback authority. In particular, a
+permitted DNS name controlled by an untrusted party can use this as a DNS
+rebinding route to host services on the permitted ports.
 
 ## The `pasta` gateway
 
@@ -379,7 +400,7 @@ The boundary provides:
 - a kernel-enforced default-drop packet floor;
 - exact IPv4/IPv6 CIDR and TCP/UDP port enforcement;
 - DNS-name admission backed by TTL-bound nftables sets;
-- no ambient host network namespace or host loopback;
+- no ambient host network namespace;
 - no inbound `pasta` forwarding;
 - no hidden model-transport bypass: the complete harness process uses the same
   network namespace.
@@ -393,6 +414,8 @@ Its deliberate limits are:
 - raw/packet sockets and general ICMP are outside the authored contract;
 - pathname Unix sockets are governed by the constructed filesystem root and
   bind mounts, not by nftables;
+- the synthetic host-loopback addresses are not reserved from CIDR and
+  DNS-derived rules, so the dedicated `loopback` selector is not exclusive;
 - missing launch prerequisites degrade the authored list to host-open with a
   recorded warning before enforcement is selected.
 
