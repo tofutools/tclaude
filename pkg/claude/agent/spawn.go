@@ -161,6 +161,12 @@ func quoteName(name string) string { return `"` + name + `"` }
 // handleGroupSpawn decodes it. One type means the CLI and the
 // dashboard cannot drift in which fields the daemon understands.
 type SpawnRequest struct {
+	// AllowUnenforcedSandbox is the dashboard-only, fresh-spawn authorization
+	// to proceed when the selected implementation cannot enforce closed network
+	// access. It is accepted only from the cookie-authenticated dashboard route,
+	// is never profile/config-backed, and has no CLI flag. False or absent keeps
+	// the ordinary fail-closed behavior.
+	AllowUnenforcedSandbox bool `json:"allow_unenforced_sandbox,omitempty"`
 	// SandboxProfile is an optional filesystem/environment profile.
 	// Only a daemon-boundary-classified human may set it; agent callers may
 	// inherit the group's/global policy but cannot select an escalation.

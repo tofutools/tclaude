@@ -720,3 +720,55 @@ func TestClosedPartialEnforcesAndWarnsButClosedNoneRefuses(t *testing.T) {
 	_, _, err = PlanAccessEnforcement(axes, none)
 	require.ErrorContains(t, err, "cannot enforce closed Unix-socket access")
 }
+
+func TestClosedNetworkOverrideWidensOnlyThatAxisAndPinsRefusalCopy(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeClosed},
+	}
+	caps := AccessEnforcement{
+		networkClosed: EnforceNone,
+		socketClosed:  EnforceFull,
+		scope:         "tools-only",
+		mechanism:     "Codex builtin sandbox",
+	}
+	const refusal = "Codex builtin sandbox (tools-only scope) cannot enforce closed network access; " +
+		"choose a sandbox implementation that can enforce closed network access, use network open, " +
+		"or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog"
+
+	_, _, err := PlanAccessEnforcement(axes, caps)
+	var capability *SandboxCapabilityError
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityNetworkAllowlist, capability.Kind)
+	assert.Equal(t, refusal, capability.Message)
+
+	predicted := DescribePredictedAccess(axes, PredictedAccessEnforcement{
+		NetworkClosed: EnforceNone,
+		SocketClosed:  EnforceFull,
+		Scope:         "tools-only",
+		Mechanism:     "Codex builtin sandbox",
+	})
+	assert.Equal(t, AccessPredictionRefused, predicted.Network.Outcome)
+	assert.Equal(t, refusal, predicted.Network.Detail)
+
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowUnenforcedNetworkClosed: true})
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.Network.Mode)
+	assert.Equal(t, sandboxpolicy.AccessModeClosed, rendered.UnixSockets.Mode,
+		"the override must not drop an enforceable independent axis")
+	require.Len(t, notices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeClassDegradation, notices[0].Class)
+	assert.Equal(t, "network", notices[0].Axis)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+		notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "human operator used the dashboard launch override")
+	assert.Contains(t, notices[0].Detail, "outbound network access remains open")
+
+	caps.socketClosed = EnforceNone
+	_, _, err = PlanAccessEnforcement(
+		axes, caps, AccessEnforcementOptions{AllowUnenforcedNetworkClosed: true})
+	require.ErrorContains(t, err, "cannot enforce closed Unix-socket access",
+		"the network-only option must not become a generic capability bypass")
+}

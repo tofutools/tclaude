@@ -560,6 +560,9 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // "" = unset, so the daemon's profile tier stack still speaks. Sending
     // harness-builtin here instead would pin it and silence every lower tier.
     sandboxImpl: '',
+    // Dashboard-only, per-open escape hatch. It is never profile-backed or
+    // remembered; every fresh dialog and harness switch starts unchecked.
+    allowUnenforcedSandbox: false,
     // Set only by a harness switch that discarded a selection; see
     // sandboxImplClearedNoticeFor. Never sent to the daemon.
     sandboxImplCleared: null,
@@ -781,6 +784,7 @@ export function clearSpawnProfileFields(draft, context, {
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
     sandboxImpl: defaults.sandboxImpl,
+    allowUnenforcedSandbox: defaults.allowUnenforcedSandbox,
     sandboxImplCleared: null,
     owner: false,
     permissionOverrides: {},
@@ -932,7 +936,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'sandboxImpl', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1030,6 +1034,12 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   // against a group default that would have flipped it is a real intent.
   if (view.showSandboxImpl && text(draft.sandboxImpl)) {
     body.sandbox_implementation = text(draft.sandboxImpl);
+  }
+  // This bit has no profile/config/default representation. Sending true is the
+  // one per-open dashboard authorization; false is omitted so an untouched
+  // dialog follows the daemon's ordinary fail-closed path exactly.
+  if (draft.allowUnenforcedSandbox) {
+    body.allow_unenforced_sandbox = true;
   }
   if (draft.owner) body.is_owner = true;
   if (Object.keys(draft.permissionOverrides || {}).length) {

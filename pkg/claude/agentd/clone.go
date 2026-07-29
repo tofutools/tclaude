@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // cloneSpawnError carries enough context to surface either an HTTP
@@ -219,6 +220,17 @@ func cloneSpawnOnce(p cloneSpawnParams) (cloneSpawnResult, *cloneSpawnError) {
 	// temporary debugging action would mint a permanently-unconfined sibling.
 	cloneSandbox, cloneSandboxSource := cloneSandboxPosture(relaunch)
 	cloneSSH := cloneSSHWorkaround(relaunch)
+	if _, fail := planSandboxProfileAccessForLaunch(
+		srcHarness, cloneSandbox, effectiveSandbox, relaunch.SandboxImplementation,
+		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+		false,
+	); fail != nil {
+		return cloneSpawnResult{}, &cloneSpawnError{
+			Status: fail.Status,
+			Code:   fail.Kind,
+			Msg:    fail.Msg,
+		}
+	}
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {

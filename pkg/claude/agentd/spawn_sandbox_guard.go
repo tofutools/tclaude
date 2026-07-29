@@ -151,6 +151,7 @@ func planSandboxProfileAccessForLaunch(
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	modelContext session.ModelTransportLaunchContext,
+	allowUnenforcedNetworkClosed bool,
 ) ([]sandboxpolicy.AccessNotice, *spawnFailure) {
 	if snapshot == nil ||
 		(snapshot.Effective.Network == nil && snapshot.Effective.UnixSockets == nil) {
@@ -221,7 +222,11 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_access", err.Error()}
 	}
-	rendered, notices, err := harness.PlanAccessEnforcement(axes, caps)
+	rendered, notices, err := harness.PlanAccessEnforcement(
+		axes, caps, harness.AccessEnforcementOptions{
+			AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
+		},
+	)
 	if err != nil {
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")

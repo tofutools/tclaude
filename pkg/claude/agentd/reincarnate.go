@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // reincarnateSuffixRegex matches a trailing reincarnation suffix in
@@ -417,6 +418,19 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		reincarnateSandboxImplementation,
 	); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
+	if _, fail := planSandboxProfileAccessForLaunch(
+		relaunch.Harness, reincarnateSandbox, effectiveSandbox,
+		reincarnateSandboxImplementation,
+		session.ModelTransportLaunchContext{Model: model, Cwd: cwd},
+		false,
+	); fail != nil {
+		detail := fail.Msg
+		if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
+			detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
+		}
+		writeError(w, fail.Status, fail.Kind, detail)
 		return
 	}
 	// Reincarnation refreshes the target's policy through the same resolver as

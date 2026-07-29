@@ -809,6 +809,17 @@ credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
 protected-root, reserved-variable, containment, and harness capability checks.
 
+The spawn dialog also contains an operator-only
+**Allow launch WITHOUT an enforced network sandbox** checkbox. It starts
+unchecked on every open and harness switch, is never saved in a spawn profile
+or launch preferences, and applies only when that fresh spawn's exact
+closed-network request cannot be enforced. Checking it opens outbound network
+access for that launch; it does not weaken enforceable filesystem or Unix-socket
+rules and cannot bypass other refusal classes. An authorized launch is recorded
+with a `not_enforced` network notice, so its Groups badge is a warning rather
+than a lock. Resume, reincarnate, and clone do not inherit the authorization.
+Direct `/v1` requests cannot exercise this dashboard-origin operator action.
+
 The editor has separate **Network** and **Unix sockets** fieldsets with
 unset/open/closed/list modes, editable list rows, inherited harness-global
 context, and audited insert-only presets. Its **Effective policy preview**

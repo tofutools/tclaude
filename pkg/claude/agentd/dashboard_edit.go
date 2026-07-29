@@ -1728,7 +1728,7 @@ func dashboardAddMember(w http.ResponseWriter, r *http.Request, g *db.AgentGroup
 // name). Delegates to handleGroupSpawn with a synthetic human peer so
 // the inner requirePermission passes.
 func dashboardSpawnInGroup(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	handleGroupSpawn(w, asDashboardHumanPeer(r), g)
+	handleGroupSpawn(w, asDashboardSpawnPeer(r), g)
 }
 
 func dashboardRemoveMember(w http.ResponseWriter, g *db.AgentGroup, convSelector string) {

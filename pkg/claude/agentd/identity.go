@@ -201,6 +201,23 @@ func asDashboardHumanPeer(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
 }
 
+// dashboardSpawnOriginKey is an unforgeable in-process marker added only after
+// the cookie-authenticated dashboard spawn route has accepted the request. It
+// distinguishes that supported UI surface from a raw /v1 request carrying an
+// operator token, which also classifies as human but must not author the
+// dashboard-only unenforced-sandbox override.
+type dashboardSpawnOriginKey struct{}
+
+func asDashboardSpawnPeer(r *http.Request) *http.Request {
+	r = asDashboardHumanPeer(r)
+	return r.WithContext(context.WithValue(r.Context(), dashboardSpawnOriginKey{}, true))
+}
+
+func isDashboardSpawnPeer(r *http.Request) bool {
+	allowed, _ := r.Context().Value(dashboardSpawnOriginKey{}).(bool)
+	return allowed && classify(peerFromContext(r.Context())) == classHuman
+}
+
 // withIdentity is the per-request middleware that resolves the connecting
 // peer's PID, walks the process tree to a coding-harness ancestor (claude,
 // codex, … or node), reads its per-pid session file or falls back to the

@@ -2422,6 +2422,34 @@ func resumeLaunchCmdWithStackedProof(
 	}
 	session.ApplyAutoCompactWindowEnv(h, autoCompactWindow, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
+	if effectiveSandbox != nil && !outerLayer &&
+		(effectiveProfile.Network != nil || effectiveProfile.UnixSockets != nil) {
+		// Standalone conversation/watch resume does not pass through agentd's
+		// lifecycle planner. Reassert the persisted access intent here with no
+		// fresh-spawn authorization: a degradation notice records what the
+		// predecessor ran under, but is never itself permission to widen the
+		// successor's network boundary.
+		axes, axesErr := sandboxpolicy.EffectiveAccessAxes(effectiveProfile)
+		if axesErr != nil {
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", axesErr)
+		}
+		launchOSSandbox := harness.ResolveLaunchOSSandbox(
+			h, sandboxMode, resumeSandboxChosenBy(convID), resumeCwd)
+		caps, capsErr := harness.ResolveAccessEnforcement(
+			h, implementation, axes, launchOSSandbox, sandboxMode)
+		if capsErr != nil {
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", capsErr)
+		}
+		_, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
+		if planErr != nil {
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", planErr)
+		}
+		effectiveProfile.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
+			effectiveProfile.AccessNotices, notices...,
+		)
+		effectiveSandbox.Effective.AccessNotices = append(
+			[]sandboxpolicy.AccessNotice(nil), effectiveProfile.AccessNotices...)
+	}
 	if outerLayer {
 		resolvedModel := harness.ResolvedModelTransport{}
 		plannedAxes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(

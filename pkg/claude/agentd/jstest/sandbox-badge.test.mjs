@@ -164,6 +164,20 @@ const CASES = [
     tooltip: 'Status: ON\nImplementation: CC\nProfile: None\nWarning: network access list was not enforced\nClick to temporarily disable',
   },
   {
+    name: 'an operator-authorized unenforced network boundary never earns a lock',
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write',
+      sandbox_profiles_recorded: true,
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network',
+        reason: 'operator_unenforced_launch_override', effect: 'not_enforced',
+        detail: 'the human operator used the dashboard launch override; closed network access is not enforced and outbound network access remains open',
+      }],
+    },
+    glyph: '⚠', danger: true,
+    tooltip: 'Status: NOT ENFORCED\nImplementation: Codex\nProfile: None\nWarning: the human operator used the dashboard launch override; closed network access is not enforced and outbound network access remains open',
+  },
+  {
     name: 'filtered launch gate rides the badge why-clause',
     state: {
       harness: 'claude', sandbox_mode: 'off', os_sandbox_state: 'on',
@@ -377,6 +391,43 @@ test('SandboxBadge gates the adjacent recorded-facts chevron without changing th
       'producer fidelity uses exact source+implementation equality, never substrings');
   } finally {
     await spoofed.unmount();
+  }
+});
+
+test('SandboxBadge discloses an operator-authorized unenforced boundary in details', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const { SandboxBadge } = await harness.importDashboardModule('js/groups-member-table.js');
+  const detail = 'the human operator used the dashboard launch override; closed network access is not enforced and outbound network access remains open';
+  const member = {
+    conv_id: 'override-details', online: true,
+    state: {
+      harness: 'codex', sandbox_mode: 'workspace-write',
+      sandbox_profiles_recorded: true,
+      sandbox_access_notices: [{
+        class: 'degradation', axis: 'network',
+        reason: 'operator_unenforced_launch_override', effect: 'not_enforced',
+        detail,
+      }],
+    },
+  };
+  const mounted = await harness.mount(
+    harness.html`<${SandboxBadge} member=${member} showDetails=${true} />`,
+  );
+  try {
+    const badge = mounted.container.querySelector('.sandbox-badge');
+    assert.equal(badge.textContent.trim(), '⚠');
+    assert.equal(badge.dataset.act, undefined,
+      'the warning is disclosure, not a temporary sandbox transition');
+    assert.match(badge.title, /^Status: NOT ENFORCED/);
+    const details = mounted.container.querySelector('.sandbox-details-chevron');
+    assert.ok(details);
+    assert.match(details.dataset.details, new RegExp(`Notice: ${detail}`));
+  } finally {
+    await mounted.unmount();
   }
 });
 

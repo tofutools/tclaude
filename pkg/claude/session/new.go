@@ -1151,7 +1151,21 @@ func runNew(params *NewParams) error {
 		if capsErr != nil {
 			return capsErr
 		}
-		rendered, notices, planErr := harness.PlanAccessEnforcement(axes, caps)
+		allowUnenforcedNetworkClosed := false
+		for _, notice := range launchSandbox.Effective.AccessNotices {
+			if notice.Class == sandboxpolicy.AccessNoticeClassDegradation &&
+				notice.Axis == "network" &&
+				notice.Reason == sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride &&
+				notice.Effect == sandboxpolicy.AccessNoticeEffectNotEnforced {
+				allowUnenforcedNetworkClosed = true
+				break
+			}
+		}
+		rendered, notices, planErr := harness.PlanAccessEnforcement(
+			axes, caps, harness.AccessEnforcementOptions{
+				AllowUnenforcedNetworkClosed: allowUnenforcedNetworkClosed,
+			},
+		)
 		if planErr != nil {
 			return planErr
 		}

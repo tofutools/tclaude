@@ -23,6 +23,14 @@ const (
 	SandboxCapabilitySocketAllowlist  = "unsupported_sandbox_profile_socket_allowlist"
 )
 
+// AccessEnforcementOptions contains launch-boundary decisions that may widen
+// the ordinary capability plan. Its only caller-settable field is deliberately
+// specific to the exact refusal it can suppress; it is not a generic bypass
+// for SandboxCapabilityError kinds.
+type AccessEnforcementOptions struct {
+	AllowUnenforcedNetworkClosed bool
+}
+
 // AccessEnforcement is an opaque launch-only capability token. Its fields stay
 // private so callers cannot fabricate one or convert the display-only
 // PredictedAccessEnforcement into it; ResolveAccessEnforcement is the only
@@ -576,8 +584,8 @@ func predictNetworkAxis(
 			return predictedPartial(tier, caps.Mechanism,
 				"closed network access is only partially enforced; disclosed traffic remains reachable")
 		default:
-			return predictedRefused(tier, fmt.Sprintf(
-				"%s (%s scope) cannot enforce closed network access", caps.Mechanism, caps.Scope))
+			return predictedRefused(tier, closedNetworkRefusal(
+				caps.Mechanism, caps.Scope))
 		}
 	case sandboxpolicy.AccessModeList:
 		if caps.NetworkList == EnforceNone {
@@ -758,6 +766,7 @@ func networkRulesHavePorts(rules sandboxpolicy.NetworkRules) bool {
 func PlanAccessEnforcement(
 	axes sandboxpolicy.ResolvedAxes,
 	caps AccessEnforcement,
+	options ...AccessEnforcementOptions,
 ) (sandboxpolicy.ResolvedAxes, []sandboxpolicy.AccessNotice, error) {
 	if strings.TrimSpace(caps.mechanism) == "" {
 		return sandboxpolicy.ResolvedAxes{}, nil, fmt.Errorf(
@@ -767,14 +776,24 @@ func PlanAccessEnforcement(
 	rendered := cloneResolvedAxes(axes)
 	notices := []sandboxpolicy.AccessNotice{}
 
+	allowUnenforcedNetworkClosed := len(options) > 0 &&
+		options[0].AllowUnenforcedNetworkClosed
 	if axes.Network.Mode == sandboxpolicy.AccessModeClosed && caps.networkClosed == EnforceNone {
-		return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
-			Kind: SandboxCapabilityNetworkAllowlist,
-			Message: fmt.Sprintf(
-				"%s (%s scope) cannot enforce closed network access",
-				caps.mechanism, caps.scope,
-			),
+		if !allowUnenforcedNetworkClosed {
+			return sandboxpolicy.ResolvedAxes{}, nil, &SandboxCapabilityError{
+				Kind:    SandboxCapabilityNetworkAllowlist,
+				Message: closedNetworkRefusal(caps.mechanism, caps.scope),
+			}
 		}
+		rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
+		notices = append(notices, degradationNotice(
+			"network",
+			sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
+			sandboxpolicy.AccessNoticeEffectNotEnforced,
+			caps,
+			"the human operator used the dashboard launch override; closed network access is not enforced and outbound network access remains open",
+			nil,
+		))
 	}
 	if axes.Network.Mode == sandboxpolicy.AccessModeClosed && caps.networkClosed == EnforcePartial {
 		notices = append(notices, degradationNotice(
@@ -937,6 +956,13 @@ func PlanAccessEnforcement(
 		}
 	}
 	return rendered, notices, nil
+}
+
+func closedNetworkRefusal(mechanism, scope string) string {
+	return fmt.Sprintf(
+		"%s (%s scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog",
+		mechanism, scope,
+	)
 }
 
 func formatEntryIndices(indices []int) string {
