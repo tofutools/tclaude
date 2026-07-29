@@ -40,6 +40,8 @@ const (
 	openCodeLayerSmokeTclaudeEnv  = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	openCodeLayerSmokeSessionID   = "opencode-layer-smoke"
 	openCodeLayerSmokeAttachProbe = 5 * time.Second
+	openCodeLayerSmokeShellRetry  = 250 * time.Millisecond
+	openCodeLayerSmokeShellWait   = 60 * time.Second
 	openCodeFilteredToolHelperEnv = "TCLAUDE_OPENCODE_FILTERED_TOOL_HELPER"
 )
 
@@ -917,19 +919,9 @@ func runOpenCodeLayerSmokeShell(
 	command string,
 ) string {
 	t.Helper()
-	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
-		"/shell?directory=" + url.QueryEscape(runtime.Cwd)
-	request, err := openCodeRequest(http.MethodPost, endpoint, runtime, map[string]any{
-		"agent":   "build",
-		"command": command,
-	})
+	body, err := requestOpenCodeLayerSmokeShell(
+		runtime, command, openCodeLayerSmokeShellWait, openCodeLayerSmokeShellRetry)
 	require.NoError(t, err)
-	response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
-	require.NoError(t, err)
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	require.NoError(t, err)
-	require.Equalf(t, http.StatusOK, response.StatusCode, "OpenCode shell response: %s", body)
 	var result struct {
 		Parts []struct {
 			Type  string `json:"type"`
@@ -948,6 +940,190 @@ func runOpenCodeLayerSmokeShell(
 	}
 	t.Fatalf("OpenCode shell response contained no tool part: %s", body)
 	return ""
+}
+
+func requestOpenCodeLayerSmokeShell(
+	runtime db.OpenCodeRuntime,
+	command string,
+	timeout time.Duration,
+	retryInterval time.Duration,
+) ([]byte, error) {
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
+		"/shell?directory=" + url.QueryEscape(runtime.Cwd)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	// The preceding model-request assertion proves prompt processing started,
+	// not that OpenCode has released the session for the shell request.
+	var lastBusyBody []byte
+	for {
+		request, err := openCodeRequest(http.MethodPost, endpoint, runtime, map[string]any{
+			"agent":   "build",
+			"command": command,
+		})
+		if err != nil {
+			return nil, err
+		}
+		request = request.WithContext(ctx)
+		response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
+		if err != nil {
+			if ctx.Err() != nil && lastBusyBody != nil {
+				return nil, fmt.Errorf(
+					"OpenCode shell remained busy for %s; last response: %s",
+					timeout, lastBusyBody)
+			}
+			return nil, err
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+		_ = response.Body.Close()
+		if readErr != nil {
+			if ctx.Err() != nil && lastBusyBody != nil {
+				return nil, fmt.Errorf(
+					"OpenCode shell remained busy for %s; last response: %s",
+					timeout, lastBusyBody)
+			}
+			return nil, readErr
+		}
+		if response.StatusCode == http.StatusOK {
+			if ctx.Err() != nil {
+				if lastBusyBody != nil {
+					return nil, fmt.Errorf(
+						"OpenCode shell remained busy for %s; last response: %s",
+						timeout, lastBusyBody)
+				}
+				return nil, ctx.Err()
+			}
+			return body, nil
+		}
+		if response.StatusCode != http.StatusConflict ||
+			!openCodeLayerSmokeSessionBusy(body) {
+			return nil, fmt.Errorf(
+				"OpenCode shell response: status %d: %s", response.StatusCode, body)
+		}
+		lastBusyBody = body
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, fmt.Errorf(
+				"OpenCode shell remained busy for %s; last response: %s",
+				timeout, lastBusyBody)
+		}
+	}
+}
+
+func openCodeLayerSmokeSessionBusy(body []byte) bool {
+	var failure struct {
+		Tag string `json:"_tag"`
+	}
+	return json.Unmarshal(body, &failure) == nil && failure.Tag == "SessionBusyError"
+}
+
+func TestRequestOpenCodeLayerSmokeShellRetriesSessionBusy(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		if requests.Add(1) <= 2 {
+			writer.WriteHeader(http.StatusConflict)
+			_, _ = writer.Write([]byte(`{"_tag":"SessionBusyError","message":"busy"}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"parts":[{"type":"tool","state":{"status":"completed","output":"ok"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	body, err := requestOpenCodeLayerSmokeShell(db.OpenCodeRuntime{
+		ConvID:    "conv",
+		ServerURL: server.URL,
+		Password:  "password",
+		PID:       os.Getpid(),
+		Cwd:       t.TempDir(),
+	}, "true", time.Second, time.Millisecond)
+	require.NoError(t, err)
+	assert.JSONEq(t,
+		`{"parts":[{"type":"tool","state":{"status":"completed","output":"ok"}}]}`,
+		string(body))
+	assert.Equal(t, int32(3), requests.Load())
+}
+
+func TestRequestOpenCodeLayerSmokeShellBusyTimeoutIncludesLastBody(t *testing.T) {
+	const busyBody = `{"_tag":"SessionBusyError","message":"still busy"}`
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(
+		writer http.ResponseWriter,
+		_ *http.Request,
+	) {
+		if requests.Add(1) == 1 {
+			writer.WriteHeader(http.StatusConflict)
+			_, _ = writer.Write([]byte(busyBody))
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+		_, _ = writer.Write([]byte(`{"parts":[]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := requestOpenCodeLayerSmokeShell(db.OpenCodeRuntime{
+		ConvID:    "conv",
+		ServerURL: server.URL,
+		Password:  "password",
+		PID:       os.Getpid(),
+		Cwd:       t.TempDir(),
+	}, "true", 10*time.Millisecond, time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), busyBody)
+	assert.Equal(t, int32(2), requests.Load())
+}
+
+func TestRequestOpenCodeLayerSmokeShellRejectsOtherStatusesImmediately(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{
+			name:   "different conflict",
+			status: http.StatusConflict,
+			body:   `{"_tag":"OtherError","message":"not retryable"}`,
+		},
+		{
+			name:   "server error",
+			status: http.StatusInternalServerError,
+			body:   `{"_tag":"SessionBusyError","message":"wrong status"}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(
+				writer http.ResponseWriter,
+				_ *http.Request,
+			) {
+				requests.Add(1)
+				writer.WriteHeader(test.status)
+				_, _ = writer.Write([]byte(test.body))
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := requestOpenCodeLayerSmokeShell(db.OpenCodeRuntime{
+				ConvID:    "conv",
+				ServerURL: server.URL,
+				Password:  "password",
+				PID:       os.Getpid(),
+				Cwd:       t.TempDir(),
+			}, "true", time.Second, time.Millisecond)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), strconv.Itoa(test.status))
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
 }
 
 func openCodeLayerSmokeProcessTree(rootPID int) []int {
