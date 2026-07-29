@@ -3,6 +3,7 @@ package agentd
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -292,6 +293,14 @@ func jobRowMatches(r dashboardJobRow, q string) bool {
 			o.Target.Kind, o.Target.Agent, o.Target.Conv,
 			o.Target.GroupName, o.Target.Role,
 			o.Trigger.Event, o.Trigger.Label, o.Timing, o.Cadence}
+		if o.Target.GroupID > 0 {
+			groupID := strconv.FormatInt(o.Target.GroupID, 10)
+			hay = append(hay, groupID, "#"+groupID)
+		}
+		for _, group := range o.AdditionalGroups {
+			groupID := strconv.FormatInt(group.GroupID, 10)
+			hay = append(hay, group.GroupName, groupID, "#"+groupID)
+		}
 		if o.Capability != nil {
 			hay = append(hay, string(o.Capability.Status),
 				o.Capability.Transport, o.Capability.Detail)
