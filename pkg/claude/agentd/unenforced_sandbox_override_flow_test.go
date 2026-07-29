@@ -72,10 +72,12 @@ func TestDashboardClosedNetworkOverrideIsFreshSpawnOnlyAndDisclosed(t *testing.T
 		t, http.MethodPost, "/api/groups/crew/spawn", dashboardBody))
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Body.String())
 	var launched struct {
-		ConvID string `json:"conv_id"`
+		ConvID      string `json:"conv_id"`
+		TmuxSession string `json:"tmux_session"`
 	}
 	testharness.DecodeJSON(t, spawn, &launched)
 	require.NotEmpty(t, launched.ConvID)
+	require.NotEmpty(t, launched.TmuxSession)
 
 	snapshot, err := db.AgentEffectiveSandboxConfigForConv(launched.ConvID)
 	require.NoError(t, err)
@@ -127,6 +129,26 @@ func TestDashboardClosedNetworkOverrideIsFreshSpawnOnlyAndDisclosed(t *testing.T
 		"snapshot body=%s", snapshotResponse.Body.String())
 	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
 		rendered.Groups[0].Members[0].State.Notices[0].Reason)
+
+	clone := f.AsHuman().CloneWith(launched.ConvID, map[string]any{
+		"no_copy_conv": true,
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, clone.Code)
+	assert.Contains(t, string(clone.Raw), closedNetworkOverrideRefusal,
+		"clone must not treat the predecessor's disclosure notice as authorization")
+
+	reincarnate := f.AsHuman().ReincarnateWith(launched.ConvID, map[string]any{
+		"follow_up": "continue",
+	})
+	require.Equal(t, http.StatusUnprocessableEntity, reincarnate.Code)
+	assert.Contains(t, string(reincarnate.Raw), closedNetworkOverrideRefusal,
+		"reincarnation must require a new dashboard authorization")
+
+	f.MarkOffline(launched.TmuxSession)
+	resume := f.AsHuman().Resume(launched.ConvID)
+	assert.Equal(t, "error", resume.Action)
+	assert.Contains(t, resume.Detail, closedNetworkOverrideRefusal,
+		"resume must require a new dashboard authorization")
 }
 
 func TestUnenforcedSandboxOverrideRejectsEveryRawV1Caller(t *testing.T) {
