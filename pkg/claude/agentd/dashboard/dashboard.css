@@ -4235,10 +4235,9 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 
 /* ---- Sandbox-profile structured editors (filesystem / environment tables) --
    Each lives in a .cron-create-row whose field is a vertical stack of rows plus
-   an "add" button. The row inputs/selects reuse the base .cron-create-row
-   input/select chrome (dark bg, border, focus ring) via descendant match; only
-   layout + the non-full-width controls (access select, Browse/✕ buttons) need
-   overrides here. */
+   an "add" button. Row inputs/selects reuse the base .cron-create-row chrome;
+   segmented state controls, layouts, and inline Browse/✕ buttons are scoped
+   below. */
 .sbx-section {
   border: 1px solid #30363d;
   border-radius: .35rem;
@@ -4462,8 +4461,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   min-width: 0;
   overflow: hidden;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option {
+.sbx-segmented-control > .sbx-segmented-option {
   align-self: stretch;
   background: #0d1117;
   border: 0;
@@ -4476,39 +4474,32 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   min-width: 0;
   padding: 0 .55rem;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:first-child,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:first-child {
+.sbx-segmented-control > .sbx-segmented-option:first-child {
   border-left: 0;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:hover,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:hover {
+.sbx-segmented-control > .sbx-segmented-option:hover {
   background: #161b22;
   color: #c9d1d9;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-off,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-off {
+.sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-off {
   background: #21262d;
   color: #c9d1d9;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-allow,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-allow {
+.sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-allow {
   background: rgba(46, 160, 67, .16);
   color: #3fb950;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-deny,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-deny {
+.sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-deny {
   background: rgba(248, 81, 73, .16);
   color: #ff7b72;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:focus-visible,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:focus-visible {
+.sbx-segmented-control > .sbx-segmented-option:focus-visible {
   box-shadow: inset 0 0 0 2px #58a6ff;
   outline: 0;
   position: relative;
   z-index: 1;
 }
-.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:disabled,
-.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:disabled {
+.sbx-segmented-control > .sbx-segmented-option:disabled {
   cursor: default;
 }
 .sbx-network-redundant {
@@ -4574,7 +4565,12 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   line-height: 1.35;
 }
 .sbx-socket-row {
-  grid-template-columns: 6rem minmax(14rem, 1fr) auto;
+  grid-template-columns: 6.75rem minmax(12rem, 1fr) auto;
+}
+.sbx-socket-selector > .sbx-segmented-option.is-selected.sbx-state-path,
+.sbx-socket-selector > .sbx-segmented-option.is-selected.sbx-state-path_glob {
+  background: #21262d;
+  color: #c9d1d9;
 }
 .sbx-inline-check {
   white-space: nowrap;
@@ -4764,13 +4760,41 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-rows { display: flex; flex-direction: column; gap: 6px; }
 .sbx-rows:empty { display: none; }
 .sbx-row { display: flex; gap: 6px; align-items: stretch; }
-/* The access dropdown is a fixed narrow control, not a flex:1 field. Leave
-   enough room for the label plus the native select arrow and inline padding;
-   5.5em clipped even the regular "write" label in Chromium. The same width
-   also fits wizard mode's longer "inscribe" label. */
+/* Immutable inherited-access badges retain the old narrow-column footprint;
+   authored rows use the wider three-state grid below. */
 .sbx-row .sbx-access { flex: 0 0 7em; }
 .sbx-row .sbx-inc-name {
-  flex: 1; min-width: 0;
+  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.sbx-filesystem-row {
+  display: grid;
+  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto;
+  min-width: 0;
+}
+.sbx-filesystem-row > * { min-width: 0; }
+.sbx-filesystem-access > .sbx-segmented-option.is-selected.sbx-state-read {
+  background: rgba(56, 139, 253, .16);
+  color: #58a6ff;
+}
+.sbx-filesystem-access > .sbx-segmented-option.is-selected.sbx-state-write {
+  background: rgba(46, 160, 67, .16);
+  color: #3fb950;
+}
+.sbx-filesystem-access > .sbx-segmented-option.is-selected.sbx-state-deny {
+  background: rgba(248, 81, 73, .16);
+  color: #ff7b72;
+}
+.sbx-include-row {
+  max-width: 100%;
+  width: max-content;
+}
+.sbx-environment-row {
+  display: grid;
+  grid-template-columns: 14rem minmax(10rem, 1fr) auto;
+  min-width: 0;
+}
+.sbx-environment-row > input {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Agent-owned directory rows are a single variable-name input plus the ✕. */
@@ -11097,13 +11121,20 @@ body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-se
   background: #241b3d;
   color: #f3e6c0;
 }
-body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-off {
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-off,
+body.wizard #sandbox-profile-editor-modal .sbx-socket-selector > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-path,
+body.wizard #sandbox-profile-editor-modal .sbx-socket-selector > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-path_glob {
   background: #241b3d;
   color: #f3e6c0;
 }
-body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-allow {
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-allow,
+body.wizard #sandbox-profile-editor-modal .sbx-filesystem-access > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-write {
   background: rgba(46, 160, 67, .2);
   color: #56d364;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-filesystem-access > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-read {
+  background: rgba(56, 139, 253, .2);
+  color: #79c0ff;
 }
 body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-deny {
   background: rgba(248, 81, 73, .2);
