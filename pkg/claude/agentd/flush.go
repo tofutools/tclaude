@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -306,16 +307,22 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
 	}
+	var (
+		standingOrderOrigin *db.StandingOrderAgentMessageOrigin
+		err                 error
+	)
+	if strings.HasPrefix(m.Subject, "[standing-order:") {
+		standingOrderOrigin, err = db.AgentMessageStandingOrderOrigin(m.ID)
+		if err != nil {
+			slog.Warn("standing-order nudge origin lookup failed; holding message",
+				"error", err, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+	}
 	// Keep this name-keyed until TCL-675 defines the coherent managed-server
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
 	if sess.Harness == harness.OpenCodeName {
-		standingOrderOrigin, err := db.AgentMessageStandingOrderOrigin(m.ID)
-		if err != nil {
-			slog.Warn("OpenCode nudge origin lookup failed; holding message",
-				"error", err, "conv", toConv, "msg_id", m.ID)
-			return false
-		}
 		if standingOrderOrigin != nil {
 			// Do not enqueue behind a known-active turn. Error is quiescent too:
 			// the failed turn is over and OpenCode is back at its prompt. The
@@ -338,12 +345,25 @@ func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
 		}
 		return true
 	}
+	if standingOrderOrigin != nil {
+		if err := db.ArmStandingOrderTurnOrigin(
+			m.ToAgent, toConv, m.ID, standingOrderOrigin.OpenCodeMessageID,
+			time.Now(), standingOrderOriginPendingTTL); err != nil {
+			slog.Warn("standing-order hook turn origin arm failed; holding message",
+				"error", err, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+	}
 	// This recheck belongs to the exact row selected for injection: the
 	// pre-claim gate may have observed a different live session, or this pane
 	// may have entered a human-input dialog meanwhile. A narrow TOCTOU window
 	// remains while we wait for the pane lock; closing that would require the
 	// injection primitive itself to understand persisted session status.
 	if err := injectBracketedTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
+		if standingOrderOrigin != nil {
+			_ = db.CancelPendingStandingOrderTurnOrigin(
+				m.ToAgent, toConv, m.ID, standingOrderOrigin.OpenCodeMessageID)
+		}
 		slog.Warn("nudge bracket failed", "error", err, "tmux", sess.TmuxSession)
 		return false
 	}

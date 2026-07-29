@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -18,6 +19,98 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
+
+func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetForTest()
+	previousTmux := clcommon.Default
+	clcommon.Default = &commandRecordingTmux{}
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+
+	const sessionID = "spwn-hook-standing-origin"
+	const convID = "conv-hook-standing-origin"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, TmuxSession: sessionID, ConvID: convID,
+		Harness: harness.DefaultName, Status: session.StatusIdle,
+	}))
+	groupID, err := db.CreateAgentGroup("hook-origin-team", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
+		GroupID: groupID, ConvID: convID,
+	}))
+	for name, event := range map[string]string{
+		"prompt-loop": db.StandingTriggerUserPrompt,
+		"tool-loop":   db.StandingTriggerToolBefore,
+	} {
+		_, err = db.InsertStandingOrder(&db.StandingOrder{
+			Name: name, TargetKind: db.StandingTargetGroup, GroupID: groupID,
+			Summary:      "must not trigger from the reminder turn",
+			TriggerEvent: event, Timing: db.StandingTimingSameContinuation,
+			Cadence: db.StandingCadenceAlways, Enabled: true,
+		})
+		require.NoError(t, err)
+	}
+	messageID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
+		ToConv: convID, Subject: "[standing-order:trusted-hook]",
+		Body: "trusted hook reminder",
+	}, 11, 3)
+	require.NoError(t, err)
+	message, err := db.GetAgentMessage(messageID)
+	require.NoError(t, err)
+	require.NotNil(t, message)
+	nudge := messageNudgeText(messageID)
+
+	require.True(t, sendNudgeBracket(convID, message, nudge))
+	origin, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, origin)
+	assert.Equal(t, db.StandingOrderTurnOriginPending, origin.State)
+
+	var output bytes.Buffer
+	require.NoError(t, session.DispatchHookEvent(context.Background(),
+		session.HookCallbackInput{
+			HookEventName: "UserPromptSubmit", ConvID: convID, Prompt: nudge,
+		}, sessionID, session.LocalHookAmbient(), &output))
+	assert.Empty(t, output.String())
+	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, origin)
+	assert.Equal(t, db.StandingOrderTurnOriginActive, origin.State)
+
+	require.NoError(t, session.DispatchHookEvent(context.Background(),
+		session.HookCallbackInput{
+			HookEventName: "PreToolUse", ConvID: convID, ToolName: "Bash",
+		}, sessionID, session.LocalHookAmbient(), &output))
+	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, origin,
+		"tool hooks in the reminder turn retain origin suppression")
+
+	require.NoError(t, session.DispatchHookEvent(context.Background(),
+		session.HookCallbackInput{
+			HookEventName: "Stop", ConvID: convID,
+		}, sessionID, session.LocalHookAmbient(), &output))
+	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	assert.Nil(t, origin, "the turn boundary clears suppression")
+
+	require.True(t, sendNudgeBracket(convID, message, nudge))
+	output.Reset()
+	require.NoError(t, session.DispatchHookEvent(context.Background(),
+		session.HookCallbackInput{
+			HookEventName: "UserPromptSubmit", ConvID: convID,
+			Prompt: "a real human prompt after the injected hook was lost",
+		}, sessionID, session.LocalHookAmbient(), &output))
+	assert.Contains(t, output.String(), "must not trigger from the reminder turn",
+		"a pending marker cannot steal the next non-matching human prompt")
+	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	require.NoError(t, err)
+	assert.Nil(t, origin)
+}
 
 func TestOpenCodeNudgeArmsOnlyTrustedStandingOrderMessages(t *testing.T) {
 	home := t.TempDir()

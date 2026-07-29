@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,9 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		return HookResponse{}
 	}
 	if len(orders) == 0 {
+		return HookResponse{}
+	}
+	if trustedStandingOrderPrompt(input.Prompt, ev.AgentID, ev.ConvID) {
 		return HookResponse{}
 	}
 
@@ -173,6 +177,9 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	if err != nil || len(orders) == 0 {
 		return nil, noop
 	}
+	if trustedStandingOrderPrompt(input.Prompt, ev.AgentID, ev.ConvID) {
+		return nil, noop
+	}
 
 	// Same scoped serialization as the direct path, so the two cannot both
 	// satisfy one rate-controlled order.
@@ -241,6 +248,120 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 		return nil, noop
 	}
 	return pending, locks.release
+}
+
+// trustedStandingOrderPrompt recognizes the server-authored nudge shape used
+// by Claude and Codex message delivery. OpenCode carries stronger turn-scoped
+// evidence in HookCallbackInput.StandingOrderOrigin; hook-based harnesses
+// expose the submitted prompt instead, so correlate its embedded message ID
+// back to trusted DB metadata and the same stable recipient agent.
+//
+// The subject and body are deliberately not trusted. A peer can write text
+// that looks like a standing order, and even copy this prefix; only a message
+// row minted by InsertStandingOrderAgentMessage/atomic debounce consume and
+// addressed to this actor suppresses recursive prompt/tool automations.
+func trustedStandingOrderPrompt(prompt, targetAgent, targetConv string) bool {
+	return trustedStandingOrderPromptOrigin(prompt, targetAgent, targetConv) != nil
+}
+
+func trustedStandingOrderPromptOrigin(
+	prompt, targetAgent, targetConv string,
+) *db.StandingOrderAgentMessageOrigin {
+	const prefix = "[system: new agent message #"
+	if !strings.HasPrefix(prompt, prefix) {
+		return nil
+	}
+	rest := strings.TrimPrefix(prompt, prefix)
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 || (end < len(rest) && rest[end] != ' ' && rest[end] != ';') {
+		return nil
+	}
+	messageID, err := strconv.ParseInt(rest[:end], 10, 64)
+	if err != nil || messageID <= 0 {
+		return nil
+	}
+	message, err := db.GetAgentMessage(messageID)
+	if err != nil || message == nil {
+		return nil
+	}
+	if targetAgent != "" {
+		if message.ToAgent != targetAgent {
+			return nil
+		}
+	} else if message.ToConv != targetConv {
+		return nil
+	}
+	origin, err := db.AgentMessageStandingOrderOrigin(messageID)
+	if err != nil {
+		return nil
+	}
+	return origin
+}
+
+// applyStandingOrderTurnOrigin carries a trusted queued reminder's origin
+// across the whole Claude/Codex turn. UserPromptSubmit activates the durable
+// marker armed by agentd before pane injection; later tool hooks read it, and
+// the terminal Stop boundary clears it. Pending is suppressed too so a lost
+// prompt hook cannot let the reminder's tool calls recursively trigger orders.
+func applyStandingOrderTurnOrigin(
+	input HookCallbackInput,
+	envSessionID string,
+) HookCallbackInput {
+	state, err := loadStandingOrderSession(envSessionID)
+	if err != nil || state == nil || state.ConvID == "" ||
+		(input.ConvID != "" && input.ConvID != state.ConvID) {
+		return input
+	}
+	agentID, err := db.AgentIDForConv(state.ConvID)
+	if err != nil || agentID == "" {
+		return input
+	}
+	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
+		if err := clearStandingOrderTurnOrigin(agentID, state.ConvID); err != nil {
+			slog.Warn("standing orders: failed to complete hook turn origin",
+				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+		return input
+	}
+	if input.HookEventName == "UserPromptSubmit" {
+		origin := trustedStandingOrderPromptOrigin(
+			input.Prompt, agentID, state.ConvID)
+		if origin == nil {
+			// A pending injection whose prompt hook never arrived must not
+			// claim the next real human turn. An active marker with a lost Stop
+			// is healed by the same authoritative new-prompt boundary.
+			_ = clearStandingOrderTurnOrigin(agentID, state.ConvID)
+			return input
+		}
+		_, err := db.ActivateStandingOrderTurnOrigin(
+			agentID, state.ConvID, origin.OpenCodeMessageID,
+			time.Now(), 24*time.Hour)
+		if err != nil {
+			slog.Warn("standing orders: failed to activate hook turn origin",
+				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+	}
+	active, err := db.GetStandingOrderTurnOrigin(
+		agentID, state.ConvID, time.Now())
+	if err == nil && active != nil {
+		input.StandingOrderOrigin = true
+	}
+	return input
+}
+
+func clearStandingOrderTurnOrigin(agentID, convID string) error {
+	current, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	if err != nil || current == nil {
+		return err
+	}
+	if current.State == db.StandingOrderTurnOriginPending {
+		return db.CancelPendingStandingOrderTurnOrigin(
+			agentID, convID, current.MessageID, current.OpenCodeMessageID)
+	}
+	return db.CompleteStandingOrderTurnOrigin(agentID, convID)
 }
 
 // standingOrderRateCandidates performs only stateless evaluation and returns

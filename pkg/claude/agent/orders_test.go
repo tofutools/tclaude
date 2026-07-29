@@ -77,12 +77,28 @@ func TestOrdersShowRendersCapabilityMatrix(t *testing.T) {
 	assert.Contains(t, got, "Push the PR early")
 	assert.Contains(t, got, "Author:    operator")
 	assert.Contains(t, got, "Cooldown:  1m30s per stable recipient agent")
+	assert.Contains(t, got, "Debounce:  off")
 	// The matrix is the point: an operator must be able to see that this
 	// order does not reach OpenCode at all before they rely on it.
 	assert.Contains(t, got, harness.DefaultName)
 	assert.Contains(t, got, harness.OpenCodeName)
 	assert.Contains(t, got, "unsupported")
 	assert.Contains(t, got, "(none recorded)")
+}
+
+func TestOrdersShowRendersDebounceMessageTransport(t *testing.T) {
+	setupTestDB(t)
+	o := seedOrder(t, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.DebounceSeconds = 5
+	})
+
+	var out, errOut bytes.Buffer
+	require.Equal(t, rcOK, runOrdersShow(&out, &errOut, o.Name))
+	got := out.String()
+	assert.Contains(t, got, "Debounce:  5s trailing edge")
+	assert.Contains(t, got, "claude     supported    via message")
+	assert.Contains(t, got, "codex      supported    via message")
 }
 
 func TestOrdersShowUnknownOrder(t *testing.T) {

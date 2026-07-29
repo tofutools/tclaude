@@ -76,7 +76,13 @@ func queueStandingOrderMessage(
 			message, p.OrderID, p.OrderRevision)
 	} else {
 		_, err = db.ConsumeStandingDebounceIntoAgentMessage(
-			debounce, message, p.OrderID, p.OrderRevision)
+			debounce, message, &db.StandingDelivery{
+				OrderID: p.OrderID, OrderRevision: p.OrderRevision,
+				TargetConv: p.TargetConv, TargetAgent: p.TargetAgent,
+				Epoch: p.Epoch, Outcome: db.StandingOutcomeDelivered,
+				Transport: db.StandingTransportMessage,
+				Harness:   p.Harness, Detail: p.Detail,
+			})
 	}
 	if err == nil {
 		enqueueDeliveryForConv(p.TargetConv)
@@ -155,7 +161,7 @@ func fireStandingOrderDebounce(orderID int64, targetAgent string, now time.Time)
 		return
 	}
 	currentConv := recipient.CurrentConvID
-	inScope, scopeErr := standingDebounceInScope(order, targetAgent, currentConv)
+	inScope, scopeErr := standingDebounceInScope(order, targetAgent)
 	if scopeErr != nil {
 		return
 	}
@@ -227,28 +233,27 @@ func fireStandingOrderDebounce(orderID int64, targetAgent string, now time.Time)
 			"order", order.Name, "agent", targetAgent, "error", err)
 		return
 	}
-	session.RecordStandingMessageDelivery(message, nil)
+	// The successful ledger row committed atomically with the durable message
+	// and pending-edge delete. Recording it afterward would leave a crash gap
+	// in which cadence/cooldown could schedule a duplicate.
 }
 
 func standingDebounceInScope(
 	order *db.StandingOrder,
-	targetAgent, currentConv string,
+	targetAgent string,
 ) (bool, error) {
 	if !order.IsGroupTarget() {
 		return order.TargetAgent == targetAgent, nil
 	}
-	members, err := db.ListAgentGroupMembers(order.GroupID)
+	member, err := db.FindAgentMemberInGroup(order.GroupID, targetAgent)
 	if err != nil {
 		return false, err
 	}
-	for _, member := range members {
-		if member.ConvID == currentConv &&
-			(order.TargetRole == "" ||
-				strings.EqualFold(order.TargetRole, member.Role)) {
-			return true, nil
-		}
+	if member == nil {
+		return false, nil
 	}
-	return false, nil
+	return order.TargetRole == "" ||
+		strings.EqualFold(order.TargetRole, member.Role), nil
 }
 
 func recordStandingDebounceOutcome(

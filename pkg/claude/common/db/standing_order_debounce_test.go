@@ -91,18 +91,27 @@ func TestStandingDebounceAtomicConsumeRejectsStaleCandidate(t *testing.T) {
 		ToConv: "conv_target", Subject: "[standing-order:debounced-consume]",
 		Body: "durable reminder", OperatorAuthored: true,
 	}
+	delivery := &StandingDelivery{
+		OrderID: orderID, OrderRevision: 1,
+		TargetConv: "conv_target", TargetAgent: "agt_target",
+		Outcome: StandingOutcomeDelivered, Transport: StandingTransportMessage,
+		Harness: "opencode", Detail: "quiet edge",
+	}
 	_, err = ConsumeStandingDebounceIntoAgentMessage(
-		pending, message, orderID, pending.OrderRevision)
+		pending, message, delivery)
 	require.Error(t, err, "a retriggered candidate cannot be consumed by a stale tick")
 	queued, err := ListUndeliveredAgentMessagesFor("conv_target")
 	require.NoError(t, err)
 	assert.Empty(t, queued, "message insertion rolls back with the stale delete")
+	latest, err := LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	assert.Nil(t, latest, "delivery ledger insertion rolls back with the stale delete")
 
 	current, err := GetDueStandingDebounce(orderID, "agt_target", base.Add(time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, current)
 	messageID, err := ConsumeStandingDebounceIntoAgentMessage(
-		current, message, orderID, current.OrderRevision)
+		current, message, delivery)
 	require.NoError(t, err)
 	assert.Positive(t, messageID)
 
@@ -118,6 +127,11 @@ func TestStandingDebounceAtomicConsumeRejectsStaleCandidate(t *testing.T) {
 	assert.Equal(t, orderID, origin.OrderID)
 	assert.Equal(t, int64(1), origin.OrderRevision)
 	assert.True(t, IsOperatorAgentMessage(queued[0].ID))
+	latest, err = LatestStandingDelivery(orderID)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	assert.Equal(t, StandingOutcomeDelivered, latest.Outcome)
+	assert.Equal(t, "agt_target", latest.TargetAgent)
 }
 
 func mustDueStandingDebounces(t *testing.T, now time.Time) []*StandingDebounce {

@@ -149,10 +149,14 @@ func DeleteStandingDebounce(orderID int64, targetAgent string) error {
 func ConsumeStandingDebounceIntoAgentMessage(
 	p *StandingDebounce,
 	m *AgentMessage,
-	orderID, orderRevision int64,
+	delivery *StandingDelivery,
 ) (int64, error) {
-	if p == nil || m == nil || orderID != p.OrderID ||
-		orderRevision != p.OrderRevision {
+	if p == nil || m == nil || delivery == nil ||
+		delivery.OrderID != p.OrderID ||
+		delivery.OrderRevision != p.OrderRevision ||
+		delivery.TargetAgent != p.TargetAgent ||
+		delivery.Outcome != StandingOutcomeDelivered ||
+		delivery.Transport != StandingTransportMessage {
 		return 0, fmt.Errorf("%w: invalid debounce consume", ErrStandingOrderInvalid)
 	}
 	openCodeMessageID, err := newStandingOrderOpenCodeMessageID()
@@ -184,7 +188,18 @@ func ConsumeStandingDebounceIntoAgentMessage(
 		INSERT INTO agent_standing_order_messages
 			(message_id, order_id, order_revision, opencode_message_id)
 		VALUES (?, ?, ?, ?)`,
-		messageID, orderID, orderRevision, openCodeMessageID); err != nil {
+		messageID, delivery.OrderID, delivery.OrderRevision,
+		openCodeMessageID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO agent_standing_order_deliveries
+		(order_id, order_revision, target_conv, target_agent, epoch,
+		 outcome, transport, harness, detail, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		delivery.OrderID, delivery.OrderRevision,
+		delivery.TargetConv, delivery.TargetAgent, delivery.Epoch,
+		delivery.Outcome, delivery.Transport, delivery.Harness, delivery.Detail,
+		formatStandingTime(time.Now())); err != nil {
 		return 0, err
 	}
 	res, err := tx.Exec(`DELETE FROM agent_standing_order_debounce

@@ -1926,14 +1926,28 @@ func SharedGroupsForConvs(a, b string) ([]*AgentGroup, error) {
 // FindMemberInGroup returns the member entry for (group, conv) or nil if not
 // present.
 func FindMemberInGroup(groupID int64, convID string) (*AgentGroupMember, error) {
-	db, err := Open()
-	if err != nil {
-		return nil, err
-	}
 	agentID, err := AgentIDForConv(convID)
 	if err != nil {
 		return nil, err
 	}
+	if agentID == "" {
+		return nil, nil
+	}
+	return FindAgentMemberInGroup(groupID, agentID)
+}
+
+// FindAgentMemberInGroup reads membership by its durable actor key. Use this
+// for delivery revalidation: resolving through a conversation first creates a
+// race with /clear or reincarnation between route and roster reads.
+func FindAgentMemberInGroup(
+	groupID int64,
+	agentID string,
+) (*AgentGroupMember, error) {
+	db, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return nil, nil
 	}
