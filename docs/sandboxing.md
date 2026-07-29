@@ -530,7 +530,7 @@ If a fresh dashboard spawn requests closed network access on an implementation
 that cannot enforce it, the launch normally refuses with:
 
 ```text
-<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog
+<harness> (<scope> scope) cannot enforce closed network access; choose a sandbox implementation that can enforce closed network access, use network open, or enable “Allow launch without enforcement” in the dashboard spawn dialog
 ```
 
 The human operator may explicitly check that named dashboard escape hatch for

@@ -17,7 +17,7 @@ import (
 
 const closedNetworkOverrideRefusal = "Codex builtin sandbox (tools-only scope) cannot enforce closed network access; " +
 	"choose a sandbox implementation that can enforce closed network access, use network open, " +
-	"or enable “Allow launch WITHOUT an enforced network sandbox” in the dashboard spawn dialog"
+	"or enable “Allow launch without enforcement” in the dashboard spawn dialog"
 
 const dashboardOverrideTestOrigin = "http://127.0.0.1:0"
 

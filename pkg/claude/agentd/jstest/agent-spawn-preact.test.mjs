@@ -501,7 +501,7 @@ async function mountSpawn(t, overrides = {}) {
   return { harness, host, state, actions, calls, cleanup: mounted.unmount };
 }
 
-test('Preact agent-spawn renders the operator-only unenforced-network warning unchecked', async (t) => {
+test('Preact agent-spawn renders the unenforced-network checkbox under the sandbox profile', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
   try {
@@ -511,14 +511,21 @@ test('Preact agent-spawn renders the operator-only unenforced-network warning un
     const checkbox = host.querySelector('#agent-spawn-allow-unenforced-sandbox');
     assert.ok(checkbox);
     assert.equal(checkbox.hasAttribute('checked'), false);
-    assert.equal(checkbox.getAttribute('aria-describedby'),
-      'agent-spawn-allow-unenforced-sandbox-hint');
-    assert.match(checkbox.closest('label').textContent,
-      /Allow launch WITHOUT an enforced network sandbox/);
-    const hint = host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint');
-    assert.match(hint.textContent, /Operator-only escape hatch/);
-    assert.match(hint.textContent, /outbound network access open/);
-    assert.match(hint.textContent, /not saved and starts unchecked every time/);
+    const row = checkbox.closest('.cron-create-row');
+    assert.equal(row.id, 'agent-spawn-allow-unenforced-sandbox-row');
+    assert.equal(row.previousElementSibling.id, 'agent-spawn-sandbox-profile-row');
+    const label = checkbox.closest('label');
+    assert.match(label.textContent, /Allow launch without enforcement/);
+    assert.match(label.title, /Operator-only escape hatch/);
+    assert.match(label.title, /outbound network access open/);
+    assert.match(label.title, /not saved and starts unchecked every time/);
+    const description = host.querySelector('#agent-spawn-allow-unenforced-sandbox-description');
+    assert.equal(checkbox.getAttribute('aria-describedby'), description.id);
+    assert.match(description.className, /spawn-field-description/);
+    assert.equal(description.textContent, label.title);
+    assert.equal(label.contains(description), false,
+      'the description must not become part of the checkbox accessible name');
+    assert.equal(host.querySelector('#agent-spawn-allow-unenforced-sandbox-hint'), null);
 
     Object.defineProperty(checkbox, 'checked', {
       configurable: true, writable: true, value: true,
@@ -914,10 +921,9 @@ test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe h
 });
 
 // Every dropdown whose help is static per-mode documentation collapses behind a
-// [?]; nothing but live validation, the deliberate unenforced-network warning,
-// and a ⚠ caveat is allowed to sit permanently under a control. Regressing any
-// mode documentation back to a paragraph is what padded the dialog in the
-// first place.
+// [?]; nothing but live validation and a ⚠ caveat is allowed to sit permanently
+// under a control. Regressing any mode documentation back to a paragraph is
+// what padded the dialog in the first place.
 test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ caveats visible', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
@@ -950,14 +956,10 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
       ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
   }
 
-  // The name normalization feedback and the explicit operator-only warning are
-  // the only surviving inline hints. Count exact ids so an accidental id-less
-  // help paragraph cannot ride along.
+  // The name normalization feedback is the only surviving inline hint. Count
+  // exact ids so an accidental id-less help paragraph cannot ride along.
   const persistent = [...host.querySelectorAll('.spawn-field-hint')];
-  assert.deepEqual(persistent.map((node) => node.id).sort(), [
-    'agent-spawn-allow-unenforced-sandbox-hint',
-    'agent-spawn-name-hint',
-  ]);
+  assert.deepEqual(persistent.map((node) => node.id), ['agent-spawn-name-hint']);
 
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in
