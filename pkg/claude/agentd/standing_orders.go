@@ -26,7 +26,8 @@ import (
 // goroutine, and a reminder is not worth stalling the projection of a session's
 // status.
 func deliverOpenCodeStandingOrders(input session.HookCallbackInput, envSessionID string) {
-	pending := session.ObserveStandingOrders(input, envSessionID)
+	pending, release := session.ObserveStandingOrders(input, envSessionID)
+	defer release()
 	for _, p := range pending {
 		if p.Body == "" {
 			continue

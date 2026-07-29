@@ -115,6 +115,16 @@ const (
 	// It is deliberately its own outcome rather than being folded into
 	// unsupported-timing: the harness is not the limitation, tclaude is.
 	StandingOutcomeTransportUnimplemented = "transport-unimplemented"
+	// StandingOutcomeNotEvaluatedBusy — the order matched, but another
+	// delivery path held this conversation's delivery lock, so the cadence
+	// read-modify-write could not be performed safely and the order was NOT
+	// delivered on this boundary.
+	//
+	// It is recorded rather than dropped silently because a skipped delivery
+	// looks identical to a healthy one from the outside, and it deliberately
+	// does NOT count as a delivery: the cadence stays open so the next
+	// boundary delivers the order.
+	StandingOutcomeNotEvaluatedBusy = "not-evaluated-busy"
 	// StandingOutcomeDeliveryFailed — a supported transport was attempted but
 	// failed before the reminder was durably queued or written. It remains
 	// retryable and must not satisfy cadence.

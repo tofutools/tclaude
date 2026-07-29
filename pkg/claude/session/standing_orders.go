@@ -69,7 +69,15 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		return HookResponse{}
 	}
 
+	// Serialize the cadence read-modify-write for this conversation. Held
+	// until the response has been written AND recorded — see Release below —
+	// because the window that matters spans all three steps, not just the read.
+	release, acquired := lockStandingOrderDelivery(ctx, ev.ConvID)
+
 	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	if !acquired {
+		decisions = skipCadenceGated(decisions)
+	}
 
 	// Recording is DEFERRED until the response has actually been written.
 	//
@@ -106,12 +114,13 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 		// Nothing is being written, so there is no write to wait for; the
 		// non-delivery outcomes still belong in the ledger.
 		commit()
+		release()
 		return HookResponse{}
 	}
 	slog.Info("standing orders: delivering context",
 		"conv_id", ev.ConvID, "event", input.HookEventName, "source", input.Source,
 		"orders", deliveredNames(decisions), "module", "hooks")
-	return HookResponse{AdditionalContext: text, commit: commit}
+	return HookResponse{AdditionalContext: text, commit: commit, release: release}
 }
 
 // ObserveStandingOrders evaluates standing orders for an event that arrived on
@@ -130,22 +139,33 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 // produced no delivery AND no ledger row, which is the failure this feature is
 // supposed to prevent: the operator would see an order that looked healthy and
 // had never reached anyone.
-func ObserveStandingOrders(input HookCallbackInput, envSessionID string) []PendingStandingMessage {
+func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]PendingStandingMessage, func()) {
+	noop := func() {}
 	trigger := standingOrderTriggerFor(input.HookEventName)
 	if trigger == "" || input.AgentID != "" {
-		return nil
+		return nil, noop
 	}
 	ev, ok := standingOrderEvent(input, envSessionID, trigger)
 	if !ok {
-		return nil
+		return nil, noop
 	}
 	orders, err := db.ListEnabledStandingOrdersForEvent(trigger)
 	if err != nil || len(orders) == 0 {
-		return nil
+		return nil, noop
+	}
+
+	// Same serialization as the direct path, and the same lock, so the two
+	// cannot both deliver a once-per-generation order for one conversation.
+	// The caller performs the sends, so the release travels out with the work.
+	release, acquired := lockStandingOrderDelivery(context.Background(), ev.ConvID)
+
+	decisions := standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch)
+	if !acquired {
+		decisions = skipCadenceGated(decisions)
 	}
 
 	var pending []PendingStandingMessage
-	for _, d := range standingorders.EvaluateAll(orders, ev, db.StandingOrderDeliveredInEpoch) {
+	for _, d := range decisions {
 		if d.Deliver && d.Capability.Transport == db.StandingTransportMessage {
 			// The one case this path can actually satisfy. Recording is
 			// deferred to the caller, which knows whether the send succeeded.
@@ -190,7 +210,37 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) []Pendi
 				"error", err, "order", d.Order.Name, "module", "hooks")
 		}
 	}
-	return pending
+	if len(pending) == 0 {
+		// Everything this path could record is already recorded; there is no
+		// caller-side work left to protect.
+		release()
+		return nil, noop
+	}
+	return pending, release
+}
+
+// skipCadenceGated turns every deliverable once-per-generation decision into a
+// recorded non-delivery, for use when the delivery lock could not be acquired.
+//
+// Only cadence-gated orders are affected. An always-cadence order has no
+// read-modify-write to protect — it delivers on every boundary by definition —
+// so suppressing it would drop guidance to prevent a race it cannot lose.
+//
+// The decision is rewritten rather than removed so the skip lands in the
+// ledger. StandingOutcomeNotEvaluatedBusy is not one of the outcomes the
+// cadence check counts as a delivery, so the order stays pending and the next
+// boundary delivers it.
+func skipCadenceGated(decisions []standingorders.Decision) []standingorders.Decision {
+	out := make([]standingorders.Decision, 0, len(decisions))
+	for _, d := range decisions {
+		if d.Deliver && d.Order != nil && d.Order.Cadence == db.StandingCadenceOncePerGeneration {
+			d.Deliver = false
+			d.Outcome = db.StandingOutcomeNotEvaluatedBusy
+			d.Detail = "another delivery path held this conversation's delivery lock; deferred to the next boundary"
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // PendingStandingMessage is one standing order that matched on an

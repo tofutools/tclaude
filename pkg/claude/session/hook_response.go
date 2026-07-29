@@ -40,6 +40,12 @@ type HookResponse struct {
 	// order was delivered — until the bytes are actually out, rather than
 	// claiming a delivery a failed write never made.
 	commit func()
+
+	// release frees any resource the producer held across the write — today a
+	// delivery lock. It is run by the edges on EVERY path, success or failure,
+	// which is why it is separate from commit: a failed write must still let go
+	// of the lock, but must not record a delivery.
+	release func()
 }
 
 // Commit runs the response's deferred side effect, if it has one. It is called
@@ -47,6 +53,27 @@ type HookResponse struct {
 func (r HookResponse) Commit() {
 	if r.commit != nil {
 		r.commit()
+	}
+}
+
+// HasCommit and HasRelease let an edge that cannot run the deferred steps
+// itself — the agentd broker, which hands the bytes to a client and only
+// learns later whether the relay landed — see that there is something to hold
+// on to. Commit and Release are independent: a broker that parks the commit
+// awaiting an ACK must still run Release on ACK, expiry, OR error, because a
+// held lock outlives a lost token and would silence the conversation.
+func (r HookResponse) HasCommit() bool { return r.commit != nil }
+
+// HasRelease reports whether this response is holding a resource open.
+func (r HookResponse) HasRelease() bool { return r.release != nil }
+
+// Release frees whatever the producer held across the write. The edges defer
+// it, so it runs on every path including a failed write. It is idempotent from
+// the caller's side only in the sense that calling it twice is harmless for
+// the flock implementation; edges should still run it exactly once.
+func (r HookResponse) Release() {
+	if r.release != nil {
+		r.release()
 	}
 }
 

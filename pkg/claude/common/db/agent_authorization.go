@@ -14,7 +14,13 @@ type RetireAgentAuthorizationOutcome struct {
 	PermsRevoked  int64
 	SudoRevoked   int64
 	CronDisabled  int64
-	Retired       bool
+	// StandingOrdersDisabled counts the agent-owned standing orders paused by
+	// this retirement. Reported separately from CronDisabled because the two
+	// carry different operator consequences: a paused rhythm stops nudging,
+	// while a paused standing order stops injecting high-authority text into
+	// other agents' context.
+	StandingOrdersDisabled int64
+	Retired                bool
 }
 
 // RetireAgentAuthorizationByConv atomically removes every permanent
@@ -103,6 +109,27 @@ func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAutho
 		return RetireAgentAuthorizationOutcome{}, fmt.Errorf("disable cron jobs: %w", err)
 	}
 	out.CronDisabled, _ = res.RowsAffected()
+
+	// Standing orders owned by the retiring actor are paused in the SAME
+	// transaction, for the same reason the cron rows are: a retirement must not
+	// leave behind an authority the actor no longer has. The read path already
+	// filters orders whose owner is retired, but that filter is invisible —
+	// `orders ls` would keep showing the order as enabled while it silently
+	// never fired. Stamping the marker makes the state legible and, because
+	// only rows carrying it are ever auto-restored, a reinstate cannot
+	// resurrect an order the human had disabled by hand.
+	//
+	// The `enabled <> 0 OR disabled_reason <> ?` guard mirrors the cron
+	// statement: re-running a retirement is idempotent, and an order already
+	// paused for this reason is not counted twice.
+	res, err = tx.Exec(`UPDATE agent_standing_orders
+		SET enabled = 0, disabled_reason = ?
+		WHERE owner_agent = ? AND (enabled <> 0 OR disabled_reason <> ?)`,
+		StandingDisabledReasonAgentRetired, agentID, StandingDisabledReasonAgentRetired)
+	if err != nil {
+		return RetireAgentAuthorizationOutcome{}, fmt.Errorf("disable standing orders: %w", err)
+	}
+	out.StandingOrdersDisabled, _ = res.RowsAffected()
 
 	res, err = tx.Exec(`DELETE FROM agent_permissions WHERE agent_id = ?`, agentID)
 	if err != nil {

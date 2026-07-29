@@ -468,6 +468,9 @@ func runHookCallback() error {
 // serialized here, once, at the single edge that owns the byte stream.
 func DispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionID string, amb HookAmbient, stdout io.Writer) error {
 	resp, err := dispatchHookEvent(ctx, input, envSessionID, amb)
+	// Deferred before the error check so a producer that acquired a lock and
+	// then failed cannot strand it.
+	defer resp.Release()
 	if err != nil {
 		return err
 	}

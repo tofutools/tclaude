@@ -32,7 +32,11 @@ type retireConvOutcome struct {
 	PermsRevoked int64    `json:"perms_revoked"`
 	SudoRevoked  int64    `json:"sudo_revoked"`
 	CronDisabled int64    `json:"cron_disabled"`
-	Retired      bool     `json:"retired"`
+	// StandingOrdersDisabled is reported separately from CronDisabled: a
+	// paused rhythm stops nudging, a paused standing order stops injecting
+	// high-authority text into other agents' context.
+	StandingOrdersDisabled int64 `json:"standing_orders_disabled"`
+	Retired                bool  `json:"retired"`
 }
 
 // retireAgentConv demotes convID from an agent to a plain
@@ -95,6 +99,7 @@ func retireAgentConvWithPrecondition(
 	out.PermsRevoked = retired.PermsRevoked
 	out.SudoRevoked = retired.SudoRevoked
 	out.CronDisabled = retired.CronDisabled
+	out.StandingOrdersDisabled = retired.StandingOrdersDisabled
 	out.Retired = retired.Retired
 	return out, retired.OwnerGroupIDs, nil
 }

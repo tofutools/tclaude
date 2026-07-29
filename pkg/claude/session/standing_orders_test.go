@@ -71,6 +71,16 @@ func sessionStart(source string) HookCallbackInput {
 	}
 }
 
+// observe runs the observation-only path and immediately drops the delivery
+// lock it hands back. These tests exercise what the path DECIDES; the caller's
+// send window is not what they are about, and holding the lock across the rest
+// of a test would make a second call in the same test wait out the timeout.
+func observe(input HookCallbackInput) []PendingStandingMessage {
+	pending, release := ObserveStandingOrders(input, "sess-1")
+	release()
+	return pending
+}
+
 func dispatch(t *testing.T, input HookCallbackInput) string {
 	t.Helper()
 	var buf bytes.Buffer
@@ -251,7 +261,7 @@ func TestObserveStandingOrdersSplitsByRequiredTiming(t *testing.T) {
 	groupID := standingOrderFixture(t, harness.OpenCodeName)
 	sameID := insertOrder(t, groupID)
 
-	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	pending := observe(sessionStart(db.StandingSourceCompact))
 	assert.Empty(t, pending, "a same-continuation order is not satisfiable by a message")
 
 	latest, err := db.LatestStandingDelivery(sameID)
@@ -266,7 +276,7 @@ func TestObserveStandingOrdersReturnsNextTurnOrdersForMessageDelivery(t *testing
 		o.Timing = db.StandingTimingNextTurn
 	})
 
-	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	pending := observe(sessionStart(db.StandingSourceCompact))
 	require.Len(t, pending, 1)
 	assert.Equal(t, "pr-early", pending[0].Name)
 	assert.Contains(t, pending[0].Body, "Push the PR early")
@@ -295,7 +305,7 @@ func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {
 		o.Cadence = db.StandingCadenceOncePerGeneration
 	})
 
-	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	pending := observe(sessionStart(db.StandingSourceCompact))
 	require.Len(t, pending, 1)
 	RecordStandingMessageDelivery(pending[0], errors.New("queue full"))
 
@@ -308,7 +318,7 @@ func TestRecordStandingMessageDeliveryFailureLeavesCadenceOpen(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, already, "a failed send must remain retryable")
 
-	again := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	again := observe(sessionStart(db.StandingSourceCompact))
 	assert.Len(t, again, 1, "the next boundary retries")
 }
 
@@ -352,7 +362,7 @@ func TestObserveStandingOrdersCarriesRealAuthorship(t *testing.T) {
 		o.OwnerAgent = ownerAgent
 	})
 
-	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	pending := observe(sessionStart(db.StandingSourceCompact))
 	require.Len(t, pending, 1)
 	assert.False(t, pending[0].OperatorAuthored,
 		"an agent-authored order must not be stamped operator-authored")
@@ -368,7 +378,7 @@ func TestObserveStandingOrdersOperatorOrderStaysOperatorAuthored(t *testing.T) {
 		o.OperatorAuthored = true
 	})
 
-	pending := ObserveStandingOrders(sessionStart(db.StandingSourceCompact), "sess-1")
+	pending := observe(sessionStart(db.StandingSourceCompact))
 	require.Len(t, pending, 1)
 	assert.True(t, pending[0].OperatorAuthored)
 }
