@@ -416,10 +416,7 @@ func (o *StandingOrder) Validate() error {
 		return fmt.Errorf("%w: global target cannot carry a single target agent", ErrStandingOrderInvalid)
 	case o.IsGlobalTarget() && o.GroupID != 0:
 		return fmt.Errorf("%w: global target cannot carry a group id", ErrStandingOrderInvalid)
-	case !o.IsGroupTarget() && o.TargetAgent == "":
-		if o.IsGlobalTarget() {
-			break
-		}
+	case !o.IsGroupTarget() && !o.IsGlobalTarget() && o.TargetAgent == "":
 		return fmt.Errorf("%w: single-agent target needs a stable agent id", ErrStandingOrderInvalid)
 	case !o.IsGroupTarget() && !o.IsGlobalTarget() &&
 		!strings.HasPrefix(o.TargetAgent, AgentIDPrefix):

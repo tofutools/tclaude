@@ -574,9 +574,10 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 	}
 	ev.AgentID = agentID
 
-	// A conversation with no actor cannot be in a group, so it is only ever
-	// reachable by a conv-targeted order — leave memberships empty rather than
-	// failing the whole evaluation.
+	// A conversation with no actor cannot satisfy any durable order scope:
+	// direct and global scopes require a stable agent id, and it cannot belong
+	// to a group. Leave memberships empty and let the evaluator report that
+	// authority boundary rather than failing event construction.
 	if agentID != "" {
 		groups, err := db.ListGroupsForAgent(agentID)
 		if err != nil {
