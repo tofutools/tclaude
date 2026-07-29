@@ -52,6 +52,25 @@ func clearAmbientResumeOverride(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_RESUME_THRESHOLD_MINUTES", "")
 }
 
+func TestResumeTclaudeLayerNetworkPostureIncludesDefaultAllowDenies(t *testing.T) {
+	setupTestDB(t)
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	}, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvClaude, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+
+	assert.Equal(t, sandboxpolicy.NetworkFiltered,
+		resumeTclaudeLayerNetworkPosture(resumeConvClaude),
+		"a resumed open+deny launch must never be reported or probed as host-open")
+}
+
 func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("TCLAUDE_HUMAN_TOKEN", "must-not-reach-pane")

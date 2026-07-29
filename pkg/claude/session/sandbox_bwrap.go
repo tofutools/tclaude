@@ -97,14 +97,14 @@ type TclaudeLayerLaunchInput struct {
 	OpenCodeControl  *TclaudeLayerOpenCodeControl
 }
 
-// TclaudeLayerNetworkPosture derives the launch posture from the current
-// access-axis representation. Access lists intentionally have no legacy
-// network_access spelling, so consumers must not inspect that compatibility
-// field alone.
+// TclaudeLayerNetworkPosture derives the launch posture after applying any
+// persisted per-rule degradation notices. Access lists and default-allow
+// denies intentionally have no legacy network_access spelling, so launch and
+// resume consumers must not inspect that compatibility field alone.
 func TclaudeLayerNetworkPosture(
 	effective sandboxpolicy.EffectiveProfile,
 ) (sandboxpolicy.NetworkPosture, error) {
-	axes, err := sandboxpolicy.EffectiveAccessAxes(effective)
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
 	if err != nil {
 		return sandboxpolicy.NetworkHostOpen, err
 	}
@@ -377,10 +377,10 @@ func (p FilteredNetworkPrerequisite) LaunchWhy(enforcing bool) string {
 	}
 	if p.Detected {
 		return "filtered-network prerequisite probe: detected (" + p.Detail +
-			"); this launch cannot consume the authored list, so the network allow list remains unenforced and outbound remains open"
+			"); this launch cannot consume the filtered network rules, so they remain unenforced and outbound remains open"
 	}
 	return "filtered-network prerequisite probe: unavailable (" + p.Detail +
-		"); the network allow list remains unenforced and outbound remains open"
+		"); the filtered network rules remain unenforced and outbound remains open"
 }
 
 // FilteredNetworkPrerequisiteNotice turns one exact live probe result into the
@@ -410,7 +410,8 @@ func appendFilteredNetworkPrerequisiteNotice(
 	enforcing bool,
 	probe func() FilteredNetworkPrerequisite,
 ) []sandboxpolicy.AccessNotice {
-	if !outerLayer || network.Mode != sandboxpolicy.AccessModeList {
+	posture, err := sandboxpolicy.NetworkPostureForRules(network)
+	if !outerLayer || err != nil || posture != sandboxpolicy.NetworkFiltered {
 		return notices
 	}
 	return append(notices, FilteredNetworkPrerequisiteNotice(probe(), enforcing))
@@ -456,8 +457,13 @@ func ValidateTclaudeLayerNetwork(
 		return nil, err
 	}
 	switch axes.Network.Mode {
-	case sandboxpolicy.AccessModeUnset, sandboxpolicy.AccessModeOpen:
+	case sandboxpolicy.AccessModeUnset:
 		return nil, nil
+	case sandboxpolicy.AccessModeOpen:
+		if len(axes.Network.Deny) == 0 {
+			return nil, nil
+		}
+		fallthrough
 	case sandboxpolicy.AccessModeList:
 		if endpointErr := validateModelTransportLoopbackForPlatform(
 			h, resolvedModel, runtime.GOOS,
@@ -473,7 +479,7 @@ func ValidateTclaudeLayerNetwork(
 			return nil, coverageErr
 		}
 		detail := describeModelTransportRequirementForPlatform(
-			requirement, runtime.GOOS)
+			axes.Network, requirement, runtime.GOOS)
 		if requirement.Template != "" {
 			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
 		}
@@ -1522,10 +1528,11 @@ func (r *tclaudeLayerHideRemounts) noteReplacement(path string) {
 }
 
 func describeModelTransportRequirementForPlatform(
+	rules sandboxpolicy.NetworkRules,
 	requirement harness.ModelTransportRequirement,
 	goos string,
 ) string {
-	detail := harness.DescribeModelTransportRequirement(requirement)
+	detail := harness.DescribeModelTransportRequirementForRules(rules, requirement)
 	if goos == "darwin" {
 		detail = strings.ReplaceAll(
 			detail,

@@ -17,6 +17,156 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		harnessName string
+		sandboxMode string
+	}{
+		{
+			name:        "claude",
+			harnessName: harness.DefaultName,
+			sandboxMode: harness.ClaudeSandboxOff,
+		},
+		{
+			name:        "codex",
+			harnessName: harness.CodexName,
+			sandboxMode: harness.SandboxReadOnly,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+			t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+				func() session.FilteredNetworkPrerequisite {
+					return session.FilteredNetworkPrerequisite{
+						Detected: true,
+						Detail:   "test namespace, pasta, and nft readiness",
+					}
+				},
+			))
+			var resolvedPostures []sandboxpolicy.NetworkPosture
+			t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+				func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+					resolvedPostures = append(resolvedPostures, posture)
+					return harness.LaunchOSSandbox{
+						State:           "on",
+						Source:          "test filtered gateway",
+						FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+					}, nil
+				},
+			))
+			if tc.harnessName == harness.CodexName {
+				codexHome := t.TempDir()
+				require.NoError(t, os.WriteFile(
+					filepath.Join(codexHome, "auth.json"),
+					[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+					0o600))
+				t.Setenv("CODEX_HOME", codexHome)
+			}
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: "default-allow-deny",
+				Network: &sandboxpolicy.NetworkRules{
+					Baseline: sandboxpolicy.NetworkBaselineAllow,
+					Deny: []sandboxpolicy.NetworkAllowEntry{{
+						CIDR: "192.0.2.0/24", Ports: []int{443},
+					}},
+				},
+			})
+			require.NoError(t, err)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   tc.name + "-worker",
+				"harness":                tc.harnessName,
+				"sandbox":                tc.sandboxMode,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+				"sandbox_profile":        "default-allow-deny",
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+			require.NotEmpty(t, resp.ConvID)
+			require.NotEmpty(t, resolvedPostures)
+			for _, posture := range resolvedPostures {
+				require.Equal(t, sandboxpolicy.NetworkFiltered, posture,
+					"open+deny must enter the filtered launch path, never host-open")
+			}
+
+			snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
+			require.True(t, ok)
+			require.NotNil(t, snapshot)
+			require.NotNil(t, snapshot.Effective.Network)
+			require.Equal(t, sandboxpolicy.AccessModeOpen, snapshot.Effective.Network.Mode)
+			require.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}}, snapshot.Effective.Network.Deny)
+			var prerequisite *sandboxpolicy.AccessNotice
+			for i := range snapshot.Effective.AccessNotices {
+				if snapshot.Effective.AccessNotices[i].Reason ==
+					sandboxpolicy.AccessNoticeReasonFilteredPrerequisite {
+					prerequisite = &snapshot.Effective.AccessNotices[i]
+					break
+				}
+			}
+			require.NotNil(t, prerequisite)
+			assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated,
+				prerequisite.Effect)
+			assert.Contains(t, prerequisite.Detail, "atomic nft policy")
+			assert.NotContains(t, prerequisite.Detail, "outbound remains open")
+		})
+	}
+}
+
+func TestOpenCodeDefaultAllowDenyDegradesBeforeRuntimePosture(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			return session.FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "test namespace, pasta, and nft readiness",
+			}
+		},
+	))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+			return harness.LaunchOSSandbox{
+				State:           "on",
+				Source:          "test filtered gateway",
+				FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+			}, nil
+		},
+	))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "opencode-default-allow-deny",
+		Network: &sandboxpolicy.NetworkRules{
+			Baseline: sandboxpolicy.NetworkBaselineAllow,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				CIDR: "192.0.2.0/24", Ports: []int{443},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name":                   "opencode-worker",
+		"harness":                harness.OpenCodeName,
+		"sandbox":                harness.OpenCodeSandboxTclaudeLayer,
+		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+		"sandbox_profile":        "opencode-default-allow-deny",
+	})
+	require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+	snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.NetworkHostOpen, posture,
+		"the unsupported deny must be omitted before the runtime selects its boundary")
+	require.NotEmpty(t, snapshot.Effective.AccessNotices)
+	assert.Equal(t, "deny_selector_unsupported",
+		snapshot.Effective.AccessNotices[0].Reason)
+	assert.Equal(t, []int{0}, snapshot.Effective.AccessNotices[0].Entries)
+}
+
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

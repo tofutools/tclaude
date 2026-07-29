@@ -861,6 +861,40 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "packet-enforced floor")
 }
 
+func TestValidateTclaudeLayerDefaultAllowDenyPreflightsModelTransport(t *testing.T) {
+	claude := harness.Default()
+	effective := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Domain: "blocked.example", Ports: []int{443},
+			}},
+		},
+	}
+	resolved := harness.ResolvedModelTransport{
+		Model: "claude-sonnet", Provider: "anthropic", ProviderResolved: true,
+	}
+	notices, err := ValidateTclaudeLayerNetwork(claude, effective, resolved)
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonFilteredModelTraffic,
+		notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectLaunchGated,
+		notices[0].Effect)
+	assert.Contains(t, notices[0].Detail,
+		"default allow with explicit deny rules")
+	assert.Contains(t, notices[0].Detail, "api.anthropic.com:443")
+	assert.Contains(t, notices[0].Detail, "shared IP and port boundary")
+
+	effective.Network.Deny[0] = sandboxpolicy.NetworkAllowEntry{
+		Domain: "api.anthropic.com", Ports: []int{443},
+	}
+	_, err = ValidateTclaudeLayerNetwork(claude, effective, resolved)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deny rules block required model destinations")
+	assert.Contains(t, err.Error(), "api.anthropic.com:443")
+}
+
 func TestValidateTclaudeLayerLocalNetworkPresetsKeepModelTransportExplicit(t *testing.T) {
 	strictLocal := sandboxpolicy.EffectiveProfile{
 		Network: &sandboxpolicy.NetworkRules{
@@ -994,7 +1028,7 @@ func TestModelTransportLoopbackInterpretationMatchesPlatform(t *testing.T) {
 		require.NoError(t, harness.ValidateModelTransportCoverage(
 			harness.Default(), strictLocal, requirement))
 		detail := describeModelTransportRequirementForPlatform(
-			requirement, "darwin")
+			strictLocal, requirement, "darwin")
 		assert.Contains(t, detail, "localhost:11434")
 		assert.NotContains(t, detail, sandboxpolicy.FilteredNetworkHostLoopbackName)
 	}

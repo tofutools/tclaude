@@ -172,6 +172,11 @@ func planSandboxProfileAccessForLaunch(
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
 			"invalid_sandbox_profile", err.Error()}
 	}
+	requestedNetworkPosture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"invalid_sandbox_profile", err.Error()}
+	}
 	if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		h.Name == harness.OpenCodeName &&
 		(harness.IsLocalAccessNetworkPreset(axes.Network) ||
@@ -188,9 +193,9 @@ func planSandboxProfileAccessForLaunch(
 	var filteredProbe *session.FilteredNetworkPrerequisite
 	if implementation.UsesTclaudeLayer() {
 		posture := sandboxpolicy.NetworkHostOpen
-		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
+		if requestedNetworkPosture == sandboxpolicy.NetworkIsolatedWithAgentd {
 			posture = sandboxpolicy.NetworkIsolatedWithAgentd
-		} else if axes.Network.Mode == sandboxpolicy.AccessModeList &&
+		} else if requestedNetworkPosture == sandboxpolicy.NetworkFiltered &&
 			implementation == sandboxpolicy.ImplementationTclaudeLayer {
 			if runtime.GOOS == "darwin" &&
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
@@ -231,8 +236,13 @@ func planSandboxProfileAccessForLaunch(
 		return nil, sandboxCapabilitySpawnFailure(
 			err, "unsupported_sandbox_profile_access")
 	}
+	renderedNetworkPosture, err := sandboxpolicy.NetworkPostureForRules(rendered.Network)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity,
+			"invalid_sandbox_profile", err.Error()}
+	}
 	if implementation.UsesTclaudeLayer() &&
-		axes.Network.Mode == sandboxpolicy.AccessModeList &&
+		requestedNetworkPosture == sandboxpolicy.NetworkFiltered &&
 		(runtime.GOOS == "linux" ||
 			(runtime.GOOS == "darwin" &&
 				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network))) {
@@ -242,12 +252,12 @@ func planSandboxProfileAccessForLaunch(
 		}
 		notices = append(notices, session.FilteredNetworkPrerequisiteNotice(
 			*filteredProbe,
-			rendered.Network.Mode == sandboxpolicy.AccessModeList &&
+			renderedNetworkPosture == sandboxpolicy.NetworkFiltered &&
 				verdict.FilteredNetwork,
 		))
 	}
 	if implementation.UsesTclaudeLayer() &&
-		rendered.Network.Mode == sandboxpolicy.AccessModeList {
+		renderedNetworkPosture == sandboxpolicy.NetworkFiltered {
 		plannedEffective := snapshot.Effective
 		plannedEffective.AccessNotices = sandboxpolicy.ReplaceAccessDegradationNotices(
 			plannedEffective.AccessNotices, notices...,

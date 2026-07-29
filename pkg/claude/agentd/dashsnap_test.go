@@ -1244,6 +1244,42 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "management-sandbox-deny-authored-dense",
+			Title:    "Management — dense authored network denies",
+			Caption:  "Eight authored deny rows remain compact policy inputs with one neutral pointer to the Effective policy preview and no target verdicts in the authoring table.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxDenyPreviewDashSnapJS("authored"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-deny-preview-full",
+			Title:    "Management — network denies fully supported",
+			Caption:  "Linux Claude Code tclaude sandbox under Deny all places all eight effective deny rules in the existing Fully supported bucket.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxDenyPreviewDashSnapJS("full"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-deny-preview-partial",
+			Title:    "Management — mixed network deny support",
+			Caption:  "Linux Codex tclaude sandbox under Allow all splits CIDR denies into Fully supported and DNS-name denies into Partially supported; one target-specific rule disclosure is open.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxDenyPreviewDashSnapJS("partial"),
+			SettleMS: 700,
+		},
+		{
+			Key:      "management-sandbox-deny-preview-unsupported",
+			Title:    "Management — network denies unsupported",
+			Caption:  "The real out-of-scope Linux OpenCode tclaude cell places all eight effective deny rules in Unsupported and points to the activated Claude/Codex surface.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxDenyPreviewDashSnapJS("unsupported"),
+			SettleMS: 700,
+		},
+		{
 			Key:      "process-editor-palette",
 			Title:    "Process editor — palette open",
 			Caption:  "Template editor over release-train: header (version badge, undo/redo/save), palette dock with primitives + snippets, graph canvas, inspector hint strip.",
@@ -3280,6 +3316,135 @@ func sandboxCommonRulesJS() string {
   menu.scrollIntoView({ block: 'center' });
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
 })();`
+}
+
+// sandboxDenyPreviewDashSnapJS drives the real sandbox editor and prediction
+// endpoint. The four modes are deliberately separate captures: no single
+// activated capability cell can truthfully produce Full, Partial, and
+// NotEnforced deny rows at once. The unsupported state therefore selects the
+// real Linux tclaude-layer OpenCode cell that remains outside TCL-853.
+func sandboxDenyPreviewDashSnapJS(mode string) string {
+	baseline := "allow"
+	harnessName := "claude"
+	bucketClass := ""
+	targetText := ""
+	switch mode {
+	case "authored":
+		// The authoring-only capture does not select a prediction target.
+	case "full":
+		baseline = "deny"
+		bucketClass = "sbx-rule-bucket-applied"
+		targetText = "Claude on Linux · tclaude sandbox"
+	case "partial":
+		harnessName = "codex"
+		bucketClass = "sbx-rule-bucket-partial"
+		targetText = "Codex on Linux · tclaude sandbox"
+	case "unsupported":
+		harnessName = "opencode"
+		bucketClass = "sbx-rule-bucket-not-applied"
+		targetText = "OpenCode on Linux · tclaude sandbox"
+	default:
+		panic("unknown sandbox deny dashsnap mode: " + mode)
+	}
+	return fmt.Sprintf(`return (async function(){
+  var module = await import('/static/js/sandbox-profiles.js');
+  var deny = [
+    {domain:'telemetry-1.example',ports:[443]},
+    {domain:'telemetry-2.example',ports:[443]},
+    {domain:'telemetry-3.example',ports:[443]},
+    {domain:'telemetry-4.example',ports:[443]},
+    {cidr:'192.0.2.0/28',ports:[443]},
+    {cidr:'198.51.100.0/28',ports:[443]},
+    {cidr:'203.0.113.0/28',ports:[443]},
+    {loopback:true,ports:[443]}
+  ];
+  module.openSandboxProfileEditor({
+    name:'dashsnap-deny-%s',filesystem:[],environment:[],includes:[],agent_directories:[],
+    network:{baseline:%q,packs:[],deny_packs:[],allow:[],deny:deny},
+    unix_sockets:{mode:''}
+  });
+  var deadline=Date.now()+6000;
+  while(!document.querySelector('#sandbox-profile-editor-network-section')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var network=document.querySelector('#sandbox-profile-editor-network-section');
+  if(!network) throw new Error('deny-%s: sandbox editor did not open');
+  network.open=true;
+  var authored=[...network.querySelectorAll('.sbx-network-manual-rows .sbx-network-row')];
+  if(authored.length!==8) throw new Error('deny-%s: expected 8 authored rows, saw '+authored.length);
+  if(network.querySelector('.sbx-network-badge')||network.querySelector('.sbx-rule-help')){
+    throw new Error('deny-%s: target verdict leaked into authored rows');
+  }
+  var note=network.querySelector('.sbx-network-deny-note');
+  if(!note||note.textContent.trim()!=='Deny enforcement depends on the launch target — see Effective policy preview.'){
+    throw new Error('deny-%s: neutral authoring pointer missing');
+  }
+  if(%q==='authored'){
+    network.scrollIntoView({block:'center'});
+    return;
+  }
+  function choose(select,value){
+    select.value=value;
+    select.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  var harness=document.querySelector('#sandbox-profile-editor-evaluate-harness');
+  choose(harness,%q);
+  deadline=Date.now()+3000;
+  while(![...document.querySelector('#sandbox-profile-editor-evaluate-implementation').options]
+    .some(function(option){return option.value==='tclaude-layer';})&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,30);});
+  }
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-implementation'),'tclaude-layer');
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-platform'),'linux');
+  deadline=Date.now()+8000;
+  while((!document.querySelector('.sbx-policy-target')||
+    !document.querySelector('.sbx-policy-target').textContent.includes(%q))&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,50);});
+  }
+  var target=document.querySelector('.sbx-policy-target');
+  if(!target||!target.textContent.includes(%q)){
+    throw new Error('deny-%s: selected target prediction did not settle');
+  }
+  var effective=document.querySelector('#sandbox-profile-editor-effective-policy-section');
+  effective.open=true;
+  var bucket=document.querySelector('.%s');
+  bucket.open=true;
+  var denyRows=[...bucket.querySelectorAll('.sbx-rule-row')]
+    .filter(function(row){return row.textContent.includes('Deny network:');});
+  if(%q==='partial'){
+    var full=document.querySelector('.sbx-rule-bucket-applied');
+    full.open=true;
+    var fullDenies=[...full.querySelectorAll('.sbx-rule-row')]
+      .filter(function(row){return row.textContent.includes('Deny network:');});
+    if(denyRows.length!==4||fullDenies.length!==4){
+      throw new Error('deny-partial: expected 4 Partial DNS and 4 Full packet denies, saw '+denyRows.length+' / '+fullDenies.length);
+    }
+  }else if(denyRows.length!==8){
+    throw new Error('deny-%s: expected 8 deny rows in selected bucket, saw '+denyRows.length);
+  }
+  for(var row of denyRows){
+    if(row.getBoundingClientRect().height>34) throw new Error('deny-%s: compact rule row grew to '+row.getBoundingClientRect().height+'px');
+    if(!row.querySelector('.sbx-rule-help .spawn-field-help-trigger')) throw new Error('deny-%s: rule help affordance missing');
+  }
+  if(%q==='partial'){
+    var help=denyRows[0].querySelector('.spawn-field-help-trigger');
+    help.click();
+    await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+    var detail=denyRows[0].querySelector('.spawn-field-description');
+    if(help.getAttribute('aria-expanded')!=='true'||!detail.textContent.includes('Partial on Codex on Linux · tclaude sandbox.')){
+      throw new Error('deny-partial: target-specialized disclosure did not open');
+    }
+    if(!detail.textContent.includes('If any check fails, these rules are not enforced and outbound traffic is open')){
+      throw new Error('deny-partial: disclosure lost the fail-open consequence');
+    }
+    denyRows[0].scrollIntoView({block:'center'});
+  }else{
+    bucket.scrollIntoView({block:'center'});
+  }
+})();`,
+		mode, baseline, mode, mode, mode, mode, mode,
+		harnessName, targetText, targetText, mode, bucketClass,
+		mode, mode, mode, mode, mode)
 }
 
 func actionDialogJS(call, readySelector, extraJS string) string {

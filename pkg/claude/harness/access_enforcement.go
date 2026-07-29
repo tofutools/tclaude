@@ -66,6 +66,8 @@ type PredictedAccessEnforcement struct {
 	NetworkList                  EnforcementLevel
 	NetworkSelectors             []NetworkSelectorCapability
 	NetworkPorts                 EnforcementLevel
+	NetworkDenySelectors         []NetworkSelectorCapability
+	NetworkDenyPorts             EnforcementLevel
 	NetworkListRefusal           string
 	NetworkListUnavailableDetail string
 	NetworkSelectorRefusal       string
@@ -114,7 +116,9 @@ type PredictedNetworkEntry struct {
 	Detail  string                          `json:"detail"`
 }
 
-const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule."
+const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is saved, but this launch target does not apply network deny entries; traffic matching this destination is not blocked by this rule. Choose Linux tclaude sandbox for enforced deny rules."
+
+const FilteredNetworkDNSDenyDefaultAllowCaveat = "tclaude blocks addresses observed for this denied name through the sandbox DNS broker. With Allow all, another address for the same service, or encrypted DNS that bypasses the broker, can remain reachable. A blocked shared address also affects other names until the DNS lease expires."
 
 type accessEnforcementTableRow struct {
 	NetworkClosed                EnforcementLevel
@@ -317,6 +321,37 @@ func accessEnforcementTable(
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			goos == "linux" && filteredNetworkReady &&
+			(h.Name == DefaultName || h.Name == CodexName) {
+			dnsDenyLevel := EnforceFull
+			dnsDenyDetail := ""
+			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {
+				dnsDenyLevel = EnforcePartial
+				dnsDenyDetail = FilteredNetworkDNSDenyDefaultAllowCaveat
+			}
+			caps.NetworkDenySelectors = []NetworkSelectorCapability{
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorHost),
+					Level:    dnsDenyLevel,
+					Detail:   dnsDenyDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorDomain),
+					Level:    dnsDenyLevel,
+					Detail:   dnsDenyDetail,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorCIDR),
+					Level:    EnforceFull,
+				},
+				{
+					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
+					Level:    EnforceFull,
+				},
+			}
+			caps.NetworkDenyPorts = EnforceFull
+		}
+		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "darwin" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName) &&
 			sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
@@ -455,7 +490,11 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 	return PredictedAccessEnforcement{
 		NetworkClosed: row.NetworkClosed, NetworkList: row.NetworkList,
 		NetworkSelectors: cloneNetworkSelectorCapabilities(row.NetworkSelectors),
-		NetworkPorts:     row.NetworkPorts, SocketOpen: row.SocketOpen,
+		NetworkPorts:     row.NetworkPorts,
+		NetworkDenySelectors: cloneNetworkSelectorCapabilities(
+			row.NetworkDenySelectors),
+		NetworkDenyPorts:             row.NetworkDenyPorts,
+		SocketOpen:                   row.SocketOpen,
 		NetworkListRefusal:           row.NetworkListRefusal,
 		NetworkListUnavailableDetail: row.NetworkListUnavailableDetail,
 		NetworkSelectorRefusal:       row.NetworkSelectorRefusal,
@@ -569,21 +608,64 @@ func DescribePredictedNetworkEntries(
 	return out
 }
 
-// DescribePredictedNetworkDenyEntries projects authored deny rows without
-// consulting capability cells. TCL-839 persists deny intent before appliers
-// consume it, so every row must disclose that it does not currently block
-// traffic.
-func DescribePredictedNetworkDenyEntries(entries []sandboxpolicy.NetworkAllowEntry) []PredictedNetworkEntry {
+// DescribePredictedNetworkDenyEntries projects the polarity-aware launch plan
+// onto each authored deny row. Unsupported port-scoped rows stay whole in the
+// editor but disclose omission rather than being widened into a broader block.
+func DescribePredictedNetworkDenyEntries(
+	entries []sandboxpolicy.NetworkAllowEntry,
+	caps PredictedAccessEnforcement,
+) []PredictedNetworkEntry {
 	out := make([]PredictedNetworkEntry, len(entries))
 	for i, entry := range entries {
+		outcome := AccessPredictionNotEnforced
+		detail := PredictedNetworkDenyNotEnforcedDetail
+		capability, ok := networkSelectorCapability(
+			caps.NetworkDenySelectors, networkSelectorForEntry(entry))
+		switch {
+		case !ok || capability.Level == EnforceNone:
+			if ok && capability.Detail != "" {
+				detail = capability.Detail
+			}
+		case len(entry.Ports) > 0 && caps.NetworkDenyPorts == EnforceNone:
+			detail = "This port-scoped deny rule is not enforced because this target cannot express deny ports; it is omitted rather than widened into a whole-destination block."
+		default:
+			partialReasons := []string{}
+			if capability.Level == EnforcePartial {
+				reason := capability.Detail
+				if reason == "" {
+					reason = "the destination selector is only partially enforced"
+				}
+				partialReasons = append(partialReasons, reason)
+			}
+			if len(entry.Ports) > 0 &&
+				caps.NetworkDenyPorts == EnforcePartial {
+				partialReasons = append(partialReasons,
+					"the deny port constraint is only partially enforced")
+			}
+			if caps.Scope == "tools-only" {
+				partialReasons = append(partialReasons,
+					"the restriction applies only to tool execution, not the harness process")
+			}
+			outcome = AccessPredictionEnforced
+			detail = fmt.Sprintf("%s enforces this deny destination",
+				caps.Mechanism)
+			if len(partialReasons) > 0 {
+				outcome = AccessPredictionEnforcedPartial
+				detail = fmt.Sprintf("%s: %s", caps.Mechanism,
+					strings.Join(partialReasons, " "))
+			}
+			if caps.NetworkListCondition != "" {
+				detail += " " + caps.NetworkListCondition
+			}
+		}
 		out[i] = PredictedNetworkEntry{
 			Entry: entry, Mode: "deny",
 			Keys: []string{
 				NetworkEntryModePredictionKey("deny", entry),
 				NetworkEntryPredictionKey(entry),
 			},
-			Outcome: AccessPredictionNotEnforced,
-			Detail:  PredictedNetworkDenyNotEnforcedDetail,
+			Outcome: outcome,
+			Detail:  detail,
 		}
 	}
 	return out
@@ -613,6 +695,58 @@ func NetworkEntryModePredictionKey(mode string, entry sandboxpolicy.NetworkAllow
 }
 
 func predictNetworkAxis(
+	rules sandboxpolicy.NetworkRules,
+	caps PredictedAccessEnforcement,
+) PredictedAccessAxis {
+	baseline := predictNetworkBaselineAxis(rules, caps)
+	if len(rules.Deny) == 0 ||
+		baseline.Outcome == AccessPredictionRefused {
+		return baseline
+	}
+	denyRows := DescribePredictedNetworkDenyEntries(rules.Deny, caps)
+	partialDetails := []string{}
+	unsupportedDetails := []string{}
+	for _, row := range denyRows {
+		switch row.Outcome {
+		case AccessPredictionEnforcedPartial:
+			partialDetails = append(partialDetails, row.Detail)
+		case AccessPredictionNotEnforced:
+			unsupportedDetails = append(unsupportedDetails, row.Detail)
+		}
+	}
+	switch {
+	case len(unsupportedDetails) > 0:
+		if baseline.Outcome == AccessPredictionEnforced {
+			baseline.Outcome = AccessPredictionEnforcedPartial
+		}
+		baseline.Detail += " Deny limitation: " +
+			strings.Join(uniquePredictionDetails(unsupportedDetails), " ")
+	case len(partialDetails) > 0:
+		if baseline.Outcome == AccessPredictionEnforced {
+			baseline.Outcome = AccessPredictionEnforcedPartial
+		}
+		baseline.Detail += " Deny limitation: " +
+			strings.Join(uniquePredictionDetails(partialDetails), " ")
+	default:
+		baseline.Detail += " Configured deny rules are enforced."
+	}
+	return baseline
+}
+
+func uniquePredictionDetails(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func predictNetworkBaselineAxis(
 	rules sandboxpolicy.NetworkRules,
 	caps PredictedAccessEnforcement,
 ) PredictedAccessAxis {

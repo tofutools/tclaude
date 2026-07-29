@@ -2375,7 +2375,7 @@ func resumeLaunchCmdWithStackedProof(
 		// the recorded profile environment so a stale or hostile profile
 		// cannot unset the marker on resume.
 		resumeEnv[session.HookBrokerEnvVar] = session.HookBrokerAgentd
-		posture, err := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
+		posture, err := session.TclaudeLayerNetworkPosture(effectiveProfile)
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -2383,7 +2383,8 @@ func resumeLaunchCmdWithStackedProof(
 			h.Name,
 			"",
 			"",
-			posture == sandboxpolicy.NetworkIsolatedWithAgentd,
+			posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
+				posture == sandboxpolicy.NetworkFiltered,
 			resumeEnv,
 		); err != nil {
 			return "", "", nil, err
@@ -2457,7 +2458,12 @@ func resumeLaunchCmdWithStackedProof(
 		if axesErr != nil {
 			return "", "", nil, axesErr
 		}
-		if plannedAxes.Network.Mode == sandboxpolicy.AccessModeList {
+		plannedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+			plannedAxes.Network)
+		if postureErr != nil {
+			return "", "", nil, postureErr
+		}
+		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
 			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
 				h,
 				session.ModelTransportLaunchContext{
@@ -2634,7 +2640,7 @@ func resumeLaunchCmdWithStackedProof(
 	var layerSpec session.TclaudeLayerLaunchSpec
 	binary := ""
 	if outerLayer {
-		posture, postureErr := sandboxpolicy.NetworkPostureForAccess(effectiveProfile.NetworkAccess)
+		posture, postureErr := session.TclaudeLayerNetworkPosture(effectiveProfile)
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
@@ -3210,7 +3216,7 @@ func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPostur
 	if snapshot == nil {
 		return sandboxpolicy.NetworkHostOpen
 	}
-	posture, err := sandboxpolicy.NetworkPostureForAccess(snapshot.Effective.NetworkAccess)
+	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
 		return sandboxpolicy.NetworkHostOpen
 	}

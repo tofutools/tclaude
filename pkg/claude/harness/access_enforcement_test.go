@@ -375,6 +375,18 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 				}
 				assert.Equal(t, want, row.NetworkList,
 					"only the Linux tclaude-layer harness cells have executing CI smokes")
+				denyWant := EnforceNone
+				if platform == "linux" &&
+					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+					(target.harness.Name == DefaultName ||
+						target.harness.Name == CodexName) {
+					denyWant = EnforceFull
+				}
+				assert.Equal(t, denyWant, row.NetworkDenyPorts,
+					"deny activates only in the exact Claude/Codex cells with PR1 smoke evidence")
+				for _, capability := range row.NetworkDenySelectors {
+					assert.Equal(t, denyWant, capability.Level)
+				}
 			})
 		}
 	}
@@ -386,6 +398,103 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, EnforceNone, row.NetworkList,
 		"a host-open verdict must not mint filtered enforcement")
+	assert.Empty(t, row.NetworkDenySelectors)
+	assert.Equal(t, EnforceNone, row.NetworkDenyPorts)
+}
+
+func TestLinuxTclaudeLayerDefaultAllowRatesOnlyDNSDeniesPartial(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "blocked.example"},
+				{CIDR: "192.0.2.0/24"},
+			},
+		},
+	}
+	for _, harnessName := range []string{DefaultName, CodexName} {
+		t.Run(harnessName, func(t *testing.T) {
+			row, err := accessEnforcementTable(
+				MustGet(harnessName),
+				sandboxpolicy.ImplementationTclaudeLayer,
+				axes, ClaudeSandboxOff, "linux", true,
+			)
+			require.NoError(t, err)
+			domain, ok := networkSelectorCapability(
+				row.NetworkDenySelectors,
+				string(sandboxpolicy.NetworkSelectorDomain),
+			)
+			require.True(t, ok)
+			assert.Equal(t, EnforcePartial, domain.Level)
+			assert.Equal(t,
+				FilteredNetworkDNSDenyDefaultAllowCaveat,
+				domain.Detail)
+			cidr, ok := networkSelectorCapability(
+				row.NetworkDenySelectors,
+				string(sandboxpolicy.NetworkSelectorCIDR),
+			)
+			require.True(t, ok)
+			assert.Equal(t, EnforceFull, cidr.Level)
+			assert.Equal(t, EnforceFull, row.NetworkDenyPorts)
+		})
+	}
+}
+
+func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "blocked.example", Ports: []int{443}},
+				{CIDR: "192.0.2.0/24"},
+			},
+		},
+	}
+	for _, harnessName := range []string{DefaultName, CodexName} {
+		t.Run(harnessName, func(t *testing.T) {
+			row, err := accessEnforcementTable(
+				MustGet(harnessName),
+				sandboxpolicy.ImplementationTclaudeLayer,
+				axes, ClaudeSandboxOff, "linux", true,
+			)
+			require.NoError(t, err)
+
+			predicted := predictedAccessEnforcementFromTable(row)
+			predictedRows := DescribePredictedNetworkDenyEntries(
+				axes.Network.Deny, predicted)
+			require.Len(t, predictedRows, 2)
+			assert.Equal(t, AccessPredictionEnforcedPartial,
+				predictedRows[0].Outcome)
+			assert.Contains(t, predictedRows[0].Detail,
+				FilteredNetworkDNSDenyDefaultAllowCaveat)
+			assert.Equal(t, AccessPredictionEnforced,
+				predictedRows[1].Outcome)
+
+			rendered, notices, err := PlanAccessEnforcement(
+				axes, accessEnforcementFromTable(row))
+			require.NoError(t, err)
+			assert.Equal(t, axes, rendered,
+				"partial deny support must retain the exact deny row")
+			require.Len(t, notices, 1)
+			assert.Equal(t, "deny_selector_partial", notices[0].Reason)
+			assert.Equal(t, []int{0}, notices[0].Entries)
+		})
+	}
+
+	row, err := accessEnforcementTable(
+		MustGet(OpenCodeName),
+		sandboxpolicy.ImplementationTclaudeLayer,
+		axes, OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	rendered, notices, err := PlanAccessEnforcement(
+		axes, accessEnforcementFromTable(row))
+	require.NoError(t, err)
+	assert.Empty(t, rendered.Network.Deny,
+		"the out-of-scope OpenCode cell must omit deny rows")
+	require.Len(t, notices, 1)
+	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
+	assert.Equal(t, []int{0, 1}, notices[0].Entries)
 }
 
 func TestCodexBuiltinFilteredNetworkPredictionDisclosesUnavailableCapability(t *testing.T) {
@@ -658,11 +767,14 @@ func TestPredictedNetworkEntriesProjectListWideAndPerEntryOutcomes(t *testing.T)
 	}
 }
 
-func TestPredictedNetworkDenyEntriesAreAlwaysHonest(t *testing.T) {
+func TestPredictedNetworkDenyEntriesFollowPolarityCapabilities(t *testing.T) {
 	entry := sandboxpolicy.NetworkAllowEntry{
 		Domain: "blocked.example", Ports: []int{443},
 	}
-	rows := DescribePredictedNetworkDenyEntries([]sandboxpolicy.NetworkAllowEntry{entry})
+	rows := DescribePredictedNetworkDenyEntries(
+		[]sandboxpolicy.NetworkAllowEntry{entry},
+		PredictedAccessEnforcement{},
+	)
 	require.Len(t, rows, 1)
 	assert.Equal(t, "deny", rows[0].Mode)
 	assert.Equal(t, AccessPredictionNotEnforced, rows[0].Outcome)
@@ -671,6 +783,39 @@ func TestPredictedNetworkDenyEntriesAreAlwaysHonest(t *testing.T) {
 		`deny:{"domain":"blocked.example","ports":[443]}`,
 		`{"domain":"blocked.example","ports":[443]}`,
 	}, rows[0].Keys)
+
+	caps := PredictedAccessEnforcement{
+		NetworkDenySelectors: []NetworkSelectorCapability{{
+			Selector: string(sandboxpolicy.NetworkSelectorDomain),
+			Level:    EnforceFull,
+		}},
+		NetworkDenyPorts:     EnforceFull,
+		NetworkListCondition: "Live network probes must pass.",
+		Scope:                "process",
+		Mechanism:            "test gateway",
+	}
+	rows = DescribePredictedNetworkDenyEntries(
+		[]sandboxpolicy.NetworkAllowEntry{entry}, caps)
+	require.Len(t, rows, 1)
+	assert.Equal(t, AccessPredictionEnforced, rows[0].Outcome)
+	assert.Contains(t, rows[0].Detail, "Live network probes must pass")
+
+	caps.NetworkDenySelectors[0].Level = EnforcePartial
+	caps.NetworkDenySelectors[0].Detail =
+		FilteredNetworkDNSDenyDefaultAllowCaveat
+	rows = DescribePredictedNetworkDenyEntries(
+		[]sandboxpolicy.NetworkAllowEntry{entry}, caps)
+	assert.Equal(t, AccessPredictionEnforcedPartial, rows[0].Outcome)
+	assert.Contains(t, rows[0].Detail,
+		"encrypted DNS that bypasses the broker")
+
+	caps.NetworkDenySelectors[0].Level = EnforceFull
+	caps.NetworkDenyPorts = EnforceNone
+	rows = DescribePredictedNetworkDenyEntries(
+		[]sandboxpolicy.NetworkAllowEntry{entry}, caps)
+	assert.Equal(t, AccessPredictionNotEnforced, rows[0].Outcome)
+	assert.Contains(t, rows[0].Detail,
+		"omitted rather than widened")
 }
 
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {

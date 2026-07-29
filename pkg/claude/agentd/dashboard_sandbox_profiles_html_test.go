@@ -130,6 +130,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`Host and domain rules allow IP addresses returned by DNS.`,
 		`If any check fails, these rules are not enforced and outbound traffic is open.`,
 		`local-machine rules use host.tclaude.internal.`,
+		`target.context_network_entries?.[contextIndex]`,
+		`class="sbx-section-help sbx-rule-help"`,
+		`Deny enforcement depends on the launch target — see Effective policy preview.`,
 	} {
 		if !strings.Contains(dashboardAssets, disclosure) {
 			t.Errorf("dashboard missing filtered-network disclosure %q", disclosure)

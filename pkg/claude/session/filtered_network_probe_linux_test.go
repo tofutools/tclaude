@@ -16,6 +16,30 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+func TestTclaudeLayerNetworkPostureUsesPlannedDenyRows(t *testing.T) {
+	effective := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+		},
+	}
+	posture, err := TclaudeLayerNetworkPosture(effective)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
+
+	effective.AccessNotices = []sandboxpolicy.AccessNotice{{
+		Class:   sandboxpolicy.AccessNoticeClassDegradation,
+		Axis:    "network",
+		Reason:  "deny_selector_unsupported",
+		Effect:  sandboxpolicy.AccessNoticeEffectNotEnforced,
+		Entries: []int{0},
+	}}
+	posture, err = TclaudeLayerNetworkPosture(effective)
+	require.NoError(t, err)
+	assert.Equal(t, sandboxpolicy.NetworkHostOpen, posture,
+		"an omitted unsupported deny must not demand a filtered runtime")
+}
+
 func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
@@ -230,6 +254,28 @@ func TestSessionReplanRetainsFilteredProbeNoticeForPersistence(t *testing.T) {
 	assert.Contains(t, persisted[1].Detail, "prerequisite probe: detected")
 	assert.Contains(t, persisted[1].Detail, "atomic nft policy")
 	assert.NotContains(t, persisted[1].Detail, "outbound remains open")
+
+	defaultAllowDeny := appendFilteredNetworkPrerequisiteNotice(
+		nil,
+		true,
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{CIDR: "192.0.2.0/24"}},
+		},
+		false,
+		func() FilteredNetworkPrerequisite {
+			return FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "namespace execution passed; verdict unavailable",
+			}
+		},
+	)
+	require.Len(t, defaultAllowDeny, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectNotEnforced,
+		defaultAllowDeny[0].Effect)
+	assert.Contains(t, defaultAllowDeny[0].Detail, "filtered network rules")
+	assert.Contains(t, defaultAllowDeny[0].Detail, "outbound remains open")
+	assert.NotContains(t, defaultAllowDeny[0].Detail, "network allow list")
 
 	unchanged := appendFilteredNetworkPrerequisiteNotice(
 		prior,

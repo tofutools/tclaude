@@ -578,14 +578,23 @@ Allow all, Deny rules are restrictions while Allow rules are redundant. The
 editor labels either redundant case instead of rejecting it. No override
 carries no rows.
 
-The Linux filtered gateway now has a dark deny-capable backend, including
-snapshot authority and deny-wins policy compilation, but its production
-capability cells remain disabled until the executing CI boundaries pass.
-Deny destination badges therefore still report **Not enforced** and state that
-matching traffic is not blocked by that rule. Capability planning omits
-unsupported deny rows individually; a port-scoped deny is never widened into a
-whole-destination block. The follow-up activation changes only the verified
-surface cells and their disclosures.
+Network denies are enforced for Claude Code and Codex on the Linux
+`tclaude-layer` filtered gateway. CIDR and local-machine denies are fully
+enforced. DNS-name denies are fully enforced under Deny all; under Allow all
+they are **Partial** because the broker blocks addresses it observes for the
+name, while another address for the same service or encrypted DNS that bypasses
+the broker can remain reachable. A blocked shared address also affects other
+names until the DNS lease expires.
+
+The authoring table carries only a neutral pointer to the Effective policy
+preview. That preview places each effective deny destination in the existing
+Fully supported, Partially supported, or Unsupported bucket for the selected
+target. Its `?` disclosure identifies the target and explains the mechanism,
+limitation, and remedy without turning an authored row into a global
+enforcement claim. OpenCode, macOS, built-in, and stacked cells remain
+unsupported for network denies. Capability planning omits their deny rows
+individually; a port-scoped deny is never widened into a whole-destination
+block.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local
@@ -678,9 +687,9 @@ Each launch probes bubblewrap user/network namespaces and resolves `pasta` and
 requires the exact forwarding, synthetic-address mapping, and splice controls
 used by the gateway; older pasta releases that lack those controls are an
 unavailable prerequisite, not a weakened fallback. A missing prerequisite
-widens the list to host-open with a persisted warning. Consequently, an editor
-Full preview is explicitly prerequisite-conditional; only the resolved launch
-verdict can mint enforcement.
+widens the filtered network rules to host-open with a persisted warning.
+Consequently, an editor Full preview is explicitly prerequisite-conditional;
+only the resolved launch verdict can mint enforcement.
 
 On a positive launch, bubblewrap creates the constructed network/PID namespace
 without connectivity. Rootless bubblewrap maps the invoking host user to
@@ -734,15 +743,20 @@ UDP operation alive, but it is also a named residual rather than an
 application-identity guarantee. Re-resolving before a later connection obtains
 a fresh answer and refreshes the lease.
 
-Filtered model traffic has no hidden bypass. The operator-authored list must
-already cover every endpoint from genuinely resolved provider/model context;
-tclaude never fabricates provider resolution or appends endpoints. At the
-executing launch seam, Claude's direct Anthropic default and concrete
-`ANTHROPIC_BASE_URL` are resolved from the launch environment; third-party
-provider modes and provider-changing live settings refuse with a named remedy.
-If Claude's provider route changes after that preflight, any unauthored
-destination is denied fail-closed for new flows at the packet floor; complete
-dynamic provider resolution is tracked in TCL-826.
+Filtered model traffic has no hidden bypass. Under a default-deny/list
+baseline, the operator-authored allow rules must already cover every endpoint
+from genuinely resolved provider/model context. Under a default-allow
+baseline with denies, the same resolved endpoints must not match an authored
+deny selector. tclaude never fabricates provider resolution or rewrites the
+rules. Deny wins at the shared IP and port boundary, so a provider route that
+later shares a denied address can still be cut even when its name passed the
+selector preflight. At the executing launch seam, Claude's direct Anthropic
+default and concrete `ANTHROPIC_BASE_URL` are resolved from the launch
+environment; third-party provider modes and provider-changing live settings
+refuse with a named remedy. If Claude's provider route changes after that
+preflight, an unauthored destination under a list baseline is denied
+fail-closed for new flows at the packet floor; complete dynamic provider
+resolution is tracked in TCL-826.
 
 Codex resolves its selected provider and concrete base URL from the effective
 `config.toml`; provider-changing pass-through overrides and incomplete custom

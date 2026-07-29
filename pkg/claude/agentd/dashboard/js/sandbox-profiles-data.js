@@ -226,14 +226,15 @@ export function sandboxPredictionWarnings(prediction) {
   return { capability: [...new Set(capability)], composition };
 }
 
-function networkRuleLabel(entry = {}) {
+function networkRuleLabel(entry = {}, mode = 'allow') {
   let selector = '';
   if (entry.host) selector = `host ${entry.host}`;
   if (entry.domain) selector = `domain ${entry.domain}${entry.include_subdomains ? ' and subdomains' : ''}`;
   if (entry.cidr) selector = `network ${entry.cidr}`;
   if (entry.loopback) selector = 'local machine';
   const ports = Array.isArray(entry.ports) ? entry.ports : [];
-  return `Allow network: ${selector || 'configured destination'}${ports.length ? ` · port${ports.length === 1 ? '' : 's'} ${ports.join(', ')}` : ''}`;
+  const verb = mode === 'deny' ? 'Deny' : 'Allow';
+  return `${verb} network: ${selector || 'configured destination'}${ports.length ? ` · port${ports.length === 1 ? '' : 's'} ${ports.join(', ')}` : ''}`;
 }
 
 function effectiveRuleRows(context = {}) {
@@ -257,12 +258,21 @@ function effectiveRuleRows(context = {}) {
     rows.push({ axis: 'network', label: 'Block outbound network' });
   } else if (axes.network.mode === 'list') {
     if (axes.network.allow.length) {
-      rows.push(...axes.network.allow.map((entry) => ({ axis: 'network', label: networkRuleLabel(entry) })));
+      rows.push(...axes.network.allow.map((entry) => ({
+        axis: 'network',
+        label: networkRuleLabel(entry),
+        networkKey: sandboxNetworkModeEntryKey('allow', entry),
+      })));
       rows.push({ axis: 'network', label: 'Block all other network destinations' });
     } else {
       rows.push({ axis: 'network', label: 'Block outbound network (allow list is empty)' });
     }
   }
+  rows.push(...(axes.network.deny || []).map((entry) => ({
+    axis: 'network',
+    label: networkRuleLabel(entry, 'deny'),
+    networkKey: sandboxNetworkModeEntryKey('deny', entry),
+  })));
 
   if (axes.unix_sockets.mode === 'open') {
     rows.push({ axis: 'unix_sockets', label: 'Allow Unix sockets' });
@@ -295,22 +305,36 @@ function bucketKey(outcome) {
 // concrete effective rules grouped only by whether this target supports them.
 // `axes` should be the selected assignment's context_axes entry when present;
 // callers fall back to the target-wide worst-case axes for older daemons.
-export function sandboxRuleBuckets(axes = {}, context = {}) {
+export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = []) {
   const buckets = {
-    applied: { key: 'applied', label: 'Fully supported rules', rules: [], reasons: [] },
-    partial: { key: 'partial', label: 'Partially supported rules', rules: [], reasons: [] },
-    notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], reasons: [] },
+    applied: { key: 'applied', label: 'Fully supported rules', rules: [], items: [], reasons: [] },
+    partial: { key: 'partial', label: 'Partially supported rules', rules: [], items: [], reasons: [] },
+    notApplied: { key: 'not-applied', label: 'Unsupported rules', rules: [], items: [], reasons: [] },
   };
+  const networkPredictions = new Map();
+  for (const prediction of networkEntries || []) {
+    for (const key of prediction.keys || []) networkPredictions.set(key, prediction);
+  }
   const seenReasons = new Set();
   let launchRefused = false;
   for (const rule of effectiveRuleRows(context)) {
-    const verdict = rule.axis === 'control_socket'
+    const rowPrediction = rule.networkKey
+      ? networkPredictions.get(rule.networkKey) : null;
+    const verdict = rowPrediction || (rule.axis === 'control_socket'
       ? { outcome: 'enforced', detail: '' }
-      : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' };
+      : axes?.[rule.axis] || { outcome: 'not_enforced', detail: 'No enforcement verdict was returned.' });
     const bucket = buckets[bucketKey(verdict.outcome)];
     bucket.rules.push(rule.label);
+    bucket.items.push({
+      label: rule.label,
+      outcome: verdict.outcome,
+      detail: verdict.detail || '',
+    });
     if (verdict.outcome === 'refused') launchRefused = true;
-    if (bucket !== buckets.applied && verdict.detail) {
+    // Per-rule prediction detail belongs behind that row's keyboard-reachable
+    // help affordance. Keep only target/axis-wide reasons visible beneath the
+    // bucket, or an 8-row DNS policy repeats the same long caveat eight times.
+    if (!rowPrediction && bucket !== buckets.applied && verdict.detail) {
       const identity = `${rule.axis}\0${verdict.outcome}\0${verdict.detail}`;
       if (!seenReasons.has(identity)) {
         seenReasons.add(identity);

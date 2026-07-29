@@ -180,17 +180,32 @@ func ResolveModelTransportRequirement(
 	return requirement, nil
 }
 
-// ValidateModelTransportCoverage applies the strict-explicit policy: required
-// endpoints must already be covered by the authored list. It never appends or
-// otherwise mutates policy.
+// ValidateModelTransportCoverage applies the strict-explicit policy without
+// mutating rules: list baselines must cover every required endpoint, while
+// default-allow baselines must not deny one.
 func ValidateModelTransportCoverage(
 	h *Harness,
 	rules sandboxpolicy.NetworkRules,
 	requirement ModelTransportRequirement,
 ) error {
+	if rules.Mode == sandboxpolicy.AccessModeOpen {
+		var blocked []string
+		for _, required := range requirement.Destinations {
+			if networkRulesCoverDestination(rules.Deny, required) {
+				blocked = append(blocked, formatNetworkDestination(required))
+			}
+		}
+		if len(blocked) == 0 {
+			return nil
+		}
+		return modelTransportCapabilityError(h, fmt.Sprintf(
+			"filtered network deny rules block required model destinations: %s; remove or narrow the matching deny rule, choose another resolved provider, or remove the deny policy",
+			strings.Join(blocked, ", "),
+		))
+	}
 	if rules.Mode != sandboxpolicy.AccessModeList {
 		return modelTransportCapabilityError(
-			h, `filtered model preflight requires network.mode "list"`,
+			h, `filtered model preflight requires network.mode "list" or "open" with deny rules`,
 		)
 	}
 	var missing []string
@@ -217,14 +232,32 @@ func ValidateModelTransportCoverage(
 // becomes launch-visible only when a filtered applier actually consumes the
 // list; showing it while M2a still widens to open would be untruthful.
 func DescribeModelTransportRequirement(requirement ModelTransportRequirement) string {
+	return DescribeModelTransportRequirementForRules(
+		sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeList},
+		requirement,
+	)
+}
+
+// DescribeModelTransportRequirementForRules keeps the launch disclosure
+// aligned with the baseline whose model route was preflighted.
+func DescribeModelTransportRequirementForRules(
+	rules sandboxpolicy.NetworkRules,
+	requirement ModelTransportRequirement,
+) string {
 	destinations := make([]string, 0, len(requirement.Destinations))
 	for _, destination := range requirement.Destinations {
 		destinations = append(destinations, formatNetworkDestination(destination))
 	}
-	detail := "Filtered network: profile allow list only; no hidden model-traffic bypass. Required model destinations: " +
-		strings.Join(destinations, ", ")
+	detail := "Filtered network: profile allow list only; no hidden model-traffic bypass. Required model destinations: "
+	if rules.Mode == sandboxpolicy.AccessModeOpen {
+		detail = "Filtered network: default allow with explicit deny rules. Required model destinations verified not denied by selector: "
+	}
+	detail += strings.Join(destinations, ", ")
 	if requirement.Template != "" {
 		detail += " (covered by " + requirement.Template + ")"
+	}
+	if rules.Mode == sandboxpolicy.AccessModeOpen {
+		detail += ". Deny wins at the shared IP and port boundary, so a provider route that shares a denied address can still be cut"
 	}
 	return detail + "."
 }
