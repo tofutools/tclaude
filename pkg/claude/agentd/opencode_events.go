@@ -136,6 +136,18 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 	switch envelope.Type {
 	case "session.created":
 		return []session.HookCallbackInput{p.hook("SessionStart")}, nil
+	case "session.compacted":
+		// OpenCode publishes this event after the compaction summary has been
+		// committed. Project it as the same portable
+		// SessionStart(source=compact) boundary Claude Code and Codex expose,
+		// while retaining the native event above for exact hook selectors.
+		//
+		// This is still an observation-only path: a standing order that
+		// requires same-continuation remains unsupported, while next-turn
+		// orders can use the durable message transport.
+		input := p.hook("SessionStart")
+		input.Source = "compact"
+		return []session.HookCallbackInput{input}, nil
 	case "session.status":
 		return p.projectStatus(envelope.Properties.Status, false), nil
 	case "session.idle":
