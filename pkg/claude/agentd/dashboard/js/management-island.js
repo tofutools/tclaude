@@ -67,7 +67,12 @@ const NETWORK_ACCESS_HELP = 'Choose Allow or Deny independently for built-in pac
   + 'The sandbox can also reach other sites hosted on that same IP until the DNS '
   + 'answer expires. Only a new DNS lookup '
   + 'refreshes the allowed IP. Existing connections may continue after the DNS answer expires; '
-  + 'new connections need another lookup. At launch, bubblewrap, pasta, and nft must pass live '
+  + 'new connections need another lookup. CIDR and local-machine deny rules are enforced directly. '
+  + 'DNS-name denies are fully enforced under Deny all, but are partial under Allow all: tclaude '
+  + 'blocks addresses observed through the sandbox DNS broker, while another address for the same '
+  + 'service or encrypted DNS that bypasses the broker can remain reachable. A blocked shared '
+  + 'address also affects other names until its DNS lease expires. At launch, bubblewrap, pasta, '
+  + 'and nft must pass live '
   + 'checks. If any check fails, these rules are not enforced and outbound traffic is open. '
   + 'Applied global, group, and explicit list '
   + 'policies compose by intersection: destinations and ports must be allowed by every applicable '
@@ -90,11 +95,12 @@ const NETWORK_ACCESS_HELP = 'Choose Allow or Deny independently for built-in pac
   + ` ${CODEX_BUILTIN_FILTERED_NETWORK_HINT}`;
 const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allow or Deny pack '
   + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
-  + 'future endpoint updates follow the stored pack reference. Deny pack rows are authored but '
-  + 'not enforced in this frontend-first release. Expanded destinations below are read-only.';
+  + 'future endpoint updates follow the stored pack reference. Deny enforcement depends on the '
+  + 'selected launch target and is shown in the Effective policy preview. Expanded destinations '
+  + 'below are read-only.';
 const NETWORK_DESTINATIONS_HELP = 'The Effective policy preview below evaluates composed launch '
-  + 'behavior after Includes and assignment intersections. Deny destinations are stored but do not '
-  + 'yet block traffic in this frontend-first release.';
+  + 'behavior after Includes and assignment intersections. Its rule buckets show whether the '
+  + 'selected target fully supports, partially supports, or does not apply each deny destination.';
 const UNIX_SOCKETS_HELP = 'Unix-socket policy composes by intersection across profile layers. '
   + 'The tclaude agentd socket is always reachable and is not an editable row.';
 const FILESYSTEM_HELP = 'Directory grants widen the sandbox. Included and assignment-layer rules '
@@ -216,24 +222,52 @@ function sandboxEvaluationTarget(harness, implementation, platform) {
   return target;
 }
 
-function SandboxOutcomeBucket({ bucket, open }) {
+function sandboxRuleOutcomeHelp(item, targetLabel) {
+  const status = item.outcome === 'enforced' ? 'Enforced'
+    : item.outcome === 'enforced_partial' ? 'Partial'
+      : item.outcome === 'refused' ? 'Launch blocked' : 'Not applied';
+  const heading = `${status} on ${targetLabel}.`;
+  return {
+    text: `${heading}${item.detail ? ` ${item.detail}` : ''}`,
+    content: html`<span><strong>${heading}</strong>${item.detail ? ` ${item.detail}` : ''}</span>`,
+  };
+}
+
+function SandboxOutcomeBucket({
+  bucket, open, helpOpen, setHelpOpen, helpPrefix, targetLabel,
+}) {
   return html`<details class=${`sbx-rule-bucket sbx-rule-bucket-${bucket.key}`} open=${open}>
     <summary><span>${bucket.label}</span><span class="sbx-rule-count">${bucket.rules.length}</span></summary>
-    ${bucket.rules.length > 0 && html`<ul>${bucket.rules.map((rule, index) => html`<li key=${index}>${rule}</li>`)}</ul>`}
+    ${bucket.items.length > 0 && html`<ul>${bucket.items.map((item, index) => {
+    const helpID = `${helpPrefix}-${bucket.key}-${index}`;
+    const help = sandboxRuleOutcomeHelp(item, targetLabel);
+    return html`<li key=${index} class="sbx-rule-row"><span>${item.label}</span>
+      <span class="sbx-section-help sbx-rule-help"><${HelpDisclosure}
+        id=${helpID} label=${item.label} help=${help.text} content=${help.content}
+        open=${helpOpen === helpID} setOpen=${setHelpOpen}/></span>
+    </li>`;
+  })}</ul>`}
     ${bucket.reasons.map((reason, index) => html`<div key=${index} class="sbx-rule-reason"><strong>${reason.label}:</strong> ${reason.detail}</div>`)}
   </details>`;
 }
 
 function SandboxPolicyResult({ target, context, contextIndex }) {
+  const [ruleHelpOpen, setRuleHelpOpen] = useState('');
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  const buckets = sandboxRuleBuckets(axes, context);
+  const networkEntries = target.context_network_entries?.[contextIndex]
+    ?? target.network_entries ?? [];
+  const buckets = sandboxRuleBuckets(axes, context, networkEntries);
   const otherWarnings = sandboxOtherAssignmentWarnings(target.axes, axes);
   const otherLaunchRefused = otherWarnings.some((warning) => warning.outcome === 'refused');
   const partialCount = buckets.partial.rules.length;
   const unsupportedCount = buckets.notApplied.rules.length;
   const a11ySummary = `${partialCount} partially supported ${partialCount === 1 ? 'rule' : 'rules'} and ${unsupportedCount} unsupported ${unsupportedCount === 1 ? 'rule' : 'rules'}.`;
+  const targetLabel = sandboxTargetLabel(target);
+  const helpPrefix = `sandbox-rule-${contextIndex}-${[
+    target.target?.implementation, target.target?.harness, target.target?.platform,
+  ].filter(Boolean).join('-').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   return html`<div class="sbx-policy-result">
-    <strong class="sbx-policy-target">${sandboxTargetLabel(target)}</strong>
+    <strong class="sbx-policy-target">${targetLabel}</strong>
     ${!buckets.launchRefused && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">${a11ySummary}</div>`}
     ${otherWarnings.length > 0 && html`<div class=${`sbx-other-assignments${otherLaunchRefused ? ' refused' : ''}`} role=${otherLaunchRefused ? 'alert' : 'status'}>
       <strong>Other assignments need attention.</strong>
@@ -241,9 +275,15 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       <ul>${otherWarnings.map((warning) => html`<li key=${warning.axis}><strong>${warning.label}:</strong> ${warning.detail}</li>`)}</ul>
     </div>`}
     ${buckets.launchRefused && html`<div class="sbx-launch-blocked" role="alert">This target refuses the launch. Unsupported rules are not silently skipped.</div>`}
-    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${false}/>
-    <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}/>
-    <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.applied} open=${false}
+      helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.partial} open=${true}
+      helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
+    <${SandboxOutcomeBucket} bucket=${buckets.notApplied} open=${true}
+      helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
+      helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <details class="sbx-target-details"><summary>Evaluation details</summary>
       ${target.target.sandbox ? html`<div>Sandbox mode: ${target.target.sandbox}</div>` : null}
       ${target.resolved_by ? html`<div>Resolved from: ${target.resolved_by}</div>` : null}
@@ -253,7 +293,9 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
 
 function sandboxPolicyNeedsAttention(target, context, contextIndex) {
   const axes = target.context_axes?.[contextIndex] || target.axes || {};
-  return sandboxRuleBuckets(axes, context).launchRefused
+  const networkEntries = target.context_network_entries?.[contextIndex]
+    ?? target.network_entries ?? [];
+  return sandboxRuleBuckets(axes, context, networkEntries).launchRefused
     || sandboxOtherAssignmentWarnings(target.axes, axes).length > 0;
 }
 
@@ -477,7 +519,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
         id="sandbox-profile-editor-network-destinations-help" label="network access list"
         help=${NETWORK_DESTINATIONS_HELP} open=${helpOpen === 'sandbox-profile-editor-network-destinations-help'}
         setOpen=${setHelpOpen}/></${SandboxHelp}></div>
-      ${hasDenyRules && html`<div class="sbx-network-deny-note" role="note">Deny rules are authoring-only and not enforced yet.</div>`}
+      ${hasDenyRules && html`<div class="sbx-network-deny-note" role="note">Deny enforcement depends on the launch target — see Effective policy preview.</div>`}
       <div class="sbx-network-table">
       <div class="sbx-rows sbx-network-rows sbx-network-pack-rows">${packRows.map(({ row, pack, mode }, index) => { const kind = selector(row); const hasModifier = kind === 'domain' && row.include_subdomains; return html`<div key=${`${mode}:${pack.id}:${index}`} class=${`sbx-row sbx-access-row sbx-network-row sbx-network-pack-row${hasModifier ? '' : ' sbx-network-row-no-modifier'}`}>
         <div class="sbx-network-mode-cell"><span class=${`sbx-network-mode-readonly sbx-state-${mode}`}>${mode === 'deny' ? 'Deny' : 'Allow'}</span>

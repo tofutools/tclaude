@@ -39,25 +39,39 @@ func describePredictedDraftSandboxProfile(
 	target parsedSandboxProfileEnforcementTarget,
 	validatedBuiltinMode string,
 	described harness.PredictedAccessAxes,
-) (harness.PredictedAccessAxes, []harness.PredictedAccessAxes, error) {
+) (
+	harness.PredictedAccessAxes,
+	[]harness.PredictedAccessAxes,
+	[][]harness.PredictedNetworkEntry,
+	error,
+) {
 	if len(contexts) == 0 {
 		return describePredictedSandboxProfile(
 			flattened, target, validatedBuiltinMode, described,
-		), nil, nil
+		), nil, nil, nil
 	}
 	predictions := make([]harness.PredictedAccessAxes, 0, len(contexts))
+	networkPredictions := make(
+		[][]harness.PredictedNetworkEntry, 0, len(contexts))
 	for _, context := range contexts {
 		axes, err := sandboxpolicy.DeriveAccessAxes(context.policy)
 		if err != nil {
-			return harness.PredictedAccessAxes{}, nil, err
+			return harness.PredictedAccessAxes{}, nil, nil, err
 		}
 		predicted, err := harness.PredictAccessEnforcement(
 			target.harness, target.implementation, axes,
 			validatedBuiltinMode, target.platform,
 		)
 		if err != nil {
-			return harness.PredictedAccessAxes{}, nil, err
+			return harness.PredictedAccessAxes{}, nil, nil, err
 		}
+		networkRows := append([]harness.PredictedNetworkEntry{},
+			harness.DescribePredictedNetworkEntries(
+				axes.Network, predicted)...)
+		networkRows = append(networkRows,
+			harness.DescribePredictedNetworkDenyEntries(
+				axes.Network.Deny, predicted)...)
+		networkPredictions = append(networkPredictions, networkRows)
 		predictions = append(predictions, describePredictedSandboxProfile(
 			context.policy, target, validatedBuiltinMode,
 			harness.DescribePredictedAccess(axes, predicted),
@@ -88,7 +102,7 @@ func describePredictedDraftSandboxProfile(
 			return value.UnixSockets
 		},
 	)
-	return described, predictions, nil
+	return described, predictions, networkPredictions, nil
 }
 
 func predictSandboxFilesystem(

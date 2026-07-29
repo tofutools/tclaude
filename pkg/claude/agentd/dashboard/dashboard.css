@@ -4638,6 +4638,30 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-rule-bucket li + li {
   margin-top: .25rem;
 }
+.sbx-rule-row {
+  align-items: start;
+  display: grid;
+  gap: .4rem;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  position: relative;
+}
+.sbx-rule-row > span:first-child {
+  min-width: 0;
+}
+.sbx-rule-help {
+  align-self: start;
+  justify-self: end;
+}
+.sbx-rule-help .spawn-field-help-trigger {
+  height: 18px;
+  line-height: 1;
+  width: 18px;
+}
+.sbx-rule-help .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
+.sbx-rule-help .spawn-field-description:focus {
+  left: auto;
+  right: 0;
+}
 .sbx-rule-reason {
   color: var(--text-muted);
   font-size: .82rem;

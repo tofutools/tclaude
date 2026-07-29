@@ -953,6 +953,46 @@ test('sandbox access-axis model preserves legacy meaning and validates structure
   assert.equal(buckets.applied.label, 'Fully supported rules');
   assert.equal(buckets.partial.label, 'Partially supported rules');
   assert.equal(buckets.notApplied.label, 'Unsupported rules');
+  const denyBuckets = model.sandboxRuleBuckets({
+    network: { outcome: 'enforced_partial', detail: 'mixed network axis' },
+  }, {
+    network: {
+      mode: 'open',
+      deny: [
+        { cidr: '192.0.2.0/24' },
+        { domain: 'partial.example', ports: [443] },
+        { host: 'unsupported.example' },
+      ],
+    },
+  }, [
+    {
+      mode: 'deny',
+      keys: ['deny:{"cidr":"192.0.2.0/24"}'],
+      outcome: 'enforced',
+      detail: 'CIDR deny detail',
+    },
+    {
+      mode: 'deny',
+      keys: ['deny:{"domain":"partial.example","ports":[443]}'],
+      outcome: 'enforced_partial',
+      detail: 'DNS deny partial detail',
+    },
+    {
+      mode: 'deny',
+      keys: ['deny:{"host":"unsupported.example"}'],
+      outcome: 'not_enforced',
+      detail: 'deny target unsupported detail',
+    },
+  ]);
+  assert.ok(denyBuckets.applied.rules.includes(
+    'Deny network: network 192.0.2.0/24'));
+  assert.ok(denyBuckets.partial.rules.includes(
+    'Deny network: domain partial.example · port 443'));
+  assert.ok(denyBuckets.notApplied.rules.includes(
+    'Deny network: host unsupported.example'));
+  assert.equal(denyBuckets.partial.items.find(
+    (item) => item.label.includes('partial.example')).detail,
+  'DNS deny partial detail');
   assert.deepEqual(model.sandboxOtherAssignmentWarnings({
     filesystem: { outcome: 'refused', detail: 'another assignment refuses its carve-out' },
     network: { outcome: 'not_enforced', detail: 'same network outcome' },
@@ -1925,7 +1965,7 @@ test('new deny drafts apply default pack references once and pack rows stay read
   newDraft.host.remove();
 });
 
-test('network packs and manual destinations author deny mode without implying enforcement', async (t) => {
+test('network packs and manual destinations author deny mode without inline verdicts', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -1949,13 +1989,13 @@ test('network packs and manual destinations author deny mode without implying en
               mode: 'deny', entry: { loopback: true },
               keys: ['deny:{"loopback":true}'],
               outcome: 'not_enforced',
-              detail: 'This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule.',
+              detail: 'This deny rule is saved, but this launch target does not apply network deny entries.',
             },
             {
               mode: 'deny', entry: { domain: 'blocked.example', ports: [443] },
               keys: ['deny:{"domain":"blocked.example","ports":[443]}'],
               outcome: 'not_enforced',
-              detail: 'This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule.',
+              detail: 'This deny rule is saved, but this launch target does not apply network deny entries.',
             },
           ],
         }],
@@ -1986,7 +2026,8 @@ test('network packs and manual destinations author deny mode without implying en
   assert.equal(network.querySelector('.sbx-network-badge'), null,
     'deny destinations do not duplicate evaluation-style verdict chips');
   const denyNote = network.querySelector('.sbx-network-deny-note');
-  assert.equal(denyNote.textContent, 'Deny rules are authoring-only and not enforced yet.');
+  assert.equal(denyNote.textContent,
+    'Deny enforcement depends on the launch target — see Effective policy preview.');
   assert.equal(network.querySelectorAll('.sbx-network-deny-note').length, 1,
     'one section-level disclosure covers deny packs and manual rows');
 
@@ -2042,7 +2083,7 @@ test('network packs and manual destinations author deny mode without implying en
   mounted.host.remove();
 });
 
-test('deny disclosure is section-level and independent of normalized prediction entries', async (t) => {
+test('effective preview buckets normalized deny rows with target-specific help', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -2052,7 +2093,11 @@ test('deny disclosure is section-level and independent of normalized prediction 
     name: 'noncanonical-network', filesystem: [], environment: [], includes: [], agent_directories: [],
     network: {
       baseline: 'allow', packs: [], deny_packs: [],
-      allow: [], deny: [{ domain: 'API.EXAMPLE.COM', ports: [443, 443] }],
+      allow: [], deny: [
+        { domain: 'API.EXAMPLE.COM', ports: [443, 443] },
+        { cidr: '192.0.2.0/24' },
+        { host: 'unsupported.example' },
+      ],
     },
     unix_sockets: { mode: '' },
   }, options: {} });
@@ -2060,18 +2105,55 @@ test('deny disclosure is section-level and independent of normalized prediction 
     async predictSandbox() {
       return {
         targets: [{
-          network_entries: [{
-            mode: 'deny',
-            entry: { domain: 'api.example.com', ports: [443] },
-            keys: [
-              'deny:{"domain":"api.example.com","ports":[443]}',
-              'deny:{"domain":"API.EXAMPLE.COM","ports":[443]}',
-            ],
-            outcome: 'not_enforced',
-            detail: 'normalized deny destination is stored but not applied',
+          target: {
+            implementation: 'tclaude-layer', harness: 'codex', platform: 'linux',
+          },
+          axes: {
+            network: { outcome: 'enforced_partial', detail: 'mixed deny outcomes' },
+          },
+          context_axes: [{
+            network: { outcome: 'enforced_partial', detail: 'mixed deny outcomes' },
           }],
+          context_network_entries: [[
+            {
+              mode: 'deny',
+              entry: { domain: 'api.example.com', ports: [443] },
+              keys: [
+                'deny:{"domain":"api.example.com","ports":[443]}',
+                'deny:{"domain":"API.EXAMPLE.COM","ports":[443]}',
+              ],
+              outcome: 'enforced_partial',
+              detail: 'tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway: tclaude blocks addresses observed for this denied name through the sandbox DNS broker. With Allow all, another address for the same service, or encrypted DNS that bypasses the broker, can remain reachable. A blocked shared address also affects other names until the DNS lease expires. At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open.',
+            },
+            {
+              mode: 'deny',
+              entry: { cidr: '192.0.2.0/24' },
+              keys: ['deny:{"cidr":"192.0.2.0/24"}'],
+              outcome: 'enforced',
+              detail: 'tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway enforces this deny destination. At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open.',
+            },
+            {
+              mode: 'deny',
+              entry: { host: 'unsupported.example' },
+              keys: ['deny:{"host":"unsupported.example"}'],
+              outcome: 'not_enforced',
+              detail: 'This deny rule is saved, but this launch target does not apply network deny entries; traffic matching this destination is not blocked by this rule. Choose Linux tclaude sandbox for enforced deny rules.',
+            },
+          ]],
         }],
-        contexts: [],
+        contexts: [{
+          context: {},
+          network: {
+            mode: 'open',
+            deny: [
+              { domain: 'api.example.com', ports: [443] },
+              { cidr: '192.0.2.0/24' },
+              { host: 'unsupported.example' },
+            ],
+          },
+          unix_sockets: { mode: '' },
+          agentd_socket: 'always reachable',
+        }],
       };
     },
   });
@@ -2079,7 +2161,28 @@ test('deny disclosure is section-level and independent of normalized prediction 
   assert.equal(host.querySelector('.sbx-network-value').value, 'API.EXAMPLE.COM');
   assert.equal(host.querySelector('.sbx-network-badge'), null);
   assert.equal(host.querySelector('.sbx-network-deny-note').textContent,
-    'Deny rules are authoring-only and not enforced yet.');
+    'Deny enforcement depends on the launch target — see Effective policy preview.');
+
+  const applied = host.querySelector('.sbx-rule-bucket-applied');
+  const partial = host.querySelector('.sbx-rule-bucket-partial');
+  const unsupported = host.querySelector('.sbx-rule-bucket-not-applied');
+  assert.match(applied.textContent, /Deny network: network 192\.0\.2\.0\/24/);
+  assert.match(partial.textContent,
+    /Deny network: domain api\.example\.com · port 443/);
+  assert.match(unsupported.textContent,
+    /Deny network: host unsupported\.example/);
+  assert.equal(host.querySelectorAll('.sbx-rule-help .spawn-field-help-trigger').length >= 3,
+    true, 'effective rules expose keyboard-reachable target detail');
+
+  const partialRow = [...partial.querySelectorAll('.sbx-rule-row')]
+    .find((row) => /api\.example\.com/.test(row.textContent));
+  const partialHelp = partialRow.querySelector('.spawn-field-help-trigger');
+  await harness.act(() => harness.fireEvent(partialHelp, 'click'));
+  assert.equal(partialHelp.getAttribute('aria-expanded'), 'true');
+  assert.match(partialRow.querySelector('.spawn-field-description').textContent,
+    /Partial on Codex on Linux · tclaude sandbox\./);
+  assert.match(partialRow.querySelector('.spawn-field-description').textContent,
+    /If any check fails, these rules are not enforced and outbound traffic is open/);
   unmount();
 });
 

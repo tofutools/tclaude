@@ -578,14 +578,23 @@ Allow all, Deny rules are restrictions while Allow rules are redundant. The
 editor labels either redundant case instead of rejecting it. No override
 carries no rows.
 
-The Linux filtered gateway now has a dark deny-capable backend, including
-snapshot authority and deny-wins policy compilation, but its production
-capability cells remain disabled until the executing CI boundaries pass.
-Deny destination badges therefore still report **Not enforced** and state that
-matching traffic is not blocked by that rule. Capability planning omits
-unsupported deny rows individually; a port-scoped deny is never widened into a
-whole-destination block. The follow-up activation changes only the verified
-surface cells and their disclosures.
+Network denies are enforced for Claude Code and Codex on the Linux
+`tclaude-layer` filtered gateway. CIDR and local-machine denies are fully
+enforced. DNS-name denies are fully enforced under Deny all; under Allow all
+they are **Partial** because the broker blocks addresses it observes for the
+name, while another address for the same service or encrypted DNS that bypasses
+the broker can remain reachable. A blocked shared address also affects other
+names until the DNS lease expires.
+
+The authoring table carries only a neutral pointer to the Effective policy
+preview. That preview places each effective deny destination in the existing
+Fully supported, Partially supported, or Unsupported bucket for the selected
+target. Its `?` disclosure identifies the target and explains the mechanism,
+limitation, and remedy without turning an authored row into a global
+enforcement claim. OpenCode, macOS, built-in, and stacked cells remain
+unsupported for network denies. Capability planning omits their deny rows
+individually; a port-scoped deny is never widened into a whole-destination
+block.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local

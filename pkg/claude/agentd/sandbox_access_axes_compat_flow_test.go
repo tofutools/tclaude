@@ -781,8 +781,9 @@ func TestSandboxProfileDraftEnforcementDisclosesCodexBuiltinFilteredNetworkGap(t
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Targets []struct {
-			Axes           harness.PredictedAccessAxes     `json:"axes"`
-			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+			Axes                  harness.PredictedAccessAxes       `json:"axes"`
+			NetworkEntries        []harness.PredictedNetworkEntry   `json:"network_entries"`
+			ContextNetworkEntries [][]harness.PredictedNetworkEntry `json:"context_network_entries"`
 		} `json:"targets"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
@@ -874,7 +875,7 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	assert.Contains(t, allKeys, `{"cidr":"192.0.2.9/24"}`)
 }
 
-func TestSandboxProfileDraftEnforcementProjectsDenyRowsAsNotEnforced(t *testing.T) {
+func TestSandboxProfileDraftEnforcementProjectsPolarityAwareDenyRows(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
 		"draft": map[string]any{
@@ -884,37 +885,81 @@ func TestSandboxProfileDraftEnforcementProjectsDenyRowsAsNotEnforced(t *testing.
 				"deny_packs": []string{"net-npm"},
 				"deny": []any{
 					map[string]any{"domain": "BLOCKED.EXAMPLE", "ports": []int{443, 443}},
+					map[string]any{"cidr": "192.0.2.9/24"},
 				},
 			},
 		},
-		"targets": []any{map[string]any{
-			"implementation": "tclaude-layer",
-			"harness":        "claude",
-			"platform":       "linux",
-		}},
+		"targets": []any{
+			map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        "claude",
+				"platform":       "linux",
+			},
+			map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        "codex",
+				"platform":       "linux",
+			},
+			map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        "opencode",
+				"platform":       "linux",
+			},
+			map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        "claude",
+				"platform":       "darwin",
+			},
+		},
 	})
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var got struct {
 		Targets []struct {
-			Axes           harness.PredictedAccessAxes     `json:"axes"`
-			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+			Axes                  harness.PredictedAccessAxes       `json:"axes"`
+			NetworkEntries        []harness.PredictedNetworkEntry   `json:"network_entries"`
+			ContextNetworkEntries [][]harness.PredictedNetworkEntry `json:"context_network_entries"`
 		} `json:"targets"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
-	require.Len(t, got.Targets, 1)
-	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Network.Outcome,
-		"the frontend-first materialized axis remains today's open posture")
-	require.Len(t, got.Targets[0].NetworkEntries, 2)
+	require.Len(t, got.Targets, 4)
+	for i, target := range got.Targets {
+		assert.Equal(t, harness.AccessPredictionEnforcedPartial,
+			target.Axes.Network.Outcome)
+		require.Len(t, target.NetworkEntries, 3)
+		require.Len(t, target.ContextNetworkEntries, 1)
+		require.Len(t, target.ContextNetworkEntries[0], 3,
+			"the effective preview gets per-rule outcomes for its selected context")
+		for _, row := range target.NetworkEntries {
+			assert.Equal(t, "deny", row.Mode)
+			if i < 2 {
+				if row.Entry.CIDR != "" {
+					assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+				} else {
+					assert.Equal(t,
+						harness.AccessPredictionEnforcedPartial,
+						row.Outcome)
+					assert.Contains(t, row.Detail,
+						"encrypted DNS that bypasses the broker")
+				}
+			} else {
+				assert.Equal(t,
+					harness.AccessPredictionNotEnforced,
+					row.Outcome)
+				assert.Equal(t,
+					harness.PredictedNetworkDenyNotEnforcedDetail,
+					row.Detail)
+			}
+		}
+	}
 	allKeys := []string{}
 	for _, row := range got.Targets[0].NetworkEntries {
-		assert.Equal(t, "deny", row.Mode)
-		assert.Equal(t, harness.AccessPredictionNotEnforced, row.Outcome)
-		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
 		allKeys = append(allKeys, row.Keys...)
 	}
 	assert.Contains(t, allKeys, `deny:{"domain":"registry.npmjs.org"}`)
 	assert.Contains(t, allKeys, `deny:{"domain":"BLOCKED.EXAMPLE","ports":[443]}`,
 		"the authored spelling remains matchable after daemon normalization")
+	assert.Contains(t, allKeys, `deny:{"cidr":"192.0.2.9/24"}`,
+		"the authored CIDR spelling remains matchable after normalization")
 }
 
 func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {
