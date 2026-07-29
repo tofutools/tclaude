@@ -978,6 +978,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   );
   const predictionSignature = JSON.stringify([
     predictionDraftError ? null : predictionDraft, evaluationTarget, options.group || '',
+    predictionPauseReason,
   ]);
   useEffect(() => {
     if (typeof actions.predictSandbox !== 'function') return undefined;

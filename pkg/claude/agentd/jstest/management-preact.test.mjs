@@ -1804,6 +1804,7 @@ test('network packs and manual destinations author deny mode without implying en
     },
     async saveSandbox(value) { saved = value; },
   });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
   const network = mounted.host.querySelector('#sandbox-profile-editor-network-section');
@@ -1814,7 +1815,8 @@ test('network packs and manual destinations author deny mode without implying en
   assert.equal(selectedValue(network.querySelector('.sbx-network-rule-mode')), 'deny');
   const badges = [...network.querySelectorAll('.sbx-network-badge')];
   assert.equal(badges.length, 2);
-  assert.equal(badges.every((badge) => badge.textContent === 'Not enforced'), true);
+  assert.deepEqual(badges.map((badge) => badge.textContent),
+    ['Not enforced', 'Not enforced']);
   assert.equal(badges.every((badge) => /not blocked by this rule/.test(badge.title)), true);
 
   const networkHelp = mounted.host.querySelector(
