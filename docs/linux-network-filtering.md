@@ -58,7 +58,8 @@ The resolved `network.mode` maps to one of three tclaude-layer postures:
 
 | Profile mode | Linux behavior |
 |---|---|
-| omitted or `open` | Keep the host network namespace. There is no tclaude egress filter. |
+| omitted, or `open` without denies | Keep the host network namespace. There is no tclaude egress filter. |
+| `open` with denies | For exact `tclaude-layer` Claude Code and Codex launches, create the filtered namespace with a default-accept nftables baseline and the authored deny layer. Unsupported target cells omit the deny rows and remain host-open with disclosure. |
 | `closed` | Create a private network namespace with sandbox-private loopback and no external route. |
 | `list` | Create a private network namespace, install the filtered nftables policy, and attach the supervised DNS and `pasta` gateway. |
 
@@ -398,8 +399,8 @@ There is no fallback to an older or partially capable gateway.
 There is one important policy-level distinction:
 
 - **Before filtered enforcement is selected**, an unavailable prerequisite
-  widens the network list to host-open and records a persistent warning that
-  the list is not enforced.
+  widens the filtered network rules to host-open and records a persistent
+  warning that the rules are not enforced.
 - **After the live probe selects filtered enforcement**, setup is gated and
   fail-closed. Failure to install the policy or start the gateway prevents the
   harness from running.
@@ -445,8 +446,8 @@ Its deliberate limits are:
   bind mounts, not by nftables;
 - the synthetic host-loopback addresses are not reserved from CIDR and
   DNS-derived rules, so the dedicated `loopback` selector is not exclusive;
-- missing launch prerequisites degrade the authored list to host-open with a
-  recorded warning before enforcement is selected.
+- missing launch prerequisites degrade the filtered network rules to host-open
+  with a recorded warning before enforcement is selected.
 
 For the operator-facing summary, model-endpoint gating, and the wider
 filesystem/socket boundary, see

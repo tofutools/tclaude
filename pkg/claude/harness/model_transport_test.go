@@ -67,6 +67,37 @@ func TestModelTransportCoverageRefusesWithoutMutatingPolicy(t *testing.T) {
 	require.NoError(t, ValidateModelTransportCoverage(h, rules, requirement))
 }
 
+func TestDefaultAllowModelTransportRefusesMatchingDenyWithoutMutatingPolicy(t *testing.T) {
+	h := MustGet(CodexName)
+	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{
+		Model: "gpt-5.6-sol", Provider: "openai", ProviderResolved: true,
+	})
+	require.NoError(t, err)
+	rules := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeOpen,
+		Deny: []sandboxpolicy.NetworkAllowEntry{{
+			Domain: "api.openai.com", Ports: []int{443},
+		}},
+	}
+	before := rules
+	err = ValidateModelTransportCoverage(h, rules, requirement)
+	require.Error(t, err)
+	var capability *SandboxCapabilityError
+	require.ErrorAs(t, err, &capability)
+	assert.Equal(t, SandboxCapabilityModelTransport, capability.Kind)
+	assert.Contains(t, err.Error(), "deny rules block required model destinations")
+	assert.Contains(t, err.Error(), "api.openai.com:443")
+	assert.Contains(t, err.Error(), "remove or narrow")
+	assert.Equal(t, before, rules, "preflight must not rewrite deny rules")
+
+	rules.Deny[0].Ports = []int{80}
+	require.NoError(t, ValidateModelTransportCoverage(h, rules, requirement))
+	detail := DescribeModelTransportRequirementForRules(rules, requirement)
+	assert.Contains(t, detail, "default allow with explicit deny rules")
+	assert.Contains(t, detail, "verified not denied by selector")
+	assert.Contains(t, detail, "shared IP and port boundary")
+}
+
 func TestModelTransportCoverageHonorsExplicitSubdomainAndPortBounds(t *testing.T) {
 	h := MustGet(DefaultName)
 	requirement, err := ResolveModelTransportRequirement(h, ResolvedModelTransport{

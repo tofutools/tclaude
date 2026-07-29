@@ -934,7 +934,12 @@ func runNew(params *NewParams) error {
 		if axesErr != nil {
 			return fmt.Errorf("derive sandbox access axes: %w", axesErr)
 		}
-		if axes.Network.Mode == sandboxpolicy.AccessModeList {
+		requestedNetworkPosture, postureErr := TclaudeLayerNetworkPosture(
+			launchSandbox.Effective)
+		if postureErr != nil {
+			return fmt.Errorf("derive sandbox network posture: %w", postureErr)
+		}
+		if requestedNetworkPosture == sandboxpolicy.NetworkFiltered {
 			if runtime.GOOS == "darwin" &&
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
@@ -1169,7 +1174,12 @@ func runNew(params *NewParams) error {
 		if planErr != nil {
 			return planErr
 		}
-		filteredEnforcing := rendered.Network.Mode == sandboxpolicy.AccessModeList &&
+		renderedNetworkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+			rendered.Network)
+		if postureErr != nil {
+			return postureErr
+		}
+		filteredEnforcing := renderedNetworkPosture == sandboxpolicy.NetworkFiltered &&
 			launchOSSandbox.FilteredNetwork
 		if runtime.GOOS == "linux" ||
 			(runtime.GOOS == "darwin" &&
@@ -1201,7 +1211,12 @@ func runNew(params *NewParams) error {
 			if plannedAxesErr != nil {
 				return plannedAxesErr
 			}
-			if plannedAxes.Network.Mode == sandboxpolicy.AccessModeList {
+			plannedNetworkPosture, plannedPostureErr :=
+				sandboxpolicy.NetworkPostureForRules(plannedAxes.Network)
+			if plannedPostureErr != nil {
+				return plannedPostureErr
+			}
+			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
 				var resolveModelErr error
 				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
 					h,
