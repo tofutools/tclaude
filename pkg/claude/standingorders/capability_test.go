@@ -93,6 +93,7 @@ func TestOutcomeIsProblem(t *testing.T) {
 	for _, bad := range []string{
 		db.StandingOutcomeUnsupportedTiming,
 		db.StandingOutcomeNotEvaluatedTrimmed,
+		db.StandingOutcomeNotEvaluatedBusy,
 		db.StandingOutcomeDegradedTransport,
 		db.StandingOutcomeTransportUnimplemented,
 		db.StandingOutcomeDeliveryFailed,
