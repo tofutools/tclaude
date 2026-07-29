@@ -7379,6 +7379,7 @@ body.slop-shake { animation: slop-shake 0.6s ease-in-out; }
 .jobs-subtab {
   background: none; border: none; color: #7d8590; cursor: pointer;
   font-family: inherit; font-size: 13px; padding: 6px 14px; border-radius: 4px;
+  text-decoration: none;
 }
 .jobs-subtab:hover { color: #d4d4d4; }
 .jobs-subtab.active { background: #21262d; color: #d4d4d4; font-weight: 500; }

@@ -87,6 +87,12 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
   assert.equal(allJobs.getAttribute('href'), '/automations');
   await harness.act(() => harness.fireEvent(allJobs, 'click', { button: 0 }));
   assert.equal(state.kind.value, 'all');
+  const cronJobs = getByRole(mounted.container, 'tab', { name: 'Cron jobs' });
+  const space = harness.fireEvent(cronJobs, 'keydown', { key: ' ' });
+  assert.equal(space.defaultPrevented, true, 'Space is handled like the former native button');
+  assert.equal(state.kind.value, 'cron');
+  await harness.act(() => harness.fireEvent(allJobs, 'click', { button: 0 }));
+  assert.equal(state.kind.value, 'all');
   const cronRow = mounted.container.querySelector('tr[data-key="cron-1"]');
   const orderRow = mounted.container.querySelector('tr[data-key="standing-order-3"]');
   assert.match(orderRow.textContent, /pr-early/);

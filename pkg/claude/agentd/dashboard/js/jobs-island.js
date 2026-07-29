@@ -338,13 +338,21 @@ export function JobsApp({ state, actions }) {
       ? `item${totalAll === 1 ? '' : 's'}`
       : JOB_KIND_COUNT_LABELS[current.kind][totalAll === 1 ? 0 : 1]}`;
 
-  const selectKind = (event, value) => {
-    if (isModifiedClick(event)) return;
-    event.preventDefault();
+  const activateKind = (value) => {
     if (state.setKind(value)) void actions.refresh();
     document.dispatchEvent(new CustomEvent('tclaude:navigated', {
       detail: { location: state.location.value },
     }));
+  };
+  const selectKind = (event, value) => {
+    if (isModifiedClick(event)) return;
+    event.preventDefault();
+    activateKind(value);
+  };
+  const keyDownKind = (event, value) => {
+    if (event.key !== ' ' && event.key !== 'Spacebar') return;
+    event.preventDefault();
+    activateKind(value);
   };
 
   return html`<div class="jobs-island">
@@ -352,7 +360,8 @@ export function JobsApp({ state, actions }) {
       ${JOBS_KINDS.map((kind) => html`<a href=${toPath(jobsLocation(kind))}
         class=${`jobs-subtab${current.kind === kind ? ' active' : ''}`}
         role="tab" aria-selected=${current.kind === kind ? 'true' : 'false'}
-        onClick=${(event) => selectKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
+        onClick=${(event) => selectKind(event, kind)}
+        onKeyDown=${(event) => keyDownKind(event, kind)}>${JOB_KIND_LABELS[kind]}</a>`)}
     </div>
     <div class="filter-bar">
       <input ref=${inputRef} id="filter-jobs" type="text" aria-label="Filter automations"
