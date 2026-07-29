@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -21,6 +22,7 @@ func registerDashboardStandingOrderRoutes(mux *http.ServeMux) {
 type dashboardStandingOrderMutation struct {
 	Name         string   `json:"name"`
 	Revision     int64    `json:"revision,omitempty"`
+	UpdatedAt    string   `json:"updated_at,omitempty"`
 	Target       string   `json:"target"`
 	Role         string   `json:"role,omitempty"`
 	Summary      string   `json:"summary"`
@@ -39,7 +41,7 @@ func handleDashboardStandingOrderCreate(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST")
 		return
 	}
-	order, _, ok := decodeDashboardStandingOrder(w, r, nil)
+	order, _, _, ok := decodeDashboardStandingOrder(w, r, nil)
 	if !ok {
 		return
 	}
@@ -86,7 +88,11 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "unknown standing-order action")
 			return
 		}
-		if err := db.SetStandingOrderEnabled(id, enabled); err != nil {
+		revision, updatedAt, ok := dashboardStandingOrderCASFromQuery(w, r)
+		if !ok {
+			return
+		}
+		if err := db.SetStandingOrderEnabled(id, enabled, revision, updatedAt); err != nil {
 			writeDashboardStandingOrderError(w, "toggle", err)
 			return
 		}
@@ -95,22 +101,21 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodPatch:
-		replacement, revision, ok := decodeDashboardStandingOrder(w, r, order)
+		replacement, revision, updatedAt, ok := decodeDashboardStandingOrder(w, r, order)
 		if !ok {
 			return
 		}
-		if err := db.UpdateStandingOrder(id, revision, replacement); err != nil {
+		if err := db.UpdateStandingOrder(id, revision, updatedAt, replacement); err != nil {
 			writeDashboardStandingOrderError(w, "update", err)
 			return
 		}
 		writeDashboardStandingOrder(w, id)
 	case http.MethodDelete:
-		revision, err := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
-		if err != nil || revision <= 0 {
-			writeError(w, http.StatusBadRequest, "invalid_arg", "revision is required for delete")
+		revision, updatedAt, ok := dashboardStandingOrderCASFromQuery(w, r)
+		if !ok {
 			return
 		}
-		if err := db.DeleteStandingOrderRevision(id, revision); err != nil {
+		if err := db.DeleteStandingOrder(id, revision, updatedAt); err != nil {
 			writeDashboardStandingOrderError(w, "delete", err)
 			return
 		}
@@ -122,40 +127,49 @@ func handleDashboardStandingOrderAPI(w http.ResponseWriter, r *http.Request) {
 
 func decodeDashboardStandingOrder(
 	w http.ResponseWriter, r *http.Request, existing *db.StandingOrder,
-) (*db.StandingOrder, int64, bool) {
+) (*db.StandingOrder, int64, time.Time, bool) {
 	creating := existing == nil
 	var body dashboardStandingOrderMutation
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "bad body: "+err.Error())
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "name is required")
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	if err := validateCronName(body.Name); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
+	var expectedUpdatedAt time.Time
 	if !creating && body.Revision <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "revision is required for edit")
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
+	}
+	if !creating {
+		var err error
+		expectedUpdatedAt, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(body.UpdatedAt))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "updated_at is required for edit")
+			return nil, 0, time.Time{}, false
+		}
 	}
 	body.Target = strings.TrimSpace(body.Target)
 	if body.Target == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "target is required")
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	target, err := resolveCronTarget(body.Target)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	if target.Kind != db.StandingTargetGroup && target.Agent == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"target must resolve to an enrolled agent with a stable agt_ id")
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	role := strings.TrimSpace(body.Role)
 	if strings.EqualFold(role, "all") {
@@ -163,7 +177,7 @@ func decodeDashboardStandingOrder(
 	}
 	if role != "" && target.Kind != db.StandingTargetGroup {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "role is only valid for a group target")
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
 	trigger := strings.TrimSpace(body.TriggerEvent)
 	if trigger == "" {
@@ -209,9 +223,25 @@ func decodeDashboardStandingOrder(
 	}
 	if err := order.Validate(); err != nil {
 		writeDashboardStandingOrderError(w, "validate", err)
-		return nil, 0, false
+		return nil, 0, time.Time{}, false
 	}
-	return order, body.Revision, true
+	return order, body.Revision, expectedUpdatedAt, true
+}
+
+func dashboardStandingOrderCASFromQuery(
+	w http.ResponseWriter, r *http.Request,
+) (int64, time.Time, bool) {
+	revision, err := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
+	if err != nil || revision <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "revision is required")
+		return 0, time.Time{}, false
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, r.URL.Query().Get("updated_at"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "updated_at is required")
+		return 0, time.Time{}, false
+	}
+	return revision, updatedAt, true
 }
 
 func writeDashboardStandingOrder(w http.ResponseWriter, id int64) {

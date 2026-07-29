@@ -132,6 +132,7 @@ export function standingOrderToPrefill(order = {}) {
   return {
     name: text(order.name),
     revision: Number(order.revision) || 0,
+    updatedAt: text(order.updated_at),
     targetMode: groupTarget ? 'group' : 'solo',
     target: groupTarget ? '' : text(target.agent),
     groupName: groupTarget ? text(target.group_name || target.group_id) : '',
@@ -150,6 +151,7 @@ export function createStandingOrderDraft(prefill = {}) {
   return {
     name: text(prefill.name),
     revision: Number(prefill.revision) || 0,
+    updatedAt: text(prefill.updatedAt),
     target: {
       mode,
       target: mode === 'solo' ? text(prefill.target) : '',
@@ -189,6 +191,9 @@ export function validateStandingOrderDraft(dialog, draft) {
   if (dialog.kind === 'edit' && !draft.revision) {
     return { code: 'revision', message: 'This order has no revision; reload the Automations page and try again.' };
   }
+  if (dialog.kind === 'edit' && !draft.updatedAt) {
+    return { code: 'updated-at', message: 'This order has no edit token; reload the Automations page and try again.' };
+  }
   return null;
 }
 
@@ -206,6 +211,7 @@ export function buildStandingOrderMutation(dialog, draft) {
   };
   if (dialog.kind === 'edit') {
     payload.revision = draft.revision;
+    payload.updated_at = draft.updatedAt;
     return {
       path: `/api/standing-orders/${encodeURIComponent(dialog.id)}`,
       method: 'PATCH',

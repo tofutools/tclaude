@@ -72,6 +72,7 @@ test('standing-order edit shows retirement state and sends the stored revision',
   const saves = [];
   const order = {
     id: 4, name: 'retired-order', revision: 6, enabled: false,
+    updated_at: '2026-07-29T12:00:00Z',
     disabled_reason: 'group-retired',
     target: { kind: 'group', group_name: 'alpha', role: 'reviewer' },
     summary: 'Keep context.', trigger: { sources: [] },
@@ -89,6 +90,7 @@ test('standing-order edit shows retirement state and sends the stored revision',
     mounted.container.querySelector('#standing-order-submit'), 'click',
   ));
   assert.equal(saves[0].payload.revision, 6);
+  assert.equal(saves[0].payload.updated_at, '2026-07-29T12:00:00Z');
   assert.equal(saves[0].payload.target, 'group:alpha');
   assert.equal(saves[0].payload.enabled, false);
   await mounted.unmount();

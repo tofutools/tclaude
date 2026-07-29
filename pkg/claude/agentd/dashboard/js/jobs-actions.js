@@ -37,6 +37,10 @@ export function createJobsActions({
     }
   }
 
+  function standingOrderCAS(order) {
+    return `revision=${encodeURIComponent(order.revision)}&updated_at=${encodeURIComponent(order.updated_at || '')}`;
+  }
+
   return Object.freeze({
     refresh,
     openCronCreate: state.openCronCreate,
@@ -125,7 +129,8 @@ export function createJobsActions({
         if (!yes) return false;
       }
       return run(`standing order ${verb}: ${order.name}`, () =>
-        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}/${verb}`, { method: 'POST' }));
+        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}/${verb}?${standingOrderCAS(order)}`,
+          { method: 'POST' }));
     },
     deleteStandingOrder: async (order) => {
       const yes = await confirm({
@@ -136,7 +141,7 @@ export function createJobsActions({
       });
       if (!yes) return false;
       return run(`standing order delete: ${order.name}`, () =>
-        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}?revision=${encodeURIComponent(order.revision)}`,
+        requestMutation(`/api/standing-orders/${encodeURIComponent(order.id)}?${standingOrderCAS(order)}`,
           { method: 'DELETE' }));
     },
   });

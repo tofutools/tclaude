@@ -3,7 +3,9 @@ package agentd_test
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,13 +29,23 @@ func mutateStandingOrder(
 	return &view, rec.Code
 }
 
-func standingOrderBody(target string, revision int64) map[string]any {
+func standingOrderBody(target string, revision int64, updatedAt time.Time) map[string]any {
 	return map[string]any{
-		"name": "boundary-reminder", "revision": revision, "target": target,
+		"name": "boundary-reminder", "revision": revision,
+		"updated_at": updatedAt.Format(time.RFC3339Nano), "target": target,
 		"summary": "Re-read the durable instructions.", "trigger_event": "session.start",
 		"sources": []string{"compact", "resume"}, "timing": "same-continuation",
 		"cadence": "always", "enabled": true,
 	}
+}
+
+func standingOrderActionPath(id int64, action string, revision int64, updatedAt time.Time) string {
+	path := fmt.Sprintf("/api/standing-orders/%d", id)
+	if action != "" {
+		path += "/" + action
+	}
+	return fmt.Sprintf("%s?revision=%d&updated_at=%s",
+		path, revision, url.QueryEscape(updatedAt.Format(time.RFC3339Nano)))
 }
 
 func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
@@ -43,7 +55,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	created, code := mutateStandingOrder(t, dash, http.MethodPost,
-		"/api/standing-orders", standingOrderBody(targetAgent, 0))
+		"/api/standing-orders", standingOrderBody(targetAgent, 0, time.Time{}))
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, created)
 	assert.Positive(t, created.ID)
@@ -51,7 +63,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.Equal(t, targetAgent, created.Target.Agent)
 	assert.True(t, created.OperatorAuthored)
 
-	editBody := standingOrderBody(targetAgent, created.Revision)
+	editBody := standingOrderBody(targetAgent, created.Revision, created.UpdatedAt)
 	editBody["name"] = "boundary-reminder-edited"
 	editBody["summary"] = "Updated durable instruction."
 	editBody["timing"] = "next-turn"
@@ -68,7 +80,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, code, "a stale editor cannot overwrite a newer revision")
 
 	rec := testharness.Serve(dash, dashReq(t, http.MethodPost,
-		fmt.Sprintf("/api/standing-orders/%d/disable", created.ID), nil))
+		standingOrderActionPath(created.ID, "disable", edited.Revision, edited.UpdatedAt), nil))
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	disabled, err := db.GetStandingOrder(created.ID)
 	require.NoError(t, err)
@@ -76,11 +88,11 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.False(t, disabled.Enabled)
 
 	rec = testharness.Serve(dash, dashReq(t, http.MethodDelete,
-		fmt.Sprintf("/api/standing-orders/%d?revision=%d", created.ID, edited.Revision), nil))
+		standingOrderActionPath(created.ID, "", edited.Revision, edited.UpdatedAt), nil))
 	assert.Equal(t, http.StatusConflict, rec.Code, "the disable invalidated the stale delete")
 
 	rec = testharness.Serve(dash, dashReq(t, http.MethodPost,
-		fmt.Sprintf("/api/standing-orders/%d/enable", created.ID), nil))
+		standingOrderActionPath(created.ID, "enable", disabled.Revision, disabled.UpdatedAt), nil))
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	current, err := db.GetStandingOrder(created.ID)
 	require.NoError(t, err)
@@ -88,7 +100,7 @@ func TestDashboardStandingOrders_CRUDLifecycleAndRevisionGuards(t *testing.T) {
 	assert.True(t, current.Enabled)
 
 	rec = testharness.Serve(dash, dashReq(t, http.MethodDelete,
-		fmt.Sprintf("/api/standing-orders/%d?revision=%d", created.ID, current.Revision), nil))
+		standingOrderActionPath(created.ID, "", current.Revision, current.UpdatedAt), nil))
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	gone, err := db.GetStandingOrder(created.ID)
 	require.NoError(t, err)
@@ -109,6 +121,9 @@ func TestDashboardStandingOrders_EditPreservesAuthorAndRetirementState(t *testin
 		Enabled: true, OperatorAuthored: false,
 	})
 	require.NoError(t, err)
+	beforeRetire, err := db.GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, beforeRetire)
 	n, err := db.DisableGroupTargetStandingOrdersForRetire(group.ID)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -116,7 +131,15 @@ func TestDashboardStandingOrders_EditPreservesAuthorAndRetirementState(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 
-	body := standingOrderBody("group:"+group.Name, stored.Revision)
+	staleBody := standingOrderBody("group:"+group.Name,
+		beforeRetire.Revision, beforeRetire.UpdatedAt)
+	staleBody["name"] = "stale-retirement-overwrite"
+	_, code := mutateStandingOrder(t, agentd.BuildDashboardHandlerForTest(),
+		http.MethodPatch, fmt.Sprintf("/api/standing-orders/%d", id), staleBody)
+	assert.Equal(t, http.StatusConflict, code,
+		"an editor opened before automatic retirement cannot silently re-enable the order")
+
+	body := standingOrderBody("group:"+group.Name, stored.Revision, stored.UpdatedAt)
 	body["name"] = "agent-authored-edited"
 	body["enabled"] = false
 	view, code := mutateStandingOrder(t, agentd.BuildDashboardHandlerForTest(),
@@ -131,6 +154,7 @@ func TestDashboardStandingOrders_EditPreservesAuthorAndRetirementState(t *testin
 	current, err := db.GetStandingOrder(id)
 	require.NoError(t, err)
 	body["revision"] = current.Revision
+	body["updated_at"] = current.UpdatedAt.Format(time.RFC3339Nano)
 	body["enabled"] = true
 	view, code = mutateStandingOrder(t, agentd.BuildDashboardHandlerForTest(),
 		http.MethodPatch, fmt.Sprintf("/api/standing-orders/%d", id), body)

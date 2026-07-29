@@ -539,37 +539,15 @@ func listStandingOrders(d *sql.DB, query string, args ...any) ([]*StandingOrder,
 	return out, rows.Err()
 }
 
-// UpdateStandingOrderText replaces the delivered text and bumps the revision,
-// re-arming any once-per-generation cadence. Editing what an agent will be
-// told must not leave recipients pinned to an "already delivered" record for
-// the old wording — that would silently withhold the new text from exactly the
-// agents the edit was for.
-func UpdateStandingOrderText(id int64, summary string) error {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return fmt.Errorf("%w: summary is required", ErrStandingOrderInvalid)
-	}
-	if len(summary) > StandingSummaryMaxLen {
-		return fmt.Errorf("%w: summary is %d bytes, limit is %d",
-			ErrStandingOrderInvalid, len(summary), StandingSummaryMaxLen)
-	}
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`UPDATE agent_standing_orders
-		SET summary = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
-		summary, formatStandingTime(time.Now()), id)
-	return err
-}
-
 // UpdateStandingOrder replaces every operator-editable field and bumps the
-// revision atomically. expectedRevision is an optimistic-concurrency guard:
-// the edit is rejected if another writer changed the order after the dialog
-// opened.
-func UpdateStandingOrder(id, expectedRevision int64, o *StandingOrder) error {
-	if expectedRevision <= 0 {
-		return fmt.Errorf("%w: expected revision is required", ErrStandingOrderInvalid)
+// delivery revision atomically. expectedRevision catches content changes;
+// expectedUpdatedAt also catches automatic lifecycle changes that deliberately
+// leave the delivery cadence untouched.
+func UpdateStandingOrder(
+	id, expectedRevision int64, expectedUpdatedAt time.Time, o *StandingOrder,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
 	}
 	if err := o.Validate(); err != nil {
 		return err
@@ -583,11 +561,11 @@ func UpdateStandingOrder(id, expectedRevision int64, o *StandingOrder) error {
 		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
 		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
 		enabled = ?, disabled_reason = ?, operator_authored = ?, updated_at = ?
-		WHERE id = ? AND revision = ?`,
+		WHERE id = ? AND revision = ? AND updated_at = ?`,
 		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
 		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), formatStandingTime(time.Now()),
-		id, expectedRevision)
+		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("UpdateStandingOrder %q: %w", o.Name, ErrStandingOrderNameTaken)
@@ -604,24 +582,58 @@ func UpdateStandingOrder(id, expectedRevision int64, o *StandingOrder) error {
 	return nil
 }
 
-// SetStandingOrderEnabled toggles an order, clears any disabled_reason, and
-// bumps its revision when the state changes. The bump both invalidates a
-// concurrently open editor and re-arms delivery when an operator explicitly
-// enables an order again.
-func SetStandingOrderEnabled(id int64, enabled bool) error {
+// SetStandingOrderEnabled toggles an order through the same two-part CAS used
+// by full edits. A successful state change clears disabled_reason and bumps the
+// delivery revision, intentionally re-arming a manually re-enabled order.
+func SetStandingOrderEnabled(
+	id int64, enabled bool, expectedRevision int64, expectedUpdatedAt time.Time,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE agent_standing_orders
+	res, err := d.Exec(`UPDATE agent_standing_orders
 		SET enabled = ?, disabled_reason = '', revision = revision + 1, updated_at = ?
-		WHERE id = ? AND (enabled != ? OR disabled_reason != '')`,
-		boolToInt(enabled), formatStandingTime(time.Now()), id, boolToInt(enabled))
-	return err
+		WHERE id = ? AND revision = ? AND updated_at = ?
+		AND (enabled != ? OR disabled_reason != '')`,
+		boolToInt(enabled), formatStandingTime(time.Now()), id,
+		expectedRevision, formatStandingTime(expectedUpdatedAt), boolToInt(enabled))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		current, getErr := GetStandingOrder(id)
+		if getErr != nil {
+			return getErr
+		}
+		if current != nil &&
+			current.Revision == expectedRevision &&
+			current.UpdatedAt.Equal(expectedUpdatedAt) &&
+			current.Enabled == enabled &&
+			current.DisabledReason == "" {
+			return nil
+		}
+		return ErrStandingOrderRevisionConflict
+	}
+	return nil
 }
 
-// DeleteStandingOrder removes an order and its ledger rows.
-func DeleteStandingOrder(id int64) error {
+// DeleteStandingOrder removes an order and its ledger only if the caller still
+// holds both current CAS tokens. There is deliberately no unguarded exported
+// delete: a stale tab must not remove an order another writer changed.
+func DeleteStandingOrder(
+	id, expectedRevision int64, expectedUpdatedAt time.Time,
+) error {
+	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
+		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	}
 	d, err := Open()
 	if err != nil {
 		return err
@@ -631,33 +643,9 @@ func DeleteStandingOrder(id int64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries WHERE order_id = ?`, id); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM agent_standing_orders WHERE id = ?`, id); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// DeleteStandingOrderRevision removes an order and its ledger only if the
-// caller still holds the current revision. Dashboard editors use this so a
-// stale tab cannot delete an order that another operator has since rewritten.
-func DeleteStandingOrderRevision(id, expectedRevision int64) error {
-	if expectedRevision <= 0 {
-		return fmt.Errorf("%w: expected revision is required", ErrStandingOrderInvalid)
-	}
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	tx, err := d.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	res, err := tx.Exec(`DELETE FROM agent_standing_orders WHERE id = ? AND revision = ?`,
-		id, expectedRevision)
+	res, err := tx.Exec(
+		`DELETE FROM agent_standing_orders WHERE id = ? AND revision = ? AND updated_at = ?`,
+		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
 	if err != nil {
 		return err
 	}
@@ -685,9 +673,10 @@ func DisableGroupTargetStandingOrdersForRetire(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?
+		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?, updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND enabled = 1`,
-		StandingDisabledReasonGroupRetired, StandingTargetGroup, groupID)
+		StandingDisabledReasonGroupRetired, formatStandingTime(time.Now()),
+		StandingTargetGroup, groupID)
 	if err != nil {
 		return 0, err
 	}
@@ -704,12 +693,13 @@ func ReenableGroupRetiredStandingOrders(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = ''
+		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = '', updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?
 		 AND (owner_agent = '' OR EXISTS (
 			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
 		 ))`,
-		StandingTargetGroup, groupID, StandingDisabledReasonGroupRetired)
+		formatStandingTime(time.Now()), StandingTargetGroup, groupID,
+		StandingDisabledReasonGroupRetired)
 	if err != nil {
 		return 0, err
 	}

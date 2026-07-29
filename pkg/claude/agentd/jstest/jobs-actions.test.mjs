@@ -50,15 +50,20 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   await actions.runCron({ id: 4, name: 'daily' });
   await actions.deleteCron({ id: 4, name: 'daily' });
   await actions.dismissExport({ id: 9, title: 'summary' });
-  await actions.toggleStandingOrder({ id: 12, name: 'pr-early', enabled: true });
-  await actions.deleteStandingOrder({ id: 12, revision: 4, name: 'pr-early' });
+  await actions.toggleStandingOrder({
+    id: 12, revision: 4, updated_at: '2026-07-29T12:00:00Z',
+    name: 'pr-early', enabled: true,
+  });
+  await actions.deleteStandingOrder({
+    id: 12, revision: 4, updated_at: '2026-07-29T12:00:00Z', name: 'pr-early',
+  });
   assert.deepEqual(mutations, [
     { path: '/api/cron/4/disable', options: { method: 'POST' } },
     { path: '/api/cron/4/run-now', options: { method: 'POST' } },
     { path: '/api/cron/4', options: { method: 'DELETE' } },
     { path: '/api/export-jobs/9', options: { method: 'DELETE' } },
-    { path: '/api/standing-orders/12/disable', options: { method: 'POST' } },
-    { path: '/api/standing-orders/12?revision=4', options: { method: 'DELETE' } },
+    { path: '/api/standing-orders/12/disable?revision=4&updated_at=2026-07-29T12%3A00%3A00Z', options: { method: 'POST' } },
+    { path: '/api/standing-orders/12?revision=4&updated_at=2026-07-29T12%3A00%3A00Z', options: { method: 'DELETE' } },
   ]);
   assert.equal(notices.length, 6);
 
@@ -68,7 +73,8 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
 
   confirms = false;
   assert.equal(await actions.toggleStandingOrder({
-    id: 13, name: 'retired', enabled: false, disabled_reason: 'group-retired',
+    id: 13, revision: 2, updated_at: '2026-07-29T12:00:00Z',
+    name: 'retired', enabled: false, disabled_reason: 'group-retired',
   }), false);
   assert.equal(mutations.length, 6, 'automatic retirement requires explicit re-enable confirmation');
 

@@ -108,12 +108,14 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   state.closeStandingOrderDialog();
   assert.equal(state.openStandingOrderEdit({
     id: 9, name: 'pr-early', revision: 2, enabled: true,
+    updated_at: '2026-07-29T12:00:00Z',
     target: { kind: 'conv', agent: 'agt_one' },
     summary: 'Push early.', trigger: { sources: ['compact'] },
     timing: 'same-continuation', cadence: 'always',
   }), true);
   assert.equal(state.orderDialog.value.kind, 'edit');
   assert.equal(state.orderDialog.value.prefill.revision, 2);
+  assert.equal(state.orderDialog.value.prefill.updatedAt, '2026-07-29T12:00:00Z');
   assert.equal(state.orderDialog.value.prefill.target, 'agt_one');
 });
 
