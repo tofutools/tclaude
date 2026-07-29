@@ -280,7 +280,7 @@ func TestExportBumpsFormatAndEveryOlderBundleStillImports(t *testing.T) {
 	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", envelope)
 	require.Equalf(t, http.StatusOK, rec.Code, "self round-trip body=%s", rec.Body.String())
 
-	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9} {
+	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10} {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
 			"format":         "tclaude-sandbox-profiles",
 			"format_version": version,

@@ -37,7 +37,7 @@ func TestLegacyEnvelopeVersionsRenderByteIdenticallyAcrossBothNetworkPostures(t 
 		expectedBytes, err := json.Marshal(expectedPlan)
 		require.NoError(t, err)
 
-		for version := 1; version <= 9; version++ {
+		for version := 1; version <= 10; version++ {
 			rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
 				"format":         "tclaude-sandbox-profiles",
 				"format_version": version,
@@ -831,6 +831,49 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	}
 	assert.Contains(t, allKeys, `{"domain":"API.EXAMPLE.COM","ports":[443]}`)
 	assert.Contains(t, allKeys, `{"cidr":"192.0.2.9/24"}`)
+}
+
+func TestSandboxProfileDraftEnforcementProjectsDenyRowsAsNotEnforced(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "deny-preview", "filesystem": []any{}, "environment": []any{},
+			"network": map[string]any{
+				"baseline":   "allow",
+				"deny_packs": []string{"net-npm"},
+				"deny": []any{
+					map[string]any{"domain": "BLOCKED.EXAMPLE", "ports": []int{443, 443}},
+				},
+			},
+		},
+		"targets": []any{map[string]any{
+			"implementation": "tclaude-layer",
+			"harness":        "claude",
+			"platform":       "linux",
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Targets []struct {
+			Axes           harness.PredictedAccessAxes     `json:"axes"`
+			NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+		} `json:"targets"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.Network.Outcome,
+		"the frontend-first materialized axis remains today's open posture")
+	require.Len(t, got.Targets[0].NetworkEntries, 2)
+	allKeys := []string{}
+	for _, row := range got.Targets[0].NetworkEntries {
+		assert.Equal(t, "deny", row.Mode)
+		assert.Equal(t, harness.AccessPredictionNotEnforced, row.Outcome)
+		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
+		allKeys = append(allKeys, row.Keys...)
+	}
+	assert.Contains(t, allKeys, `deny:{"domain":"registry.npmjs.org"}`)
+	assert.Contains(t, allKeys, `deny:{"domain":"BLOCKED.EXAMPLE","ports":[443]}`,
+		"the authored spelling remains matchable after daemon normalization")
 }
 
 func TestGlobalSandboxAssignmentReportsIntrinsicCompositionOnce(t *testing.T) {

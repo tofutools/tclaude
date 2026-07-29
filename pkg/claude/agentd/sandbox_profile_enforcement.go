@@ -290,7 +290,7 @@ func predictedDraftNetworkEntries(
 	authored *sandboxpolicy.NetworkRules,
 ) []harness.PredictedNetworkEntry {
 	rows := harness.DescribePredictedNetworkEntries(rules, caps)
-	if authored == nil || len(rows) == 0 {
+	if authored == nil {
 		return rows
 	}
 	for _, entry := range authored.Allow {
@@ -307,12 +307,60 @@ func predictedDraftNetworkEntries(
 		authoredKey := harness.NetworkEntryPredictionKey(entry)
 		for i := range rows {
 			if harness.NetworkEntryPredictionKey(rows[i].Entry) != canonicalKey ||
-				slices.Contains(rows[i].Keys, authoredKey) {
+				slices.Contains(rows[i].Keys, harness.NetworkEntryModePredictionKey("allow", entry)) {
 				continue
 			}
-			rows[i].Keys = append(rows[i].Keys, authoredKey)
+			rows[i].Keys = append(rows[i].Keys,
+				harness.NetworkEntryModePredictionKey("allow", entry),
+				authoredKey,
+			)
 		}
 	}
+	denyEntries := make([]sandboxpolicy.NetworkAllowEntry, 0, len(authored.Deny))
+	for _, id := range authored.DenyPacks {
+		entries, err := sandboxpolicy.ExpandNetworkPackEntries(id)
+		if err != nil {
+			continue
+		}
+		denyEntries = append(denyEntries, entries...)
+	}
+	type denyAlias struct {
+		canonical sandboxpolicy.NetworkAllowEntry
+		authored  sandboxpolicy.NetworkAllowEntry
+	}
+	denyAliases := make([]denyAlias, 0, len(authored.Deny))
+	for _, entry := range authored.Deny {
+		materialized, err := sandboxpolicy.MaterializeNetworkRules(
+			sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Allow:    []sandboxpolicy.NetworkAllowEntry{entry},
+			},
+		)
+		if err != nil || len(materialized.Allow) != 1 {
+			continue
+		}
+		denyEntries = append(denyEntries, materialized.Allow[0])
+		denyAliases = append(denyAliases, denyAlias{
+			canonical: materialized.Allow[0],
+			authored:  entry,
+		})
+	}
+	denyRows := harness.DescribePredictedNetworkDenyEntries(denyEntries)
+	for _, alias := range denyAliases {
+		canonicalKey := harness.NetworkEntryPredictionKey(alias.canonical)
+		authoredKey := harness.NetworkEntryPredictionKey(alias.authored)
+		for i := range denyRows {
+			if harness.NetworkEntryPredictionKey(denyRows[i].Entry) != canonicalKey ||
+				slices.Contains(denyRows[i].Keys, harness.NetworkEntryModePredictionKey("deny", alias.authored)) {
+				continue
+			}
+			denyRows[i].Keys = append(denyRows[i].Keys,
+				harness.NetworkEntryModePredictionKey("deny", alias.authored),
+				authoredKey,
+			)
+		}
+	}
+	rows = append(rows, denyRows...)
 	return rows
 }
 

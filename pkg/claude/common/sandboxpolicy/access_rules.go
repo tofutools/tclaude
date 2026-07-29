@@ -47,13 +47,16 @@ const (
 type NetworkRules struct {
 	// Mode is the forever-readable legacy/effective representation. Newly
 	// authored profiles use Baseline; resolved launch authority uses Mode.
-	Mode     AccessMode          `json:"mode,omitempty"`
-	Baseline NetworkBaseline     `json:"baseline,omitempty"`
-	Packs    []string            `json:"packs,omitempty"`
-	Allow    []NetworkAllowEntry `json:"allow,omitempty"`
+	Mode      AccessMode          `json:"mode,omitempty"`
+	Baseline  NetworkBaseline     `json:"baseline,omitempty"`
+	Packs     []string            `json:"packs,omitempty"`
+	DenyPacks []string            `json:"deny_packs,omitempty"`
+	Allow     []NetworkAllowEntry `json:"allow,omitempty"`
+	Deny      []NetworkAllowEntry `json:"deny,omitempty"`
 }
 
-// NetworkAllowEntry names exactly one outbound destination selector.
+// NetworkAllowEntry names exactly one outbound destination selector. The
+// containing Allow or Deny slice supplies its authored mode.
 type NetworkAllowEntry struct {
 	Host              string `json:"host,omitempty"`
 	Domain            string `json:"domain,omitempty"`
@@ -223,11 +226,12 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 				in.Baseline,
 			)
 		}
-		if in.Baseline != NetworkBaselineDeny &&
-			(len(in.Packs) > 0 || len(in.Allow) > 0) {
+		if in.Baseline == NetworkBaselineInherit &&
+			(len(in.Packs) > 0 || len(in.DenyPacks) > 0 ||
+				len(in.Allow) > 0 || len(in.Deny) > 0) {
 			return nil, fmt.Errorf(
-				"network packs and allow entries are only valid with baseline %q",
-				NetworkBaselineDeny,
+				"network packs and entries are not valid with baseline %q",
+				NetworkBaselineInherit,
 			)
 		}
 	} else {
@@ -237,34 +241,54 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 		if len(in.Packs) > 0 {
 			return nil, fmt.Errorf("network.packs requires the compositional baseline representation")
 		}
+		if len(in.DenyPacks) > 0 {
+			return nil, fmt.Errorf("network.deny_packs requires the compositional baseline representation")
+		}
 		if in.Mode != AccessModeList && len(in.Allow) > 0 {
 			return nil, fmt.Errorf(`network.allow is only valid with mode "list"`)
+		}
+		if len(in.Deny) > 0 {
+			return nil, fmt.Errorf("network.deny requires the compositional baseline representation")
 		}
 	}
 	if len(in.Allow) > MaxNetworkAllowEntries {
 		return nil, fmt.Errorf("network.allow has too many entries (maximum %d)", MaxNetworkAllowEntries)
 	}
-	packs, err := normalizeNetworkPackRefs(in.Packs)
+	if len(in.Deny) > MaxNetworkAllowEntries {
+		return nil, fmt.Errorf("network.deny has too many entries (maximum %d)", MaxNetworkAllowEntries)
+	}
+	packs, err := normalizeNetworkPackRefs(in.Packs, "packs")
 	if err != nil {
 		return nil, err
 	}
-	out := &NetworkRules{Mode: in.Mode, Baseline: in.Baseline, Packs: packs}
-	seen := make(map[string]struct{}, len(in.Allow))
-	for i, entry := range in.Allow {
-		normalized, err := normalizeNetworkAllowEntry(entry, i)
-		if err != nil {
-			return nil, err
-		}
-		key := networkEntryKey(normalized)
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		out.Allow = append(out.Allow, normalized)
+	denyPacks, err := normalizeNetworkPackRefs(in.DenyPacks, "deny_packs")
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(out.Allow, func(i, j int) bool {
-		return networkEntryKey(out.Allow[i]) < networkEntryKey(out.Allow[j])
-	})
+	allowPacks := make(map[string]struct{}, len(packs))
+	for _, id := range packs {
+		allowPacks[id] = struct{}{}
+	}
+	for _, id := range denyPacks {
+		if _, exists := allowPacks[id]; exists {
+			return nil, fmt.Errorf(
+				"network pack capability %q is authored in both network.packs (allow) and network.deny_packs (deny); choose exactly one mode",
+				id,
+			)
+		}
+	}
+	out := &NetworkRules{
+		Mode: in.Mode, Baseline: in.Baseline,
+		Packs: packs, DenyPacks: denyPacks,
+	}
+	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
+	if err != nil {
+		return nil, err
+	}
+	out.Deny, err = normalizeNetworkEntries(in.Deny, "deny")
+	if err != nil {
+		return nil, err
+	}
 	if out.Baseline != "" {
 		if _, err := MaterializeNetworkRules(*out); err != nil {
 			return nil, err
@@ -273,7 +297,31 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	return out, nil
 }
 
-func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int) (NetworkAllowEntry, error) {
+func normalizeNetworkEntries(in []NetworkAllowEntry, field string) ([]NetworkAllowEntry, error) {
+	if in == nil {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]NetworkAllowEntry, 0, len(in))
+	for i, entry := range in {
+		normalized, err := normalizeNetworkAllowEntry(entry, i, field)
+		if err != nil {
+			return nil, err
+		}
+		key := networkEntryKey(normalized)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, normalized)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return networkEntryKey(out[i]) < networkEntryKey(out[j])
+	})
+	return out, nil
+}
+
+func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int, field string) (NetworkAllowEntry, error) {
 	selectors := 0
 	if in.Host != "" {
 		selectors++
@@ -289,14 +337,14 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int) (NetworkAllowEn
 	}
 	if selectors != 1 {
 		return NetworkAllowEntry{}, fmt.Errorf(
-			"network.allow[%d] must set exactly one of host, domain, cidr, loopback",
-			index,
+			"network.%s[%d] must set exactly one of host, domain, cidr, loopback",
+			field, index,
 		)
 	}
 	if in.IncludeSubdomains && in.Domain == "" {
 		return NetworkAllowEntry{}, fmt.Errorf(
-			"network.allow[%d].include_subdomains is only valid with domain",
-			index,
+			"network.%s[%d].include_subdomains is only valid with domain",
+			field, index,
 		)
 	}
 	out := in
@@ -304,33 +352,33 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int) (NetworkAllowEn
 	if out.Host != "" {
 		out.Host, err = normalizeDNSName(out.Host)
 		if err != nil {
-			return NetworkAllowEntry{}, fmt.Errorf("network.allow[%d].host: %w", index, err)
+			return NetworkAllowEntry{}, fmt.Errorf("network.%s[%d].host: %w", field, index, err)
 		}
 	}
 	if out.Domain != "" {
 		out.Domain, err = normalizeDNSName(out.Domain)
 		if err != nil {
-			return NetworkAllowEntry{}, fmt.Errorf("network.allow[%d].domain: %w", index, err)
+			return NetworkAllowEntry{}, fmt.Errorf("network.%s[%d].domain: %w", field, index, err)
 		}
 	}
 	if out.CIDR != "" {
 		prefix, parseErr := netip.ParsePrefix(out.CIDR)
 		if parseErr != nil {
-			return NetworkAllowEntry{}, fmt.Errorf("network.allow[%d].cidr %q is invalid: %w", index, out.CIDR, parseErr)
+			return NetworkAllowEntry{}, fmt.Errorf("network.%s[%d].cidr %q is invalid: %w", field, index, out.CIDR, parseErr)
 		}
 		prefix = prefix.Masked()
 		if prefixIntersectsLoopback(prefix) {
 			return NetworkAllowEntry{}, fmt.Errorf(
-				`network.allow[%d].cidr covers loopback; use {"loopback": true} instead`,
-				index,
+				`network.%s[%d].cidr covers loopback; use {"loopback": true} instead`,
+				field, index,
 			)
 		}
 		out.CIDR = prefix.String()
 	}
 	if len(out.Ports) > MaxPortsPerEntry {
 		return NetworkAllowEntry{}, fmt.Errorf(
-			"network.allow[%d].ports has too many entries (maximum %d)",
-			index, MaxPortsPerEntry,
+			"network.%s[%d].ports has too many entries (maximum %d)",
+			field, index, MaxPortsPerEntry,
 		)
 	}
 	portSet := make(map[int]struct{}, len(out.Ports))
@@ -341,8 +389,8 @@ func normalizeNetworkAllowEntry(in NetworkAllowEntry, index int) (NetworkAllowEn
 	for _, port := range out.Ports {
 		if port < 1 || port > 65535 {
 			return NetworkAllowEntry{}, fmt.Errorf(
-				"network.allow[%d].ports contains %d (want 1..65535)",
-				index, port,
+				"network.%s[%d].ports contains %d (want 1..65535)",
+				field, index, port,
 			)
 		}
 		if _, exists := portSet[port]; exists {
@@ -617,15 +665,20 @@ func socketEntryKey(entry SocketAllowEntry) string {
 func cloneNetworkRules(in NetworkRules) NetworkRules {
 	out := in
 	out.Packs = append([]string(nil), in.Packs...)
-	if in.Allow == nil {
-		out.Allow = nil
-		return out
+	out.DenyPacks = append([]string(nil), in.DenyPacks...)
+	cloneEntries := func(entries []NetworkAllowEntry) []NetworkAllowEntry {
+		if entries == nil {
+			return nil
+		}
+		cloned := make([]NetworkAllowEntry, len(entries))
+		for i, entry := range entries {
+			cloned[i] = entry
+			cloned[i].Ports = append([]int(nil), entry.Ports...)
+		}
+		return cloned
 	}
-	out.Allow = make([]NetworkAllowEntry, len(in.Allow))
-	for i, entry := range in.Allow {
-		out.Allow[i] = entry
-		out.Allow[i].Ports = append([]int(nil), entry.Ports...)
-	}
+	out.Allow = cloneEntries(in.Allow)
+	out.Deny = cloneEntries(in.Deny)
 	return out
 }
 

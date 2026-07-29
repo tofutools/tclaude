@@ -599,7 +599,11 @@ func TestPredictedNetworkEntriesProjectListWideAndPerEntryOutcomes(t *testing.T)
 	rows := DescribePredictedNetworkEntries(rules, caps)
 	require.Len(t, rows, 2)
 	assert.Equal(t, AccessPredictionEnforced, rows[0].Outcome)
-	assert.Equal(t, []string{`{"cidr":"192.0.2.0/24","ports":[443]}`}, rows[0].Keys)
+	assert.Equal(t, "allow", rows[0].Mode)
+	assert.Equal(t, []string{
+		`allow:{"cidr":"192.0.2.0/24","ports":[443]}`,
+		`{"cidr":"192.0.2.0/24","ports":[443]}`,
+	}, rows[0].Keys)
 	assert.Contains(t, rows[0].Detail, "Live network probes must pass")
 	assert.Equal(t, AccessPredictionEnforcedPartial, rows[1].Outcome)
 	assert.Contains(t, rows[1].Detail, "DNS identity is lease-bound")
@@ -621,6 +625,21 @@ func TestPredictedNetworkEntriesProjectListWideAndPerEntryOutcomes(t *testing.T)
 		assert.Equal(t, AccessPredictionRefused, row.Outcome)
 		assert.Equal(t, "the target refuses this list", row.Detail)
 	}
+}
+
+func TestPredictedNetworkDenyEntriesAreAlwaysHonest(t *testing.T) {
+	entry := sandboxpolicy.NetworkAllowEntry{
+		Domain: "blocked.example", Ports: []int{443},
+	}
+	rows := DescribePredictedNetworkDenyEntries([]sandboxpolicy.NetworkAllowEntry{entry})
+	require.Len(t, rows, 1)
+	assert.Equal(t, "deny", rows[0].Mode)
+	assert.Equal(t, AccessPredictionNotEnforced, rows[0].Outcome)
+	assert.Equal(t, PredictedNetworkDenyNotEnforcedDetail, rows[0].Detail)
+	assert.Equal(t, []string{
+		`deny:{"domain":"blocked.example","ports":[443]}`,
+		`{"domain":"blocked.example","ports":[443]}`,
+	}, rows[0].Keys)
 }
 
 func TestPlanAccessEnforcementPersistsPerSelectorPartialDetails(t *testing.T) {

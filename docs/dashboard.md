@@ -820,9 +820,15 @@ with a `not_enforced` network notice, so its Groups badge is a warning rather
 than a lock. Resume, reincarnate, and clone do not inherit the authorization.
 Direct `/v1` requests cannot exercise this dashboard-origin operator action.
 
-The editor has separate **Network** and **Unix sockets** fieldsets with
-unset/open/closed/list modes, editable list rows, inherited harness-global
-context, and audited insert-only presets. Its **Effective policy preview**
+The editor has separate **Network** and **Unix sockets** fieldsets. Network
+authoring starts with Deny all, Allow all, or No override; each built-in pack
+has a compact Off/Allow/Deny control and each manual destination has its own
+Allow/Deny mode. Deny wins when both modes match, independent of row order.
+Deny rows are stored but display **Not enforced** until the follow-up applier
+work lands; their badge never implies that traffic is currently blocked.
+No override carries no network rows. Unix sockets retain their
+unset/open/closed/list modes. Both axes show inherited harness-global context
+and audited insert-only presets. The **Effective policy preview**
 shows concrete effective rules grouped as **Fully supported rules**,
 **Partially supported rules**, and **Unsupported rules** for the selected
 implementation/harness/platform. Partial and unsupported groups open

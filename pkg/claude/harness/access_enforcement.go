@@ -106,10 +106,13 @@ type PredictedAccessAxes struct {
 // verdict after pack expansion without relying on positional indices.
 type PredictedNetworkEntry struct {
 	Entry   sandboxpolicy.NetworkAllowEntry `json:"entry"`
+	Mode    string                          `json:"mode"`
 	Keys    []string                        `json:"keys"`
 	Outcome string                          `json:"outcome"`
 	Detail  string                          `json:"detail"`
 }
+
+const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is authored but this release does not apply deny entries; traffic matching this destination is not blocked by this rule."
 
 type accessEnforcementTableRow struct {
 	NetworkClosed                EnforcementLevel
@@ -485,7 +488,11 @@ func DescribePredictedNetworkEntries(
 	setAll := func(outcome, detail string) []PredictedNetworkEntry {
 		for i, entry := range rules.Allow {
 			out[i] = PredictedNetworkEntry{
-				Entry: entry, Keys: []string{NetworkEntryPredictionKey(entry)},
+				Entry: entry, Mode: "allow",
+				Keys: []string{
+					NetworkEntryModePredictionKey("allow", entry),
+					NetworkEntryPredictionKey(entry),
+				},
 				Outcome: outcome, Detail: detail,
 			}
 		}
@@ -543,8 +550,32 @@ func DescribePredictedNetworkEntries(
 			detail += " " + caps.NetworkListCondition
 		}
 		out[i] = PredictedNetworkEntry{
-			Entry: entry, Keys: []string{NetworkEntryPredictionKey(entry)},
+			Entry: entry, Mode: "allow",
+			Keys: []string{
+				NetworkEntryModePredictionKey("allow", entry),
+				NetworkEntryPredictionKey(entry),
+			},
 			Outcome: outcome, Detail: detail,
+		}
+	}
+	return out
+}
+
+// DescribePredictedNetworkDenyEntries projects authored deny rows without
+// consulting capability cells. TCL-839 persists deny intent before appliers
+// consume it, so every row must disclose that it does not currently block
+// traffic.
+func DescribePredictedNetworkDenyEntries(entries []sandboxpolicy.NetworkAllowEntry) []PredictedNetworkEntry {
+	out := make([]PredictedNetworkEntry, len(entries))
+	for i, entry := range entries {
+		out[i] = PredictedNetworkEntry{
+			Entry: entry, Mode: "deny",
+			Keys: []string{
+				NetworkEntryModePredictionKey("deny", entry),
+				NetworkEntryPredictionKey(entry),
+			},
+			Outcome: AccessPredictionNotEnforced,
+			Detail:  PredictedNetworkDenyNotEnforcedDetail,
 		}
 	}
 	return out
@@ -565,6 +596,12 @@ func NetworkEntryPredictionKey(entry sandboxpolicy.NetworkAllowEntry) string {
 		panic("marshal network prediction key: " + err.Error())
 	}
 	return string(raw)
+}
+
+// NetworkEntryModePredictionKey prevents identical allow and deny selectors
+// from aliasing in editor projections.
+func NetworkEntryModePredictionKey(mode string, entry sandboxpolicy.NetworkAllowEntry) string {
+	return mode + ":" + NetworkEntryPredictionKey(entry)
 }
 
 func predictNetworkAxis(

@@ -4277,7 +4277,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin: 0;
   padding: 0;
 }
-.sbx-network-unlocks.sbx-disabled .sbx-network-pack > label,
+.sbx-network-unlocks.sbx-disabled .sbx-network-pack > select,
 .sbx-network-unlocks.sbx-disabled .sbx-network-rows,
 .sbx-network-unlocks.sbx-disabled > .sbx-add-row {
   opacity: .55;
@@ -4309,11 +4309,10 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   gap: .3rem;
   min-height: 1.4rem;
 }
-.sbx-network-pack > label {
-  align-items: center;
-  display: flex;
-  gap: .4rem;
-  min-width: 0;
+.sbx-network-pack-mode {
+  flex: 0 0 5.5rem;
+  padding-bottom: 3px;
+  padding-top: 3px;
 }
 .sbx-network-pack-visibility-error {
   align-items: center;
@@ -4350,7 +4349,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
      own grid, so an auto column would size to that row's label and misalign
      the shared 1fr value column across rows. */
   gap: 4px;
-  grid-template-columns: 6rem minmax(10rem, 1fr) 6.5rem 8rem 7rem 8.5rem;
+  grid-template-columns: 13rem 6rem minmax(10rem, 1fr) 6.5rem 8rem 7rem 8.5rem;
 }
 .sbx-network-row > button:last-child {
   justify-self: start;
@@ -4364,6 +4363,21 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-network-value,
 .sbx-socket-value {
   min-width: 0;
+}
+.sbx-network-mode-cell {
+  align-items: center;
+  display: flex;
+  gap: .35rem;
+  min-width: 0;
+}
+.sbx-network-mode-cell > select,
+.sbx-network-mode-cell > .sbx-network-value-readonly {
+  flex: 0 0 5.5rem;
+}
+.sbx-network-redundant {
+  color: var(--text-muted);
+  font-size: .72rem;
+  line-height: 1.1;
 }
 .sbx-network-value-readonly {
   display: flex;

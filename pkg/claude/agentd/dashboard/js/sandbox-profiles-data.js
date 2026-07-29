@@ -60,6 +60,8 @@ export function sandboxProfileSummary(profile) {
     const unlocks = authoredNetwork.packs.length + authoredNetwork.allow.length;
     parts.push(`network deny all${unlocks ? ` (${unlocks} unlock${unlocks === 1 ? '' : 's'})` : ''}`);
   }
+  const networkDenies = authoredNetwork.deny_packs.length + authoredNetwork.deny.length;
+  if (networkDenies) parts.push(`${networkDenies} network deny${networkDenies === 1 ? '' : 's'}`);
   const axes = sandboxAccessAxes(profile);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
@@ -72,7 +74,9 @@ export function sandboxNetworkAuthoring(profile = {}) {
   const network = profile.network ? structuredClone(profile.network) : null;
   if (network?.baseline) {
     network.packs ||= [];
+    network.deny_packs ||= [];
     network.allow ||= [];
+    network.deny ||= [];
     return network;
   }
   const legacy = profile.network_access || '';
@@ -80,7 +84,9 @@ export function sandboxNetworkAuthoring(profile = {}) {
   return {
     baseline: mode === 'open' ? 'allow' : mode === 'closed' || mode === 'list' ? 'deny' : 'inherit',
     packs: [],
+    deny_packs: [],
     allow: network?.allow || [],
+    deny: [],
   };
 }
 
@@ -117,6 +123,20 @@ export function sandboxNetworkEntryKey(entry = {}) {
   });
 }
 
+export function sandboxNetworkModeEntryKey(mode, entry = {}) {
+  return `${mode}:${sandboxNetworkEntryKey(entry)}`;
+}
+
+function networkEntriesForWire(entries = []) {
+  return entries.map((entry) => ({
+    ...(entry.host ? { host: entry.host } : {}),
+    ...(entry.domain ? { domain: entry.domain, include_subdomains: !!entry.include_subdomains } : {}),
+    ...(entry.cidr ? { cidr: entry.cidr } : {}),
+    ...(entry.loopback ? { loopback: true } : {}),
+    ...(portsForWire(entry.ports).length ? { ports: portsForWire(entry.ports) } : {}),
+  }));
+}
+
 export function sandboxProfileForWire(draft) {
   const value = structuredClone(draft || {});
   if (!Object.hasOwn(value, 'network') && !Object.hasOwn(value, 'unix_sockets')) return value;
@@ -126,18 +146,17 @@ export function sandboxProfileForWire(draft) {
     value.network = {
       baseline: value.network.baseline,
       ...(value.network.packs?.length ? { packs: [...value.network.packs].sort() } : {}),
+      ...(value.network.deny_packs?.length ? { deny_packs: [...value.network.deny_packs].sort() } : {}),
       ...((value.network.allow || []).length ? { allow: value.network.allow } : {}),
+      ...((value.network.deny || []).length ? { deny: value.network.deny } : {}),
     };
   }
-  const networkAllow = (value.network.allow || []).map((entry) => ({
-    ...(entry.host ? { host: entry.host } : {}),
-    ...(entry.domain ? { domain: entry.domain, include_subdomains: !!entry.include_subdomains } : {}),
-    ...(entry.cidr ? { cidr: entry.cidr } : {}),
-    ...(entry.loopback ? { loopback: true } : {}),
-    ...(portsForWire(entry.ports).length ? { ports: portsForWire(entry.ports) } : {}),
-  }));
+  const networkAllow = networkEntriesForWire(value.network.allow);
   if (networkAllow.length) value.network.allow = networkAllow;
   else delete value.network.allow;
+  const networkDeny = networkEntriesForWire(value.network.deny);
+  if (networkDeny.length) value.network.deny = networkDeny;
+  else delete value.network.deny;
   value.unix_sockets.allow = (value.unix_sockets.allow || []).map((entry) =>
     entry.path_glob ? { path_glob: entry.path_glob } : { path: entry.path || '' });
   value.network_access = '';
@@ -161,22 +180,31 @@ export function sandboxAccessDraftErrors(draft) {
   const authoredNetwork = sandboxNetworkAuthoring(draft);
   const axes = sandboxAccessAxes(draft);
   if (!['inherit', 'allow', 'deny'].includes(authoredNetwork.baseline)) errors.push('Network baseline is invalid.');
-  if (authoredNetwork.baseline !== 'deny' && (authoredNetwork.packs.length || authoredNetwork.allow.length)) {
-    errors.push('Network packs and entries require Deny all baseline.');
+  if (authoredNetwork.baseline === 'inherit' &&
+      (authoredNetwork.packs.length || authoredNetwork.deny_packs.length ||
+       authoredNetwork.allow.length || authoredNetwork.deny.length)) {
+    errors.push('Network packs and entries require Deny all or Allow all baseline.');
+  }
+  const allowPacks = new Set(authoredNetwork.packs);
+  const packOverlap = authoredNetwork.deny_packs.find((id) => allowPacks.has(id));
+  if (packOverlap) {
+    errors.push(`Network pack ${packOverlap} must use exactly one Allow or Deny mode.`);
   }
   if (!['', 'open', 'closed', 'list'].includes(axes.unix_sockets.mode)) errors.push('Unix-socket mode is invalid.');
   if (axes.unix_sockets.mode !== 'list' && axes.unix_sockets.allow.length) errors.push('Unix-socket entries require Access list mode.');
-  authoredNetwork.allow.forEach((entry, index) => {
+  const validateNetworkEntries = (entries, mode) => entries.forEach((entry, index) => {
     const selectors = ['host', 'domain', 'cidr'].filter((key) => entry[key]).length + (entry.loopback ? 1 : 0);
-    if (selectors !== 1) errors.push(`Network row ${index + 1} must set exactly one selector.`);
-    if (entry.host && dnsError(entry.host)) errors.push(`Network row ${index + 1} host ${dnsError(entry.host)}.`);
-    if (entry.domain && dnsError(entry.domain)) errors.push(`Network row ${index + 1} domain ${dnsError(entry.domain)}.`);
-    if (entry.cidr && !/^([0-9a-f:.]+)\/\d{1,3}$/i.test(entry.cidr)) errors.push(`Network row ${index + 1} CIDR is invalid.`);
+    if (selectors !== 1) errors.push(`Network ${mode} row ${index + 1} must set exactly one selector.`);
+    if (entry.host && dnsError(entry.host)) errors.push(`Network ${mode} row ${index + 1} host ${dnsError(entry.host)}.`);
+    if (entry.domain && dnsError(entry.domain)) errors.push(`Network ${mode} row ${index + 1} domain ${dnsError(entry.domain)}.`);
+    if (entry.cidr && !/^([0-9a-f:.]+)\/\d{1,3}$/i.test(entry.cidr)) errors.push(`Network ${mode} row ${index + 1} CIDR is invalid.`);
     const rawPorts = Array.isArray(entry.ports) ? entry.ports : String(entry.ports || '').split(',').filter((part) => part.trim());
     if (rawPorts.some((port) => !/^\d+$/.test(String(port).trim()) || Number(port) < 1 || Number(port) > 65535)) {
-      errors.push(`Network row ${index + 1} ports must be comma-separated values from 1 to 65535.`);
+      errors.push(`Network ${mode} row ${index + 1} ports must be comma-separated values from 1 to 65535.`);
     }
   });
+  validateNetworkEntries(authoredNetwork.allow, 'allow');
+  validateNetworkEntries(authoredNetwork.deny, 'deny');
   axes.unix_sockets.allow.forEach((entry, index) => {
     const value = entry.path_glob || entry.path || '';
     if (!value.startsWith('/')) errors.push(`Unix-socket row ${index + 1} must be an absolute path.`);
