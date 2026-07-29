@@ -96,6 +96,8 @@ func (d Decision) ShouldRecord() bool {
 		// `explain` still computes it live, which is where it answers a
 		// question someone actually asked.
 		return false
+	case db.StandingOutcomeDeferredDebounce:
+		return false
 	}
 	return true
 }
@@ -260,7 +262,7 @@ func Evaluate(
 		}
 	}
 
-	d.Capability = CapabilityFor(o.Timing, o.TriggerEvent, ev.Harness)
+	d.Capability = CapabilityForOrder(o, ev.Harness)
 	if !d.Capability.Supported() {
 		d.Outcome = db.StandingOutcomeUnsupportedTiming
 		d.Detail = d.Capability.Detail

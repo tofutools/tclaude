@@ -33,6 +33,7 @@ type dashboardStandingOrderMutation struct {
 	Timing          string   `json:"timing"`
 	Cadence         string   `json:"cadence"`
 	CooldownSeconds int64    `json:"cooldown_seconds,omitempty"`
+	DebounceSeconds int64    `json:"debounce_seconds,omitempty"`
 	Enabled         *bool    `json:"enabled,omitempty"`
 	TriggerEvent    string   `json:"trigger_event,omitempty"`
 	MatchField      string   `json:"match_field,omitempty"`
@@ -202,6 +203,7 @@ func decodeDashboardStandingOrder(
 		Timing:           body.Timing,
 		Cadence:          body.Cadence,
 		CooldownSeconds:  body.CooldownSeconds,
+		DebounceSeconds:  body.DebounceSeconds,
 		Enabled:          enabled,
 		OperatorAuthored: true,
 	}

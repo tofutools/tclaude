@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,6 +287,57 @@ func TestStandingOrderOpenCodeToolTriggerQueuesNextTurn(t *testing.T) {
 	require.NotNil(t, latest)
 	assert.Equal(t, db.StandingOutcomeDelivered, latest.Outcome)
 	assert.Equal(t, db.StandingTransportMessage, latest.Transport)
+}
+
+func TestStandingOrderDebounceDefersAndMovesTrailingEdge(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.DebounceSeconds = 5
+	})
+	agentID, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)),
+		"debounce must not block the hook or emit inline context")
+	first, err := db.GetDueStandingDebounce(id, agentID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, "conv-1", first.TargetConv)
+	assert.Equal(t, harness.DefaultName, first.Harness)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	second, err := db.GetDueStandingDebounce(id, agentID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.False(t, second.DueAt.Before(first.DueAt),
+		"a later match moves the trailing edge later")
+	assert.Equal(t, first.MaxDueAt, second.MaxDueAt,
+		"continuous matches cannot postpone delivery forever")
+
+	latest, err := db.LatestStandingDelivery(id)
+	require.NoError(t, err)
+	assert.Nil(t, latest,
+		"individual burst events do not create ledger noise or claim delivery")
+}
+
+func TestStandingOrderLongDebounceWindowRemainsSchedulable(t *testing.T) {
+	groupID := standingOrderFixture(t, harness.DefaultName)
+	id := insertOrder(t, groupID, func(o *db.StandingOrder) {
+		o.Timing = db.StandingTimingNextTurn
+		o.DebounceSeconds = 2 * 60 * 60
+	})
+	agentID, err := db.AgentIDForConv("conv-1")
+	require.NoError(t, err)
+
+	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
+	pending, err := db.GetDueStandingDebounce(
+		id, agentID, time.Now().Add(3*time.Hour))
+	require.NoError(t, err)
+	require.NotNil(t, pending)
+	assert.Equal(t, pending.DueAt, pending.MaxDueAt,
+		"the starvation bound can never precede an authored quiet window")
 }
 
 func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {

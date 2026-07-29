@@ -53,7 +53,8 @@ func ordersCmd() *cobra.Command {
 			"and tool.after, with optional validated RE2 matching over normalized event fields. " +
 			"An order declares the delivery timing it REQUIRES; a harness that cannot meet " +
 			"it reports unsupported rather than downgrading silently. An optional per-agent cooldown limits " +
-			"successful deliveries without depending on conversation generation.",
+			"successful deliveries without depending on conversation generation; optional trailing-edge " +
+			"debounce coalesces matching bursts into one queued next-turn reminder.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			ordersLsCmd(),
@@ -168,10 +169,11 @@ func runOrdersShow(stdout, stderr io.Writer, selector string) int {
 	fmt.Fprintf(stdout, "Timing:    %s (required — no silent downgrade)\n", o.Timing)
 	fmt.Fprintf(stdout, "Cadence:   %s\n", o.Cadence)
 	fmt.Fprintf(stdout, "Cooldown:  %s\n", ordersCooldownLabel(o.CooldownSeconds))
+	fmt.Fprintf(stdout, "Debounce:  %s\n", ordersDebounceLabel(o.DebounceSeconds))
 	fmt.Fprintf(stdout, "\nText delivered to the agent:\n  %s\n", o.Summary)
 
 	fmt.Fprintln(stdout, "\nPer-harness capability:")
-	byH := standingorders.CapabilityByHarness(o.Timing, o.TriggerEvent)
+	byH := standingorders.CapabilityByHarnessForOrder(o)
 	for _, h := range standingorders.KnownHarnesses {
 		c := byH[h]
 		line := fmt.Sprintf("  %-10s %-12s via %s", h, c.Status, c.Transport)
@@ -203,6 +205,14 @@ func ordersCooldownLabel(seconds int64) string {
 		return "off"
 	}
 	return (time.Duration(seconds) * time.Second).String() + " per stable recipient agent"
+}
+
+func ordersDebounceLabel(seconds int64) string {
+	if seconds <= 0 {
+		return "off"
+	}
+	return (time.Duration(seconds) * time.Second).String() +
+		" trailing edge (queued next-turn message)"
 }
 
 // ---- explain ----

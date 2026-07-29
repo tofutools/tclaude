@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -78,6 +79,9 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 	if len(orders) == 0 {
 		return HookResponse{}
 	}
+	if trustedStandingOrderPrompt(input.Prompt, ev.AgentID, ev.ConvID) {
+		return HookResponse{}
+	}
 
 	// First evaluate without state lookups. This filters scope, regex, and
 	// capability failures before any rate lock is acquired; a high-frequency
@@ -92,6 +96,7 @@ func standingOrderResponse(ctx context.Context, input HookCallbackInput, envSess
 	decisions := standingorders.EvaluateAll(
 		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	decisions = skipRateGated(decisions, locks)
+	decisions = deferStandingDebounced(decisions, ev)
 
 	// Recording is DEFERRED until the response has actually been written.
 	//
@@ -171,6 +176,9 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	if err != nil || len(orders) == 0 {
 		return nil, noop
 	}
+	if trustedStandingOrderPrompt(input.Prompt, ev.AgentID, ev.ConvID) {
+		return nil, noop
+	}
 
 	// Same scoped serialization as the direct path, so the two cannot both
 	// satisfy one rate-controlled order.
@@ -182,6 +190,7 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	decisions := standingorders.EvaluateAll(
 		orders, ev, db.StandingOrderDeliveredInEpoch, db.LatestSuccessfulStandingDeliveryAt)
 	decisions = skipRateGated(decisions, locks)
+	decisions = deferStandingDebounced(decisions, ev)
 
 	var pending []PendingStandingMessage
 	for _, d := range decisions {
@@ -240,6 +249,120 @@ func ObserveStandingOrders(input HookCallbackInput, envSessionID string) ([]Pend
 	return pending, locks.release
 }
 
+// trustedStandingOrderPrompt recognizes the server-authored nudge shape used
+// by Claude and Codex message delivery. OpenCode carries stronger turn-scoped
+// evidence in HookCallbackInput.StandingOrderOrigin; hook-based harnesses
+// expose the submitted prompt instead, so correlate its embedded message ID
+// back to trusted DB metadata and the same stable recipient agent.
+//
+// The subject and body are deliberately not trusted. A peer can write text
+// that looks like a standing order, and even copy this prefix; only a message
+// row minted by InsertStandingOrderAgentMessage/atomic debounce consume and
+// addressed to this actor suppresses recursive prompt/tool automations.
+func trustedStandingOrderPrompt(prompt, targetAgent, targetConv string) bool {
+	return trustedStandingOrderPromptOrigin(prompt, targetAgent, targetConv) != nil
+}
+
+func trustedStandingOrderPromptOrigin(
+	prompt, targetAgent, targetConv string,
+) *db.StandingOrderAgentMessageOrigin {
+	messageID, _, ok := agentMessagePrompt(prompt)
+	if !ok {
+		return nil
+	}
+	message, err := db.GetAgentMessage(messageID)
+	if err != nil || message == nil {
+		return nil
+	}
+	if targetAgent != "" {
+		if message.ToAgent != targetAgent {
+			return nil
+		}
+	} else if message.ToConv != targetConv {
+		return nil
+	}
+	origin, err := db.AgentMessageStandingOrderOrigin(messageID)
+	if err != nil {
+		return nil
+	}
+	return origin
+}
+
+// applyStandingOrderTurnOrigin carries a trusted queued reminder's origin
+// across the whole Claude/Codex turn. UserPromptSubmit activates the durable
+// marker armed by agentd before pane injection; later tool hooks read it, and
+// the terminal Stop boundary clears it. Pending is suppressed too so a lost
+// prompt hook cannot let the reminder's tool calls recursively trigger orders.
+func applyStandingOrderTurnOrigin(
+	input HookCallbackInput,
+	envSessionID string,
+) HookCallbackInput {
+	switch input.HookEventName {
+	case "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+		"Stop", "StopFailure":
+	default:
+		return input
+	}
+	state, err := loadStandingOrderSession(envSessionID)
+	if err != nil || state == nil || state.ConvID == "" ||
+		(input.ConvID != "" && input.ConvID != state.ConvID) {
+		return input
+	}
+	agentID, err := db.AgentIDForConv(state.ConvID)
+	if err != nil || agentID == "" {
+		return input
+	}
+	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
+		if err := clearStandingOrderTurnOrigin(agentID, state.ConvID); err != nil {
+			slog.Warn("standing orders: failed to complete hook turn origin",
+				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+		return input
+	}
+	if input.HookEventName == "UserPromptSubmit" {
+		origin := trustedStandingOrderPromptOrigin(
+			input.Prompt, agentID, state.ConvID)
+		if origin == nil {
+			// A pending injection whose prompt hook never arrived must not
+			// claim the next real human turn. An active marker with a lost Stop
+			// is healed by the same authoritative new-prompt boundary.
+			_ = clearStandingOrderTurnOrigin(agentID, state.ConvID)
+			return input
+		}
+		activated, err := db.ActivateStandingOrderTurnOrigin(
+			agentID, state.ConvID, origin.OpenCodeMessageID,
+			time.Now(), 24*time.Hour)
+		if err != nil {
+			slog.Warn("standing orders: failed to activate hook turn origin",
+				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+		if !activated {
+			// The prompt may name another trusted reminder, but only the exact
+			// message currently armed for this stable agent owns this turn.
+			_ = clearStandingOrderTurnOrigin(agentID, state.ConvID)
+			return input
+		}
+	}
+	active, err := db.GetStandingOrderTurnOrigin(
+		agentID, state.ConvID, time.Now())
+	if err == nil && active != nil {
+		input.StandingOrderOrigin = true
+	}
+	return input
+}
+
+func clearStandingOrderTurnOrigin(agentID, convID string) error {
+	current, err := db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
+	if err != nil || current == nil {
+		return err
+	}
+	if current.State == db.StandingOrderTurnOriginPending {
+		return db.CancelPendingStandingOrderTurnOrigin(
+			agentID, convID, current.MessageID, current.OpenCodeMessageID)
+	}
+	return db.CompleteStandingOrderTurnOrigin(agentID, convID)
+}
+
 // standingOrderRateCandidates performs only stateless evaluation and returns
 // matching, supported orders that need a read-modify-write rate control.
 // Supplying nil lookups deliberately leaves cadence/cooldown open; the real
@@ -251,7 +374,8 @@ func standingOrderRateCandidates(
 	preliminary := standingorders.EvaluateAll(orders, ev, nil, nil)
 	out := make([]*db.StandingOrder, 0, len(preliminary))
 	for _, d := range preliminary {
-		if d.Deliver && (d.Order.CooldownSeconds > 0 ||
+		if d.Deliver && (d.Order.DebounceSeconds > 0 ||
+			d.Order.CooldownSeconds > 0 ||
 			d.Order.Cadence == db.StandingCadenceOncePerGeneration) {
 			out = append(out, d.Order)
 		}
@@ -263,9 +387,9 @@ func standingOrderRateCandidates(
 // control into a recorded non-delivery when that order's delivery lock was
 // unavailable.
 //
-// Only cadence/cooldown-gated orders are affected. An always-cadence order
-// with no cooldown has no read-modify-write to protect, so suppressing it
-// would drop guidance to prevent a race it cannot lose.
+// Only cadence/cooldown/debounce-gated orders are affected. An always-cadence
+// order with none of those controls has no read-modify-write to protect, so
+// suppressing it would drop guidance to prevent a race it cannot lose.
 //
 // The decision is rewritten rather than removed so the skip lands in the
 // ledger. StandingOutcomeNotEvaluatedBusy is not one of the outcomes the
@@ -280,6 +404,8 @@ func skipRateGated(
 		var blockedScope string
 		switch {
 		case d.Order == nil:
+		case d.Order.DebounceSeconds > 0 && !locks.cooldownAcquired[d.Order.ID]:
+			blockedScope = "stable-agent debounce"
 		case d.Order.CooldownSeconds > 0 && !locks.cooldownAcquired[d.Order.ID]:
 			blockedScope = "stable-agent cooldown"
 		case d.Order.CooldownSeconds == 0 &&
@@ -296,6 +422,51 @@ func skipRateGated(
 		out = append(out, d)
 	}
 	return out
+}
+
+func deferStandingDebounced(
+	decisions []standingorders.Decision,
+	ev standingorders.Event,
+) []standingorders.Decision {
+	now := ev.OccurredAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for i := range decisions {
+		d := &decisions[i]
+		if !d.Deliver || d.Order == nil || d.Order.DebounceSeconds <= 0 {
+			continue
+		}
+		quiet := time.Duration(d.Order.DebounceSeconds) * time.Second
+		maxDelay := quiet * 10
+		if maxDelay < time.Minute {
+			maxDelay = time.Minute
+		}
+		if maxDelay > time.Hour {
+			maxDelay = time.Hour
+		}
+		if maxDelay < quiet {
+			maxDelay = quiet
+		}
+		err := db.ScheduleStandingDebounce(&db.StandingDebounce{
+			OrderID: d.Order.ID, OrderRevision: d.Order.Revision,
+			TargetAgent: ev.AgentID, TargetConv: ev.ConvID,
+			Epoch: d.Epoch, Harness: ev.Harness, Detail: d.Detail,
+			DueAt: now.Add(quiet), MaxDueAt: now.Add(maxDelay), UpdatedAt: now,
+		})
+		d.Deliver = false
+		if err != nil {
+			d.Outcome = db.StandingOutcomeDeliveryFailed
+			d.Detail = "could not schedule debounced delivery: " + err.Error()
+			continue
+		}
+		d.Outcome = db.StandingOutcomeDeferredDebounce
+		d.Detail = fmt.Sprintf(
+			"scheduled for %s after %ds without another match (maximum delay %s)",
+			now.Add(quiet).Format(time.RFC3339), d.Order.DebounceSeconds,
+			maxDelay)
+	}
+	return decisions
 }
 
 // PendingStandingMessage is one standing order that matched on an

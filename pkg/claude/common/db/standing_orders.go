@@ -109,6 +109,10 @@ const (
 	// StandingOutcomeSuppressedCooldown — matched, but this stable recipient
 	// received the same order revision too recently.
 	StandingOutcomeSuppressedCooldown = "suppressed-cooldown"
+	// StandingOutcomeDeferredDebounce — matched and durably scheduled for
+	// trailing-edge message delivery. It is normally represented by the
+	// pending table rather than one ledger row per high-frequency event.
+	StandingOutcomeDeferredDebounce = "deferred-debounce"
 	// StandingOutcomeDisabled — the order is disabled; see disabled_reason.
 	StandingOutcomeDisabled = "disabled"
 	// StandingOutcomeOutOfScope — this agent is not in the order's target set.
@@ -170,6 +174,10 @@ const StandingMatchRegexMaxLen = 1024
 // StandingCooldownMaxSeconds keeps an accidental dashboard value from
 // suppressing an order effectively forever. Zero disables cooldown.
 const StandingCooldownMaxSeconds int64 = 365 * 24 * 60 * 60
+
+// StandingDebounceMaxSeconds bounds one authored quiet window. The scheduler
+// also forces a continuously retriggered order out after a bounded maximum.
+const StandingDebounceMaxSeconds int64 = 24 * 60 * 60
 
 // ErrStandingOrderNameTaken is the canonical rejection for a duplicate order
 // name. Names are the stable handle the CLI and the skill address orders by,
@@ -241,6 +249,10 @@ type StandingOrder struct {
 	// the cooldown itself does not, so the new duration applies to the last
 	// successful delivery instead of granting an immediate extra delivery.
 	CooldownSeconds int64
+	// DebounceSeconds enables trailing-edge coalescing. Debounced delivery is
+	// necessarily next-turn/message transport: an inline hook response cannot
+	// wait to learn whether a later event arrives.
+	DebounceSeconds int64
 
 	Enabled        bool
 	DisabledReason string
@@ -432,6 +444,14 @@ func (o *StandingOrder) Validate() error {
 		return fmt.Errorf("%w: cooldown_seconds must be between 0 and %d",
 			ErrStandingOrderInvalid, StandingCooldownMaxSeconds)
 	}
+	if o.DebounceSeconds < 0 || o.DebounceSeconds > StandingDebounceMaxSeconds {
+		return fmt.Errorf("%w: debounce_seconds must be between 0 and %d",
+			ErrStandingOrderInvalid, StandingDebounceMaxSeconds)
+	}
+	if o.DebounceSeconds > 0 && o.Timing != StandingTimingNextTurn {
+		return fmt.Errorf("%w: debounce requires next-turn timing",
+			ErrStandingOrderInvalid)
+	}
 	return nil
 }
 
@@ -486,7 +506,7 @@ const standingSelect = `SELECT o.id, o.name, o.revision, o.row_version,
 	o.target_kind, o.target_agent, COALESCE(tg.current_conv_id, ''),
 	o.group_id, o.target_role, o.summary,
 	o.trigger_event, o.trigger_sources, o.match_field, o.match_regex,
-	o.timing, o.cadence, o.cooldown_seconds,
+	o.timing, o.cadence, o.cooldown_seconds, o.debounce_seconds,
 	o.enabled, o.disabled_reason, o.operator_authored,
 	o.created_at, o.updated_at
 	FROM agent_standing_orders o
@@ -508,7 +528,7 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		&o.TargetKind, &o.TargetAgent, &o.TargetConv,
 		&o.GroupID, &o.TargetRole, &o.Summary,
 		&o.TriggerEvent, &sources, &o.MatchField, &o.MatchRegex,
-		&o.Timing, &o.Cadence, &o.CooldownSeconds,
+		&o.Timing, &o.Cadence, &o.CooldownSeconds, &o.DebounceSeconds,
 		&enabled, &o.DisabledReason, &operator,
 		&createdRaw, &updatedRaw,
 	); err != nil {
@@ -554,13 +574,13 @@ func InsertStandingOrder(o *StandingOrder) (int64, error) {
 	now := formatStandingTime(time.Now())
 	res, err := d.Exec(`INSERT INTO agent_standing_orders
 		(name, revision, row_version, owner_agent, target_kind, target_agent, group_id, target_role,
-		 summary, trigger_event, trigger_sources, timing, cadence, cooldown_seconds,
+		 summary, trigger_event, trigger_sources, timing, cadence, cooldown_seconds, debounce_seconds,
 		 match_field, match_regex,
 		 enabled, disabled_reason, operator_authored, created_at, updated_at)
-		VALUES (?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
-		o.CooldownSeconds, o.MatchField, o.MatchRegex,
+		o.CooldownSeconds, o.DebounceSeconds, o.MatchField, o.MatchRegex,
 		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -687,12 +707,12 @@ func UpdateStandingOrder(
 		name = ?, revision = revision + ?, row_version = row_version + 1,
 		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
 		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
-		cooldown_seconds = ?, match_field = ?, match_regex = ?,
+		cooldown_seconds = ?, debounce_seconds = ?, match_field = ?, match_regex = ?,
 		enabled = ?, disabled_reason = ?, operator_authored = ?, updated_at = ?
 		WHERE id = ? AND row_version = ?`,
 		o.Name, boolToInt(rearm), o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
-		o.CooldownSeconds, o.MatchField, o.MatchRegex,
+		o.CooldownSeconds, o.DebounceSeconds, o.MatchField, o.MatchRegex,
 		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), formatStandingTime(time.Now()),
 		id, expectedRowVersion)
 	if err != nil {
@@ -718,7 +738,8 @@ func standingOrderDeliveryChanged(a, b *StandingOrder) bool {
 		a.MatchField != b.MatchField ||
 		a.MatchRegex != b.MatchRegex ||
 		a.Timing != b.Timing ||
-		a.Cadence != b.Cadence
+		a.Cadence != b.Cadence ||
+		a.DebounceSeconds != b.DebounceSeconds
 }
 
 // SetStandingOrderEnabled toggles an order through the row-version CAS. A

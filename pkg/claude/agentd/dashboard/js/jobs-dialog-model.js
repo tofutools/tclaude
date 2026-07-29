@@ -145,6 +145,7 @@ export function standingOrderToPrefill(order = {}) {
     timing: text(order.timing),
     cadence: text(order.cadence),
     cooldownSeconds: Number(order.cooldown_seconds) || 0,
+    debounceSeconds: Number(order.debounce_seconds) || 0,
     enabled: !!order.enabled,
   };
 }
@@ -173,6 +174,7 @@ export function createStandingOrderDraft(prefill = {}) {
     timing: prefill.timing === 'next-turn' ? 'next-turn' : 'same-continuation',
     cadence: prefill.cadence === 'once-per-generation' ? 'once-per-generation' : 'always',
     cooldownSeconds: Number(prefill.cooldownSeconds) || 0,
+    debounceSeconds: Number(prefill.debounceSeconds) || 0,
     enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
   };
 }
@@ -225,6 +227,14 @@ export function validateStandingOrderDraft(dialog, draft) {
       Number(draft.cooldownSeconds) > 31536000) {
     return { code: 'cooldown', message: 'Minimum interval must be a whole number of seconds from 0 to 31536000.' };
   }
+  if (!Number.isInteger(Number(draft.debounceSeconds)) ||
+      Number(draft.debounceSeconds) < 0 ||
+      Number(draft.debounceSeconds) > 86400) {
+    return { code: 'debounce', message: 'Debounce must be a whole number of seconds from 0 to 86400.' };
+  }
+  if (Number(draft.debounceSeconds) > 0 && draft.timing !== 'next-turn') {
+    return { code: 'debounce-timing', message: 'Trailing-edge debounce requires Next turn timing.' };
+  }
   if (dialog.kind === 'edit' && !draft.rowVersion) {
     return { code: 'row-version', message: 'This order has no edit token; reload the Automations page and try again.' };
   }
@@ -245,6 +255,7 @@ export function buildStandingOrderMutation(dialog, draft) {
     timing: draft.timing,
     cadence: draft.cadence,
     cooldown_seconds: Number(draft.cooldownSeconds) || 0,
+    debounce_seconds: Number(draft.debounceSeconds) || 0,
     enabled: draft.enabled,
   };
   if (dialog.kind === 'edit') {

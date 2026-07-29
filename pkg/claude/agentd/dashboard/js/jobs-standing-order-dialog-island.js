@@ -186,8 +186,8 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           </label>`)}
         </div>`}
         ${draft.triggerEvent !== 'session.start' && html`<div class="muted">
-          Action triggers currently deliver inline on Claude and Codex. OpenCode is shown as unsupported
-          until queued deliveries can suppress their own trigger origin.
+          Action triggers deliver inline on Claude and Codex. OpenCode supports tool triggers as queued
+          next turns; prompt-text triggers remain unsupported because its event stream omits the prompt.
         </div>`}
       </div>
     </div>
@@ -240,6 +240,14 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
           value=${draft.cooldownSeconds}
           onInput=${(event) => update({ cooldownSeconds: Number(event.currentTarget.value) })} />
         <div class="muted">Seconds between successful deliveries to each stable recipient agent. 0 disables cooldown.</div>
+      </div>
+    </label>
+    <label class="cron-create-row"><span class="cron-create-label">Debounce</span>
+      <div>
+        <input id="standing-order-debounce" type="number" min="0" max="86400" step="1"
+          value=${draft.debounceSeconds}
+          onInput=${(event) => update({ debounceSeconds: Number(event.currentTarget.value) })} />
+        <div class="muted">Wait for this many quiet seconds after the last match, then send one queued reminder. Requires Next turn; delivery may be up to about one scheduler tick late. 0 disables debounce.</div>
       </div>
     </label>
     <label class="cron-create-row"><span class="cron-create-label">Instruction</span>

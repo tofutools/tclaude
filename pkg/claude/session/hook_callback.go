@@ -544,6 +544,7 @@ func dispatchHookEvent(ctx context.Context, input HookCallbackInput, envSessionI
 	if err := applyHook(ctx, input, envSessionID, amb); err != nil {
 		return HookResponse{}, err
 	}
+	input = applyStandingOrderTurnOrigin(input, envSessionID)
 	return standingOrderResponse(ctx, input, envSessionID), nil
 }
 

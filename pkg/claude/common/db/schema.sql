@@ -1024,7 +1024,7 @@ CREATE TABLE agent_standing_orders (
 			operator_authored INTEGER NOT NULL DEFAULT 0,
 			created_at        TEXT    NOT NULL,
 			updated_at        TEXT    NOT NULL DEFAULT ''
-		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '', row_version INTEGER NOT NULL DEFAULT 1);
+		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '', row_version INTEGER NOT NULL DEFAULT 1, debounce_seconds INTEGER NOT NULL DEFAULT 0);
 
 CREATE INDEX idx_agent_standing_orders_owner
 			ON agent_standing_orders(owner_agent);
@@ -1079,4 +1079,22 @@ CREATE TABLE agent_standing_order_turn_origins (
 			armed_at     TEXT NOT NULL,
 			expires_at   TEXT NOT NULL
 		);
+
+CREATE TABLE agent_standing_order_debounce (
+			order_id       INTEGER NOT NULL
+			               REFERENCES agent_standing_orders(id) ON DELETE CASCADE,
+			order_revision INTEGER NOT NULL,
+			target_agent   TEXT NOT NULL,
+			target_conv    TEXT NOT NULL,
+			epoch          TEXT NOT NULL DEFAULT '',
+			harness        TEXT NOT NULL,
+			detail         TEXT NOT NULL DEFAULT '',
+			due_at         TEXT NOT NULL,
+			max_due_at     TEXT NOT NULL,
+			updated_at     TEXT NOT NULL,
+			PRIMARY KEY (order_id, target_agent)
+		);
+
+CREATE INDEX idx_agent_standing_order_debounce_due
+			ON agent_standing_order_debounce(due_at);
 
