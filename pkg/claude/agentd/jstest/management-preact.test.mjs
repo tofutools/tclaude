@@ -2011,8 +2011,29 @@ test('raw access JSON can repair a structured access validation error', async (t
   await harness.act(() => Promise.resolve());
   assert.equal(saved, null);
   assert.match(host.querySelector('.cron-create-error').textContent,
-    /network and unix socket allow fields must be arrays/,
+    /network allow\/deny and Unix-socket allow fields must be arrays/,
     'malformed allow values are rejected instead of normalized as sparse lists');
+  rawNetwork.value = '{"baseline":"allow","deny":[null]}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('.sbx-preview-status').textContent,
+    /preview paused: Network deny row 1 must be a JSON object/);
+  rawNetwork.value = '{"baseline":"allow","deny":false}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent,
+    /network allow\/deny and Unix-socket allow fields must be arrays/);
+  rawNetwork.value = '{"baseline":"allow","deny_packs":false}';
+  rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent,
+    /network packs and deny_packs must be arrays/);
   rawNetwork.value = '{"mode":"list","allow":[]}';
   rawNetwork.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
@@ -2313,6 +2334,48 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
   assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
   assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
   assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 3);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
+  unmount();
+});
+
+test('a failing common-rule feed also blocks hidden deny-pack intent under Allow all', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: {
+    name: 'hidden-deny-pack', filesystem: [], environment: [], includes: [], agent_directories: [],
+    network: {
+      baseline: 'allow', packs: [], deny_packs: ['net-local'], allow: [], deny: [],
+    },
+    unix_sockets: { mode: '' },
+  }, options: {} });
+  let feedOffline = true;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async loadCommonRuleCatalog() {
+      if (feedOffline) throw new Error('feed offline');
+      return COMMON_RULES;
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  assert.equal(host.querySelector('#sandbox-profile-editor-network-section').open, true);
+  assert.match(host.querySelector('.sbx-network-pack-visibility-error').textContent,
+    /Saving is paused.*net-local/s);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
+    'unrendered deny intent is protected just like unrendered allow authority');
+
+  feedOffline = false;
+  const feedError = host.querySelector('#sandbox-profile-editor-common-rule-feed-error');
+  await harness.act(() => {
+    feedError.querySelector('button').click();
+    return new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  assert.equal(host.querySelector('.sbx-network-pack-visibility-error'), null);
+  const localPack = [...host.querySelectorAll('.sbx-network-pack')]
+    .find((row) => /Local access/.test(row.textContent));
+  assert.equal(selectedValue(localPack.querySelector('.sbx-network-pack-mode')), 'deny');
+  assert.equal(host.querySelectorAll('.sbx-network-pack-row').length, 1);
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
   unmount();
 });

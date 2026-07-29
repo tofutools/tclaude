@@ -221,6 +221,8 @@ function accessRowShapeError(network, unixSockets) {
   const isRow = (row) => !!row && typeof row === 'object' && !Array.isArray(row);
   const networkIndex = (network.allow || []).findIndex((row) => !isRow(row));
   if (networkIndex >= 0) return `Network row ${networkIndex + 1} must be a JSON object containing a host, domain, CIDR, or loopback selector.`;
+  const networkDenyIndex = (network.deny || []).findIndex((row) => !isRow(row));
+  if (networkDenyIndex >= 0) return `Network deny row ${networkDenyIndex + 1} must be a JSON object containing a host, domain, CIDR, or loopback selector.`;
   const socketIndex = (unixSockets.allow || []).findIndex((row) => !isRow(row));
   return socketIndex >= 0
     ? `Unix-socket row ${socketIndex + 1} must be a JSON object containing a path or path_glob selector.`
@@ -921,7 +923,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if ([network, unix_sockets].some((axis) => axis.allow != null && !Array.isArray(axis.allow))) throw new Error('network and unix socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs)) throw new Error('network packs must be an array'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const filesystem_spellings = JSON.parse(rawSpellings || 'null'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const network = JSON.parse(rawNetwork || '{}'); const unix_sockets = JSON.parse(rawSockets || '{}'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); if (filesystem_spellings !== null && (!filesystem_spellings || Array.isArray(filesystem_spellings))) throw new Error('filesystem spellings must be a JSON object or null'); if (!network || typeof network !== 'object' || Array.isArray(network) || !unix_sockets || typeof unix_sockets !== 'object' || Array.isArray(unix_sockets)) throw new Error('network and unix sockets must be JSON objects'); if (network.allow != null && !Array.isArray(network.allow) || network.deny != null && !Array.isArray(network.deny) || unix_sockets.allow != null && !Array.isArray(unix_sockets.allow)) throw new Error('network allow/deny and Unix-socket allow fields must be arrays'); if (network.packs != null && !Array.isArray(network.packs) || network.deny_packs != null && !Array.isArray(network.deny_packs)) throw new Error('network packs and deny_packs must be arrays'); const rowError = accessRowShapeError(network, unix_sockets); if (rowError) throw new Error(rowError); const axes = sandboxAccessAxes({ network, unix_sockets }); return { filesystem, filesystem_spellings, environment, includes, agent_directories, network: axes.network, unix_sockets: axes.unix_sockets }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed, filesystem: sandboxFilesystemEditorRows(parsed.filesystem, parsed.filesystem_spellings) })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
   const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { const wire = sandboxFilesystemWire(draft, baseline); setRawFS(JSON.stringify(wire.filesystem, null, 2)); setRawSpellings(JSON.stringify(wire.filesystem_spellings, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawNetwork(JSON.stringify(draft.network, null, 2)); setRawSockets(JSON.stringify(draft.unix_sockets, null, 2)); } setAdvanced(!advanced); };
   const submit = async () => {
@@ -947,11 +949,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     advanced && !predictionDraftError ? predictionDraft : draft,
   );
   const knownNetworkPacks = new Set((commonRules.network_packs || []).map((pack) => pack.id));
-  const hiddenNetworkPacks = authoredNetwork.baseline === 'deny'
-    ? authoredNetwork.packs.filter((id) => !knownNetworkPacks.has(id))
-    : [];
+  const hiddenNetworkPacks = authoredNetwork.baseline === 'inherit' ? [] : [
+    ...new Set([...authoredNetwork.packs, ...authoredNetwork.deny_packs]
+      .filter((id) => !knownNetworkPacks.has(id))),
+  ];
   const networkPackVisibilityError = hiddenNetworkPacks.length
-    ? `Saving is paused because release-owned authority cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
+    ? `Saving is paused because release-owned network intent cannot be displayed for: ${hiddenNetworkPacks.join(', ')}.${commonRuleFeedBusy ? ' The pack catalog is still loading.' : commonRuleFeedError ? ` Catalog error: ${commonRuleFeedError}` : ' Retry the common-rule catalog.'}`
     : '';
   const accessErrors = sandboxAccessDraftErrors(draft);
   // Raw JSON is authoritative while Advanced is open, so a repaired raw axis
