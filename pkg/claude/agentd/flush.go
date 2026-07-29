@@ -10,6 +10,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // flushSender delivers a single undelivered nudge. The production
@@ -137,7 +138,7 @@ func flushAgent(agentID string) int {
 	return flushQueue("agent:"+agentID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForAgent(agentID) },
 		func() bool { return deliverablePane(head) },
-		func(m *db.AgentMessage, nudge string) bool { return sendNudgeBracket(head, m.ID, nudge) })
+		func(m *db.AgentMessage, nudge string) bool { return sendNudgeBracket(head, m, nudge) })
 }
 
 // flush drains the exact-conv queue for convID: undelivered messages that
@@ -287,7 +288,7 @@ func nudgeRetryDelay(attempts int) time.Duration {
 // found — the message stays in the inbox; the recipient will see it on next
 // `inbox ls`.
 func realFlushSender(m *db.AgentMessage, nudge string) bool {
-	return sendNudgeBracket(m.ToConv, m.ID, nudge)
+	return sendNudgeBracket(m.ToConv, m, nudge)
 }
 
 // sendNudgeBracket finds an alive session for toConv and sends the bracketed
@@ -297,7 +298,10 @@ func realFlushSender(m *db.AgentMessage, nudge string) bool {
 //
 // Caller is responsible for marking delivered_at; this function
 // only does the external delivery work.
-func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
+func sendNudgeBracket(toConv string, m *db.AgentMessage, nudge string) bool {
+	if m == nil {
+		return false
+	}
 	sess := pickNudgeSession(toConv)
 	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
@@ -306,9 +310,29 @@ func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 	// delivery capability. ServerAuthoritative alone does not promise an
 	// OpenCode-compatible prompt sender for future harnesses.
 	if sess.Harness == harness.OpenCodeName {
-		if err := sendOpenCodeNudge(toConv, nudge); err != nil {
+		standingOrderOrigin, err := db.AgentMessageStandingOrderOrigin(m.ID)
+		if err != nil {
+			slog.Warn("OpenCode nudge origin lookup failed; holding message",
+				"error", err, "conv", toConv, "msg_id", m.ID)
+			return false
+		}
+		if standingOrderOrigin != nil {
+			// Do not enqueue behind a known-active turn. Error is quiescent too:
+			// the failed turn is over and OpenCode is back at its prompt. The
+			// durable marker is correlated to the exact OpenCode user-message
+			// ID, so a prompt racing after this check cannot steal attribution.
+			if sess.Status != session.StatusIdle &&
+				sess.Status != session.StatusError {
+				return false
+			}
+			err = sendOpenCodeStandingOrderNudge(
+				toConv, m.ToAgent, standingOrderOrigin, nudge)
+		} else {
+			err = sendOpenCodeNudge(toConv, nudge)
+		}
+		if err != nil {
 			slog.Warn("OpenCode nudge prompt failed",
-				"error", err, "conv", toConv, "msg_id", msgID,
+				"error", err, "conv", toConv, "msg_id", m.ID,
 				"tmux", sess.TmuxSession)
 			return false
 		}

@@ -60,7 +60,7 @@ func TestCapabilityUnknownTriggerAndTiming(t *testing.T) {
 		CapabilityFor("whenever", db.StandingTriggerSessionStart, harness.DefaultName).Status)
 }
 
-func TestCapabilityActionTriggersAreDirectOnlyUntilOriginSuppression(t *testing.T) {
+func TestCapabilityActionTriggersByHarness(t *testing.T) {
 	for _, event := range []string{
 		db.StandingTriggerUserPrompt,
 		db.StandingTriggerToolBefore,
@@ -71,10 +71,26 @@ func TestCapabilityActionTriggersAreDirectOnlyUntilOriginSuppression(t *testing.
 			assert.Equal(t, StatusSupported, c.Status)
 			assert.Equal(t, db.StandingTransportHookContext, c.Transport)
 		}
-		c := CapabilityFor(db.StandingTimingNextTurn, event, harness.OpenCodeName)
-		assert.Equal(t, StatusUnsupported, c.Status)
-		assert.Equal(t, db.StandingTransportNone, c.Transport)
-		assert.Contains(t, c.Detail, "origin suppression")
+	}
+
+	prompt := CapabilityFor(
+		db.StandingTimingNextTurn, db.StandingTriggerUserPrompt, harness.OpenCodeName)
+	assert.Equal(t, StatusUnsupported, prompt.Status)
+	assert.Equal(t, db.StandingTransportNone, prompt.Transport)
+	assert.Contains(t, prompt.Detail, "normalized prompt text")
+
+	for _, event := range []string{
+		db.StandingTriggerToolBefore,
+		db.StandingTriggerToolAfter,
+	} {
+		next := CapabilityFor(db.StandingTimingNextTurn, event, harness.OpenCodeName)
+		assert.Equal(t, StatusSupported, next.Status)
+		assert.Equal(t, db.StandingTransportMessage, next.Transport)
+		assert.Contains(t, next.Detail, "self-trigger")
+
+		same := CapabilityFor(db.StandingTimingSameContinuation, event, harness.OpenCodeName)
+		assert.Equal(t, StatusUnsupported, same.Status)
+		assert.Equal(t, db.StandingTransportNone, same.Transport)
 	}
 }
 

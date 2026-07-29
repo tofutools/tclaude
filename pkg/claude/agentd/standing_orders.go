@@ -2,9 +2,19 @@ package agentd
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+)
+
+const (
+	// Pending covers prompt_async acceptance uncertainty, including a daemon
+	// crash after the server accepted the prompt but before the response was
+	// observed. Active survives long tool-heavy turns and projector restarts;
+	// the normal Stop boundary clears it much earlier.
+	standingOrderOriginPendingTTL = 5 * time.Minute
+	standingOrderOriginActiveTTL  = 24 * time.Hour
 )
 
 // deliverOpenCodeStandingOrders is the next-turn transport for standing orders
@@ -35,7 +45,7 @@ func deliverOpenCodeStandingOrders(input session.HookCallbackInput, envSessionID
 		// The subject is tagged like a cron nudge so a recipient can tell a
 		// standing-order reminder from a hand-typed peer message, and so the
 		// dashboard groups them recognisably.
-		_, err := queueAgentMessage(&db.AgentMessage{
+		message := &db.AgentMessage{
 			ToConv:       p.TargetConv,
 			ToRecipients: []string{p.TargetConv},
 			Subject:      "[standing-order:" + p.Name + "]",
@@ -45,7 +55,16 @@ func deliverOpenCodeStandingOrders(input session.HookCallbackInput, envSessionID
 			// agent's guidance to another as the human's instruction.
 			FromConv:         p.OwnerConv,
 			OperatorAuthored: p.OperatorAuthored,
-		})
+		}
+		_, err := db.InsertStandingOrderAgentMessage(
+			message, p.OrderID, p.OrderRevision)
+		if err == nil {
+			// The trusted origin row is durable before the async nudge worker
+			// can submit the prompt. It re-arms the turn handshake on every
+			// retry, so an expired failed attempt can never deliver without
+			// origin suppression.
+			enqueueDeliveryForConv(p.TargetConv)
+		}
 		if err != nil {
 			slog.Warn("standing orders: OpenCode message delivery failed",
 				"order", p.Name, "target", p.TargetConv, "error", err, "module", "hooks")
