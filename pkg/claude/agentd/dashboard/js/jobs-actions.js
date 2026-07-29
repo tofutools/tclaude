@@ -38,7 +38,7 @@ export function createJobsActions({
   }
 
   function standingOrderCAS(order) {
-    return `revision=${encodeURIComponent(order.revision)}&updated_at=${encodeURIComponent(order.updated_at || '')}`;
+    return `row_version=${encodeURIComponent(order.row_version)}`;
   }
 
   return Object.freeze({

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -178,10 +179,15 @@ var ErrStandingOrderNameTaken = errors.New("standing order name already exists")
 // ErrStandingOrderInvalid classifies a write rejected by Validate.
 var ErrStandingOrderInvalid = errors.New("invalid standing order")
 
-// ErrStandingOrderRevisionConflict reports an edit based on a stale revision.
-// Dashboard dialogs carry the revision they opened so two operator tabs cannot
-// silently overwrite one another's trigger or model-visible text.
-var ErrStandingOrderRevisionConflict = errors.New("standing order revision conflict")
+// ErrStandingOrderVersionConflict reports an edit based on a stale row
+// version. Dashboard dialogs carry the version they opened so two operator
+// tabs cannot silently overwrite one another.
+var ErrStandingOrderVersionConflict = errors.New("standing order version conflict")
+
+// ErrStandingOrderRevisionConflict is the historical name retained for callers
+// compiled against the prototype API. Revision now means delivery revision;
+// row version is the compare-and-swap token.
+var ErrStandingOrderRevisionConflict = ErrStandingOrderVersionConflict
 
 // StandingOrder is a row in agent_standing_orders: durable guidance delivered
 // when a trigger matches rather than on a wall clock.
@@ -197,10 +203,13 @@ var ErrStandingOrderRevisionConflict = errors.New("standing order revision confl
 type StandingOrder struct {
 	ID   int64
 	Name string
-	// Revision bumps whenever the delivered TEXT or the trigger changes. It is
-	// part of the cadence key, so editing an order re-arms it rather than
-	// leaving the recipient pinned to a stale "already delivered" record.
+	// Revision bumps whenever delivered guidance or its matching/cadence
+	// changes. It is the delivery revision recorded in the ledger and used by
+	// cadence/cooldown suppression.
 	Revision int64
+	// RowVersion bumps on every persisted mutation and is the sole optimistic
+	// concurrency token. Administrative edits do not re-arm delivery.
+	RowVersion int64
 
 	OwnerAgent  string
 	OwnerConv   string
@@ -470,7 +479,7 @@ func validStandingMatchField(event, field string) bool {
 // strand an order pointed at a dead generation. LEFT JOIN + COALESCE so a
 // group-target order (target_agent "") or an owner-less operator order keeps
 // an empty string rather than dropping the row.
-const standingSelect = `SELECT o.id, o.name, o.revision,
+const standingSelect = `SELECT o.id, o.name, o.revision, o.row_version,
 	o.owner_agent, COALESCE(ow.current_conv_id, ''),
 	o.target_kind, o.target_agent, COALESCE(tg.current_conv_id, ''),
 	o.group_id, o.target_role, o.summary,
@@ -492,7 +501,7 @@ func scanStandingOrder(s rowScanner) (*StandingOrder, error) {
 		updatedRaw string
 	)
 	if err := s.Scan(
-		&o.ID, &o.Name, &o.Revision,
+		&o.ID, &o.Name, &o.Revision, &o.RowVersion,
 		&o.OwnerAgent, &o.OwnerConv,
 		&o.TargetKind, &o.TargetAgent, &o.TargetConv,
 		&o.GroupID, &o.TargetRole, &o.Summary,
@@ -531,7 +540,7 @@ func formatStandingTime(t time.Time) string {
 }
 
 // InsertStandingOrder writes a new order. CreatedAt/UpdatedAt are stamped
-// server-side; the caller's values are ignored. Revision starts at 1.
+// server-side; the caller's values are ignored. Both versions start at 1.
 func InsertStandingOrder(o *StandingOrder) (int64, error) {
 	if err := o.Validate(); err != nil {
 		return 0, err
@@ -542,11 +551,11 @@ func InsertStandingOrder(o *StandingOrder) (int64, error) {
 	}
 	now := formatStandingTime(time.Now())
 	res, err := d.Exec(`INSERT INTO agent_standing_orders
-		(name, revision, owner_agent, target_kind, target_agent, group_id, target_role,
+		(name, revision, row_version, owner_agent, target_kind, target_agent, group_id, target_role,
 		 summary, trigger_event, trigger_sources, timing, cadence, cooldown_seconds,
 		 match_field, match_regex,
 		 enabled, disabled_reason, operator_authored, created_at, updated_at)
-		VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
 		o.CooldownSeconds, o.MatchField, o.MatchRegex,
@@ -645,35 +654,45 @@ func listStandingOrders(d *sql.DB, query string, args ...any) ([]*StandingOrder,
 	return out, rows.Err()
 }
 
-// UpdateStandingOrder replaces every operator-editable field and bumps the
-// delivery revision atomically. expectedRevision catches content changes;
-// expectedUpdatedAt also catches automatic lifecycle changes that deliberately
-// leave the delivery cadence untouched.
+// UpdateStandingOrder replaces every operator-editable field. RowVersion
+// always advances; the delivery revision advances only when model-visible
+// guidance, matching, timing, or cadence changes, or when this edit explicitly
+// re-enables the order.
 func UpdateStandingOrder(
-	id, expectedRevision int64, expectedUpdatedAt time.Time, o *StandingOrder,
+	id, expectedRowVersion int64, o *StandingOrder,
 ) error {
-	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
-		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	if expectedRowVersion <= 0 {
+		return fmt.Errorf("%w: expected row version is required", ErrStandingOrderInvalid)
 	}
 	if err := o.Validate(); err != nil {
 		return err
 	}
+	current, err := GetStandingOrder(id)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.RowVersion != expectedRowVersion {
+		return ErrStandingOrderVersionConflict
+	}
+	rearm := standingOrderDeliveryChanged(current, o) ||
+		(o.Enabled && o.DisabledReason == "" &&
+			(!current.Enabled || current.DisabledReason != ""))
 	d, err := Open()
 	if err != nil {
 		return err
 	}
 	res, err := d.Exec(`UPDATE agent_standing_orders SET
-		name = ?, revision = revision + 1,
+		name = ?, revision = revision + ?, row_version = row_version + 1,
 		owner_agent = ?, target_kind = ?, target_agent = ?, group_id = ?, target_role = ?,
 		summary = ?, trigger_event = ?, trigger_sources = ?, timing = ?, cadence = ?,
 		cooldown_seconds = ?, match_field = ?, match_regex = ?,
 		enabled = ?, disabled_reason = ?, operator_authored = ?, updated_at = ?
-		WHERE id = ? AND revision = ? AND updated_at = ?`,
-		o.Name, o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
+		WHERE id = ? AND row_version = ?`,
+		o.Name, boolToInt(rearm), o.OwnerAgent, o.TargetKind, o.TargetAgent, o.GroupID, o.TargetRole,
 		o.Summary, o.TriggerEvent, strings.Join(o.TriggerSources, ","), o.Timing, o.Cadence,
 		o.CooldownSeconds, o.MatchField, o.MatchRegex,
 		boolToInt(o.Enabled), o.DisabledReason, boolToInt(o.OperatorAuthored), formatStandingTime(time.Now()),
-		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
+		id, expectedRowVersion)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("UpdateStandingOrder %q: %w", o.Name, ErrStandingOrderNameTaken)
@@ -685,30 +704,41 @@ func UpdateStandingOrder(
 		return err
 	}
 	if n == 0 {
-		return ErrStandingOrderRevisionConflict
+		return ErrStandingOrderVersionConflict
 	}
 	return nil
 }
 
-// SetStandingOrderEnabled toggles an order through the same two-part CAS used
-// by full edits. A successful state change clears disabled_reason and bumps the
-// delivery revision, intentionally re-arming a manually re-enabled order.
+func standingOrderDeliveryChanged(a, b *StandingOrder) bool {
+	return a.Summary != b.Summary ||
+		a.TriggerEvent != b.TriggerEvent ||
+		!slices.Equal(a.TriggerSources, b.TriggerSources) ||
+		a.MatchField != b.MatchField ||
+		a.MatchRegex != b.MatchRegex ||
+		a.Timing != b.Timing ||
+		a.Cadence != b.Cadence
+}
+
+// SetStandingOrderEnabled toggles an order through the row-version CAS. A
+// manual enable advances both versions to re-arm delivery; disable advances
+// only row version. Every successful state change clears disabled_reason.
 func SetStandingOrderEnabled(
-	id int64, enabled bool, expectedRevision int64, expectedUpdatedAt time.Time,
+	id int64, enabled bool, expectedRowVersion int64,
 ) error {
-	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
-		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	if expectedRowVersion <= 0 {
+		return fmt.Errorf("%w: expected row version is required", ErrStandingOrderInvalid)
 	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
 	res, err := d.Exec(`UPDATE agent_standing_orders
-		SET enabled = ?, disabled_reason = '', revision = revision + 1, updated_at = ?
-		WHERE id = ? AND revision = ? AND updated_at = ?
+		SET enabled = ?, disabled_reason = '',
+		    revision = revision + ?, row_version = row_version + 1, updated_at = ?
+		WHERE id = ? AND row_version = ?
 		AND (enabled != ? OR disabled_reason != '')`,
-		boolToInt(enabled), formatStandingTime(time.Now()), id,
-		expectedRevision, formatStandingTime(expectedUpdatedAt), boolToInt(enabled))
+		boolToInt(enabled), boolToInt(enabled), formatStandingTime(time.Now()), id,
+		expectedRowVersion, boolToInt(enabled))
 	if err != nil {
 		return err
 	}
@@ -722,25 +752,24 @@ func SetStandingOrderEnabled(
 			return getErr
 		}
 		if current != nil &&
-			current.Revision == expectedRevision &&
-			current.UpdatedAt.Equal(expectedUpdatedAt) &&
+			current.RowVersion == expectedRowVersion &&
 			current.Enabled == enabled &&
 			current.DisabledReason == "" {
 			return nil
 		}
-		return ErrStandingOrderRevisionConflict
+		return ErrStandingOrderVersionConflict
 	}
 	return nil
 }
 
 // DeleteStandingOrder removes an order and its ledger only if the caller still
-// holds both current CAS tokens. There is deliberately no unguarded exported
+// holds the current row-version CAS token. There is deliberately no unguarded exported
 // delete: a stale tab must not remove an order another writer changed.
 func DeleteStandingOrder(
-	id, expectedRevision int64, expectedUpdatedAt time.Time,
+	id, expectedRowVersion int64,
 ) error {
-	if expectedRevision <= 0 || expectedUpdatedAt.IsZero() {
-		return fmt.Errorf("%w: expected revision and update time are required", ErrStandingOrderInvalid)
+	if expectedRowVersion <= 0 {
+		return fmt.Errorf("%w: expected row version is required", ErrStandingOrderInvalid)
 	}
 	d, err := Open()
 	if err != nil {
@@ -752,8 +781,8 @@ func DeleteStandingOrder(
 	}
 	defer func() { _ = tx.Rollback() }()
 	res, err := tx.Exec(
-		`DELETE FROM agent_standing_orders WHERE id = ? AND revision = ? AND updated_at = ?`,
-		id, expectedRevision, formatStandingTime(expectedUpdatedAt))
+		`DELETE FROM agent_standing_orders WHERE id = ? AND row_version = ?`,
+		id, expectedRowVersion)
 	if err != nil {
 		return err
 	}
@@ -762,7 +791,7 @@ func DeleteStandingOrder(
 		return err
 	}
 	if n == 0 {
-		return ErrStandingOrderRevisionConflict
+		return ErrStandingOrderVersionConflict
 	}
 	if _, err := tx.Exec(`DELETE FROM agent_standing_order_deliveries WHERE order_id = ?`, id); err != nil {
 		return err
@@ -781,7 +810,8 @@ func DisableGroupTargetStandingOrdersForRetire(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?, updated_at = ?
+		`UPDATE agent_standing_orders SET enabled = 0, disabled_reason = ?,
+		 row_version = row_version + 1, updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND enabled = 1`,
 		StandingDisabledReasonGroupRetired, formatStandingTime(time.Now()),
 		StandingTargetGroup, groupID)
@@ -801,7 +831,8 @@ func ReenableGroupRetiredStandingOrders(groupID int64) (int, error) {
 		return 0, err
 	}
 	res, err := d.Exec(
-		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = '', updated_at = ?
+		`UPDATE agent_standing_orders SET enabled = 1, disabled_reason = '',
+		 row_version = row_version + 1, updated_at = ?
 		 WHERE target_kind = ? AND group_id = ? AND disabled_reason = ?
 		 AND (owner_agent = '' OR EXISTS (
 			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''

@@ -69,12 +69,11 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.equal(model.cronDraftDirty({ ...draft, body: 'changed' }, draft), true);
 });
 
-test('standing-order dialog model preserves stable targets, explicit any-source semantics, and revision CAS', async (t) => {
+test('standing-order dialog model preserves stable targets, explicit any-source semantics, and row-version CAS', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/jobs-dialog-model.js');
   const order = {
-    id: 9, name: 'pr-early', revision: 3, enabled: false,
-    updated_at: '2026-07-29T12:00:00Z',
+    id: 9, name: 'pr-early', revision: 3, row_version: 5, enabled: false,
     target: { kind: 'group', group_id: 7, group_name: 'alpha', role: 'reviewer' },
     summary: 'Push the PR early.',
     trigger: { event: 'session.start', sources: ['compact', 'resume'] },
@@ -89,7 +88,7 @@ test('standing-order dialog model preserves stable targets, explicit any-source 
   assert.deepEqual(model.buildStandingOrderMutation({ kind: 'edit', id: 9 }, draft), {
     path: '/api/standing-orders/9', method: 'PATCH',
     payload: {
-      name: 'pr-early', revision: 3, updated_at: '2026-07-29T12:00:00Z',
+      name: 'pr-early', row_version: 5,
       target: 'group:alpha', role: 'reviewer',
       summary: 'Push the PR early.', trigger_event: 'session.start',
       sources: ['compact', 'resume'], match_field: '', match_regex: '',
