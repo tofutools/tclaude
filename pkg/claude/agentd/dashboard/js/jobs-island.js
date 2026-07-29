@@ -288,6 +288,11 @@ const JOB_KIND_LABELS = {
   cron: 'Schedules',
   'standing-order': 'Standing orders',
 };
+const JOB_KIND_COUNT_LABELS = {
+  export: ['export', 'exports'],
+  cron: ['schedule', 'schedules'],
+  'standing-order': ['standing order', 'standing orders'],
+};
 
 export function JobsApp({ state, actions }) {
   const current = state.view.value;
@@ -310,7 +315,7 @@ export function JobsApp({ state, actions }) {
     ? `${total} / ${totalAll}`
     : `${totalAll} ${current.kind === 'all'
       ? `job${totalAll === 1 ? '' : 's'}`
-      : JOB_KIND_LABELS[current.kind].toLowerCase()}`;
+      : JOB_KIND_COUNT_LABELS[current.kind][totalAll === 1 ? 0 : 1]}`;
 
   const selectKind = (value) => {
     if (state.setKind(value)) void actions.refresh();
