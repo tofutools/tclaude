@@ -94,6 +94,31 @@ func TestResolveEmptyScopesReturnsNonNilCollections(t *testing.T) {
 	assert.NotNil(t, got.Provenance.Environment)
 }
 
+func TestResolveMaterializesNetworkPacksBeforeSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	effective, err := Resolve(Scopes{Explicit: &Profile{
+		Name: "packed",
+		Network: &NetworkRules{
+			Baseline: NetworkBaselineDeny,
+			Packs:    []string{"net-local", "net-anthropic"},
+		},
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, effective.Network)
+	assert.Equal(t, AccessModeList, effective.Network.Mode)
+	assert.Empty(t, effective.Network.Baseline)
+	assert.Empty(t, effective.Network.Packs)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "api.anthropic.com", Ports: []int{443}},
+		{Loopback: true},
+	}, effective.Network.Allow)
+
+	snapshot := NewSnapshot(effective, nil)
+	require.NotNil(t, snapshot.Effective.Network)
+	assert.Equal(t, effective.Network, snapshot.Effective.Network,
+		"the immutable launch snapshot freezes expanded authority, not pack references")
+}
+
 func TestResolveRetainsCanonicalMissingFilesystemRule(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
