@@ -70,8 +70,9 @@ func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
 		"github": {
 			Name: "github",
 			Network: &NetworkRules{
-				Baseline: NetworkBaselineDeny,
-				Packs:    []string{"net-github"},
+				Baseline:  NetworkBaselineDeny,
+				Packs:     []string{"net-github"},
+				DenyPacks: []string{"net-npm"},
 			},
 		},
 	}
@@ -83,6 +84,9 @@ func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
 			Allow: []NetworkAllowEntry{{
 				Domain: "api.github.com",
 			}},
+			Deny: []NetworkAllowEntry{{
+				Domain: "telemetry.example",
+			}},
 		},
 	}, registryLookup(registry))
 	require.NoError(t, err)
@@ -92,7 +96,19 @@ func TestNetworkPackReferencesExpandBeforeIncludeIntersection(t *testing.T) {
 		Allow: []NetworkAllowEntry{{
 			Domain: "api.github.com",
 		}},
+		Deny: []NetworkAllowEntry{
+			{Domain: "registry.npmjs.org"},
+			{Domain: "telemetry.example"},
+		},
 	}, *got.Network)
+	snapshot := NewSnapshot(EffectiveProfile{Network: got.Network}, nil)
+	require.NotNil(t, snapshot.Effective.Network)
+	assert.Empty(t, snapshot.Effective.Network.DenyPacks)
+	assert.Equal(t, []NetworkAllowEntry{
+		{Domain: "registry.npmjs.org"},
+		{Domain: "telemetry.example"},
+	}, snapshot.Effective.Network.Deny,
+		"the snapshot freezes expanded deny destinations, not pack references")
 }
 
 func TestFlattenCarriesRetainedSpellingsForSurvivingCanonicalRule(t *testing.T) {

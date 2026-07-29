@@ -217,6 +217,43 @@ func TestFilteredDNSBrokerDefaultAllowPortDenyReturnsLeasedAnswer(t *testing.T) 
 	require.Len(t, leases.calls[0].matches.Deny, 1)
 }
 
+func TestFilteredDNSBrokerDenyOnlyDefaultDropSeedsLeaseAndRefuses(t *testing.T) {
+	rules, err := sandboxpolicy.CompileFilteredNetworkRules(
+		sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Deny: []sandboxpolicy.NetworkAllowEntry{{
+				Host: "blocked.example.test",
+			}},
+		})
+	require.NoError(t, err)
+	leases := &fakeFilteredDNSLeaseStore{}
+	broker := testFilteredDNSBroker(rules, leases, func(
+		_ context.Context,
+		request dnsmessage.Message,
+	) (dnsmessage.Message, error) {
+		q := request.Questions[0]
+		return dnsmessage.Message{
+			Header:    dnsmessage.Header{ID: request.ID, Response: true},
+			Questions: request.Questions,
+			Answers: []dnsmessage.Resource{{
+				Header: dnsmessage.ResourceHeader{
+					Name: q.Name, Type: dnsmessage.TypeA,
+					Class: dnsmessage.ClassINET, TTL: 30,
+				},
+				Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 57}},
+			}},
+		}, nil
+	})
+
+	response := queryFilteredDNSBroker(
+		t, broker, "blocked.example.test.", dnsmessage.TypeA)
+	assert.Equal(t, dnsmessage.RCodeRefused, response.RCode)
+	assert.Empty(t, response.Answers)
+	require.Len(t, leases.calls, 1)
+	assert.Empty(t, leases.calls[0].matches.Allow)
+	require.Len(t, leases.calls[0].matches.Deny, 1)
+}
+
 func TestValidateFilteredDNSUpstreamResponseBindsWholeQuestion(t *testing.T) {
 	request := dnsmessage.Message{
 		Header: dnsmessage.Header{ID: 41, RecursionDesired: true},
