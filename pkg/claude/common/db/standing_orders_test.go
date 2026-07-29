@@ -413,6 +413,28 @@ func TestStandingOrder_FailedOutcomeDoesNotSuppressCadence(t *testing.T) {
 	assert.False(t, already, "an undelivered order must remain deliverable")
 }
 
+func TestStandingOrder_UnsupportedOutcomeIsDeduplicatedPerRecipientRevision(t *testing.T) {
+	setupTestDB(t)
+	id, err := InsertStandingOrder(sampleOrder("pr-early"))
+	require.NoError(t, err)
+
+	rec := &StandingDelivery{
+		OrderID: id, OrderRevision: 1, TargetConv: "conv-a",
+		TargetAgent: "agt_aaa", Outcome: StandingOutcomeUnsupportedTiming,
+		Transport: StandingTransportNone, Harness: "opencode",
+		Detail: "action hooks are observation-only",
+	}
+	_, err = RecordStandingDelivery(rec)
+	require.NoError(t, err)
+	_, err = RecordStandingDelivery(rec)
+	require.NoError(t, err)
+
+	got, err := ListStandingDeliveries(id, 10)
+	require.NoError(t, err)
+	assert.Len(t, got, 1,
+		"unchanged high-frequency capability failures need one durable explanation")
+}
+
 func TestStandingOrder_DeleteRemovesLedger(t *testing.T) {
 	setupTestDB(t)
 	id, err := InsertStandingOrder(sampleOrder("pr-early"))

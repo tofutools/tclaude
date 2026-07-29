@@ -403,23 +403,8 @@ func (o *StandingOrder) Validate() error {
 		}
 	}
 	o.MatchField = strings.ToLower(strings.TrimSpace(o.MatchField))
-	if (o.MatchField == "") != (o.MatchRegex == "") {
-		return fmt.Errorf("%w: match_field and match_regex must be set together",
-			ErrStandingOrderInvalid)
-	}
-	if o.MatchField != "" {
-		if !validStandingMatchField(o.TriggerEvent, o.MatchField) {
-			return fmt.Errorf("%w: field %q cannot be matched on trigger %q",
-				ErrStandingOrderInvalid, o.MatchField, o.TriggerEvent)
-		}
-		if len(o.MatchRegex) > StandingMatchRegexMaxLen {
-			return fmt.Errorf("%w: match_regex is %d bytes, limit is %d",
-				ErrStandingOrderInvalid, len(o.MatchRegex), StandingMatchRegexMaxLen)
-		}
-		if _, err := regexp.Compile(o.MatchRegex); err != nil {
-			return fmt.Errorf("%w: invalid RE2 match_regex: %v",
-				ErrStandingOrderInvalid, err)
-		}
+	if err := ValidateStandingMatcher(o.TriggerEvent, o.MatchField, o.MatchRegex); err != nil {
+		return err
 	}
 
 	switch o.Timing {
@@ -435,6 +420,32 @@ func (o *StandingOrder) Validate() error {
 	if o.CooldownSeconds < 0 || o.CooldownSeconds > StandingCooldownMaxSeconds {
 		return fmt.Errorf("%w: cooldown_seconds must be between 0 and %d",
 			ErrStandingOrderInvalid, StandingCooldownMaxSeconds)
+	}
+	return nil
+}
+
+// ValidateStandingMatcher checks the matcher independently of the rest of an
+// order. Writes call it through Validate, and the evaluator calls it again on
+// rows read from storage so a directly edited or corrupted row fails closed.
+func ValidateStandingMatcher(event, field, expression string) error {
+	if (field == "") != (expression == "") {
+		return fmt.Errorf("%w: match_field and match_regex must be set together",
+			ErrStandingOrderInvalid)
+	}
+	if field == "" {
+		return nil
+	}
+	if !validStandingMatchField(event, field) {
+		return fmt.Errorf("%w: field %q cannot be matched on trigger %q",
+			ErrStandingOrderInvalid, field, event)
+	}
+	if len(expression) > StandingMatchRegexMaxLen {
+		return fmt.Errorf("%w: match_regex is %d bytes, limit is %d",
+			ErrStandingOrderInvalid, len(expression), StandingMatchRegexMaxLen)
+	}
+	if _, err := regexp.Compile(expression); err != nil {
+		return fmt.Errorf("%w: invalid RE2 match_regex: %v",
+			ErrStandingOrderInvalid, err)
 	}
 	return nil
 }
@@ -813,6 +824,32 @@ func RecordStandingDelivery(rec *StandingDelivery) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
+	}
+	if rec.Outcome == StandingOutcomeUnsupportedTiming {
+		// Capability failures are stable for one order revision, recipient,
+		// and harness. High-frequency action hooks can encounter the same
+		// unsupported OpenCode order thousands of times; preserve the first
+		// explanation without growing an unbounded row-per-hook ledger.
+		res, err := d.Exec(`INSERT INTO agent_standing_order_deliveries
+			(order_id, order_revision, target_conv, target_agent, epoch, outcome, transport, harness, detail, created_at)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			WHERE NOT EXISTS (
+				SELECT 1 FROM agent_standing_order_deliveries
+				WHERE order_id = ? AND order_revision = ? AND target_agent = ?
+				AND harness = ? AND outcome = ? AND transport = ? AND detail = ?
+			)`,
+			rec.OrderID, rec.OrderRevision, rec.TargetConv, rec.TargetAgent, rec.Epoch,
+			rec.Outcome, rec.Transport, rec.Harness, rec.Detail,
+			formatStandingTime(time.Now()),
+			rec.OrderID, rec.OrderRevision, rec.TargetAgent, rec.Harness, rec.Outcome,
+			rec.Transport, rec.Detail)
+		if err != nil {
+			return 0, err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return 0, err
+		}
+		return res.LastInsertId()
 	}
 	res, err := d.Exec(`INSERT INTO agent_standing_order_deliveries
 		(order_id, order_revision, target_conv, target_agent, epoch, outcome, transport, harness, detail, created_at)

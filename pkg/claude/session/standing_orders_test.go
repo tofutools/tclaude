@@ -250,6 +250,17 @@ func TestStandingOrderOpenCodeActionTriggerIsUnsupportedNotQueued(t *testing.T) 
 	require.NotNil(t, latest)
 	assert.Equal(t, db.StandingOutcomeUnsupportedTiming, latest.Outcome)
 	assert.Contains(t, latest.Detail, "origin suppression")
+
+	// Capability is unchanged for this order revision and stable recipient.
+	// Repeated high-frequency tool hooks must not append an unbounded ledger.
+	assert.Empty(t, observe(HookCallbackInput{
+		HookEventName: "PreToolUse",
+		ConvID:        "conv-1",
+		ToolName:      "Bash",
+	}))
+	deliveries, err := db.ListStandingDeliveries(id, 10)
+	require.NoError(t, err)
+	assert.Len(t, deliveries, 1)
 }
 
 func TestStandingOrderSourceFilterSkipsUnselectedBoundary(t *testing.T) {

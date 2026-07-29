@@ -234,6 +234,15 @@ func Evaluate(
 			ev.Source, strings.Join(o.TriggerSources, ", "))
 		return d
 	}
+	if err := db.ValidateStandingMatcher(o.TriggerEvent, o.MatchField, o.MatchRegex); err != nil {
+		// Writes validate matchers, but storage can still be edited or
+		// corrupted out of band. Every invalid pair/field/expression must fail
+		// closed; treating an unknown field as an empty value could otherwise
+		// turn a regex that matches empty into a delivery.
+		d.Outcome = db.StandingOutcomeNoMatch
+		d.Detail = "stored matcher is invalid and was not evaluated"
+		return d
+	}
 	if o.MatchField != "" {
 		re, err := regexp.Compile(o.MatchRegex)
 		if err != nil {

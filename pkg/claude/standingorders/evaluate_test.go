@@ -60,6 +60,31 @@ func TestEvaluateDeliversOnMatchingBoundary(t *testing.T) {
 	assert.True(t, d.ShouldRecord())
 }
 
+func TestEvaluateCorruptMatcherFailsClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		regex string
+	}{
+		{name: "expression without field", regex: `.*`},
+		{name: "field without expression", field: db.StandingMatchFieldCwd},
+		{name: "unknown field matching empty", field: "unknown", regex: `^$`},
+		{name: "field invalid for event", field: db.StandingMatchFieldPrompt, regex: `.*`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Evaluate(order(func(o *db.StandingOrder) {
+				o.MatchField = tt.field
+				o.MatchRegex = tt.regex
+			}), event(), neverDelivered)
+
+			assert.False(t, d.Deliver)
+			assert.Equal(t, db.StandingOutcomeNoMatch, d.Outcome)
+			assert.Contains(t, d.Detail, "stored matcher is invalid")
+		})
+	}
+}
+
 func TestEvaluateDisabledShortCircuitsBeforeScope(t *testing.T) {
 	o := order(func(o *db.StandingOrder) {
 		o.Enabled = false
