@@ -223,7 +223,7 @@ func TestRenderSeatbeltIsolatedNetworkProfileParameterizesAllowedSockets(t *test
 	}
 }
 
-func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
+func TestRenderSeatbeltLoopbackOnlyNetworkCarvesRemoteIPExceptions(t *testing.T) {
 	rules, err := sandboxpolicy.CompileFilteredNetworkRules(sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
 		Allow: []sandboxpolicy.NetworkAllowEntry{
@@ -246,11 +246,20 @@ func TestRenderSeatbeltLoopbackOnlyNetworkUsesRemoteIPPredicates(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	assert.Contains(t, profile, `(remote ip "*:*")`)
+	assert.Contains(t, profile, `(deny network-outbound
+  (require-all
+    (remote ip "*:*")
+    (require-not
+      (remote ip "localhost:3000"))
+    (require-not
+      (remote ip "localhost:11434"))
+  ))`)
 	assert.Equal(t, 1, strings.Count(profile,
-		`(allow network-outbound (remote ip "localhost:3000"))`))
+		`(remote ip "localhost:3000")`))
 	assert.Equal(t, 1, strings.Count(profile,
-		`(allow network-outbound (remote ip "localhost:11434"))`))
+		`(remote ip "localhost:11434")`))
+	assert.NotContains(t, profile, `(allow network-outbound`,
+		"loopback reachability must not depend on Seatbelt allow/deny selection")
 	assert.NotContains(t, profile, `(local ip `)
 	assert.NotContains(t, profile, `(deny network-bind)`,
 		"the authored list is outbound-only and local services must still bind")
@@ -280,9 +289,16 @@ func TestRenderSeatbeltLoopbackAllPortsCoalescesPortExceptions(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
+	assert.Contains(t, profile, `(deny network-outbound
+  (require-all
+    (remote ip "*:*")
+    (require-not
+      (remote ip "localhost:*"))
+  ))`)
 	assert.Equal(t, 1, strings.Count(profile,
-		`(allow network-outbound (remote ip "localhost:*"))`))
+		`(remote ip "localhost:*")`))
 	assert.NotContains(t, profile, `localhost:11434`)
+	assert.NotContains(t, profile, `(allow network-outbound`)
 }
 
 func TestRenderSeatbeltIsolatedNetworkHiddenAgentdHasNoPostureException(t *testing.T) {

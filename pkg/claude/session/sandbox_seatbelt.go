@@ -646,8 +646,10 @@ func seatbeltDaemonReopenDescendants(
 
 // appendSeatbeltLoopbackNetworkRules applies the one network list Seatbelt can
 // represent without a proxy. The remote-ip wildcard confines the deny to IP
-// traffic, preserving the independently authored Unix-socket axis; the more
-// specific localhost allows reopen only the authored destination ports.
+// traffic, preserving the independently authored Unix-socket axis. Authored
+// loopback destinations are carved out of that deny predicate so their
+// reachability does not depend on Seatbelt selecting a separate allow over the
+// broad deny.
 //
 // Outbound exceptions must be remote predicates. A local-ip predicate observes
 // the unbound socket's source address and Seatbelt treats localhost as matching
@@ -675,15 +677,22 @@ func appendSeatbeltLoopbackNetworkRules(
 
 	profile.WriteString("\n; Local access permits only real host-loopback IP destinations.\n")
 	profile.WriteString("; Bind/inbound and Unix sockets retain their independently authored behavior.\n")
-	profile.WriteString("(deny network-outbound (remote ip \"*:*\"))\n")
+	profile.WriteString("(deny network-outbound\n")
+	profile.WriteString("  (require-all\n")
+	profile.WriteString("    (remote ip \"*:*\")\n")
 	if allowAllPorts {
-		profile.WriteString("(allow network-outbound (remote ip \"localhost:*\"))\n")
+		profile.WriteString("    (require-not\n")
+		profile.WriteString("      (remote ip \"localhost:*\"))\n")
 	} else {
 		for _, port := range ports {
 			fmt.Fprintf(profile,
-				"(allow network-outbound (remote ip \"localhost:%d\"))\n", port)
+				"    (require-not\n"+
+					"      (remote ip \"localhost:%d\"))\n",
+				port,
+			)
 		}
 	}
+	profile.WriteString("  ))\n")
 }
 
 // appendSeatbeltIsolatedNetworkRules blocks every connection except connect(2)
