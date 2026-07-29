@@ -109,6 +109,44 @@ testing" in `docs/dashboard.md`.
 The visual smoke harness is optional and environment-dependent; it is not wired
 into CI.
 
+## UI design proposals: mock, render, notify
+
+For UI direction questions — which control type fits, competing layout ideas, a
+contested visual change — do not iterate in the production frontend. The full
+dev loop (edit real JS/CSS, rebuild, re-render, review) is far slower than the
+decision needs. Instead:
+
+1. Write a small standalone HTML+CSS file that mocks the alternatives side by
+   side, approximating the dashboard theme. No build step, no app assets.
+2. Render it with the host's Chrome:
+   `google-chrome --headless=new --no-sandbox --screenshot=out.png
+   --window-size=WxH --hide-scrollbars file:///path/to/mock.html`.
+   Under an agent sandbox, point `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, and
+   `XDG_DATA_HOME` at a disposable writable directory first — Chrome's crashpad
+   ignores `--user-data-dir` and aborts when `~/.config` is unwritable (same
+   trick as `pkg/claude/agentd/dashsnap`).
+3. Send the rendered image to the operator with
+   `tclaude agent notify-human -a out.png` plus a short assessment and a
+   recommendation, and let the human pick. Note that notify-human is
+   permission-gated (`human.notify` slug or group ownership); an agent without
+   the grant should route the image through its coordinating agent or fall
+   back to `--ask-human`.
+4. Only after a direction is chosen, ticket and implement it in the real
+   frontend.
+
+This keeps taste decisions with the human at the cost of minutes, and avoids
+churning production code on designs that may be rejected.
+
+The same loop works agent-to-agent. A lead can ask the implementing agent for
+a mock before green-lighting implementation, or send the implementor a
+rendered mock of what is wanted; either side re-renders and replies with an
+updated image, passing an absolute path the peer can read in the message body
+(`tclaude agent send` carries text only — attachments exist only on
+notify-human), iterating on the design together before any production code is
+written. Bring
+the human in with notify-human whenever a decision is taste rather than
+mechanics.
+
 ## Git, commits, and PRs
 
 When making feature or fix changes as an agent, use a git worktree and open a
