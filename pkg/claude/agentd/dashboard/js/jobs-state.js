@@ -12,7 +12,24 @@ const PAGE_SIZE_KEY = 'tclaude.dash.list.jobs.pagesize';
 const SORT_KEY = 'tclaude.dash.sort';
 export const JOBS_PAGE_SIZES = [25, 50, 100, 200];
 export const JOBS_KINDS = ['all', 'export', 'cron', 'standing-order'];
+export const JOBS_KIND_SUBTABS = Object.freeze({
+  all: '',
+  'export': 'exports',
+  cron: 'cron-jobs',
+  'standing-order': 'standing-orders',
+});
 const DEFAULT_PAGE_SIZE = 50;
+
+export function jobsLocation(kind) {
+  const normalized = JOBS_KINDS.includes(kind) ? kind : 'all';
+  const subtab = JOBS_KIND_SUBTABS[normalized];
+  return subtab ? { tab: 'jobs', subtab } : { tab: 'jobs' };
+}
+
+export function jobsKindForLocation(loc) {
+  if (!loc || loc.tab !== 'jobs' || !loc.subtab) return 'all';
+  return JOBS_KINDS.find((kind) => JOBS_KIND_SUBTABS[kind] === loc.subtab) || 'all';
+}
 
 function errorMessage(error) {
   return error ? String(error.message || error) : null;
@@ -51,6 +68,7 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     if (value) search.set('q', value);
     return search.toString();
   });
+  const location = computed(() => jobsLocation(kind.value));
 
   const view = computed(() => {
     const value = snapshot.value;
@@ -118,6 +136,10 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
     else prefs.setItem(KIND_KEY, next);
     invalidateRequest();
     return true;
+  }
+
+  function applyLocation(loc) {
+    return setKind(jobsKindForLocation(loc));
   }
 
   function cycleSort(col) {
@@ -272,8 +294,8 @@ export function createJobsState({ snapshot = dashboardState.snapshot, prefs = da
   }
 
   return Object.freeze({
-    query, kind, offset, limit, sort, request, dialog, orderDialog, params, view,
-    initialize, setQuery, setKind, cycleSort, page, setPageSize, syncServedOffset,
+    query, kind, offset, limit, sort, request, dialog, orderDialog, params, view, location,
+    initialize, setQuery, setKind, applyLocation, cycleSort, page, setPageSize, syncServedOffset,
     beginRequest, acceptsRequest, invalidateRequest,
     commitRequest, failRequest, discardRequest, upsertCron,
     openCronCreate, openCronEdit, openCronDuplicate, closeCronDialog,

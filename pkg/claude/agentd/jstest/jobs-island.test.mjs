@@ -73,14 +73,19 @@ test('Jobs island renders reactively and preserves keyed DOM/focus across polls'
 
   const filter = getByRole(mounted.container, 'textbox', { name: 'Filter automations' });
   assert.equal(filter.value, '');
+  let navigated = null;
+  harness.document.addEventListener('tclaude:navigated', (event) => { navigated = event.detail?.location; });
   const standingOrders = getByRole(mounted.container, 'tab', { name: 'Standing orders' });
-  await harness.act(() => harness.fireEvent(standingOrders, 'click'));
+  assert.equal(standingOrders.getAttribute('href'), '/automations/standing-orders');
+  await harness.act(() => harness.fireEvent(standingOrders, 'click', { button: 0 }));
   assert.equal(state.kind.value, 'standing-order');
+  assert.deepEqual(navigated, { tab: 'jobs', subtab: 'standing-orders' });
   assert.match(state.params.value, /kind=standing-order/);
   assert.equal(standingOrders.getAttribute('aria-selected'), 'true');
   assert.ok(calls.includes('refresh'));
   const allJobs = getByRole(mounted.container, 'tab', { name: 'All' });
-  await harness.act(() => harness.fireEvent(allJobs, 'click'));
+  assert.equal(allJobs.getAttribute('href'), '/automations');
+  await harness.act(() => harness.fireEvent(allJobs, 'click', { button: 0 }));
   assert.equal(state.kind.value, 'all');
   const cronRow = mounted.container.querySelector('tr[data-key="cron-1"]');
   const orderRow = mounted.container.querySelector('tr[data-key="standing-order-3"]');
@@ -195,7 +200,7 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
 
   await harness.act(() => state.failRequest(1, new Error('offline')));
   assert.match(getByRole(mounted.container, 'alert').textContent, /offline/);
-  assert.doesNotMatch(mounted.container.textContent, /No exports, schedules, or standing orders yet/,
+  assert.doesNotMatch(mounted.container.textContent, /No exports, cron jobs, or standing orders yet/,
     'a failed first load is not an empty result');
 
   state.beginRequest(2);
@@ -204,7 +209,7 @@ test('Jobs island exposes loading, empty, badge, and retry states', async (t) =>
     snapshot.value = { jobs: [], export_jobs_active: 0, paging: { jobs: { total: 0, total_unfiltered: 0 } } };
     state.commitRequest(2);
   });
-  assert.match(mounted.container.textContent, /No exports, schedules, or standing orders yet/);
+  assert.match(mounted.container.textContent, /No exports, cron jobs, or standing orders yet/);
   assert.equal(mounted.container.querySelector('#filter-jobs-count').textContent, '0 items');
   await mounted.unmount();
 });
@@ -217,18 +222,27 @@ test('production loader dynamically mounts and unmounts the Jobs feature graph',
   badgeHost.id = 'jobs-badge-root';
   const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
   dialogHost.id = 'jobs-cron-dialog-root';
-  const [{ mountJobsFeature }, { openCronCreateModal }] = await Promise.all([
+  let refreshes = 0;
+  const [{ mountJobsFeature }, { openCronCreateModal }, { jobsState }] = await Promise.all([
     harness.importDashboardModule('js/preact-loader.js'),
     harness.importDashboardModule('js/jobs-controller.js'),
+    harness.importDashboardModule('js/jobs-state.js'),
   ]);
   const cleanup = await mountJobsFeature({
-    requestMutation: async () => {}, refresh: async () => {}, confirm: async () => true,
+    requestMutation: async () => {}, refresh: async () => { refreshes += 1; }, confirm: async () => true,
     notify: () => {}, download: () => {}, confirmDiscard: async () => true,
   });
   assert.equal(typeof cleanup, 'function');
   assert.ok(host.querySelector('#filter-jobs'));
   assert.ok(badgeHost.querySelector('#jobs-badge'));
   assert.equal(dialogHost.childElementCount, 0);
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:restore-location',
+    { detail: { location: { tab: 'jobs', subtab: 'standing-orders' } } },
+  )));
+  assert.equal(jobsState.kind.value, 'standing-order',
+    'a deep-link/history restore selects the matching Automations view');
+  assert.equal(refreshes, 1, 'restoring a different view refreshes its server-side window');
   await harness.act(() => openCronCreateModal({
     targetMode: 'solo', target: 'agt_one', interval: '5m', body: 'hello',
   }));

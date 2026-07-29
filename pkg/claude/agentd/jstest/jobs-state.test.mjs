@@ -28,6 +28,7 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.initialize(), false);
   assert.equal(state.query.value, 'agent one');
   assert.equal(state.kind.value, 'cron');
+  assert.deepEqual(state.location.value, { tab: 'jobs', subtab: 'cron-jobs' });
   assert.equal(state.limit.value, 25);
   assert.equal(state.params.value, 'offset=0&limit=25&kind=cron&q=agent+one');
 
@@ -37,6 +38,14 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(prefs.values.get('tclaude.dash.jobs.kind'), 'standing-order');
   assert.match(state.params.value, /kind=standing-order/);
   assert.equal(state.setKind('standing-order'), false);
+  assert.equal(state.applyLocation({ tab: 'jobs', subtab: 'exports' }), true);
+  assert.equal(state.kind.value, 'export');
+  assert.deepEqual(state.location.value, { tab: 'jobs', subtab: 'exports' });
+  assert.equal(state.applyLocation({ tab: 'jobs', subtab: 'standing-orders' }), true);
+  assert.equal(state.kind.value, 'standing-order');
+  assert.equal(state.applyLocation({ tab: 'jobs' }), true);
+  assert.equal(state.kind.value, 'all');
+  assert.deepEqual(state.location.value, { tab: 'jobs' });
 
   state.setQuery('cron & owner');
   assert.equal(state.offset.value, 0);

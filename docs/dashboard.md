@@ -1130,7 +1130,7 @@ the replacement engine is designed. See [Processes](processes.md).
 
 ### Automations
 
-One table with subviews for exports, recurring **Schedules**, and durable
+One table with subviews for exports, recurring **Cron jobs**, and durable
 **Standing orders**.
 
 The scheduled-job rows show name, owner, target, interval, immediate-run
