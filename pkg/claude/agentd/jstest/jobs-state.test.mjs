@@ -116,7 +116,7 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   assert.equal(state.openCronCreate({}), false, 'only one automation editor owns the overlay');
   state.closeStandingOrderDialog();
   assert.equal(state.openStandingOrderEdit({
-    id: 9, name: 'pr-early', revision: 2, enabled: true,
+    id: 9, name: 'pr-early', revision: 2, row_version: 4, enabled: true,
     updated_at: '2026-07-29T12:00:00Z',
     target: { kind: 'conv', agent: 'agt_one' },
     summary: 'Push early.', trigger: { sources: ['compact'] },
@@ -124,7 +124,7 @@ test('Jobs state explicitly owns query, paging, sort, requests, and derived rows
   }), true);
   assert.equal(state.orderDialog.value.kind, 'edit');
   assert.equal(state.orderDialog.value.prefill.revision, 2);
-  assert.equal(state.orderDialog.value.prefill.updatedAt, '2026-07-29T12:00:00Z');
+  assert.equal(state.orderDialog.value.prefill.rowVersion, 4);
   assert.equal(state.orderDialog.value.prefill.target, 'agt_one');
 });
 

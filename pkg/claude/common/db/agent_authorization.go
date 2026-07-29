@@ -123,7 +123,7 @@ func RetireAgentAuthorizationByConv(convID, by, reason string) (RetireAgentAutho
 	// statement: re-running a retirement is idempotent, and an order already
 	// paused for this reason is not counted twice.
 	res, err = tx.Exec(`UPDATE agent_standing_orders
-		SET enabled = 0, disabled_reason = ?, updated_at = ?
+		SET enabled = 0, disabled_reason = ?, row_version = row_version + 1, updated_at = ?
 		WHERE owner_agent = ? AND (enabled <> 0 OR disabled_reason <> ?)`,
 		StandingDisabledReasonAgentRetired, formatStandingTime(time.Now()),
 		agentID, StandingDisabledReasonAgentRetired)

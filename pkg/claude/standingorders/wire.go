@@ -55,6 +55,9 @@ type OrderView struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	Revision int64  `json:"revision"`
+	// RowVersion is the dashboard mutation CAS token. Revision is reserved for
+	// delivery/cadence identity and may remain unchanged after an edit.
+	RowVersion int64 `json:"row_version"`
 
 	Enabled          bool   `json:"enabled"`
 	DisabledReason   string `json:"disabled_reason,omitempty"`
@@ -106,6 +109,7 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		ID:               o.ID,
 		Name:             o.Name,
 		Revision:         o.Revision,
+		RowVersion:       o.RowVersion,
 		Enabled:          o.Enabled,
 		DisabledReason:   o.DisabledReason,
 		OperatorAuthored: o.OperatorAuthored,

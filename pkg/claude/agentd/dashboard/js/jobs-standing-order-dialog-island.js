@@ -142,7 +142,7 @@ export function StandingOrderDialog({ descriptor, snapshot, actions, confirmDisc
     confirmDiscard=${confirmDiscard} registerClose=${registerClose}
     resizeKey="tclaude.dash.modalSize.standing-order">
     <h3 id="standing-order-title">${editing ? 'Edit standing order' : 'Create standing order'}</h3>
-    ${editing && html`<div class="modal-meta">#${descriptor.id} · revision ${draft.revision}</div>`}
+    ${editing && html`<div class="modal-meta">#${descriptor.id} · delivery revision ${draft.revision}</div>`}
     ${descriptor.order?.disabled_reason && html`<div class="jobs-error standing-order-retirement-warning">
       This order was disabled automatically: ${descriptor.order.disabled_reason}.
       Leave Enabled off to preserve that retirement state; explicitly enabling it clears the marker.

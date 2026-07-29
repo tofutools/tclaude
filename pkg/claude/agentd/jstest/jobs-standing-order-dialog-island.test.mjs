@@ -110,15 +110,14 @@ test('standing-order dialog authors a prompt RE2 condition', async (t) => {
   await mounted.unmount();
 });
 
-test('standing-order edit shows retirement state and sends the stored revision', async (t) => {
+test('standing-order edit shows retirement state and sends the stored row version', async (t) => {
   const harness = await createPreactHarness(t);
   const { StandingOrderDialog } = await harness.importDashboardModule(
     'js/jobs-standing-order-dialog-island.js',
   );
   const saves = [];
   const order = {
-    id: 4, name: 'retired-order', revision: 6, enabled: false,
-    updated_at: '2026-07-29T12:00:00Z',
+    id: 4, name: 'retired-order', revision: 6, row_version: 9, enabled: false,
     disabled_reason: 'group-retired',
     target: { kind: 'group', group_name: 'alpha', role: 'reviewer' },
     summary: 'Keep context.', trigger: { sources: [] },
@@ -135,8 +134,8 @@ test('standing-order edit shows retirement state and sends the stored revision',
   await harness.act(() => harness.fireEvent(
     mounted.container.querySelector('#standing-order-submit'), 'click',
   ));
-  assert.equal(saves[0].payload.revision, 6);
-  assert.equal(saves[0].payload.updated_at, '2026-07-29T12:00:00Z');
+  assert.equal(saves[0].payload.row_version, 9);
+  assert.equal(saves[0].payload.revision, undefined);
   assert.equal(saves[0].payload.target, 'group:alpha');
   assert.equal(saves[0].payload.enabled, false);
   await mounted.unmount();

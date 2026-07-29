@@ -329,7 +329,7 @@ func TestStandingOrderDisabledDeliversNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, order)
 	require.NoError(t, db.SetStandingOrderEnabled(
-		id, false, order.Revision, order.UpdatedAt))
+		id, false, order.RowVersion))
 
 	assert.Empty(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
 }
@@ -350,7 +350,7 @@ func TestStandingOrderCadenceOncePerGenerationAndRevisionRearm(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, order)
 	order.Summary = "Push the PR early, then request a cold review."
-	require.NoError(t, db.UpdateStandingOrder(id, order.Revision, order.UpdatedAt, order))
+	require.NoError(t, db.UpdateStandingOrder(id, order.RowVersion, order))
 
 	got := additionalContext(t, dispatch(t, sessionStart(db.StandingSourceCompact)))
 	assert.Contains(t, got, "cold review", "an edited order must reach the agents the edit was for")

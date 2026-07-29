@@ -1024,7 +1024,7 @@ CREATE TABLE agent_standing_orders (
 			operator_authored INTEGER NOT NULL DEFAULT 0,
 			created_at        TEXT    NOT NULL,
 			updated_at        TEXT    NOT NULL DEFAULT ''
-		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '');
+		, cooldown_seconds INTEGER NOT NULL DEFAULT 0, match_field TEXT NOT NULL DEFAULT '', match_regex TEXT NOT NULL DEFAULT '', row_version INTEGER NOT NULL DEFAULT 1);
 
 CREATE INDEX idx_agent_standing_orders_owner
 			ON agent_standing_orders(owner_agent);

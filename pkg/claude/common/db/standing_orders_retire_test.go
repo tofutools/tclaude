@@ -39,8 +39,10 @@ func TestStandingOrder_RetireOwnerDisablesOrders(t *testing.T) {
 	assert.False(t, got.Enabled)
 	assert.Equal(t, before.Revision, got.Revision,
 		"retirement must not re-arm the delivery cadence")
-	assert.NotEqual(t, before.UpdatedAt, got.UpdatedAt,
+	assert.Equal(t, before.RowVersion+1, got.RowVersion,
 		"retirement must invalidate stale dashboard writers")
+	assert.NotEqual(t, before.UpdatedAt, got.UpdatedAt,
+		"retirement keeps its audit timestamp current")
 	assert.Equal(t, StandingDisabledReasonAgentRetired, got.DisabledReason,
 		"the marker records WHY, so a later reinstate can tell this apart from a hand-disabled order")
 }
