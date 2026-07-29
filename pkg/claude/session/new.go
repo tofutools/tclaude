@@ -2372,12 +2372,22 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...strin
 			"session name %d bytes, launch dir %d bytes, script path %d bytes — shorten the launch directory path",
 			n, tmuxClientArgvLimit, len(tmuxSession), len(cwd), len(scriptPath))
 	}
-	tmuxCmd := clcommon.TmuxCommand(args...)
-	tmuxCmd.Stdout = os.Stdout
-	tmuxCmd.Stderr = os.Stderr
-	if err := tmuxCmd.Run(); err != nil {
+	// The tmux client's own diagnostic travels in the error rather than onto
+	// this process's terminal. `new-session -d` prints nothing on success, and
+	// on failure ("bad session name", "can't create socket") the message is the
+	// whole explanation — attaching it to the error keeps it with the caller
+	// that can render it. Writing it to os.Stderr instead would land it
+	// wherever this process's stderr happens to point, which since
+	// StartShellSession includes an agentd console sitting in bubbletea's
+	// alternate screen: the diagnostic would overwrite the rendered frame while
+	// the console separately reported the same failure.
+	out, err := clcommon.TmuxCommand(args...).CombinedOutput()
+	if err != nil {
 		// The pane never ran, so the script's self-delete never did either.
 		cleanupScript()
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return fmt.Errorf("failed to create tmux session: %w: %s", err, detail)
+		}
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 	return nil

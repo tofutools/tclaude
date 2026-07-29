@@ -1198,7 +1198,7 @@ func TestTUISpawnDirSuggestionsStayOnOneLine(t *testing.T) {
 	m.form.dirSuggestions = []string{
 		"alpha-service", "beta-service", "gamma-service", "delta-service",
 	}
-	line := m.dirSuggestionLine()
+	line := m.dirSuggestionLine(m.form.dirSuggestions)
 	assert.LessOrEqual(t, lipgloss.Width(line), m.width)
 	assert.Contains(t, line, "alpha-service")
 	assert.Contains(t, line, "more)")

@@ -80,6 +80,31 @@ func TestRunNew_ShellFlagIsHarnessShellAlias(t *testing.T) {
 	})
 }
 
+// The label becomes the tmux session name verbatim and the session id that
+// reaches tmux's set-titles-string (a format string, where "#(cmd)" runs cmd),
+// so the gate lives in the shared launch — it must hold for the CLI's --label
+// as much as for StartShellSession, which builds the same name from the same
+// field. Rejection comes before GuardAgainstNestedSpawn and the tmux probe, so
+// these cases need neither.
+func TestShellSessionRejectsAnUnsafeLabel(t *testing.T) {
+	for _, label := range []string{"my.label", "a:b", "#(touch /tmp/pwned)", "back`tick`", "sp ace"} {
+		t.Run(label, func(t *testing.T) {
+			t.Run("cli", func(t *testing.T) {
+				err := RunNew(&NewParams{Shell: true, Label: label, Detached: true})
+				if err == nil || !strings.Contains(err.Error(), "letters, digits") {
+					t.Fatalf("--shell --label %q must be refused with a charset explanation, got: %v", label, err)
+				}
+			})
+			t.Run("api", func(t *testing.T) {
+				_, err := StartShellSession(t.TempDir(), label)
+				if err == nil || !strings.Contains(err.Error(), "letters, digits") {
+					t.Fatalf("StartShellSession label %q must be refused, got: %v", label, err)
+				}
+			})
+		})
+	}
+}
+
 func TestShellBinary(t *testing.T) {
 	t.Run("uses $SHELL when set", func(t *testing.T) {
 		t.Setenv("SHELL", "/usr/bin/zsh")
