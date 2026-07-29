@@ -2,16 +2,27 @@ package harness
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/gofrs/flock"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
+)
+
+var installCodexHooksMu sync.Mutex
+
+const (
+	installCodexHooksLockTimeout = 5 * time.Second
+	installCodexHooksLockRetry   = 10 * time.Millisecond
 )
 
 // codexHookEvents is the set of Codex hook events tclaude registers its
@@ -204,6 +215,29 @@ type codexHookInstallPlan struct {
 // Codex event, preserving any other top-level keys and non-tclaude matcher
 // groups. Idempotent.
 func (codexHookInstaller) Install() error {
+	installCodexHooksMu.Lock()
+	defer installCodexHooksMu.Unlock()
+
+	path := codexHooksPath()
+	if path == "" {
+		return fmt.Errorf("cannot determine codex hooks path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create Codex config directory: %w", err)
+	}
+	fileLock := flock.New(path + ".tclaude.lock")
+	lockCtx, cancelLock := context.WithTimeout(
+		context.Background(), installCodexHooksLockTimeout)
+	defer cancelLock()
+	locked, err := fileLock.TryLockContext(lockCtx, installCodexHooksLockRetry)
+	if err != nil {
+		return fmt.Errorf("lock Codex hooks: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("lock Codex hooks: timed out")
+	}
+	defer func() { _ = fileLock.Unlock() }()
+
 	plan, err := planCodexHookInstall()
 	if err != nil {
 		return err

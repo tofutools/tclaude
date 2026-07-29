@@ -313,17 +313,18 @@ func trustedStandingOrderPromptOrigin(
 
 // applyStandingOrderTurnOrigin carries a trusted queued reminder's origin
 // across the whole Claude/Codex turn. UserPromptSubmit activates the durable
-// marker armed by agentd before pane injection; later tool hooks read it, and
-// the terminal Stop boundary clears it. Pending is suppressed too so a lost
-// prompt hook cannot let the reminder's tool calls recursively trigger orders.
+// marker armed by agentd before pane injection; every later native hook reads
+// it, and the terminal Stop boundary clears it. Covering every hook is
+// load-bearing now that operators may select the complete native vocabulary:
+// a permission, compact, subagent, or configuration hook emitted by the
+// reminder turn must not queue the same reminder recursively. Pending is
+// suppressed too so a lost prompt hook cannot let the reminder's tool calls
+// recursively trigger orders.
 func applyStandingOrderTurnOrigin(
 	input HookCallbackInput,
 	envSessionID string,
 ) HookCallbackInput {
-	switch input.HookEventName {
-	case "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-		"Stop", "StopFailure", "PreCompact":
-	default:
+	if strings.TrimSpace(input.HookEventName) == "" {
 		return input
 	}
 	state, err := loadStandingOrderSession(envSessionID)
@@ -336,9 +337,17 @@ func applyStandingOrderTurnOrigin(
 		return input
 	}
 	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
+		origin, readErr := db.GetStandingOrderTurnOrigin(
+			agentID, state.ConvID, time.Now())
 		if err := clearStandingOrderTurnOrigin(agentID, state.ConvID); err != nil {
 			slog.Warn("standing orders: failed to complete hook turn origin",
 				"agent", agentID, "conv", state.ConvID, "error", err)
+		}
+		// Clear the durable marker at the boundary, but retain its evidence on
+		// THIS callback. A selectable Stop hook from a reminder turn must not
+		// queue the next reminder and form a turn-perpetuating loop.
+		if readErr == nil && origin != nil {
+			input.StandingOrderOrigin = true
 		}
 		return input
 	}

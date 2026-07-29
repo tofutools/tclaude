@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -674,7 +675,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("DELETE /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-		dashboardDeleteGroup(w, g.Name)
+		dashboardDeleteGroup(w, g)
 	}))
 	mux.HandleFunc("PATCH /api/groups/{name}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		handleGroupUpdate(w, asDashboardHumanPeer(r), g)
@@ -918,10 +919,16 @@ func dashboardRemoveLink(w http.ResponseWriter, g *db.AgentGroup, idStr string) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func dashboardDeleteGroup(w http.ResponseWriter, name string) {
-	if err := db.DeleteAgentGroup(name); err != nil {
+func dashboardDeleteGroup(w http.ResponseWriter, group *db.AgentGroup) {
+	hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(group.ID)
+	if err := db.DeleteAgentGroup(group.Name); err != nil {
 		http.Error(w, "delete group: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
+		w.Header().Set("X-Tclaude-Hook-Warning", warning)
+		slog.Warn("dashboard group delete: standing-order hook reconciliation failed",
+			"group", group.Name, "warning", warning)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

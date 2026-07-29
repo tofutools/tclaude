@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -347,19 +348,25 @@ func reconcileStandingOrderHookDeclarations(
 	before, after *db.StandingOrder,
 ) string {
 	harnesses := map[string]bool{}
-	collect := func(order *db.StandingOrder) {
+	collect := func(order *db.StandingOrder, active bool) {
 		if order == nil {
 			return
 		}
 		for _, selector := range order.HookSelectors {
-			if order.Enabled || order == before {
+			if active {
 				harnesses[selector.Harness] = true
 			}
 		}
 	}
-	collect(before)
-	collect(after)
+	// The old harness must be reconciled even when the old row was disabled:
+	// this is also the cleanup path for declarations left by an interrupted
+	// earlier mutation. The replacement contributes only while it is enabled.
+	collect(before, before != nil)
+	collect(after, after != nil && after.Enabled)
+	return reconcileStandingOrderHookHarnesses(harnesses)
+}
 
+func reconcileStandingOrderHookHarnesses(harnesses map[string]bool) string {
 	var problems []string
 	if harnesses[hookevents.HarnessClaude] {
 		if err := session.InstallHooks(); err != nil {
@@ -375,6 +382,49 @@ func reconcileStandingOrderHookDeclarations(
 		}
 	}
 	return strings.Join(problems, "; ")
+}
+
+// standingOrderHookHarnessesForGroup snapshots the declaration files a group
+// lifecycle mutation may affect. It must run before deletion/disable so rows
+// that are about to disappear still identify the files that need pruning.
+func standingOrderHookHarnessesForGroup(groupID int64) (map[string]bool, error) {
+	orders, err := db.ListStandingOrders()
+	if err != nil {
+		return nil, err
+	}
+	harnesses := map[string]bool{}
+	for _, order := range orders {
+		touchesGroup := order.IsGroupTarget() && order.GroupID == groupID
+		if !touchesGroup {
+			for _, additionalID := range order.AdditionalGroupIDs {
+				if additionalID == groupID {
+					touchesGroup = true
+					break
+				}
+			}
+		}
+		if !touchesGroup {
+			continue
+		}
+		for _, selector := range order.HookSelectors {
+			harnesses[selector.Harness] = true
+		}
+	}
+	return harnesses, nil
+}
+
+func standingOrderHookHarnessesForGroupBestEffort(groupID int64) map[string]bool {
+	harnesses, err := standingOrderHookHarnessesForGroup(groupID)
+	if err == nil {
+		return harnesses
+	}
+	// Do not touch either harness's configuration unless a selector proves it
+	// is in scope. A later setup/mutation can self-heal an optional declaration;
+	// unexpectedly rewriting hook files for an installation that has never
+	// authored a native standing order would violate the feature's opt-in seam.
+	slog.Warn("standing orders: could not resolve group hook declarations",
+		"group_id", groupID, "error", err)
+	return map[string]bool{}
 }
 
 func writeDashboardStandingOrderError(w http.ResponseWriter, operation string, err error) {

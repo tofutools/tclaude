@@ -891,10 +891,16 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		// back with them. Left out, a group would resume with orders the
 		// operator was told had been paused, delivered to whoever is enrolled
 		// next.
+		hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(g.ID)
 		if n, err := db.ReenableGroupRetiredStandingOrders(g.ID); err != nil {
 			slog.Warn("resume: could not re-enable group standing orders", "group", g.Name, "err", err)
 		} else if n > 0 {
 			slog.Info("resume re-enabled group standing orders", "group", g.Name, "reenabled", n)
+			if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
+				w.Header().Set("X-Tclaude-Hook-Warning", warning)
+				slog.Warn("resume: standing-order hook reconciliation failed",
+					"group", g.Name, "warning", warning)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -1689,12 +1695,17 @@ func disableGroupRhythmsIfEmptied(g *db.AgentGroup) int {
 	// group must pause both. Only rows tclaude itself paused carry the marker,
 	// so a hand-disabled order is untouched and a later resume restores exactly
 	// what this paused.
+	hookHarnesses := standingOrderHookHarnessesForGroupBestEffort(g.ID)
 	if so, err := db.DisableGroupTargetStandingOrdersForRetire(g.ID); err != nil {
 		slog.Warn("retire: could not disable group standing orders",
 			"group", g.Name, "err", err)
 	} else if so > 0 {
 		slog.Info("retire emptied group — disabled its standing orders",
 			"group", g.Name, "disabled", so)
+		if warning := reconcileStandingOrderHookHarnesses(hookHarnesses); warning != "" {
+			slog.Warn("retire: standing-order hook reconciliation failed",
+				"group", g.Name, "warning", warning)
+		}
 	}
 	n, err := db.DisableGroupTargetCronJobsForRetire(g.ID)
 	if err != nil {

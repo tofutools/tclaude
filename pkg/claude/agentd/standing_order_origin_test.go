@@ -17,6 +17,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -54,6 +55,18 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+	_, err = db.InsertStandingOrder(&db.StandingOrder{
+		Name: "permission-loop", TargetKind: db.StandingTargetGroup, GroupID: groupID,
+		Summary:      "must not queue itself from the reminder turn",
+		TriggerEvent: db.StandingTriggerHookEvent,
+		HookSelectors: []hookevents.Selector{
+			{Harness: hookevents.HarnessClaude, Event: "PermissionRequest"},
+			{Harness: hookevents.HarnessClaude, Event: "Stop"},
+		},
+		Timing:  db.StandingTimingNextTurn,
+		Cadence: db.StandingCadenceAlways, Enabled: true,
+	})
+	require.NoError(t, err)
 	messageID, err := db.InsertStandingOrderAgentMessage(&db.AgentMessage{
 		ToConv: convID, Subject: "[standing-order:trusted-hook]",
 		Body: "trusted hook reminder",
@@ -102,11 +115,25 @@ func TestHookHarnessNudgeCarriesTrustedOriginThroughTurn(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, origin,
 		"tool hooks in the reminder turn retain origin suppression")
+	messagesBefore, err := db.ListAgentMessagesForConv(convID, 0)
+	require.NoError(t, err)
+	require.NoError(t, session.DispatchHookEvent(context.Background(),
+		session.HookCallbackInput{
+			HookEventName: "PermissionRequest", ConvID: convID, ToolName: "Bash",
+		}, sessionID, session.LocalHookAmbient(), &output))
+	messagesAfter, err := db.ListAgentMessagesForConv(convID, 0)
+	require.NoError(t, err)
+	assert.Len(t, messagesAfter, len(messagesBefore),
+		"every selectable native hook must retain origin suppression")
 
 	require.NoError(t, session.DispatchHookEvent(context.Background(),
 		session.HookCallbackInput{
 			HookEventName: "Stop", ConvID: convID,
 		}, sessionID, session.LocalHookAmbient(), &output))
+	messagesAfterStop, err := db.ListAgentMessagesForConv(convID, 0)
+	require.NoError(t, err)
+	assert.Len(t, messagesAfterStop, len(messagesBefore),
+		"the terminal native hook keeps callback-local suppression while clearing durable state")
 	origin, err = db.GetStandingOrderTurnOrigin(agentID, convID, time.Now())
 	require.NoError(t, err)
 	assert.Nil(t, origin, "the turn boundary clears suppression")

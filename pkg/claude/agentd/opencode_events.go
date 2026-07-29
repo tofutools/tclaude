@@ -74,11 +74,12 @@ type openCodeQuestionPrompt struct {
 }
 
 type openCodeMessagePart struct {
-	ID     string          `json:"id"`
-	Type   string          `json:"type"`
-	Tool   string          `json:"tool"`
-	CallID string          `json:"callID"`
-	State  json.RawMessage `json:"state"`
+	ID        string          `json:"id"`
+	SessionID string          `json:"sessionID"`
+	Type      string          `json:"type"`
+	Tool      string          `json:"tool"`
+	CallID    string          `json:"callID"`
+	State     json.RawMessage `json:"state"`
 }
 
 type openCodeToolState struct {
@@ -114,11 +115,11 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 	if envelope.Type == "" {
 		return nil, nil
 	}
+	sessionID := openCodeEventSessionID(envelope)
 	if p.convID == "" ||
-		(envelope.Properties.SessionID == "" &&
+		(sessionID == "" &&
 			!openCodeSessionOptionalEvent(envelope.Type)) ||
-		(envelope.Properties.SessionID != "" &&
-			envelope.Properties.SessionID != p.convID) {
+		(sessionID != "" && sessionID != p.convID) {
 		// /event is directory-scoped, not session-scoped. A user's OpenCode
 		// store can contain several conversations for the same worktree.
 		// Session-scoped events must name this runtime; genuinely directory-
@@ -177,6 +178,27 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		// process exit. OpenCode process exit remains reaper-authoritative,
 		// with a blank exit reason like Codex.
 		return nil, nil
+	}
+}
+
+// openCodeEventSessionID resolves identity from the event's native wire shape.
+// OpenCode does not use one common properties.sessionID field: message and
+// part updates nest it in their payload, while session lifecycle events use
+// properties.info.id. Keeping this explicit prevents a catalog-valid selector
+// from being silently discarded before standing-order evaluation.
+func openCodeEventSessionID(envelope openCodeEventEnvelope) string {
+	if sessionID := strings.TrimSpace(envelope.Properties.SessionID); sessionID != "" {
+		return sessionID
+	}
+	switch envelope.Type {
+	case "message.updated":
+		return strings.TrimSpace(envelope.Properties.Info.SessionID)
+	case "message.part.updated":
+		return strings.TrimSpace(envelope.Properties.Part.SessionID)
+	case "session.created", "session.updated", "session.deleted":
+		return strings.TrimSpace(envelope.Properties.Info.ID)
+	default:
+		return ""
 	}
 }
 
