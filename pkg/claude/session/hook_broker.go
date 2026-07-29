@@ -151,6 +151,10 @@ type BrokeredHookRequest struct {
 	// harness. It is opaque, short-lived, and bound server-side to the session
 	// agentd resolves from this process; the client cannot mint ledger writes.
 	AckToken string `json:"ack_token,omitempty"`
+	// RelayFailed consumes AckToken without committing delivery. The callback
+	// sends it when stdout relay fails so agentd can release a held delivery
+	// lock immediately rather than waiting for token expiry.
+	RelayFailed bool `json:"relay_failed,omitempty"`
 }
 
 // BrokeredHookResponse carries back whatever the hook would have written
@@ -205,13 +209,19 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 	}
 	if resp.Stdout != "" {
 		if _, err := io.WriteString(stdout, resp.Stdout); err != nil {
+			if resp.AckToken != "" {
+				if ackErr := acknowledgeBrokeredHook(resp.AckToken, false); ackErr != nil {
+					slog.Warn("hook broker: failed to abandon undelivered hook output",
+						"error", ackErr, "module", "hooks")
+				}
+			}
 			slog.Warn("hook broker: failed to relay hook decision to stdout",
 				"error", err, "module", "hooks")
 			return nil
 		}
 	}
 	if resp.AckToken != "" {
-		if err := acknowledgeBrokeredHook(resp.AckToken); err != nil {
+		if err := acknowledgeBrokeredHook(resp.AckToken, true); err != nil {
 			// The output already reached the harness, so this cannot be
 			// retried safely in-place. Leaving cadence open may repeat one
 			// reminder at the next boundary; falsely claiming delivery would
@@ -223,10 +233,11 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 	return nil
 }
 
-func acknowledgeBrokeredHook(token string) error {
+func acknowledgeBrokeredHook(token string, delivered bool) error {
 	body, err := json.Marshal(BrokeredHookRequest{
 		ClaimedSessionID: os.Getenv("TCLAUDE_SESSION_ID"),
 		AckToken:         token,
+		RelayFailed:      !delivered,
 	})
 	if err != nil {
 		return err

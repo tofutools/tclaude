@@ -53,6 +53,7 @@ const hookBrokerAckTTL = time.Minute
 type pendingHookAck struct {
 	sessionID string
 	commit    func()
+	release   func()
 	timer     *time.Timer
 }
 
@@ -61,19 +62,24 @@ var hookAckRegistry = struct {
 	pending map[string]*pendingHookAck
 }{pending: make(map[string]*pendingHookAck)}
 
-func registerHookAck(sessionID string, commit func()) (string, error) {
+func registerHookAck(sessionID string, commit, release func()) (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
 	}
 	token := hex.EncodeToString(raw[:])
-	entry := &pendingHookAck{sessionID: sessionID, commit: commit}
+	entry := &pendingHookAck{sessionID: sessionID, commit: commit, release: release}
 	entry.timer = time.AfterFunc(hookBrokerAckTTL, func() {
+		var release func()
 		hookAckRegistry.Lock()
 		if hookAckRegistry.pending[token] == entry {
 			delete(hookAckRegistry.pending, token)
+			release = entry.release
 		}
 		hookAckRegistry.Unlock()
+		if release != nil {
+			release()
+		}
 	})
 	hookAckRegistry.Lock()
 	hookAckRegistry.pending[token] = entry
@@ -81,7 +87,7 @@ func registerHookAck(sessionID string, commit func()) (string, error) {
 	return token, nil
 }
 
-func commitHookAck(sessionID, token string) bool {
+func resolveHookAck(sessionID, token string, delivered bool) bool {
 	hookAckRegistry.Lock()
 	entry := hookAckRegistry.pending[token]
 	if entry == nil || entry.sessionID != sessionID {
@@ -91,7 +97,14 @@ func commitHookAck(sessionID, token string) bool {
 	delete(hookAckRegistry.pending, token)
 	_ = entry.timer.Stop()
 	hookAckRegistry.Unlock()
-	entry.commit()
+	defer func() {
+		if entry.release != nil {
+			entry.release()
+		}
+	}()
+	if delivered && entry.commit != nil {
+		entry.commit()
+	}
 	return true
 }
 
@@ -211,7 +224,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AckToken != "" {
-		if !commitHookAck(row.ID, req.AckToken) {
+		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {
 			writeError(w, http.StatusConflict, "ack",
 				"hook delivery acknowledgement is invalid, expired, or already consumed")
 			return
@@ -248,6 +261,12 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	resp, err := session.PrepareHookEvent(ctx, req.Input, row.ID, amb)
+	releaseOwned := true
+	defer func() {
+		if releaseOwned {
+			resp.Release()
+		}
+	}()
 	if err != nil {
 		slog.Warn("hook broker: applying brokered hook event failed",
 			"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
@@ -270,8 +289,8 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var ackToken string
-	if resp.HasCommit() {
-		ackToken, err = registerHookAck(row.ID, resp.Commit)
+	if resp.HasCommit() || resp.HasRelease() {
+		ackToken, err = registerHookAck(row.ID, resp.Commit, resp.Release)
 		if err != nil {
 			slog.Warn("hook broker: could not register delivery acknowledgement",
 				"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
@@ -279,6 +298,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 				"could not prepare hook delivery acknowledgement")
 			return
 		}
+		// The registry now owns Release and runs it after a successful or
+		// failed acknowledgement, or when the token expires.
+		releaseOwned = false
 	}
 	writeJSON(w, http.StatusOK, session.BrokeredHookResponse{
 		Stdout: stdout.String(), AckToken: ackToken,
