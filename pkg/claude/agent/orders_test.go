@@ -163,16 +163,46 @@ func TestOrdersExplainReportsTrimmedPayload(t *testing.T) {
 	// A trigger that DOES read the tool payload, so trimming is decisive.
 	seedOrder(t, func(o *db.StandingOrder) {
 		o.GroupID = groupID
-		o.TriggerEvent = db.StandingTriggerSessionStart
+		o.TriggerEvent = db.StandingTriggerToolBefore
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldToolInput
+		o.MatchRegex = "deploy"
 	})
 
 	var out, errOut bytes.Buffer
 	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
-		Event: "tool.before", Source: "", Conv: convID,
+		Event: db.StandingTriggerToolBefore, Source: "", Conv: convID,
 		Harness: harness.DefaultName, Trimmed: true,
 	}))
 	assert.Contains(t, out.String(), "payload trimmed",
 		"the simulated condition must be echoed so the output is self-describing")
+	assert.Contains(t, out.String(), db.StandingOutcomeNotEvaluatedTrimmed)
+}
+
+func TestOrdersExplainSuppliesRegexMatcherInputs(t *testing.T) {
+	setupTestDB(t)
+	groupID, convID := seedGroupWithMember(t)
+	seedOrder(t, func(o *db.StandingOrder) {
+		o.GroupID = groupID
+		o.TriggerEvent = db.StandingTriggerUserPrompt
+		o.TriggerSources = nil
+		o.MatchField = db.StandingMatchFieldPrompt
+		o.MatchRegex = `(?i)\bdeploy\b`
+	})
+
+	var out, errOut bytes.Buffer
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerUserPrompt, Conv: convID,
+		Harness: harness.DefaultName, Prompt: "Please DEPLOY now",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeDelivered)
+
+	out.Reset()
+	require.Equal(t, rcOK, runOrdersExplain(&out, &errOut, &ordersExplainParams{
+		Event: db.StandingTriggerUserPrompt, Conv: convID,
+		Harness: harness.DefaultName, Prompt: "Run tests",
+	}))
+	assert.Contains(t, out.String(), db.StandingOutcomeNoMatch)
 }
 
 func TestOrdersExplainNoOrders(t *testing.T) {

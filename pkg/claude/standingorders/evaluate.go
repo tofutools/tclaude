@@ -2,6 +2,7 @@ package standingorders
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,15 +40,20 @@ type Event struct {
 	// so a multi-order evaluation is deterministic and tests need no clock.
 	OccurredAt time.Time
 
+	// Normalized matcher inputs. ToolInput is compact JSON when the harness
+	// supplied a structured value; no matcher input is ever persisted in the
+	// delivery ledger.
+	Cwd       string
+	Prompt    string
+	ToolName  string
+	ToolInput string
+
 	Memberships []Membership
 
-	// PayloadTrimmed records that the hook payload reached the evaluator with
-	// its tool fields dropped (see db.StandingOutcomeNotEvaluatedTrimmed and
-	// session.trimOversizedHookBody). It only changes the answer for triggers
-	// that actually read those fields — no SessionStart trigger does — but it
-	// is threaded through from the start so the day a tool trigger lands, the
-	// "we could not tell" answer already exists and is already distinct from
-	// "it did not match".
+	// PayloadTrimmed records that the hook payload reached the evaluator after
+	// the broker dropped tool fields or truncated prompt text (see
+	// db.StandingOutcomeNotEvaluatedTrimmed and session.trimOversizedHookBody).
+	// It changes the answer only for a matcher that reads an affected field.
 	PayloadTrimmed bool
 }
 
@@ -94,19 +100,26 @@ func (d Decision) ShouldRecord() bool {
 	return true
 }
 
-// triggerReadsToolPayload reports whether a trigger event needs the tool
-// fields that the brokered hook path may have dropped. No v1 trigger does;
-// this exists so the trimmed-payload branch below is a real branch rather than
-// a comment promising future behaviour.
-func triggerReadsToolPayload(event string) bool {
-	switch event {
-	case db.StandingTriggerSessionStart:
-		return false
+// matcherReadsTrimmedPayload reports whether this order needs a field the
+// broker may have dropped or truncated. A tool-name/cwd matcher remains fully
+// evaluable even when oversized tool input or prompt text was removed.
+func matcherReadsTrimmedPayload(o *db.StandingOrder) bool {
+	return o.MatchField == db.StandingMatchFieldToolInput ||
+		o.MatchField == db.StandingMatchFieldPrompt
+}
+
+func matchFieldValue(o *db.StandingOrder, ev Event) string {
+	switch o.MatchField {
+	case db.StandingMatchFieldCwd:
+		return ev.Cwd
+	case db.StandingMatchFieldPrompt:
+		return ev.Prompt
+	case db.StandingMatchFieldToolName:
+		return ev.ToolName
+	case db.StandingMatchFieldToolInput:
+		return ev.ToolInput
 	}
-	// An unrecognised trigger is assumed to need the payload. Assuming
-	// otherwise would let a future trigger silently evaluate against fields
-	// that were never delivered.
-	return true
+	return ""
 }
 
 // InScope reports whether an order targets the agent described by ev, and why
@@ -208,7 +221,7 @@ func Evaluate(
 		return d
 	}
 
-	if ev.PayloadTrimmed && triggerReadsToolPayload(o.TriggerEvent) {
+	if ev.PayloadTrimmed && matcherReadsTrimmedPayload(o) {
 		d.Outcome = db.StandingOutcomeNotEvaluatedTrimmed
 		d.Detail = "hook payload was trimmed before evaluation, so this trigger could not be checked; " +
 			"this is not the same as the trigger failing to match"
@@ -220,6 +233,22 @@ func Evaluate(
 		d.Detail = fmt.Sprintf("event source %q is not in the order's sources (%s)",
 			ev.Source, strings.Join(o.TriggerSources, ", "))
 		return d
+	}
+	if o.MatchField != "" {
+		re, err := regexp.Compile(o.MatchRegex)
+		if err != nil {
+			// Writes validate regexes, but a directly edited/corrupted row
+			// must fail closed rather than turning an invalid matcher into a
+			// match-all order.
+			d.Outcome = db.StandingOutcomeNoMatch
+			d.Detail = "stored matcher is invalid and was not evaluated"
+			return d
+		}
+		if !re.MatchString(matchFieldValue(o, ev)) {
+			d.Outcome = db.StandingOutcomeNoMatch
+			d.Detail = fmt.Sprintf("%s did not match the configured RE2 expression", o.MatchField)
+			return d
+		}
 	}
 
 	d.Capability = CapabilityFor(o.Timing, o.TriggerEvent, ev.Harness)

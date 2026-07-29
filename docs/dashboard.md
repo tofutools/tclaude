@@ -1148,8 +1148,13 @@ trigger, required delivery timing, capability, and latest evaluation.
 or deleted. The first authoring surface deliberately exposes only the trigger
 semantics the evaluator already implements:
 
-- a session boundary, optionally filtered to startup, resume, clear, and/or
-  compaction;
+- a session boundary (optionally filtered to startup, resume, clear, and/or
+  compaction), a submitted user prompt, or the before/after boundary of a tool
+  call;
+- an optional RE2 expression over one event-appropriate normalized field:
+  working directory, prompt text, tool name, or compact-JSON tool input.
+  Expressions are validated before save and are case-sensitive unless they
+  include an RE2 flag such as `(?i)`;
 - either same-continuation hook context or next-turn message delivery as a
   required guarantee (an unsupported harness reports a visible non-delivery,
   rather than silently weakening the guarantee);
@@ -1157,6 +1162,12 @@ semantics the evaluator already implements:
 - an optional minimum interval between successful deliveries to each stable
   recipient agent. The cooldown follows the agent across `/clear` and
   reincarnation rather than resetting with its conversation ID.
+
+Action triggers currently use the inline hook-context channel on Claude Code
+and Codex. OpenCode projects the equivalent events from an observation-only
+stream, but queued action-trigger delivery is deliberately reported as
+unsupported until messages can carry a trigger-origin marker. Without that
+marker, an automation-created prompt or tool turn could trigger itself.
 
 Single-agent targets are persisted by stable `agt_…` ID, never by conversation
 generation. Editing an agent-authored order preserves its author and lifecycle

@@ -71,12 +71,33 @@ func TestStandingOrder_NameIsUnique(t *testing.T) {
 
 func TestStandingOrder_ValidateRejectsBadInput(t *testing.T) {
 	cases := map[string]func(*StandingOrder){
-		"no name":           func(o *StandingOrder) { o.Name = "" },
-		"no summary":        func(o *StandingOrder) { o.Summary = "" },
-		"bad target kind":   func(o *StandingOrder) { o.TargetKind = "everyone" },
-		"group without id":  func(o *StandingOrder) { o.GroupID = 0 },
-		"unknown trigger":   func(o *StandingOrder) { o.TriggerEvent = "tool.before" },
-		"unknown source":    func(o *StandingOrder) { o.TriggerSources = []string{"whenever"} },
+		"no name":          func(o *StandingOrder) { o.Name = "" },
+		"no summary":       func(o *StandingOrder) { o.Summary = "" },
+		"bad target kind":  func(o *StandingOrder) { o.TargetKind = "everyone" },
+		"group without id": func(o *StandingOrder) { o.GroupID = 0 },
+		"unknown trigger":  func(o *StandingOrder) { o.TriggerEvent = "no.such.event" },
+		"unknown source":   func(o *StandingOrder) { o.TriggerSources = []string{"whenever"} },
+		"source on prompt trigger": func(o *StandingOrder) {
+			o.TriggerEvent = StandingTriggerUserPrompt
+		},
+		"matcher field without regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+		},
+		"matcher regex without field": func(o *StandingOrder) {
+			o.MatchRegex = "repo"
+		},
+		"matcher field invalid for event": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldPrompt
+			o.MatchRegex = "deploy"
+		},
+		"invalid matcher regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+			o.MatchRegex = "(unterminated"
+		},
+		"excessive matcher regex": func(o *StandingOrder) {
+			o.MatchField = StandingMatchFieldCwd
+			o.MatchRegex = strings.Repeat("x", StandingMatchRegexMaxLen+1)
+		},
 		"unknown timing":    func(o *StandingOrder) { o.Timing = "immediately" },
 		"unknown cadence":   func(o *StandingOrder) { o.Cadence = "hourly" },
 		"negative cooldown": func(o *StandingOrder) { o.CooldownSeconds = -1 },
@@ -189,6 +210,8 @@ func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
 	replacement := sampleOrder("after")
 	replacement.Summary = "Updated instruction."
 	replacement.TriggerSources = []string{StandingSourceResume}
+	replacement.MatchField = StandingMatchFieldCwd
+	replacement.MatchRegex = `/deploy$`
 	replacement.Timing = StandingTimingNextTurn
 	replacement.Cadence = StandingCadenceOncePerGeneration
 	replacement.CooldownSeconds = 90
@@ -203,6 +226,8 @@ func TestStandingOrder_FullUpdateUsesRevisionCAS(t *testing.T) {
 	assert.Equal(t, "after", got.Name)
 	assert.Equal(t, "Updated instruction.", got.Summary)
 	assert.Equal(t, []string{StandingSourceResume}, got.TriggerSources)
+	assert.Equal(t, StandingMatchFieldCwd, got.MatchField)
+	assert.Equal(t, `/deploy$`, got.MatchRegex)
 	assert.Equal(t, StandingTimingNextTurn, got.Timing)
 	assert.Equal(t, StandingCadenceOncePerGeneration, got.Cadence)
 	assert.Equal(t, int64(90), got.CooldownSeconds)
@@ -447,6 +472,22 @@ func TestStandingOrder_TriggerLabelAndSourceMatching(t *testing.T) {
 	o.TriggerSources = nil
 	assert.Equal(t, "session.start (any source)", o.TriggerLabel())
 	assert.True(t, o.MatchesSource(StandingSourceResume), "no sources means every source")
+
+	o.MatchField = StandingMatchFieldCwd
+	o.MatchRegex = `(?i)/repo$`
+	assert.Equal(t,
+		`session.start (any source) where cwd matches /(?i)/repo$/`,
+		o.TriggerLabel())
+
+	prompt := sampleOrder("prompt")
+	prompt.TriggerEvent = StandingTriggerUserPrompt
+	prompt.TriggerSources = nil
+	prompt.MatchField = StandingMatchFieldPrompt
+	prompt.MatchRegex = `\bdeploy\b`
+	require.NoError(t, prompt.Validate())
+	assert.Equal(t,
+		`user.prompt where prompt matches /\bdeploy\b/`,
+		prompt.TriggerLabel())
 }
 
 func TestNormalizeTriggerSources(t *testing.T) {

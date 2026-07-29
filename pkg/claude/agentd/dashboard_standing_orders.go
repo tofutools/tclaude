@@ -32,6 +32,8 @@ type dashboardStandingOrderMutation struct {
 	CooldownSeconds int64    `json:"cooldown_seconds,omitempty"`
 	Enabled         *bool    `json:"enabled,omitempty"`
 	TriggerEvent    string   `json:"trigger_event,omitempty"`
+	MatchField      string   `json:"match_field,omitempty"`
+	MatchRegex      string   `json:"match_regex,omitempty"`
 }
 
 func handleDashboardStandingOrderCreate(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +198,8 @@ func decodeDashboardStandingOrder(
 		Summary:          body.Summary,
 		TriggerEvent:     trigger,
 		TriggerSources:   body.Sources,
+		MatchField:       body.MatchField,
+		MatchRegex:       body.MatchRegex,
 		Timing:           body.Timing,
 		Cadence:          body.Cadence,
 		CooldownSeconds:  body.CooldownSeconds,

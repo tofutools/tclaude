@@ -54,13 +54,59 @@ test('standing-order dialog creates explicit session-boundary mutations and prev
     payload: {
       name: 'pr-early', target: 'agt_target', role: '',
       summary: 'Push the PR early.', trigger_event: 'session.start',
-      sources: ['compact'], timing: 'same-continuation', cadence: 'always',
+      sources: ['compact'], match_field: '', match_regex: '',
+      timing: 'same-continuation', cadence: 'always',
       cooldown_seconds: 0, enabled: true,
     },
   });
   assert.equal(submit.disabled, true);
   await harness.act(() => resolveSave({ id: 1 }));
   assert.equal(closes, 1);
+  await mounted.unmount();
+});
+
+test('standing-order dialog authors a prompt RE2 condition', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { StandingOrderDialog } = await harness.importDashboardModule(
+    'js/jobs-standing-order-dialog-island.js',
+  );
+  const saves = [];
+  const mounted = await harness.mount(harness.html`<${StandingOrderDialog}
+    descriptor=${{
+      kind: 'create',
+      prefill: {
+        name: 'deploy-prompt', target: 'agt_target', summary: 'Use the release checklist.',
+      },
+    }}
+    snapshot=${snapshot()} actions=${{
+      saveStandingOrder: async (mutation) => { saves.push(mutation); },
+      closeStandingOrderDialog: () => {},
+    }} confirmDiscard=${async () => true} />`);
+
+  const trigger = mounted.container.querySelector('#standing-order-trigger');
+  Object.defineProperty(trigger, 'value', {
+    configurable: true, writable: true, value: 'user.prompt',
+  });
+  await harness.act(() => harness.fireEvent(trigger, 'change'));
+  assert.equal(mounted.container.querySelector('#standing-order-sources'), null);
+  assert.match(mounted.container.textContent, /OpenCode is shown as unsupported/);
+
+  const field = mounted.container.querySelector('#standing-order-match-field');
+  Object.defineProperty(field, 'value', {
+    configurable: true, writable: true, value: 'prompt',
+  });
+  await harness.act(() => harness.fireEvent(field, 'change'));
+  const expression = mounted.container.querySelector('#standing-order-match-regex');
+  await harness.input(expression, '(?i)\\bdeploy\\b');
+
+  await harness.act(() => harness.fireEvent(
+    mounted.container.querySelector('#standing-order-submit'), 'click',
+  ));
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].payload.trigger_event, 'user.prompt');
+  assert.deepEqual(saves[0].payload.sources, []);
+  assert.equal(saves[0].payload.match_field, 'prompt');
+  assert.equal(saves[0].payload.match_regex, '(?i)\\bdeploy\\b');
   await mounted.unmount();
 });
 

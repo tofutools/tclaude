@@ -22,6 +22,12 @@ func standingOrderTriggerFor(hookEventName string) string {
 	switch hookEventName {
 	case "SessionStart":
 		return db.StandingTriggerSessionStart
+	case "UserPromptSubmit":
+		return db.StandingTriggerUserPrompt
+	case "PreToolUse":
+		return db.StandingTriggerToolBefore
+	case "PostToolUse":
+		return db.StandingTriggerToolAfter
 	}
 	return ""
 }
@@ -343,6 +349,10 @@ func standingOrderEvent(input HookCallbackInput, envSessionID, trigger string) (
 		ConvID:         convID,
 		Harness:        db.DefaultHarness,
 		OccurredAt:     time.Now(),
+		Cwd:            strings.TrimSpace(input.Cwd),
+		Prompt:         input.Prompt,
+		ToolName:       standingorders.NormalizeToolName(input.ToolName),
+		ToolInput:      standingorders.NormalizeToolInput(input.ToolInput),
 		PayloadTrimmed: input.PayloadTrimmed,
 	}
 	if h := strings.TrimSpace(state.Harness); h != "" {

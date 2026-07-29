@@ -55,9 +55,27 @@ func TestCapabilityUnknownHarnessIsMessageOnly(t *testing.T) {
 
 func TestCapabilityUnknownTriggerAndTiming(t *testing.T) {
 	assert.Equal(t, StatusUnsupported,
-		CapabilityFor(db.StandingTimingNextTurn, "tool.before", harness.DefaultName).Status)
+		CapabilityFor(db.StandingTimingNextTurn, "unknown.event", harness.DefaultName).Status)
 	assert.Equal(t, StatusUnsupported,
 		CapabilityFor("whenever", db.StandingTriggerSessionStart, harness.DefaultName).Status)
+}
+
+func TestCapabilityActionTriggersAreDirectOnlyUntilOriginSuppression(t *testing.T) {
+	for _, event := range []string{
+		db.StandingTriggerUserPrompt,
+		db.StandingTriggerToolBefore,
+		db.StandingTriggerToolAfter,
+	} {
+		for _, harnessName := range []string{harness.DefaultName, harness.CodexName} {
+			c := CapabilityFor(db.StandingTimingSameContinuation, event, harnessName)
+			assert.Equal(t, StatusSupported, c.Status)
+			assert.Equal(t, db.StandingTransportHookContext, c.Transport)
+		}
+		c := CapabilityFor(db.StandingTimingNextTurn, event, harness.OpenCodeName)
+		assert.Equal(t, StatusUnsupported, c.Status)
+		assert.Equal(t, db.StandingTransportNone, c.Transport)
+		assert.Contains(t, c.Detail, "origin suppression")
+	}
 }
 
 // The rolled-up cell must report the worst case: the failure this feature has

@@ -27,6 +27,22 @@ func TestTrimOversizedHookBodyCarriesIncompletePayloadEvidence(t *testing.T) {
 	assert.Empty(t, got.Input.ToolInput)
 }
 
+func TestTrimOversizedPromptCarriesIncompletePayloadEvidence(t *testing.T) {
+	req := BrokeredHookRequest{Input: HookCallbackInput{
+		HookEventName: "UserPromptSubmit",
+		Prompt:        strings.Repeat("deploy ", hookBrokerBodyBudget/4),
+	}}
+	body, err := json.Marshal(req)
+	assert.NoError(t, err)
+	assert.Greater(t, len(body), hookBrokerBodyBudget)
+
+	trimmed := trimOversizedHookBody(req, body)
+	var got BrokeredHookRequest
+	assert.NoError(t, json.Unmarshal(trimmed, &got))
+	assert.True(t, got.Input.PayloadTrimmed)
+	assert.Less(t, len(got.Input.Prompt), len(req.Input.Prompt))
+}
+
 // The routing decision is the whole reason TCL-754 needs a marker at all:
 // inside the wall the database is an empty writable tmpfs, so a hook that
 // tried the direct path would succeed into a throwaway database instead of

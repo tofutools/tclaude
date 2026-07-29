@@ -27,9 +27,11 @@ type TargetView struct {
 // TriggerView carries a pre-rendered label so every surface prints the same
 // string instead of composing its own from event + sources.
 type TriggerView struct {
-	Event   string   `json:"event"`
-	Sources []string `json:"sources,omitempty"`
-	Label   string   `json:"label"`
+	Event      string   `json:"event"`
+	Sources    []string `json:"sources,omitempty"`
+	MatchField string   `json:"match_field,omitempty"`
+	MatchRegex string   `json:"match_regex,omitempty"`
+	Label      string   `json:"label"`
 }
 
 // EvaluationView is the most recent ledger row for an order.
@@ -119,9 +121,11 @@ func NewOrderView(o *db.StandingOrder, groupName string, latest *db.StandingDeli
 		},
 		Summary: o.Summary,
 		Trigger: TriggerView{
-			Event:   o.TriggerEvent,
-			Sources: o.TriggerSources,
-			Label:   o.TriggerLabel(),
+			Event:      o.TriggerEvent,
+			Sources:    o.TriggerSources,
+			MatchField: o.MatchField,
+			MatchRegex: o.MatchRegex,
+			Label:      o.TriggerLabel(),
 		},
 		Timing:              o.Timing,
 		Cadence:             o.Cadence,
