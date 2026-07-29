@@ -4277,7 +4277,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   margin: 0;
   padding: 0;
 }
-.sbx-network-unlocks.sbx-disabled .sbx-network-pack > select,
+.sbx-network-unlocks.sbx-disabled .sbx-network-pack > .sbx-segmented-control,
 .sbx-network-unlocks.sbx-disabled .sbx-network-rows,
 .sbx-network-unlocks.sbx-disabled > .sbx-add-row {
   opacity: .55;
@@ -4325,10 +4325,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   min-height: 1.4rem;
 }
 .sbx-network-pack > .sbx-network-pack-mode {
-  flex: 0 0 5.5rem;
-  padding-bottom: 3px;
-  padding-top: 3px;
-  width: 5.5rem;
+  flex: 0 0 10.6rem;
+  width: 10.6rem;
 }
 .sbx-network-pack > span {
   min-width: 0;
@@ -4373,13 +4371,24 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   display: grid;
   gap: 6px 4px;
   grid-template-columns:
-    6rem
-    6rem
-    minmax(5rem, 1fr)
-    minmax(0, 7rem)
-    minmax(6rem, 8rem)
+    7.35rem
+    7rem
+    minmax(7rem, 1fr)
+    6.75rem
+    5.5rem
     minmax(4.5rem, 8.5rem);
   min-width: 0;
+}
+@media (max-width: 720px) {
+  .sbx-network-table {
+    grid-template-columns:
+      7.35rem
+      7rem
+      minmax(7rem, 1fr)
+      6.75rem
+      4.75rem
+      4.5rem;
+  }
 }
 /* Both release-owned and manual rows participate in one grid so every cell
    shares the same columns. The wrappers remain in the DOM for keyed Preact
@@ -4393,6 +4402,18 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   max-width: 100%;
   min-width: 0;
 }
+.sbx-network-mode-cell { grid-column: 1; }
+.sbx-network-selector { grid-column: 2; }
+.sbx-network-value { grid-column: 3; }
+.sbx-network-modifier { grid-column: 4; }
+.sbx-network-ports { grid-column: 5; }
+.sbx-network-pack-owner,
+.sbx-network-row > button:last-child {
+  grid-column: 6;
+}
+.sbx-network-row-no-modifier > .sbx-network-value {
+  grid-column: 3 / 5;
+}
 .sbx-network-row > button:last-child {
   align-self: center;
   box-sizing: border-box;
@@ -4403,8 +4424,7 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-network-row > input,
 .sbx-network-row > select,
-.sbx-network-mode-cell > select,
-.sbx-network-row .sbx-network-value-readonly {
+.sbx-network-mode-cell > select {
   align-self: start;
   box-sizing: border-box;
   min-width: 0;
@@ -4427,10 +4447,69 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   min-width: 0;
 }
 .sbx-network-mode-cell > .sbx-network-rule-mode,
-.sbx-network-mode-cell > .sbx-network-value-readonly {
+.sbx-network-mode-cell > .sbx-network-mode-readonly {
   box-sizing: border-box;
   flex: 0 0 auto;
   width: 100%;
+}
+.sbx-segmented-control {
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  display: inline-grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  height: 29px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option {
+  align-self: stretch;
+  background: #0d1117;
+  border: 0;
+  border-left: 1px solid #30363d;
+  border-radius: 0;
+  color: #8b949e;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  min-width: 0;
+  padding: 0 .55rem;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:first-child,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:first-child {
+  border-left: 0;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:hover,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:hover {
+  background: #161b22;
+  color: #c9d1d9;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-off,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-off {
+  background: #21262d;
+  color: #c9d1d9;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-allow,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-allow {
+  background: rgba(46, 160, 67, .16);
+  color: #3fb950;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-deny,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option.is-selected.sbx-state-deny {
+  background: rgba(248, 81, 73, .16);
+  color: #ff7b72;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:focus-visible,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:focus-visible {
+  box-shadow: inset 0 0 0 2px #58a6ff;
+  outline: 0;
+  position: relative;
+  z-index: 1;
+}
+.sbx-network-pack .sbx-segmented-control > .sbx-segmented-option:disabled,
+.sbx-network-row .sbx-segmented-control > .sbx-segmented-option:disabled {
+  cursor: default;
 }
 .sbx-network-redundant {
   color: var(--text-muted);
@@ -4439,14 +4518,29 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   overflow-wrap: anywhere;
 }
 .sbx-network-value-readonly {
-  display: block;
-  background: #0d1117;
-  border: 1px solid #2a3340;
-  border-radius: 4px;
+  align-items: center;
   color: #8b949e;
+  display: flex;
   font-family: inherit;
   font-size: 13px;
-  padding: 6px 10px;
+  min-height: 29px;
+  overflow: hidden;
+  padding: 4px 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+.sbx-network-mode-readonly {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  min-height: 29px;
+}
+.sbx-network-mode-readonly.sbx-state-allow {
+  color: #3fb950;
+}
+.sbx-network-mode-readonly.sbx-state-deny {
+  color: #ff7b72;
 }
 .sbx-network-modifier {
   align-self: start;
@@ -4741,9 +4835,9 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   color: #c9d1d9; font-family: inherit; font-size: 12px;
   padding: 0 10px; cursor: pointer; white-space: nowrap;
 }
-.sbx-row button:last-child { padding: 0 9px; color: #8b949e; }
+.sbx-row button:last-child:not(.sbx-segmented-option) { padding: 0 9px; color: #8b949e; }
 .sbx-row button:hover { background: #2d333b; }
-.sbx-row button:last-child:hover { color: #f0b0b0; border-color: #6e3a3a; }
+.sbx-row button:last-child:hover:not(.sbx-segmented-option) { color: #f0b0b0; border-color: #6e3a3a; }
 /* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
@@ -10970,7 +11064,6 @@ body.wizard #sandbox-profile-editor-modal .cron-create-row input[type=text],
 body.wizard #sandbox-profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section input:not([type]),
 body.wizard #sandbox-profile-editor-modal .sbx-section select,
-body.wizard #sandbox-profile-editor-modal .sbx-network-value-readonly,
 body.wizard #sandbox-profile-editor-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -10988,6 +11081,38 @@ body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-sub
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-submit):hover { background: #3a2a63; }
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control {
+  border-color: rgba(122, 93, 176, .65);
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit) {
+  background: #140f28;
+  border: 0;
+  border-left: 1px solid rgba(122, 93, 176, .65);
+  color: #b39ddb;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit):first-child {
+  border-left: 0;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit):hover {
+  background: #241b3d;
+  color: #f3e6c0;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-off {
+  background: #241b3d;
+  color: #f3e6c0;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-allow {
+  background: rgba(46, 160, 67, .2);
+  color: #56d364;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit).is-selected.sbx-state-deny {
+  background: rgba(248, 81, 73, .2);
+  color: #ff7b72;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-segmented-control > button.sbx-segmented-option:not(#sandbox-profile-editor-submit):focus-visible {
+  box-shadow: inset 0 0 0 2px #b39ddb;
+  outline: 0;
+}
 /* Save = 🛡 Inscribe ward! — the gilded conjuring lever, twin of the profile
    editor's 📜 Inscribe!. The button's own text is hidden (font-size: 0) and
    replaced by a ::before glyph; the disabled state (setEditorSaving locks it
