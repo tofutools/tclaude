@@ -445,6 +445,8 @@ func (b *filteredNetworkDNSBroker) leaseAddressRecord(
 			sandboxpolicy.FilteredNetworkDefaultVerdictForRules(b.rules) ==
 				sandboxpolicy.FilteredNetworkDefaultAccept
 		if len(matches.Deny) > 0 {
+			// All loopback names share this address, so a scoped name deny
+			// intentionally over-blocks that port like any shared-IP lease.
 			synthetic := netip.MustParseAddr(
 				sandboxpolicy.FilteredNetworkLoopbackIPv6)
 			if address.Is4() {
