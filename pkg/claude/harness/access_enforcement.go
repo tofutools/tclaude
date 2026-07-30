@@ -322,7 +322,8 @@ func accessEnforcementTable(
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			goos == "linux" && filteredNetworkReady &&
-			(h.Name == DefaultName || h.Name == CodexName) {
+			(h.Name == DefaultName || h.Name == CodexName ||
+				h.Name == OpenCodeName) {
 			dnsDenyLevel := EnforceFull
 			dnsDenyDetail := ""
 			if axes.Network.Mode == sandboxpolicy.AccessModeOpen {
@@ -375,6 +376,8 @@ func accessEnforcementTable(
 			caps.NetworkList = EnforceNone
 			caps.NetworkSelectors = nil
 			caps.NetworkPorts = EnforceNone
+			caps.NetworkDenySelectors = nil
+			caps.NetworkDenyPorts = EnforceNone
 			caps.NetworkListCondition = ""
 			caps.NetworkListRefusal =
 				"missing capability unsupported_filtered_model_transport: OpenCode local-preset effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open"

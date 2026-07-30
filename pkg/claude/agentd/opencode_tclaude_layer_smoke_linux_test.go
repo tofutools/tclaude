@@ -255,6 +255,23 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			harness.MustGet(harness.OpenCodeName), snapshot.Effective, resolved)
 		require.NoError(t, validateErr)
 
+		// The capability cell must hand the launch the exact deny plan this
+		// boundary goes on to execute, not a silently narrowed one.
+		axes, axesErr := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+		require.NoError(t, axesErr)
+		launchCaps, capsErr := harness.ResolveAccessEnforcement(
+			harness.MustGet(harness.OpenCodeName),
+			sandboxpolicy.ImplementationTclaudeLayer,
+			axes,
+			session.TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered),
+			harness.OpenCodeSandboxTclaudeLayer,
+		)
+		require.NoError(t, capsErr)
+		rendered, _, planErr := harness.PlanAccessEnforcement(axes, launchCaps)
+		require.NoError(t, planErr)
+		assert.Equal(t, snapshot.Effective.Network.Deny, rendered.Network.Deny,
+			"the activated OpenCode cell must retain every authored deny row")
+
 		accountAgentID := db.NewAgentID()
 		accountAllocation, allocationErr :=
 			allocatePrivateOpenCodeState(accountAgentID)

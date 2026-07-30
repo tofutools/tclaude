@@ -3322,10 +3322,11 @@ func sandboxCommonRulesJS() string {
 // endpoint. The four modes are deliberately separate captures: no single
 // activated capability cell can truthfully produce Full, Partial, and
 // NotEnforced deny rows at once. The unsupported state therefore selects the
-// real Linux tclaude-layer OpenCode cell that remains outside TCL-853.
+// real macOS tclaude-layer cell, which has no deny gateway at all.
 func sandboxDenyPreviewDashSnapJS(mode string) string {
 	baseline := "allow"
 	harnessName := "claude"
+	platform := "linux"
 	bucketClass := ""
 	targetText := ""
 	switch mode {
@@ -3340,9 +3341,9 @@ func sandboxDenyPreviewDashSnapJS(mode string) string {
 		bucketClass = "sbx-rule-bucket-partial"
 		targetText = "Codex on Linux · tclaude sandbox"
 	case "unsupported":
-		harnessName = "opencode"
+		platform = "darwin"
 		bucketClass = "sbx-rule-bucket-not-applied"
-		targetText = "OpenCode on Linux · tclaude sandbox"
+		targetText = "Claude on macOS · tclaude sandbox"
 	default:
 		panic("unknown sandbox deny dashsnap mode: " + mode)
 	}
@@ -3395,7 +3396,7 @@ func sandboxDenyPreviewDashSnapJS(mode string) string {
     await new Promise(function(resolve){setTimeout(resolve,30);});
   }
   choose(document.querySelector('#sandbox-profile-editor-evaluate-implementation'),'tclaude-layer');
-  choose(document.querySelector('#sandbox-profile-editor-evaluate-platform'),'linux');
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-platform'),%q);
   deadline=Date.now()+8000;
   while((!document.querySelector('.sbx-policy-target')||
     !document.querySelector('.sbx-policy-target').textContent.includes(%q))&&Date.now()<deadline){
@@ -3443,7 +3444,7 @@ func sandboxDenyPreviewDashSnapJS(mode string) string {
   }
 })();`,
 		mode, baseline, mode, mode, mode, mode, mode,
-		harnessName, targetText, targetText, mode, bucketClass,
+		harnessName, platform, targetText, targetText, mode, bucketClass,
 		mode, mode, mode, mode, mode)
 }
 

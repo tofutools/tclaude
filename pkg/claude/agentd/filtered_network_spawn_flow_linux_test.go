@@ -115,7 +115,11 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 	}
 }
 
-func TestOpenCodeDefaultAllowDenyDegradesBeforeRuntimePosture(t *testing.T) {
+// TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider records the honest
+// cost of that activation: an OpenCode deny can no longer be dropped to keep a
+// launch alive, so a profile OpenCode cannot filter is refused rather than
+// started with the deny silently omitted.
+func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
@@ -136,7 +140,7 @@ func TestOpenCodeDefaultAllowDenyDegradesBeforeRuntimePosture(t *testing.T) {
 		},
 	))
 	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
-		Name: "opencode-default-allow-deny",
+		Name: "opencode-default-allow-deny-no-provider",
 		Network: &sandboxpolicy.NetworkRules{
 			Baseline: sandboxpolicy.NetworkBaselineAllow,
 			Deny: []sandboxpolicy.NetworkAllowEntry{{
@@ -151,20 +155,11 @@ func TestOpenCodeDefaultAllowDenyDegradesBeforeRuntimePosture(t *testing.T) {
 		"harness":                harness.OpenCodeName,
 		"sandbox":                harness.OpenCodeSandboxTclaudeLayer,
 		"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
-		"sandbox_profile":        "opencode-default-allow-deny",
+		"sandbox_profile":        "opencode-default-allow-deny-no-provider",
 	})
-	require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
-	snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
-	require.True(t, ok)
-	require.NotNil(t, snapshot)
-	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
-	require.NoError(t, err)
-	assert.Equal(t, sandboxpolicy.NetworkHostOpen, posture,
-		"the unsupported deny must be omitted before the runtime selects its boundary")
-	require.NotEmpty(t, snapshot.Effective.AccessNotices)
-	assert.Equal(t, "deny_selector_unsupported",
-		snapshot.Effective.AccessNotices[0].Reason)
-	assert.Equal(t, []int{0}, snapshot.Effective.AccessNotices[0].Entries)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.Code)
+	assert.Contains(t, string(resp.Raw), "unsupported_filtered_model_transport")
+	assert.Contains(t, string(resp.Raw), "explicit provider/model launch model")
 }
 
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {

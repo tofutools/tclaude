@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -180,6 +181,71 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 		false,
 	)
 	require.Nil(t, failure)
+}
+
+// TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows pins the launch
+// side of the OpenCode deny activation: a default-allow profile carrying a deny
+// row must resolve the filtered posture and keep that row, instead of omitting
+// it and settling for host-open.
+func TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("filtered gateway capability is Linux-only")
+	}
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace, pasta, and nft detected",
+		}
+	}
+	var resolvedPostures []sandboxpolicy.NetworkPosture
+	resolveTclaudeLayerAccessVerdict = func(
+		_ string, posture sandboxpolicy.NetworkPosture,
+	) (harness.LaunchOSSandbox, error) {
+		resolvedPostures = append(resolvedPostures, posture)
+		return harness.LaunchOSSandbox{
+			State: "on", Source: "test bwrap",
+			FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+		}, nil
+	}
+	deny := []sandboxpolicy.NetworkAllowEntry{
+		{CIDR: "192.0.2.0/24", Ports: []int{443}},
+		{Domain: "blocked.example"},
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Environment: []sandboxpolicy.EnvironmentEntry{{
+			Name:  "OPENCODE_CONFIG_CONTENT",
+			Value: `{"enabled_providers":["corp"],"provider":{"corp":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"https://models.example","apiKey":"test-key"}}}}`,
+		}},
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen,
+			Deny: deny,
+		},
+	}}
+	notices, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{Model: "corp/model"},
+		false,
+	)
+	require.Nil(t, failure)
+	require.Contains(t, resolvedPostures, sandboxpolicy.NetworkFiltered,
+		"an enforced deny must reach the filtered launch path")
+	for _, notice := range notices {
+		assert.NotEqual(t, "deny_selector_unsupported", notice.Reason)
+		assert.NotEqual(t, "deny_ports_unsupported", notice.Reason)
+	}
+	planned, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	require.NoError(t, err)
+	assert.Equal(t, deny, planned.Network.Deny,
+		"the authored deny rows must survive capability planning intact")
 }
 
 func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing.T) {

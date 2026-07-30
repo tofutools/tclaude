@@ -143,11 +143,18 @@ intersected with an explicit rule allowing only `api.example.com:443`, becomes
 the exact host and port rule. Disjoint lists produce an empty list, which
 allows no new external flow.
 
-Network denies are active only for Claude Code and Codex launches using the
-Linux `tclaude-layer` filtered gateway. Other implementation, harness, and
-platform cells omit each deny row individually with a persisted disclosure;
-an unsupported port-scoped row is never widened into a whole-destination
-block. OpenCode remains outside this deny activation.
+Network denies are active only for Claude Code, Codex, and OpenCode launches
+using the Linux `tclaude-layer` filtered gateway. Other implementation,
+harness, and platform cells omit each deny row individually with a persisted
+disclosure; an unsupported port-scoped row is never widened into a
+whole-destination block. OpenCode's `net-local` and local-model-API presets
+stay outside the activation with the rest of their filtered surface, pending
+TCL-826.
+
+Because an OpenCode deny is now real, it is also load-bearing at launch: an
+OpenCode profile carrying a deny row enters the filtered path and is refused
+when OpenCode cannot filter it (no explicit provider/model), rather than
+starting with the deny dropped.
 
 CIDR and host-loopback denies are direct packet rules. DNS-name denies are
 reported as fully enforced under the default-deny/list posture. Under

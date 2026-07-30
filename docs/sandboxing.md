@@ -591,8 +591,8 @@ preview. That preview places each effective deny destination in the existing
 Fully supported, Partially supported, or Unsupported bucket for the selected
 target. Its `?` disclosure identifies the target and explains the mechanism,
 limitation, and remedy without turning an authored row into a global
-enforcement claim. OpenCode, macOS, built-in, and stacked cells remain
-unsupported for network denies. Capability planning omits their deny rows
+enforcement claim. macOS, built-in, and stacked cells, plus OpenCode's local
+presets, remain unsupported for network denies. Capability planning omits their deny rows
 individually; a port-scoped deny is never widened into a whole-destination
 block.
 
@@ -978,8 +978,14 @@ executes the real bash tool across an allowed and denied path, and requires
 agent identity. The filtered activation test additionally proves the server
 consumes its inspected explicit `options.baseURL`, suppresses hostile alternate
 config/auth/model/plugin sources, and allows authored TCP/UDP tool traffic while
-denying an adjacent unauthorised port. Neither test has a user-namespace
-capability skip. To repeat them after installing OpenCode:
+denying an adjacent unauthorised port. It also executes the deny boundary that
+backs OpenCode's Linux deny capability: deny-over-allow precedence in both
+overlap directions and a DNS deny whose negative lease cuts an address the
+covering allow otherwise permits. That case needs the live adjacent-target
+fixture the CI step provisions, and the smoke refuses to run without it.
+Neither test has a user-namespace capability skip. To repeat them after
+installing OpenCode (see the workflow step for the fixture the second command
+expects):
 
 ```bash
 TCLAUDE_OPENCODE_LAYER_SMOKE=1 \
