@@ -9,19 +9,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrateV176toV177AddsMonitorsColumn(t *testing.T) {
-	require.GreaterOrEqual(t, currentVersion, 177)
-	d, err := sql.Open("sqlite", "file:migrate-v177?mode=memory&cache=shared&_pragma=foreign_keys(1)")
+func TestMigrateV177toV178AddsMonitorsColumn(t *testing.T) {
+	require.GreaterOrEqual(t, currentVersion, 178)
+	d, err := sql.Open("sqlite", "file:migrate-v178?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
 	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
-	mustExec(t, d, `INSERT INTO schema_version VALUES (176)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (177)`)
 	mustExec(t, d, `CREATE TABLE sessions (id TEXT PRIMARY KEY)`)
 	mustExec(t, d, `INSERT INTO sessions (id) VALUES ('legacy-sess')`)
 
-	require.NoError(t, migrateV176toV177(d))
-	assert.Equal(t, 177, schemaVersion(d))
-	require.NoError(t, migrateV176toV177(d), "migration converges after a partial application")
+	require.NoError(t, migrateV177toV178(d))
+	assert.Equal(t, 178, schemaVersion(d))
+	require.NoError(t, migrateV177toV178(d), "migration converges after a partial application")
 
 	var n int
 	require.NoError(t, d.QueryRow(
