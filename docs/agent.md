@@ -574,12 +574,12 @@ setting, every managed Codex profile denies the private directory containing
 tclaude's tmux server socket. Every tclaude-managed Claude launch whose sandbox
 mode is not explicitly `off` denies the exact named tclaude socket. Linux uses
 Claude's `denyRead` `/dev/null` mask whenever the inherited Claude sandbox is
-enabled. Claude's built-in macOS config cannot express an exact socket-connect
-deny, so tclaude does not nest an additional Seatbelt around it; the explicit
-`tclaude-layer` implementation owns its existing tmux host-control rule.
-Where enforced, agents can still use tmux with private sockets they own but
-cannot control the server hosting agent panes. The sandbox editor exposes the
-generated built-in rules as read-only launch context. Under `harness-builtin`,
+enabled. On macOS, Claude's exact `allowUnixSockets` list permits agentd but not
+the tmux server; tclaude's installer omits the broad `allowAllUnixSockets`
+switch there and migrates a legacy installed `true` value to `false`. Agents
+can still use tmux with private sockets they own but cannot control the server
+hosting agent panes. The sandbox editor exposes the generated built-in rules
+as read-only launch context. Under `harness-builtin`,
 network policies require Codex's managed sandbox; a Claude launch or a raw
 Codex sandbox mode is rejected instead of silently dropping the rule.
 Linux/WSL `none` is also rejected there because Codex's restricted-network

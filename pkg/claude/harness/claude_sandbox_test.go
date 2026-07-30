@@ -176,8 +176,8 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 			b["allowUnsandboxedCommands"])
 	}
 	net, _ := b["network"].(map[string]any)
-	if net == nil || net["allowAllUnixSockets"] != true {
-		t.Fatalf("on block must keep unix sockets reachable, got %v", b["network"])
+	if net == nil {
+		t.Fatalf("on block must configure unix sockets, got %v", b["network"])
 	}
 	if domains, _ := net["allowedDomains"].([]any); !slices.Equal(
 		domains, []any{"github.com", "api.github.com"},
@@ -198,6 +198,23 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	b["enabled"] = "mutated"
 	if again := ClaudeSandboxOnBlock(); again["enabled"] != true {
 		t.Fatal("ClaudeSandboxOnBlock must return a fresh map each call (mutation leaked)")
+	}
+}
+
+func TestClaudeSandboxOnBlock_PlatformUnixSocketPolicy(t *testing.T) {
+	linuxNetwork := ClaudeSandboxOnBlockForGOOS("linux")["network"].(map[string]any)
+	if linuxNetwork["allowAllUnixSockets"] != true {
+		t.Fatalf("Linux must allow AF_UNIX broadly and filter by filesystem, got %v", linuxNetwork)
+	}
+
+	darwinNetwork := ClaudeSandboxOnBlockForGOOS("darwin")["network"].(map[string]any)
+	if _, present := darwinNetwork["allowAllUnixSockets"]; present {
+		t.Fatalf("macOS must preserve per-path Unix-socket filtering, got %v", darwinNetwork)
+	}
+	if sockets, _ := darwinNetwork["allowUnixSockets"].([]any); !slices.Equal(
+		sockets, tclaudeAgentdSocketTildes(),
+	) {
+		t.Fatalf("macOS must allowlist only tclaude agentd sockets, got %v", darwinNetwork)
 	}
 }
 

@@ -93,7 +93,7 @@ func TestSandboxGlobalFilesystemRulesKeepCanonicalCodexBaselineWhenClaudeConfigI
 			Harness: "claude", Source: "generated claude --settings launch override",
 			Setting: "sandbox.filesystem.denyRead + denyWrite", Access: "deny",
 			Note: "Canonical host-control baseline added to every tclaude-managed Claude launch unless sandbox mode is off; " +
-				"Linux masks the socket when Claude's inherited sandbox is enabled. Claude's built-in macOS config has no exact socket-connect deny.",
+				"Linux masks the socket when Claude's inherited sandbox is enabled. macOS filters socket connects through Claude's allowUnixSockets list while allowAllUnixSockets is false.",
 		}},
 	})
 }

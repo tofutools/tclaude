@@ -66,14 +66,20 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 20 leaf values: 4 scalars (sandbox.enabled,
-// sandbox.failIfUnavailable, sandbox.allowUnsandboxedCommands,
-// sandbox.network.allowAllUnixSockets) and
-// 16 array elements (allowedDomains 2, allowUnixSockets 3, denyWrite 2,
-// denyRead 2, allowRead 3, permissions.deny 4). The socket lists carry the
-// canonical api/ socket plus the two retained pre-split sockets. The deny lists
-// cover the two protected roots: ~/.tclaude/data and ~/.claude/sessions.
-const specLeafCount = 20
+func hardeningLeafCount(value any) int {
+	switch typed := value.(type) {
+	case map[string]any:
+		total := 0
+		for _, child := range typed {
+			total += hardeningLeafCount(child)
+		}
+		return total
+	case []any:
+		return len(typed)
+	default:
+		return 1
+	}
+}
 
 // Pin the fail-closed properties together with the network allowance that makes
 // disabling dangerouslyDisableSandbox usable for the required GitHub workflow.
@@ -86,6 +92,18 @@ func TestSandboxHardeningSpec_FailsClosedAndPreservesGitHub(t *testing.T) {
 	assert.Equal(t, []any{"github.com", "api.github.com"}, network["allowedDomains"])
 }
 
+func TestSandboxHardeningSpec_PlatformUnixSocketPolicy(t *testing.T) {
+	linuxNetwork := sandboxHardeningSpecForGOOS("linux")["sandbox"].(map[string]any)["network"].(map[string]any)
+	assert.Equal(t, true, linuxNetwork["allowAllUnixSockets"])
+
+	darwinNetwork := sandboxHardeningSpecForGOOS("darwin")["sandbox"].(map[string]any)["network"].(map[string]any)
+	assert.NotContains(t, darwinNetwork, "allowAllUnixSockets",
+		"fresh macOS installs must preserve Claude's per-path Unix-socket filter")
+	assert.Equal(t,
+		[]any{"~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"},
+		darwinNetwork["allowUnixSockets"])
+}
+
 // --- merge engine: the risky part, tested hard --------------------------------
 
 // Merging into an empty tree adds every entry and produces a tree deep-equal
@@ -95,7 +113,7 @@ func TestMergeHardening_EmptyTree(t *testing.T) {
 	r := runMerge(tree)
 
 	assert.True(t, r.changed())
-	assert.Len(t, r.added, specLeafCount)
+	assert.Len(t, r.added, hardeningLeafCount(sandboxHardeningSpec()))
 	assert.Empty(t, r.alreadyPresent)
 	assert.Empty(t, r.scalarConflicts)
 	assert.Empty(t, r.typeConflicts)
@@ -113,7 +131,7 @@ func TestMergeHardening_Idempotent(t *testing.T) {
 
 	assert.False(t, r.changed(), "second merge must not change anything")
 	assert.Empty(t, r.added)
-	assert.Len(t, r.alreadyPresent, specLeafCount)
+	assert.Len(t, r.alreadyPresent, hardeningLeafCount(sandboxHardeningSpec()))
 	assert.Empty(t, r.scalarConflicts)
 	assert.Empty(t, r.typeConflicts)
 
@@ -304,6 +322,9 @@ func TestSandboxHardeningSpec_MatchesDoc(t *testing.T) {
 	require.NotEmpty(t, block, "no ```json block found in %s", sandboxHardeningDocPath)
 
 	docTree := decodeTree(t, strings.Join(block, "\n"))
+	if runtime.GOOS == "linux" {
+		docTree["sandbox"].(map[string]any)["network"].(map[string]any)["allowAllUnixSockets"] = true
+	}
 	assert.Equal(t, docTree, sandboxHardeningSpec(),
 		"sandboxHardeningSpec() has drifted from the config block in %s", sandboxHardeningDocPath)
 }
@@ -362,6 +383,46 @@ func TestApplySandboxHardening_Idempotent(t *testing.T) {
 
 	// Exactly zero backups: run 1 had no file to back up, run 2 did not write.
 	assert.Empty(t, backupFiles(t, dir))
+}
+
+func TestApplySandboxHardening_MacOSDisablesLegacyAllowAllUnixSockets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{
+	  "sandbox": {
+	    "network": {
+	      "allowAllUnixSockets": true,
+	      "futureSetting": "preserved"
+	    }
+	  }
+	}`), 0o600))
+
+	res, err := applySandboxHardeningForGOOS(path, "darwin")
+	require.NoError(t, err)
+	assert.True(t, res.wrote)
+	require.Len(t, res.report.updated, 1)
+	assert.Contains(t, res.report.updated[0], "allowAllUnixSockets = false")
+	assert.NotEmpty(t, res.backupPath, "the security migration must retain the original settings")
+
+	network := readTree(t, path)["sandbox"].(map[string]any)["network"].(map[string]any)
+	assert.Equal(t, false, network["allowAllUnixSockets"])
+	assert.Equal(t, "preserved", network["futureSetting"])
+
+	res2, err := applySandboxHardeningForGOOS(path, "darwin")
+	require.NoError(t, err)
+	assert.False(t, res2.wrote, "the migration must be idempotent")
+	assert.Empty(t, res2.report.updated)
+}
+
+func TestApplySandboxHardening_FreshMacOSOmitsAllowAllUnixSockets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+
+	res, err := applySandboxHardeningForGOOS(path, "darwin")
+	require.NoError(t, err)
+	assert.True(t, res.wrote)
+
+	network := readTree(t, path)["sandbox"].(map[string]any)["network"].(map[string]any)
+	assert.NotContains(t, network, "allowAllUnixSockets")
 }
 
 // Unknown keys in a real-looking settings file survive the apply round-trip.

@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 )
 
@@ -144,10 +145,12 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // is disabled so those boundaries cannot be skipped. ~/.codex remains readable
 // because it also contains the Codex runtime itself; denying that whole root
 // can strand the harness.
-// block is cross-platform: macOS honors per-path `allowUnixSockets`;
-// Linux/WSL2 require the broader `allowAllUnixSockets`, which macOS also
-// honors. Listing both keeps one block functional on either platform, at the
-// cost of the documented all-sockets exposure on macOS too.
+// Unix-socket policy is platform-specific. macOS honors the exact
+// `allowUnixSockets` path list, so enabling `allowAllUnixSockets` there would
+// disable the only built-in filter protecting other host sockets. Linux/WSL2
+// cannot filter Unix sockets by path, so it requires the broader
+// `allowAllUnixSockets` switch and relies on filesystem visibility for the
+// tclaude host-control boundary.
 //
 // Arrays are []any (not []string) so the setup merge engine compares and
 // appends them uniformly against values decoded from a user's settings file
@@ -155,15 +158,24 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // same as []string for the spawner's `--settings` payload. A fresh map each
 // call so the setup merge can mutate it in place without aliasing.
 func ClaudeSandboxOnBlock() map[string]any {
+	return ClaudeSandboxOnBlockForGOOS(runtime.GOOS)
+}
+
+// ClaudeSandboxOnBlockForGOOS is ClaudeSandboxOnBlock with an explicit
+// platform for setup rendering and cross-platform tests.
+func ClaudeSandboxOnBlockForGOOS(goos string) map[string]any {
+	network := map[string]any{
+		"allowUnixSockets": tclaudeAgentdSocketTildes(),
+		"allowedDomains":   []any{"github.com", "api.github.com"},
+	}
+	if goos == "linux" {
+		network["allowAllUnixSockets"] = true
+	}
 	return map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,
 		"allowUnsandboxedCommands": false,
-		"network": map[string]any{
-			"allowUnixSockets":    tclaudeAgentdSocketTildes(),
-			"allowAllUnixSockets": true,
-			"allowedDomains":      []any{"github.com", "api.github.com"},
-		},
+		"network":                  network,
 		"filesystem": map[string]any{
 			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
 			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
