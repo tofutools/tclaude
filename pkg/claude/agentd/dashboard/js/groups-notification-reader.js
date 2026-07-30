@@ -102,13 +102,18 @@ export async function persistHumanMessageRead(state, id, read, onError) {
 function Attachment({ message }) {
   const attachment = message.attachment;
   if (!attachment) return null;
+  const href = `/api/human-messages/${encodeURIComponent(message.id)}/attachment`;
+  const filename = attachment.filename || 'attachment';
   return html`<div class="human-notification-drawer-attachment">
-    <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
-    <span class="human-notification-drawer-file">
-      <strong>${attachment.filename || 'attachment'}</strong>
-      <span>${attachment.content_type || 'file'} · ${attachmentSize(attachment.size_bytes)}</span>
-    </span>
-    <a href=${`/api/human-messages/${encodeURIComponent(message.id)}/attachment`}
+    <a class="human-notification-drawer-file-link" href=${href}
+      download=${attachment.filename || ''} title=${`Download ${filename}`}>
+      <span class="human-notification-drawer-file-icon" aria-hidden="true">▣</span>
+      <span class="human-notification-drawer-file">
+        <strong>${filename}</strong>
+        <span>${attachment.content_type || 'file'} · ${attachmentSize(attachment.size_bytes)}</span>
+      </span>
+    </a>
+    <a class="human-notification-drawer-download" href=${href}
       download=${attachment.filename || ''} title="Download this agent-published file">Download</a>
   </div>`;
 }
