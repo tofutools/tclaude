@@ -48,7 +48,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-evaluate-harness"`:                                 "target harness prediction picker",
 		`id="sandbox-profile-editor-evaluate-implementation"`:                          "sandbox implementation prediction picker",
 		`id="sandbox-profile-editor-evaluate-platform"`:                                "target platform prediction picker",
-		`sandboxImpl: getSnapshot()?.sandbox_impl || {}`:                               "editor receives agentd's host sandbox catalog",
 		`['linux', 'darwin'].includes(descriptor.sandboxImpl?.platform)`:               "target platform defaults to agentd's supported OS",
 		`id="sandbox-profile-editor-unix-sockets"`:                                     "raw Unix-socket JSON editor",
 		`actions.predictSandbox(predictionDraft, targets`:                              "editor prediction uses the authoritative structured or raw draft",
@@ -160,6 +159,33 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		if strings.Contains(dashboardAssets, retired) {
 			t.Errorf("retired sandbox manager ownership remains: %q", retired)
 		}
+	}
+}
+
+func TestDashboardSandboxEditorActionsReceiveAgentdHostCatalog(t *testing.T) {
+	source := string(mustReadFS(dashboardAssetsFS, "js/management-actions.js"))
+	for _, tc := range []struct {
+		name  string
+		start string
+		end   string
+	}{
+		{"open", "function openSandboxEditor(", "function openSandboxClone("},
+		{"clone", "function openSandboxClone(", "function openTemplateEditor("},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := strings.Index(source, tc.start)
+			if start < 0 {
+				t.Fatalf("management actions missing %q", tc.start)
+			}
+			rest := source[start:]
+			end := strings.Index(rest, tc.end)
+			if end < 0 {
+				t.Fatalf("%s action has no %q boundary", tc.name, tc.end)
+			}
+			if !strings.Contains(rest[:end], `sandboxImpl: getSnapshot()?.sandbox_impl || {}`) {
+				t.Errorf("%s sandbox editor does not receive agentd's host sandbox catalog", tc.name)
+			}
+		})
 	}
 }
 
