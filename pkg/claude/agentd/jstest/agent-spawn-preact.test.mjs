@@ -179,12 +179,16 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.harness, 'codex');
   assert.equal(draft.model, 'gpt-5.6');
   assert.equal(draft.sandbox, 'danger-full-access');
-  assert.equal(draft.sandboxImpl, 'off',
-    'a legacy native-off profile is promoted to the durable implementation value');
+  assert.equal(draft.sandboxImpl, '',
+    'a legacy native-off profile preserves its independently resolved implementation');
   assert.equal(draft.approval, 'on-request');
   assert.equal(draft.approvalReviewer, 'auto_review');
   assert.equal(model.spawnProfileSeed(draft, context).auto_review, true);
-  assert.equal(model.spawnProfileSeed(draft, context).sandbox_implementation, 'off');
+  assert.equal(model.spawnProfileSeed(draft, context).sandbox_implementation, undefined);
+  assert.match(
+    model.sandboxImplHintFor(draft, model.spawnCapabilityView(draft, context)).text,
+    /Legacy Codex CLI sandbox mode Off is preserved/,
+  );
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
 
@@ -215,8 +219,8 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   assert.equal(openCode.sandbox, 'off');
   assert.equal(openCode.tools, 'allow');
-  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, true,
-    'an explicit cross-harness Off selection survives the harness switch');
+  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, false,
+    'legacy native Off remains independent from the inherited implementation');
 
   const sparseCodex = model.applySpawnProfile(draft, {
     name: 'codex-default-reviewer', harness: 'codex',

@@ -150,7 +150,8 @@ export function sandboxModeIsOff(harnessName, mode) {
     codex: 'danger-full-access',
     opencode: 'off',
   };
-  return text(mode) === (offModes[text(harnessName)] || '');
+  const offMode = offModes[text(harnessName)] || '';
+  return !!offMode && text(mode) === offMode;
 }
 
 // SANDBOX_APPARMOR_DOC is the operator guide a hint links to when this host
@@ -343,6 +344,26 @@ export function setSpawnSandboxImpl(draft, value) {
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
+  if (!explicit && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+    const harnessLabel = view.sandboxImplHarness || 'Harness';
+    return {
+      warn: true,
+      text: `Legacy ${harnessLabel} sandbox mode Off is preserved while Sandbox follows `
+        + `resolved defaults. Choose Off above to disable every OS sandbox, or choose `
+        + `${harnessLabel} built-in to replace the legacy mode.`,
+    };
+  }
+  if (explicit === SANDBOX_IMPL_DEFAULT
+    && view.sandboxImplCanBuiltin
+    && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+    const harnessLabel = view.sandboxImplHarness || 'Harness';
+    return {
+      warn: true,
+      text: `Legacy ${harnessLabel} built-in + native Off is preserved. Choose a confined `
+        + `${harnessLabel} sandbox mode below, or choose Off above to disable every OS `
+        + 'sandbox layer explicitly.',
+    };
+  }
   const value = explicit || view.sandboxImplDefault;
   if (value === SANDBOX_IMPL_OFF) {
     return {
@@ -490,13 +511,15 @@ export function sandboxModeControlLabel(harness) {
 }
 
 // sandboxModeOptionsForImplementation removes the native off spelling from
-// the nested mode menu. Off is a first-class implementation choice in the
-// primary Sandbox selector, so presenting it again below would recreate the
-// duplicate controls this interaction replaces.
-export function sandboxModeOptionsForImplementation(setting, harnessName) {
+// new nested-mode choices. A legacy built-in + native-off pair keeps its
+// current value visible until the operator changes it; hiding a still-submitted
+// controlled-select value would misrepresent an existing profile.
+export function sandboxModeOptionsForImplementation(setting, harnessName, currentMode = '') {
   return {
     ...setting,
-    modes: (setting?.modes || []).filter((mode) => !sandboxModeIsOff(harnessName, mode)),
+    modes: (setting?.modes || []).filter((mode) => (
+      !sandboxModeIsOff(harnessName, mode) || text(mode) === text(currentMode)
+    )),
   };
 }
 
@@ -784,15 +807,6 @@ export function applySpawnProfile(
   // onto a profile that never asked for it.
   next.sandboxImpl = view.showSandboxImpl && profile.sandbox_implementation
     ? text(profile.sandbox_implementation) : '';
-  // Profiles authored before `off` became a first-class implementation stored
-  // only the harness-native off mode. Promote that legacy pair in the draft so
-  // the new primary selector tells the truth and the explicit launch cannot
-  // inherit a lower-tier tclaude outer wall.
-  if (!profile.sandbox_implementation
-    && profile.sandbox
-    && sandboxModeIsOff(next.harness, profile.sandbox)) {
-    next.sandboxImpl = SANDBOX_IMPL_OFF;
-  }
   next.sandboxImplCleared = null;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);

@@ -72,11 +72,11 @@ test('management model preserves full-replace profile and role semantics', async
   const legacyOff = model.profileDraft({
     name: 'legacy-off', harness: 'codex', sandbox: 'danger-full-access',
   }, {}, catalog);
-  assert.equal(legacyOff.sandbox_implementation, 'off',
-    'editing a legacy native-off profile exposes the durable Off implementation');
+  assert.equal(legacyOff.sandbox_implementation, '',
+    'editing a legacy native-off profile preserves its independent implementation tier');
   assert.equal(model.profilePayload(legacyOff, {
     name: 'legacy-off', harness: 'codex', sandbox: 'danger-full-access',
-  }, catalog).sandbox_implementation, 'off');
+  }, catalog).sandbox_implementation, undefined);
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], tools_modes: ['deny'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', tools: 'deny', approval_reviewer: '', ask_user_question_timeout: '60s' });
 });
 

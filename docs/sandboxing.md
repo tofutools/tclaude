@@ -165,6 +165,13 @@ harness's built-in sandbox. This keeps Codex's managed `tclaude-agent` profile
 where it belongs—as a Codex built-in sandbox mode, not a competing sandbox
 implementation.
 
+Existing profiles that stored a harness-native off mode without pinning an
+implementation keep that two-axis meaning; the editor calls it out as a legacy
+value rather than silently turning it into the broader implementation-level
+Off choice. A legacy profile that explicitly paired the built-in implementation
+with its native off mode keeps that mode visible until it is changed. Selecting
+Off explicitly is what disables every OS sandbox layer.
+
 Like every other launch field it resolves through one precedence chain, highest
 first: the explicit flag or dialog selection, then `--profile`, then the group's
 default spawn profile, then the global default profile, then the harness

@@ -920,7 +920,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       label=${sandboxModeControlLabel(view.harness)}
       title="Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
       value=${draft.sandbox} options=${SettingOptions({
-    setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness),
+    setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness, draft.sandbox),
     optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
   })}
       onChange=${(event) => {

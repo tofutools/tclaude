@@ -146,6 +146,13 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
     }, 'codex').modes,
     ['tclaude-agent', 'workspace-write', 'read-only'],
   );
+  assert.deepEqual(
+    model.sandboxModeOptionsForImplementation({
+      modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    }, 'codex', 'danger-full-access').modes,
+    ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    'a legacy built-in + native-off pair remains represented until changed',
+  );
 });
 
 test('the harness-owned option is named after the actual harness', async (t) => {
@@ -211,6 +218,17 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
     'an unresolved answer names nothing rather than guessing');
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, codexView), null,
     'inherit leaves the profile chain in control and must not claim the builtin target won');
+  const legacyOff = model.sandboxImplHintFor({
+    sandboxImpl: '', harness: 'codex', sandbox: 'danger-full-access',
+  }, codexView);
+  assert.equal(legacyOff.warn, true);
+  assert.match(legacyOff.text, /Legacy Codex CLI sandbox mode Off is preserved/);
+  assert.match(legacyOff.text, /Choose Off above to disable every OS sandbox/);
+  const legacyBuiltinOff = model.sandboxImplHintFor({
+    sandboxImpl: 'harness-builtin', harness: 'codex', sandbox: 'danger-full-access',
+  }, codexView);
+  assert.equal(legacyBuiltinOff.warn, true);
+  assert.match(legacyBuiltinOff.text, /built-in \+ native Off is preserved/);
   const codexHint = model.sandboxImplHintFor(
     { sandboxImpl: 'harness-builtin' }, codexView,
   );

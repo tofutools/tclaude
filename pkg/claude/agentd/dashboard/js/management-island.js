@@ -799,7 +799,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
   );
   const sandboxImplHint = sandboxImplHintFor(
-    { sandboxImpl: draft.sandbox_implementation },
+    {
+      sandboxImpl: draft.sandbox_implementation,
+      harness: draft.harness,
+      sandbox: draft.sandbox,
+    },
     {
       showSandboxImpl: !!hEntry,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
@@ -854,7 +858,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       value=${draft.sandbox}
       options=${(profile ? sandboxModeOptionsForImplementation({
     modes: hEntry?.sandbox_modes || [],
-  }, draft.harness).modes : (hEntry?.sandbox_modes || [])).map((value) => ({
+  }, draft.harness, draft.sandbox).modes : (hEntry?.sandbox_modes || [])).map((value) => ({
     value, label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
   }))}
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
