@@ -6,9 +6,10 @@ import (
 )
 
 // TmuxClientFeatureArgs feeds tmux's -T flag from the process environment. tmux
-// rejects an unparsable feature list by failing the whole client, so a bad value
-// would cost a blank terminal rather than a terminal without hyperlinks — hence
-// the charset gate, and hence pinning it.
+// itself is tolerant — it ignores a feature name it does not know — so the gate
+// is not there to keep tmux happy. It is there because the value is written by
+// whoever controls the environment and ends up in a subprocess argv, and the
+// only value we ever mean to send is a short lowercase feature list.
 func TestTmuxClientFeatureArgs(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

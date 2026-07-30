@@ -234,7 +234,7 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
 	// until then this is still strictly better than the pre-fix behaviour and
 	// correct for the common native-terminal case.
-	runPTYOverWS(w, r, openAttachCmdForce(sess.ID), sess.TmuxSession)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -278,7 +278,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, openAttachCmd(label), sess.TmuxSession)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession)
 }
 
 // termWSHook lets the env-gated real-browser terminal smoke observe and
@@ -371,23 +371,25 @@ func hangupProcessGroup(proc *os.Process) {
 // it, a link a harness draws with label text (rather than a bare URL) arrives as
 // dead text, because tmux keeps the target in its grid and never emits it.
 //
-// A tmux client that reaches tmux through `tclaude session attach` instead of
-// forking tmux itself gets the same opt-in via clcommon.TmuxClientFeaturesEnv,
-// which runPTYOverWS puts in the PTY environment.
+// A PTY site that reaches tmux through `tclaude session attach` cannot spell the
+// flag here — the wrapper builds the tmux argv itself — and uses
+// webTerminalAttachCmd instead.
 func webTerminalTmuxFlags() string {
 	return "-T " + clcommon.TmuxHyperlinksFeature
 }
 
-// webTerminalPTYEnv is the environment every browser-hosted PTY runs under.
-// TERM describes what xterm.js emulates; the feature request is the same OSC 8
-// opt-in webTerminalTmuxFlags spells inline, carried as an env var for the PTY
-// sites that reach tmux through `tclaude session attach` instead of forking
-// tmux themselves — that wrapper turns it back into tmux's -T.
-func webTerminalPTYEnv() []string {
-	return append(os.Environ(),
-		"TERM=xterm-256color",
-		clcommon.TmuxClientFeaturesEnv+"="+clcommon.TmuxHyperlinksFeature,
-	)
+// webTerminalAttachCmd carries the same OSC 8 opt-in across the one process hop
+// `tclaude session attach` adds, by exporting it for exactly that command.
+//
+// The assignment is a prefix on the command rather than an entry in the PTY's
+// own environment on purpose. A browser terminal is an interactive shell the
+// operator runs things in, and anything started there — a daemon restart, say —
+// would inherit a process-wide copy and hand it to native terminal attaches it
+// later opens, re-enabling hyperlinks on the very terminals whose renderer we
+// know nothing about. Scoping it to the exec'd command keeps the claim attached
+// to the client it is true of. `VAR=value exec cmd` exports VAR to cmd.
+func webTerminalAttachCmd(attachCommand string) string {
+	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " + attachCommand
 }
 
 // runPTYOverWS upgrades the request to a WebSocket and pumps a PTY
@@ -416,7 +418,7 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 	defer func() { _ = conn.Close() }()
 
 	cmd := exec.Command("sh", "-c", shellCommand)
-	cmd.Env = webTerminalPTYEnv()
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {

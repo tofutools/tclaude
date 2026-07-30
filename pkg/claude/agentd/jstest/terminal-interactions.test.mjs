@@ -317,3 +317,90 @@ test('terminal lifecycle accepts only the latest armed pane OSC 52', async () =>
     else delete globalThis.ClipboardItem;
   }
 });
+
+// An OSC 8 hyperlink picks its label text independently of its target, so the
+// hover reveal is the only thing standing between "see the docs" and wherever
+// it actually points. These drive the real linkHandler the terminal installs.
+function linkHarness() {
+  const doc = new FakeEventTarget();
+  const harness = terminalHarness(doc);
+  const statuses = [];
+  const interactions = attachTerminalInteractions({
+    term: harness.term,
+    host: harness.host,
+    setStatus: (text) => statuses.push(text),
+    baseStatus: () => 'BASE',
+  });
+  return { harness, statuses, interactions, links: harness.term.options.linkHandler };
+}
+
+test('hovering a hyperlink reveals its real destination, and leaving restores the base status', () => {
+  const { statuses, interactions, links } = linkHarness();
+  try {
+    links.hover({}, 'https://linear.app/doc/abc123');
+    assert.deepEqual(statuses, ['Ctrl/Cmd-click → https://linear.app/doc/abc123']);
+    links.leave();
+    assert.equal(statuses.at(-1), 'BASE', 'the hint must not outlive the pointer');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('a long target keeps its origin intact and truncates only the path', () => {
+  const { statuses, interactions, links } = linkHarness();
+  try {
+    const url = `https://linear.app/${'segment/'.repeat(40)}end`;
+    links.hover({}, url);
+    const shown = statuses.at(-1);
+    assert.ok(shown.includes('https://linear.app/'),
+      `the origin answers "who am I contacting" and must survive shortening: ${shown}`);
+    assert.ok(shown.endsWith('…'), `an over-long path is elided at the tail: ${shown}`);
+    assert.ok(shown.length <= 140, `status stays one line: ${shown.length}`);
+  } finally {
+    interactions.dispose();
+  }
+});
+
+// The oldest URL spoof: everything before the '@' is userinfo, so this renders
+// as github.com while pointing at attacker.example.
+test('a link carrying userinfo is refused rather than described', () => {
+  const { statuses, interactions, links } = linkHarness();
+  const opened = [];
+  const oldOpen = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    value: { open: (...args) => opened.push(args) }, configurable: true, writable: true,
+  });
+  try {
+    const spoof = 'https://github.com.trusted.example.review-this@attacker.example/pwn';
+    links.hover({}, spoof);
+    assert.equal(statuses.at(-1), 'blocked unsafe link');
+    links.activate({ ctrlKey: true }, spoof);
+    assert.deepEqual(opened, [], 'a credentialed URL must never be opened');
+  } finally {
+    interactions.dispose();
+    if (oldOpen === undefined) delete globalThis.window;
+    else Object.defineProperty(globalThis, 'window', { value: oldOpen, configurable: true, writable: true });
+  }
+});
+
+test('non-HTTP schemes stay blocked', () => {
+  const { statuses, interactions, links } = linkHarness();
+  try {
+    for (const raw of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x']) {
+      links.hover({}, raw);
+      assert.equal(statuses.at(-1), 'blocked unsafe link', raw);
+    }
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('clicking without the modifier keeps the destination in the hint', () => {
+  const { statuses, interactions, links } = linkHarness();
+  try {
+    links.activate({}, 'https://linear.app/doc/abc123');
+    assert.match(statuses.at(-1), /^Ctrl\/Cmd-click to open https:\/\/linear\.app\/doc\/abc123$/);
+  } finally {
+    interactions.dispose();
+  }
+});

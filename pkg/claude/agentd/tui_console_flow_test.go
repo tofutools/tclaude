@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -210,12 +211,12 @@ func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 		"closing this stream must not detach every other client on the session")
 }
 
-// The standalone TUI's terminal is an xterm.js client like the dashboard's, so
-// it needs the same OSC 8 opt-in: tmux keeps a hyperlink's target in its grid
-// and emits it only to a client that advertises the capability. The flags must
-// land before the command word — tmux reads client flags only there, and would
-// fail the whole client on a misplaced -T rather than merely drop the links.
-func TestTUIRemoteAttachRequestsHyperlinkPassthrough(t *testing.T) {
+// Unlike the dashboard's browser terminals, this stream lands on the operator's
+// REAL terminal — the remote TUI writes the bytes to its own raw-mode stdout —
+// so tmux must not be told the far end renders OSC 8. Nothing here knows what
+// emulator the operator is running, and the browser terminals' opt-in must not
+// drift into this shared PTY path.
+func TestTUIRemoteAttachDoesNotForceHyperlinksOnANativeTerminal(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("dev")
 	spawned := f.Spawn("dev", "worker")
@@ -236,10 +237,10 @@ func TestTUIRemoteAttachRequestsHyperlinkPassthrough(t *testing.T) {
 	))
 	require.NotEmpty(t, command, "status=%d body=%s", rec.Code, rec.Body.String())
 
-	flagAt := strings.Index(command, "-T hyperlinks")
-	require.GreaterOrEqual(t, flagAt, 0, "no hyperlink opt-in in %q", command)
-	assert.Less(t, flagAt, strings.Index(command, "attach-session"),
-		"client flags must precede the tmux command word: %q", command)
+	assert.NotContains(t, command, "-T hyperlinks",
+		"a native terminal must keep tmux's own capability detection: %q", command)
+	assert.NotContains(t, command, clcommon.TmuxClientFeaturesEnv,
+		"the browser terminals' feature opt-in must not reach this path: %q", command)
 }
 
 // Enter on an offline agent is the console's "turn this back on": it goes

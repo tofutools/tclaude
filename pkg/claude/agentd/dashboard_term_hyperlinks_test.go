@@ -3,7 +3,6 @@ package agentd
 import (
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -14,29 +13,23 @@ import (
 // tmux always parses OSC 8 out of pane output and keeps the target URL in its
 // grid, but it re-emits the sequence only to a client whose terminal advertises
 // the hyperlink capability. Neither the web terminal's terminfo entry nor tmux's
-// own detection (xterm.js answers no XTVERSION query) supplies it, so every one
-// of these tests is guarding the difference between a clickable link and dead
-// label text in the browser.
+// own detection (xterm.js answers no XTVERSION query) supplies it, so every test
+// here guards the difference between a clickable link and dead label text.
 
-func TestWebTerminalTmuxFlagsRequestHyperlinks(t *testing.T) {
-	got := webTerminalTmuxFlags()
-	if got != "-T "+clcommon.TmuxHyperlinksFeature {
-		t.Fatalf("webTerminalTmuxFlags() = %q, want the hyperlink feature opt-in", got)
+// The env-var form exists for the PTY sites that reach tmux through `tclaude
+// session attach`, which builds the tmux argv itself and so cannot be handed a
+// flag. Scoping the assignment to the command — rather than to the PTY's whole
+// environment — keeps an interactive browser terminal from handing a
+// process-wide copy to anything the operator starts inside it.
+func TestWebTerminalAttachCmdScopesFeatureRequestToTheCommand(t *testing.T) {
+	got := webTerminalAttachCmd("exec tclaude session attach 'worker'")
+	want := clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature +
+		" exec tclaude session attach 'worker'"
+	if got != want {
+		t.Fatalf("webTerminalAttachCmd()\n got: %s\nwant: %s", got, want)
 	}
-}
-
-// The PTY sites that reach tmux through `tclaude session attach` cannot carry a
-// tmux flag in their command string — the wrapper builds the tmux argv itself —
-// so the request has to cross that process boundary in the environment.
-func TestWebTerminalPTYEnvCarriesTerminalContract(t *testing.T) {
-	env := webTerminalPTYEnv()
-	for _, want := range []string{
-		"TERM=xterm-256color",
-		clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature,
-	} {
-		if !slices.Contains(env, want) {
-			t.Errorf("web terminal PTY env missing %q", want)
-		}
+	if strings.HasPrefix(got, "exec ") {
+		t.Error("the assignment must precede the command, or the shell exports nothing")
 	}
 }
 
@@ -64,13 +57,11 @@ func captureTermCommand(t *testing.T, handler http.HandlerFunc, path string) str
 }
 
 // assertHyperlinkFlagsPrecedeCommand pins placement as well as presence: tmux
-// reads client flags only BEFORE the command word, so `-T` after `new-session`
-// or `attach-session` would be parsed as one of that command's options and fail
-// the client outright — a blank terminal, not merely one without links.
+// reads client flags only BEFORE the command word, so a `-T` sitting after
+// `new-session` would be parsed as one of that command's own options.
 func assertHyperlinkFlagsPrecedeCommand(t *testing.T, command, tmuxCommandWord string) {
 	t.Helper()
-	flags := "-T " + clcommon.TmuxHyperlinksFeature
-	flagAt := strings.Index(command, flags)
+	flagAt := strings.Index(command, "-T "+clcommon.TmuxHyperlinksFeature)
 	if flagAt < 0 {
 		t.Fatalf("command does not request tmux hyperlink passthrough: %s", command)
 	}
@@ -79,10 +70,12 @@ func assertHyperlinkFlagsPrecedeCommand(t *testing.T, command, tmuxCommandWord s
 		t.Fatalf("command lost its %q verb: %s", tmuxCommandWord, command)
 	}
 	if flagAt > wordAt {
-		t.Fatalf("client flags must precede %q or tmux fails the client: %s", tmuxCommandWord, command)
+		t.Fatalf("client flags must precede %q: %s", tmuxCommandWord, command)
 	}
 }
 
+// The conv-addressed routes need a fully resolvable agent, so they are covered
+// in the flow harness: see dashboard_term_hyperlinks_flow_test.go.
 func TestGroupTermWSRequestsHyperlinks(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

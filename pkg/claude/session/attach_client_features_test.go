@@ -58,9 +58,10 @@ func TestAttachWithoutClientFeaturesEnvIsUnchanged(t *testing.T) {
 	}
 }
 
-// A malformed environment value must degrade to "no hyperlinks", never to a
-// broken client: tmux treats an unparsable -T as fatal, which would replace a
-// working terminal with a blank one.
+// A malformed environment value degrades to "no hyperlinks" rather than being
+// forwarded. tmux would tolerate the junk, but nothing legitimate produces it,
+// and an attach is not the place to widen what an environment writer can put in
+// front of the tmux binary.
 func TestAttachIgnoresMalformedClientFeatures(t *testing.T) {
 	rec := withRecordingTmux(t)
 	t.Setenv(clcommon.TmuxClientFeaturesEnv, "hyperlinks; rm -rf /")

@@ -104,10 +104,12 @@ const TmuxClientFeaturesEnv = "TCLAUDE_TMUX_CLIENT_FEATURES"
 // flags that precede the command word (`tmux -T a,b attach-session …`), or nil
 // when nothing valid was asked for.
 //
-// The list is charset-gated even though it lands in an exec argv rather than a
-// shell word: this value arrives from the process environment, and tmux treats
-// an unparsable -T as a fatal client error, so a malformed value would turn
-// every web terminal into a blank pane instead of one without links.
+// The list is charset-gated because it arrives from the process environment and
+// is forwarded to a subprocess argv. It is not load-bearing for tmux itself —
+// tmux ignores a feature name it does not recognise and starts normally — but a
+// value that reaches this function unrecognisable is a sign the caller is not
+// the one we think it is, and passing it on would only widen what an
+// environment writer can put in front of tmux.
 func TmuxClientFeatureArgs(features string) []string {
 	features = strings.TrimSpace(features)
 	if features == "" || len(features) > 128 {

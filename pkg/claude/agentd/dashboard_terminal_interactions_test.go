@@ -59,7 +59,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"navigator.clipboard.writeText(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.options.linkHandler = linkHandler",
-		"url.protocol === 'http:' || url.protocol === 'https:'",
+		"if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;",
+		// Userinfo renders as the victim host right up to the '@'.
+		"if (url.username || url.password) return null;",
 		"host.addEventListener('paste', onPaste, true)",
 		"`/api/terminal-attachments?terminal=${encodeURIComponent(terminalPath)}`",
 		"term.paste(paths.join(' ') + ' ')",
@@ -71,10 +73,11 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"isComposeMessageShortcut(event)",
 		"onComposeMessage();",
 		// An OSC 8 link's label is chosen independently of its target, so the
-		// destination must be visible before the human commits to Ctrl/Cmd-click.
+		// destination must be reachable before the human commits to Ctrl/Cmd-click.
+		// This pins only that the handlers are WIRED; what they show is behaviour,
+		// covered for real in jstest/terminal-interactions.test.mjs.
 		"hover: (event, text) => showLinkTarget(text)",
 		"leave: () => clearLinkTarget()",
-		"setStatus(url ? `Ctrl/Cmd-click → ${shortenForStatus(url)}` : 'blocked unsafe link')",
 	} {
 		if !strings.Contains(interactions, needle) {
 			t.Errorf("terminal-interactions.js missing %q", needle)
