@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -100,7 +101,7 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	if spec.ExecutablePath != "" {
 		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
 	}
-	cmd := spec.EnvExports + binary
+	cmd := spec.EnvExports + claudeTmuxCommandPrefix(spec, runtime.GOOS) + binary
 	if spec.ResumeID != "" {
 		cmd += " --resume " + spec.ResumeID
 	}
@@ -276,6 +277,9 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 			argv = append(argv, "--")
 		}
 		argv = append(argv, spec.Prompt)
+	}
+	if prefix := claudeTmuxAskArgvPrefix(spec.LaunchPosture, runtime.GOOS); len(prefix) != 0 {
+		argv = append(prefix, argv...)
 	}
 	return argv
 }

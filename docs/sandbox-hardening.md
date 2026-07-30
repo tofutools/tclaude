@@ -220,10 +220,16 @@ domains until the installer runs again.
 For tclaude-managed Claude sessions, the launch-specific `--settings` overlay
 also adds `denyRead` + `denyWrite` for the exact named tmux socket hosting agent
 panes. That host path is resolved at launch rather than installed in this
-portable user-level block. It prevents `capture-pane`, `send-keys`, and tmux
-session mutation against tclaude while leaving the tmux binary and agent-owned
-private sockets usable. Sandbox mode `off` is the explicit escape hatch;
-`inherit` applies the socket rule only when the operator's sandbox is enabled.
+portable user-level block. On Linux, Claude's bubblewrap runtime masks that
+socket with `/dev/null` when its sandbox is enabled. On macOS, a file-read deny
+does not block Unix-socket `connect`, so tclaude additionally wraps Claude in a
+narrow Seatbelt profile whose sole deny is `network-outbound` to that exact
+socket. It prevents `capture-pane`, `send-keys`, and tmux session mutation
+against tclaude while leaving the tmux binary and agent-owned private sockets
+usable. Sandbox mode `off` is the explicit escape hatch. Under `inherit`, the
+Linux mask follows the operator's enabled/disabled sandbox posture; the narrow
+macOS host-control deny remains active without enabling Claude's broader
+sandbox.
 
 Notes:
 

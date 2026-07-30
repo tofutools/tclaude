@@ -1240,7 +1240,7 @@ const COMMON_RULES = {
       { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', access: 'write', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
     { path: '/tmp/tmux-1000/tclaude', access: 'deny', harnesses: ['claude'], origins: [
-      { harness: 'claude', source: 'generated claude --settings launch override', setting: 'sandbox.filesystem.denyRead + denyWrite', access: 'deny', note: "Canonical tclaude tmux socket boundary." },
+      { harness: 'claude', source: 'generated claude --settings launch override', setting: 'sandbox.filesystem.denyRead + denyWrite; macOS Seatbelt network-outbound', access: 'deny', note: "Canonical tclaude tmux socket boundary." },
     ] },
   ],
   global_network: [{ mode: 'list', entry: { domain: 'global.example' }, origin: { harness: 'claude', setting: 'sandbox.network.allowedDomains' } }],

@@ -91,9 +91,9 @@ func TestSandboxGlobalFilesystemRulesKeepCanonicalCodexBaselineWhenClaudeConfigI
 		Path: tmuxSocket, Access: "deny", Harnesses: []string{"claude"},
 		Origins: []sandboxGlobalFilesystemRuleOriginJSON{{
 			Harness: "claude", Source: "generated claude --settings launch override",
-			Setting: "sandbox.filesystem.denyRead + denyWrite", Access: "deny",
+			Setting: "sandbox.filesystem.denyRead + denyWrite; macOS Seatbelt network-outbound", Access: "deny",
 			Note: "Canonical host-control baseline added to every tclaude-managed Claude launch unless sandbox mode is off; " +
-				"under inherit it is active when the operator's sandbox is enabled.",
+				"Linux masks it when Claude's inherited sandbox is enabled, while macOS adds an exact outer connect deny.",
 		}},
 	})
 }

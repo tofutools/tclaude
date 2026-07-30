@@ -572,11 +572,14 @@ an inherited managed proxy and permits ordinary IP networking. On macOS,
 Seatbelt can preserve the agentd Unix-socket exception. Independently of this
 setting, every managed Codex profile denies the private directory containing
 tclaude's tmux server socket. Every tclaude-managed Claude launch whose sandbox
-mode is not explicitly `off` adds a deny for the exact named tclaude socket;
-under `inherit`, it is active whenever the operator's Claude sandbox is
-enabled. Agents can still use tmux with private sockets they own, but cannot
-control the server hosting agent panes. The sandbox editor exposes both
-generated baselines as read-only launch context. Under `harness-builtin`,
+mode is not explicitly `off` denies the exact named tclaude socket. Linux uses
+Claude's `denyRead` `/dev/null` mask whenever the inherited Claude sandbox is
+enabled. Because macOS Seatbelt treats file reads and Unix-socket connects as
+separate operations, tclaude also applies an exact `network-outbound` deny
+around the Claude process there; it does not enable Claude's broader sandbox.
+Agents can still use tmux with private sockets they own, but cannot control the
+server hosting agent panes. The sandbox editor exposes both generated baselines
+as read-only launch context. Under `harness-builtin`,
 network policies require Codex's managed sandbox; a Claude launch or a raw
 Codex sandbox mode is rejected instead of silently dropping the rule.
 Linux/WSL `none` is also rejected there because Codex's restricted-network

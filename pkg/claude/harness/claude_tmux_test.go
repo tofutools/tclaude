@@ -28,6 +28,7 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 	socketPath := filepath.Join(
 		canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), clcommon.TmuxSocketName)
 	assert.Equal(t, []string{"/opt/secret", socketPath}, spec.SandboxDenyDirs)
+	assert.Equal(t, socketPath, spec.TclaudeTmuxSocketPath)
 	assert.Equal(t, []string{"/opt/secret"}, originalDenies,
 		"preparing a launch must not mutate the caller's slice")
 
@@ -75,4 +76,42 @@ func TestPrepareClaudeSandboxLaunchDoesNotDuplicateSocketDeny(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{socketPath}, spec.SandboxDenyDirs)
+	assert.Equal(t, socketPath, spec.TclaudeTmuxSocketPath)
+}
+
+func TestClaudeTmuxDarwinWrapperDeniesOnlyExactSocket(t *testing.T) {
+	socketPath := "/private/tmp/tmux-501/tclaude"
+	spec := SpawnSpec{
+		SandboxMode:           ClaudeSandboxInherit,
+		TclaudeTmuxSocketPath: socketPath,
+	}
+
+	commandPrefix := claudeTmuxCommandPrefix(spec, "darwin")
+	assert.Equal(t,
+		claudeTmuxDarwinSandboxExec+" -p "+
+			clcommon.ShellQuoteArg(claudeTmuxDarwinProfile)+" "+
+			clcommon.ShellQuoteArg("-D"+claudeTmuxDarwinSocketParam+"="+socketPath)+" -- ",
+		commandPrefix)
+	assert.NotContains(t, claudeTmuxDarwinProfile, "subpath",
+		"the host-control boundary must not cover private sibling tmux sockets")
+
+	assert.Equal(t, []string{
+		claudeTmuxDarwinSandboxExec,
+		"-p", claudeTmuxDarwinProfile,
+		"-D" + claudeTmuxDarwinSocketParam + "=" + socketPath,
+		"--",
+	}, claudeTmuxAskArgvPrefix(&spec, "darwin"))
+}
+
+func TestClaudeTmuxWrapperIsDarwinOnlyAndHonorsOff(t *testing.T) {
+	spec := SpawnSpec{
+		SandboxMode:           ClaudeSandboxInherit,
+		TclaudeTmuxSocketPath: "/tmp/tmux-1000/tclaude",
+	}
+	assert.Empty(t, claudeTmuxCommandPrefix(spec, "linux"))
+	assert.Nil(t, claudeTmuxAskArgvPrefix(&spec, "linux"))
+
+	spec.SandboxMode = ClaudeSandboxOff
+	assert.Empty(t, claudeTmuxCommandPrefix(spec, "darwin"))
+	assert.Nil(t, claudeTmuxAskArgvPrefix(&spec, "darwin"))
 }

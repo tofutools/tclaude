@@ -102,6 +102,14 @@ type SpawnSpec struct {
 	// boundary. Claude renders both denyRead and denyWrite; Codex renders
 	// permission-profile "none" entries.
 	SandboxDenyDirs []string
+	// TclaudeTmuxSocketPath is the exact host-control socket denied to a
+	// tclaude-managed Claude launch. It is separate from SandboxDenyDirs
+	// because macOS Seatbelt does not treat file-read denial as Unix-socket
+	// connect denial: Claude's settings still hide the path, while the Claude
+	// command itself also runs under a narrow network-outbound deny for this
+	// socket. Linux uses the filesystem deny's /dev/null mask. Empty means no
+	// additional host-control wrapper (including explicit sandbox "off").
+	TclaudeTmuxSocketPath string
 	// SandboxReadBaseline is the effective profile's opt-in read posture
 	// (sandboxpolicy.ReadBaseline). "" keeps each harness's existing broad,
 	// denylist-shaped read default — today's behavior. "minimal" requests an
