@@ -89,6 +89,32 @@ func (o codexRemoteConfigOrigin) String() string {
 // resolution rules without a harness install.
 var codexEffectiveConfigReader = readCodexEffectiveConfig
 
+// SetCodexEffectiveConfigProbeForTest swaps the Codex effective-config
+// subprocess boundary and returns a restore function. Resolving a filtered
+// Codex launch executes the real `codex` binary, so flow tests on a host with
+// no Codex install would otherwise refuse every Codex launch for a missing
+// executable instead of exercising the path under test.
+//
+// The replacement supplies the raw `config/read` result, not a parsed struct,
+// so a test still runs the production parser and layer-origin attribution over
+// the shape Codex actually returns.
+func SetCodexEffectiveConfigProbeForTest(
+	read func(cwd string, environment []sandboxpolicy.EnvironmentEntry) (json.RawMessage, error),
+) func() {
+	previous := codexEffectiveConfigReader
+	codexEffectiveConfigReader = func(
+		cwd string,
+		environment []sandboxpolicy.EnvironmentEntry,
+	) (codexEffectiveConfig, error) {
+		raw, err := read(cwd, environment)
+		if err != nil {
+			return codexEffectiveConfig{}, err
+		}
+		return parseCodexEffectiveConfig(raw)
+	}
+	return func() { codexEffectiveConfigReader = previous }
+}
+
 // readCodexEffectiveConfig starts a short-lived Codex app-server, asks it for
 // the effective config as seen from the launch cwd, and stops it again. This is
 // a launch-time side effect: Codex refreshes and re-signs its cloud-config
