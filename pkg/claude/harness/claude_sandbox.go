@@ -114,8 +114,8 @@ func (claudeSandbox) ValidateMode(mode string) (string, error) {
 // properties that keep a sandboxed agent able to coordinate yet unable to read
 // peers' state). Keyed by mode value.
 var claudeSandboxModeHelp = map[string]string{
-	ClaudeSandboxInherit: "Use your Claude Code settings.json enabled/disabled posture as-is, including any tclaude hardening already installed. When enabled, tclaude's per-launch deny also blocks the tmux server socket hosting agent panes.",
-	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable while ~/.tclaude/data and the tmux server socket hosting agent panes are denied.",
+	ClaudeSandboxInherit: "Use your Claude Code settings.json enabled/disabled posture as-is, including any tclaude hardening already installed. On Linux, when enabled, the per-launch deny blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for the exact boundary or an operator-selected false Unix-socket allowlist for broader blocking.",
+	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. The agentd socket stays reachable and ~/.tclaude/data is hidden; Linux also blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for that boundary.",
 	ClaudeSandboxOff:     "⚠ Force the OS sandbox OFF for this session, even if settings.json enables it. The agent's Bash runs unconfined.",
 }
 

@@ -184,6 +184,13 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		ApprovalPolicy: resolved.Approval,
 		AutoReview:     resolved.AutoReview,
 	}
+	if h.Name == harness.DefaultName {
+		posture, err = harness.PrepareClaudeSandboxLaunch(posture)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: prepare Claude host-control sandbox preview: %v\n", err)
+			return rcIOFailure
+		}
+	}
 	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
 		// The daemon creates a launch-unique profile at execution time. Keep a
 		// visibly symbolic name in --print-cmd rather than pretending the

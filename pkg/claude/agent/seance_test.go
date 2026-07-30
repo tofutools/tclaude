@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 func stubSeanceDaemon(
@@ -124,6 +125,29 @@ func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
 	assert.Contains(t, out, "cwd:         "+cwd, "resumes from the predecessor's launch dir")
 	assert.Contains(t, out, "what was the auth bug", "carries the question")
 	assert.Contains(t, stderr.String(), "chain is only 2 generation(s) deep")
+}
+
+func TestSeance_PrintCmd_ClaudeIncludesTmuxHostControlDeny(t *testing.T) {
+	const dead = "eeeeeeee-1111-1111-1111-111111111111"
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	socketPath, err := harness.ClaudeTmuxSocketDenyPath()
+	require.NoError(t, err)
+	stubSeanceDaemon(t, seanceResolveResp{
+		Predecessor: dead,
+		Harness:     "claude",
+		Cwd:         t.TempDir(),
+		Sandbox:     "inherit",
+	}, nil, nil)
+
+	var stdout, stderr bytes.Buffer
+	rc := runSeance(&seanceParams{
+		Question: "what changed?",
+		PrintCmd: true,
+	}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "rc; stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), socketPath,
+		"preview must include the same exact tmux deny as execution")
+	assert.Contains(t, stdout.String(), "denyRead")
 }
 
 // The actual-run path pins execution to the exact planned generation and asks
