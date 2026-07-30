@@ -3539,3 +3539,89 @@ test('spawn-dialog sandbox preview names the sandbox path a remapped grant lands
   assert.match(text, /write \/srv\/build \(explicit\)/,
     'an ordinary grant is unchanged');
 });
+
+test('network filtering engine is authorable, survives a baseline change, and is validated', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/sandbox-profiles-data.js');
+
+  // The engine reaches the wire in the compositional shape, and an unset engine
+  // adds no key at all — the daemon's "unset never changes behavior" contract
+  // has to hold on the authoring side too.
+  assert.equal(model.sandboxProfileForWire({
+    name: 'engined', filesystem: [], environment: [],
+    network: { baseline: 'deny', allow: [{ domain: 'example.com' }], engine: 'proxy' },
+    unix_sockets: { mode: '', allow: [] },
+  }).network.engine, 'proxy');
+  assert.equal(Object.hasOwn(model.sandboxProfileForWire({
+    name: 'plain', filesystem: [], environment: [],
+    network: { baseline: 'deny', allow: [{ domain: 'example.com' }] },
+    unix_sockets: { mode: '', allow: [] },
+  }).network, 'engine'), false, 'an unset engine writes no key');
+
+  // A legacy mode-based payload that already names an engine keeps it: the
+  // engine is orthogonal to the mode the legacy branch reconstructs.
+  assert.equal(model.sandboxNetworkAuthoring({
+    network: { mode: 'list', allow: [], engine: 'packet' },
+  }).engine, 'packet');
+
+  assert.match(model.sandboxAccessDraftErrors({
+    network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'socks' },
+  }).join(' '), /filtering engine is invalid/);
+  assert.deepEqual(model.sandboxAccessDraftErrors({
+    name: 'ok', filesystem: [], environment: [],
+    network: { baseline: 'deny', packs: [], deny_packs: [], allow: [], deny: [], engine: 'proxy' },
+    unix_sockets: { mode: '', allow: [] },
+  }), []);
+
+  assert.match(model.sandboxProfileSummary({
+    network: { baseline: 'deny', allow: [{ domain: 'example.com' }], engine: 'proxy' },
+  }), /proxy filter/);
+});
+
+test('profile editor engine control selects an engine and keeps it across a baseline change', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'engined', filesystem: [], environment: [], includes: [], agent_directories: [],
+      network: { baseline: 'deny', packs: [], allow: [{ domain: 'example.com' }] },
+      unix_sockets: { mode: '' },
+    },
+    options: {},
+  });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(payload) { saved = payload; return true; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const engine = host.querySelector('#sandbox-profile-editor-network-engine');
+  assert.ok(engine, 'the editor offers a filtering-engine control');
+  assert.deepEqual([...engine.options].map((option) => option.value),
+    ['', 'packet', 'proxy']);
+  choose(engine, 'proxy');
+  await harness.act(() => harness.fireEvent(engine, 'change'));
+
+  // Changing the baseline must not clear the engine: it is not one of the
+  // rules the baseline governs, and losing it would swap the mechanism as a
+  // side effect of an unrelated edit.
+  const baseline = host.querySelector('#sandbox-profile-editor-network-baseline');
+  choose(baseline, 'allow');
+  await harness.act(() => harness.fireEvent(baseline, 'change'));
+  assert.equal(
+    host.querySelector('#sandbox-profile-editor-network-engine').value, 'proxy',
+    'the engine survives a baseline change');
+
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.equal(saved.draft.network.engine, 'proxy');
+  assert.equal(saved.draft.network.baseline, 'allow');
+
+  unmount();
+  host.remove();
+});
