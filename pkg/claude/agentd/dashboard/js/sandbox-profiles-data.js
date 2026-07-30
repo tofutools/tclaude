@@ -239,7 +239,14 @@ function networkRuleLabel(entry = {}, mode = 'allow') {
   return `${verb} network: ${selector || 'configured destination'}${ports.length ? ` · port${ports.length === 1 ? '' : 's'} ${ports.join(', ')}` : ''}`;
 }
 
-function effectiveRuleRows(context = {}) {
+/* `constructedRoot` says this target builds its own filesystem root instead of
+   inheriting the host's. That is not a verdict on any rule the operator wrote —
+   every one of them is still enforced — but it changes what EXISTS around them,
+   so it is stated as its own rule row rather than left to warning prose. It
+   mirrors the closing rows an allow list already gets ("Block all other network
+   destinations", "Block all other Unix sockets"): the implicit half of a
+   restricting posture, made visible next to the explicit half. */
+function effectiveRuleRows(context = {}, constructedRoot = false) {
   const rows = [];
   for (const entry of context.filesystem || []) {
     const prefix = entry.access === 'write' ? 'Read/write'
@@ -306,6 +313,12 @@ function effectiveRuleRows(context = {}) {
   if (context.agentd_socket && axes.unix_sockets.mode !== 'open') {
     rows.push({ axis: 'control_socket', label: 'Allow Unix socket: tclaude agent control' });
   }
+  if (constructedRoot) {
+    rows.push({
+      axis: 'filesystem',
+      label: 'Block: every other host path (tclaude builds the sandbox root from the directory rules above plus a read-only OS surface)',
+    });
+  }
   return rows;
 }
 
@@ -331,7 +344,7 @@ export function sandboxRuleBuckets(axes = {}, context = {}, networkEntries = [])
   }
   const seenReasons = new Set();
   let launchRefused = false;
-  for (const rule of effectiveRuleRows(context)) {
+  for (const rule of effectiveRuleRows(context, axes?.constructed_root === true)) {
     const rowPrediction = rule.networkKey
       ? networkPredictions.get(rule.networkKey) : null;
     const verdict = rowPrediction || (rule.axis === 'control_socket'

@@ -2666,8 +2666,12 @@ func resumeLaunchCmdWithStackedProof(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
+		root, rootErr := session.TclaudeLayerRootPosture(posture, effectiveProfile)
+		if rootErr != nil {
+			return "", "", nil, rootErr
+		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayer(posture)
+		binary, _, resolveErr = session.ResolveTclaudeLayer(posture, root)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}
@@ -3189,7 +3193,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	switch resumeImplementation {
 	case sandboxpolicy.ImplementationTclaudeLayer:
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
-			resumeTclaudeLayerNetworkPosture(conv.SessionID),
+			resumeTclaudeLayerPostures(conv.SessionID),
 		)
 	case sandboxpolicy.ImplementationStacked:
 		launchOSSandbox = session.StackedLaunchOSSandbox(
@@ -3238,15 +3242,31 @@ func createSessionForConv(conv *SessionEntry) error {
 }
 
 func resumeTclaudeLayerNetworkPosture(convID string) sandboxpolicy.NetworkPosture {
+	posture, _ := resumeTclaudeLayerPostures(convID)
+	return posture
+}
+
+// resumeTclaudeLayerPostures reports both halves of the boundary a resume will
+// rebuild. They are returned together because since TCL-798 the root posture is
+// no longer a function of the network posture, and a badge that reported only
+// the network half would describe a constructed host-open root as a plain
+// host-open one.
+func resumeTclaudeLayerPostures(
+	convID string,
+) (sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) {
 	snapshot := resumeEffectiveSandboxForState(convID)
 	if snapshot == nil {
-		return sandboxpolicy.NetworkHostOpen
+		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited
 	}
 	posture, err := session.TclaudeLayerNetworkPosture(snapshot.Effective)
 	if err != nil {
-		return sandboxpolicy.NetworkHostOpen
+		return sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited
 	}
-	return posture
+	root, err := session.TclaudeLayerRootPosture(posture, snapshot.Effective)
+	if err != nil {
+		return posture, sandboxpolicy.RootHostInherited
+	}
+	return posture, root
 }
 
 func findSessionForConv(convID string) *session.SessionState {

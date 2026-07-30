@@ -301,7 +301,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	switch resumeImplementation {
 	case sandboxpolicy.ImplementationTclaudeLayer:
 		launchOSSandbox = session.TclaudeLayerLaunchOSSandbox(
-			resumeTclaudeLayerNetworkPosture(rc.ConvID),
+			resumeTclaudeLayerPostures(rc.ConvID),
 		)
 	case sandboxpolicy.ImplementationStacked:
 		launchOSSandbox = session.StackedLaunchOSSandbox(

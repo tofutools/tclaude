@@ -43,7 +43,8 @@ func TestResolveTclaudeLayerRefusesMissingBwrapAndRecordsOffVerdict(t *testing.T
 		return "", errors.New("executable file not found")
 	}
 
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.ErrorContains(t, err, "requires bubblewrap (`bwrap`) on PATH")
 	assert.Equal(t, "off", verdict.State)
 	assert.Equal(t, "tclaude-layer unavailable", verdict.Source)
@@ -230,11 +231,12 @@ func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
 		probeBwrap = oldProbe
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error {
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return errors.New("operation not permitted")
 	}
 
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.ErrorContains(t, err, "unprivileged user namespaces may be unavailable")
 	assert.Equal(t, "off", verdict.State)
 }
@@ -248,7 +250,7 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	var probed []sandboxpolicy.NetworkPosture
-	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
+	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) error {
 		probed = append(probed, posture)
 		if posture == sandboxpolicy.NetworkIsolatedWithAgentd {
 			return errors.New("operation not permitted")
@@ -256,9 +258,11 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 		return nil
 	}
 
-	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.NoError(t, err)
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
+	_, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
 	require.ErrorContains(t, err, "mount, network, and PID namespaces")
 	require.ErrorContains(t, err, "read-only remount support")
 	assert.Equal(t, "off", verdict.State)
@@ -276,11 +280,12 @@ func TestResolveTclaudeLayerNamesFilteredNamespaceRequirement(t *testing.T) {
 		probeBwrap = oldProbe
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error {
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return errors.New("operation not permitted")
 	}
 
-	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	_, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.ErrorContains(t, err, "required by filtered network")
 	require.NotContains(t, err.Error(), "required by isolated-with-agentd")
 }
@@ -295,10 +300,11 @@ func TestResolveTclaudeLayerRefusesUnavailablePidfdRelay(t *testing.T) {
 		probeTclaudeLayerPidfd = oldPidfdProbe
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }
 
-	_, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.ErrorContains(t, err, "requires Linux pidfd support")
 	assert.Equal(t, "off", verdict.State)
 }
@@ -313,10 +319,11 @@ func TestResolveTclaudeLayerServerDoesNotRequirePidfdRelay(t *testing.T) {
 		probeTclaudeLayerPidfd = oldPidfdProbe
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }
 
-	binary, verdict, err := ResolveTclaudeLayerServer(sandboxpolicy.NetworkHostOpen)
+	binary, verdict, err := ResolveTclaudeLayerServer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.NoError(t, err)
 	assert.Equal(t, "/usr/bin/bwrap", binary)
 	assert.Equal(t, "on", verdict.State)
@@ -467,7 +474,8 @@ func TestTclaudeLayerProbeExercisesReadOnlyRemountSemantics(t *testing.T) {
 		sandboxpolicy.NetworkIsolatedWithAgentd,
 	} {
 		t.Run(posture.String(), func(t *testing.T) {
-			args, err := tclaudeLayerProbeArgs(posture)
+			args, err := tclaudeLayerProbeArgs(posture,
+				sandboxpolicy.RootPostureFor(posture, sandboxpolicy.AccessModeUnset))
 			require.NoError(t, err)
 
 			tmpfs := indexOfBwrapTriplet(args, "--tmpfs", "/tmp")

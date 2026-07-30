@@ -297,15 +297,22 @@ func CanonicalTclaudeLayerGeneratedPath(path string) string {
 
 // ResolveTclaudeLayer verifies the host capability before a launch is
 // committed. Callers record the returned verdict even when verification fails.
-func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.LaunchOSSandbox, error) {
-	binary, err := resolveBwrapBinary(posture)
+//
+// Both postures are required because since TCL-798 they are independent: a
+// constructed root under the host network namespace needs a PID namespace the
+// plain host-open probe never exercised.
+func ResolveTclaudeLayer(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (string, harness.LaunchOSSandbox, error) {
+	binary, err := resolveBwrapBinary(posture, root)
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
 			State:  "off",
 			Source: "tclaude-layer unavailable",
 		}, err
 	}
-	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
+	return binary, TclaudeLayerLaunchOSSandbox(posture, root), nil
 }
 
 // ResolveTclaudeLayerServer verifies the host capability needed by a
@@ -313,15 +320,16 @@ func ResolveTclaudeLayer(posture sandboxpolicy.NetworkPosture) (string, harness.
 // require terminal-resize relay support that the server renderer never uses.
 func ResolveTclaudeLayerServer(
 	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
 ) (string, harness.LaunchOSSandbox, error) {
-	binary, err := resolveBwrapServerBinary(posture)
+	binary, err := resolveBwrapServerBinary(posture, root)
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
 			State:  "off",
 			Source: "tclaude-layer unavailable",
 		}, err
 	}
-	return binary, TclaudeLayerLaunchOSSandbox(posture), nil
+	return binary, TclaudeLayerLaunchOSSandbox(posture, root), nil
 }
 
 // TclaudeLayerHostAvailability reports whether THIS HOST can create the
@@ -344,7 +352,8 @@ func ResolveTclaudeLayerServer(
 // an operator who has just installed bwrap must not be refused by a stale
 // negative. Caching is for disclosure only. See TCL-769.
 func TclaudeLayerHostAvailability() error {
-	_, err := resolveBwrapBinary(sandboxpolicy.NetworkHostOpen)
+	_, err := resolveBwrapBinary(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	return err
 }
 
@@ -352,7 +361,8 @@ func TclaudeLayerHostAvailability() error {
 // non-interactive server boundary, without imposing interactive relay
 // capabilities on a topology that has no terminal.
 func TclaudeLayerServerHostAvailability() error {
-	_, err := resolveBwrapServerBinary(sandboxpolicy.NetworkHostOpen)
+	_, err := resolveBwrapServerBinary(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	return err
 }
 
@@ -435,8 +445,11 @@ func appendFilteredNetworkPrerequisiteNotice(
 // TclaudeLayerLaunchOSSandbox records the resolved platform/posture boundary.
 // Partial host-open implementations stay visibly unverified; a constructed
 // isolated root can report the stronger boundary it actually enforces.
-func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
-	return tclaudeLayerLaunchOSSandbox(posture)
+func TclaudeLayerLaunchOSSandbox(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) harness.LaunchOSSandbox {
+	return tclaudeLayerLaunchOSSandbox(posture, root)
 }
 
 // TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
@@ -445,17 +458,75 @@ func TclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 func TclaudeLayerLaunchOSSandboxForHarness(
 	harnessName string,
 	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
 ) harness.LaunchOSSandbox {
 	if harnessName == harness.OpenCodeName {
 		if posture == sandboxpolicy.NetworkFiltered {
-			resolved := TclaudeLayerLaunchOSSandbox(posture)
+			resolved := TclaudeLayerLaunchOSSandbox(posture, root)
 			resolved.Source += "; OpenCode tool-executing server confined; " +
 				"attach client outside boundary over authenticated Unix relay"
 			return resolved
 		}
 		return tclaudeLayerOpenCodeLaunchOSSandbox()
 	}
-	return TclaudeLayerLaunchOSSandbox(posture)
+	return TclaudeLayerLaunchOSSandbox(posture, root)
+}
+
+// TclaudeLayerRootPosture answers the TCL-798 question for one launch: does it
+// build its own filesystem root? It exists so the surfaces that must agree
+// about the boundary — the capability probe, the launch badge, the agent-socket
+// environment — derive the answer from one place instead of each re-deciding
+// it.
+//
+// The NETWORK posture is taken from the caller rather than re-derived, because
+// the launch boundary may have settled on a weaker one than the profile asked
+// for: a filtered launch whose live gateway prerequisites fail runs host-open.
+// Re-deriving here would report a constructed root for a launch that is not
+// going to build one. The SOCKET half is read from the profile, since nothing
+// at the launch boundary can widen it after the capability ladder has run.
+//
+// Planned axes are used rather than authored ones so a socket rule the ladder
+// already widened cannot keep requesting a root the launch will not enforce
+// with.
+func TclaudeLayerRootPosture(
+	posture sandboxpolicy.NetworkPosture,
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.RootPosture, error) {
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+	if err != nil {
+		return sandboxpolicy.RootHostInherited, err
+	}
+	return sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode), nil
+}
+
+// TclaudeLayerLaunchRootPosture is TclaudeLayerRootPosture for a launch surface
+// that runs BEFORE the capability ladder, where the socket tier is still the
+// authored one.
+//
+// The extra gate matters because the socket-driven constructed root is a Linux
+// tclaude-layer mechanism for Claude Code and Codex only. Everywhere else the
+// ladder is about to widen the axis away, and the applier will render an
+// inherited root — so deriving a constructed root here would make the probe
+// demand a namespace the launch does not need, and, worse, make
+// ApplyAgentSocketEnv refuse an operator's explicit agentd socket for a launch
+// that never confines sockets at all.
+func TclaudeLayerLaunchRootPosture(
+	h *harness.Harness,
+	implementation sandboxpolicy.Implementation,
+	posture sandboxpolicy.NetworkPosture,
+	effective sandboxpolicy.EffectiveProfile,
+) (sandboxpolicy.RootPosture, error) {
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+	if err != nil {
+		return sandboxpolicy.RootHostInherited, err
+	}
+	sockets := axes.UnixSockets.Mode
+	if !harness.SupportsHostOpenConstructedRoot(
+		h, implementation, axes, runtime.GOOS) {
+		// Keep only the network posture's own implication.
+		sockets = sandboxpolicy.AccessModeUnset
+	}
+	return sandboxpolicy.RootPostureFor(posture, sockets), nil
 }
 
 // ValidateTclaudeLayerNetwork refuses an isolated whole-process launch unless
@@ -853,7 +924,7 @@ func tclaudeLayerSpecRenderInput(
 		}
 	}
 	socketPaths := sandboxpolicy.AgentdSocketFloor()
-	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) &&
+	if tclaudeLayerPlanUsesConstructedRoot(plan) &&
 		spec.Effective.UnixSockets != nil {
 		var authoredSockets []string
 		if spec.Contract.MaterializedUnixSocketPaths != nil {
@@ -1180,6 +1251,9 @@ func bwrapArgsWithDaemonFinal(
 	opaqueStateDirs []string,
 ) ([]string, error) {
 	var hideRemounts tclaudeLayerHideRemounts
+	// Set only when root construction reopens the host resolver file, so plan
+	// replay can repair it beneath an ordinary ancestor deny.
+	resolverTarget := ""
 	if plan.NetworkPosture == sandboxpolicy.NetworkFiltered {
 		if plan.FilteredNetwork == nil {
 			return nil, fmt.Errorf("filtered network posture has no compiled gateway policy")
@@ -1199,6 +1273,21 @@ func bwrapArgsWithDaemonFinal(
 	}
 	switch plan.NetworkPosture {
 	case sandboxpolicy.NetworkHostOpen:
+		if tclaudeLayerPlanUsesConstructedRoot(plan) {
+			// TCL-798: the host network namespace is kept, but the root is
+			// built rather than inherited, so ambient filesystem sockets are
+			// absent unless a later bind reopens them.
+			//
+			// --unshare-pid is not optional here even though the network stays
+			// shared. Without it the host's own processes remain visible in
+			// /proc, and any of them the sandboxed user may ptrace exposes
+			// /proc/<pid>/root — a live path back into the host mount namespace
+			// and therefore back to every socket this posture just hid. The
+			// isolated posture has always relied on the same property.
+			args = append(args, "--unshare-pid")
+			args = hideRemounts.appendHide(args, "/")
+			break
+		}
 		// Preserve the walking skeleton: the host namespace and read-only host
 		// root stay visible, including ambient pathname sockets.
 		args = append(args, "--ro-bind", "/", "/")
@@ -1241,13 +1330,17 @@ func bwrapArgsWithDaemonFinal(
 		// filtered relay may later add only the resolver symlink target.
 		args = append(args, "--tmpfs", "/run")
 	}
-	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
+	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		var err error
 		args, err = appendTclaudeLayerAliases(args, plan.Aliases)
 		if err != nil {
 			return nil, err
 		}
 		args, err = appendTclaudeLayerStaticOSRoot(args)
+		if err != nil {
+			return nil, err
+		}
+		args, resolverTarget, err = appendTclaudeLayerHostResolver(args, plan)
 		if err != nil {
 			return nil, err
 		}
@@ -1306,7 +1399,7 @@ func bwrapArgsWithDaemonFinal(
 		args = hideRemounts.appendHide(args, root)
 	}
 	liveSocketPaths := make([]string, 0, len(socketPaths))
-	if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
+	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
@@ -1360,7 +1453,7 @@ func bwrapArgsWithDaemonFinal(
 			if !exists {
 				continue
 			}
-			if err := requireTclaudeLayerGuestMountpoint(i, entry, plan.NetworkPosture); err != nil {
+			if err := requireTclaudeLayerGuestMountpoint(i, entry, plan); err != nil {
 				return nil, err
 			}
 			hideRemounts.noteReplacement(path)
@@ -1377,7 +1470,7 @@ func bwrapArgsWithDaemonFinal(
 			)
 		case sandboxpolicy.MountHide:
 			args = hideRemounts.appendHide(args, path)
-			if tclaudeLayerConstructedRootPosture(plan.NetworkPosture) {
+			if tclaudeLayerPlanUsesConstructedRoot(plan) {
 				args = appendTclaudeLayerAliasRepairs(
 					args,
 					path,
@@ -1399,6 +1492,18 @@ func bwrapArgsWithDaemonFinal(
 				liveSocketPaths,
 				&hideRemounts,
 			)
+			// The resolver file is reopened during root construction, so an
+			// ordinary deny on an ancestor — /run is the realistic one — would
+			// otherwise shadow it and break name resolution with no notice.
+			// Repaired like the agentd socket rather than left to chance.
+			if resolverTarget != "" {
+				args = appendTclaudeLayerSocketRepairs(
+					args,
+					path,
+					[]string{resolverTarget},
+					&hideRemounts,
+				)
+			}
 		default:
 			return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}
@@ -1482,11 +1587,17 @@ func bwrapArgsWithDaemonFinal(
 //
 // Under a CONSTRUCTED root the sandbox root is a fresh tmpfs, so bubblewrap
 // creates the destination directory inside the namespace and nothing on the
-// host has to exist. Under the host-open posture the sandbox root IS the host
-// root, bound read-only, so there is nowhere to create a new mountpoint: the
-// directory must already exist on the host. This mirrors the existing
-// daemon-final source→target bind, which has required an existing target since
-// it was introduced.
+// host has to exist. Under an INHERITED root the sandbox root IS the host root,
+// bound read-only, so there is nowhere to create a new mountpoint: the directory
+// must already exist on the host. This mirrors the existing daemon-final
+// source→target bind, which has required an existing target since it was
+// introduced.
+//
+// The condition is the root posture, not the network posture. Until TCL-798 the
+// two were the same question, and this refusal was reachable for every host-open
+// launch; a host-open plan that constructs its root to confine Unix sockets now
+// creates the mountpoint like any other constructed root, so the refusal no
+// longer applies there.
 //
 // tclaude deliberately does not mkdir the mountpoint itself. Creating host
 // directories as a side effect of launching is the same failure the missing-
@@ -1496,9 +1607,9 @@ func bwrapArgsWithDaemonFinal(
 func requireTclaudeLayerGuestMountpoint(
 	index int,
 	entry sandboxpolicy.MountEntry,
-	posture sandboxpolicy.NetworkPosture,
+	plan sandboxpolicy.MountPlan,
 ) error {
-	if !entry.IsRemapped() || tclaudeLayerConstructedRootPosture(posture) {
+	if !entry.IsRemapped() || tclaudeLayerPlanUsesConstructedRoot(plan) {
 		return nil
 	}
 	exists, err := bwrapBindSourceExists(entry.Path)
@@ -1507,15 +1618,19 @@ func requireTclaudeLayerGuestMountpoint(
 	}
 	if !exists {
 		return fmt.Errorf(
-			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture, so the mount point must already exist on the host; create %q, or use an isolated or filtered network posture where tclaude constructs the root",
-			index, entry.SourcePath(), entry.Path, posture, entry.Path)
+			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture with an inherited root, so the mount point must already exist on the host; create %q, or use a posture where tclaude constructs the root (closed or filtered network access, or an explicit unix_sockets rule)",
+			index, entry.SourcePath(), entry.Path, plan.NetworkPosture, entry.Path)
 	}
 	return nil
 }
 
-func tclaudeLayerConstructedRootPosture(posture sandboxpolicy.NetworkPosture) bool {
-	return posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
-		posture == sandboxpolicy.NetworkFiltered
+// tclaudeLayerPlanUsesConstructedRoot is the applier's single reading of the
+// TCL-798 decision. Every operation that only makes sense against a root
+// tclaude built — the static OS surface, symlink aliases, socket binds, the
+// mountpoint refusal above — asks this rather than re-deriving it from the
+// network posture, which no longer answers the question.
+func tclaudeLayerPlanUsesConstructedRoot(plan sandboxpolicy.MountPlan) bool {
+	return plan.EffectiveRootPosture() == sandboxpolicy.RootConstructed
 }
 
 func appendTclaudeLayerOpaqueState(
@@ -1727,6 +1842,107 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 		args = append(args, "--ro-bind", path, path)
 	}
 	return args, nil
+}
+
+// tclaudeLayerHostResolverRuntimeRoot is the only directory outside the static
+// OS surface a resolver symlink may point into. Distributions that manage
+// /etc/resolv.conf dynamically (systemd-resolved, resolvconf, NetworkManager)
+// all park the real file under /run.
+// These two are variables only so a test can point the traversal below at a
+// fixture instead of the developer's real resolver and real /run. Neither is
+// reassigned in production.
+var (
+	tclaudeLayerHostResolverPath        = "/etc/resolv.conf"
+	tclaudeLayerHostResolverRuntimeRoot = "/run"
+)
+
+// appendTclaudeLayerHostResolver keeps DNS working for a constructed root that
+// still has the HOST network namespace.
+//
+// The static OS surface binds /etc read-only, so /etc/resolv.conf is present
+// either way. On a systemd-resolved-class host it is a SYMLINK into /run, which
+// the constructed root does not have, and following it inside the namespace
+// lands on nothing. The isolated posture never noticed: it has no route to
+// resolve names over. The filtered posture never noticed either: it installs
+// its own broker resolv.conf. A host-open constructed root is the first posture
+// where the host's real resolver has to survive root construction, so the
+// target file is reopened read-only and its parents created.
+//
+// Only the resolver FILE is bound, never its directory. /run is exactly where
+// the ambient sockets this posture exists to hide tend to live, so reopening
+// the surrounding directory would hand back what the constructed root just took
+// away.
+//
+// A target outside /run is deliberately not chased. tclaude does not know what
+// such a layout means, and silently binding an arbitrary host path to make DNS
+// work would be a wider hole than the failure it prevents; the launch proceeds
+// and name resolution behaves as it does in any other constructed root.
+// It returns the reopened target so plan replay can repair it after an ordinary
+// ancestor hide, the same way the agentd socket is repaired; "" means nothing
+// was reopened.
+func appendTclaudeLayerHostResolver(
+	args []string,
+	plan sandboxpolicy.MountPlan,
+) ([]string, string, error) {
+	if plan.NetworkPosture != sandboxpolicy.NetworkHostOpen ||
+		plan.EffectiveRootPosture() != sandboxpolicy.RootConstructed {
+		// An inherited root already carries the real /run, and an isolated or
+		// filtered posture has no host resolver to preserve. The caller only
+		// reaches here for a constructed root; this restates the precondition
+		// so the reopen cannot be moved somewhere it would widen a plan.
+		return args, "", nil
+	}
+	resolver := tclaudeLayerHostResolverPath
+	info, err := os.Lstat(resolver)
+	switch {
+	case err == nil:
+	case os.IsNotExist(err):
+		return args, "", nil
+	default:
+		return nil, "", fmt.Errorf("inspect host resolver %q: %w", resolver, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		// A regular file arrives with the read-only /etc bind.
+		return args, "", nil
+	}
+	target, err := filepath.EvalSymlinks(resolver)
+	if err != nil {
+		// A dangling resolver symlink is already broken on the host. Leave the
+		// namespace matching it rather than failing the launch.
+		return args, "", nil
+	}
+	target = filepath.Clean(target)
+	if tclaudeLayerStaticOSRootProvides(target) {
+		return args, "", nil
+	}
+	if !sandboxpolicy.PathContainsOrEqual(tclaudeLayerHostResolverRuntimeRoot, target) ||
+		target == tclaudeLayerHostResolverRuntimeRoot {
+		return args, "", nil
+	}
+	// The target must be a REGULAR FILE, and this check is load-bearing rather
+	// than defensive. bwrap binds whatever it is given: a resolver symlink
+	// pointing at a directory would recursively expose that whole /run subtree —
+	// which is exactly where the ambient sockets this posture exists to hide
+	// live — and one pointing at a socket would reopen an ambient socket
+	// directly. Either would make the capability row's Partial rating untrue
+	// while it discloses only the abstract-socket remainder. A host whose
+	// resolv.conf points at a non-file cannot resolve names anyway, so refusing
+	// to follow it costs nothing real.
+	targetInfo, err := os.Stat(target)
+	if err != nil || !targetInfo.Mode().IsRegular() {
+		return args, "", nil
+	}
+	parents := []string{}
+	for parent := filepath.Dir(target); ; parent = filepath.Dir(parent) {
+		parents = append([]string{parent}, parents...)
+		if parent == tclaudeLayerHostResolverRuntimeRoot {
+			break
+		}
+	}
+	for _, parent := range parents {
+		args = append(args, "--dir", parent)
+	}
+	return append(args, "--ro-bind", target, target), target, nil
 }
 
 func appendTclaudeLayerAliases(

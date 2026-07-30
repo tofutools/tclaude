@@ -53,8 +53,13 @@ type SandboxPlanDescription struct {
 	Unavailable        []string                      `json:"unavailable,omitempty"`
 	UnavailableEntries []SandboxPlanUnavailableEntry `json:"unavailable_entries,omitempty"`
 	NetworkPosture     string                        `json:"network_posture,omitempty"`
-	Entries            []SandboxPlanEntry            `json:"entries"`
-	Aliases            []sandboxpolicy.MountAlias    `json:"aliases"`
+	// RootPosture is reported separately from NetworkPosture because since
+	// TCL-798 the two are independent: a host-open plan may still construct its
+	// own root to confine Unix sockets, and a dry-run that printed only the
+	// network half would not let an operator tell the two apart.
+	RootPosture string                     `json:"root_posture,omitempty"`
+	Entries     []SandboxPlanEntry         `json:"entries"`
+	Aliases     []sandboxpolicy.MountAlias `json:"aliases"`
 }
 
 // DescribeTclaudeLayerPlan describes the already-composed launch contract.
@@ -77,10 +82,12 @@ func DescribeTclaudeLayerPlan(
 		return SandboxPlanDescription{}, err
 	}
 	plan.NetworkPosture = composed.NetworkPosture
+	plan.RootPosture = composed.RootPosture
 	out := SandboxPlanDescription{
 		Applicable:     true,
 		Coverage:       "composed",
 		NetworkPosture: networkPostureLabel(plan.NetworkPosture),
+		RootPosture:    plan.EffectiveRootPosture().String(),
 		Entries:        []SandboxPlanEntry{},
 		Aliases:        append([]sandboxpolicy.MountAlias(nil), plan.Aliases...),
 	}
@@ -178,6 +185,7 @@ func DescribeRecordedEffectivePlan(
 			"positive profile dispositions: not recorded at launch — unavailable; use hypothetical mode with explicit --cwd and --for inputs",
 		},
 		NetworkPosture: networkPostureLabel(plan.NetworkPosture),
+		RootPosture:    plan.EffectiveRootPosture().String(),
 		Entries:        []SandboxPlanEntry{},
 		Aliases:        append([]sandboxpolicy.MountAlias(nil), plan.Aliases...),
 	}

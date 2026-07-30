@@ -95,7 +95,8 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	if filtered {
 		posture = sandboxpolicy.NetworkFiltered
 	}
-	_, _, err := session.ResolveTclaudeLayerServer(posture)
+	_, _, err := session.ResolveTclaudeLayerServer(
+		posture, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	openCodeExecutable, err := harness.OpenCodeExecutable()
 	require.NoError(t, err)
@@ -263,7 +264,8 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			harness.MustGet(harness.OpenCodeName),
 			sandboxpolicy.ImplementationTclaudeLayer,
 			axes,
-			session.TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered),
+			session.TclaudeLayerLaunchOSSandbox(
+				sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed),
 			harness.OpenCodeSandboxTclaudeLayer,
 		)
 		require.NoError(t, capsErr)

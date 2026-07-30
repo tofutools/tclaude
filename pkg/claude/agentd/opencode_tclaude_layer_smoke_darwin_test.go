@@ -41,7 +41,8 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 	if os.Getenv(openCodeDarwinLayerSmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_OPENCODE_LAYER_SMOKE=1 on macOS with OpenCode installed")
 	}
-	_, _, err := session.ResolveTclaudeLayerServer(sandboxpolicy.NetworkHostOpen)
+	_, _, err := session.ResolveTclaudeLayerServer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.NoError(t, err)
 	openCodeExecutable, err := harness.OpenCodeExecutable()
 	require.NoError(t, err)

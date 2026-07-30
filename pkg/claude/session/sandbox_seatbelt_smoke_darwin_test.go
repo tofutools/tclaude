@@ -71,7 +71,8 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on macOS to exercise sandbox-exec")
 	}
-	binary, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	binary, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.NoError(t, err)
 
 	home, err := os.UserHomeDir()

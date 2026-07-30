@@ -966,11 +966,30 @@ func runNew(params *NewParams) error {
 			}
 		}
 	}
+	// The constructed root is what makes the canonical agentd socket the only
+	// reachable one, so the environment follows the ROOT posture rather than the
+	// network posture it used to be inseparable from (TCL-798).
+	tclaudeLayerRoot := sandboxpolicy.RootHostInherited
+	if outerLayer && launchSandbox != nil {
+		// This runs before the capability ladder, so the gated helper is
+		// required: on a target where the socket-driven constructed root does
+		// not apply the ladder is about to widen the axis away, and claiming a
+		// constructed root here would refuse an explicit agentd socket for a
+		// launch that never confines sockets.
+		tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
+			h, sandboxImplementation, tclaudeLayerPosture, launchSandbox.Effective)
+		if err != nil {
+			return fmt.Errorf("derive sandbox root posture: %w", err)
+		}
+	} else if tclaudeLayerPosture == sandboxpolicy.NetworkIsolatedWithAgentd ||
+		tclaudeLayerPosture == sandboxpolicy.NetworkFiltered {
+		tclaudeLayerRoot = sandboxpolicy.RootConstructed
+	}
 	if err := ApplyAgentSocketEnv(
 		h.Name,
 		params.Sandbox,
 		params.PermissionProfile,
-		outerLayer && tclaudeLayerConstructedRootPosture(tclaudeLayerPosture),
+		outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed,
 		additionalEnv,
 	); err != nil {
 		return err
@@ -1112,12 +1131,15 @@ func runNew(params *NewParams) error {
 	var bwrapCapabilityErr error
 	if outerLayer {
 		if tclaudeLayerWrapsPane(h.Name) {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(tclaudeLayerPosture)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayer(
+				tclaudeLayerPosture, tclaudeLayerRoot)
 		} else {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(tclaudeLayerPosture)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServer(
+				tclaudeLayerPosture, tclaudeLayerRoot)
 		}
 		if bwrapCapabilityErr == nil && !stacked {
-			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(h.Name, tclaudeLayerPosture)
+			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
+				h.Name, tclaudeLayerPosture, tclaudeLayerRoot)
 		}
 	}
 	if outerLayer {
@@ -1206,8 +1228,18 @@ func runNew(params *NewParams) error {
 		}
 		if tclaudeLayerPosture == sandboxpolicy.NetworkFiltered && !filteredEnforcing {
 			tclaudeLayerPosture = sandboxpolicy.NetworkHostOpen
+			// The root posture is re-derived rather than carried over: the
+			// filtered posture implied a constructed root, and dropping to
+			// host-open must not keep claiming one unless the profile's own
+			// socket axis still asks for it.
+			tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
+				h, sandboxImplementation, tclaudeLayerPosture,
+				launchSandbox.Effective)
+			if err != nil {
+				return fmt.Errorf("derive sandbox root posture: %w", err)
+			}
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture)
+				h.Name, tclaudeLayerPosture, tclaudeLayerRoot)
 		}
 		if outerLayer {
 			plannedEffective := launchSandbox.Effective

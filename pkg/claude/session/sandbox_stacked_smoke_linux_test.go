@@ -59,7 +59,8 @@ func TestStackedSandboxHostSmoke(t *testing.T) {
 			for _, harnessName := range []string{harness.DefaultName, harness.CodexName} {
 				t.Run(harnessName, func(t *testing.T) {
 					h := harness.MustGet(harnessName)
-					binary, _, err := ResolveTclaudeLayer(tc.posture)
+					binary, _, err := ResolveTclaudeLayer(tc.posture,
+						sandboxpolicy.RootPostureFor(tc.posture, sandboxpolicy.AccessModeUnset))
 					require.NoError(t, err)
 					spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 						HarnessName: h.Name,

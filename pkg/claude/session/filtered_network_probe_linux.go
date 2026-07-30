@@ -178,7 +178,8 @@ func validateRootOwnedExecutable(path string) error {
 }
 
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
-	if _, err := resolveBwrapServerBinary(sandboxpolicy.NetworkFiltered); err != nil {
+	if _, err := resolveBwrapServerBinary(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed); err != nil {
 		return FilteredNetworkPrerequisite{
 			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
 		}

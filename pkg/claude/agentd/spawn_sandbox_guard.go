@@ -16,12 +16,13 @@ import (
 var resolveTclaudeLayerAccessVerdict = func(
 	harnessName string,
 	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
 ) (harness.LaunchOSSandbox, error) {
 	if session.TclaudeLayerUsesServerBoundary(harnessName) {
-		_, verdict, err := session.ResolveTclaudeLayerServer(posture)
+		_, verdict, err := session.ResolveTclaudeLayerServer(posture, root)
 		return verdict, err
 	}
-	_, verdict, err := session.ResolveTclaudeLayer(posture)
+	_, verdict, err := session.ResolveTclaudeLayer(posture, root)
 	return verdict, err
 }
 
@@ -229,7 +230,18 @@ func planSandboxProfileAccessForLaunch(
 				}
 			}
 		}
-		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
+		// This verdict is one of the ladder's own inputs, so the socket axis is
+		// still the authored one. Ask the same gate the ladder will: on a
+		// target where the socket-driven constructed root does not apply, the
+		// axis is about to be widened away and the verdict must not describe a
+		// root the launch will never build.
+		sockets := axes.UnixSockets.Mode
+		if !harness.SupportsHostOpenConstructedRoot(
+			h, implementation, axes, runtime.GOOS) {
+			sockets = sandboxpolicy.AccessModeUnset
+		}
+		root := sandboxpolicy.RootPostureFor(posture, sockets)
+		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture, root)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				sandboxImplementationUnavailableKind, err.Error()}

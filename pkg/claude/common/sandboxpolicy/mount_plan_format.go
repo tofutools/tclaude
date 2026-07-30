@@ -47,6 +47,21 @@ func (p NetworkPosture) String() string {
 	}
 }
 
+// String renders the root posture as the stable token used in effective plan
+// output. It is printed alongside the network posture because since TCL-798 the
+// two are independent: a plan can construct its root while keeping the host
+// network, and a reader of a dry-run plan must be able to tell which.
+func (p RootPosture) String() string {
+	switch p {
+	case RootHostInherited:
+		return "host-inherited"
+	case RootConstructed:
+		return "constructed"
+	default:
+		return fmt.Sprintf("root-posture(%d)", int(p))
+	}
+}
+
 // String renders the whole plan in application order. Entries are indented and
 // the mode column is padded so paths line up, which is what makes a two-plan
 // diff readable. The output always ends in a newline; an empty plan is stated
@@ -56,6 +71,7 @@ func (p MountPlan) String() string {
 	var b strings.Builder
 	b.WriteString("mount-plan:\n")
 	fmt.Fprintf(&b, "  network %s\n", p.NetworkPosture)
+	fmt.Fprintf(&b, "  root %s\n", p.EffectiveRootPosture())
 	for _, alias := range p.Aliases {
 		fmt.Fprintf(&b, "  alias %s -> %s\n", alias.Link, alias.Target)
 	}

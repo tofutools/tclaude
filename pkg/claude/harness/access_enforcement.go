@@ -52,6 +52,7 @@ type AccessEnforcement struct {
 	socketListRefusal       string
 	socketCombinationDetail string
 	socketClosedRefusal     string
+	constructedRoot         bool
 	scope                   string
 	mechanism               string
 	mcpBypass               bool
@@ -79,9 +80,15 @@ type PredictedAccessEnforcement struct {
 	SocketListRefusal            string
 	SocketCombinationDetail      string
 	SocketClosedRefusal          string
-	Scope                        string
-	Mechanism                    string
-	MCPBypass                    bool
+	// ConstructedRoot reports that this target builds its own filesystem root
+	// rather than inheriting the host's. It is a whole-posture fact rather than
+	// a per-rule verdict, and the preview needs it: the authored rules are all
+	// still enforced, but everything the operator did NOT author stops being
+	// visible, and that change has to be legible where they read their rules.
+	ConstructedRoot bool
+	Scope           string
+	Mechanism       string
+	MCPBypass       bool
 }
 
 const (
@@ -103,6 +110,11 @@ type PredictedAccessAxes struct {
 	AgentDirectories PredictedAccessAxis `json:"agent_directories"`
 	Network          PredictedAccessAxis `json:"network"`
 	UnixSockets      PredictedAccessAxis `json:"unix_sockets"`
+	// ConstructedRoot lets the preview state the filesystem consequence of a
+	// built root as a RULE the operator can see, next to the rules they wrote,
+	// rather than only as prose in a warning. Omitted when false so older
+	// clients and inherited-root targets are unaffected.
+	ConstructedRoot bool `json:"constructed_root,omitempty"`
 }
 
 // PredictedNetworkEntry projects the list-wide enforcement plan onto one
@@ -144,6 +156,7 @@ type accessEnforcementTableRow struct {
 	SocketListRefusal            string
 	SocketCombinationDetail      string
 	SocketClosedRefusal          string
+	ConstructedRoot              bool
 	Scope                        string
 	Mechanism                    string
 	MCPBypass                    bool
@@ -434,6 +447,14 @@ func accessEnforcementTable(
 				// sockets beneath them.
 				caps.SocketClosed = EnforcePartial
 				caps.SocketList = EnforcePartial
+				// Name the posture in the mechanism itself. Every disclosure
+				// that prints a mechanism — the launch degradation notice, the
+				// predicted axis detail, the spawn warning — then says WHICH
+				// boundary is active. An operator whose pre-existing
+				// sockets+open profile starts behaving differently after an
+				// upgrade learns why from the launch notes rather than from a
+				// build that stopped working.
+				caps.Mechanism = mechanism + " (host-network constructed root)"
 				caps.SocketCombinationDetail =
 					"listed Unix sockets are bound and sockets outside the sandbox's readable/writable directories remain hidden, " +
 						"but sockets beneath those readable/writable directories remain reachable"
@@ -442,7 +463,39 @@ func accessEnforcementTable(
 						`use a socket access list or leave unix_sockets unset`
 			}
 		} else {
-			if goos == "linux" {
+			if linuxHostOpenConstructedRootAvailable(
+				h, implementation, axes, goos) {
+				// TCL-798. The constructed root no longer requires giving up
+				// host networking, so the filesystem half of the socket axis is
+				// enforceable here. It is Partial rather than Full, and
+				// permanently so: with the host network namespace shared,
+				// Linux abstract-namespace sockets are not filesystem objects
+				// at all and no mount plan can reach them.
+				caps.SocketClosed = EnforcePartial
+				caps.SocketList = EnforcePartial
+				// Name the posture in the mechanism itself. Every disclosure
+				// that prints a mechanism — the launch degradation notice, the
+				// predicted axis detail, the spawn warning — then says WHICH
+				// boundary is active. An operator whose pre-existing
+				// sockets+open profile starts behaving differently after an
+				// upgrade learns why from the launch notes rather than from a
+				// build that stopped working.
+				caps.Mechanism = mechanism + " (host-network constructed root)"
+				caps.SocketCombinationDetail =
+					"tclaude builds the sandbox root, so listed Unix sockets are bound and " +
+						"ambient filesystem sockets are absent; sockets beneath the sandbox's own readable/writable " +
+						"directories, and beneath the read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt), " +
+						"remain reachable. Because host networking is kept, abstract-namespace Unix sockets (@…) live in the " +
+						"shared network namespace rather than the filesystem and remain reachable — " +
+						"close network access as well to confine those too. " +
+						"Two consequences of building the root reach beyond sockets. " +
+						"Host paths outside your filesystem grants and that OS surface are no longer visible at all, " +
+						"where a host-open launch without this rule would have shown the whole read-only host root — " +
+						"check that anything the agent needs (toolchains under your home, /var, /srv, /opt-style installs) is granted. " +
+						"And the agent runs in its own PID namespace, which is required rather than incidental: " +
+						"without it a host process's /proc/<pid>/root would lead straight back to the sockets the constructed root just hid. " +
+						"The agent therefore cannot see or signal host processes, and tools that read the host process table stop working."
+			} else if goos == "linux" {
 				caps.SocketCombinationDetail =
 					"Unix-socket restrictions are unenforced under host-open network on Linux tclaude-layer; " +
 						"they are enforceable when network access is closed because that posture uses the constructed root"
@@ -457,6 +510,24 @@ func accessEnforcementTable(
 			// Darwin has the required Seatbelt vocabulary, but M1's host-open
 			// renderer wires no socket denies. The capability remains None
 			// until that adapter consumes the authored axis.
+		}
+		// Whether this target builds its own root is decided once, from the
+		// combination the launch will actually run, so the preview cannot
+		// disagree with the applier. Linux only: Seatbelt is a path filter over
+		// the host namespace and has no root to construct.
+		if goos == "linux" {
+			networkPosture, postureErr := sandboxpolicy.NetworkPostureForRules(
+				axes.Network)
+			socketTier := axes.UnixSockets.Mode
+			if !linuxHostOpenConstructedRootAvailable(
+				h, implementation, axes, goos) {
+				// Without the mechanism the socket tier is about to be widened
+				// away, so only the network posture's own implication counts.
+				socketTier = sandboxpolicy.AccessModeUnset
+			}
+			caps.ConstructedRoot = postureErr == nil &&
+				sandboxpolicy.RootPostureFor(networkPosture, socketTier) ==
+					sandboxpolicy.RootConstructed
 		}
 		return caps, nil
 	}
@@ -505,6 +576,71 @@ func accessEnforcementTable(
 	}
 }
 
+// linuxHostOpenConstructedRootAvailable reports whether this exact launch would
+// get TCL-798's host-network constructed root, and therefore whether the socket
+// axis may be rated above EnforceNone with the network axis left open.
+//
+// Three conditions, each load-bearing:
+//
+//   - tclaude-layer proper. The stacked implementation composes this root with
+//     a harness-native inner sandbox whose interaction with a constructed
+//     host-open root has no smoke evidence, and an unproven combination may not
+//     raise a capability rating.
+//   - Claude Code or Codex. OpenCode's boundary is its agentd-owned server with
+//     a control plane of its own; its host-open arm is deliberately left on the
+//     pre-TCL-798 path.
+//   - A host-open network posture. An allow list or any deny renders the
+//     filtered posture instead, which already constructs its root beneath a
+//     private network namespace and is rated separately.
+//
+// The socket TIER is deliberately not part of the predicate. This function only
+// answers whether the mechanism exists; the ladder applies the rating solely to
+// a profile that explicitly authored a closed or list tier, which is what keeps
+// the constructed root from turning itself on under profiles that never asked
+// about sockets.
+//
+// It is exported through SupportsHostOpenConstructedRoot because the launch
+// boundary has to ask the same question BEFORE the ladder runs — the capability
+// verdict is one of the ladder's own inputs — and a launch that answered it
+// differently from the table would probe for, and disclose, a root it is not
+// going to build.
+func linuxHostOpenConstructedRootAvailable(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	axes sandboxpolicy.ResolvedAxes,
+	goos string,
+) bool {
+	if goos != "linux" {
+		return false
+	}
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return false
+	}
+	if h == nil || (h.Name != DefaultName && h.Name != CodexName) {
+		return false
+	}
+	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
+	return err == nil && posture == sandboxpolicy.NetworkHostOpen
+}
+
+// SupportsHostOpenConstructedRoot reports whether this launch target would get
+// TCL-798's host-network constructed root from an explicitly authored socket
+// tier. Callers outside this package use it so the pre-ladder launch surfaces —
+// the bubblewrap capability probe, the launch badge, the agent-socket
+// environment — agree with the rating the ladder is about to compute.
+//
+// It answers only whether the MECHANISM applies to this target. Whether the
+// profile actually asked for it is the socket tier's question, which
+// sandboxpolicy.RootPostureFor answers.
+func SupportsHostOpenConstructedRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	axes sandboxpolicy.ResolvedAxes,
+	goos string,
+) bool {
+	return linuxHostOpenConstructedRootAvailable(h, implementation, axes, goos)
+}
+
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {
 	return AccessEnforcement{
 		networkClosed: row.NetworkClosed, networkList: row.NetworkList,
@@ -521,6 +657,7 @@ func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement
 		socketListRefusal:       row.SocketListRefusal,
 		socketCombinationDetail: row.SocketCombinationDetail,
 		socketClosedRefusal:     row.SocketClosedRefusal,
+		constructedRoot:         row.ConstructedRoot,
 		scope:                   row.Scope, mechanism: row.Mechanism, mcpBypass: row.MCPBypass,
 	}
 }
@@ -543,6 +680,7 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		SocketListRefusal:       row.SocketListRefusal,
 		SocketCombinationDetail: row.SocketCombinationDetail,
 		SocketClosedRefusal:     row.SocketClosedRefusal,
+		ConstructedRoot:         row.ConstructedRoot,
 		Scope:                   row.Scope, Mechanism: row.Mechanism, MCPBypass: row.MCPBypass,
 	}
 }
@@ -554,8 +692,9 @@ func DescribePredictedAccess(
 	caps PredictedAccessEnforcement,
 ) PredictedAccessAxes {
 	return PredictedAccessAxes{
-		Network:     predictNetworkAxis(axes.Network, caps),
-		UnixSockets: predictSocketAxis(axes.UnixSockets, caps),
+		Network:         predictNetworkAxis(axes.Network, caps),
+		UnixSockets:     predictSocketAxis(axes.UnixSockets, caps),
+		ConstructedRoot: caps.ConstructedRoot,
 	}
 }
 

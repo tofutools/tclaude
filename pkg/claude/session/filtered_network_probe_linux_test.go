@@ -56,7 +56,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 		inspectFilteredNetworkPasta = oldFilteredInspect
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture) error {
+	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) error {
 		assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 		return nil
 	}
@@ -134,7 +134,7 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 		inspectFilteredNetworkPasta = oldFilteredInspect
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
@@ -152,7 +152,8 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 }
 
 func TestFilteredNetworkProbeArgsRequireNamespaceRootCapability(t *testing.T) {
-	args, err := tclaudeLayerProbeArgs(sandboxpolicy.NetworkFiltered)
+	args, err := tclaudeLayerProbeArgs(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	joined := strings.Join(args, " ")
 	assert.Contains(t, joined,
@@ -172,7 +173,7 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 		filteredNetworkLookPath = oldFilteredPath
 	})
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	probeBwrap = func(string, sandboxpolicy.NetworkPosture) error { return nil }
+	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	filteredNetworkLookPath = func(name string) (string, error) {
 		if name == "pasta" {
 			return "", errors.New("not found")

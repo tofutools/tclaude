@@ -264,7 +264,7 @@ jobs:
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
         run: |
           smoke_log="$RUNNER_TEMP/tclaude-layer-bubblewrap-smoke.log"
-          go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=120s |
+          go test ./pkg/claude/session -run '^TestTclaudeLayerHostSmoke$' -count=1 -v -timeout=180s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestTclaudeLayerHostSmoke ' "$smoke_log"; then
             {
@@ -274,6 +274,16 @@ jobs:
               echo "The test name, build constraints, or smoke gate likely changed; see the test log."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::Sandbox v2 bubblewrap smoke did not report an explicit pass (TestTclaudeLayerHostSmoke)"
+            exit 1
+          fi
+          if ! grep -qE '^ *--- PASS: TestTclaudeLayerHostSmoke/host-network-constructed-root ' "$smoke_log"; then
+            {
+              echo "### Sandbox v2 host-network constructed-root arm did not pass"
+              echo
+              echo "TCL-798's Linux socket capability under network=open rests on this arm's"
+              echo "explicit pass. A skipped or renamed subtest is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerHostSmoke/host-network-constructed-root did not report an explicit pass"
             exit 1
           fi
 
