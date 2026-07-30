@@ -20,13 +20,13 @@ import (
 )
 
 type seancePlanView struct {
-	Predecessor              string `json:"predecessor"`
-	Harness                  string `json:"harness"`
-	Cwd                      string `json:"cwd"`
-	Hops                     int    `json:"hops"`
-	Requested                int    `json:"requested_back"`
-	Exact                    bool   `json:"exact"`
-	ClaudeTmuxSocketDenyPath string `json:"claude_tmux_socket_deny_path,omitempty"`
+	Predecessor     string   `json:"predecessor"`
+	Harness         string   `json:"harness"`
+	Cwd             string   `json:"cwd"`
+	Hops            int      `json:"hops"`
+	Requested       int      `json:"requested_back"`
+	Exact           bool     `json:"exact"`
+	SandboxDenyDirs []string `json:"sandbox_deny_dirs,omitempty"`
 }
 
 func requestSeancePlan(
@@ -132,8 +132,8 @@ func TestSeancePlan_DefaultAndSelectorsResolveThroughDaemon(t *testing.T) {
 		assert.Equal(t, 1, got.Hops)
 		assert.Equal(t, 1, got.Requested)
 		assert.False(t, got.Exact)
-		assert.Equal(t, tmuxSocketPath, got.ClaudeTmuxSocketDenyPath,
-			"plan must carry the daemon-resolved host-control path to --print-cmd")
+		assert.Contains(t, got.SandboxDenyDirs, tmuxSocketPath,
+			"plan must carry the daemon-prepared host-control posture to --print-cmd")
 	})
 
 	t.Run("stable agent id walks from live head", func(t *testing.T) {

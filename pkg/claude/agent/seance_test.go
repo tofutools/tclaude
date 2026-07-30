@@ -131,11 +131,11 @@ func TestSeance_PrintCmd_ClaudeIncludesTmuxHostControlDeny(t *testing.T) {
 	const socketPath = "/daemon-resolved/tmux-1000/tclaude"
 	t.Setenv("TMUX_TMPDIR", "relative-client-value-must-not-be-used")
 	stubSeanceDaemon(t, seanceResolveResp{
-		Predecessor:              dead,
-		Harness:                  "claude",
-		Cwd:                      t.TempDir(),
-		Sandbox:                  "inherit",
-		ClaudeTmuxSocketDenyPath: socketPath,
+		Predecessor:     dead,
+		Harness:         "claude",
+		Cwd:             t.TempDir(),
+		Sandbox:         "inherit",
+		SandboxDenyDirs: []string{socketPath},
 	}, nil, nil)
 
 	var stdout, stderr bytes.Buffer
