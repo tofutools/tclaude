@@ -305,7 +305,11 @@ outrank it). Three modes:
   `settings.json` *is* the operator's chosen posture. For daemon-spawned agents
   inside a Git repository, tclaude merges only proof-pinned `filesystem.allowWrite`
   entries using the same proof-pinned repository paths; Claude Code merges these
-  arrays with the operator's existing scopes.
+  arrays with the operator's existing scopes. tclaude also merges one
+  non-profile host-control rule: `denyRead` + `denyWrite` for the exact named
+  tmux socket hosting tclaude's agent panes. Under `inherit` that rule becomes
+  active only when the operator's sandbox is enabled; it does not change the
+  enabled/disabled choice.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the
@@ -315,6 +319,12 @@ outrank it). Three modes:
   above are included.
 - **`off`** — forces the sandbox **off** for this session even if `settings.json`
   enables it (the agent's Bash runs unconfined).
+
+The tmux rule is socket-specific. Agents may still run the `tmux` binary
+against a private socket they own; they cannot connect to the existing
+`tclaude` server and use `capture-pane`, `send-keys`, or session mutation to
+inspect or reconfigure agent panes. The sandbox editor shows this generated
+Claude rule as read-only launch context alongside Codex's managed baseline.
 
 This is the per-session counterpart to the **global** hardening guide
 ([`sandbox-hardening.md`](sandbox-hardening.md) / `tclaude setup

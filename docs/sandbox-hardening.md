@@ -217,6 +217,14 @@ after upgrading**: settings written by an older tclaude do not acquire
 `failIfUnavailable: true`, `allowUnsandboxedCommands: false`, or the GitHub
 domains until the installer runs again.
 
+For tclaude-managed Claude sessions, the launch-specific `--settings` overlay
+also adds `denyRead` + `denyWrite` for the exact named tmux socket hosting agent
+panes. That host path is resolved at launch rather than installed in this
+portable user-level block. It prevents `capture-pane`, `send-keys`, and tmux
+session mutation against tclaude while leaving the tmux binary and agent-owned
+private sockets usable. Sandbox mode `off` is the explicit escape hatch;
+`inherit` applies the socket rule only when the operator's sandbox is enabled.
+
 Notes:
 
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1

@@ -1495,6 +1495,12 @@ func runNew(params *NewParams) error {
 			spawnSpec.ExecutablePath = stackedProof.Executable.Path
 		}
 	}
+	if h.Name == harness.DefaultName {
+		spawnSpec, err = harness.PrepareClaudeSandboxLaunch(spawnSpec)
+		if err != nil {
+			return fmt.Errorf("prepare Claude host-control sandbox: %w", err)
+		}
+	}
 	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		if stacked {
@@ -1835,7 +1841,7 @@ func OneShotLaunchPosture(
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
 		return harness.SpawnSpec{}, err
 	}
-	return harness.SpawnSpec{
+	posture := harness.SpawnSpec{
 		Cwd:              cwd,
 		SandboxMode:      sandboxMode,
 		SandboxWriteDirs: launchWriteDirs,
@@ -1844,7 +1850,11 @@ func OneShotLaunchPosture(
 		ShellEnvironment: sandboxSnapshotEnvironment(effectiveSandbox),
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
-	}, nil
+	}
+	if harnessName == harness.DefaultName {
+		return harness.PrepareClaudeSandboxLaunch(posture)
+	}
+	return posture, nil
 }
 
 func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, *harness.CodexSplitPolicyCapability, error) {

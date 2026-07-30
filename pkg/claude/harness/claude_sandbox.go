@@ -114,8 +114,8 @@ func (claudeSandbox) ValidateMode(mode string) (string, error) {
 // properties that keep a sandboxed agent able to coordinate yet unable to read
 // peers' state). Keyed by mode value.
 var claudeSandboxModeHelp = map[string]string{
-	ClaudeSandboxInherit: "Use your Claude Code settings.json sandbox config as-is, including any tclaude hardening already installed.",
-	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable and ~/.tclaude/data (all daemon state) is hidden, so the agent can still run `tclaude agent` but can't read other agents' state.",
+	ClaudeSandboxInherit: "Use your Claude Code settings.json enabled/disabled posture as-is, including any tclaude hardening already installed. When enabled, tclaude's per-launch deny also blocks the tmux server socket hosting agent panes.",
+	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable while ~/.tclaude/data and the tmux server socket hosting agent panes are denied.",
 	ClaudeSandboxOff:     "⚠ Force the OS sandbox OFF for this session, even if settings.json enables it. The agent's Bash runs unconfined.",
 }
 

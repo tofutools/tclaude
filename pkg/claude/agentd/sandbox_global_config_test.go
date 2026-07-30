@@ -13,6 +13,8 @@ import (
 func TestSandboxGlobalFilesystemRulesMergeHarnessProvenance(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	tmuxBase := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	codexHome := filepath.Join(home, ".codex")
 	t.Setenv("CODEX_HOME", codexHome)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
@@ -56,11 +58,22 @@ func TestSandboxGlobalFilesystemRulesMergeHarnessProvenance(t *testing.T) {
 	assert.False(t, staleInstalledRowShown)
 	assert.Equal(t, "~/.claude/settings.json", read.Origins[0].Source)
 	assert.Equal(t, "generated tclaude-agent-<launch-id>.config.toml", read.Origins[1].Source)
+
+	tmuxSocket := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	claudeTmux := byKey[tmuxSocket+"|deny"]
+	assert.Equal(t, []string{"claude"}, claudeTmux.Harnesses)
+	require.Len(t, claudeTmux.Origins, 1)
+	assert.Equal(t, "generated claude --settings launch override", claudeTmux.Origins[0].Source)
+	codexTmux := byKey[filepath.Dir(tmuxSocket)+"|deny"]
+	assert.Equal(t, []string{"codex"}, codexTmux.Harnesses,
+		"Codex's existing directory-wide boundary remains independently visible")
 }
 
 func TestSandboxGlobalFilesystemRulesKeepCanonicalCodexBaselineWhenClaudeConfigIsMalformed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	tmuxBase := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".claude"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"sandbox":`), 0o600))
 
@@ -69,6 +82,16 @@ func TestSandboxGlobalFilesystemRulesKeepCanonicalCodexBaselineWhenClaudeConfigI
 	require.Len(t, got.Warnings, 1)
 	assert.Contains(t, got.Warnings[0], "Claude Code")
 	assert.NotContains(t, got.Warnings[0], `{"sandbox":`, "parser source excerpts must not reach the endpoint")
+	tmuxSocket := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	assert.Contains(t, got.Filesystem, sandboxGlobalFilesystemRuleJSON{
+		Path: tmuxSocket, Access: "deny", Harnesses: []string{"claude"},
+		Origins: []sandboxGlobalFilesystemRuleOriginJSON{{
+			Harness: "claude", Source: "generated claude --settings launch override",
+			Setting: "sandbox.filesystem.denyRead + denyWrite", Access: "deny",
+			Note: "Canonical host-control baseline added to every tclaude-managed Claude launch unless sandbox mode is off; " +
+				"under inherit it is active when the operator's sandbox is enabled.",
+		}},
+	})
 }
 
 func TestSandboxGlobalFilesystemRulesMergeAcrossSymlinkedHome(t *testing.T) {
