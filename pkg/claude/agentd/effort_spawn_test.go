@@ -211,7 +211,7 @@ func TestSessionNewArgs_Sandbox(t *testing.T) {
 	}
 }
 
-func TestSessionArgs_SandboxImplementationDefaultsOffAndReplaysOptIn(t *testing.T) {
+func TestSessionArgs_SandboxImplementationLeavesBuiltinUnpinnedAndReplaysExplicitChoices(t *testing.T) {
 	for _, implementation := range []string{"", string(sandboxpolicy.ImplementationHarnessBuiltin)} {
 		for _, args := range [][]string{
 			sessionNewArgs(clcommon.SpawnArgs{
@@ -227,19 +227,26 @@ func TestSessionArgs_SandboxImplementationDefaultsOffAndReplaysOptIn(t *testing.
 		}
 	}
 
-	for name, args := range map[string][]string{
-		"new": sessionNewArgs(clcommon.SpawnArgs{
-			Label: "lbl", Cwd: "/tmp/x",
-			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
-		}),
-		"resume": sessionResumeArgs(clcommon.SpawnArgs{
-			ConvID: "conv-1", Cwd: "/tmp/x",
-			SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
-		}),
+	for _, implementation := range []sandboxpolicy.Implementation{
+		sandboxpolicy.ImplementationTclaudeLayer,
+		sandboxpolicy.ImplementationStacked,
+		sandboxpolicy.ImplementationOff,
 	} {
-		i := slices.Index(args, "--sandbox-impl")
-		if i < 0 || i+1 >= len(args) || args[i+1] != string(sandboxpolicy.ImplementationTclaudeLayer) {
-			t.Fatalf("%s must replay the durable tclaude-layer opt-in, got %v", name, args)
+		for name, args := range map[string][]string{
+			"new": sessionNewArgs(clcommon.SpawnArgs{
+				Label: "lbl", Cwd: "/tmp/x",
+				SandboxImplementation: string(implementation),
+			}),
+			"resume": sessionResumeArgs(clcommon.SpawnArgs{
+				ConvID: "conv-1", Cwd: "/tmp/x",
+				SandboxImplementation: string(implementation),
+			}),
+		} {
+			i := slices.Index(args, "--sandbox-impl")
+			if i < 0 || i+1 >= len(args) || args[i+1] != string(implementation) {
+				t.Fatalf("%s must replay durable implementation %q, got %v",
+					name, implementation, args)
+			}
 		}
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func TestSandboxOffModeUsesHarnessNativeUnconfinedPosture(t *testing.T) {
@@ -28,6 +30,28 @@ func TestSandboxOffModeUsesHarnessNativeUnconfinedPosture(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("SandboxOffMode(%s) = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOffSandboxImplementationOverridesInheritedHarnessMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, inherited, want string
+	}{
+		{DefaultName, ClaudeSandboxOn, ClaudeSandboxOff},
+		{CodexName, SandboxManagedProfile, SandboxDangerFull},
+		{OpenCodeName, OpenCodeSandboxAccessControl, OpenCodeSandboxOff},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := MustGet(tc.name)
+			got, err := ResolveSandboxImplementationMode(
+				h, tc.inherited, sandboxpolicy.ImplementationOff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("off implementation mode = %q, want %q", got, tc.want)
 			}
 		})
 	}

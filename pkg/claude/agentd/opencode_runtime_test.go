@@ -738,7 +738,8 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	})
 	require.NoError(t, err)
 	spec.Version = session.TclaudeLayerLegacyLaunchSpecVersion
-	implementation, encoded, err := openCodeSandboxRecord(&spec)
+	implementation, encoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), &spec)
 	require.NoError(t, err)
 
 	decoded, err := openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
@@ -773,7 +774,8 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	require.ErrorContains(t, err, "refusing an unwrapped restart")
 
 	spec.Contract.StateDirs = nil
-	_, missingStateDirs, err := openCodeSandboxRecord(&spec)
+	_, missingStateDirs, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), &spec)
 	require.NoError(t, err)
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,
@@ -804,7 +806,8 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 		"the persisted server spec must carry the tool executor's attachment root")
 	freshSpec.Contract.ReadOnlyStateDirs = nil
 	freshSpec.Contract.ReadOnlyBinds = nil
-	_, missingReadOnlyState, err := openCodeSandboxRecord(freshSpec)
+	_, missingReadOnlyState, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), freshSpec)
 	require.NoError(t, err)
 	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
 		Cwd:                   cwd,
@@ -812,6 +815,20 @@ func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 		SandboxLaunchSpecJSON: missingReadOnlyState,
 	})
 	require.ErrorContains(t, err, "does not protect its executable state")
+}
+
+func TestOpenCodeSandboxRecordPersistsOffWithoutLaunchSpec(t *testing.T) {
+	implementation, encoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationOff), nil)
+	require.NoError(t, err)
+	assert.Equal(t, string(sandboxpolicy.ImplementationOff), implementation)
+	assert.Empty(t, encoded)
+
+	decoded, err := openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		SandboxImplementation: implementation,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, decoded)
 }
 
 func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
@@ -930,7 +947,8 @@ func TestReconcileOpenCodeRuntimeReplaysPersistedWrapperSpec(t *testing.T) {
 		agentID,
 	)
 	require.NoError(t, err)
-	_, encoded, err := openCodeSandboxRecord(spec)
+	_, encoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
 	require.NoError(t, err)
 
 	previousRestart := restartOpenCodeProcess
@@ -1029,7 +1047,8 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	require.Contains(t, spec.Effective.Filesystem, sandboxpolicy.FilesystemGrant{
 		Path: frozenAgentSocket, Access: sandboxpolicy.AccessRead,
 	})
-	_, encoded, err := openCodeSandboxRecord(spec)
+	_, encoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), spec)
 	require.NoError(t, err)
 
 	require.NotNil(t, spec.Contract.OpenCodeControl)

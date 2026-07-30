@@ -142,6 +142,16 @@ export function launchSetting(harness, key) {
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
+export const SANDBOX_IMPL_OFF = 'off';
+
+export function sandboxModeIsOff(harnessName, mode) {
+  const offModes = {
+    claude: 'off',
+    codex: 'danger-full-access',
+    opencode: 'off',
+  };
+  return text(mode) === (offModes[text(harnessName)] || '');
+}
 
 // SANDBOX_APPARMOR_DOC is the operator guide a hint links to when this host
 // most likely denies the nested bwrap stacked needs. The docs own the
@@ -334,6 +344,12 @@ export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
   const value = explicit || view.sandboxImplDefault;
+  if (value === SANDBOX_IMPL_OFF) {
+    return {
+      warn: true,
+      text: 'Sandbox OFF. The agent runs without OS-level confinement; approval policy still applies.',
+    };
+  }
   if (explicit === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
     return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
   }
@@ -421,10 +437,11 @@ export function spawnCapabilityView(draft, context) {
   const approval = launchSetting(harness, 'approval');
   const tools = launchSetting(harness, 'tools');
   const askTimeout = launchSetting(harness, 'askTimeout');
-  const sandboxProfilesDisabled = draft.harness === 'codex'
-    && draft.sandbox === 'danger-full-access';
+  const sandboxProfilesDisabled = draft.sandboxImpl === SANDBOX_IMPL_OFF
+    || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access');
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
   const sshWorkaroundAvailable = showSSHWorkaround
+    && (!draft.sandboxImpl || draft.sandboxImpl === SANDBOX_IMPL_DEFAULT)
     && draft.sandbox === 'tclaude-agent'
     && !sandboxProfilesDisabled
     && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
@@ -452,10 +469,34 @@ export function spawnCapabilityView(draft, context) {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     ...sandboxImplView(harness, context),
+    showSandboxMode: !!(sandbox.visible
+      && draft.sandboxImpl === SANDBOX_IMPL_DEFAULT),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
+  };
+}
+
+// sandboxModeControlLabel names the nested control after the harness that owns
+// it. It is shown only for an explicit harness-builtin selection; the primary
+// Sandbox selector above it chooses the implementation (or Off).
+export function sandboxModeControlLabel(harness) {
+  const name = text(harness?.name);
+  const label = name === 'codex'
+    ? 'Codex'
+    : text(harness?.display_name) || name || 'Harness';
+  return `${label} sandbox mode`;
+}
+
+// sandboxModeOptionsForImplementation removes the native off spelling from
+// the nested mode menu. Off is a first-class implementation choice in the
+// primary Sandbox selector, so presenting it again below would recreate the
+// duplicate controls this interaction replaces.
+export function sandboxModeOptionsForImplementation(setting, harnessName) {
+  return {
+    ...setting,
+    modes: (setting?.modes || []).filter((mode) => !sandboxModeIsOff(harnessName, mode)),
   };
 }
 
@@ -743,6 +784,15 @@ export function applySpawnProfile(
   // onto a profile that never asked for it.
   next.sandboxImpl = view.showSandboxImpl && profile.sandbox_implementation
     ? text(profile.sandbox_implementation) : '';
+  // Profiles authored before `off` became a first-class implementation stored
+  // only the harness-native off mode. Promote that legacy pair in the draft so
+  // the new primary selector tells the truth and the explicit launch cannot
+  // inherit a lower-tier tclaude outer wall.
+  if (!profile.sandbox_implementation
+    && profile.sandbox
+    && sandboxModeIsOff(next.harness, profile.sandbox)) {
+    next.sandboxImpl = SANDBOX_IMPL_OFF;
+  }
   next.sandboxImplCleared = null;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);

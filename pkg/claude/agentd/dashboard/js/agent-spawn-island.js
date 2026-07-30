@@ -39,6 +39,8 @@ import {
   validateSpawnDraft,
   autoCompactWindowHintFor,
   sandboxModeHelpForImplementation,
+  sandboxModeControlLabel,
+  sandboxModeOptionsForImplementation,
   sandboxImplHintFor,
   sandboxImplClearedNoticeFor,
   sandboxImplResolvedLabel,
@@ -893,25 +895,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         }}
         placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
-    <${HelpField} id="agent-spawn-sandbox" label="Sandbox"
-      title="Launch containment for the new agent. The modes are per-harness."
-      value=${draft.sandbox} options=${SettingOptions({
-    setting: view.sandbox,
-    optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
-  })}
-      onChange=${(event) => {
-        const value = event.currentTarget.value;
-        touched.current.add('sandbox');
-        setDraft((before) => ({
-          ...before, sandbox: value,
-          sandboxProfile: before.harness === 'codex' && value === 'danger-full-access'
-            ? '' : before.sandboxProfile,
-        }));
-      }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
-      disabled=${!view.sandbox.visible} busy=${busy} />
     <label class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
       title=${SANDBOX_IMPL_TITLE}>
-      <span class="cron-create-label">Sandbox impl</span>
+      <span class="cron-create-label">Sandbox</span>
       <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
         onChange=${(event) => {
           const value = event.currentTarget.value;
@@ -930,6 +916,19 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           <${SandboxImplHint} hint=${sandboxImplHint} id="agent-spawn-sandbox-impl-hint" />
         </div>
       </div>`}
+    <${HelpField} id="agent-spawn-sandbox"
+      label=${sandboxModeControlLabel(view.harness)}
+      title="Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
+      value=${draft.sandbox} options=${SettingOptions({
+    setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness),
+    optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
+  })}
+      onChange=${(event) => {
+        const value = event.currentTarget.value;
+        touched.current.add('sandbox');
+        setDraft((before) => ({ ...before, sandbox: value }));
+      }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
+      disabled=${!view.showSandboxMode} busy=${busy} />
     ${sandboxImplCleared && html`
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-cleared-row" role="alert">
         <span class="cron-create-label"></span>

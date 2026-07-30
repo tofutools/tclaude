@@ -278,6 +278,17 @@ func accessEnforcementTable(
 	validatedBuiltinMode, goos string,
 	filteredNetworkReady bool,
 ) (accessEnforcementTableRow, error) {
+	if implementation == sandboxpolicy.ImplementationOff {
+		return accessEnforcementTableRow{
+			NetworkClosed: EnforceNone,
+			NetworkList:   EnforceNone,
+			SocketOpen:    EnforceFull,
+			SocketClosed:  EnforceNone,
+			SocketList:    EnforceNone,
+			Scope:         "process",
+			Mechanism:     "sandbox off",
+		}, nil
+	}
 	if implementation.UsesTclaudeLayer() {
 		mechanism := "tclaude-layer Seatbelt"
 		if goos == "linux" {

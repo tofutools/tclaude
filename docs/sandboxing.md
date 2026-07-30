@@ -133,6 +133,13 @@ default remains
 The implementation choice is recorded with the conversation, so a flagless
 resume uses the same layer.
 
+`--sandbox-impl off` is the cross-harness explicit opt-out. It selects each
+harness's native no-confinement posture (`off` for Claude Code and OpenCode,
+`danger-full-access` for Codex), omits composed tclaude sandbox-profile policy,
+and is recorded for relaunches. Because it is a real implementation value—not a
+dashboard-only alias—a group or global default cannot silently put the launch
+back inside `tclaude-layer`.
+
 That legacy name is not a claim that every harness contains an OS sandbox.
 Claude Code and Codex do; OpenCode does not. For OpenCode, leaving the
 implementation unset preserves its historical command filter + warning, while
@@ -146,9 +153,17 @@ The same choice is available wherever an agent is spawned, so the layer does not
 have to be driven through `session new` by hand:
 
 - `tclaude agent spawn --sandbox-impl tclaude-layer`
-- a spawn profile's **Sandbox impl** field, which every agent launched through
+- a spawn profile's **Sandbox** field, which every agent launched through
   that profile inherits
-- the dashboard spawn dialog's **Sandbox impl** row
+- the dashboard spawn dialog's **Sandbox** row
+
+The dashboard presents this implementation choice first: resolved defaults,
+the harness's built-in sandbox when it has one, tclaude's built-in OS sandbox,
+the experimental stacked boundary where supported, or Off. A second
+**\<Harness\> sandbox mode** row appears only after explicitly selecting the
+harness's built-in sandbox. This keeps Codex's managed `tclaude-agent` profile
+where it belongs—as a Codex built-in sandbox mode, not a competing sandbox
+implementation.
 
 Like every other launch field it resolves through one precedence chain, highest
 first: the explicit flag or dialog selection, then `--profile`, then the group's

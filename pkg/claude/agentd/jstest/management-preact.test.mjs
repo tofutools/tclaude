@@ -4,6 +4,17 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
 
+const sandboxImpl = {
+  options: [
+    { value: 'harness-builtin', label: '{harness} built-in' },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+    { value: 'off', label: 'Off' },
+  ],
+  default: 'harness-builtin',
+  host_available: true,
+};
+
 function choose(select, value) {
   for (const option of select.options) {
     if (option.value === value) option.setAttribute('selected', '');
@@ -58,6 +69,14 @@ test('management model preserves full-replace profile and role semantics', async
   const legacyPayload = model.profilePayload(legacyCodex, { name: 'legacy', harness: 'codex', approval: '' }, catalog);
   assert.equal(legacyPayload.approval, 'never');
   assert.equal('auto_review' in legacyPayload, false, 'unset reviewer stays sparse for lower-tier resolution');
+  const legacyOff = model.profileDraft({
+    name: 'legacy-off', harness: 'codex', sandbox: 'danger-full-access',
+  }, {}, catalog);
+  assert.equal(legacyOff.sandbox_implementation, 'off',
+    'editing a legacy native-off profile exposes the durable Off implementation');
+  assert.equal(model.profilePayload(legacyOff, {
+    name: 'legacy-off', harness: 'codex', sandbox: 'danger-full-access',
+  }, catalog).sandbox_implementation, 'off');
   assert.deepEqual(model.harnessDefaults({ sandbox_modes: ['on'], approval_modes: ['plan'], tools_modes: ['deny'], ask_timeout_modes: ['60s'] }), { sandbox: 'on', approval: 'plan', tools: 'deny', approval_reviewer: '', ask_user_question_timeout: '60s' });
 });
 
@@ -117,13 +136,20 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   cleanups.reverse().forEach((fn) => fn());
 });
 
-test('OpenCode profile editor surfaces and saves sandbox plus tool governance', async (t) => {
+test('OpenCode profile editor selects sandbox implementation or off and saves tool governance', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.openDialog({ kind: 'profile-editor', seed: { name: 'opencode-off', harness: 'opencode', sandbox: 'off', tools: 'deny' }, options: {}, catalog });
+  state.openDialog({
+    kind: 'profile-editor',
+    seed: {
+      name: 'opencode-off', harness: 'opencode',
+      sandbox_implementation: 'off', tools: 'deny',
+    },
+    options: {}, catalog, sandboxImpl,
+  });
   const saves = [];
   const cleanups = [];
   const host = harness.document.createElement('div');
@@ -135,11 +161,13 @@ test('OpenCode profile editor surfaces and saves sandbox plus tool governance', 
   });
   await harness.act(() => Promise.resolve());
 
-  const sandbox = host.querySelector('#profile-editor-sandbox');
-  assert.equal(sandbox.closest('.cron-create-row').hidden, false);
-  assert.deepEqual([...sandbox.options].map((option) => option.value), ['off']);
+  const sandbox = host.querySelector('#profile-editor-sandbox-impl');
+  assert.deepEqual([...sandbox.options].map((option) => option.value),
+    ['', 'tclaude-layer', 'stacked', 'off']);
   assert.equal(selectedValue(sandbox), 'off');
-  assert.match(host.querySelector('#profile-editor-sandbox-caveat').textContent, /No tclaude OS containment/);
+  assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, true,
+    'OpenCode has no built-in OS sandbox mode to reveal');
+  assert.match(host.textContent, /Sandbox OFF/);
   const tools = host.querySelector('#profile-editor-tools');
   assert.equal(tools.closest('.cron-create-row').hidden, false);
   assert.deepEqual([...tools.options].map((option) => option.value), ['allow', 'ask', 'deny']);
@@ -147,7 +175,7 @@ test('OpenCode profile editor surfaces and saves sandbox plus tool governance', 
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(saves.length, 1);
   assert.equal(saves[0].payload.harness, 'opencode');
-  assert.equal(saves[0].payload.sandbox, 'off');
+  assert.equal(saves[0].payload.sandbox_implementation, 'off');
   assert.equal(saves[0].payload.tools, 'deny');
   cleanups.reverse().forEach((fn) => fn());
 });
@@ -168,15 +196,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     seed: { name: 'impl', harness: 'claude', sandbox_implementation: 'harness-builtin' },
     options: {},
     catalog,
-    sandboxImpl: {
-      options: [
-        { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
-        { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
-        { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)', experimental: true },
-      ],
-      default: 'harness-builtin',
-      host_available: true,
-    },
+    sandboxImpl,
   });
   const cleanups = [];
   const host = harness.document.createElement('div');
@@ -189,13 +209,18 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   await harness.act(() => Promise.resolve());
 
   const impl = host.querySelector('#profile-editor-sandbox-impl');
+  assert.match(impl.closest('.cron-create-row').textContent, /^Sandbox/);
+  assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, false);
+  assert.match(host.querySelector('#profile-editor-sandbox-row').textContent,
+    /Claude Code sandbox mode/);
   assert.deepEqual(
     [...impl.options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
-      'Stacked: tclaude + Claude Code (experimental)',
       'tclaude built-in OS sandbox (experimental)',
+      'Stacked: tclaude + Claude Code (experimental)',
+      'Off',
     ],
   );
 
@@ -210,6 +235,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     'Codex built-in (no filtered network sandbox yet)',
   );
   assert.match(host.textContent, /upstream proxy is experimental and off by default/);
+  assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, false,
+    'the explicit harness-builtin selection survives a capable harness switch');
 
   choose(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -217,11 +244,20 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
-      'Stacked: tclaude + OpenCode (experimental)',
       'tclaude built-in OS sandbox (experimental)',
+      'Stacked: tclaude + OpenCode (experimental)',
+      'Off',
     ],
   );
   assert.match(host.textContent, /harness-builtin is invalid for OpenCode/);
+  assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, false,
+    'an invalid preserved built-in pin stays inspectable until the server refuses or the operator changes it');
+  choose(host.querySelector('#profile-editor-sandbox-impl'), 'off');
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#profile-editor-sandbox-impl'), 'change',
+  ));
+  assert.equal(host.querySelector('#profile-editor-sandbox-row').hidden, true);
+  assert.match(host.textContent, /Sandbox OFF/);
   cleanups.reverse().forEach((fn) => fn());
 });
 

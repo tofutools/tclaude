@@ -13,6 +13,7 @@ const (
 	ImplementationHarnessBuiltin Implementation = "harness-builtin"
 	ImplementationTclaudeLayer   Implementation = "tclaude-layer"
 	ImplementationStacked        Implementation = "stacked"
+	ImplementationOff            Implementation = "off"
 )
 
 // UsesTclaudeLayer reports whether tclaude owns an outer OS boundary.
@@ -76,10 +77,11 @@ func NormalizeImplementation(value string) (Implementation, error) {
 		return ImplementationHarnessBuiltin, nil
 	}
 	switch implementation {
-	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked:
+	case ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked, ImplementationOff:
 		return implementation, nil
 	default:
-		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, or %s)",
-			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked)
+		return "", fmt.Errorf("invalid sandbox implementation %q (want %s, %s, %s, or %s)",
+			value, ImplementationHarnessBuiltin, ImplementationTclaudeLayer, ImplementationStacked,
+			ImplementationOff)
 	}
 }

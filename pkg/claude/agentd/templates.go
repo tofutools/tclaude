@@ -2625,6 +2625,7 @@ func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAg
 	for _, a := range agents {
 		harnessName := strings.TrimSpace(a.Harness)
 		sandboxMode := strings.TrimSpace(a.Sandbox)
+		sandboxImplementation := ""
 		if a.ProfileInline != nil {
 			if harnessName == "" {
 				harnessName = strings.TrimSpace(a.ProfileInline.Harness)
@@ -2632,8 +2633,9 @@ func templateRosterExplicitlyDisablesSandboxProfiles(agents []db.GroupTemplateAg
 			if sandboxMode == "" {
 				sandboxMode = strings.TrimSpace(a.ProfileInline.Sandbox)
 			}
+			sandboxImplementation = strings.TrimSpace(a.ProfileInline.SandboxImplementation)
 		}
-		if !sandboxProfilesDisabled(harnessName, sandboxMode) {
+		if !sandboxProfilesDisabled(harnessName, sandboxMode, sandboxImplementation) {
 			return false
 		}
 	}

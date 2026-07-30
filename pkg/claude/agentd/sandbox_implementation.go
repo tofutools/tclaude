@@ -117,7 +117,7 @@ func sandboxImplementationValidationStatus(err error) int {
 	return http.StatusBadRequest
 }
 
-func resolveOpenCodeSandboxImplementationMode(
+func resolveSandboxImplementationMode(
 	h *harness.Harness,
 	mode, rawImplementation string,
 ) (string, *spawnFailure) {
@@ -125,7 +125,7 @@ func resolveOpenCodeSandboxImplementationMode(
 	if err != nil {
 		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox_implementation", err.Error()}
 	}
-	mode, err = harness.ResolveOpenCodeSandboxImplementationMode(h.Name, mode, implementation)
+	mode, err = harness.ResolveSandboxImplementationMode(h, mode, implementation)
 	if err != nil {
 		return "", &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}

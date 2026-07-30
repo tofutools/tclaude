@@ -116,7 +116,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is an experimental
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -491,8 +491,8 @@ func runNew(params *NewParams) error {
 		}
 		params.Sandbox = sandboxMode
 	}
-	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
-		h.Name, sandboxMode, sandboxImplementation)
+	sandboxMode, err = harness.ResolveSandboxImplementationMode(
+		h, sandboxMode, sandboxImplementation)
 	if err != nil {
 		return err
 	}

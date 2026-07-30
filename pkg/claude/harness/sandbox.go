@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // SandboxCatalog is the optional capability for a harness that takes a
@@ -110,6 +112,26 @@ func SandboxOffMode(h *Harness) (string, error) {
 		return "", fmt.Errorf("harness %q has no sandbox-off mode", h.Name)
 	}
 	return ValidateSandboxMode(h, mode)
+}
+
+// ResolveSandboxImplementationMode applies the launch posture implied by the
+// selected sandbox implementation. Most implementations leave a harness's
+// native mode alone; OpenCode additionally keeps its persisted mode truthful
+// about the tclaude-owned server boundary. Off is intentionally shared across
+// harnesses: it resolves to each harness's native no-confinement mode so an
+// explicit implementation choice cannot be undone by an independently
+// inherited sandbox-mode value.
+func ResolveSandboxImplementationMode(
+	h *Harness, mode string,
+	implementation sandboxpolicy.Implementation,
+) (string, error) {
+	if implementation == sandboxpolicy.ImplementationOff {
+		return SandboxOffMode(h)
+	}
+	if h == nil {
+		return "", fmt.Errorf("sandbox implementation requires a resolved harness")
+	}
+	return ResolveOpenCodeSandboxImplementationMode(h.Name, mode, implementation)
 }
 
 // TclaudeLayerSandboxMode returns the reviewed harness-native posture used

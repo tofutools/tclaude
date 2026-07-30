@@ -88,6 +88,7 @@ const sandboxImpl = {
     { value: 'harness-builtin', label: '{harness} built-in' },
     { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
     { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+    { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
   host_available: true,
@@ -178,9 +179,12 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.harness, 'codex');
   assert.equal(draft.model, 'gpt-5.6');
   assert.equal(draft.sandbox, 'danger-full-access');
+  assert.equal(draft.sandboxImpl, 'off',
+    'a legacy native-off profile is promoted to the durable implementation value');
   assert.equal(draft.approval, 'on-request');
   assert.equal(draft.approvalReviewer, 'auto_review');
   assert.equal(model.spawnProfileSeed(draft, context).auto_review, true);
+  assert.equal(model.spawnProfileSeed(draft, context).sandbox_implementation, 'off');
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
 
@@ -211,7 +215,8 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   assert.equal(openCode.sandbox, 'off');
   assert.equal(openCode.tools, 'allow');
-  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, false);
+  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, true,
+    'an explicit cross-harness Off selection survives the harness switch');
 
   const sparseCodex = model.applySpawnProfile(draft, {
     name: 'codex-default-reviewer', harness: 'codex',
@@ -616,22 +621,31 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   );
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
     'an inherited target stays neutral because the profile chain has not resolved yet');
+  assert.equal(host.querySelector('#agent-spawn-sandbox-row').hidden, true,
+    'the Codex mode stays hidden until its built-in sandbox is explicitly selected');
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
   setValue(codexImpl, 'harness-builtin');
   await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
     /upstream proxy is experimental and off by default/);
+  const codexMode = host.querySelector('#agent-spawn-sandbox');
+  assert.equal(codexMode.closest('.cron-create-row').hidden, false);
+  assert.match(codexMode.closest('.cron-create-row').textContent, /Codex sandbox mode/);
+  assert.deepEqual([...codexMode.options].map((option) => option.value), ['tclaude-agent']);
+  assert.match(codexMode.options[0].textContent,
+    /Managed workspace \+ agent coordination \(tclaude-agent, recommended\)/);
   setValue(codexImpl, '');
   await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   setValue(harnessSelect, 'opencode');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, true,
     'a harness with no trust dialog hides the checkbox');
-  const openCodeSandbox = host.querySelector('#agent-spawn-sandbox');
-  assert.equal(openCodeSandbox.closest('.cron-create-row').hidden, false);
-  assert.deepEqual([...openCodeSandbox.options].map((option) => option.value), ['off']);
-  assert.equal(selectedValue(openCodeSandbox), 'off');
-  assert.match(host.querySelector('#agent-spawn-sandbox-caveat').textContent, /No tclaude OS containment/);
+  const openCodeMode = host.querySelector('#agent-spawn-sandbox');
+  assert.equal(openCodeMode.closest('.cron-create-row').hidden, true,
+    'OpenCode has no built-in OS sandbox, so it has no nested mode control');
+  const openCodeSandbox = host.querySelector('#agent-spawn-sandbox-impl');
+  assert.deepEqual([...openCodeSandbox.options].map((option) => option.value),
+    ['', 'tclaude-layer', 'stacked', 'off']);
   assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
   const openCodeTools = host.querySelector('#agent-spawn-tools');
   assert.equal(openCodeTools.closest('.cron-create-row').hidden, false);
@@ -640,10 +654,18 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   setValue(harnessSelect, 'claude');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
   assert.equal(host.querySelector('#agent-spawn-tools-row').hidden, true);
+  const claudeSandbox = host.querySelector('#agent-spawn-sandbox-impl');
+  setValue(claudeSandbox, 'harness-builtin');
+  await harness.act(() => harness.fireEvent(claudeSandbox, 'change'));
+  const claudeMode = host.querySelector('#agent-spawn-sandbox');
+  assert.equal(claudeMode.closest('.cron-create-row').hidden, false);
+  assert.match(claudeMode.closest('.cron-create-row').textContent, /Claude Code sandbox mode/);
+  assert.deepEqual([...claudeMode.options].map((option) => option.value), ['inherit', 'on'],
+    'off belongs to the primary Sandbox selector, not the nested Claude mode selector');
   mounted.cleanup();
 });
 
-test('Codex sandbox-off keeps a visible forced-none sandbox-profile choice', async (t) => {
+test('the primary Sandbox off choice keeps a visible forced-none sandbox-profile choice', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
   try {
@@ -652,9 +674,12 @@ test('Codex sandbox-off keeps a visible forced-none sandbox-profile choice', asy
     const harnessSelect = host.querySelector('#agent-spawn-harness');
     setValue(harnessSelect, 'codex');
     await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
-    const codexSandbox = host.querySelector('#agent-spawn-sandbox');
-    setValue(codexSandbox, 'danger-full-access');
+    const codexSandbox = host.querySelector('#agent-spawn-sandbox-impl');
+    setValue(codexSandbox, 'off');
     await harness.act(() => harness.fireEvent(codexSandbox, 'change'));
+    assert.equal(host.querySelector('#agent-spawn-sandbox-row').hidden, true);
+    assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
+      /Sandbox OFF/);
 
     const forcedNone = host.querySelector('#agent-spawn-sandbox-profile');
     assert.equal(forcedNone.closest('.cron-create-row').hidden, false,

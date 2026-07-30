@@ -40,19 +40,30 @@ export function harnessDefaults(harness) {
   };
 }
 
+function sandboxModeIsOff(harnessName, mode) {
+  return mode === ({
+    claude: 'off',
+    codex: 'danger-full-access',
+    opencode: 'off',
+  }[harnessName] || '');
+}
+
 export function profileDraft(seed = null, { editExisting = true, local = null } = {}, catalog = []) {
   const harness = defaultHarness(catalog, seed?.harness);
   const h = harnessByName(catalog, harness);
   const defaults = harnessDefaults(h);
+  const sandbox = seed?.sandbox || defaults.sandbox;
+  const sandboxImplementation = seed?.sandbox_implementation
+    || (seed?.sandbox && sandboxModeIsOff(harness, sandbox) ? 'off' : '');
   return {
     name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
-    model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
+    model: seed?.model || '', effort: seed?.effort || '', sandbox,
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',
     // "" = unset, so the profile stays silent and lower spawn tiers still speak.
-    sandbox_implementation: seed?.sandbox_implementation || '',
+    sandbox_implementation: sandboxImplementation,
     // Retained for backward-compatible local draft shape. Harness switches no
     // longer discard an explicit implementation selection.
     sandbox_implementation_cleared: null,

@@ -67,6 +67,37 @@ func TestSpawn_ExplicitTclaudeLayerReachesLaunch(t *testing.T) {
 	assertSandboxLayerCalls(t, f, testharness.SandboxLayerInteractive)
 }
 
+func TestSpawn_ExplicitOffDisablesEveryHarnessSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		harness string
+		want    string
+	}{
+		{harness.DefaultName, harness.ClaudeSandboxOff},
+		{harness.CodexName, harness.SandboxDangerFull},
+		{harness.OpenCodeName, harness.OpenCodeSandboxOff},
+	} {
+		t.Run(tc.harness, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("crew")
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   tc.harness + "-off",
+				"harness":                tc.harness,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationOff),
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+			implementation, ok := f.World.SpawnSandboxImplementation(resp.ConvID)
+			require.True(t, ok)
+			assert.Equal(t, string(sandboxpolicy.ImplementationOff), implementation)
+			mode, ok := f.World.SpawnSandbox(resp.ConvID)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, mode)
+			assertSandboxLayerCalls(t, f)
+		})
+	}
+}
+
 // TestSpawn_SandboxImplementationFromProfileTiers: the field rides the standard
 // per-field precedence, at every tier — the named --profile, the group default,
 // and the global default. This is the path an operator actually uses: pin it

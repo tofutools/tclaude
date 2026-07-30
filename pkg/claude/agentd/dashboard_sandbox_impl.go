@@ -190,6 +190,11 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 				Descr: "Runs {harness} inside tclaude's outer wall and requires a live " +
 					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
 			},
+			{
+				Value: string(sandboxpolicy.ImplementationOff),
+				Label: "Off",
+				Descr: "Disables OS-level sandbox confinement for this launch.",
+			},
 		},
 		Default: string(sandboxpolicy.ImplementationHarnessBuiltin),
 		Stacked: map[string]dashboardStackedAvailability{},

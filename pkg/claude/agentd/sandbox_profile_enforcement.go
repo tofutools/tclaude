@@ -455,8 +455,8 @@ func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnfo
 	if defaults.implementation == sandboxpolicy.ImplementationStacked {
 		sandboxMode = predictedBuiltinMode(defaults.harness.Name)
 	}
-	sandboxMode, err = harness.ResolveOpenCodeSandboxImplementationMode(
-		defaults.harness.Name, sandboxMode, defaults.implementation)
+	sandboxMode, err = harness.ResolveSandboxImplementationMode(
+		defaults.harness, sandboxMode, defaults.implementation)
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}
@@ -820,7 +820,7 @@ func parseSandboxProfileEnforcementTarget(raw string) (parsedSandboxProfileEnfor
 func invalidSandboxProfileTarget(raw string) error {
 	return fmt.Errorf(
 		`invalid --for target %q (want implementation[/harness[/platform]]; `+
-			`implementation: harness-builtin, tclaude-layer, stacked; `+
+			`implementation: off, harness-builtin, tclaude-layer, stacked; `+
 			`harness: claude, codex, opencode; platform: linux, darwin)`,
 		raw,
 	)
@@ -858,6 +858,6 @@ func resolveSandboxProfilePredictionMode(
 	if target.implementation == sandboxpolicy.ImplementationStacked {
 		mode = predictedBuiltinMode(target.harness.Name)
 	}
-	return harness.ResolveOpenCodeSandboxImplementationMode(
-		target.harness.Name, mode, target.implementation)
+	return harness.ResolveSandboxImplementationMode(
+		target.harness, mode, target.implementation)
 }
