@@ -70,12 +70,14 @@ func TestRegister_Roundtrip(t *testing.T) {
 func TestSupports_NilContracts(t *testing.T) {
 	var h *Harness
 	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() ||
-		h.CanReplayOneShotLaunchPosture() || h.SupportsOfflineModelTransport() {
+		h.CanReplayOneShotLaunchPosture() || h.SupportsOfflineModelTransport() ||
+		h.SupportsHostControlSandbox() {
 		t.Fatalf("nil harness must report no capabilities")
 	}
 	bare := &Harness{Name: "bare"}
 	if bare.SupportsRename() || bare.SupportsCompact() || bare.SupportsSoftExit() ||
-		bare.CanReplayOneShotLaunchPosture() || bare.SupportsOfflineModelTransport() {
+		bare.CanReplayOneShotLaunchPosture() || bare.SupportsOfflineModelTransport() ||
+		bare.SupportsHostControlSandbox() {
 		t.Fatalf("harness with nil Lifecycle must report no capabilities")
 	}
 	unknown := &Harness{Ask: codexAsker{}, OneShotReplay: OneShotReplayStrategy(255)}

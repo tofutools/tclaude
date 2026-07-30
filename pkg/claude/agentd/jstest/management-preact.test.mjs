@@ -1239,6 +1239,9 @@ const COMMON_RULES = {
       { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.allowRead', access: 'read', note: "Claude Code's global sandbox is enabled." },
       { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', access: 'write', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
+    { path: '/tmp/tmux-1000/tclaude', access: 'deny', harnesses: ['claude'], origins: [
+      { harness: 'claude', source: 'generated claude --settings launch override', setting: 'sandbox.filesystem.denyRead + denyWrite', access: 'deny', note: "Canonical tclaude tmux socket boundary." },
+    ] },
   ],
   global_network: [{ mode: 'list', entry: { domain: 'global.example' }, origin: { harness: 'claude', setting: 'sandbox.network.allowedDomains' } }],
   global_unix_sockets: [{ mode: 'list', entry: { path: '/tmp/global.sock' }, origin: { harness: 'claude', setting: 'sandbox.network.allowUnixSockets' } }],
@@ -2451,12 +2454,15 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   assert.match(inherited[0].textContent, /Claude \+ Codex/);
   assert.match(inherited[0].getAttribute('title'), /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
   assert.match(inherited[1].textContent, /deny read.*Claude/);
+  const claudeTmux = inherited.find((row) => row.querySelector('.sbx-path').value === '/tmp/tmux-1000/tclaude');
+  assert.match(claudeTmux.textContent, /deny.*Claude/);
+  assert.match(claudeTmux.getAttribute('title'), /generated claude --settings launch override/);
 
   filter.querySelector('option[value="claude"]').selected = true;
   filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   inherited = [...host.querySelectorAll('.sbx-global-row')];
-  assert.equal(inherited.length, 3);
+  assert.equal(inherited.length, 4);
   assert.equal(inherited.every((row) => row.textContent.includes('Claude') && !row.textContent.includes('Codex')), true);
   assert.equal(inherited.every((row) => !row.getAttribute('title').includes('generated tclaude-agent')), true, 'Claude-only tooltips omit Codex provenance');
   assert.equal(inherited.find((row) => row.querySelector('.sbx-path').value === '~/.tclaude/api/agentd.sock').querySelector('.sbx-access').textContent, 'read', 'Claude-only rows use Claude access, not the merged write');

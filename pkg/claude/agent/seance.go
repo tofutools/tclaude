@@ -83,15 +83,16 @@ func seanceCmd() *cobra.Command {
 // belongs in agentd because succession, session cwd and harness metadata live
 // in private ~/.tclaude/data.
 type seanceResolveResp struct {
-	Predecessor string `json:"predecessor"`
-	Harness     string `json:"harness"`
-	Cwd         string `json:"cwd"`
-	Hops        int    `json:"hops"`
-	Requested   int    `json:"requested_back"`
-	Exact       bool   `json:"exact"`
-	Sandbox     string `json:"sandbox"`
-	Approval    string `json:"approval"`
-	AutoReview  bool   `json:"auto_review"`
+	Predecessor     string   `json:"predecessor"`
+	Harness         string   `json:"harness"`
+	Cwd             string   `json:"cwd"`
+	Hops            int      `json:"hops"`
+	Requested       int      `json:"requested_back"`
+	Exact           bool     `json:"exact"`
+	Sandbox         string   `json:"sandbox"`
+	Approval        string   `json:"approval"`
+	AutoReview      bool     `json:"auto_review"`
+	SandboxDenyDirs []string `json:"sandbox_deny_dirs,omitempty"`
 }
 
 type seanceRunResp struct {
@@ -180,9 +181,10 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 	posture := harness.SpawnSpec{
-		SandboxMode:    resolved.Sandbox,
-		ApprovalPolicy: resolved.Approval,
-		AutoReview:     resolved.AutoReview,
+		SandboxMode:     resolved.Sandbox,
+		SandboxDenyDirs: append([]string(nil), resolved.SandboxDenyDirs...),
+		ApprovalPolicy:  resolved.Approval,
+		AutoReview:      resolved.AutoReview,
 	}
 	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
 		// The daemon creates a launch-unique profile at execution time. Keep a

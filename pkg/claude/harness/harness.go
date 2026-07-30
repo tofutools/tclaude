@@ -140,6 +140,11 @@ type Harness struct {
 	// harness is not stackable; callers must refuse rather than infer behavior
 	// from the harness name or fall back to a single wall.
 	NestedSandbox NestedSandboxContract
+	// HostControlSandbox is the optional harness-native launch preparation that
+	// keeps an agent from reaching tclaude's host control plane. nil means the
+	// harness has no reviewed implementation; callers preserve its launch
+	// posture rather than inferring support from the harness name.
+	HostControlSandbox HostControlSandboxContract
 
 	// TmuxScrollback marks a harness that relies on tmux for scroll-back
 	// history rather than rendering its own. The spawn path turns tmux mouse

@@ -20,12 +20,13 @@ import (
 )
 
 type seancePlanView struct {
-	Predecessor string `json:"predecessor"`
-	Harness     string `json:"harness"`
-	Cwd         string `json:"cwd"`
-	Hops        int    `json:"hops"`
-	Requested   int    `json:"requested_back"`
-	Exact       bool   `json:"exact"`
+	Predecessor     string   `json:"predecessor"`
+	Harness         string   `json:"harness"`
+	Cwd             string   `json:"cwd"`
+	Hops            int      `json:"hops"`
+	Requested       int      `json:"requested_back"`
+	Exact           bool     `json:"exact"`
+	SandboxDenyDirs []string `json:"sandbox_deny_dirs,omitempty"`
 }
 
 func requestSeancePlan(
@@ -98,6 +99,9 @@ func setSeanceSessionSnapshot(t *testing.T, convID string, snapshot sandboxpolic
 // harness + cwd. The caller never needs direct access to ~/.tclaude/data.
 func TestSeancePlan_DefaultAndSelectorsResolveThroughDaemon(t *testing.T) {
 	f := newFlow(t)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	tmuxSocketPath, err := harness.ClaudeTmuxSocketDenyPath()
+	require.NoError(t, err)
 
 	const (
 		oldConv = "aaaabbbb-1111-2222-3333-444444444444"
@@ -112,7 +116,7 @@ func TestSeancePlan_DefaultAndSelectorsResolveThroughDaemon(t *testing.T) {
 	f.HaveMember("alpha", oldConv)
 	f.HaveConvWithTitle(newConv, "worker")
 	haveSeanceSession(f, newConv, "seance-new-label", "seance-new-tmux", newCwd)
-	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
 	require.NoError(t, err, "rotate actor old → new")
 
 	agentID, err := db.AgentIDForConv(newConv)
@@ -128,6 +132,8 @@ func TestSeancePlan_DefaultAndSelectorsResolveThroughDaemon(t *testing.T) {
 		assert.Equal(t, 1, got.Hops)
 		assert.Equal(t, 1, got.Requested)
 		assert.False(t, got.Exact)
+		assert.Contains(t, got.SandboxDenyDirs, tmuxSocketPath,
+			"plan must carry the daemon-prepared host-control posture to --print-cmd")
 	})
 
 	t.Run("stable agent id walks from live head", func(t *testing.T) {

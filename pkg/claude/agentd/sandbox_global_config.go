@@ -195,9 +195,10 @@ func sandboxSocketTemplates() []sandboxAccessTemplateJSON {
 	return templates
 }
 
-// sandboxGlobalFilesystemRules reads only the filesystem portions of the two
-// harness configs that compose beneath a named sandbox profile:
+// sandboxGlobalFilesystemRules reads the filesystem portions of the harness
+// baselines that compose beneath a named sandbox profile:
 //
+//   - tclaude's generated Claude host-control deny;
 //   - Claude Code's user settings.json sandbox block; and
 //   - the canonical baseline rendered into every managed Codex launch profile.
 //
@@ -213,6 +214,11 @@ func sandboxGlobalFilesystemRules(home string) sandboxGlobalFilesystemRulesJSON 
 
 	candidates := make([]sandboxGlobalFilesystemRuleCandidate, 0)
 	warnings := make([]string, 0)
+	claudeManagedRules, claudeManagedWarning := readClaudeManagedFilesystemRules()
+	candidates = append(candidates, claudeManagedRules...)
+	if claudeManagedWarning != "" {
+		warnings = append(warnings, claudeManagedWarning)
+	}
 	claudeRules, claudeWarning := readClaudeGlobalFilesystemRules(home)
 	candidates = append(candidates, claudeRules...)
 	if claudeWarning != "" {
@@ -228,6 +234,22 @@ func sandboxGlobalFilesystemRules(home string) sandboxGlobalFilesystemRulesJSON 
 		Filesystem: mergeSandboxGlobalFilesystemRules(home, candidates),
 		Warnings:   warnings,
 	}
+}
+
+func readClaudeManagedFilesystemRules() ([]sandboxGlobalFilesystemRuleCandidate, string) {
+	tmuxSocketPath, err := harness.ClaudeTmuxSocketDenyPath()
+	if err != nil {
+		return nil, "Could not render the managed Claude host-control baseline: " + err.Error()
+	}
+	return []sandboxGlobalFilesystemRuleCandidate{{
+		path: tmuxSocketPath, access: "deny",
+		origin: sandboxGlobalFilesystemRuleOriginJSON{
+			Harness: "claude", Source: "generated claude --settings launch override",
+			Setting: "sandbox.filesystem.denyRead + denyWrite",
+			Note: "Canonical host-control baseline added to every tclaude-managed Claude launch unless sandbox mode is off; " +
+				"Linux masks only this socket when Claude's inherited sandbox is enabled. Claude's built-in macOS config has no exact connect deny; allowAllUnixSockets false activates the broader allowUnixSockets allowlist.",
+		},
+	}}, ""
 }
 
 func readClaudeGlobalFilesystemRules(home string) ([]sandboxGlobalFilesystemRuleCandidate, string) {

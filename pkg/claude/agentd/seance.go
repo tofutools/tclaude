@@ -45,15 +45,16 @@ type seanceResolveReq struct {
 }
 
 type seanceResolveResp struct {
-	Predecessor string `json:"predecessor"`
-	Harness     string `json:"harness"`
-	Cwd         string `json:"cwd"`
-	Hops        int    `json:"hops"`
-	Requested   int    `json:"requested_back"`
-	Exact       bool   `json:"exact"`
-	Sandbox     string `json:"sandbox"`
-	Approval    string `json:"approval"`
-	AutoReview  bool   `json:"auto_review"`
+	Predecessor     string   `json:"predecessor"`
+	Harness         string   `json:"harness"`
+	Cwd             string   `json:"cwd"`
+	Hops            int      `json:"hops"`
+	Requested       int      `json:"requested_back"`
+	Exact           bool     `json:"exact"`
+	Sandbox         string   `json:"sandbox"`
+	Approval        string   `json:"approval"`
+	AutoReview      bool     `json:"auto_review"`
+	SandboxDenyDirs []string `json:"sandbox_deny_dirs,omitempty"`
 
 	// launchPosture and effectiveSandbox never cross the API boundary. They are
 	// the daemon-private, DB-backed launch contract consumed by /run.
@@ -551,13 +552,12 @@ func resolveSeancePlan(
 		return seanceResolveResp{}, false
 	}
 	posture, err := session.OneShotLaunchPosture(
-		cwd, h.Name, sandboxMode, approvalPolicy, autoReview, effectiveSandbox)
+		cwd, h, sandboxMode, approvalPolicy, autoReview, effectiveSandbox)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+err.Error())
 		return seanceResolveResp{}, false
 	}
-
 	return seanceResolveResp{
 		Predecessor:      target,
 		Harness:          h.Name,
@@ -568,6 +568,7 @@ func resolveSeancePlan(
 		Sandbox:          sandboxMode,
 		Approval:         approvalPolicy,
 		AutoReview:       autoReview,
+		SandboxDenyDirs:  append([]string(nil), posture.SandboxDenyDirs...),
 		launchPosture:    posture,
 		effectiveSandbox: effectiveSandbox,
 	}, true

@@ -96,9 +96,11 @@ type SpawnSpec struct {
 	// sandbox profile. Harness adapters must either render them or reject the
 	// launch before BuildCommand; silently dropping them is not allowed.
 	SandboxReadDirs []string
-	// SandboxDenyDirs are canonical roots an effective sandbox profile denies
-	// all filesystem access to. Claude renders both denyRead and denyWrite;
-	// Codex renders permission-profile "none" entries.
+	// SandboxDenyDirs are canonical paths denied all filesystem access. Most
+	// come from directory-only sandbox-profile rows; Claude launch preparation
+	// also adds tclaude's exact tmux server socket as a non-profile host-control
+	// boundary. Claude renders both denyRead and denyWrite; Codex renders
+	// permission-profile "none" entries.
 	SandboxDenyDirs []string
 	// SandboxReadBaseline is the effective profile's opt-in read posture
 	// (sandboxpolicy.ReadBaseline). "" keeps each harness's existing broad,

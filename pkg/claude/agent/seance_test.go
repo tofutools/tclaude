@@ -126,11 +126,35 @@ func TestSeance_PrintCmd_BuildsHeadlessResumeArgv(t *testing.T) {
 	assert.Contains(t, stderr.String(), "chain is only 2 generation(s) deep")
 }
 
+func TestSeance_PrintCmd_ClaudeIncludesTmuxHostControlDeny(t *testing.T) {
+	const dead = "eeeeeeee-1111-1111-1111-111111111111"
+	const socketPath = "/daemon-resolved/tmux-1000/tclaude"
+	t.Setenv("TMUX_TMPDIR", "relative-client-value-must-not-be-used")
+	stubSeanceDaemon(t, seanceResolveResp{
+		Predecessor:     dead,
+		Harness:         "claude",
+		Cwd:             t.TempDir(),
+		Sandbox:         "inherit",
+		SandboxDenyDirs: []string{socketPath},
+	}, nil, nil)
+
+	var stdout, stderr bytes.Buffer
+	rc := runSeance(&seanceParams{
+		Question: "what changed?",
+		PrintCmd: true,
+	}, strings.NewReader(""), &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "rc; stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), socketPath,
+		"preview must include the same exact tmux deny as execution")
+	assert.Contains(t, stdout.String(), "denyRead")
+}
+
 // The actual-run path pins execution to the exact planned generation and asks
 // agentd to cross the managed-sandbox boundary. No local harness subprocess is
 // spawned by this CLI.
 func TestSeance_Run_InvokesDaemonWithPinnedResumePlan(t *testing.T) {
 	const dead = "99999999-1111-1111-1111-111111111111"
+	t.Setenv("TMUX_TMPDIR", "relative-client-value-must-not-affect-run")
 	cwd := t.TempDir()
 	var runBody map[string]any
 	var runOpts DaemonOpts

@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -60,6 +61,8 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 
 func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	f := newFlow(t)
+	tmuxBase := t.TempDir()
+	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	realHome := t.TempDir()
 	linkedHome := filepath.Join(t.TempDir(), "home")
 	require.NoError(t, os.Symlink(realHome, linkedHome))
@@ -108,6 +111,15 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
+	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
+	require.NoError(t, err)
+	tmuxSocket := filepath.Join(canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	assert.Contains(t, catalog.Global, struct {
+		Path      string   `json:"path"`
+		Access    string   `json:"access"`
+		Harnesses []string `json:"harnesses"`
+	}{Path: tmuxSocket, Access: "deny", Harnesses: []string{"claude"}},
+		"the editor feed must disclose Claude's generated tclaude-socket deny")
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)

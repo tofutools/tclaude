@@ -212,10 +212,32 @@ any project's `.claude/settings.json`:
 ```
 
 `tclaude setup --install-sandbox-hardening` installs this block
-append-only and idempotently. **Existing installations must re-run that command
-after upgrading**: settings written by an older tclaude do not acquire
-`failIfUnavailable: true`, `allowUnsandboxedCommands: false`, or the GitHub
-domains until the installer runs again.
+append-only and idempotently. It adds `allowAllUnixSockets: true` only when the
+key is missing. If the operator already set it to `false`, setup reports the
+scalar conflict and preserves `false`. **Existing installations must re-run
+that command after upgrading**: settings written by an older tclaude do not
+acquire `failIfUnavailable: true`, `allowUnsandboxedCommands: false`, or the
+GitHub domains until the installer runs again.
+
+For tclaude-managed Claude sessions, the launch-specific `--settings` overlay
+also adds `denyRead` + `denyWrite` for the exact named tmux socket hosting agent
+panes. That host path is resolved at launch rather than installed in this
+portable user-level block. On Linux, Claude's bubblewrap runtime masks that
+socket with `/dev/null` when its sandbox is enabled. That prevents
+`capture-pane`, `send-keys`, and tmux session mutation against tclaude while
+leaving the tmux binary and agent-owned private sockets usable. Sandbox mode
+`off` is the explicit escape hatch; under `inherit`, the mask follows the
+operator's enabled/disabled sandbox posture.
+
+On macOS, filesystem denial alone does not block a Unix-socket connection and
+Claude's supported settings expose no exact socket deny. With the default
+`allowAllUnixSockets: true`, the built-in sandbox therefore cannot enforce the
+tclaude tmux boundary. An operator-selected `false` activates the
+`allowUnixSockets` list, which keeps agentd reachable but also blocks every
+other unlisted Unix socket. tclaude does not nest another Seatbelt around
+Claude. When the explicit `tclaude-layer` implementation is selected, its
+existing host-control phase owns the exact connect rule in that one Seatbelt
+profile.
 
 Notes:
 
@@ -325,13 +347,9 @@ Re-allowing it is a `sandbox.network` setting — *not* a filesystem one:
 
 `allowAllUnixSockets` is also honored on macOS. The cross-platform settings
 block therefore permits all Unix sockets there too, including an SSH agent
-socket used by `git push`; a macOS-only operator can remove that broad key and
-add every required socket path explicitly for a tighter policy.
-
-This allowance is a **precondition**, not something this guide's
-lockdown introduces: an agent that can already run `tclaude agent`
-inside a sandbox already has it set. The settings block above lists both
-keys so one `settings.json` works on either platform; on Linux/WSL2 the
+socket used by `git push`. Setup adds this key only when it is missing: an
+operator who already selected `false` keeps the narrower path allowlist and
+must add every other required socket path explicitly. On Linux/WSL2 the
 per-path entry is inert but harmless.
 
 **2. The socket *file* must be visible.** This is the filesystem layer.

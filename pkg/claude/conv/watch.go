@@ -2672,6 +2672,10 @@ func resumeLaunchCmdWithStackedProof(
 			spec.ExecutablePath = stackedProof.Executable.Path
 		}
 	}
+	spec, err = h.PrepareHostControlSandboxLaunch(spec)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
+	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)

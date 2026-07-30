@@ -305,7 +305,16 @@ outrank it). Three modes:
   `settings.json` *is* the operator's chosen posture. For daemon-spawned agents
   inside a Git repository, tclaude merges only proof-pinned `filesystem.allowWrite`
   entries using the same proof-pinned repository paths; Claude Code merges these
-  arrays with the operator's existing scopes.
+  arrays with the operator's existing scopes. tclaude also merges one
+  non-profile host-control rule for the exact named tmux socket hosting
+  tclaude's agent panes. Linux enforces it through Claude's `denyRead`
+  `/dev/null` mask whenever the inherited sandbox is enabled. Claude's built-in
+  macOS settings have no exact Unix-socket deny. The hardening installer adds
+  `allowAllUnixSockets: true` only when the key is missing and preserves an
+  operator-selected `false`; with `false`, the exact `allowUnixSockets`
+  allowlist applies instead. tclaude does not nest another Seatbelt around the
+  harness. The explicit `tclaude-layer` implementation owns its existing tmux
+  host-control rule instead.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the
@@ -315,6 +324,16 @@ outrank it). Three modes:
   above are included.
 - **`off`** — forces the sandbox **off** for this session even if `settings.json`
   enables it (the agent's Bash runs unconfined).
+
+On Linux the tmux rule is socket-specific: agents may still run the `tmux`
+binary against a private socket they own, but cannot connect to the existing
+`tclaude` server and use `capture-pane`, `send-keys`, or session mutation.
+Claude's built-in macOS sandbox cannot provide that exact distinction: broad
+Unix-socket access leaves the tclaude server reachable, while an
+operator-selected `allowAllUnixSockets: false` blocks every socket not listed
+in `allowUnixSockets`. The sandbox editor shows the generated Claude rule and
+this platform limitation as read-only launch context alongside Codex's managed
+baseline.
 
 This is the per-session counterpart to the **global** hardening guide
 ([`sandbox-hardening.md`](sandbox-hardening.md) / `tclaude setup

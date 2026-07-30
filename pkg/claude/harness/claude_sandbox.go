@@ -114,8 +114,8 @@ func (claudeSandbox) ValidateMode(mode string) (string, error) {
 // properties that keep a sandboxed agent able to coordinate yet unable to read
 // peers' state). Keyed by mode value.
 var claudeSandboxModeHelp = map[string]string{
-	ClaudeSandboxInherit: "Use your Claude Code settings.json sandbox config as-is, including any tclaude hardening already installed.",
-	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. Bash is confined (working dir writable, $HOME read-only); the agentd socket stays reachable and ~/.tclaude/data (all daemon state) is hidden, so the agent can still run `tclaude agent` but can't read other agents' state.",
+	ClaudeSandboxInherit: "Use your Claude Code settings.json enabled/disabled posture as-is, including any tclaude hardening already installed. On Linux, when enabled, the per-launch deny blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for the exact boundary or an operator-selected false Unix-socket allowlist for broader blocking.",
+	ClaudeSandboxOn:      "Force Claude Code's OS sandbox ON for this session, even if settings.json leaves it off. The agentd socket stays reachable and ~/.tclaude/data is hidden; Linux also blocks the tmux server hosting agent panes. Claude's built-in macOS sandbox has no exact socket deny; use tclaude-layer for that boundary.",
 	ClaudeSandboxOff:     "⚠ Force the OS sandbox OFF for this session, even if settings.json enables it. The agent's Bash runs unconfined.",
 }
 
@@ -144,10 +144,11 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // is disabled so those boundaries cannot be skipped. ~/.codex remains readable
 // because it also contains the Codex runtime itself; denying that whole root
 // can strand the harness.
-// block is cross-platform: macOS honors per-path `allowUnixSockets`;
+// This block is cross-platform: macOS honors per-path `allowUnixSockets`;
 // Linux/WSL2 require the broader `allowAllUnixSockets`, which macOS also
-// honors. Listing both keeps one block functional on either platform, at the
-// cost of the documented all-sockets exposure on macOS too.
+// honors. Listing both keeps one block functional on either platform. The
+// append-only setup merge preserves an existing operator-selected false value
+// instead of replacing it with true.
 //
 // Arrays are []any (not []string) so the setup merge engine compares and
 // appends them uniformly against values decoded from a user's settings file

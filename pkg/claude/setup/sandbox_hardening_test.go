@@ -208,6 +208,18 @@ func TestMergeHardening_ScalarConflict(t *testing.T) {
 	assert.Contains(t, sandbox, "filesystem")
 }
 
+func TestMergeHardening_PreservesExplicitUnixSocketAllowlist(t *testing.T) {
+	tree := decodeTree(t, `{"sandbox":{"network":{"allowAllUnixSockets":false}}}`)
+
+	r := runMerge(tree)
+
+	network := tree["sandbox"].(map[string]any)["network"].(map[string]any)
+	assert.Equal(t, false, network["allowAllUnixSockets"],
+		"an operator-selected Unix-socket allowlist must never be widened")
+	assert.Contains(t, strings.Join(r.scalarConflicts, "\n"),
+		"sandbox.network.allowAllUnixSockets")
+}
+
 // The new bypass setting uses the same append-only scalar behavior as every
 // other hardening key. An operator's explicit true remains untouched, and the
 // warning names the exact unsafe key and the required value.
