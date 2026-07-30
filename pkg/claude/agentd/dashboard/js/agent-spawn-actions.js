@@ -146,6 +146,17 @@ export function createAgentSpawnActions({
       return { path: payload.path || '', branch: payload.branch || branch };
     },
 
+    /* Ask the daemon what a launch would resolve for the fields this dialog
+       leaves blank. The browser cannot work this out: clearing the profile row
+       blanks the dialog but not the group/global default spawn profiles, which
+       the daemon still applies at spawn. */
+    async loadLaunchDefaults(groupName, harnessName) {
+      const query = new URLSearchParams();
+      if (groupName) query.set('group', groupName);
+      if (harnessName) query.set('harness', harnessName);
+      return jsonRequest(fetchImpl, `/api/spawn-launch-defaults?${query.toString()}`);
+    },
+
     async loadSandboxPolicy(groupName, selected = '') {
       const profiles = await loadSandboxProfiles();
       if (selected === SANDBOX_PROFILE_NONE) {

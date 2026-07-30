@@ -41,6 +41,7 @@ import {
   sandboxModeHelpForImplementation,
   sandboxImplHintFor,
   sandboxImplClearedNoticeFor,
+  sandboxImplResolvedLabel,
   setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
@@ -48,8 +49,8 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
-  RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_LABEL, SANDBOX_PROFILE_COMPOSITION,
-  sandboxModeOptionLabel,
+  RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
+  resolvedDefaultOption, sandboxModeOptionLabel,
 } from './resolved-defaults.js';
 
 const html = htm.bind(h);
@@ -175,6 +176,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     worktrees: [], branches: [], defaultBranch: '', subRepos: [],
   });
   const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', key: '' });
+  // What the daemon says a blank sandbox-implementation row would resolve to
+  // for this group + harness. Null while unknown (unfetched, in flight, or the
+  // request failed), which the row renders as an unnamed resolved default
+  // rather than a guess.
+  const [launchDefaults, setLaunchDefaults] = useState(null);
   // Live mirror for the submit closure: after its awaits, the captured
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
@@ -199,6 +205,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const profileRequest = useRef(0);
   const worktreeRequest = useRef(0);
   const sandboxRequest = useRef(0);
+  const launchDefaultsRequest = useRef(0);
   const autonomyRequest = useRef(0);
   const directoryRequest = useRef(0);
   const worktreesRef = useRef(worktrees);
@@ -324,6 +331,30 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     });
     return undefined;
   }, [draft.group, draft.sandboxProfile, view.sandboxProfilesDisabled, current.sandboxRevision]);
+
+  // Ask the daemon what a blank implementation row resolves to. Keyed on group
+  // + harness because those are the two inputs: the group selects which default
+  // spawn profiles apply, and the harness decides which implementations are
+  // even valid. The request counter drops an answer that lands after a newer
+  // pick, and a failure clears the label rather than leaving the previous
+  // group's answer on screen under a new group.
+  useEffect(() => {
+    if (!view.showSandboxImpl || typeof actions?.loadLaunchDefaults !== 'function') {
+      setLaunchDefaults(null);
+      return undefined;
+    }
+    const request = ++launchDefaultsRequest.current;
+    const generation = current.generation;
+    setLaunchDefaults(null);
+    Promise.resolve(actions.loadLaunchDefaults(draft.group, draft.harness)).then((value) => {
+      if (request !== launchDefaultsRequest.current || !state.isCurrent(generation)) return;
+      setLaunchDefaults(value || null);
+    }).catch(() => {
+      if (request !== launchDefaultsRequest.current || !state.isCurrent(generation)) return;
+      setLaunchDefaults(null);
+    });
+    return undefined;
+  }, [draft.group, draft.harness, view.showSandboxImpl]);
 
   // Re-probe the effective sandbox whenever an input to it changes. CWD is a
   // free-text field, so the same 350ms debounce the worktree-repo probe uses
@@ -667,6 +698,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const toolsHelp = view.tools.help[draft.tools] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const autoCompactWindowHint = autoCompactWindowHintFor(draft, view);
+  // The blank row names the answer the daemon gave, in the same words the
+  // concrete option below it uses.
+  const resolvedSandboxImplLabel = sandboxImplResolvedLabel(
+    view.sandboxImplOptions, launchDefaults?.implementation,
+  );
   const sandboxImplHint = sandboxImplHintFor(draft, view);
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
@@ -878,7 +914,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           touched.current.add('sandboxImpl');
           setDraft((before) => setSpawnSandboxImpl(before, value));
         }}>
-        <option value="">— ${RESOLVED_DEFAULTS_LABEL} (${view.sandboxImplInheritLabel}) —</option>
+        <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
         ${(view.sandboxImplOptions || []).map((option) => html`
           <option key=${option.value} value=${option.value}>${option.label}</option>`)}
       </select>

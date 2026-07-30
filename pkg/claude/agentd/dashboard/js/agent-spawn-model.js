@@ -257,12 +257,6 @@ function sandboxImplView(harness, context) {
     ),
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
-    sandboxImplInheritLabel: canBuiltinOSSandbox
-      ? `spawn-profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
-        + (text(harness?.name) === 'codex'
-          ? ` (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
-          : '')
-      : 'spawn-profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
     sandboxImplHarness: harnessLabel,
     sandboxImplHarnessName: text(harness?.name),
     sandboxImplCanStacked: !!harness?.can_stacked,
@@ -275,6 +269,25 @@ function sandboxImplView(harness, context) {
       ? catalog.server_host_unavailable_reason
       : catalog.host_unavailable_reason),
   };
+}
+
+// sandboxImplResolvedLabel names the implementation the daemon says a blank row
+// would resolve to, using the SAME label the concrete option carries — the
+// operator should be able to see that the resolved default is one of the
+// choices below it, not a fourth thing.
+//
+// An answer that matches no offered option returns '': the row then says
+// "Resolved default" without naming one. That is not a corner case to paper
+// over. A harness with no built-in OS sandbox (OpenCode) resolves a blank field
+// to harness-builtin, which its own option list deliberately omits, so naming
+// it would advertise a sandbox that harness cannot run. The hint row beneath
+// already explains that case in full.
+export function sandboxImplResolvedLabel(options, implementation) {
+  const value = text(implementation);
+  if (!value) return '';
+  const match = (Array.isArray(options) ? options : [])
+    .find((option) => text(option?.value) === value);
+  return match ? text(match.label) : '';
 }
 
 // sandboxImplClearedNoticeFor renders the notice shown after a harness switch

@@ -484,6 +484,10 @@ async function mountSpawn(t, overrides = {}) {
     }),
     loadSandboxPolicy: async (_group, selected) => ({ profiles: [], selected, preview: 'no profiles applied' }),
     loadUnsandboxedAutonomy: async () => ({ info: [], warnings: [], sandboxState: '', sandboxSource: '' }),
+    loadLaunchDefaults: async (group, harnessName) => ({
+      harness: harnessName || 'claude', sandbox: '', implementation: 'harness-builtin',
+      resolved_by: 'harness default',
+    }),
     resolveWorktree: async () => ({ path: '', branch: '' }),
     uploadAttachments: async () => [],
     spawn: async () => ({ conv_id: 'abcdef1234' }),
@@ -595,8 +599,10 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
       .find((option) => option.value === 'harness-builtin').textContent,
     'Codex built-in (no filtered network sandbox yet)',
   );
-  assert.match(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
-    /Resolved defaults \(spawn-profile chain, then harness-builtin \(no filtered network sandbox yet\)\)/);
+  // The blank row NAMES what the daemon said a blank field resolves to, in the
+  // same words as the concrete option — not the mechanism that produced it.
+  assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
+    '— Resolved default (Codex built-in (no filtered network sandbox yet)) —');
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
     'an inherited target stays neutral because the profile chain has not resolved yet');
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
