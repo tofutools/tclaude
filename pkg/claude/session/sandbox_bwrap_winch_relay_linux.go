@@ -241,9 +241,10 @@ func runTclaudeLayerWinchRelay(
 	_ = statusW.Close()
 	if len(engineFiles) > 0 {
 		// The child owns duplicates of the sealed bootstrap image and policy
-		// files. The parent no longer needs its bootstrap-image descriptor
-		// once bubblewrap has started. It must be the descriptor list the
-		// running engine actually contributed: the other engine's list is
+		// files. The parent drops the bootstrap image specifically, because it
+		// is the large one; the remaining sealed inputs are small and are
+		// released with the rest of the relay. It must be the descriptor list
+		// the running engine actually contributed: the other engine's list is
 		// empty, and indexing it would take the supervisor down.
 		_ = engineFiles[0].Close()
 	}

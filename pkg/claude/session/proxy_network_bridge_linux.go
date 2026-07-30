@@ -67,6 +67,9 @@ const (
 	// proxyNetworkMinPort keeps the sandbox's bind unprivileged, which is what
 	// lets the bootstrap run without CAP_NET_BIND_SERVICE.
 	proxyNetworkMinPort = 1024
+	// proxyNetworkHostsFD is the sealed hosts file's descriptor, following the
+	// bootstrap image bubblewrap already owns at filteredNetworkBootstrapBinaryFD.
+	proxyNetworkHostsFD = 5
 )
 
 // preparedProxyNetworkRelay is the host half of the bridge, owned by the
@@ -181,12 +184,25 @@ func prepareProxyNetworkRelay(
 			"open proxy network bootstrap image: %w", err)
 	}
 	files = append(files, self)
+	// The constructed root binds the host's /etc read-only, so without this the
+	// namespace would inherit the host's /etc/hosts and could resolve mapped
+	// names with no query leaving it. See ProxyNetworkHostsFile for why that
+	// would put an authored name deny out of reach.
+	hostsFile, err := sealedFilteredNetworkData(
+		"tclaude-proxy-hosts", sandboxpolicy.ProxyNetworkHostsFile(), 0o444)
+	if err != nil {
+		return preparedProxyNetworkRelay{}, err
+	}
+	files = append(files, hostsFile)
 	return preparedProxyNetworkRelay{
 		SetupArgs: []string{
 			"--ro-bind", syncHostPath, proxyNetworkBootstrapSyncPath,
 			"--perms", "0500",
 			"--file", strconv.Itoa(filteredNetworkBootstrapBinaryFD),
 			sandboxpolicy.FilteredNetworkBootstrapPath,
+			"--perms", "0444",
+			"--ro-bind-data", strconv.Itoa(proxyNetworkHostsFD),
+			"/etc/hosts",
 		},
 		Command: []string{
 			sandboxpolicy.FilteredNetworkBootstrapPath,

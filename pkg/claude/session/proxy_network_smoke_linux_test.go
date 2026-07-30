@@ -429,7 +429,13 @@ func TestTclaudeLayerProxyFloorHelper(t *testing.T) {
 	fmt.Printf("proxy-floor: ICMP echo: refused (%v)\n", icmpRefusal)
 
 	// The namespace has no resolver at all, which is what makes socks5h and
-	// CONNECT-by-name load-bearing rather than a preference.
+	// CONNECT-by-name load-bearing rather than a preference. The CI job maps
+	// these fixture names in the HOST's /etc/hosts, so this is a live check
+	// that the floor replaced them rather than a check that nothing existed.
+	hosts, err := os.ReadFile("/etc/hosts")
+	require.NoError(t, err)
+	assert.NotContains(t, string(hosts), "proxy.tclaude.test",
+		"the floor must replace the host's name mappings")
 	_, resolveErr := net.LookupHost(proxySmokeAllowedHost)
 	require.Error(t, resolveErr)
 	fmt.Printf("proxy-floor: local name resolution: refused (%v)\n", resolveErr)

@@ -271,6 +271,48 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 	), nil
 }
 
+// ProxyNetworkHostsFile is the proxy engine's namespace hosts file: the
+// loopback names a process needs to talk to itself, and nothing else.
+//
+// Every host-derived mapping is dropped, and that is a policy decision rather
+// than tidiness. The proxy engine authorizes destinations by NAME — a host row,
+// a domain row, a deny row — and it can only do that for names the sandbox
+// hands it instead of resolving itself. A namespace that inherited the host's
+// /etc/hosts would let a process turn any mapped name into an address literal
+// without any query leaving it, and a literal is matched against CIDR selectors
+// only. An authored deny on that name would then have nothing to match, so a
+// refused name would become a permitted literal wherever some CIDR row covers
+// its address.
+//
+// The packet engine reaches the same place by a different route: it synthesizes
+// its own hosts file too, and its DNS broker holds the name authority.
+//
+// Only /etc/hosts is replaced, because it is the one resolution path the FLOOR
+// ITSELF provides that needs no network. The resolver configuration is left
+// alone: a query has nowhere to go in an empty namespace, the socket-backed NSS
+// modules (systemd-resolved, nscd, sssd) live under /run, which the constructed
+// root does not bind, and a resolv.conf naming a loopback stub can only reach
+// the sandbox's own loopback — where the floor grants no capabilities and no
+// namespace root, so nothing can bind port 53 to answer.
+//
+// What this does NOT cover, stated because it is the boundary of the guarantee:
+// the sandbox inherits the host's /etc/nsswitch.conf and NSS modules, so an
+// operator who authorizes a resolver socket through the unix_sockets axis
+// restores exactly the name-to-literal conversion this file exists to prevent.
+// Refusing known resolver sockets under this engine belongs with the selection
+// surface, where an authored engine and authored sockets first meet.
+//
+// The delivered property is therefore "no automatic name-to-address conversion",
+// not "no host-derived address knowledge": /etc/resolv.conf and friends remain
+// readable and still disclose host addresses. Disclosure is not authorization —
+// a literal the sandbox learns still has to pass the proxy's CIDR rows.
+func ProxyNetworkHostsFile() []byte {
+	return []byte(
+		"127.0.0.1 localhost\n" +
+			"::1 localhost ip6-localhost ip6-loopback\n",
+	)
+}
+
 // FilteredNetworkResolvConf makes the broker authoritative inside the private
 // namespace. Only sandbox-private loopback is named, so no packet can bypass
 // the broker through pasta or a host resolver address.

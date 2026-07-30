@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -753,7 +755,82 @@ func TestProxyNetworkSetupArgsGrantNoCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	defer relay.Close()
 	assert.False(t, slices.Contains(relay.SetupArgs, "--cap-add"))
-	assert.Len(t, relay.Files, 1, "the bootstrap image is the only sealed input")
+	assert.Len(t, relay.Files, 2,
+		"the sealed inputs are the bootstrap image and the namespace hosts file")
 	assert.Contains(t, relay.SetupArgs, proxyNetworkBootstrapSyncPath)
 	assert.Contains(t, relay.Command, tclaudeLayerProxyBootstrapCommand)
+}
+
+// TestProxyNetworkFloorMasksHostNameMappings proves the namespace cannot
+// resolve a name locally that the HOST maps.
+//
+// This is a policy property, not hygiene. The proxy engine authorizes by name,
+// and can only do so for names the sandbox asks it about rather than resolving
+// itself. The constructed root binds the host's /etc read-only, so without this
+// mask a process could turn any host-mapped name into an address literal with
+// no query leaving the namespace — and a literal is matched against CIDR
+// selectors only, so an authored deny on that name would have nothing to match.
+func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	encoded, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+	relay, err := prepareProxyNetworkRelay(encoded)
+	require.NoError(t, err)
+	defer relay.Close()
+
+	require.Contains(t, relay.SetupArgs, "/etc/hosts",
+		"the proxy floor must replace the host's name mappings")
+	index := slices.Index(relay.SetupArgs, "/etc/hosts")
+	require.GreaterOrEqual(t, index, 2)
+	assert.Equal(t, "--ro-bind-data", relay.SetupArgs[index-2])
+	assert.Equal(t, strconv.Itoa(proxyNetworkHostsFD), relay.SetupArgs[index-1])
+
+	require.Len(t, relay.Files, 2)
+
+	hosts := sandboxpolicy.ProxyNetworkHostsFile()
+	assert.Contains(t, string(hosts), "127.0.0.1 localhost",
+		"a process must still be able to name its own loopback")
+	for _, line := range strings.Split(strings.TrimSpace(string(hosts)), "\n") {
+		fields := strings.Fields(line)
+		require.NotEmpty(t, fields)
+		addr, parseErr := netip.ParseAddr(fields[0])
+		require.NoError(t, parseErr)
+		assert.True(t, addr.IsLoopback(),
+			"the namespace hosts file may name only loopback, got %q", line)
+	}
+}
+
+// TestProxyNetworkHostsFileReachesTheNamedDescriptor proves the descriptor
+// NUMBER in the bubblewrap argument is the one that actually carries the hosts
+// file, by reading it from a stand-in for bwrap.
+//
+// Asserting the arithmetic instead — that the constant equals first-fd plus an
+// offset — would only restate the assumption the argument already encodes. The
+// layout it depends on (bubblewrap's status pipe at fd 3, then this engine's
+// files, with no stacked binding in between) is enforced elsewhere by refusals;
+// this observes the result rather than trusting that chain.
+func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	policy, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+
+	observed := filepath.Join(t.TempDir(), "hosts-at-fd")
+	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
+	require.NoError(t, os.WriteFile(fakeBwrap, []byte(
+		"#!/bin/sh\ncat <&"+strconv.Itoa(proxyNetworkHostsFD)+" >"+observed+
+			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\n"), 0o700))
+
+	_, err = runTclaudeLayerWinchRelay(
+		[]string{fakeBwrap, "--", "/bin/true"}, nil,
+		stackedRelayBindingOptions{ProxyPolicy: policy})
+	// The stand-in hands out no listener, so the launch fails closed after the
+	// descriptors are in place. What is under test is what it read.
+	require.Error(t, err)
+
+	carried, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	assert.Equal(t, string(sandboxpolicy.ProxyNetworkHostsFile()), string(carried),
+		"the descriptor the /etc/hosts argument names must carry the hosts file")
 }
