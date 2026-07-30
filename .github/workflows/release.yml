@@ -432,6 +432,113 @@ jobs:
             exit 1
           fi
 
+      - name: Run filtered-network proxy floor and policy smokes
+        shell: bash
+        env:
+          TCLAUDE_FILTERED_PROXY_SMOKE: "1"
+          TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          # 198.18.2.0/25 covers the allowed address and NOT the adjacent one,
+          # so the adjacent address is both "outside the authored CIDR" and
+          # inside benchmarking space the private-destination blocker refuses.
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.2.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.2.200
+          TCLAUDE_FILTERED_ALLOWED_PREFIX: 198.18.2.0/25
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41011"
+          TCLAUDE_FILTERED_DENIED_PORT: "41012"
+        run: |
+          namespace=tclaude-proxy-target
+          host_link=tclprx0
+          peer_link=tclprx1
+          hosts_backup="$RUNNER_TEMP/tclaude-proxy-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          server_pids=()
+          cleanup() {
+            for pid in "${server_pids[@]}"; do
+              sudo kill "$pid" 2>/dev/null || true
+            done
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.2.1/24 dev "$host_link"
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.2.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.2.200/24 dev "$peer_link"
+
+          # The proxy resolves names HOST-side, so the fixture names live in the
+          # host's resolver. The allowed, sibling and denied names deliberately
+          # share one address: what separates them is authored name identity, not
+          # reachability. The private name points at the address outside the
+          # authored CIDR, so its refusal comes from the resolved answer.
+          {
+            echo "198.18.2.10 allowed.proxy.tclaude.test sibling.proxy.tclaude.test denied.proxy.tclaude.test"
+            echo "198.18.2.200 private.proxy.tclaude.test"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          for address in 198.18.2.10 198.18.2.200; do
+            for port in 41011 41012; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/proxy-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+
+          # Every refusal the policy smoke asserts must be the POLICY refusing,
+          # never an unreachable fixture: prove each address and port answers a
+          # direct round trip from the host before the sandbox is built.
+          for address in 198.18.2.10 198.18.2.200; do
+            for port in 41011 41012; do
+              token="proxy-fixture-$address-$port"
+              reply=$(
+                printf '%s' "$token" |
+                  timeout 5 socat -T 2 -t 2 - "TCP4:$address:$port"
+              )
+              if [[ "$reply" != "$token" ]]; then
+                echo "::error::proxy fixture failed a direct round trip to $address:$port"
+                exit 1
+              fi
+            done
+          done
+
+          smoke_log="$RUNNER_TEMP/tclaude-filtered-proxy-smoke.log"
+          go test ./pkg/claude/session \
+            -run '^TestTclaudeLayerProxy(Floor|Policy)Smoke$' \
+            -count=1 -v -timeout=300s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestTclaudeLayerProxyFloorSmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network proxy floor smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must observe direct TCP, UDP, DNS, ICMP and local name resolution all refused inside the launched sandbox, with only the proxy port answering."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerProxyFloorSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q '^--- PASS: TestTclaudeLayerProxyPolicySmoke ' "$smoke_log"; then
+            {
+              echo "### Filtered-network proxy policy smoke did not complete"
+              echo
+              echo "The named real boundary did not report an explicit pass."
+              echo "A skip, missing/renamed test, build-tag mismatch, or zero-test success is a hard failure."
+              echo "The smoke must execute every policy case over BOTH the HTTP CONNECT and SOCKS5 carriages through a real launch, including sibling-name, port-narrowing, deny-wins, CIDR literal, resolved-private, host-loopback and no-upstream-chaining cases."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestTclaudeLayerProxyPolicySmoke did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run pinned filtered model endpoint evidence
         env:
           TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
