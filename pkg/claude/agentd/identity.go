@@ -924,6 +924,26 @@ func sessionRowByPID(hostPID int) *db.SessionRow {
 // preference: those are different questions, and applying them in the
 // other order could prefer a live row the trust boundary excludes.
 func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.SessionRow {
+	return repairedRowAtPID(hostPID, accept, nil)
+}
+
+// repairedRowAtPID is preferLiveRowAtPID with one extra knob: `replaces`
+// vetoes an otherwise-eligible live replacement, deciding — against the
+// incumbent it would displace — whether the swap is one this caller can
+// afford. It is NOT a candidate filter: the incumbent is still whichever row
+// FindSessionByPID would have returned, so a veto keeps that row rather than
+// promoting anyone else. A nil `replaces` allows every live replacement,
+// which is the row-returning callers' behaviour.
+//
+// sessionConvByPID needs it because its answer is the row's CONV-ID, not the
+// row: a repair that swaps a conv-id-bearing row for one that has none (or
+// the reverse) would change whether the caller resolves at all, in a
+// direction liveness says nothing about.
+func repairedRowAtPID(
+	hostPID int,
+	accept func(*db.SessionRow) bool,
+	replaces func(incumbent, candidate *db.SessionRow) bool,
+) *db.SessionRow {
 	rows, err := db.FindSessionsByPID(hostPID)
 	if err != nil || len(rows) == 0 {
 		return nil
@@ -961,9 +981,16 @@ func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.Sessi
 		if row.TmuxSession == "" {
 			continue
 		}
-		if _, ok := alive[row.TmuxSession]; ok {
-			return row
+		if _, ok := alive[row.TmuxSession]; !ok {
+			continue
 		}
+		if replaces != nil && !replaces(incumbent, row) {
+			// Alive, but not a swap this caller can make. Keep the
+			// incumbent rather than looking further down: the rest are
+			// older still, and nothing about them is better evidence.
+			return incumbent
+		}
+		return row
 	}
 	return incumbent
 }
@@ -1010,11 +1037,23 @@ func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 // pruned, so a long-dead row can shadow a live agent's pane pid and hand the
 // caller a stranger's identity.
 //
-// The repair semantics are sessionRowByPID's exactly, and deliberately so: a
-// demonstrably dead incumbent is displaced only by a demonstrably live
-// sibling, never filtered and never re-ranked. Ambiguity — one row, a nameless
-// incumbent, nothing else alive, an unreachable tmux — keeps the incumbent, so
-// this can never resolve nothing where the old code resolved something.
+// The repair semantics are sessionRowByPID's: a demonstrably dead incumbent
+// is displaced only by a demonstrably live sibling, never filtered and never
+// re-ranked. Ambiguity — one row, a nameless incumbent, nothing else alive, an
+// unreachable tmux — keeps the incumbent.
+//
+// One condition is added on top, because this caller's answer is the row's
+// CONV-ID rather than the row: a live sibling may displace the incumbent only
+// when the two agree about HAVING a conv-id. A spawn row is written with an
+// empty conv-id and stays that way until the first hook establishes one, so
+// without that condition a repair could swap a conv-id-bearing dead row for a
+// live row that has none — refusing a caller the old code placed — or the
+// reverse, resolving one it previously declined and short-circuiting the
+// stronger probes convIDForPID would otherwise have reached (the layer walk's
+// recorded-implementation check, OpenCode's endpoint-ownership proof).
+// Liveness says nothing about that question, so it may not decide it. With the
+// condition, this resolves exactly when the old code did, and only ever
+// improves WHICH conversation it names.
 //
 // Failing CLOSED on ambiguity was considered and rejected: multiple rows per
 // pid is the NORMAL case (rows are never pruned and record the pane pid they
@@ -1027,7 +1066,10 @@ func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 // either way. Residual limitation: a dead incumbent with no provably live
 // sibling still resolves as before.
 func sessionConvByPID(hostPID int) string {
-	if row := preferLiveRowAtPID(hostPID, nil); row != nil {
+	sameAnswerability := func(incumbent, candidate *db.SessionRow) bool {
+		return (incumbent.ConvID == "") == (candidate.ConvID == "")
+	}
+	if row := repairedRowAtPID(hostPID, nil, sameAnswerability); row != nil {
 		return row.ConvID
 	}
 	return ""

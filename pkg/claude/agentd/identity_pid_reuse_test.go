@@ -181,6 +181,65 @@ func TestConvIDForPID_NothingAliveResolvesExactlyAsBefore(t *testing.T) {
 	}), "and the caller stays as placeable as it was before the repair")
 }
 
+// TestConvIDForPID_ALiveRowWithNoConvIDDoesNotUnresolveTheCaller is the
+// invariant's sharp edge. A spawn row is written with an EMPTY conv-id and
+// stays that way until the first hook establishes one, so a live sibling that
+// cannot answer the question is a routine state, not a curiosity. Letting it
+// displace a dead incumbent that CAN answer would turn a misidentification
+// into a refusal — the caller resolves to "", convIDForPID reports an
+// unidentified ancestor, and classify() drops it to classAgentUnknown.
+func TestConvIDForPID_ALiveRowWithNoConvIDDoesNotUnresolveTheCaller(t *testing.T) {
+	setupTestDB(t)
+	haveCLIPidReuseRows(t, "tmux-cli-live", "tmux-cli-dead")
+	// The live row has not established its conv-id yet.
+	live, err := db.LoadSession(pidReuseCLILiveLabel)
+	require.NoError(t, err)
+	require.NotNil(t, live)
+	live.ConvID = ""
+	require.NoError(t, db.SaveSession(live))
+	stampSessionUpdatedAt(t, pidReuseCLILiveLabel, time.Now().Add(-2*time.Minute))
+	haveLiveTmuxSessions(t, "tmux-cli-live")
+
+	gotConv, hasAncestor := convIDForPID(pidReuseCLIPeerPID)
+	assert.True(t, hasAncestor)
+	assert.Equal(t, pidReuseCLIDeadConv, gotConv,
+		"a live row with no conv-id must not displace an incumbent that has one: "+
+			"the repair may improve which conversation is named, never whether one is")
+	assert.Equal(t, classAgent, classify(&peer{
+		PID: pidReuseCLIPeerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor,
+	}), "the caller stays placeable, exactly as it was before the repair")
+}
+
+// TestConvIDForPID_ALiveRowDoesNotAnswerForAnIncumbentWithNoConvID is the
+// mirror, and it is the property for which the accept=(ConvID != "") variant
+// was rejected: resolving where the old code resolved nothing. It also
+// preserves step order — a step-2/3 miss must keep falling through to the
+// probes that carry stronger proof (the layer walk's recorded-implementation
+// check, OpenCode's endpoint ownership) rather than being short-circuited by
+// a row that merely happens to be alive.
+func TestConvIDForPID_ALiveRowDoesNotAnswerForAnIncumbentWithNoConvID(t *testing.T) {
+	setupTestDB(t)
+	haveCLIPidReuseRows(t, "tmux-cli-live", "tmux-cli-dead")
+	// This time the INCUMBENT — the freshest row, whose pane is gone — is the
+	// one still waiting on its conv-id.
+	dead, err := db.LoadSession(pidReuseCLIDeadLabel)
+	require.NoError(t, err)
+	require.NotNil(t, dead)
+	dead.ConvID = ""
+	require.NoError(t, db.SaveSession(dead))
+	stampSessionUpdatedAt(t, pidReuseCLIDeadLabel, time.Now().Add(-1*time.Minute))
+	haveLiveTmuxSessions(t, "tmux-cli-live")
+
+	baseline, err := db.FindSessionByPID(pidReuseCLISharedSh)
+	require.NoError(t, err)
+	require.Equal(t, pidReuseCLIDeadLabel, baseline.ID, "fixture: the conv-less row is the incumbent")
+
+	gotConv, _ := convIDForPID(pidReuseCLIPeerPID)
+	assert.Empty(t, gotConv,
+		"the old code resolved nothing here; a live sibling's conv-id must not be "+
+			"substituted for an answer the incumbent never gave")
+}
+
 // TestConvIDForPID_ANamelessIncumbentKeepsAReusedPid guards the one case
 // where the preference could quietly become a re-ranking. A row with no
 // recorded tmux session — what auto-registration writes for a harness not

@@ -894,7 +894,11 @@ The repair covers the brokered hook and status-line paths, the
 `tclaude-layer` ancestry walks, and the general pid → conv-id lookup behind
 direct CLI identity. That last one is the one whose answer becomes the caller's
 conversation for authorization, so a reused pid there means a caller is
-authorized as whichever conversation happened to hold the freshest row.
+authorized as whichever conversation happened to hold the freshest row. On that
+path the repair may only improve WHICH conversation is named, never whether one
+is named at all: a live row that has not established its conv-id yet — the
+state every spawn row starts in — cannot displace a dead row that has one, nor
+answer in place of an incumbent that has none.
 
 Refusing outright on an ambiguous pid was considered and rejected: several rows
 per pid is the normal case rather than the suspicious one, so refusing whenever
@@ -904,8 +908,8 @@ cannot choose the pid the OS hands it, and identity stays bound to host pids the
 daemon itself recorded either way. The residual limitation is deliberate: a dead
 incumbent with no provably live sibling still resolves as it did before.
 
-For OpenCode, CLI identity may cross at most 16
-wrapper ancestors only when the matching runtime row explicitly records
+For OpenCode, CLI identity may cross at most 16 wrapper
+ancestors only when the matching runtime row explicitly records
 `tclaude-layer`; the candidate still has to pass the server endpoint-ownership
 proof. Harness-builtin OpenCode rows retain the exact/one-parent lookup.
 
