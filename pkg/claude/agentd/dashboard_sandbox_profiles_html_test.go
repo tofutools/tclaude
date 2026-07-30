@@ -48,6 +48,8 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-evaluate-harness"`:                                 "target harness prediction picker",
 		`id="sandbox-profile-editor-evaluate-implementation"`:                          "sandbox implementation prediction picker",
 		`id="sandbox-profile-editor-evaluate-platform"`:                                "target platform prediction picker",
+		`sandboxImpl: getSnapshot()?.sandbox_impl || {}`:                               "editor receives agentd's host sandbox catalog",
+		`['linux', 'darwin'].includes(descriptor.sandboxImpl?.platform)`:               "target platform defaults to agentd's supported OS",
 		`id="sandbox-profile-editor-unix-sockets"`:                                     "raw Unix-socket JSON editor",
 		`actions.predictSandbox(predictionDraft, targets`:                              "editor prediction uses the authoritative structured or raw draft",
 		`function SandboxPolicyResult(`:                                                "effective rules render through the outcome-bucket read model",
