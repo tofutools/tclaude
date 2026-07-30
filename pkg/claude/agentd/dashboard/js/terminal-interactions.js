@@ -183,6 +183,35 @@ function safeHTTPURL(raw) {
   }
 }
 
+// OSC 8 file hyperlinks name files on the agentd host, not on the computer
+// running the browser. Parse only ordinary absolute local file URLs here; UNC
+// hosts and every other non-HTTP scheme stay blocked.
+export function safeTerminalLink(raw) {
+  const http = safeHTTPURL(raw);
+  if (http) return { kind: 'http', target: http };
+  try {
+    // Some harnesses put the absolute path itself in OSC 8's URI field while
+    // others use a file:// URI. A leading // would be a network-path
+    // reference, so do not reinterpret it as a local filesystem target.
+    if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
+      const url = new URL(raw, 'file://localhost');
+      const path = decodeURIComponent(url.pathname);
+      if (!path.includes('\0')) return { kind: 'file', target: path };
+      return null;
+    }
+    if (typeof raw !== 'string' || !/^file:\/\//i.test(raw)) return null;
+    const url = new URL(raw);
+    if (url.protocol !== 'file:' ||
+        (url.hostname !== '' && url.hostname !== 'localhost') ||
+        url.username || url.password) return null;
+    const path = decodeURIComponent(url.pathname);
+    if (!path.startsWith('/') || path.includes('\0')) return null;
+    return { kind: 'file', target: path };
+  } catch (_) {
+    return null;
+  }
+}
+
 // The status line is one row of chrome under the terminal, so a long target
 // would push out the hint that precedes it. Shorten the PATH only: the origin
 // answers "who am I about to contact", so eliding any part of it would defeat
@@ -273,6 +302,7 @@ export function attachTerminalInteractions({
   terminalPath,
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
+  downloadFile = null,
 }) {
   let statusTimer = null;
   let uploadPending = false;
@@ -385,18 +415,40 @@ export function attachTerminalInteractions({
     term.focus();
   }
 
+  function downloadHostFile(path) {
+    if (downloadFile) {
+      downloadFile(path);
+      return;
+    }
+    const query = new URLSearchParams({ terminal: terminalPath, path });
+    const anchor = ownerDocument.createElement('a');
+    anchor.href = `/api/terminal-file?${query}`;
+    anchor.download = '';
+    anchor.style.display = 'none';
+    ownerDocument.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }
+
   const activateLink = (event, raw) => {
-    const url = safeHTTPURL(raw);
-    if (!url) { flash('blocked unsafe link'); return; }
+    const link = safeTerminalLink(raw);
+    if (!link) { flash('blocked unsafe link'); return; }
     if (!event || (!event.ctrlKey && !event.metaKey)) {
       // Keep the destination in the hint. This flash replaces whatever the
       // hover put there and no further hover fires until the pointer moves, so
       // dropping the target here would blank it precisely when the human has
       // just been told to click again.
-      flash(`Ctrl/Cmd-click to open ${shortenForStatus(url)}`);
+      const action = link.kind === 'file' ? 'download' : 'open';
+      const target = link.kind === 'file' ? link.target : shortenForStatus(link.target);
+      flash(`Ctrl/Cmd-click to ${action} ${target}`);
       return;
     }
-    window.open(url, '_blank', 'noopener,noreferrer');
+    if (link.kind === 'file') {
+      downloadHostFile(link.target);
+      flash(`downloading ${link.target.split('/').pop() || 'file'}…`);
+      return;
+    }
+    window.open(link.target, '_blank', 'noopener,noreferrer');
   };
   // An OSC 8 hyperlink chooses its label text independently of its target, so
   // "see the docs" — or a string that reads like some other URL — can point
@@ -407,8 +459,14 @@ export function attachTerminalInteractions({
   const showLinkTarget = (raw) => {
     if (!setStatus) return;
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-    const url = safeHTTPURL(raw);
-    setStatus(url ? `Ctrl/Cmd-click → ${shortenForStatus(url)}` : 'blocked unsafe link');
+    const link = safeTerminalLink(raw);
+    if (!link) {
+      setStatus('blocked unsafe link');
+      return;
+    }
+    const action = link.kind === 'file' ? 'download →' : '→';
+    const target = link.kind === 'file' ? link.target : shortenForStatus(link.target);
+    setStatus(`Ctrl/Cmd-click ${action} ${target}`);
   };
   const clearLinkTarget = () => {
     if (!setStatus) return;
@@ -419,7 +477,9 @@ export function attachTerminalInteractions({
     activate: (event, text) => activateLink(event, text),
     hover: (event, text) => showLinkTarget(text),
     leave: () => clearLinkTarget(),
-    allowNonHttpProtocols: false,
+    // xterm otherwise recognizes OSC 8 file:// links visually but declines to
+    // hand them to this guarded handler.
+    allowNonHttpProtocols: true,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks
   if (globalThis.WebLinksAddon && globalThis.WebLinksAddon.WebLinksAddon) {

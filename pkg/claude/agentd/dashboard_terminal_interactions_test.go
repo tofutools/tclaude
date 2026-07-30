@@ -60,6 +60,9 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
 		"term.options.linkHandler = linkHandler",
 		"if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;",
+		"if (url.protocol !== 'file:'",
+		"allowNonHttpProtocols: true",
+		"`/api/terminal-file?${query}`",
 		// Userinfo renders as the victim host right up to the '@'.
 		"if (url.username || url.password) return null;",
 		"host.addEventListener('paste', onPaste, true)",
@@ -194,6 +197,61 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "pasted-image.png") {
 		t.Errorf("terminal attachment response missing stored file: %s", w.Body.String())
 	}
+}
+
+func TestTerminalFileRouteDownloadsHostFile(t *testing.T) {
+	withDashboardAuth(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "result å.md")
+	require.NoError(t, os.WriteFile(path, []byte("# done\n"), 0o600))
+
+	query := url.Values{
+		"terminal": {"/api/term-ws/agent?which=current"},
+		"path":     {path},
+	}.Encode()
+	r := dashboardRequest(http.MethodGet, "/api/terminal-file?"+query, "")
+	w := httptest.NewRecorder()
+	mux := http.NewServeMux()
+	registerDashboardSpawnAttachmentRoutes(mux)
+	mux.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "# done\n", w.Body.String())
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "result")
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+}
+
+func TestTerminalFileRouteRejectsInvalidTargets(t *testing.T) {
+	withDashboardAuth(t)
+	dir := t.TempDir()
+	mux := http.NewServeMux()
+	registerDashboardSpawnAttachmentRoutes(mux)
+
+	for name, path := range map[string]string{
+		"relative":  "report.md",
+		"directory": dir,
+		"missing":   filepath.Join(dir, "missing.md"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := url.Values{
+				"terminal": {"/api/term-ws/agent"},
+				"path":     {path},
+			}.Encode()
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, dashboardRequest(http.MethodGet,
+				"/api/terminal-file?"+query, ""))
+			assert.NotEqual(t, http.StatusOK, w.Code, w.Body.String())
+		})
+	}
+
+	path := filepath.Join(dir, "report.md")
+	require.NoError(t, os.WriteFile(path, []byte("private"), 0o600))
+	query := url.Values{"terminal": {"/not-a-terminal"}, "path": {path}}.Encode()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, dashboardRequest(http.MethodGet,
+		"/api/terminal-file?"+query, ""))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTerminalAttachmentsRouteUsesLayerVisibleSessionRoot(t *testing.T) {
