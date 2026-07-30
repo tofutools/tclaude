@@ -335,6 +335,20 @@ export function setSpawnSandboxImpl(draft, value) {
   return { ...draft, sandboxImpl: text(value), sandboxImplCleared: null };
 }
 
+// Codex approval requests are boundary-crossing requests from its own sandbox.
+// When another implementation owns the only wall (or every wall is off), the
+// policy and reviewer controls describe prompts Codex cannot produce. Claude
+// Code's permission modes are independent of sandboxing, so this gate is
+// deliberately Codex-only.
+export function approvalControlsVisibleFor(draft, resolvedImplementation = '') {
+  if (text(draft?.harness) !== 'codex') return true;
+  const explicit = text(draft?.sandboxImpl ?? draft?.sandbox_implementation);
+  const implementation = explicit || text(resolvedImplementation);
+  const codexOwnsSandbox = implementation === SANDBOX_IMPL_DEFAULT
+    || implementation === SANDBOX_IMPL_STACKED;
+  return codexOwnsSandbox && text(draft?.sandbox) !== 'danger-full-access';
+}
+
 // sandboxImplHintFor renders the note under the sandbox-implementation row.
 // Two truths, in the order an operator needs them: what the selected
 // implementation actually is, and — when they have selected the experimental
@@ -376,7 +390,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (value === SANDBOX_IMPL_OFF) {
     return {
       warn: true,
-      text: 'Sandbox OFF. The agent runs without OS-level confinement; approval policy still applies.',
+      text: 'Sandbox OFF. The agent runs without OS-level confinement.',
     };
   }
   const builtinCodex = view.sandboxImplHarnessName === 'codex'
