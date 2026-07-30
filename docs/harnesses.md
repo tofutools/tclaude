@@ -325,11 +325,14 @@ outrank it). Three modes:
 - **`off`** — forces the sandbox **off** for this session even if `settings.json`
   enables it (the agent's Bash runs unconfined).
 
-The tmux rule is socket-specific. Agents may still run the `tmux` binary
-against a private socket they own; they cannot connect to the existing
-`tclaude` server and use `capture-pane`, `send-keys`, or session mutation to
-inspect or reconfigure agent panes. The sandbox editor shows this generated
-Claude rule as read-only launch context alongside Codex's managed baseline.
+On Linux the tmux rule is socket-specific: agents may still run the `tmux`
+binary against a private socket they own, but cannot connect to the existing
+`tclaude` server and use `capture-pane`, `send-keys`, or session mutation. On
+macOS Claude exposes an allowlist rather than a single-socket deny, so all
+unlisted Unix sockets (including private tmux sockets and `SSH_AUTH_SOCK`) are
+blocked unless the operator adds them explicitly. The sandbox editor shows the
+generated Claude rule as read-only launch context alongside Codex's managed
+baseline.
 
 This is the per-session counterpart to the **global** hardening guide
 ([`sandbox-hardening.md`](sandbox-hardening.md) / `tclaude setup

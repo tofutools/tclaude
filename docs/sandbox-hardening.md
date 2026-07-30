@@ -302,7 +302,9 @@ The setup command deliberately writes the user-level
 append-only/conflict behavior except for one targeted security migration:
 macOS `sandbox.network.allowAllUnixSockets: true` is changed to `false`, after
 the normal settings backup. This is appropriate for a single-user workstation
-where the operator controls that file. If
+where the operator controls that file. Because this is user-level Claude
+configuration, the migration narrows Unix-socket access for ordinary
+non-tclaude Claude sessions too. If
 `allowUnsandboxedCommands` is already `true`, setup reports
 `sandbox.allowUnsandboxedCommands: hardening wants false ... left unchanged
 (fix it manually)` and does not overwrite the operator's choice.
@@ -352,9 +354,10 @@ Re-allowing it is a `sandbox.network` setting — *not* a filesystem one:
 filtering. tclaude therefore never adds it on macOS and migrates a legacy
 installed value from `true` to `false`. Operators can add other required
 macOS socket paths explicitly (for example an SSH agent socket) without
-opening every host socket. On Linux/WSL2 the per-path entry is inert but
-harmless; the installer adds the broad key there because it is the only way
-for `tclaude agent` to reach agentd.
+opening every host socket. Until they do, SSH-based Git pushes and agent-owned
+private tmux connections are blocked inside the macOS sandbox. On Linux/WSL2
+the per-path entry is inert but harmless; the installer adds the broad key
+there because it is the only way for `tclaude agent` to reach agentd.
 
 **2. The socket *file* must be visible.** This is the filesystem layer.
 The socket lives under `~/.tclaude/api/`, outside the denied
