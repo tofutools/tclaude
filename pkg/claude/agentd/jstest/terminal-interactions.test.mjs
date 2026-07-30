@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
-	isBrowserPasteShortcut, isComposeMessageShortcut, shouldArmTmuxClipboard, terminalKeyInput,
+	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
+	shouldArmTmuxClipboard, terminalKeyInput,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -321,8 +322,9 @@ test('terminal lifecycle accepts only the latest armed pane OSC 52', async () =>
 // An OSC 8 hyperlink picks its label text independently of its target, so the
 // hover reveal is the only thing standing between "see the docs" and wherever
 // it actually points. These drive the real linkHandler the terminal installs.
-function linkHarness() {
+function linkHarness(options = {}, setupDocument = () => {}) {
   const doc = new FakeEventTarget();
+  setupDocument(doc);
   const harness = terminalHarness(doc);
   const statuses = [];
   const interactions = attachTerminalInteractions({
@@ -330,6 +332,7 @@ function linkHarness() {
     host: harness.host,
     setStatus: (text) => statuses.push(text),
     baseStatus: () => 'BASE',
+    ...options,
   });
   return { harness, statuses, interactions, links: harness.term.options.linkHandler };
 }
@@ -386,10 +389,84 @@ test('a link carrying userinfo is refused rather than described', () => {
 test('non-HTTP schemes stay blocked', () => {
   const { statuses, interactions, links } = linkHarness();
   try {
-    for (const raw of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,x']) {
+    for (const raw of ['javascript:alert(1)', 'file://remote-host/etc/passwd', 'data:text/html,x']) {
       links.hover({}, raw);
       assert.equal(statuses.at(-1), 'blocked unsafe link', raw);
     }
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('local OSC 8 file URLs decode to host paths without query or fragment metadata', () => {
+  assert.deepEqual(
+    safeTerminalLink('file:///tmp/rendered%20results/chart.png?line=2#L2'),
+    { kind: 'file', target: '/tmp/rendered results/chart.png' },
+  );
+  assert.deepEqual(
+    safeTerminalLink('file://localhost/home/me/report.md'),
+    { kind: 'file', target: '/home/me/report.md' },
+  );
+  assert.deepEqual(
+    safeTerminalLink('/home/me/rendered%20image.png#L12'),
+    { kind: 'file', target: '/home/me/rendered image.png' },
+  );
+  for (const raw of [
+    'file://other-host/tmp/report.md',
+    '//other-host/tmp/report.md',
+    'file:///tmp/bad%ZZname',
+    'file:relative.txt',
+  ]) {
+    assert.equal(safeTerminalLink(raw), null, raw);
+  }
+});
+
+test('file hyperlinks reveal the host path and download only on a modified click', async () => {
+  const downloaded = [];
+  const { statuses, interactions, links } = linkHarness({
+    downloadFile: (path) => downloaded.push(path),
+  });
+  try {
+    const raw = 'file:///tmp/final%20chart.png#L1';
+    links.hover({}, raw);
+    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click download → /tmp/final chart.png');
+    links.activate({}, raw);
+    assert.equal(statuses.at(-1), 'Ctrl/Cmd-click to download /tmp/final chart.png');
+    assert.deepEqual(downloaded, []);
+    links.activate({ metaKey: true }, raw);
+    assert.deepEqual(downloaded, ['/tmp/final chart.png']);
+    await Promise.resolve();
+    assert.equal(statuses.at(-1), 'downloading final chart.png…');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('file downloads preflight through fetch and surface a non-2xx response', async () => {
+  const fetches = [];
+  const anchors = [];
+  const { statuses, interactions, links } = linkHarness({
+    terminalPath: '/api/term-ws/agent?which=current',
+    fetchImpl: async (...args) => {
+      fetches.push(args);
+      return { ok: false, status: 403 };
+    },
+  }, (doc) => {
+    doc.body = { append: (anchor) => anchors.push(anchor) };
+    doc.createElement = () => ({
+      style: {}, click() { throw new Error('failed preflight must not click'); }, remove() {},
+    });
+  });
+  try {
+    links.activate({ ctrlKey: true }, 'file:///tmp/result.png');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fetches.length, 1);
+    assert.match(fetches[0][0], /^\/api\/terminal-file\?/);
+    assert.deepEqual(fetches[0][1], {
+      method: 'HEAD', credentials: 'same-origin', cache: 'no-store',
+    });
+    assert.deepEqual(anchors, []);
+    assert.equal(statuses.at(-1), 'download unavailable (403)');
   } finally {
     interactions.dispose();
   }

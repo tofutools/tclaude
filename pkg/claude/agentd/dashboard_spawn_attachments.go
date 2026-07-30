@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
@@ -122,6 +124,7 @@ type spawnAttachmentsResponse struct {
 func registerDashboardSpawnAttachmentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/spawn-attachments", handleDashboardSpawnAttachments)
 	mux.HandleFunc("/api/terminal-attachments", handleDashboardTerminalAttachments)
+	mux.HandleFunc("/api/terminal-file", handleDashboardTerminalFile)
 }
 
 // handleDashboardSpawnAttachments receives a multipart/form-data POST whose
@@ -175,6 +178,70 @@ func handleDashboardTerminalAttachments(w http.ResponseWriter, r *http.Request) 
 	storeDashboardAttachments(w, r, base, createBase)
 }
 
+// handleDashboardTerminalFile turns a host-local file hyperlink rendered by a
+// web terminal into a browser download. The browser cannot dereference
+// file:// URLs when it is remote from agentd, so it sends the absolute path
+// back over this cookie-authenticated route instead.
+//
+// Requiring a valid originating terminal path keeps this endpoint coupled to
+// the terminal interaction that exposed it. The dashboard human is still the
+// authority boundary: terminal output cannot invoke the route, and xterm
+// requires an explicit Ctrl/Cmd-click after revealing the real target path.
+func handleDashboardTerminalFile(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET or HEAD only")
+		return
+	}
+	if _, _, status, err := terminalAttachmentBase(
+		r.URL.Query().Get("terminal"),
+		session.IsTmuxSessionAlive,
+	); err != nil {
+		writeError(w, status, "terminal", err.Error())
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" || !filepath.IsAbs(path) || strings.IndexByte(path, 0) >= 0 {
+		writeError(w, http.StatusBadRequest, "path", "an absolute file path is required")
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "missing", "file is no longer available")
+			return
+		}
+		writeError(w, http.StatusForbidden, "io", "file cannot be read")
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeError(w, http.StatusBadRequest, "path", "only regular files can be downloaded")
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "io", "file cannot be read")
+		return
+	}
+	defer func() { _ = f.Close() }()
+	// Re-check the opened object so a path swapped between Stat and Open cannot
+	// turn a directory or device into a streamed response.
+	openedInfo, err := f.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() {
+		writeError(w, http.StatusBadRequest, "path", "only regular files can be downloaded")
+		return
+	}
+
+	name := sanitizeAttachmentFilename(filepath.Base(path))
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	w.Header().Set("Content-Disposition", disposition)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, name, openedInfo.ModTime(), f)
+}
+
 func terminalAttachmentBase(
 	rawTerminalPath string,
 	isTmuxSessionAlive func(string) bool,
@@ -190,8 +257,29 @@ func terminalAttachmentBase(
 	}
 	path := terminalURL.Path
 	switch {
-	case strings.HasPrefix(path, "/api/term-ws/"),
-		strings.HasPrefix(path, "/api/group-term-ws/"):
+	case strings.HasPrefix(path, "/api/term-ws/"):
+		selector, unescapeErr := terminalPathSelector(path, "/api/term-ws/")
+		if unescapeErr != nil {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid agent terminal path")
+		}
+		if _, _, resolveErr := agent.ResolveSelectorCached(selector); resolveErr != nil {
+			return "", false, http.StatusNotFound, fmt.Errorf("terminal agent is unavailable")
+		}
+		if _, ok := normaliseWhich(terminalURL.Query().Get("which")); !ok {
+			return "", false, http.StatusBadRequest, fmt.Errorf(
+				`terminal directory must be "start", "current", or "worktree"`,
+			)
+		}
+		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
+	case strings.HasPrefix(path, "/api/group-term-ws/"):
+		name, unescapeErr := terminalPathSelector(path, "/api/group-term-ws/")
+		if unescapeErr != nil {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid group terminal path")
+		}
+		group, groupErr := db.GetAgentGroupByName(name)
+		if groupErr != nil || group == nil || strings.TrimSpace(group.DefaultCwd) == "" {
+			return "", false, http.StatusNotFound, fmt.Errorf("terminal group is unavailable")
+		}
 		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
 	}
 
@@ -255,6 +343,18 @@ func terminalAttachmentBase(
 		return privateRoot, false, http.StatusOK, nil
 	}
 	return "", false, http.StatusConflict, fmt.Errorf("terminal session sandbox is unavailable")
+}
+
+func terminalPathSelector(path, prefix string) (string, error) {
+	raw := strings.TrimPrefix(path, prefix)
+	if raw == "" || strings.Contains(raw, "/") {
+		return "", fmt.Errorf("missing or nested selector")
+	}
+	selector, err := url.PathUnescape(raw)
+	if err != nil || selector == "" || strings.Contains(selector, "/") {
+		return "", fmt.Errorf("invalid selector")
+	}
+	return selector, nil
 }
 
 func storeDashboardAttachments(
@@ -411,7 +511,15 @@ func sanitizeAttachmentFilename(name string) string {
 		if len(ext) > 16 {
 			ext = ""
 		}
-		name = name[:maxNameLen-len(ext)] + ext
+		stem := strings.TrimSuffix(name, ext)
+		for len(stem) > maxNameLen-len(ext) {
+			_, size := utf8.DecodeLastRuneInString(stem)
+			if size == 0 {
+				break
+			}
+			stem = stem[:len(stem)-size]
+		}
+		name = stem + ext
 	}
 	if name == "" || name == "." || name == ".." {
 		return "attachment"
