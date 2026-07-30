@@ -111,7 +111,9 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
-	tmuxSocket := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
+	require.NoError(t, err)
+	tmuxSocket := filepath.Join(canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
 	assert.Contains(t, catalog.Global, struct {
 		Path      string   `json:"path"`
 		Access    string   `json:"access"`

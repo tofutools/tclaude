@@ -59,7 +59,9 @@ func TestSandboxGlobalFilesystemRulesMergeHarnessProvenance(t *testing.T) {
 	assert.Equal(t, "~/.claude/settings.json", read.Origins[0].Source)
 	assert.Equal(t, "generated tclaude-agent-<launch-id>.config.toml", read.Origins[1].Source)
 
-	tmuxSocket := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
+	require.NoError(t, err)
+	tmuxSocket := filepath.Join(canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
 	claudeTmux := byKey[tmuxSocket+"|deny"]
 	assert.Equal(t, []string{"claude"}, claudeTmux.Harnesses)
 	require.Len(t, claudeTmux.Origins, 1)
@@ -82,7 +84,9 @@ func TestSandboxGlobalFilesystemRulesKeepCanonicalCodexBaselineWhenClaudeConfigI
 	require.Len(t, got.Warnings, 1)
 	assert.Contains(t, got.Warnings[0], "Claude Code")
 	assert.NotContains(t, got.Warnings[0], `{"sandbox":`, "parser source excerpts must not reach the endpoint")
-	tmuxSocket := filepath.Join(tmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
+	canonicalTmuxBase, err := filepath.EvalSymlinks(tmuxBase)
+	require.NoError(t, err)
+	tmuxSocket := filepath.Join(canonicalTmuxBase, fmt.Sprintf("tmux-%d", os.Getuid()), "tclaude")
 	assert.Contains(t, got.Filesystem, sandboxGlobalFilesystemRuleJSON{
 		Path: tmuxSocket, Access: "deny", Harnesses: []string{"claude"},
 		Origins: []sandboxGlobalFilesystemRuleOriginJSON{{
