@@ -642,8 +642,26 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
   setValue(codexImpl, 'harness-builtin');
   await harness.act(() => harness.fireEvent(codexImpl, 'change'));
-  assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
+  assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
+    'the Codex caveat is disclosure copy, never a paragraph under the row');
+  const codexCaveatTrigger = host.querySelector('#agent-spawn-sandbox-impl-row .spawn-field-help-trigger');
+  assert.equal(codexCaveatTrigger.textContent, '!',
+    'a caveat marks its own trigger so it is not mistaken for ordinary field help');
+  assert.ok(codexCaveatTrigger.classList.contains('warn'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-label'), 'Show Sandbox warning',
+    'the warn state is named, not left as colour a screen reader cannot see');
+  // The description span is always in the DOM (the reveal is pure CSS on
+  // aria-expanded), so reading its text alone would pass even if the trigger
+  // never opened. Assert the toggle itself.
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'false');
+  assert.equal(codexCaveatTrigger.getAttribute('aria-controls'), 'agent-spawn-sandbox-impl-help');
+  await harness.act(() => harness.fireEvent(codexCaveatTrigger, 'click'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'true');
+  assert.match(host.querySelector('#agent-spawn-sandbox-impl-help').textContent,
     /upstream proxy is experimental and off by default/);
+  await harness.act(() => harness.fireEvent(codexCaveatTrigger, 'click'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'false',
+    'the trigger is a plain toggle');
   assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
   assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
   assert.match(host.querySelector('#agent-spawn-approval').textContent, /Never ask — no approval prompts/);
@@ -722,9 +740,16 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
       'the row is untouched — this is the resolved-default path, not an explicit pick');
     assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
       '— Resolved default (Codex CLI built-in) —');
-    const hint = host.querySelector('#agent-spawn-sandbox-impl-hint');
-    assert.ok(hint, 'a blank row the daemon resolved to Codex built-in must still warn');
-    assert.match(hint.textContent, /no filtered network sandbox yet/);
+    // A blank row the daemon resolved to Codex built-in must still disclose the
+    // gap — through the row's [!], which is visible without costing the dialog
+    // five lines of copy that apply to one harness.
+    const trigger = host.querySelector('#agent-spawn-sandbox-impl-row .spawn-field-help-trigger');
+    assert.equal(trigger.textContent, '!');
+    assert.ok(trigger.classList.contains('warn'));
+    await harness.act(() => harness.fireEvent(trigger, 'click'));
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    assert.match(host.querySelector('#agent-spawn-sandbox-impl-help').textContent,
+      /no filtered network sandbox yet/);
     const codexMode = host.querySelector('#agent-spawn-sandbox');
     assert.equal(codexMode.closest('.cron-create-row').hidden, false,
       'a resolved Codex built-in default reveals its native mode');

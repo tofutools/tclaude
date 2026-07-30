@@ -30,20 +30,32 @@ export function helpCaveat(help) {
    body; `content` overrides only the body when the copy is worth structuring
    (paths in <code>, a highlighted warning) while the tooltip stays flat text.
    Both empty means no trigger at all: an empty popover would be a focusable,
-   unnamed blank in the tab order. */
-export function HelpDisclosure({ id, descriptionID = `${id}-hint`, label, help, content = null, open, setOpen }) {
+   unnamed blank in the tab order.
+
+   `warn` swaps the glyph to [!] and colours the trigger, for help that carries
+   a caveat rather than a description. It is what lets a caveat come out of the
+   dialog body without becoming invisible: the operator still sees at a glance
+   that this control has something to say, and one click says it. */
+export function HelpDisclosure({
+  id, descriptionID = `${id}-hint`, label, help, content = null, open, setOpen, warn = false,
+}) {
   if (!help && !content) return null;
   /* A browser focuses the button on mousedown, which would open the disclosure
      before onClick ran and make the click read as a toggle-closed. Suppressing
      the default mousedown keeps click a plain toggle while Tab still opens it
      via onFocus. */
   const swallowFocus = (event) => event.preventDefault();
+  /* aria-label wins over content, so the [!] glyph is not announced. Naming the
+     warn state here is what gives a screen-reader user the same "this control
+     has a caveat" cue the colour gives a sighted one. */
+  const name = warn ? `Show ${label} warning` : `Show ${label} help`;
   return html`<${Fragment}>
-    <button type="button" class="spawn-field-help-trigger" aria-label=${`Show ${label} help`}
-      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${`Show ${label} help`}
+    <button type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
+      aria-label=${name}
+      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onMouseDown=${swallowFocus}
       onClick=${() => setOpen(open ? '' : id)}
-      onFocus=${() => setOpen(id)}>?</button>
+      onFocus=${() => setOpen(id)}>${warn ? '!' : '?'}</button>
     <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
       aria-live="polite" onFocus=${() => setOpen(id)}>${content || help}</span>
   <//>`;

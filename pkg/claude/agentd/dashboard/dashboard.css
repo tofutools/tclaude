@@ -4895,11 +4895,18 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   background: #12111f; padding: 9px 10px;
   display: flex; flex-direction: column; gap: 7px;
 }
-.sbx-mount-title { color: #a5a2ff; font-size: 12px; }
+/* The panel's own [?] sits on the title line, inside the card — the table row
+   above keeps its exact column layout, which is what makes a long filesystem
+   list readable in the first place. */
+.sbx-mount-title {
+  color: #a5a2ff; font-size: 12px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sbx-mount-title .spawn-field-help-trigger {
+  flex: 0 0 auto; width: 18px; height: 18px; font-size: 11px; line-height: 1;
+}
 .sbx-mount-row { display: flex; gap: 6px; align-items: stretch; }
 .sbx-mount-row > input { flex: 1; min-width: 0; }
-.sbx-mount-help { color: #8b949e; font-size: 11px; line-height: 1.4; }
-.sbx-mount-help strong { color: #c9d1d9; font-weight: 600; }
 /* Global harness rules explain the layer beneath the named profile. They look
    like rows so the combined filesystem policy is scannable, but use immutable
    text/badges and never participate in the editor draft. */
@@ -5192,6 +5199,17 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .spawn-field-help-trigger:hover, .spawn-field-help-trigger:focus {
   color: #c9d1d9; border-color: #58a6ff;
+}
+/* A caveat that came out of the dialog body must not become invisible on the
+   way. The warn trigger keeps the same size and column as [?] — the row does
+   not reflow when the selection changes — and only changes colour and glyph,
+   so "this control has a warning" reads at a glance and the text is one click
+   away. */
+.spawn-field-help-trigger.warn {
+  color: #d29922; border-color: #9e6a03; background: #1c1710;
+}
+.spawn-field-help-trigger.warn:hover, .spawn-field-help-trigger.warn:focus {
+  color: #f0b72f; border-color: #d29922;
 }
 .spawn-field-description {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -11250,8 +11268,6 @@ body.wizard #sandbox-profile-editor-modal .sbx-mount-panel {
   border-color: #a97bd6;
 }
 body.wizard #sandbox-profile-editor-modal .sbx-mount-title { color: #f3e6c0; }
-body.wizard #sandbox-profile-editor-modal .sbx-mount-help { color: #b39ddb; }
-body.wizard #sandbox-profile-editor-modal .sbx-mount-help strong { color: #f3e6c0; }
 body.wizard #sandbox-profile-editor-modal .sbx-segmented-control {
   border-color: rgba(122, 93, 176, .65);
 }

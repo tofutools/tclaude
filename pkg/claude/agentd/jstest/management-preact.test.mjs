@@ -3263,11 +3263,34 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   const panel = host.querySelector('#sandbox-profile-editor-mount-panel-0');
   assert.notEqual(panel, null);
   assert.equal(panel.querySelector('input').value, '/data');
-  assert.match(panel.textContent, /not visible inside the sandbox at all/,
-    'the panel states what the host path stops being');
-  assert.match(panel.textContent, /Linux tclaude-layer or stacked only/,
-    'the platform caveat lives inline, which is what this control shape affords');
-  assert.match(panel.textContent, /never fall back to exposing the host path/);
+  // The two explanatory paragraphs are disclosure copy: the panel stays three
+  // rows tall and a [?] on its title line carries them, so the filesystem table
+  // above keeps its column layout.
+  const mountHelp = panel.querySelector('.sbx-mount-title .spawn-field-help-trigger');
+  assert.notEqual(mountHelp, null, 'the panel offers its explanation');
+  assert.equal(mountHelp.getAttribute('aria-expanded'), 'false');
+  await harness.act(() => harness.fireEvent(mountHelp, 'click'));
+  assert.equal(mountHelp.getAttribute('aria-expanded'), 'true');
+  const mountHelpBody = mountHelp.nextElementSibling;
+  assert.match(mountHelpBody.textContent, /not visible inside the sandbox at all/,
+    'the disclosure states what the host path stops being');
+  assert.match(mountHelpBody.textContent, /Linux tclaude-layer or stacked only/);
+  assert.match(mountHelpBody.textContent, /never fall back to exposing the host path/);
+  assert.match(mountHelpBody.textContent, /\/srv\/corpus/,
+    'it names the row it belongs to, not "the host directory"');
+
+  // Closing the panel forgets the open disclosure. A remembered key would
+  // reopen the popover on top of the mount input this panel autofocuses, so the
+  // operator would type under something they never opened.
+  await harness.act(() => harness.fireEvent(toggles[0], 'click'));
+  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null);
+  await harness.act(() => harness.fireEvent(toggles[0], 'click'));
+  assert.equal(
+    host.querySelector('#sandbox-profile-editor-mount-panel-0 .spawn-field-help-trigger')
+      .getAttribute('aria-expanded'),
+    'false',
+    'a reopened panel starts closed',
+  );
 
   // Authoring a projection on the plain write row round-trips onto the wire.
   await harness.act(() => harness.fireEvent(toggles[1], 'click'));

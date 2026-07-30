@@ -43,13 +43,14 @@ import {
   sandboxModeControlLabel,
   sandboxModeOptionsForImplementation,
   sandboxImplHintFor,
+  sandboxImplCaveatFor,
   sandboxImplClearedNoticeFor,
   sandboxImplResolvedLabel,
   setSpawnSandboxImpl,
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
-import { HelpField } from './help-field.js';
+import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, SANDBOX_PROFILE_COMPOSITION,
@@ -725,6 +726,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     view.sandboxImplOptions, launchDefaults?.implementation,
   );
   const sandboxImplHint = sandboxImplHintFor(draft, view, launchDefaults?.implementation);
+  // The row's own help and the selected implementation's caveat are one
+  // disclosure, not two triggers: an operator opening [!] wants everything this
+  // row has to say, and a second button beside the first would only make them
+  // guess which one holds the warning.
+  const sandboxImplCaveat = sandboxImplCaveatFor(draft, view, launchDefaults?.implementation);
+  const sandboxImplHelp = sandboxImplCaveat
+    ? `${sandboxImplCaveat} ${SANDBOX_IMPL_TITLE}` : SANDBOX_IMPL_TITLE;
   const showApprovalControls = approvalControlsVisibleFor(
     draft, launchDefaults?.implementation,
   );
@@ -913,20 +921,29 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         }}
         placeholder="model id or alias" autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
+    <div class="cron-create-row" id="agent-spawn-sandbox-impl-row" hidden=${!view.showSandboxImpl}
       title=${SANDBOX_IMPL_TITLE}>
-      <span class="cron-create-label">Sandbox</span>
-      <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
-        onChange=${(event) => {
-          const value = event.currentTarget.value;
-          touched.current.add('sandboxImpl');
-          setDraft((before) => setSpawnSandboxImpl(before, value));
-        }}>
-        <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
-        ${(view.sandboxImplOptions || []).map((option) => html`
-          <option key=${option.value} value=${option.value}>${option.label}</option>`)}
-      </select>
-    </label>
+      <label class="cron-create-label" for="agent-spawn-sandbox-impl">Sandbox</label>
+      <div class="cron-create-target spawn-field-help-column">
+        <div class="spawn-field-with-help">
+          <select id="agent-spawn-sandbox-impl" value=${draft.sandboxImpl} disabled=${busy}
+            aria-describedby="agent-spawn-sandbox-impl-help"
+            onChange=${(event) => {
+    const value = event.currentTarget.value;
+    touched.current.add('sandboxImpl');
+    setDraft((before) => setSpawnSandboxImpl(before, value));
+  }}>
+            <option value="">${resolvedDefaultOption(resolvedSandboxImplLabel)}</option>
+            ${(view.sandboxImplOptions || []).map((option) => html`
+              <option key=${option.value} value=${option.value}>${option.label}</option>`)}
+          </select>
+          <${HelpDisclosure} id="agent-spawn-sandbox-impl"
+            descriptionID="agent-spawn-sandbox-impl-help" label="Sandbox"
+            help=${sandboxImplHelp} warn=${!!sandboxImplCaveat}
+            open=${helpOpen === 'agent-spawn-sandbox-impl'} setOpen=${setHelpOpen} />
+        </div>
+      </div>
+    </div>
     ${view.showSandboxImpl && sandboxImplHint && html`
       <div class="cron-create-row" id="agent-spawn-sandbox-impl-hint-row">
         <span class="cron-create-label"></span>

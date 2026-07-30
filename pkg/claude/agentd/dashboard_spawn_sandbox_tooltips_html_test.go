@@ -9,7 +9,9 @@ import (
 // explicit accessible disclosure owned by the Preact component.
 func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 	for needle, why := range map[string]string{
-		`class="spawn-field-help-trigger"`:                                                      "explicit keyboard/touch disclosure",
+		"class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}": "explicit keyboard/touch disclosure, caveat variant included",
+		"aria-label=${name}":               "the caveat variant renames itself, so the [!] is not a sighted-only cue",
+		`.spawn-field-help-trigger.warn {`: "a caveat trigger paints differently from ordinary field help",
 		`aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'}`:               "disclosure publishes expanded state",
 		`<span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"`: "help is focusable and scrollable",
 		`<label class="cron-create-label" for=${id}>`:                                           "selector retains an explicit label",

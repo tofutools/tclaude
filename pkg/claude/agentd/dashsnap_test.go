@@ -3529,6 +3529,16 @@ func sandboxMountPathDashSnapJS(mode string) string {
     await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
     var panel=document.querySelector('#sandbox-profile-editor-mount-panel-0');
     if(!panel) throw new Error('mount-editor: the mount panel did not open');
+    // The two explanatory paragraphs are disclosure copy now: the panel holds a
+    // [?] on its title line — inside the card, so the filesystem table above
+    // keeps its column alignment — and the copy appears when it is opened.
+    var help=panel.querySelector('.sbx-mount-title .spawn-field-help-trigger');
+    if(!help) throw new Error('mount-editor: the mount panel has no help disclosure');
+    help.click();
+    await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+    if(help.getAttribute('aria-expanded')!=='true'){
+      throw new Error('mount-editor: the help disclosure did not open');
+    }
     if(!panel.textContent.includes('Linux tclaude-layer or stacked only')){
       throw new Error('mount-editor: the platform caveat is missing from the panel');
     }

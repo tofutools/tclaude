@@ -90,6 +90,30 @@ custom.value = 'provider/experimental-42';
 custom.dispatchEvent(new InputEvent('input', {bubbles:true, data:'provider/experimental-42'}));
 custom.focus();
 `),
+		// The Codex built-in network gap is disclosure copy: the row carries a
+		// warning-coloured [!], and the paragraph appears only once the operator
+		// opens it. This state paints both halves — the closed row keeps its
+		// height, the opened popover states the caveat in full — because the
+		// whole point of moving the copy was that the dialog stays readable.
+		agentSpawnBrowserState("plain-codex-sandbox-caveat", "Plain Codex sandbox caveat", false, `
+var harness = document.querySelector('#agent-spawn-harness');
+harness.value = 'codex';
+harness.dispatchEvent(new Event('change', {bubbles:true}));
+await waitFor(function(){ return !document.querySelector('#agent-spawn-sandbox-impl-row').hidden; }, 'sandbox row');
+var impl = document.querySelector('#agent-spawn-sandbox-impl');
+impl.value = 'harness-builtin';
+impl.dispatchEvent(new Event('change', {bubbles:true}));
+var trigger = document.querySelector('#agent-spawn-sandbox-impl-row .spawn-field-help-trigger');
+await waitFor(function(){ return trigger.classList.contains('warn'); }, 'caveat trigger');
+if (trigger.textContent !== '!') throw new Error('a caveat must not wear the plain help glyph');
+if (document.querySelector('#agent-spawn-sandbox-impl-hint')) throw new Error('the caveat leaked back into the dialog body');
+trigger.click();
+await waitFor(function(){ return trigger.getAttribute('aria-expanded') === 'true'; }, 'open disclosure');
+if (!document.querySelector('#agent-spawn-sandbox-impl-help').textContent.includes('no filtered network sandbox yet')) {
+  throw new Error('the opened disclosure does not carry the caveat');
+}
+document.querySelector('#agent-spawn-sandbox-impl-row').scrollIntoView({block:'center'});
+`),
 		agentSpawnBrowserState("wizard-validation", "Wizard validation error", true, `
 document.querySelector('#agent-spawn-submit').click();
 await waitFor(function(){ return document.querySelector('#agent-spawn-error').textContent.includes('name'); }, 'validation error');

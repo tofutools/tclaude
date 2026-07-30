@@ -226,11 +226,11 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   const codex = model.spawnCapabilityView({ harness: 'codex' }, { harnesses, sandboxImpl });
   const codexBuiltin = codex.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
   // A selector option names the implementation and nothing else. The
-  // filtered-network caveat is real, but it is carried by the hint under the
-  // row, which has room to state it in full — not squeezed into a parenthetical
-  // that a closed <select> truncates.
+  // filtered-network caveat is real, but it has exactly one home now — the
+  // row's disclosure — so the option carries the catalog's own description
+  // rather than a second copy nothing renders.
   assert.equal(codexBuiltin.label, 'Codex CLI built-in');
-  assert.match(codexBuiltin.descr, /upstream proxy is experimental and off by default/);
+  assert.equal(codexBuiltin.descr, 'Current behavior: Codex CLI owns containment.');
 });
 
 test('sandbox-implementation hint stays silent for the default and warns honestly', async (t) => {
@@ -264,13 +264,34 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   );
   // Once the daemon HAS answered, a blank row is not unresolved any more — it
   // names Codex's built-in sandbox, so it must also carry that sandbox's
-  // caveat. Withholding it here was the hole left when the caveat came out of
-  // the option label, and it is the commonest Codex spawn: the row untouched.
-  const codexResolvedHint = model.sandboxImplHintFor(
-    { sandboxImpl: '' }, codexView, 'harness-builtin',
+  // caveat. The caveat is disclosure copy now: it answers through
+  // sandboxImplCaveatFor, which the row's [!] reads, and never as a paragraph
+  // the hint prints under the control.
+  assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, codexView, 'harness-builtin'), null,
+    'the resolved Codex answer states itself through the disclosure, not the hint line');
+  assert.match(
+    model.sandboxImplCaveatFor({ sandboxImpl: '' }, codexView, 'harness-builtin'),
+    /no filtered network sandbox yet/,
+    'the commonest Codex spawn — the row untouched — still discloses the gap',
   );
-  assert.equal(codexResolvedHint.warn, true);
-  assert.match(codexResolvedHint.text, /no filtered network sandbox yet/);
+  assert.equal(model.sandboxImplCaveatFor({ sandboxImpl: '' }, codexView), '',
+    'an unresolved blank row claims nothing, exactly as the hint does');
+  assert.equal(model.sandboxImplCaveatFor({ sandboxImpl: 'tclaude-layer' }, codexView), '',
+    'the caveat belongs to the built-in implementation, not to the Codex harness');
+  assert.equal(model.sandboxImplCaveatFor({ sandboxImpl: 'harness-builtin' }, view), '',
+    'no other harness carries it');
+  // A descriptor saying Codex has no built-in OS sandbox at all makes
+  // sandboxImplHintFor's "no built-in OS sandbox" branch fire. The caveat must
+  // stand down there rather than assert, beside it, that the built-in
+  // filesystem sandbox remains available.
+  assert.equal(
+    model.sandboxImplCaveatFor(
+      { sandboxImpl: 'harness-builtin' },
+      { ...codexView, sandboxImplCanBuiltin: false },
+    ),
+    '',
+    'the caveat never contradicts the hint that the built-in sandbox does not exist',
+  );
 
   // A legacy native-off pairing is a more specific statement about the same
   // blank row, so it outranks the caveat above rather than competing with it.
@@ -292,15 +313,13 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   }, codexView);
   assert.equal(legacyBuiltinOff.warn, true);
   assert.match(legacyBuiltinOff.text, /built-in \+ native Off is preserved/);
-  const codexHint = model.sandboxImplHintFor(
-    { sandboxImpl: 'harness-builtin' }, codexView,
-  );
-  assert.equal(codexHint.warn, true);
-  assert.match(codexHint.text, /built-in filesystem sandbox remains available/);
-  assert.match(codexHint.text, /no filtered network sandbox yet/);
-  assert.match(codexHint.text, /upstream proxy is experimental and off by default/);
-  assert.match(codexHint.text, /tclaude-layer filtering on Linux/);
-  assert.match(codexHint.text, /network open \(Allow all\)/);
+  assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'harness-builtin' }, codexView), null);
+  const codexCaveat = model.sandboxImplCaveatFor({ sandboxImpl: 'harness-builtin' }, codexView);
+  assert.match(codexCaveat, /built-in filesystem sandbox remains available/);
+  assert.match(codexCaveat, /no filtered network sandbox yet/);
+  assert.match(codexCaveat, /upstream proxy is experimental and off by default/);
+  assert.match(codexCaveat, /tclaude-layer filtering on Linux/);
+  assert.match(codexCaveat, /network open \(Allow all\)/);
 
   const off = model.sandboxImplHintFor({ sandboxImpl: 'off' }, codexView);
   assert.equal(off.warn, true);

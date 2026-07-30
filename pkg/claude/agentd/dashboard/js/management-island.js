@@ -14,7 +14,7 @@ import {
   sandboxRuleBuckets,
   sandboxTargetLabel,
 } from './sandbox-profiles-data.js';
-import { CODEX_BUILTIN_FILTERED_NETWORK_HINT } from './sandbox-network-disclosure.js';
+import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -26,7 +26,7 @@ import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   approvalControlsVisibleFor, autoCompactWindowHintFor, sandboxModeHelpForImplementation,
-  sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
+  sandboxImplHintFor, sandboxImplCaveatFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
   sandboxModeControlLabel, sandboxModeOptionsForImplementation,
 } from './agent-spawn-model.js';
 import {
@@ -96,7 +96,7 @@ const NETWORK_ACCESS_HELP = 'Choose Allow or Deny independently for built-in pac
   + 'and launches with the existing Not enforced disclosure and open outbound network. '
   + 'ChatGPT-auth Codex is refused in filtered mode; custom providers, web search, plugins, MCP '
   + 'servers, and agent commands need their own Access list destinations.'
-  + ` ${CODEX_BUILTIN_FILTERED_NETWORK_HINT}`;
+  + ` ${CODEX_BUILTIN_FILTERED_NETWORK_DETAIL}`;
 const NETWORK_PACKS_HELP = 'Release-owned destinations are stored as stable Allow or Deny pack '
   + 'references and expand from the current tclaude release. Choose Off to remove a pack; '
   + 'future endpoint updates follow the stored pack reference. Deny enforcement depends on the '
@@ -794,7 +794,6 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
   const harnessLabel = hEntry?.display_name || hEntry?.name || '';
   const sandboxImplOptions = sandboxImplOptionsFor(
     sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
-    hEntry?.name || '',
   );
   const showSandboxMode = !profile
     || (hEntry?.can_sandbox && draft.sandbox_implementation === 'harness-builtin');
@@ -828,6 +827,18 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
         : sandboxImpl?.host_unavailable_reason || '',
     },
   );
+  // Same disclosure contract as the spawn dialog: the caveat for the selected
+  // implementation is read through the row's [!], never printed under it.
+  const sandboxImplCaveat = sandboxImplCaveatFor(
+    { sandboxImpl: draft.sandbox_implementation },
+    {
+      showSandboxImpl: !!hEntry,
+      sandboxImplHarnessName: hEntry?.name || '',
+      sandboxImplCanBuiltin: hEntry?.can_builtin_os_sandbox !== false,
+    },
+  );
+  const sandboxImplHelp = sandboxImplCaveat
+    ? `${sandboxImplCaveat} ${SANDBOX_IMPL_TITLE}` : SANDBOX_IMPL_TITLE;
   const showApprovalControls = !profile || approvalControlsVisibleFor({
     harness: draft.harness,
     sandbox: draft.sandbox,
@@ -841,13 +852,28 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
     ${profile && hEntry && html`<${Row} label="Sandbox"
       title=${SANDBOX_IMPL_TITLE}>
-      <div class="cron-create-target">
-        <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}
-          onChange=${(value) => setDraft((current) => ({
+      ${/* Row wraps its children in a <label>, whose activation behaviour
+           forwards clicks from any NON-interactive descendant to the select.
+           The popover body is a <span> — tabindex does not make it interactive
+           — so reading or selecting text inside the open caveat would focus the
+           select and pop its dropdown open over the words being read. The
+           label still forwards clicks on its own "Sandbox" text, which is
+           outside this column. */ ''}
+      <div class="cron-create-target spawn-field-help-column"
+        onClick=${(event) => event.stopPropagation()}>
+        <div class="spawn-field-with-help">
+          <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}
+            aria-describedby="profile-editor-sandbox-impl-help"
+            onChange=${(value) => setDraft((current) => ({
     ...current, sandbox_implementation: value, sandbox_implementation_cleared: null,
   }))}
-          options=${[['', `Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`],
+            options=${[['', `Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`],
     ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
+          <${HelpDisclosure} id="profile-editor-sandbox-impl"
+            descriptionID="profile-editor-sandbox-impl-help" label="Sandbox"
+            help=${sandboxImplHelp} warn=${!!sandboxImplCaveat}
+            open=${helpOpen === 'profile-editor-sandbox-impl'} setOpen=${setHelpOpen} />
+        </div>
         <${SandboxImplHint} hint=${sandboxImplHint} />
       </div>
     </${Row}>`}
@@ -1068,6 +1094,15 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   // at a time: the panel renders beneath its row, so two open panels would push
   // the rows apart and make the table hard to read.
   const [mountPathRow, setMountPathRow] = useState(-1);
+  // Only one mount panel is open at a time, so one disclosure key covers every
+  // row's [?]. The two paragraphs this replaced doubled the panel's height for
+  // copy an operator reads once and then knows.
+  //
+  // Every path that closes a panel clears this too. A remembered open key would
+  // reopen the popover the next time that row's panel mounts — on top of the
+  // mount-path input the panel has just autofocused, so the operator would be
+  // typing under a popover they did not open.
+  const [mountHelpOpen, setMountHelpOpen] = useState('');
   // The feed is optional and its failures are the menu's own business. They
   // must never reach `state.error`, which carries save and validation
   // refusals: a late rejection would replace the reason a save was refused
@@ -1246,7 +1281,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => { const denied = (row.access || 'read') === 'deny'; const mountPath = (row.mount_path || '').trim(); const mountOpen = mountPathRow === index; const mountInvalid = denied && !!mountPath; const mountLabel = mountInvalid ? `A deny rule must not carry a mount path; this profile will be refused until ${mountPath} is removed` : denied ? 'A deny always applies to the host path' : mountPath ? `Mounts inside the sandbox at ${mountPath}` : 'Mount at a different sandbox path'; return html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button>${/* The SET state is deliberately loud. The value itself lives in a popover, so this glyph is the only signal a reviewer scrolling the table gets that the row projects its directory somewhere else; a quiet toggle would let a remapped row read as an ordinary same-path grant. */ ''}<button type="button" class=${`sbx-mount-btn${mountPath && !denied ? ' is-set' : ''}${mountInvalid ? ' is-invalid' : ''}`} id=${`sandbox-profile-editor-mount-toggle-${index}`} disabled=${denied} aria-expanded=${denied ? undefined : mountOpen} aria-controls=${mountOpen && !denied ? `sandbox-profile-editor-mount-panel-${index}` : undefined} aria-label=${`Filesystem row ${index + 1}: ${mountLabel}`} title=${mountLabel} onClick=${() => setMountPathRow(mountOpen ? -1 : index)}>⤳</button><button type="button" onClick=${() => { setMountPathRow(-1); setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) })); }}>×</button></div>${mountOpen && !denied && html`<div key=${`mount-${index}`} class="sbx-mount-panel" id=${`sandbox-profile-editor-mount-panel-${index}`} onKeyDown=${(event) => { if (event.key !== 'Escape') return; /* Close just this panel. Without it Escape reaches the Overlay and starts the whole modal's discard-confirm flow, which is a wildly disproportionate answer to dismissing one popover. */ event.stopPropagation(); event.preventDefault(); setMountPathRow(-1); document.getElementById(`sandbox-profile-editor-mount-toggle-${index}`)?.focus(); }}><div class="sbx-mount-title">Mount inside the sandbox at</div><div class="sbx-mount-row"><input class="sbx-path" value=${row.mount_path || ''} placeholder="/data" ref=${(node) => { /* Preact does not implement autofocus, and the document's autofocus-processed flag is already set by the modal's name field, so the browser will not honor it either. Focus the field explicitly when the panel first mounts. */ if (node && !node.dataset.focused) { node.dataset.focused = '1'; node.focus(); } }} onInput=${(event) => setFS(index, { mount_path: event.currentTarget.value })}/><button type="button" disabled=${!mountPath} onClick=${() => setFS(index, { mount_path: '' })}>clear</button></div><div class="sbx-mount-help">The agent sees this path instead of the host path; <strong>${row._resolved_path || row.path || 'the host directory'} is not visible inside the sandbox at all</strong>. Leave it empty to expose the directory at its own location.</div><div class="sbx-mount-help"><strong>Linux tclaude-layer or stacked only.</strong> Mounting a directory somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.</div></div>`}`; })}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => { const denied = (row.access || 'read') === 'deny'; const mountPath = (row.mount_path || '').trim(); const mountOpen = mountPathRow === index; const mountInvalid = denied && !!mountPath; const hostPath = row._resolved_path || row.path || 'the host directory'; const mountHelpID = `sandbox-profile-editor-mount-help-${index}`; const mountHelp = `The agent sees this path instead of the host path; ${hostPath} is not visible inside the sandbox at all. Leave it empty to expose the directory at its own location. Linux tclaude-layer or stacked only: mounting a directory somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.`; const mountHelpContent = html`<span>The agent sees this path instead of the host path; <strong>${hostPath} is not visible inside the sandbox at all</strong>. Leave it empty to expose the directory at its own location.</span><br/><span><strong>Linux tclaude-layer or stacked only.</strong> Mounting a directory somewhere else needs a mount namespace. macOS Seatbelt and harness-builtin sandboxes cannot do it and refuse the launch — they never fall back to exposing the host path instead.</span>`; const mountLabel = mountInvalid ? `A deny rule must not carry a mount path; this profile will be refused until ${mountPath} is removed` : denied ? 'A deny always applies to the host path' : mountPath ? `Mounts inside the sandbox at ${mountPath}` : 'Mount at a different sandbox path'; return html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button>${/* The SET state is deliberately loud. The value itself lives in a popover, so this glyph is the only signal a reviewer scrolling the table gets that the row projects its directory somewhere else; a quiet toggle would let a remapped row read as an ordinary same-path grant. */ ''}<button type="button" class=${`sbx-mount-btn${mountPath && !denied ? ' is-set' : ''}${mountInvalid ? ' is-invalid' : ''}`} id=${`sandbox-profile-editor-mount-toggle-${index}`} disabled=${denied} aria-expanded=${denied ? undefined : mountOpen} aria-controls=${mountOpen && !denied ? `sandbox-profile-editor-mount-panel-${index}` : undefined} aria-label=${`Filesystem row ${index + 1}: ${mountLabel}`} title=${mountLabel} onClick=${() => { setMountHelpOpen(''); setMountPathRow(mountOpen ? -1 : index); }}>⤳</button><button type="button" onClick=${() => { setMountHelpOpen(''); setMountPathRow(-1); setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) })); }}>×</button></div>${mountOpen && !denied && html`<div key=${`mount-${index}`} class="sbx-mount-panel" id=${`sandbox-profile-editor-mount-panel-${index}`} onKeyDown=${(event) => { if (event.key !== 'Escape') return; /* Close just this panel. Without it Escape reaches the Overlay and starts the whole modal's discard-confirm flow, which is a wildly disproportionate answer to dismissing one popover. */ event.stopPropagation(); event.preventDefault(); setMountHelpOpen(''); setMountPathRow(-1); document.getElementById(`sandbox-profile-editor-mount-toggle-${index}`)?.focus(); }}><div class="sbx-mount-title">Mount inside the sandbox at<${SandboxHelp}><${HelpDisclosure} id=${mountHelpID} label="Mount path" help=${mountHelp} content=${mountHelpContent} open=${mountHelpOpen === mountHelpID} setOpen=${setMountHelpOpen}/></${SandboxHelp}></div><div class="sbx-mount-row"><input class="sbx-path" value=${row.mount_path || ''} placeholder="/data" ref=${(node) => { /* Preact does not implement autofocus, and the document's autofocus-processed flag is already set by the modal's name field, so the browser will not honor it either. Focus the field explicitly when the panel first mounts. */ if (node && !node.dataset.focused) { node.dataset.focused = '1'; node.focus(); } }} onInput=${(event) => setFS(index, { mount_path: event.currentTarget.value })}/><button type="button" disabled=${!mountPath} onClick=${() => setFS(index, { mount_path: '' })}>clear</button></div></div>`}`; })}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes
