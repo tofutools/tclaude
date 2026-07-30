@@ -2672,11 +2672,9 @@ func resumeLaunchCmdWithStackedProof(
 			spec.ExecutablePath = stackedProof.Executable.Path
 		}
 	}
-	if h.Name == harness.DefaultName {
-		spec, err = harness.PrepareClaudeSandboxLaunch(spec)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("prepare Claude host-control sandbox: %w", err)
-		}
+	spec, err = h.PrepareHostControlSandboxLaunch(spec)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {

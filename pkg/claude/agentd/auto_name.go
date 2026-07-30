@@ -137,7 +137,7 @@ func runAutoName(agentID, convID, harnessName, cwd, fallback, prompt string) {
 		posture.SandboxMode = harness.ClaudeSandboxOn
 		posture.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, "plan")
 		if err == nil {
-			posture, err = harness.PrepareClaudeSandboxLaunch(posture)
+			posture, err = h.PrepareHostControlSandboxLaunch(posture)
 		}
 	case harness.CodexName:
 		posture.SandboxMode = harness.SandboxReadOnly

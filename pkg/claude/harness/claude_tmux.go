@@ -8,6 +8,12 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
+type claudeTmuxHostControlSandbox struct{}
+
+func (claudeTmuxHostControlSandbox) PrepareLaunch(spec SpawnSpec) (SpawnSpec, error) {
+	return PrepareClaudeSandboxLaunch(spec)
+}
+
 // ClaudeTmuxSocketDenyPath resolves tclaude's named tmux server socket. The
 // boundary is intentionally socket-specific: agents may run tmux against a
 // private socket they own, but must not connect to the server hosting tclaude

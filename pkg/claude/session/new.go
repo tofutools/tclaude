@@ -1495,11 +1495,9 @@ func runNew(params *NewParams) error {
 			spawnSpec.ExecutablePath = stackedProof.Executable.Path
 		}
 	}
-	if h.Name == harness.DefaultName {
-		spawnSpec, err = harness.PrepareClaudeSandboxLaunch(spawnSpec)
-		if err != nil {
-			return fmt.Errorf("prepare Claude host-control sandbox: %w", err)
-		}
+	spawnSpec, err = h.PrepareHostControlSandboxLaunch(spawnSpec)
+	if err != nil {
+		return fmt.Errorf("prepare %s host-control sandbox: %w", h.DisplayName, err)
 	}
 	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
@@ -1821,10 +1819,16 @@ func EnsureCodexManagedOneShotProfile(
 // it when a headless resume must run with the same recorded containment as the
 // predecessor instead of the generic read-only `tclaude ask` posture.
 func OneShotLaunchPosture(
-	cwd, harnessName, sandboxMode, approvalPolicy string,
+	cwd string,
+	targetHarness *harness.Harness,
+	sandboxMode, approvalPolicy string,
 	autoReview bool,
 	effectiveSandbox *sandboxpolicy.Snapshot,
 ) (harness.SpawnSpec, error) {
+	if targetHarness == nil {
+		return harness.SpawnSpec{}, fmt.Errorf("prepare one-shot launch posture: nil harness")
+	}
+	harnessName := targetHarness.Name
 	params := &NewParams{}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, sandboxMode, cwd)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -1851,10 +1855,7 @@ func OneShotLaunchPosture(
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
 	}
-	if harnessName == harness.DefaultName {
-		return harness.PrepareClaudeSandboxLaunch(posture)
-	}
-	return posture, nil
+	return targetHarness.PrepareHostControlSandboxLaunch(posture)
 }
 
 func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, *harness.CodexSplitPolicyCapability, error) {

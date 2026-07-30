@@ -17,7 +17,9 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 	tmuxBase := t.TempDir()
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
 	originalDenies := []string{"/opt/secret"}
-	spec, err := PrepareClaudeSandboxLaunch(SpawnSpec{
+	claude := MustGet(DefaultName)
+	require.True(t, claude.SupportsHostControlSandbox())
+	spec, err := claude.PrepareHostControlSandboxLaunch(SpawnSpec{
 		SandboxMode:     ClaudeSandboxInherit,
 		SandboxDenyDirs: originalDenies,
 	})
@@ -75,4 +77,15 @@ func TestPrepareClaudeSandboxLaunchDoesNotDuplicateSocketDeny(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{socketPath}, spec.SandboxDenyDirs)
+}
+
+func TestHostControlSandboxCapabilityIsDescriptorOwned(t *testing.T) {
+	for _, name := range []string{CodexName, OpenCodeName} {
+		target := MustGet(name)
+		assert.False(t, target.SupportsHostControlSandbox(), name)
+		input := SpawnSpec{SandboxDenyDirs: []string{"/operator-rule"}}
+		got, err := target.PrepareHostControlSandboxLaunch(input)
+		require.NoError(t, err)
+		assert.Equal(t, input, got)
+	}
 }

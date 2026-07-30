@@ -552,14 +552,14 @@ func resolveSeancePlan(
 		return seanceResolveResp{}, false
 	}
 	posture, err := session.OneShotLaunchPosture(
-		cwd, h.Name, sandboxMode, approvalPolicy, autoReview, effectiveSandbox)
+		cwd, h, sandboxMode, approvalPolicy, autoReview, effectiveSandbox)
 	if err != nil {
 		writeError(w, http.StatusConflict, "sandbox_profile_changed",
 			"cannot reproduce the predecessor's recorded sandbox: "+err.Error())
 		return seanceResolveResp{}, false
 	}
 	claudeTmuxSocketDenyPath := ""
-	if h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff {
+	if h.SupportsHostControlSandbox() && sandboxMode != harness.ClaudeSandboxOff {
 		claudeTmuxSocketDenyPath, err = harness.ClaudeTmuxSocketDenyPath()
 		if err != nil {
 			writeError(w, http.StatusConflict, "sandbox_profile_changed",
