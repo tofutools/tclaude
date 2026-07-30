@@ -123,14 +123,27 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	require.NotEmpty(t, catalog.GlobalNetwork)
 	assert.Equal(t, "api.example.com", catalog.GlobalNetwork[0]["entry"].(map[string]any)["domain"])
 	require.NotEmpty(t, catalog.GlobalSockets)
-	assert.Equal(t, []string{"net-local", "net-anthropic", "net-openai-codex", "net-github", "net-go-modules", "net-npm"},
-		[]string{catalog.NetworkPacks[0].ID, catalog.NetworkPacks[1].ID, catalog.NetworkPacks[2].ID, catalog.NetworkPacks[3].ID, catalog.NetworkPacks[4].ID, catalog.NetworkPacks[5].ID})
+	require.Len(t, catalog.NetworkPacks, 7)
+	packIDs := make([]string, 0, len(catalog.NetworkPacks))
+	for _, pack := range catalog.NetworkPacks {
+		packIDs = append(packIDs, pack.ID)
+	}
+	assert.Equal(t, []string{
+		"net-local", "net-anthropic", "net-openai-codex", "net-openai-chatgpt",
+		"net-github", "net-go-modules", "net-npm",
+	}, packIDs)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
 		catalog.NetworkPacks[0].Entries)
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
 		{Domain: "api.openai.com", Ports: []int{443}},
 	}, catalog.NetworkPacks[2].Entries)
-	assert.Contains(t, catalog.NetworkPacks[2].Warning, "ChatGPT-auth Codex is refused")
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "chatgpt.com", Ports: []int{443}},
+		{Domain: "auth.openai.com", Ports: []int{443}},
+	}, catalog.NetworkPacks[3].Entries)
+	assert.Contains(t, catalog.NetworkPacks[2].Warning,
+		"ChatGPT-auth Codex uses different destinations")
+	assert.Contains(t, catalog.NetworkPacks[3].Warning, "chatgpt_base_url")
 	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{{
 		Domain: "api.anthropic.com", Ports: []int{443},
 	}}, catalog.NetworkPacks[1].Entries)

@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -24,6 +23,13 @@ type ModelTransportLaunchContext struct {
 	Cwd         string
 	Environment []sandboxpolicy.EnvironmentEntry
 	ExtraArgs   []string
+	// PermissionProfile is the Codex permission profile the launch will pass as
+	// `-p <name>`. tclaude sets this itself on the stacked path, so it is not
+	// covered by the ExtraArgs gate; the profile layers
+	// $CODEX_HOME/<name>.config.toml above the base user config and can carry
+	// provider routing, so the effective-config probe has to select it too or
+	// it reads a different config than the launch gets.
+	PermissionProfile string
 }
 
 // ResolveTclaudeLayerModelTransport resolves the concrete provider endpoint for
@@ -40,7 +46,7 @@ func ResolveTclaudeLayerModelTransport(
 	environment := launchModelEnvironment(context.Environment)
 	if variable := modelTransportProxyVariable(environment); variable != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			fmt.Sprintf("model transport proxy variable %s changes the actual network boundary; remove it or use network open (proxy-aware resolution tracked in TCL-826)",
+			fmt.Sprintf("model transport proxy variable %s puts the real destination behind a proxy this seam does not resolve, so the authored list cannot be checked against it; remove the proxy variable or use network open",
 				variable))
 	}
 	switch h.Name {
@@ -233,15 +239,16 @@ func resolveOpenCodeModelTransport(
 
 // ValidateTclaudeLayerOpenCodeLocalModelTransport keeps the local convenience
 // presets behind the existing model-transport launch gate. General OpenCode
-// explicit-provider filtering is supported, but resolving an effective local
-// provider for these presets belongs to TCL-826.
+// explicit-provider filtering is supported because the frozen inline config is
+// the provider authority; the local presets have no such authority and OpenCode
+// exposes no effective-config read of its own loader, so they stay refused.
 func ValidateTclaudeLayerOpenCodeLocalModelTransport(
 	h *harness.Harness,
 	_ sandboxpolicy.EffectiveProfile,
 	_ ModelTransportLaunchContext,
 ) error {
 	return modelTransportLaunchError(h,
-		"OpenCode local-preset effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open")
+		"OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open")
 }
 
 func resolveClaudeModelTransport(
@@ -360,6 +367,24 @@ func claudeProviderSettingsPaths(
 			configDir = filepath.Join(home, ".claude")
 		}
 	}
+	// Claude Code 2.1.220 caches its remotely delivered managed settings here
+	// and merges them as a policy-tier source. A verified payload is exempt
+	// from the env filter that strips provider routing from an unverified one,
+	// so this file can carry ANTHROPIC_BASE_URL or a provider selector just as
+	// managed-settings.json can. The live fetch still happens after this
+	// preflight; inspecting the cache catches the consented, persisted case
+	// rather than pretending the channel does not exist.
+	// Both are appended rather than either/or: a stale or wrong
+	// CLAUDE_CODE_REMOTE_SETTINGS_PATH export must not make the default cache
+	// invisible. A path that does not exist is skipped during inspection, so
+	// naming both costs nothing and cannot under-inspect.
+	if remote := strings.TrimSpace(
+		environment["CLAUDE_CODE_REMOTE_SETTINGS_PATH"]); remote != "" {
+		paths = append(paths, remote)
+	}
+	if configDir != "" {
+		paths = append(paths, filepath.Join(configDir, "remote-settings.json"))
+	}
 	if configDir != "" {
 		paths = append(paths, filepath.Join(configDir, "settings.json"))
 	}
@@ -423,117 +448,132 @@ func resolveCodexModelTransport(
 		home := strings.TrimSpace(environment["HOME"])
 		if home == "" {
 			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				"cannot locate Codex config.toml because HOME and CODEX_HOME are unset; set CODEX_HOME or use network open")
+				"cannot locate the Codex home because HOME and CODEX_HOME are unset; set CODEX_HOME or use network open")
 		}
 		configDir = filepath.Join(home, ".codex")
 	}
-	for _, path := range codexExternalModelConfigPaths() {
-		key, inspectErr := codexProviderKeyInConfig(path)
-		if inspectErr != nil {
-			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				inspectErr.Error()+"; fix the external Codex config or use network open")
-		}
-		if key != "" {
-			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				fmt.Sprintf("Codex external config %s sets provider-routing key %s, which this launch seam cannot merge exactly; remove the override, move the concrete provider into CODEX_HOME/config.toml, or use network open",
-					path, key))
-		}
-	}
-	config, err := readCodexModelTransportConfig(
-		filepath.Join(configDir, "config.toml"))
+	config, err := codexEffectiveConfigReader(
+		context.Cwd, context.Environment, context.PermissionProfile)
 	if err != nil {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			err.Error()+"; fix config.toml or use network open")
+			err.Error()+"; fix the Codex installation or configuration, or use network open")
 	}
-	provider := strings.TrimSpace(config.ModelProvider)
+	provider := config.ModelProvider
 	if provider == "" {
 		provider = "openai"
 	}
-	if strings.TrimSpace(config.Profile) != "" || len(config.Profiles) != 0 {
-		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			"Codex 0.145.0 rejects legacy profile/[profiles] configuration; remove it and use concrete top-level provider configuration, or use network open")
-	}
-	if strings.TrimSpace(config.ChatGPTBaseURL) != "" {
-		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-			"Codex chatgpt_base_url overrides the pinned first-party auth endpoint; remove the override or use network open")
-	}
+	// A profile needs no separate gate here: `--profile` is refused above with
+	// the other provider-changing pass-through arguments, and Codex 0.145.0's
+	// own loader hard-errors on a legacy `profile` key, which surfaces as the
+	// effective-config read failing rather than as a silent provider switch.
 
-	baseURL := ""
-	requiresOpenAIAuth := true
-	if provider == "openai" {
-		baseURL = strings.TrimSpace(config.OpenAIBaseURL)
-	} else {
-		configured, ok := config.ModelProviders[provider]
-		if !ok || strings.TrimSpace(configured.BaseURL) == "" {
-			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
-				fmt.Sprintf("Codex provider %q has no concrete model_providers.%s.base_url; configure one or use network open",
-					provider, provider))
-		}
-		baseURL = strings.TrimSpace(configured.BaseURL)
-		requiresOpenAIAuth = configured.RequiresOpenAIAuth
-	}
-	if authErr := validateCodexFilteredAuth(
-		configDir, config.AuthCredentialsStore, environment, requiresOpenAIAuth,
-	); authErr != nil {
+	authMode, authErr := codexFilteredAuthMode(configDir, config.AuthStore, environment)
+	if authErr != nil {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
 			authErr.Error())
 	}
-	return harness.ResolvedModelTransport{
+
+	resolved := harness.ResolvedModelTransport{
 		Model:            context.Model,
 		Provider:         provider,
-		BaseURL:          baseURL,
+		Provenance:       codexRemoteProvenance(config.RemoteOrigins),
 		ProviderResolved: true,
-	}, nil
+	}
+	// ChatGPT sign-in substitutes chatgpt_base_url only for the built-in openai
+	// provider. A custom provider keeps posting to its own base_url and merely
+	// uses the ChatGPT token as its bearer, so the model endpoint is chosen by
+	// the provider and only the refresh endpoint follows the credential.
+	if provider == "openai" {
+		if authMode == codexAuthChatGPT {
+			baseURL := config.ChatGPTBaseURL
+			if baseURL == "" {
+				baseURL = codexDefaultChatGPTBaseURL
+			}
+			resolved.BaseURL = baseURL
+		} else {
+			resolved.BaseURL = config.OpenAIBaseURL
+		}
+	} else {
+		configured, ok := config.ModelProviders[provider]
+		if !ok || configured.BaseURL == "" {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+				fmt.Sprintf("the effective Codex config selects provider %q with no concrete model_providers.%s.base_url; configure one or use network open",
+					provider, provider))
+		}
+		resolved.BaseURL = configured.BaseURL
+	}
+	if authMode == codexAuthChatGPT {
+		// The refresh endpoint is a compile-time constant in the harness
+		// (codex-rs/login/src/auth/manager.rs REFRESH_TOKEN_URL), so no config
+		// layer can move it and every ChatGPT-authenticated launch needs it,
+		// whichever provider serves the model traffic.
+		resolved.AuxiliaryBaseURLs = []string{codexChatGPTTokenRefreshURL}
+	}
+	if authMode == codexAuthNone && provider != "openai" {
+		if configured, ok := config.ModelProviders[provider]; ok &&
+			configured.RequiresOpenAIAuth {
+			return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+				fmt.Sprintf("the effective Codex config selects provider %q, which requires OpenAI authentication, but no inspectable credential is present; sign in or use network open",
+					provider))
+		}
+	}
+	if authMode == codexAuthNone && provider == "openai" {
+		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
+			"no Codex authentication is present, so the launch provider route cannot be resolved; sign in with an API key or ChatGPT, or use network open")
+	}
+	return resolved, nil
 }
 
-type codexModelTransportConfig struct {
-	ModelProvider        string `toml:"model_provider"`
-	Profile              string `toml:"profile"`
-	OpenAIBaseURL        string `toml:"openai_base_url"`
-	ChatGPTBaseURL       string `toml:"chatgpt_base_url"`
-	AuthCredentialsStore string `toml:"cli_auth_credentials_store"`
-	ModelProviders       map[string]struct {
-		BaseURL            string `toml:"base_url"`
-		RequiresOpenAIAuth bool   `toml:"requires_openai_auth"`
-	} `toml:"model_providers"`
-	Profiles map[string]struct {
-		ModelProvider  string `toml:"model_provider"`
-		ChatGPTBaseURL string `toml:"chatgpt_base_url"`
-	} `toml:"profiles"`
-}
+const (
+	// codexDefaultChatGPTBaseURL matches the harness default applied when no
+	// layer sets chatgpt_base_url (codex-rs/core/src/config/mod.rs).
+	codexDefaultChatGPTBaseURL = "https://chatgpt.com/backend-api/"
+	// codexChatGPTTokenRefreshURL is REFRESH_TOKEN_URL in
+	// codex-rs/login/src/auth/manager.rs — a constant, not a config key.
+	codexChatGPTTokenRefreshURL = "https://auth.openai.com/oauth/token"
+)
 
-func validateCodexFilteredAuth(
+type codexAuthMode int
+
+const (
+	codexAuthNone codexAuthMode = iota
+	codexAuthAPIKey
+	codexAuthChatGPT
+)
+
+// codexFilteredAuthMode reports which credential route the launch will take.
+// The route decides the destination set — ChatGPT sign-in talks to
+// chatgpt_base_url and the token-refresh endpoint, an API key talks to the
+// model endpoint — so an uninspectable credential store is still refused: not
+// because the credential is secret, but because the destination it selects is
+// then unknown.
+func codexFilteredAuthMode(
 	configDir string,
 	store string,
 	environment map[string]string,
-	requiresOpenAIAuth bool,
-) error {
+) (codexAuthMode, error) {
 	if strings.TrimSpace(environment["CODEX_ACCESS_TOKEN"]) != "" {
-		return codexFilteredAuthError(
-			"CODEX_ACCESS_TOKEN selects externally supplied authentication")
+		return codexAuthNone, codexFilteredAuthError(
+			"CODEX_ACCESS_TOKEN supplies authentication from outside the inspected launch inputs")
 	}
 	switch normalized := strings.ToLower(strings.TrimSpace(store)); normalized {
 	case "", "file":
 	case "auto", "keyring", "ephemeral":
-		return codexFilteredAuthError(fmt.Sprintf(
+		return codexAuthNone, codexFilteredAuthError(fmt.Sprintf(
 			"cli_auth_credentials_store=%q is not inspectable at the launch seam",
 			normalized))
 	default:
-		return codexFilteredAuthError(fmt.Sprintf(
+		return codexAuthNone, codexFilteredAuthError(fmt.Sprintf(
 			"cli_auth_credentials_store=%q is unsupported", normalized))
 	}
 
 	path := filepath.Join(configDir, "auth.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if requiresOpenAIAuth {
-			return codexFilteredAuthError(
-				"no persisted API-key authentication was found")
-		}
-		return nil
+		return codexAuthNone, nil
 	}
 	if err != nil {
-		return codexFilteredAuthError(fmt.Sprintf(
+		return codexAuthNone, codexFilteredAuthError(fmt.Sprintf(
 			"cannot inspect Codex authentication at %s: %v", path, err))
 	}
 	var auth struct {
@@ -541,7 +581,7 @@ func validateCodexFilteredAuth(
 		OpenAIAPIKey *string `json:"OPENAI_API_KEY"`
 	}
 	if err := json.Unmarshal(data, &auth); err != nil {
-		return codexFilteredAuthError(fmt.Sprintf(
+		return codexAuthNone, codexFilteredAuthError(fmt.Sprintf(
 			"cannot parse Codex authentication at %s", path))
 	}
 	mode := ""
@@ -552,74 +592,26 @@ func validateCodexFilteredAuth(
 	} else {
 		mode = "chatgpt"
 	}
-	if mode != "apikey" {
-		return codexFilteredAuthError(fmt.Sprintf(
-			"persisted Codex auth mode %q can load remote provider overrides",
+	switch mode {
+	case "apikey":
+		if auth.OpenAIAPIKey == nil || strings.TrimSpace(*auth.OpenAIAPIKey) == "" {
+			return codexAuthNone, codexFilteredAuthError(
+				"persisted Codex API-key authentication is missing its key")
+		}
+		return codexAuthAPIKey, nil
+	case "chatgpt":
+		return codexAuthChatGPT, nil
+	default:
+		return codexAuthNone, codexFilteredAuthError(fmt.Sprintf(
+			"persisted Codex auth mode %q selects an unknown model destination",
 			mode))
 	}
-	if auth.OpenAIAPIKey == nil || strings.TrimSpace(*auth.OpenAIAPIKey) == "" {
-		return codexFilteredAuthError(
-			"persisted Codex API-key authentication is missing its key")
-	}
-	return nil
 }
 
 func codexFilteredAuthError(reason string) error {
 	return fmt.Errorf(
-		"%s; filtered networking requires an inspectable API-key route because ChatGPT-auth provider overrides can refresh after launch. Sign in with a Codex API key or use network open (dynamic provider-resolution remedy tracked in TCL-826)",
+		"%s, so filtered networking cannot tell which model destination this launch will use; sign in with a Codex API key or ChatGPT sign-in whose credentials are stored in the inspected auth file, or use network open",
 		reason)
-}
-
-var codexExternalModelConfigPaths = func() []string {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	return []string{
-		"/etc/codex/managed_config.toml",
-		"/etc/codex/config.toml",
-	}
-}
-
-func codexProviderKeyInConfig(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("read Codex external config %s: %w", path, err)
-	}
-	var config map[string]any
-	if err := toml.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("parse Codex external config %s", path)
-	}
-	for _, key := range []string{
-		"model_provider",
-		"model_providers",
-		"openai_base_url",
-		"chatgpt_base_url",
-		"profile",
-		"profiles",
-	} {
-		if _, ok := config[key]; ok {
-			return key, nil
-		}
-	}
-	return "", nil
-}
-
-func readCodexModelTransportConfig(path string) (codexModelTransportConfig, error) {
-	var config codexModelTransportConfig
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return config, nil
-	}
-	if err != nil {
-		return config, fmt.Errorf("read Codex config %s: %w", path, err)
-	}
-	if err := toml.Unmarshal(data, &config); err != nil {
-		return config, fmt.Errorf("parse Codex config %s", path)
-	}
-	return config, nil
 }
 
 func launchModelEnvironment(

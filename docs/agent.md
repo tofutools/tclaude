@@ -548,14 +548,18 @@ network open. The provider-empty private config directories are read-only
 inside the executor, and both those directories and account state are rechecked
 before every initial server exec or restart. Its built-in webfetch/websearch
 network rules remain soft tool policy, distinct from the packet-enforced nft
-floor. Codex filtered launches also refuse ChatGPT or opaque
-authentication because those routes can load provider overrides after
-preflight; use inspectable file-backed API-key authentication or network open
-until TCL-826 adds dynamic resolution. Claude continues from its inspected
-first-party launch route, with any later unauthored reroute denied fail-closed
-for new flows at the packet floor. Both harnesses refuse filtered launch when
-HTTP(S)/ALL proxy environment variables change the actual model-transport
-boundary; remove the proxy or use network open until TCL-826.
+floor. Codex resolves its provider route from its own merged effective config
+through the app-server, so enterprise cloud-config and MDM layers are included
+and ChatGPT sign-in resolves to `chatgpt_base_url` plus the constant
+`auth.openai.com` refresh endpoint; credential routes tclaude cannot inspect
+(`CODEX_ACCESS_TOKEN`, keyring/ephemeral stores) still refuse because the
+destination stays unknown. Claude continues from its inspected first-party
+launch route — including the cached remote managed settings, whose live fetch
+and hourly poll can still re-route the running process — with any later
+unauthored reroute denied fail-closed for new flows at the packet floor. Both
+harnesses refuse filtered launch when HTTP(S)/ALL proxy environment variables
+change the actual model-transport boundary; remove the proxy or use network
+open.
 
 The editor's Linux preview is prerequisite-conditional: the exact launch must
 pass live bubblewrap namespace plus trusted root-owned `pasta` and `nft`

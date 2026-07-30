@@ -22,7 +22,7 @@ var networkPackRegistry = []NetworkPack{
 		ID: "net-local", Label: "Local access",
 		Entries: []NetworkAllowEntry{{Loopback: true}},
 		Note:    "Host-loopback model servers and local development services.",
-		Warning: "OpenCode local-provider launches remain refused until TCL-826 resolves their effective provider endpoint.",
+		Warning: "OpenCode local-provider launches remain refused: they name no explicit provider endpoint to resolve.",
 	},
 	{
 		ID: "net-anthropic", Label: "Anthropic API", Group: "Cloud model APIs",
@@ -33,7 +33,17 @@ var networkPackRegistry = []NetworkPack{
 		ID: "net-openai-codex", Label: "OpenAI API", Group: "Cloud model APIs",
 		Entries: []NetworkAllowEntry{{Domain: "api.openai.com", Ports: []int{443}}},
 		Note:    "The supported filtered Codex route uses api.openai.com for API-key model traffic.",
-		Warning: "ChatGPT-auth Codex is refused in filtered mode; custom providers and other networked features need their own destinations.",
+		Warning: "ChatGPT-auth Codex uses different destinations; add the ChatGPT sign-in pack for those. Custom providers and other networked features need their own destinations.",
+	},
+	{
+		ID: "net-openai-chatgpt", Label: "ChatGPT (Codex sign-in)",
+		Group: "Cloud model APIs",
+		Entries: []NetworkAllowEntry{
+			{Domain: "chatgpt.com", Ports: []int{443}},
+			{Domain: "auth.openai.com", Ports: []int{443}},
+		},
+		Note:    "ChatGPT-signed-in Codex reaches its model endpoint at chatgpt.com and refreshes its token at auth.openai.com, per the named CI origin audit.",
+		Warning: "A workspace that overrides chatgpt_base_url routes model traffic elsewhere and needs that destination authored explicitly.",
 	},
 	{
 		ID: "net-github", Label: "GitHub essentials",

@@ -90,6 +90,10 @@ external subprocess boundaries are swapped:
 - `clcommon.Default` for tmux.
 - `agentd.Spawn` for `tclaude session new`.
 - `agentd.runPluginShell` for plugin shell execution when needed.
+- `session.SetCodexEffectiveConfigProbeForTest` for the `codex app-server`
+  effective-config read that resolves a filtered Codex launch's provider route.
+  `agentd`'s `TestMain` installs a binary-wide default, so only tests needing a
+  specific provider route swap their own.
 
 Keep new tests focused on user-visible surfaces such as CLI/API results,
 conversation listings, and dashboard snapshots. Avoid asserting on simulator

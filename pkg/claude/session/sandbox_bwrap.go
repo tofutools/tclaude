@@ -570,7 +570,14 @@ func ValidateTclaudeLayerNetwork(
 			detail += " Hosted endpoint coverage was empirically audited by the pinned M2c real-harness origin smoke (Claude Code 2.1.220; Codex CLI 0.145.0)."
 		}
 		if h.Name == harness.DefaultName {
-			detail += " If Claude's provider route changes after preflight, an unauthored destination is denied fail-closed for new flows at the packet floor; dynamic provider-resolution follow-up is tracked in TCL-826."
+			detail += " Claude Code also loads remote managed settings, which its own loader re-fetches on a background poll and applies in-process, so provider routing can move after this preflight without any local file changing. tclaude inspects the cached remote settings it can see; when the route moves anyway, the unauthored destination is denied fail-closed for new flows at the packet floor."
+		}
+		if h.Name == harness.CodexName {
+			detail += " The provider route above is Codex's own effective config, read through its app-server, so enterprise cloud-config and MDM layers are included rather than guessed. Codex snapshots that bundle at process start and its background refresher only warms the cache for later starts, so a running session does not re-route; a refresh landing between this preflight and process start is denied fail-closed at the packet floor."
+			if len(resolvedModel.Provenance) > 0 {
+				detail += " Remotely delivered provider routing in effect: " +
+					strings.Join(resolvedModel.Provenance, "; ") + "."
+			}
 		}
 		if h.Name == harness.OpenCodeName {
 			detail += " OpenCode filtered supports explicit-provider configs only: the launch model and frozen OPENCODE_CONFIG_CONTENT must name exactly one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses daemon-final read-only, provider-empty private XDG and HOME config directories and rechecks those directories plus persistent account/org authority before every initial exec or restart so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."

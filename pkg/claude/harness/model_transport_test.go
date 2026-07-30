@@ -147,7 +147,7 @@ func TestOpenCodeModelTransportRequiresResolvedProviderEndpoint(t *testing.T) {
 	require.True(t, errors.As(err, &capability))
 	assert.Equal(t, SandboxCapabilityModelTransport, capability.Kind)
 	assert.Contains(t, err.Error(), "resolved provider endpoint")
-	assert.Contains(t, err.Error(), "TCL-826")
+	assert.Contains(t, err.Error(), "no inspected effective-config read")
 	assert.Contains(t, err.Error(), "network open")
 }
 

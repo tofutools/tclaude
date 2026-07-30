@@ -566,7 +566,8 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 	}
 
 	// The OpenCode local presets stay outside the activation: their filtered
-	// list is refused at launch pending TCL-826, so their deny rows must keep
+	// list is refused at launch for want of an explicit provider, so their deny
+	// rows must keep
 	// disclosing omission rather than inheriting the flipped cell.
 	localPresetAxes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{
@@ -780,7 +781,7 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 			preview = DescribePredictedAccess(local, prediction).Network
 			assert.Equal(t, AccessPredictionRefused, preview.Outcome)
 			assert.Contains(t, preview.Detail, SandboxCapabilityModelTransport)
-			assert.Contains(t, preview.Detail, "TCL-826")
+			assert.Contains(t, preview.Detail, "no explicit provider")
 		}
 	}
 
@@ -800,7 +801,7 @@ func TestM3OpenCodeFilteredPredictionAndReadyPlanActivate(t *testing.T) {
 	preview = DescribePredictedAccess(portScopedLoopback, prediction).Network
 	assert.Equal(t, AccessPredictionEnforced, preview.Outcome,
 		"ordinary explicit-provider loopback lists retain general M3 support")
-	assert.NotContains(t, preview.Detail, "TCL-826")
+	assert.NotContains(t, preview.Detail, "no explicit provider")
 }
 
 func TestM2cHostDomainEntriesArePreviewedAndLaunchedAsEnforced(t *testing.T) {

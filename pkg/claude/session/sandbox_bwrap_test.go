@@ -819,9 +819,9 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 	assert.Contains(t, notices[0].Detail, "Claude Code 2.1.220")
 	assert.Contains(t, notices[0].Detail, "Codex CLI 0.145.0")
 	assert.Contains(t, notices[0].Detail, "M2c")
-	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
+	assert.Contains(t, notices[0].Detail, "remote managed settings")
+	assert.Contains(t, notices[0].Detail, "applies in-process")
 	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
-	assert.Contains(t, notices[0].Detail, "TCL-826")
 
 	custom := sandboxpolicy.EffectiveProfile{
 		Network: &sandboxpolicy.NetworkRules{
@@ -840,8 +840,8 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 		})
 	require.NoError(t, err)
 	require.Len(t, notices, 1)
-	assert.Contains(t, notices[0].Detail, "provider route changes after preflight")
-	assert.Contains(t, notices[0].Detail, "TCL-826")
+	assert.Contains(t, notices[0].Detail, "remote managed settings")
+	assert.Contains(t, notices[0].Detail, "denied fail-closed for new flows")
 
 	openCode, resolveErr := harness.Resolve(harness.OpenCodeName)
 	require.NoError(t, resolveErr)
@@ -1558,4 +1558,52 @@ func underAnyProtectedRoot(protected []string, path string) bool {
 		}
 	}
 	return false
+}
+
+func TestTclaudeLayerNetworkDisclosesCodexRemoteProviderRouting(t *testing.T) {
+	codex, err := harness.Resolve(harness.CodexName)
+	require.NoError(t, err)
+	effective := sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{
+				{Domain: "chatgpt.com", Ports: []int{443}},
+				{Domain: "auth.openai.com", Ports: []int{443}},
+			},
+		},
+	}
+
+	notices, err := ValidateTclaudeLayerNetwork(
+		codex, effective, harness.ResolvedModelTransport{
+			Model:             "gpt-5.4",
+			Provider:          "openai",
+			BaseURL:           "https://chatgpt.com/backend-api/",
+			AuxiliaryBaseURLs: []string{"https://auth.openai.com/oauth/token"},
+			ProviderResolved:  true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail, "chatgpt.com:443")
+	assert.Contains(t, notices[0].Detail, "auth.openai.com:443")
+	assert.Contains(t, notices[0].Detail, "read through its app-server")
+	assert.Contains(t, notices[0].Detail, "a running session does not re-route")
+	assert.NotContains(t, notices[0].Detail, "Remotely delivered provider routing")
+
+	// A route chosen by a layer the operator cannot read has to say so, or the
+	// rendered surface understates where the endpoint came from.
+	notices, err = ValidateTclaudeLayerNetwork(
+		codex, effective, harness.ResolvedModelTransport{
+			Model:             "gpt-5.4",
+			Provider:          "openai",
+			BaseURL:           "https://chatgpt.com/backend-api/",
+			AuxiliaryBaseURLs: []string{"https://auth.openai.com/oauth/token"},
+			Provenance: []string{
+				`model_provider from enterpriseManaged layer "acme-workspace" (sha256:bundle)`,
+			},
+			ProviderResolved: true,
+		})
+	require.NoError(t, err)
+	require.Len(t, notices, 1)
+	assert.Contains(t, notices[0].Detail,
+		`Remotely delivered provider routing in effect: model_provider from enterpriseManaged layer "acme-workspace" (sha256:bundle).`)
 }

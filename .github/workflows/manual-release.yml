@@ -457,6 +457,58 @@ jobs:
             exit 1
           fi
 
+      - name: Run pinned Codex effective-config seam evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-codex-effective-config.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedCodexEffectiveConfigSeam$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedCodexEffectiveConfigSeam ' "$smoke_log"; then
+            {
+              echo "### Pinned Codex effective-config seam evidence did not complete"
+              echo
+              echo "The named real Codex effective-config read did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must resolve provider routing through Codex 0.145.0's own app-server config/read, including its layer precedence."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedCodexEffectiveConfigSeam did not report an explicit pass"
+            exit 1
+          fi
+
+      - name: Run pinned Codex system-config layer evidence
+        env:
+          TCLAUDE_CODEX_SYSTEM_LAYER_SMOKE: "1"
+        run: |
+          # Machine-wide, so it is staged here and removed immediately after —
+          # every other pinned-harness step has already run by this point and
+          # must not inherit this routing override.
+          sudo mkdir -p /etc/codex
+          printf 'openai_base_url = "https://system-layer.example/v1"\n' |
+            sudo tee /etc/codex/config.toml >/dev/null
+          smoke_log="$RUNNER_TEMP/tclaude-codex-system-layer.log"
+          set +e
+          go test ./pkg/claude/session \
+            -run '^TestPinnedCodexSystemConfigLayerEvidence$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          status=${PIPESTATUS[0]}
+          set -e
+          sudo rm -f /etc/codex/config.toml
+          if [ "$status" -ne 0 ] ||
+             ! grep -q '^--- PASS: TestPinnedCodexSystemConfigLayerEvidence ' "$smoke_log"; then
+            {
+              echo "### Pinned Codex system-config layer evidence did not complete"
+              echo
+              echo "The launch seam no longer refuses an external /etc/codex provider override; it relies on Codex's own merge including the system layer."
+              echo "This step is the evidence for that removed refusal. A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedCodexSystemConfigLayerEvidence did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run OpenCode executor sandbox smoke
         env:
           TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
