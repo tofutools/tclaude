@@ -648,8 +648,20 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(codexCaveatTrigger.textContent, '!',
     'a caveat marks its own trigger so it is not mistaken for ordinary field help');
   assert.ok(codexCaveatTrigger.classList.contains('warn'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-label'), 'Show Sandbox warning',
+    'the warn state is named, not left as colour a screen reader cannot see');
+  // The description span is always in the DOM (the reveal is pure CSS on
+  // aria-expanded), so reading its text alone would pass even if the trigger
+  // never opened. Assert the toggle itself.
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'false');
+  assert.equal(codexCaveatTrigger.getAttribute('aria-controls'), 'agent-spawn-sandbox-impl-help');
+  await harness.act(() => harness.fireEvent(codexCaveatTrigger, 'click'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'true');
   assert.match(host.querySelector('#agent-spawn-sandbox-impl-help').textContent,
     /upstream proxy is experimental and off by default/);
+  await harness.act(() => harness.fireEvent(codexCaveatTrigger, 'click'));
+  assert.equal(codexCaveatTrigger.getAttribute('aria-expanded'), 'false',
+    'the trigger is a plain toggle');
   assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
   assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
   assert.match(host.querySelector('#agent-spawn-approval').textContent, /Never ask — no approval prompts/);
@@ -734,6 +746,8 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
     const trigger = host.querySelector('#agent-spawn-sandbox-impl-row .spawn-field-help-trigger');
     assert.equal(trigger.textContent, '!');
     assert.ok(trigger.classList.contains('warn'));
+    await harness.act(() => harness.fireEvent(trigger, 'click'));
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
     assert.match(host.querySelector('#agent-spawn-sandbox-impl-help').textContent,
       /no filtered network sandbox yet/);
     const codexMode = host.querySelector('#agent-spawn-sandbox');

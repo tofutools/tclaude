@@ -226,11 +226,11 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   const codex = model.spawnCapabilityView({ harness: 'codex' }, { harnesses, sandboxImpl });
   const codexBuiltin = codex.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
   // A selector option names the implementation and nothing else. The
-  // filtered-network caveat is real, but it is carried by the hint under the
-  // row, which has room to state it in full — not squeezed into a parenthetical
-  // that a closed <select> truncates.
+  // filtered-network caveat is real, but it has exactly one home now — the
+  // row's disclosure — so the option carries the catalog's own description
+  // rather than a second copy nothing renders.
   assert.equal(codexBuiltin.label, 'Codex CLI built-in');
-  assert.match(codexBuiltin.descr, /upstream proxy is experimental and off by default/);
+  assert.equal(codexBuiltin.descr, 'Current behavior: Codex CLI owns containment.');
 });
 
 test('sandbox-implementation hint stays silent for the default and warns honestly', async (t) => {
@@ -280,6 +280,18 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
     'the caveat belongs to the built-in implementation, not to the Codex harness');
   assert.equal(model.sandboxImplCaveatFor({ sandboxImpl: 'harness-builtin' }, view), '',
     'no other harness carries it');
+  // A descriptor saying Codex has no built-in OS sandbox at all makes
+  // sandboxImplHintFor's "no built-in OS sandbox" branch fire. The caveat must
+  // stand down there rather than assert, beside it, that the built-in
+  // filesystem sandbox remains available.
+  assert.equal(
+    model.sandboxImplCaveatFor(
+      { sandboxImpl: 'harness-builtin' },
+      { ...codexView, sandboxImplCanBuiltin: false },
+    ),
+    '',
+    'the caveat never contradicts the hint that the built-in sandbox does not exist',
+  );
 
   // A legacy native-off pairing is a more specific statement about the same
   // blank row, so it outranks the caveat above rather than competing with it.

@@ -1,8 +1,5 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
-import {
-  CODEX_BUILTIN_FILTERED_NETWORK_DETAIL,
-  isCodexBuiltinSandboxOption,
-} from './sandbox-network-disclosure.js';
+import { CODEX_BUILTIN_FILTERED_NETWORK_DETAIL } from './sandbox-network-disclosure.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
 export const WT_NEW = '__new__';
@@ -221,24 +218,15 @@ function fillHarnessPlaceholder(template, displayName) {
 // sandboxImplOptionsFor names the harness-owned option after the actual harness.
 // Both the spawn dialog and the profile editor render the same catalog, so both
 // call this rather than each rewriting the copy.
-export function sandboxImplOptionsFor(
-  options, displayName, canBuiltinOSSandbox = true, harnessName = '',
-) {
+export function sandboxImplOptionsFor(options, displayName, canBuiltinOSSandbox = true) {
   return (Array.isArray(options) ? options : [])
     .filter((option) => canBuiltinOSSandbox
       || text(option?.value) !== SANDBOX_IMPL_DEFAULT)
-    .map((option) => {
-      const codexBuiltin = isCodexBuiltinSandboxOption(
-        text(option?.value), text(harnessName),
-      );
-      return {
-        ...option,
-        label: fillHarnessPlaceholder(option?.label, displayName),
-        descr: codexBuiltin
-          ? CODEX_BUILTIN_FILTERED_NETWORK_DETAIL
-          : fillHarnessPlaceholder(option?.descr, displayName),
-      };
-    });
+    .map((option) => ({
+      ...option,
+      label: fillHarnessPlaceholder(option?.label, displayName),
+      descr: fillHarnessPlaceholder(option?.descr, displayName),
+    }));
 }
 
 // sandboxImplView answers the two halves of "can this launch use the tclaude
@@ -262,9 +250,7 @@ function sandboxImplView(harness, context) {
   const canBuiltinOSSandbox = harness?.can_builtin_os_sandbox !== false;
   return {
     showSandboxImpl: !!harness,
-    sandboxImplOptions: sandboxImplOptionsFor(
-      catalog.options, harnessLabel, canBuiltinOSSandbox, text(harness?.name),
-    ),
+    sandboxImplOptions: sandboxImplOptionsFor(catalog.options, harnessLabel, canBuiltinOSSandbox),
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
     sandboxImplHarness: harnessLabel,
@@ -366,6 +352,11 @@ export function approvalControlsVisibleFor(draft, resolvedImplementation = '') {
 // there, the field really is unresolved until spawn.
 export function sandboxImplCaveatFor(draft, view, resolvedImplementation = '') {
   if (!view?.showSandboxImpl) return '';
+  // A descriptor that says Codex has no built-in OS sandbox at all outranks a
+  // caveat about that sandbox's network half: sandboxImplHintFor's "no built-in
+  // OS sandbox" branch fires there, and an [!] reading "the built-in filesystem
+  // sandbox remains available" beside it would flatly contradict it.
+  if (view.sandboxImplCanBuiltin === false) return '';
   const explicit = text(draft?.sandboxImpl);
   const builtinCodex = view.sandboxImplHarnessName === 'codex'
     && (explicit === SANDBOX_IMPL_DEFAULT

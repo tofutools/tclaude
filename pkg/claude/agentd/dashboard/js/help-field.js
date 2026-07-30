@@ -45,10 +45,14 @@ export function HelpDisclosure({
      the default mousedown keeps click a plain toggle while Tab still opens it
      via onFocus. */
   const swallowFocus = (event) => event.preventDefault();
+  /* aria-label wins over content, so the [!] glyph is not announced. Naming the
+     warn state here is what gives a screen-reader user the same "this control
+     has a caveat" cue the colour gives a sighted one. */
+  const name = warn ? `Show ${label} warning` : `Show ${label} help`;
   return html`<${Fragment}>
     <button type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
-      aria-label=${`Show ${label} help`}
-      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${`Show ${label} help`}
+      aria-label=${name}
+      aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
       onMouseDown=${swallowFocus}
       onClick=${() => setOpen(open ? '' : id)}
       onFocus=${() => setOpen(id)}>${warn ? '!' : '?'}</button>

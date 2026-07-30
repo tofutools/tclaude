@@ -170,3 +170,50 @@ test('HelpField keeps the ⚠ caveat visible outside the popover anchor', async 
   // help arrives a moment later.
   assert.equal(host.querySelector('.spawn-field-with-help').getAttribute('class'), 'spawn-field-with-help');
 });
+
+// A caveat that came out of a dialog body has to stay findable. `warn` is the
+// only thing carrying that: without it the trigger is indistinguishable from
+// the ordinary field help beside it, and the copy is effectively gone.
+test('HelpDisclosure marks a caveat in colour, glyph, and accessible name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { HelpDisclosure } = await harness.importDashboardModule('js/help-field.js');
+  const props = {
+    id: 'demo-impl',
+    descriptionID: 'demo-impl-help',
+    label: 'Sandbox',
+    help: 'This implementation cannot enforce a profile’s TCP/UDP rules.',
+    open: false,
+    setOpen() {},
+  };
+  const { container: host, rerender } = await harness.mount(
+    harness.preact.h(HelpDisclosure, props),
+  );
+
+  const plain = host.querySelector('.spawn-field-help-trigger');
+  assert.equal(plain.textContent, '?');
+  assert.equal(plain.classList.contains('warn'), false);
+  assert.equal(plain.getAttribute('aria-label'), 'Show Sandbox help');
+  assert.equal(plain.getAttribute('title'), 'Show Sandbox help');
+  // Whatever the glyph, the popover has to remain the trigger's DOM sibling:
+  // the reveal is expressed purely as `trigger[aria-expanded="true"] +
+  // description`, so anything between them silently stops it opening.
+  assert.equal(plain.nextElementSibling.id, 'demo-impl-help');
+  assert.equal(plain.getAttribute('aria-controls'), 'demo-impl-help');
+
+  await rerender(harness.preact.h(HelpDisclosure, { ...props, warn: true }));
+  const warned = host.querySelector('.spawn-field-help-trigger');
+  assert.equal(warned.textContent, '!');
+  assert.ok(warned.classList.contains('warn'));
+  // aria-label wins over content, so the [!] is not announced. The name is what
+  // gives a screen-reader user the cue the colour gives a sighted one.
+  assert.equal(warned.getAttribute('aria-label'), 'Show Sandbox warning');
+  assert.equal(warned.getAttribute('title'), 'Show Sandbox warning');
+  assert.equal(warned.nextElementSibling.id, 'demo-impl-help');
+  assert.match(warned.nextElementSibling.textContent, /cannot enforce/);
+
+  // Warn is a presentation of the same disclosure, not a second mechanism: an
+  // empty one still leaves nothing focusable and unnamed behind.
+  await rerender(harness.preact.h(HelpDisclosure, { ...props, warn: true, help: '' }));
+  assert.equal(host.querySelector('.spawn-field-help-trigger'), null);
+  assert.equal(host.querySelector('#demo-impl-help'), null);
+});
