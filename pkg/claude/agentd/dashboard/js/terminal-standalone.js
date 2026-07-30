@@ -38,9 +38,9 @@ export function createStandaloneTerminalsPage({
     throw new TypeError('standalone terminal page requires preference initializers');
   }
 
-  // A solo pop-out has no tab strip, so it must not overwrite the dashboard's
-  // persisted presentation order merely by attaching its one pane.
-  const state = createTerminalShellState({ persistOrder: false });
+  // A solo pop-out has no tab strip or group controls, so attaching its one
+  // pane must not rewrite remembered dashboard group presentation.
+  const state = createTerminalShellState({ persistPresentation: false });
   const composeMessageReady = signal(false);
   const detachConversations = new Set();
   let actions = null;

@@ -1507,13 +1507,12 @@ tab, so a browser that blocks pop-ups for the dashboard cannot complete it. The
 terminal then stays exactly where it was, still connected, and the dashboard
 says so rather than appearing to lose the drag.
 
-An explicitly reordered tab sequence is stored as a dashboard presentation
-preference in the same server-backed preferences as the other sticky view
-settings. A terminal key already in that stored sequence returns to its
-remembered relative position when it is reopened; a key absent from it is
-appended at the end of the current strip. Simply opening, closing, switching, or
-popping out a terminal does not rewrite the stored order. Remembered history is
-bounded to 512 keys and 60 KiB.
+Opening a terminal appends its tab after the tabs already open. Closing and
+reopening a terminal also gives it a fresh position at the end instead of
+reviving stale order history. A terminal with remembered group membership
+instead appends within that group, keeping the group contiguous. Drag and
+keyboard reordering affect the current terminal strip; group membership remains
+the persisted presentation preference described below.
 
 ### Terminal tab groups
 
@@ -1572,13 +1571,13 @@ or a keystroke will do never disagree.
   (*Ungroup tabs*, which keeps every terminal and its position) or closes the
   terminals in it.
 
-Group descriptors and membership are stored as one more presentation preference
-alongside the tab order, so they survive reloads and are shared by every
-dashboard client. Membership is remembered for terminals that are not currently
-open, exactly as the order is: closing every tab of a group and later reopening
-one restores it to its group. A group whose last member explicitly *leaves* it
-has nothing left to render, drop onto, or name, and is dropped. Stored groups
-are bounded to 24 groups, 40-character names and 60 KiB.
+Group descriptors and membership are stored as a presentation preference, so
+they survive reloads and are shared by every dashboard client. Membership is
+remembered for terminals that are not currently open: closing every tab of a
+group and later reopening one restores it to its group. A group whose last
+member explicitly *leaves* it has nothing left to render, drop onto, or name,
+and is dropped. Stored groups are bounded to 24 groups, 40-character names and
+60 KiB.
 
 In 🧙 wizard mode, the Terminals tab and its popped-out browser terminals use
 the same purple-and-gold portal chrome as the rest of the dashboard. Each pane
