@@ -371,21 +371,13 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 	f := newFlow(t)
 	_, err := db.CreateAgentGroup("crew", "")
 	require.NoError(t, err)
-	globalID, err := db.CreateSpawnProfile(&db.SpawnProfile{
-		Name: "claude-off", Harness: harness.DefaultName,
-		Sandbox: harness.ClaudeSandboxOff,
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "claude-off"))
-	require.NoError(t, db.SetDashboardPref(
-		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
-	))
 	parent := t.TempDir()
 	body := map[string]any{
 		"draft": map[string]any{
-			"name":        "resolved-mode",
-			"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
-			"environment": []any{},
+			"name":              "resolved-mode",
+			"filesystem":        []any{map[string]any{"path": parent, "access": "write"}},
+			"environment":       []any{},
+			"agent_directories": []any{"GOCACHE"},
 		},
 	}
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
@@ -400,6 +392,31 @@ func TestSandboxProfileDraftEnforcementUsesResolvedDefaultSandboxMode(t *testing
 			Axes       harness.PredictedAccessAxes `json:"axes"`
 		} `json:"targets"`
 	}
+	testharness.DecodeJSON(t, rec, &got)
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, harness.DefaultName, got.Targets[0].Target.Harness)
+	assert.Equal(t, harness.ClaudeSandboxInherit, got.Targets[0].Target.Sandbox)
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial, got.Targets[0].Axes.Filesystem.Outcome,
+		"additive Claude directory grants do not block launch, but inherited settings decide whether the sandbox applies them")
+	assert.Contains(t, got.Targets[0].Axes.Filesystem.Detail, "launch remains allowed")
+	assert.Equal(t, harness.AccessPredictionEnforced, got.Targets[0].Axes.AgentDirectories.Outcome)
+
+	globalID, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "claude-off", Harness: harness.DefaultName,
+		Sandbox: harness.ClaudeSandboxOff,
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetDashboardPref(globalDefaultProfilePrefKey, "claude-off"))
+	require.NoError(t, db.SetDashboardPref(
+		"tclaude.dash.default_profile_id", fmt.Sprint(globalID),
+	))
+	body["draft"] = map[string]any{
+		"name":        "resolved-mode",
+		"filesystem":  []any{map[string]any{"path": parent, "access": "deny"}},
+		"environment": []any{},
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", body)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	testharness.DecodeJSON(t, rec, &got)
 	require.Len(t, got.Targets, 1)
 	assert.Equal(t, harness.DefaultName, got.Targets[0].Target.Harness)
