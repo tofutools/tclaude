@@ -308,10 +308,10 @@ outrank it). Three modes:
   arrays with the operator's existing scopes. tclaude also merges one
   non-profile host-control rule for the exact named tmux socket hosting
   tclaude's agent panes. Linux enforces it through Claude's `denyRead`
-  `/dev/null` mask whenever the inherited sandbox is enabled. macOS additionally
-  wraps Claude in a narrow exact-socket `network-outbound` deny because
-  Seatbelt's file-read denial does not govern Unix-socket connects; this does
-  not enable Claude's broader sandbox.
+  `/dev/null` mask whenever the inherited sandbox is enabled. Claude's built-in
+  macOS settings have no exact Unix-socket deny; tclaude does not nest another
+  Seatbelt around the harness. The explicit `tclaude-layer` implementation
+  owns its existing tmux host-control rule instead.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the
