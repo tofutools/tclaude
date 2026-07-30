@@ -378,9 +378,26 @@ func TestTerminalAttachmentBaseRejectsStaleUnknownAndHostileTargets(t *testing.T
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:                    "sandbox-off",
+		TmuxSession:           "tmux-off",
+		SandboxImplementation: string(sandboxpolicy.ImplementationOff),
+		Status:                "working",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}))
 
 	base, createBase, status, err := terminalAttachmentBase(
 		"/api/spawn-focus-ws/legacy-builtin",
+		func(string) bool { return true },
+	)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, spawnAttachmentsBaseDir(), base)
+	assert.True(t, createBase)
+
+	base, createBase, status, err = terminalAttachmentBase(
+		"/api/spawn-focus-ws/sandbox-off",
 		func(string) bool { return true },
 	)
 	require.NoError(t, err)

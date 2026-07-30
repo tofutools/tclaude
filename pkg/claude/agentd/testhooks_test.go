@@ -45,6 +45,7 @@ func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string
 	previousSend := sendOpenCodePromptForSpawn
 	startOpenCodeRuntimeForSpawn = func(
 		sessionID, cwd, title, resumeID, _ string,
+		_ string,
 		_ *session.TclaudeLayerLaunchSpec,
 	) (*openCodeLaunch, error) {
 		fixture, err := start(sessionID, cwd, title, resumeID)

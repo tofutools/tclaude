@@ -3005,7 +3005,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
-	sandboxMode, fieldFail = resolveOpenCodeSandboxImplementationMode(
+	sandboxMode, fieldFail = resolveSandboxImplementationMode(
 		h, sandboxMode, body.SandboxImplementation)
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
@@ -3097,7 +3097,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// state; this server-side rule also covers CLI callers and older tabs.
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
-	if !sandboxProfilesDisabled(h.Name, sandboxMode) && !body.OmitSandboxProfiles {
+	if !sandboxProfilesDisabled(h.Name, sandboxMode, body.SandboxImplementation) &&
+		!body.OmitSandboxProfiles {
 		effectiveSandbox, policyErr = db.ResolveEffectiveSandboxSnapshot(g.ID, body.SandboxProfile)
 	}
 	if errors.Is(policyErr, db.ErrSandboxProfileNotFound) {
@@ -4248,7 +4249,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
-	if p.SandboxMode, fail = resolveOpenCodeSandboxImplementationMode(
+	if p.SandboxMode, fail = resolveSandboxImplementationMode(
 		h, p.SandboxMode, p.SandboxImplementation); fail != nil {
 		return fail
 	}
@@ -4356,7 +4357,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// particular, template/wave callers can arrive with a previously resolved
 	// global/group policy even though this agent explicitly selects Codex's raw
 	// no-sandbox mode.
-	if sandboxProfilesDisabled(p.Harness, p.SandboxMode) {
+	if sandboxProfilesDisabled(p.Harness, p.SandboxMode, p.SandboxImplementation) {
 		omitted := sandboxpolicy.OmittedProfilesSnapshot()
 		p.EffectiveSandbox = &omitted
 	}
@@ -4609,7 +4610,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_network", err.Error()}
 		}
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			label, p.Cwd, p.Name, "", permissionJSON, sandboxSpec)
+			label, p.Cwd, p.Name, "", permissionJSON,
+			p.SandboxImplementation, sandboxSpec)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + err.Error()}
@@ -6700,12 +6702,13 @@ func appendSandboxFlag(args []string, mode string) []string {
 	return args
 }
 
-// appendSandboxImplementationFlag preserves the feature's default-off
-// invariant: the legacy harness-owned implementation changes no argv, while a
-// durable tclaude-layer opt-in is explicit on every relaunch.
+// appendSandboxImplementationFlag leaves the legacy harness-owned default
+// unpinned, while every explicit non-default implementation is carried into
+// the session boundary and its durable launch record.
 func appendSandboxImplementationFlag(args []string, implementation string) []string {
 	normalized, err := sandboxpolicy.NormalizeImplementation(implementation)
-	if err == nil && normalized.UsesTclaudeLayer() {
+	if err == nil && strings.TrimSpace(implementation) != "" &&
+		normalized != sandboxpolicy.ImplementationHarnessBuiltin {
 		args = append(args, "--sandbox-impl", string(normalized))
 	}
 	return args
@@ -7018,7 +7021,8 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		var err error
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
-			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON, sandboxSpec)
+			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
+			a.SandboxImplementation, sandboxSpec)
 		if err != nil {
 			return err
 		}

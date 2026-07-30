@@ -30,6 +30,7 @@ import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
   autoCompactWindowHintFor, sandboxModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
+  sandboxModeControlLabel, sandboxModeOptionsForImplementation,
 } from './agent-spawn-model.js';
 import {
   RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_CHAIN_PREVIEW, RESOLVED_DEFAULTS_LABEL,
@@ -792,11 +793,17 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     sandboxImpl?.options, harnessLabel, hEntry?.can_builtin_os_sandbox !== false,
     hEntry?.name || '',
   );
+  const showSandboxMode = !profile
+    || (hEntry?.can_sandbox && draft.sandbox_implementation === 'harness-builtin');
   const sandboxImplCleared = sandboxImplClearedNoticeFor(
     { sandboxImplCleared: draft.sandbox_implementation_cleared },
   );
   const sandboxImplHint = sandboxImplHintFor(
-    { sandboxImpl: draft.sandbox_implementation },
+    {
+      sandboxImpl: draft.sandbox_implementation,
+      harness: draft.harness,
+      sandbox: draft.sandbox,
+    },
     {
       showSandboxImpl: !!hEntry,
       sandboxImplDefault: sandboxImpl?.default || 'harness-builtin',
@@ -824,15 +831,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     <${Row} label="Harness"><${Select} id=${profile ? 'profile-editor-harness' : 'role-editor-harness'} value=${draft.harness} onChange=${updateHarness} options=${catalog.map((entry) => [entry.name, entry.display_name || entry.name])} /></${Row}>
     <${Row} label="Model" title="Model suggested by the selected harness. Blank leaves it unset; Custom model id accepts an out-of-catalog model supported by that harness.">${modelControl}</${Row}>
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
-    <${HelpField} id=${sandboxID} label="Sandbox" title="Launch containment for the agent. The modes are per-harness."
-      value=${draft.sandbox}
-      options=${(hEntry?.sandbox_modes || []).map((value) => ({
-    value, label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
-  }))}
-      onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
-      help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
-      disabled=${!hEntry?.can_sandbox} />
-    ${profile && hEntry && html`<${Row} label="Sandbox impl"
+    ${profile && hEntry && html`<${Row} label="Sandbox"
       title=${SANDBOX_IMPL_TITLE}>
       <div class="cron-create-target">
         <${Select} id="profile-editor-sandbox-impl" value=${draft.sandbox_implementation}
@@ -851,6 +850,20 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
         <div class="spawn-field-hint warn">${sandboxImplCleared.text}</div>
       </div>
     </div>`}
+    <${HelpField} id=${sandboxID}
+      label=${profile ? sandboxModeControlLabel(hEntry) : 'Sandbox'}
+      title=${profile
+        ? "Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
+        : 'Launch containment for the agent. The modes are per-harness.'}
+      value=${draft.sandbox}
+      options=${(profile ? sandboxModeOptionsForImplementation({
+    modes: hEntry?.sandbox_modes || [],
+  }, draft.harness, draft.sandbox).modes : (hEntry?.sandbox_modes || [])).map((value) => ({
+    value, label: sandboxModeOptionLabel(draft.harness, value, hEntry.default_sandbox),
+  }))}
+      onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
+      help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
+      disabled=${!showSandboxMode} />
     <${HelpField} id=${approvalID} label=${approvalLabel} title="Controls when the harness requests approval; it does not change the sandbox."
       value=${draft.approval}
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, hEntry.default_approval) }))}

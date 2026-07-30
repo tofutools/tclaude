@@ -142,6 +142,17 @@ export function launchSetting(harness, key) {
 export const SANDBOX_IMPL_DEFAULT = 'harness-builtin';
 export const SANDBOX_IMPL_TCLAUDE_LAYER = 'tclaude-layer';
 export const SANDBOX_IMPL_STACKED = 'stacked';
+export const SANDBOX_IMPL_OFF = 'off';
+
+export function sandboxModeIsOff(harnessName, mode) {
+  const offModes = {
+    claude: 'off',
+    codex: 'danger-full-access',
+    opencode: 'off',
+  };
+  const offMode = offModes[text(harnessName)] || '';
+  return !!offMode && text(mode) === offMode;
+}
 
 // SANDBOX_APPARMOR_DOC is the operator guide a hint links to when this host
 // most likely denies the nested bwrap stacked needs. The docs own the
@@ -333,7 +344,33 @@ export function setSpawnSandboxImpl(draft, value) {
 export function sandboxImplHintFor(draft, view) {
   if (!view.showSandboxImpl) return null;
   const explicit = text(draft.sandboxImpl);
+  if (!explicit && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+    const harnessLabel = view.sandboxImplHarness || 'Harness';
+    return {
+      warn: true,
+      text: `Legacy ${harnessLabel} sandbox mode Off is preserved while Sandbox follows `
+        + `resolved defaults. Choose Off above to disable every OS sandbox, or choose `
+        + `${harnessLabel} built-in to replace the legacy mode.`,
+    };
+  }
+  if (explicit === SANDBOX_IMPL_DEFAULT
+    && view.sandboxImplCanBuiltin
+    && sandboxModeIsOff(draft.harness, draft.sandbox)) {
+    const harnessLabel = view.sandboxImplHarness || 'Harness';
+    return {
+      warn: true,
+      text: `Legacy ${harnessLabel} built-in + native Off is preserved. Choose a confined `
+        + `${harnessLabel} sandbox mode below, or choose Off above to disable every OS `
+        + 'sandbox layer explicitly.',
+    };
+  }
   const value = explicit || view.sandboxImplDefault;
+  if (value === SANDBOX_IMPL_OFF) {
+    return {
+      warn: true,
+      text: 'Sandbox OFF. The agent runs without OS-level confinement; approval policy still applies.',
+    };
+  }
   if (explicit === SANDBOX_IMPL_DEFAULT && view.sandboxImplHarnessName === 'codex') {
     return { warn: true, text: CODEX_BUILTIN_FILTERED_NETWORK_HINT };
   }
@@ -421,10 +458,11 @@ export function spawnCapabilityView(draft, context) {
   const approval = launchSetting(harness, 'approval');
   const tools = launchSetting(harness, 'tools');
   const askTimeout = launchSetting(harness, 'askTimeout');
-  const sandboxProfilesDisabled = draft.harness === 'codex'
-    && draft.sandbox === 'danger-full-access';
+  const sandboxProfilesDisabled = draft.sandboxImpl === SANDBOX_IMPL_OFF
+    || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access');
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
   const sshWorkaroundAvailable = showSSHWorkaround
+    && (!draft.sandboxImpl || draft.sandboxImpl === SANDBOX_IMPL_DEFAULT)
     && draft.sandbox === 'tclaude-agent'
     && !sandboxProfilesDisabled
     && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
@@ -452,10 +490,36 @@ export function spawnCapabilityView(draft, context) {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     ...sandboxImplView(harness, context),
+    showSandboxMode: !!(sandbox.visible
+      && draft.sandboxImpl === SANDBOX_IMPL_DEFAULT),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
+  };
+}
+
+// sandboxModeControlLabel names the nested control after the harness that owns
+// it. It is shown only for an explicit harness-builtin selection; the primary
+// Sandbox selector above it chooses the implementation (or Off).
+export function sandboxModeControlLabel(harness) {
+  const name = text(harness?.name);
+  const label = name === 'codex'
+    ? 'Codex'
+    : text(harness?.display_name) || name || 'Harness';
+  return `${label} sandbox mode`;
+}
+
+// sandboxModeOptionsForImplementation removes the native off spelling from
+// new nested-mode choices. A legacy built-in + native-off pair keeps its
+// current value visible until the operator changes it; hiding a still-submitted
+// controlled-select value would misrepresent an existing profile.
+export function sandboxModeOptionsForImplementation(setting, harnessName, currentMode = '') {
+  return {
+    ...setting,
+    modes: (setting?.modes || []).filter((mode) => (
+      !sandboxModeIsOff(harnessName, mode) || text(mode) === text(currentMode)
+    )),
   };
 }
 

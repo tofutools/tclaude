@@ -331,7 +331,7 @@ func terminalAttachmentBase(
 		)
 	}
 	switch implementation {
-	case sandboxpolicy.ImplementationHarnessBuiltin:
+	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
 		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
 	case sandboxpolicy.ImplementationTclaudeLayer:
 		privateRoot := tclcommon.SpawnAttachmentsPrivateDir(sess.ID)
