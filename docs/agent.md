@@ -483,6 +483,13 @@ existing reference while retaining the last reason for review or reuse; pass a
 new `--reason` to replace it on a later disable. Profile writes require
 `profiles.manage`.
 
+A profile may instead set `operator_only: true`. It remains usable by the
+human operator—including when selected explicitly or reached through a group
+or global default—but an agent-originated direct, template, role, process,
+wave, or scribe spawn fails with `profile_operator_only`. This is useful for
+high-trust or high-cost launch presets that agents may inspect but must not
+delegate to.
+
 ### sandbox profiles
 
 > New to this? Read [Sandboxing](sandboxing.md) first — it covers the

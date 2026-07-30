@@ -1000,7 +1000,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 			return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 				fmt.Sprintf("references spawn profile %q which no longer exists", ref)}
 		}
-		if fail := disabledProfileFailure(prof); fail != nil {
+		if fail := profileSpawnFailure(prof, caller); fail != nil {
 			return templateAgentLaunch{}, fail
 		}
 		refProfile = prof
@@ -1022,7 +1022,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 				return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_profile",
 					fmt.Sprintf("role %q references spawn profile %q which no longer exists", role.Name, ref)}
 			}
-			if fail := disabledProfileFailure(prof); fail != nil {
+			if fail := profileSpawnFailure(prof, caller); fail != nil {
 				return templateAgentLaunch{}, &spawnFailure{fail.Status, fail.Kind,
 					fmt.Sprintf("role %q: %s", role.Name, fail.Msg)}
 			}
@@ -2259,6 +2259,7 @@ type instantiateAgentResult struct {
 	OwnerDropped bool     `json:"owner_dropped,omitempty"`
 	Granted      []string `json:"granted,omitempty"`
 	Notes        []string `json:"notes,omitempty"`
+	ErrorKind    string   `json:"error_kind,omitempty"`
 	Error        string   `json:"error,omitempty"`
 }
 

@@ -34,12 +34,12 @@ export function findSpawnProfile(profiles, handle) {
 export function spawnProfileChoices(profiles) {
   const choices = [];
   for (const profile of profiles || []) {
-    const disabled = profile.disabled
+    const status = profile.disabled
       ? ` [🚫 disabled: ${text(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]`
-      : '';
-    choices.push({ value: profile.name, label: profile.name + disabled });
+      : profile.operator_only ? ' [👤 operator only]' : '';
+    choices.push({ value: profile.name, label: profile.name + status });
     for (const alias of profile.aliases || []) {
-      choices.push({ value: alias, label: `${alias} → ${profile.name}${disabled}` });
+      choices.push({ value: alias, label: `${alias} → ${profile.name}${status}` });
     }
   }
   return choices;

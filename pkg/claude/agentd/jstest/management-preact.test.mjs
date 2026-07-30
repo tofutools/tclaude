@@ -41,13 +41,14 @@ function segment(control, value) {
 test('management model preserves full-replace profile and role semantics', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
-  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage' };
+  const original = { name: 'old', aliases: ['codex-reviewer'], harness: 'codex', approval: 'never', auto_review: true, model: 'gpt-5', disabled: false, disabled_reason: 'previous outage', operator_only: true };
   const draft = model.profileDraft(original, {}, catalog); draft.name = 'renamed'; draft.trust_dir = '1';
   assert.equal(draft.approval_reviewer, 'auto_review');
   draft.aliases_text += ', cold-reviewer';
   const payload = model.profilePayload(draft, original, catalog);
   assert.equal(payload.name, 'renamed'); assert.equal(payload.approval, 'never'); assert.equal(payload.auto_review, true); assert.equal(payload.trust_dir, true);
   assert.equal(payload.disabled, false); assert.equal(payload.disabled_reason, 'previous outage');
+  assert.equal(payload.operator_only, true);
   draft.approval_reviewer = 'human'; assert.equal(model.profilePayload(draft, original, catalog).auto_review, false);
   assert.deepEqual(payload.aliases, ['codex-reviewer', 'cold-reviewer']);
   draft.harness = 'claude'; draft.approval = 'plan'; draft.sandbox = 'on';

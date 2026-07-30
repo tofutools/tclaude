@@ -36,6 +36,9 @@ type SpawnProfile struct {
 	// explanation the next time it is disabled.
 	Disabled       bool
 	DisabledReason string
+	// OperatorOnly lets humans use the profile normally while rejecting every
+	// agent-originated spawn that resolves through it.
+	OperatorOnly bool
 
 	// Launch fields — overlap clcommon.SpawnArgs. "" = unset.
 	Harness string
@@ -166,15 +169,15 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
-		   (name, disabled, disabled_reason, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
+		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
 		    auto_compact_window,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
 		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
@@ -225,7 +228,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	}
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
-		   name = ?, disabled = ?, disabled_reason = ?, harness = ?, model = ?, effort = ?, sandbox = ?,
+		   name = ?, disabled = ?, disabled_reason = ?, operator_only = ?, harness = ?, model = ?, effort = ?, sandbox = ?,
 		   sandbox_implementation = ?, approval = ?, tools = ?,
 		   ask_user_question_timeout = ?, auto_compact_window = ?,
 		   auto_review = ?, trust_dir = ?,
@@ -235,7 +238,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   is_owner = ?, permission_overrides = ?, context_features = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
-		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox,
+		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox,
 		p.SandboxImplementation, p.Approval, p.ToolGovernance,
 		p.AskUserQuestionTimeout, p.AutoCompactWindow,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
@@ -483,7 +486,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 	return isUniqueViolation(err) || (err != nil && strings.Contains(err.Error(), "spawn profile handle already exists"))
 }
 
-const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, harness, model, effort, sandbox,
+const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox,
 	sandbox_implementation, approval,
 	tools, ask_user_question_timeout, auto_compact_window,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
@@ -496,7 +499,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var disabled int64
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
 	var permOverrides, contextFeatures, createdAt, updatedAt string
-	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
+	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,

@@ -48,6 +48,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
   return {
     name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
+    operator_only: !!seed?.operator_only,
     model: seed?.model || '', effort: seed?.effort || '', sandbox,
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
@@ -75,6 +76,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     name: draft.name.trim(), harness: draft.harness, model: draft.model.trim(), effort: draft.effort,
     agent_name: draft.agent_name.trim(), role: draft.role.trim(), descr: draft.descr.trim(),
     initial_message: draft.initial_message, disabled: !!draft.disabled,
+    operator_only: !!draft.operator_only,
   };
   if (draft.disabled_reason.trim()) body.disabled_reason = draft.disabled_reason.trim();
   const aliases = String(draft.aliases_text || '').split(/[\n,]/).map((value) => value.trim()).filter(Boolean);

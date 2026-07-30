@@ -2732,7 +2732,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			writeError(w, http.StatusBadRequest, "invalid_profile", fmt.Sprintf("spawn profile %q does not exist", name))
 			return
 		}
-		if fail := disabledProfileFailure(namedProfile); fail != nil {
+		if fail := profileSpawnFailure(namedProfile, spawnerConvID); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -2740,7 +2740,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	groupProfile := groupDefaultProfile(g)
 	globalProfile := globalDefaultProfile()
 	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
-		if fail := disabledProfileFailure(prof); fail != nil {
+		if fail := profileSpawnFailure(prof, spawnerConvID); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -4143,7 +4143,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	tiers := make([]launchProfileTier, 0, len(profiles))
 	for _, prof := range profiles {
 		if prof != nil {
-			if fail := disabledProfileFailure(prof); fail != nil {
+			if fail := profileSpawnFailure(prof, p.SpawnedByConv); fail != nil {
 				return fail
 			}
 			tiers = append(tiers, launchProfileTier{profile: prof})

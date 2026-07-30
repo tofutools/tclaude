@@ -79,10 +79,12 @@ function findProfileByHandle(profiles, handle) {
 function profileChoices(profiles) {
   const out = [];
   for (const profile of profiles || []) {
-    const disabled = profile.disabled ? ` [🚫 disabled: ${String(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]` : '';
-    out.push({ value: profile.name, label: profile.name + disabled, profile, alias: false });
+    const status = profile.disabled
+      ? ` [🚫 disabled: ${String(profile.disabled_reason).replace(/\s+/g, ' ').trim()}]`
+      : profile.operator_only ? ' [👤 operator only]' : '';
+    out.push({ value: profile.name, label: profile.name + status, profile, alias: false });
     for (const alias of profile.aliases || []) {
-      out.push({ value: alias, label: `${alias} → ${profile.name}${disabled}`, profile, alias: true });
+      out.push({ value: alias, label: `${alias} → ${profile.name}${status}`, profile, alias: true });
     }
   }
   return out;
@@ -216,6 +218,7 @@ function syncDashDefaultProfile(name) {
 function profileSummary(p) {
   const parts = [];
   if (p.disabled) parts.push('🚫 disabled');
+  else if (p.operator_only) parts.push('👤 operator only');
   // Claude is the default harness — only name a non-default one.
   if (p.harness && p.harness !== 'claude') parts.push(p.harness);
   if (p.model) parts.push(p.model);
@@ -269,6 +272,7 @@ function profileDetailChips(p) {
   const parts = [];
   if (p.disabled) parts.push(`🚫 disabled · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
   else if (p.disabled_reason) parts.push(`last disable reason · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
+  if (!p.disabled && p.operator_only) parts.push('👤 operator only');
   const text = (label, value) => { if (value) parts.push(`${label} ${String(value).replace(/\s+/g, ' ').trim()}`); };
   const toggle = (label, value) => { if (value != null) parts.push(`${label} ${value ? 'on' : 'off'}`); };
   text('harness', p.harness);

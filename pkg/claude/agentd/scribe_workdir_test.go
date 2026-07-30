@@ -105,6 +105,33 @@ func TestScribeSpawnHarness_RejectsDisabledDefault(t *testing.T) {
 	assert.Contains(t, fail.Msg, "provider maintenance")
 }
 
+func TestScribeSpawnHarness_OperatorOnlyDefaultRejectsAgentCaller(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "operator", Harness: harness.CodexName, OperatorOnly: true,
+	})
+	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("operator-scribe", scribeGroupDescr)
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("operator-scribe", "operator")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByID(groupID)
+	require.NoError(t, err)
+
+	got, fail := scribeSpawnHarnessForCaller(g, "agent-caller")
+	assert.Empty(t, got)
+	require.NotNil(t, fail)
+	assert.Equal(t, "profile_operator_only", fail.Kind)
+
+	got, fail = scribeSpawnHarnessForCaller(g, "")
+	require.Nil(t, fail)
+	assert.Equal(t, harness.CodexName, got, "the human trust root may summon with the profile")
+}
+
 func TestSeedScribeDirTrust_SeedsThePerHarnessStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
