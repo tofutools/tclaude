@@ -316,29 +316,30 @@ unleased destinations through an auxiliary query.
 
 ### SVCB/HTTPS stripping also keeps TLS SNI observable
 
-The `SVCB` and `HTTPS` half of that sanitizing has a second effect, and it is
-load-bearing. TLS Encrypted Client Hello (ECH,
+The `SVCB` and `HTTPS` part of the response sanitizing described above has a
+second effect, and it is load-bearing. TLS Encrypted Client Hello (ECH,
 [RFC 9849](https://datatracker.ietf.org/doc/rfc9849/), March 2026) requires the
 client to obtain an `ECHConfigList`, and the defined way to publish one is an
-`HTTPS`/`SVCB` resource record. A sandboxed client
-that can only resolve through the broker never sees such a record, so it cannot
-learn a config and negotiates with a plaintext `server_name` instead. Client
-hostnames therefore stay observable on the wire inside the sandbox.
+`HTTPS`/`SVCB` resource record. A sandboxed client that can only resolve through
+the broker never sees such a record, so it cannot learn a config and negotiates
+with a plaintext `server_name` instead. Client hostnames therefore stay
+observable on the wire inside the sandbox.
 
 Relaxing the stripping is not only an address-smuggling decision. It would also
 make ECH reachable and remove that plaintext-SNI visibility, including for any
 future control that depends on reading the name a connection claims.
 
-The property is defense in depth against accidental or cooperative ECH, not a
-guarantee against a hostile client. Such a client can still carry a hardcoded or
-out-of-band `ECHConfigList`, or fetch one over DoH to an allowed domain inside a
-body the broker cannot inspect. Even under ECH the outer ClientHello still
-carries a cover `public_name` SNI, so an observer is not blinded outright; it
-sees a name that is not the intended one.
+The property is defense in depth, not a guarantee. It holds for a client that
+resolves through the broker and does not go out of its way; it does not bind a
+client that carries a hardcoded or out-of-band `ECHConfigList`. It also depends
+on the broker seeing the lookups at all: encrypted DNS to an allowed domain
+bypasses the broker entirely, in a body the packet floor cannot inspect, which
+is the same caveat already recorded for DNS-name denies. And even under ECH the
+outer ClientHello still carries a cover `public_name` SNI, so an observer is not
+blinded outright; it sees a name that is not the intended one.
 
-The analysis of record is
-[TCL-876](https://linear.app/johan-kjolhede/issue/TCL-876) — passive host/SNI
-inspection on the Linux packet floor, §5.2.
+The analysis of record is TCL-876, passive host/SNI inspection on the Linux
+packet floor.
 
 ### What lease expiry means
 
