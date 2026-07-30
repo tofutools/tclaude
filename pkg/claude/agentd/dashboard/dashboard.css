@@ -4727,9 +4727,19 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-section-legend {
   position: relative;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 4px;
+}
+.sbx-section-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  margin-left: auto;
+}
+.sbx-section-count-empty {
+  color: #6e7681;
 }
 .sbx-section-summary {
   background: rgba(110, 118, 129, .06);

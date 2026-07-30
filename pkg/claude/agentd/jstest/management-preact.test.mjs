@@ -1332,6 +1332,65 @@ test('sandbox editor sections start collapsed and keep disclosure help reachable
   unmount();
 });
 
+test('sandbox editor section summaries show live profile entry counts', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'counted',
+      filesystem: [
+        { path: '/workspace', access: 'read' },
+        { path: '$GOCACHE', access: 'write' },
+      ],
+      environment: [{ name: 'POLICY_OWNER', value: 'agent' }],
+      includes: [],
+      agent_directories: ['GOCACHE'],
+      network: {
+        baseline: 'deny',
+        packs: ['net-local'],
+        allow: [{ domain: 'example.com' }, { loopback: true }],
+        deny: [{ cidr: '192.0.2.0/24' }],
+      },
+      unix_sockets: { mode: 'list', allow: [{ path: '/tmp/example.sock' }] },
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+
+  const count = (id) =>
+    host.querySelector(`#${id} > .sbx-section-summary > .sbx-section-count`);
+  assert.equal(count('sandbox-profile-editor-network-section').textContent, '4 entries',
+    'network counts release-owned pack destinations plus manual destinations');
+  assert.equal(count('sandbox-profile-editor-unix-sockets-section').textContent, '1 entry');
+  assert.equal(count('sandbox-profile-editor-filesystem-section').textContent, '2 entries');
+  assert.equal(count('sandbox-profile-editor-environment-section').textContent, '1 entry');
+  const includesCount = count('sandbox-profile-editor-includes-section');
+  assert.equal(includesCount.textContent, '0 entries');
+  assert.equal(includesCount.classList.contains('sbx-section-count-empty'), true,
+    'zero is explicitly present but visually subdued');
+  assert.equal(count('sandbox-profile-editor-agent-directories-section').textContent, '1 entry');
+  assert.equal(count('sandbox-profile-editor-effective-policy-section'), null,
+    'the evaluation preview is not presented as an authored entry category');
+
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#sandbox-profile-editor-includes-section .sbx-include-add'), 'click'));
+  assert.equal(count('sandbox-profile-editor-includes-section').textContent, '1 entry');
+  assert.equal(count('sandbox-profile-editor-includes-section')
+    .classList.contains('sbx-section-count-empty'), false);
+
+  const filesystemButtons = host.querySelectorAll(
+    '#sandbox-profile-editor-filesystem-section .sbx-filesystem-row > button');
+  await harness.act(() => harness.fireEvent(filesystemButtons[filesystemButtons.length - 1], 'click'));
+  assert.equal(count('sandbox-profile-editor-filesystem-section').textContent, '1 entry',
+    'counts update immediately when a row is removed');
+  unmount();
+});
+
 test('sandbox editor tolerates legacy and modern sparse profile payloads', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
