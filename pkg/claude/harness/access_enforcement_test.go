@@ -2,6 +2,7 @@ package harness
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1048,4 +1049,47 @@ func TestComposedNetworkDisclosureSentencesAreSeparated(t *testing.T) {
 	assert.Equal(t,
 		"test gateway enforces this deny destination. Live network probes must pass.",
 		rows[0].Detail)
+}
+
+// TestAppendPredictionSentencePreservesFinalCharacter pins the invariant the
+// separator fix rests on: appendPredictionSentence only ever inserts a
+// terminator BETWEEN two clauses, so a composed detail always ends exactly as
+// its last clause ended. Downstream summaries join whole details with their
+// own separator (sandbox_profile_prediction.go), so a helper that terminated
+// the tail would silently change how every one of those lines reads.
+func TestAppendPredictionSentencePreservesFinalCharacter(t *testing.T) {
+	clauses := []string{
+		"", " ", "ambient outbound network access remains available",
+		"Deny limitation: this rule is saved",
+		"Live network probes must pass.",
+		"is the boundary enforced?", "traffic is open!",
+		"the mechanism widened the list; disclosed traffic remains reachable",
+		PredictedNetworkDenyNotEnforcedDetail,
+		FilteredNetworkDNSDenyDefaultAllowCaveat,
+	}
+	for _, base := range clauses {
+		for _, next := range clauses {
+			composed := appendPredictionSentence(base, next)
+			trimmedBase, trimmedNext := strings.TrimSpace(base), strings.TrimSpace(next)
+			switch {
+			case trimmedNext != "":
+				assert.True(t, strings.HasSuffix(composed, trimmedNext),
+					"composing %q onto %q must end with the appended clause", next, base)
+			case trimmedBase != "":
+				assert.True(t, strings.HasSuffix(composed, trimmedBase),
+					"an empty addition must leave %q's ending alone", base)
+			default:
+				assert.Equal(t, "", composed)
+			}
+			// Both clauses must survive whole; separation never rewrites them.
+			assert.Contains(t, composed, trimmedBase)
+			assert.Contains(t, composed, trimmedNext)
+		}
+	}
+
+	// The fold inherits the invariant from the pairwise operation.
+	assert.True(t, strings.HasSuffix(
+		joinPredictionSentences([]string{
+			"first clause", "second clause without a stop",
+		}), "second clause without a stop"))
 }
