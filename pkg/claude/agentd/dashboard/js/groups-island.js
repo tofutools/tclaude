@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
 import { GroupsNativeList } from './groups-list.js';
+import { GroupsNotificationReader } from './groups-notification-reader.js';
 import { GroupStandingOrdersDialog } from './groups-standing-orders-dialog.js';
 import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
@@ -193,6 +194,7 @@ export function GroupsControls({ state, actions }) {
 export function GroupsList({ host, state, actions }) {
   useWizardTheme();
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
+  const [notificationReader, setNotificationReader] = useState(null);
   const current = state.view.value;
 
   useEffect(() => {
@@ -226,6 +228,31 @@ export function GroupsList({ host, state, actions }) {
     };
   }, [host]);
 
+  useEffect(() => {
+    const open = (event) => {
+      const detail = event.detail || {};
+      if (!detail.sender || !detail.messageId) return;
+      setNotificationReader({
+        sender: detail.sender,
+        messageId: detail.messageId,
+        launcher: detail.launcher || null,
+        returnFocus: detail.returnFocus || null,
+      });
+    };
+    document.addEventListener('tclaude:open-human-notification', open);
+    return () => document.removeEventListener('tclaude:open-human-notification', open);
+  }, []);
+
+  const closeNotificationReader = (restoreFocus) => {
+    const focusTarget = notificationReader?.launcher?.isConnected
+      ? notificationReader.launcher
+      : notificationReader?.returnFocus;
+    setNotificationReader(null);
+    if (restoreFocus && focusTarget?.isConnected) {
+      queueMicrotask(() => focusTarget.focus({ preventScroll: true }));
+    }
+  };
+
   // Hover is local Groups presentation state. Delegate from the stable island
   // host so keyed group nodes can move across polls without acquiring their
   // own listeners. relatedTarget suppresses churn while the pointer moves
@@ -256,6 +283,14 @@ export function GroupsList({ host, state, actions }) {
   return html`<${GroupsInteractionProvider}>
     <${BrokerRefusalNotice} snapshot=${state.snapshot.value} />
     <${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />
+    ${notificationReader && html`<${GroupsNotificationReader}
+      descriptor=${notificationReader}
+      snapshot=${state.snapshot.value}
+      state=${state}
+      actions=${actions}
+      onSelect=${(messageId) => setNotificationReader({ ...notificationReader, messageId })}
+      onClose=${closeNotificationReader}
+    />`}
     ${state.standingOrdersDialog.value && html`
       <${GroupStandingOrdersDialog}
         key=${state.standingOrdersDialog.value.launchID}

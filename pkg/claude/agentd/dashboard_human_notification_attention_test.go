@@ -11,14 +11,19 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 		needle string
 	}{
 		"member row":      {"js/groups-member-table.js", "human-notification-attention"},
+		"hover preview":   {"js/groups-member-table.js", "human-notification-preview"},
 		"group bots":      {"js/groups-list.js", "human-notification-hint"},
 		"global bots":     {"js/shell-island.js", "human-notification-hint"},
-		"row action":      {"js/row-action-handler.js", "view-human-notifications"},
+		"reader launch":   {"js/groups-island.js", "tclaude:open-human-notification"},
+		"quick reader":    {"js/groups-notification-reader.js", "GroupsNotificationReader"},
+		"auto read":       {"js/groups-notification-reader.js", "/api/human-messages/read"},
+		"attachment":      {"js/groups-notification-reader.js", "/attachment"},
 		"mail bridge":     {"js/mail-bridge.js", "openHumanNotifications"},
 		"mail controller": {"js/mail.js", "selectMessage(first.id)"},
 		"group a11y":      {"js/groups-list.js", "a member has unread notifications"},
 		"global a11y":     {"js/shell-island.js", "one or more agents have unread notifications"},
 		"styles":          {"dashboard.css", ".human-notification-attention"},
+		"drawer styles":   {"dashboard.css", ".human-notification-drawer"},
 	}
 	for name, check := range checks {
 		asset := dashboardAssetFile(t, check.asset)

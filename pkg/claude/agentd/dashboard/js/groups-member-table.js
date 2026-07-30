@@ -10,7 +10,7 @@ import {
 import { isWizardActive } from './slop.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import {
-  humanNotificationSenderQuery, memberUnreadHumanCount,
+  humanNotificationSenderQuery, memberHumanMessages, memberUnreadHumanCount,
 } from './human-notification-attention.js';
 
 const html = htm.bind(h);
@@ -671,11 +671,43 @@ function HumanNotificationAttention({ member, snapshot }) {
   const unread = memberUnreadHumanCount(member, snapshot);
   if (!unread) return null;
   const label = member.title || member.conv_id;
-  const title = `${unread} unread notification${unread === 1 ? '' : 's'} from ${label} — open in Messages`;
+  const message = memberHumanMessages(member, snapshot, true)[0];
+  const title = `${unread} unread notification${unread === 1 ? '' : 's'} from ${label} — open quick reader`;
+  const attachment = message?.attachment;
+  const openReader = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    document.dispatchEvent(new CustomEvent('tclaude:open-human-notification', {
+      detail: {
+        sender: {
+          agent: member.agent_id || '',
+          conv: member.conv_id || '',
+          label,
+        },
+        messageId: message?.id || null,
+        launcher: event.currentTarget,
+        returnFocus: event.currentTarget.closest('.rowname')?.querySelector('.rowname-text') || null,
+      },
+    }));
+  };
   return html`<button type="button" class="human-notification-attention"
-    data-act="view-human-notifications" ...${memberAttrs(member)}
+    ...${memberAttrs(member)}
     data-sender=${humanNotificationSenderQuery(member)}
-    aria-label=${title} title=${title}><span aria-hidden="true">!</span></button>`;
+    aria-label=${title} onClick=${openReader}><span class="human-notification-attention-glyph" aria-hidden="true">!</span>
+    ${message && html`<span class="human-notification-preview" role="tooltip">
+      <span class="human-notification-preview-head">
+        <strong>${message.subject || '(no subject)'}</strong>
+        <span>${relTime(message.created_at)}</span>
+      </span>
+      <span class="human-notification-preview-body">${message.body || '(empty notification)'}</span>
+      <span class="human-notification-preview-foot">
+        ${attachment
+          ? html`<span class="human-notification-preview-attachment">📎 ${attachment.filename || 'attachment'}</span>`
+          : html`<span>No attachment</span>`}
+        <span>${unread > 1 ? `${unread} unread · ` : ''}preview only · remains unread</span>
+      </span>
+    </span>`}
+  </button>`;
 }
 
 function MemberName({ member, snapshot, actions, grants, editorKey }) {

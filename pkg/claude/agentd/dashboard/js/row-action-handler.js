@@ -31,7 +31,7 @@ import {
 import { openAgentSpawnModal } from './agent-spawn-controller.js';
 // openMailbox brings the Messages tab forward + selects a folder; mail.js
 // doesn't import row-actions.js, so this is a one-way edge (no cycle).
-import { openHumanNotifications, openMailbox } from './mail-bridge.js';
+import { openMailbox } from './mail-bridge.js';
 import { wizWord } from './slop.js';
 import { refresh, toast, confirmModal, showAccessTab } from './refresh.js';
 import {
@@ -854,13 +854,6 @@ export async function handleRowAction(action) {
         // and open this agent's mailbox folder. Read-only navigation —
         // no daemon round-trip, no refresh.
         openMailbox(conv);
-        return;
-      }
-      case 'view-human-notifications': {
-        // The floating Groups-row attention mark is the actionable leaf of
-        // the global → group → agent hint chain. Open human.notify, narrowed
-        // by the sender's rotation-stable agent id (conv-id fallback).
-        openHumanNotifications(data.sender || agent);
         return;
       }
       case 'view-group-messages': {

@@ -7,19 +7,26 @@ export function unreadHumanMessages(snapshot) {
   return (snapshot?.messages || []).filter((message) => !message?.read);
 }
 
-function senderMatchesMember(message, member) {
-  const agent = String(member?.agent_id || '');
-  const conv = String(member?.conv_id || '');
+export function humanNotificationMatchesSender(message, sender) {
+  const agent = String(sender?.agent || sender?.agent_id || '');
+  const conv = String(sender?.conv || sender?.conv_id || '');
   return !!(
     (agent && message?.from_agent === agent)
     || (conv && message?.from_conv === conv)
   );
 }
 
+function senderMatchesMember(message, member) {
+  return humanNotificationMatchesSender(message, member);
+}
+
+export function memberHumanMessages(member, snapshot, unreadOnly = false) {
+  const messages = unreadOnly ? unreadHumanMessages(snapshot) : (snapshot?.messages || []);
+  return messages.filter((message) => senderMatchesMember(message, member));
+}
+
 export function memberUnreadHumanCount(member, snapshot) {
-  return unreadHumanMessages(snapshot)
-    .filter((message) => senderMatchesMember(message, member))
-    .length;
+  return memberHumanMessages(member, snapshot, true).length;
 }
 
 export function groupHasUnreadHumanNotifications(members, snapshot) {
