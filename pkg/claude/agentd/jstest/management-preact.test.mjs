@@ -3283,3 +3283,152 @@ test('effective preview discloses the host to sandbox mapping on the rule line',
     filesystem: [{ path: '/srv/corpus', access: 'read', mount_path: '/srv/corpus' }],
   }).applied.rules, ['Read-only: /srv/corpus']);
 });
+
+test('authoring a mount path does not re-author the row host path or drop retained spellings', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  let saved = null;
+  const state = createManagementState();
+  // The editor shows the operator's own spelling and keeps the canonical target
+  // beside it. Setting a mount path says nothing about WHICH host directory is
+  // granted, so it must not look like a re-authoring: that would replace the
+  // canonical path with the alias and throw the retained-spelling sidecar away.
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'spelled',
+      filesystem: [{ path: '/canonical/work', access: 'read' }],
+      filesystem_spellings: {
+        version: 1,
+        rules: [{ resolved_path: '/canonical/work', spellings: ['/workspace', '/Volumes/Work'] }],
+      },
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  await harness.act(() => harness.fireEvent(
+    host.querySelector('#sandbox-profile-editor-mount-toggle-0'), 'click'));
+  const field = host.querySelector('#sandbox-profile-editor-mount-panel-0 input');
+  field.value = '/data';
+  await harness.act(() => harness.fireEvent(field, 'input'));
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+
+  assert.deepEqual(saved.draft.filesystem,
+    [{ path: '/canonical/work', access: 'read', mount_path: '/data' }],
+    'the canonical host path survives; the alias spelling does not replace it');
+  assert.deepEqual(saved.draft.filesystem_spellings, {
+    version: 1,
+    rules: [{ resolved_path: '/canonical/work', spellings: ['/workspace', '/Volumes/Work'] }],
+  }, 'retained spellings belong to the host path and survive a mount-path edit');
+  unmount();
+});
+
+test('the mount panel takes focus, closes on Escape, and returns focus to its row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'focus',
+      filesystem: [{ path: '/srv/corpus', access: 'read' }],
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const toggle = host.querySelector('#sandbox-profile-editor-mount-toggle-0');
+  await harness.act(() => harness.fireEvent(toggle, 'click'));
+  const panel = host.querySelector('#sandbox-profile-editor-mount-panel-0');
+  assert.equal(toggle.getAttribute('aria-controls'), panel.id);
+  assert.equal(harness.document.activeElement, panel.querySelector('input'),
+    'the field takes focus without relying on autofocus, which Preact does not implement');
+
+  await harness.act(() => harness.fireEvent(panel, 'keydown', { key: 'Escape' }));
+  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null,
+    'Escape dismisses the popover rather than the whole modal');
+  assert.equal(harness.document.activeElement, toggle);
+  unmount();
+});
+
+test('a deny row carrying a mount path is flagged invalid rather than painted as an active mount', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  // Only reachable through the raw-JSON escape hatch or an agent draft; the
+  // daemon refuses it on save, so the row must say so rather than show a set
+  // glyph on a control that is switched off.
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'invalid',
+      filesystem: [{ path: '/srv/secrets', access: 'deny', mount_path: '/data' }],
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => Promise.resolve());
+
+  const toggle = host.querySelector('#sandbox-profile-editor-mount-toggle-0');
+  assert.equal(toggle.disabled, true);
+  assert.equal(toggle.classList.contains('is-set'), false);
+  assert.equal(toggle.classList.contains('is-invalid'), true);
+  assert.match(toggle.getAttribute('title'), /must not carry a mount path/);
+  unmount();
+});
+
+test('a fully supported remapped rule opens its bucket so the mapping is not two collapses deep', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/sandbox-profiles-data.js');
+  const remapped = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+  }, { filesystem: [{ path: '/srv/corpus', access: 'read', mount_path: '/data' }] });
+  assert.equal(remapped.applied.hasMountPath, true);
+
+  const plain = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+  }, { filesystem: [{ path: '/srv/corpus', access: 'read' }] });
+  assert.equal(plain.applied.hasMountPath, false,
+    'a profile with no mount path keeps the collapsed Applied bucket');
+});
+
+test('spawn-dialog sandbox preview names the sandbox path a remapped grant lands at', async (t) => {
+  const harness = await createPreactHarness(t);
+  const preview = await harness.importDashboardModule('js/sandbox-profile-preview.js');
+  const text = preview.composeSandboxProfilePreview([{
+    scope: 'explicit',
+    profile: {
+      name: 'mounted',
+      filesystem: [
+        { path: '/srv/shared-datasets/corpus-v3', access: 'read', mount_path: '/data' },
+        { path: '/srv/shared-datasets/corpus-v3', access: 'read', mount_path: '/models' },
+        { path: '/srv/build', access: 'write' },
+      ],
+    },
+  }]);
+  // Printing the host path alone would name the one path the agent will NOT
+  // see, at the exact moment the operator is deciding whether to grant it.
+  assert.match(text, /read \/data ← \/srv\/shared-datasets\/corpus-v3 \(explicit\)/);
+  assert.match(text, /read \/models ← \/srv\/shared-datasets\/corpus-v3 \(explicit\)/,
+    'one host directory mounted twice stays two preview entries');
+  assert.match(text, /write \/srv\/build \(explicit\)/,
+    'an ordinary grant is unchanged');
+});

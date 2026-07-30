@@ -442,7 +442,12 @@ func TestDashboardCSS_SandboxProfileSelectLayouts(t *testing.T) {
 	if !strings.Contains(css, ".sbx-global-row .sbx-access { flex: 0 0 7em; }") {
 		t.Error("dashboard.css inherited access badge must retain its narrow read-only column")
 	}
-	if !strings.Contains(css, ".sbx-filesystem-row {\n  display: grid;\n  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto;") {
+	// Three trailing auto columns since TCL-866: Browse, the "mount at" control,
+	// and remove. The path column keeps its minmax so the added action does not
+	// come out of the path's width.
+	if !strings.Contains(css, ".sbx-filesystem-row {\n  display: grid;\n"+
+		"  /* access · path · Browse · mount-at · remove */\n"+
+		"  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto auto;") {
 		t.Error("dashboard.css authored filesystem rows must use the shared segmented/path/action grid")
 	}
 	if !strings.Contains(css, ".sbx-row .sbx-inc-name {\n  flex: 0 1 auto; min-width: 0; width: auto; max-width: 100%;") {

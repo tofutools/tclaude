@@ -4875,7 +4875,17 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   font-weight: 700;
 }
 .sbx-row .sbx-mount-btn.is-set:hover { background: rgba(165, 162, 255, .24); }
+/* A deny row carrying a mount path is only reachable through the raw-JSON
+   escape hatch or an agent draft, and the daemon refuses it on save. Paint it as
+   the problem it is rather than as an active mount whose control happens to be
+   switched off. */
+.sbx-row .sbx-mount-btn.is-invalid {
+  background: rgba(248, 81, 73, .16);
+  border-color: #6e3a3a;
+  color: #ff7b72;
+}
 .sbx-row .sbx-mount-btn:disabled { opacity: .3; cursor: default; }
+.sbx-row .sbx-mount-btn.is-invalid:disabled { opacity: .75; }
 .sbx-row .sbx-mount-btn:disabled:hover { background: #0d1117; }
 .sbx-mount-panel {
   border: 1px solid #3b3566; border-radius: 5px;
@@ -11226,6 +11236,11 @@ body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#s
 }
 body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#sandbox-profile-editor-submit).is-set:hover {
   background: rgba(169, 123, 214, .45);
+}
+body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#sandbox-profile-editor-submit).is-invalid {
+  background: rgba(248, 81, 73, .24);
+  border-color: #b4553f;
+  color: #ffb4a8;
 }
 body.wizard #sandbox-profile-editor-modal .sbx-mount-panel {
   background: #1c1436;
