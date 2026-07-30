@@ -491,7 +491,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
   };
   return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
-      attention=${packVisibilityAttention} entryCount=${packRows.length + manualRows.length}>
+      attention=${packVisibilityAttention}
+      entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}

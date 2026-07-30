@@ -1359,13 +1359,15 @@ test('sandbox editor section summaries show live profile entry counts', async (t
     },
     options: {},
   });
-  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async loadCommonRuleCatalog() { return new Promise(() => {}); },
+  });
+  await harness.act(() => Promise.resolve());
 
   const count = (id) =>
     host.querySelector(`#${id} > .sbx-section-summary > .sbx-section-count`);
   assert.equal(count('sandbox-profile-editor-network-section').textContent, '4 entries',
-    'network counts release-owned pack destinations plus manual destinations');
+    'network counts authored pack selections plus manual destinations without waiting for the catalog');
   assert.equal(count('sandbox-profile-editor-unix-sockets-section').textContent, '1 entry');
   assert.equal(count('sandbox-profile-editor-filesystem-section').textContent, '2 entries');
   assert.equal(count('sandbox-profile-editor-environment-section').textContent, '1 entry');
