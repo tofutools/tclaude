@@ -679,7 +679,11 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		source := cloneProfileSource(*in.Provenance.UnixSockets)
 		out.Provenance.UnixSockets = &source
 	}
-	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
+	// The SAME canonical order normalizeFilesystem produces. RevalidateSnapshot
+	// compares the two with an order-sensitive DeepEqual, so a snapshot sorted by
+	// host path while resolution sorts by guest path would fail revalidation for
+	// every profile that uses a mount path.
+	sortFilesystemGrants(out.Filesystem)
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
 	return out

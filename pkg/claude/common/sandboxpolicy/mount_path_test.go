@@ -368,3 +368,55 @@ func TestNormalizeRejectsMountPathIntoProtectedRootThroughASymlink(t *testing.T)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "intersects protected directory")
 }
+
+// TestResolveSnapshotRevalidateRoundTripWithMixedMounts is the end-to-end
+// ordering contract. Resolution sorts by sandbox path; a snapshot that sorted by
+// host path instead would disagree with the order-sensitive comparison inside
+// RevalidateSnapshot, and every authority-use boundary (resume, child-spawn
+// containment, agent-directory materialization, séance, launch prep) would
+// reject a mount_path profile outright.
+//
+// The fixture is MIXED and chosen so the two orders genuinely disagree: the
+// remapped rule's host path sorts LAST ("zzz") while its sandbox path sorts
+// FIRST ("/aaa-mount"), so a host-path sort produces the opposite sequence.
+func TestResolveSnapshotRevalidateRoundTripWithMixedMounts(t *testing.T) {
+	_, dirs := mountPathFixture(t, "zzz", "mmm")
+	effective, err := Resolve(Scopes{Explicit: &Profile{
+		Name: "mixed",
+		Filesystem: []FilesystemGrant{
+			{Path: dirs[0], Access: AccessRead, MountPath: "/aaa-mount"},
+			{Path: dirs[1], Access: AccessWrite},
+		},
+	}})
+	require.NoError(t, err)
+	require.Equal(t, "/aaa-mount", effective.Filesystem[0].GuestPath(),
+		"resolution orders by sandbox path")
+
+	snapshot := NewSnapshot(effective, nil)
+	require.Equal(t, effective.Filesystem, snapshot.Effective.Filesystem,
+		"the snapshot must freeze the canonical order, not re-sort by host path")
+
+	revalidated, err := RevalidateSnapshot(snapshot)
+	require.NoError(t, err, "a mount_path profile must survive its own revalidation")
+	assert.Equal(t, snapshot.Effective.Filesystem, revalidated.Effective.Filesystem)
+}
+
+func TestFlattenRefusesIncludeOverrideAcrossHostPaths(t *testing.T) {
+	_, dirs := mountPathFixture(t, "sensitive", "other")
+	base := Profile{Name: "base", Filesystem: []FilesystemGrant{
+		{Path: dirs[0], Access: AccessDeny},
+	}}
+	child := Profile{Name: "child", Includes: []string{"base"}, Filesystem: []FilesystemGrant{
+		{Path: dirs[1], Access: AccessRead, MountPath: dirs[0]},
+	}}
+	_, err := Flatten(child, func(name string) (*Profile, error) {
+		if name == "base" {
+			copied := base
+			return &copied, nil
+		}
+		return nil, nil
+	})
+	require.Error(t, err,
+		"an include override may not make an inherited deny vanish by claiming its path for another host directory")
+	assert.Contains(t, err.Error(), "is claimed by two different host paths")
+}

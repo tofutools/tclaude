@@ -2107,7 +2107,16 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 		return nil
 	}
 	all := append([]string(nil), candidates...)
-	all = append(all, sandboxSnapshotDirs(snapshot, sandboxpolicy.AccessWrite)...)
+	// Host paths only. Every candidate here is canonicalized against the HOST
+	// below, so feeding a sandbox path in would resolve whatever happens to sit
+	// at that spelling on the host and emit a read reopen for it. A remapped
+	// grant also needs no contract reopen: its mount is applied after the deny
+	// that would have masked it, so nothing has to be repaired.
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == sandboxpolicy.AccessWrite && !grant.IsRemapped() {
+			all = append(all, grant.Path)
+		}
+	}
 	// Agent-owned directories are materialized by agentd and exported by name;
 	// their absolute paths ride in the effective environment.
 	for _, name := range snapshot.Effective.AgentDirectories {

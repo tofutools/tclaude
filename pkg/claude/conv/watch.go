@@ -2369,16 +2369,19 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, err
 		}
 		for _, grant := range launchFilesystem {
-			if grant.IsRemapped() {
-				// Carried by the tclaude-layer launch spec, which reads the
-				// grants directly; a bare dir list would lose the projection.
-				continue
-			}
+			// These lists become the HARNESS's own sandbox dirs, which under the
+			// stacked implementation is the nested wall running inside the
+			// namespace tclaude built. So a remapped grant contributes the path
+			// it occupies there — matching sandboxSnapshotDirs on the fresh-launch
+			// side. Skipping it instead would have bwrap mount the directory while
+			// the inner wall silently blocked it, and only on resume. The outer
+			// layer does not read these lists; it takes the projection from the
+			// snapshot itself.
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
-				writeDirs = append(writeDirs, grant.Path)
+				writeDirs = append(writeDirs, grant.GuestPath())
 			case sandboxpolicy.AccessRead:
-				readDirs = append(readDirs, grant.Path)
+				readDirs = append(readDirs, grant.GuestPath())
 			case sandboxpolicy.AccessDeny:
 				denyDirs = append(denyDirs, grant.Path)
 			}

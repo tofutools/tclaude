@@ -203,11 +203,6 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	effective.Filesystem = append(
 		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs),
 		remappedGrants...)
-	if err := validateRemappedGuestPathsAgainstContract(
-		remappedGrants, append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
-	); err != nil {
-		return TclaudeLayerLaunchSpec{}, err
-	}
 	agentDirectoryNames := make(map[string]bool, len(effective.AgentDirectories))
 	for _, name := range effective.AgentDirectories {
 		agentDirectoryNames[name] = true
@@ -216,6 +211,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		if agentDirectoryNames[entry.Name] {
 			contractWriteDirs = append(contractWriteDirs, entry.Value)
 		}
+	}
+	// After the agent directories are in contractWriteDirs, not before: they are
+	// launch-required in exactly the same way, and a mount shadowing one would
+	// otherwise slip past the named refusal and silently hide it.
+	if err := validateRemappedGuestPathsAgainstContract(
+		remappedGrants, append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+	); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
 	}
 	contract := TclaudeLayerLaunchContract{
 		HarnessName:       input.HarnessName,
