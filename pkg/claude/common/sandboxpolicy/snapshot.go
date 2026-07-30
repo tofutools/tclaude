@@ -182,9 +182,15 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 				if axes.Network.Mode != AccessModeList {
 					continue
 				}
+				// The engine rides through the widening. Widening changes
+				// WHICH destinations survive, never the mechanism the surviving
+				// deny rows are enforced with, and a launch that re-derived a
+				// different engine here than the preview named would be exactly
+				// the disclosure-does-not-match-rendered-surface bug.
 				axes.Network = NetworkRules{
-					Mode: AccessModeOpen,
-					Deny: cloneNetworkRules(axes.Network).Deny,
+					Mode:   AccessModeOpen,
+					Deny:   cloneNetworkRules(axes.Network).Deny,
+					Engine: axes.Network.Engine,
 				}
 			case "ports_unsupported":
 				if axes.Network.Mode != AccessModeList {

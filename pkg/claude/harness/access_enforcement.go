@@ -89,6 +89,12 @@ type PredictedAccessEnforcement struct {
 	Scope           string
 	Mechanism       string
 	MCPBypass       bool
+	// NetworkEngine is the engine this policy deploys; see the table row field
+	// of the same name.
+	NetworkEngine sandboxpolicy.NetworkEngine
+	// NetworkEngineDetail is the whole-posture engine sentence appended to the
+	// network axis detail.
+	NetworkEngineDetail string
 }
 
 const (
@@ -160,6 +166,14 @@ type accessEnforcementTableRow struct {
 	Scope                        string
 	Mechanism                    string
 	MCPBypass                    bool
+	// NetworkEngine is the engine this policy DEPLOYS, from
+	// DeployedNetworkEngine — not the engine a layer selected. A selection on a
+	// policy that needs no filtering deploys nothing and leaves this unset.
+	NetworkEngine sandboxpolicy.NetworkEngine
+	// NetworkEngineDetail is the whole-posture engine sentence for the network
+	// axis. Empty whenever no layer selected an engine, which is what keeps an
+	// engine-unset policy rendering exactly what it rendered before.
+	NetworkEngineDetail string
 }
 
 // NetworkSelectorCapability is a mechanism's honest rating for one selector
@@ -303,9 +317,21 @@ func accessEnforcementTable(
 		}, nil
 	}
 	if implementation.UsesTclaudeLayer() {
+		// One predicate, both consumers. The launch path reaches this same
+		// function through ResolveAccessEnforcement, so preview and launch
+		// cannot disagree about which engine a policy deploys — and therefore
+		// cannot disagree about which mechanism the disclosure may name.
+		deployedEngine, engineErr :=
+			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+		if engineErr != nil {
+			return accessEnforcementTableRow{}, engineErr
+		}
 		mechanism := "tclaude-layer Seatbelt"
 		if goos == "linux" {
 			mechanism = "tclaude-layer bubblewrap"
+		}
+		if deployedEngine == sandboxpolicy.NetworkEngineProxy {
+			mechanism = proxyEngineMechanism(goos)
 		}
 		caps := accessEnforcementTableRow{
 			NetworkClosed: EnforceFull,
@@ -319,7 +345,14 @@ func accessEnforcementTable(
 			Scope:        "process",
 			Mechanism:    mechanism,
 		}
+		// Every packet-gateway rating below is gated on the deployed engine.
+		// A policy that deploys a proxy is not enforced by pasta/nft/DNS-broker
+		// machinery, so claiming those cells would describe a mechanism this
+		// launch does not run. The proxy's own cells stay EnforceNone until
+		// their carriage smokes land.
+		packetGateway := deployedEngine != sandboxpolicy.NetworkEngineProxy
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName ||
 				h.Name == OpenCodeName) {
@@ -358,6 +391,7 @@ func accessEnforcementTable(
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
+			packetGateway &&
 			goos == "linux" && filteredNetworkReady &&
 			(h.Name == DefaultName || h.Name == CodexName ||
 				h.Name == OpenCodeName) {
@@ -530,6 +564,26 @@ func accessEnforcementTable(
 				sandboxpolicy.RootPostureFor(networkPosture, socketTier) ==
 					sandboxpolicy.RootConstructed
 		}
+		// Carried security item: an authored resolver socket restores in-sandbox
+		// name-to-literal conversion and defeats the proxy engine's name
+		// authority. This is the seam the invariant comment at the hosts-file
+		// synthesis site names — the one place an authored engine and an
+		// authored socket list meet — and it refuses through the socket axis so
+		// preview and launch reach the verdict from the same row.
+		if selector, resolver, conflict :=
+			sandboxpolicy.NetworkEngineResolverSocketConflict(
+				deployedEngine, axes.UnixSockets); conflict {
+			caps.SocketList = EnforceNone
+			caps.SocketListRefusal =
+				sandboxpolicy.NetworkEngineResolverSocketRefusal(selector, resolver)
+		}
+		// The engine fields are set last so they describe the row as it ended
+		// up, after every platform and harness branch above has had its say —
+		// including a loopback-only policy on Darwin, which deploys no engine
+		// at all and must keep its native mechanism sentence.
+		caps.NetworkEngine = deployedEngine
+		caps.NetworkEngineDetail = networkEngineDisclosure(
+			axes.Network.Engine, deployedEngine)
 		return caps, nil
 	}
 	switch h.Name {
@@ -683,6 +737,8 @@ func predictedAccessEnforcementFromTable(row accessEnforcementTableRow) Predicte
 		SocketClosedRefusal:     row.SocketClosedRefusal,
 		ConstructedRoot:         row.ConstructedRoot,
 		Scope:                   row.Scope, Mechanism: row.Mechanism, MCPBypass: row.MCPBypass,
+		NetworkEngine:       row.NetworkEngine,
+		NetworkEngineDetail: row.NetworkEngineDetail,
 	}
 }
 
@@ -760,6 +816,13 @@ func DescribePredictedNetworkEntries(
 		}
 		if len(entry.Ports) > 0 && caps.NetworkPorts != EnforceFull {
 			partialReasons = append(partialReasons, "the authored port restriction is not fully enforced")
+		}
+		// §5.3: a destination whose authored ports are not obviously HTTP-ish
+		// is the one a proxy-unaware client is likely to open a socket to, and
+		// under the proxy engine that traffic is blocked rather than filtered.
+		if caps.NetworkEngine == sandboxpolicy.NetworkEngineProxy &&
+			networkEntryNeedsProxyCarriageCaveat(entry) {
+			partialReasons = append(partialReasons, ProxyEngineEntryCarriageDetail)
 		}
 		if caps.Scope == "tools-only" {
 			partialReasons = append(partialReasons,
@@ -874,6 +937,29 @@ func NetworkEntryModePredictionKey(mode string, entry sandboxpolicy.NetworkAllow
 }
 
 func predictNetworkAxis(
+	rules sandboxpolicy.NetworkRules,
+	caps PredictedAccessEnforcement,
+) PredictedAccessAxis {
+	return withNetworkEngineDetail(
+		predictNetworkAxisWithoutEngine(rules, caps), caps)
+}
+
+// withNetworkEngineDetail appends the whole-posture engine sentence to a
+// finished network axis. It runs after every other clause so the engine reads
+// as a property of the posture rather than of one deny row, and it is a no-op
+// for an engine-unset policy.
+func withNetworkEngineDetail(
+	axis PredictedAccessAxis,
+	caps PredictedAccessEnforcement,
+) PredictedAccessAxis {
+	if caps.NetworkEngineDetail == "" {
+		return axis
+	}
+	axis.Detail = appendPredictionSentence(axis.Detail, caps.NetworkEngineDetail)
+	return axis
+}
+
+func predictNetworkAxisWithoutEngine(
 	rules sandboxpolicy.NetworkRules,
 	caps PredictedAccessEnforcement,
 ) PredictedAccessAxis {
@@ -1179,7 +1265,9 @@ func PlanAccessEnforcement(
 				Message: closedNetworkRefusal(caps.mechanism, caps.scope),
 			}
 		}
-		rendered.Network = sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen}
+		rendered.Network = sandboxpolicy.NetworkRules{
+			Mode: sandboxpolicy.AccessModeOpen, Engine: axes.Network.Engine,
+		}
 		notices = append(notices, degradationNotice(
 			"network",
 			sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
@@ -1247,9 +1335,15 @@ func PlanAccessEnforcement(
 					Message: caps.networkListRefusal,
 				}
 			}
+			// Widening drops destinations, never the authored mechanism. The
+			// engine has to survive every rendered form of the policy because
+			// the launch decides what to deploy from these axes: a widened
+			// policy that lost its engine would deploy the pre-engine default
+			// while the preview named the authored one.
 			rendered.Network = sandboxpolicy.NetworkRules{
-				Mode: sandboxpolicy.AccessModeOpen,
-				Deny: cloneNetworkEntries(axes.Network.Deny),
+				Mode:   sandboxpolicy.AccessModeOpen,
+				Deny:   cloneNetworkEntries(axes.Network.Deny),
+				Engine: axes.Network.Engine,
 			}
 			notices = append(notices, degradationNotice(
 				"network", "no_mechanism", sandboxpolicy.AccessNoticeEffectNotEnforced,
@@ -1269,8 +1363,9 @@ func PlanAccessEnforcement(
 					}
 				}
 				rendered.Network = sandboxpolicy.NetworkRules{
-					Mode: sandboxpolicy.AccessModeOpen,
-					Deny: cloneNetworkEntries(axes.Network.Deny),
+					Mode:   sandboxpolicy.AccessModeOpen,
+					Deny:   cloneNetworkEntries(axes.Network.Deny),
+					Engine: axes.Network.Engine,
 				}
 				notices = append(notices, degradationNotice(
 					"network", "selector_unsupported", sandboxpolicy.AccessNoticeEffectNotEnforced,

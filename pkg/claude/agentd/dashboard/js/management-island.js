@@ -372,6 +372,17 @@ const NETWORK_BASELINE_OPTIONS = [
   ['inherit', 'No override'],
 ];
 
+// Engine names HOW a discriminating rule set is enforced, never WHAT it
+// authorizes, so it sits beside the baseline rather than inside the rule table.
+// "No override" is the fourth state and the default: it inherits the next
+// composition layer, and when no layer names one it is today's behavior for the
+// platform.
+const NETWORK_ENGINE_OPTIONS = [
+  ['', 'No override'],
+  ['packet', 'Packet filter'],
+  ['proxy', 'Proxy filter'],
+];
+
 const DEFAULT_NETWORK_PACKS = ['net-local', 'net-anthropic', 'net-openai-codex'];
 
 function networkEntriesMayOverlap(left = {}, right = {}) {
@@ -473,7 +484,10 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
           defaultsAvailable.current = false;
         }
       }
-      return { ...value, network: { baseline, ...next } };
+      // The engine survives a baseline change: it is not one of the rules the
+      // baseline governs, and silently clearing it would change the mechanism
+      // as a side effect of an unrelated edit.
+      return { ...value, network: { baseline, ...next, ...(current.engine ? { engine: current.engine } : {}) } };
     });
   };
   const packMode = (id) => rules.packs.includes(id) ? 'allow'
@@ -515,6 +529,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       attention=${packVisibilityAttention}
       entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
+    <label class="sbx-network-baseline-label">Filtering engine <${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
     <fieldset class=${`sbx-network-unlocks${editable ? '' : ' sbx-disabled'}`}>

@@ -1,6 +1,9 @@
 package sandboxpolicy
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // NetworkEngine names how a discriminating network rule set is enforced. It is
 // deliberately not an access axis: two profiles that agree on rules and
@@ -19,6 +22,21 @@ const (
 	// host-side filtering proxy.
 	NetworkEngineProxy NetworkEngine = "proxy"
 )
+
+// NetworkEngineLabel is the operator-facing name for an engine, per decision
+// (a). Every surface that shows an engine — editor control, composition
+// notice, preview detail — says the same two words, so an operator who picked
+// "Proxy filter" in the editor recognizes it in the disclosure.
+func NetworkEngineLabel(engine NetworkEngine) string {
+	switch engine {
+	case NetworkEnginePacket:
+		return "Packet filter"
+	case NetworkEngineProxy:
+		return "Proxy filter"
+	default:
+		return ""
+	}
+}
 
 // ValidateNetworkEngine rejects spellings outside the authored vocabulary.
 func ValidateNetworkEngine(engine NetworkEngine) error {
@@ -135,6 +153,56 @@ func ResolveNetworkEngine(
 	return out, nil
 }
 
+// networkEngineLayerForScope maps a composition scope onto its precedence
+// layer. The two vocabularies are deliberately kept apart: scopes name WHERE a
+// profile came from and are what every other disclosure prints, while layers
+// name the precedence rank decision (b) is written in terms of.
+func networkEngineLayerForScope(scope Scope) NetworkEngineLayer {
+	switch scope {
+	case ScopeGroup:
+		return NetworkEngineLayerGroup
+	case ScopeExplicit:
+		return NetworkEngineLayerSession
+	default:
+		return NetworkEngineLayerGlobal
+	}
+}
+
+// networkEngineCompositionNotice renders decision (b)'s binding disclosure
+// requirement: because a lower layer's engine can be overridden silently by
+// design, the composed surface has to say which engine won, which profile it
+// came from, and — when a lower layer asked for a different one — that the
+// lower layer lost and what it had asked for.
+//
+// A resolution in which no layer named an engine produces no notice at all.
+// Unset is not a selection to disclose; it is today's behavior, and rendering
+// anything for it would break engine-unset parity.
+func networkEngineCompositionNotice(
+	resolved ResolvedNetworkEngine,
+) (AccessNotice, bool) {
+	if !resolved.NamesEngine() {
+		return AccessNotice{}, false
+	}
+	sentences := []string{fmt.Sprintf("Filtering engine: %s (from %s)",
+		NetworkEngineLabel(resolved.Engine), resolved.Source)}
+	tiers := []string{string(resolved.Layer)}
+	for _, loser := range resolved.Overridden {
+		sentences = append(sentences, fmt.Sprintf(
+			"the %s requests %s and is overridden",
+			loser.Source, NetworkEngineLabel(loser.Engine)))
+		tiers = append(tiers, string(loser.Layer))
+	}
+	detail := strings.Join(sentences, "; ")
+	return AccessNotice{
+		Class:  AccessNoticeClassComposition,
+		Axis:   "network",
+		Reason: AccessNoticeReasonNetworkEngine,
+		Effect: AccessNoticeEffectMechanismSelected,
+		Detail: detail + ".",
+		Tiers:  tiers,
+	}, true
+}
+
 func sortNetworkEngineSelections(in []NetworkEngineSelection) {
 	// Insertion sort over at most three layers; a stable order by rank is all
 	// that is needed and this keeps the precedence rule readable in one place.
@@ -152,10 +220,9 @@ func sortNetworkEngineSelections(in []NetworkEngineSelection) {
 // It is the composition of the two halves that must never be re-derived apart —
 // the discrimination predicate below, and the authored engine selection resolved
 // by ResolveNetworkEngine — and it is deliberately the single place they meet.
-// The launch path calls it today. Enforcement prediction is to call this same
-// function rather than grow its own copy when the selection surface lands —
-// that is what will keep a preview from naming a mechanism the launch does not
-// run, and it is why the composition lives here rather than at the launch seam.
+// Both the launch path and enforcement prediction call it, which is what keeps
+// a preview from naming a mechanism the launch does not run, and it is why the
+// composition lives here rather than at the launch seam.
 //
 // The unset result is load-bearing rather than a missing value: a policy that
 // asks for no distinction between destinations deploys NO engine, whatever a
@@ -185,6 +252,14 @@ func DeployedNetworkEngine(
 		return NetworkEnginePacket, nil
 	}
 	return selected, nil
+}
+
+// DeployedNetworkEngineForRules is DeployedNetworkEngine for rules that already
+// carry their own composed selection, which every materialized policy does once
+// resolution has run. Preview and launch both reach the engine this way, so
+// neither can pair one policy's rules with another policy's selection.
+func DeployedNetworkEngineForRules(rules NetworkRules) (NetworkEngine, error) {
+	return DeployedNetworkEngine(rules, rules.Engine)
 }
 
 // NetworkRulesAreDiscriminating implements the proposal's Discriminating()

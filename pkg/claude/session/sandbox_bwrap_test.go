@@ -1015,13 +1015,15 @@ func TestModelTransportLoopbackInterpretationMatchesPlatform(t *testing.T) {
 			ProviderResolved: true,
 		}
 		linuxErr := validateModelTransportLoopbackForPlatform(
-			harness.Default(), resolved, "linux")
+			harness.Default(), resolved, "linux",
+			sandboxpolicy.NetworkEngineUnset)
 		require.Error(t, linuxErr)
 		assert.Contains(t, linuxErr.Error(), "sandbox-private localhost on Linux")
 		assert.Contains(t, linuxErr.Error(), sandboxpolicy.FilteredNetworkHostLoopbackName)
 
 		require.NoError(t, validateModelTransportLoopbackForPlatform(
-			harness.Default(), resolved, "darwin"))
+			harness.Default(), resolved, "darwin",
+			sandboxpolicy.NetworkEngineUnset))
 		requirement, err := harness.ResolveModelTransportRequirement(
 			harness.Default(), resolved)
 		require.NoError(t, err)
@@ -1043,9 +1045,11 @@ func TestModelTransportLoopbackInterpretationMatchesPlatform(t *testing.T) {
 		ProviderResolved: true,
 	}
 	require.NoError(t, validateModelTransportLoopbackForPlatform(
-		harness.Default(), synthetic, "linux"))
+		harness.Default(), synthetic, "linux",
+		sandboxpolicy.NetworkEngineUnset))
 	darwinErr := validateModelTransportLoopbackForPlatform(
-		harness.Default(), synthetic, "darwin")
+		harness.Default(), synthetic, "darwin",
+		sandboxpolicy.NetworkEngineUnset)
 	require.Error(t, darwinErr)
 	assert.Contains(t, darwinErr.Error(), "Linux-only synthetic")
 	assert.Contains(t, darwinErr.Error(), "localhost")

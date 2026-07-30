@@ -54,6 +54,12 @@ type NetworkRules struct {
 	DenyPacks []string            `json:"deny_packs,omitempty"`
 	Allow     []NetworkAllowEntry `json:"allow,omitempty"`
 	Deny      []NetworkAllowEntry `json:"deny,omitempty"`
+	// Engine names HOW a discriminating rule set is enforced. It is not an
+	// access axis: it can neither widen nor narrow the destinations the rest of
+	// this struct authorizes, which is why it composes by most-explicit-wins
+	// (ResolveNetworkEngine) rather than through the intersection lattice the
+	// other fields use. Omitted is the fourth state and never changes behavior.
+	Engine NetworkEngine `json:"engine,omitempty"`
 }
 
 // NetworkAllowEntry names exactly one outbound destination selector. The
@@ -98,6 +104,11 @@ const (
 	AccessNoticeReasonUnmaterializedEntries = "unmaterialized_entries"
 	AccessNoticeReasonFilteredPrerequisite  = "filtered_prerequisite_probe"
 	AccessNoticeReasonFilteredModelTraffic  = "filtered_model_transport"
+	// AccessNoticeReasonNetworkEngine carries decision (b)'s disclosure: which
+	// filtering engine composition settled on, which profile named it, and
+	// which lower layer asked for a different one and lost. It is emitted only
+	// when some layer named an engine.
+	AccessNoticeReasonNetworkEngine = "network_engine"
 	// AccessNoticeReasonOperatorUnenforcedLaunchOverride records the
 	// dashboard-only, fresh-spawn authorization to widen an otherwise-refused
 	// closed network posture to open. The daemon-written one-shot launch
@@ -111,6 +122,11 @@ const (
 	AccessNoticeEffectNothingAllowed    = "nothing_allowed"
 	AccessNoticeEffectNotMaterialized   = "not_materialized"
 	AccessNoticeEffectPreviewIncomplete = "preview_incomplete"
+	// AccessNoticeEffectMechanismSelected states that the notice reports which
+	// mechanism was chosen, not a change to what the policy authorizes. It is
+	// its own effect precisely because the existing ones all describe a
+	// widening or a gate, and an engine selection is neither.
+	AccessNoticeEffectMechanismSelected = "mechanism_selected"
 )
 
 // AccessNotice is the single persisted disclosure record used by access
@@ -280,9 +296,13 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 			)
 		}
 	}
+	if err := ValidateNetworkEngine(in.Engine); err != nil {
+		return nil, err
+	}
 	out := &NetworkRules{
 		Mode: in.Mode, Baseline: in.Baseline,
 		Packs: packs, DenyPacks: denyPacks,
+		Engine: in.Engine,
 	}
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -330,7 +350,10 @@ func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 			"effective network.deny has too many entries (maximum %d)",
 			MaxEffectiveNetworkDenyEntries)
 	}
-	out := &NetworkRules{Mode: in.Mode}
+	if err := ValidateNetworkEngine(in.Engine); err != nil {
+		return nil, err
+	}
+	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine}
 	var err error
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
