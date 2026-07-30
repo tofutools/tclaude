@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+// NormalizeNetworkTargetName canonicalizes a name a client asked for into the
+// same spelling authored entries are stored in, so one normalizer serves both
+// authoring and enforcement. IP literals are rejected: a literal is a
+// different target kind, never a name.
+func NormalizeNetworkTargetName(name string) (string, error) {
+	return normalizeDNSName(strings.TrimSuffix(strings.TrimSpace(name), "."))
+}
+
 type FilteredNetworkDNSMatches struct {
 	Allow []FilteredNetworkRule
 	Deny  []FilteredNetworkRule
