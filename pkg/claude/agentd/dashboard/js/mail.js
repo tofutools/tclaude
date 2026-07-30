@@ -1077,7 +1077,27 @@ async function openHumanNotifications(sender, messageID) {
   const target = messageID
     ? mail.messages.find((message) => message.id === messageID)
     : null;
-  const first = target || mail.messages[0];
+  let exact = target;
+  if (messageID && !exact) {
+    // The snapshot used to estimate the page can race an insertion/deletion.
+    // Probe both adjacent pages, as the generic Messages attention jump does,
+    // before giving up. Never silently open a different notification.
+    const estimatedPage = mail.page;
+    for (const candidatePage of adjacentAttentionPages(estimatedPage, pageCount())) {
+      mail.page = candidatePage;
+      await loadMessages();
+      exact = mail.messages.find((message) => message.id === messageID);
+      if (exact) break;
+    }
+    if (!exact) {
+      mail.page = estimatedPage;
+      await loadMessages();
+      mail.selectedMsgId = null;
+      paintReader();
+      return;
+    }
+  }
+  const first = exact || mail.messages[0];
   if (first) selectMessage(first.id);
   else {
     mail.selectedMsgId = null;

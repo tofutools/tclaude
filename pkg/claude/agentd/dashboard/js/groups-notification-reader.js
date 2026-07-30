@@ -71,8 +71,12 @@ function replaceMessageRead(state, id, read) {
 export async function persistHumanMessageRead(state, id, read, onError) {
   const prior = replaceMessageRead(state, id, read);
   if (prior === null) return;
-  const previous = readWrites.get(id) || Promise.resolve();
-  const request = previous.catch(() => {}).then(async () => {
+  let queue = readWrites.get(id);
+  if (!queue) {
+    queue = { tail: Promise.resolve(), confirmed: prior };
+    readWrites.set(id, queue);
+  }
+  const request = queue.tail.catch(() => {}).then(async () => {
     const response = await fetch('/api/human-messages/read', {
       method: 'POST',
       credentials: 'same-origin',
@@ -81,16 +85,17 @@ export async function persistHumanMessageRead(state, id, read, onError) {
     });
     if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
   });
-  readWrites.set(id, request);
+  queue.tail = request;
   try {
     await request;
+    queue.confirmed = read;
   } catch (error) {
     const current = (state.snapshot.value?.messages || [])
       .find((message) => message.id === id);
-    if (current?.read === read) replaceMessageRead(state, id, prior);
+    if (current?.read === read) replaceMessageRead(state, id, queue.confirmed);
     onError?.(error);
   } finally {
-    if (readWrites.get(id) === request) readWrites.delete(id);
+    if (queue.tail === request) readWrites.delete(id);
   }
 }
 
