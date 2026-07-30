@@ -308,7 +308,12 @@ func existingSeatbeltPlan(plan sandboxpolicy.MountPlan) (sandboxpolicy.MountPlan
 				entry.Mode,
 			)
 		}
-		_, err := os.Stat(entry.Path)
+		// Stat the HOST source, not the sandbox path. For a remapped entry those
+		// differ, and statting the sandbox path would drop the entry as "missing
+		// source" — a silent fallback that would skip the explicit refusal
+		// seatbeltCommandArgs makes for exactly this shape.
+		source := entry.SourcePath()
+		_, err := os.Stat(source)
 		switch {
 		case err == nil:
 			filtered.Entries = append(filtered.Entries, entry)
@@ -317,7 +322,7 @@ func existingSeatbeltPlan(plan sandboxpolicy.MountPlan) (sandboxpolicy.MountPlan
 			return sandboxpolicy.MountPlan{}, fmt.Errorf(
 				"mount plan entry %d source %q: %w",
 				i,
-				entry.Path,
+				source,
 				err,
 			)
 		}

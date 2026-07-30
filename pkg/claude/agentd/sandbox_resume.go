@@ -165,7 +165,10 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 	changed := false
 	for _, grant := range current.Effective.Filesystem {
 		if grant.Access != sandboxpolicy.AccessDeny {
-			if access, covered := sandboxpolicy.EffectiveAccessAt(previousGrants, grant.Path); covered && access == sandboxpolicy.AccessDeny {
+			// Containment is a namespace question, so it is asked at the path
+			// the rule occupies inside the sandbox. For an unremapped rule that
+			// is the host path, so this is unchanged for existing lineages.
+			if access, covered := sandboxpolicy.EffectiveAccessAt(previousGrants, grant.GuestPath()); covered && access == sandboxpolicy.AccessDeny {
 				changed = true
 				continue
 			}
@@ -176,7 +179,7 @@ func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpol
 		if previousGrant.Access != sandboxpolicy.AccessDeny {
 			continue
 		}
-		if access, covered := sandboxpolicy.EffectiveAccessAt(kept, previousGrant.Path); covered && access == sandboxpolicy.AccessDeny {
+		if access, covered := sandboxpolicy.EffectiveAccessAt(kept, previousGrant.GuestPath()); covered && access == sandboxpolicy.AccessDeny {
 			continue
 		}
 		kept = append(kept, sandboxpolicy.FilesystemGrant{Path: previousGrant.Path, Access: sandboxpolicy.AccessDeny})

@@ -70,9 +70,15 @@ type EffectiveProfile struct {
 	Provenance       ResolutionProvenance `json:"provenance"`
 }
 
+// resolvedFilesystemGrant is one merged rule. The map it lives in is keyed on
+// the GUEST path, so a host directory projected onto two sandbox paths stays
+// two rules, while path holds the host authority the revalidation pass and the
+// appliers need.
 type resolvedFilesystemGrant struct {
-	access  Access
-	sources []ProfileSource
+	path      string
+	mountPath string
+	access    Access
+	sources   []ProfileSource
 }
 
 type observableFilesystemSpelling struct {
@@ -173,16 +179,30 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
 		for _, grant := range normalized.Filesystem {
-			current, exists := filesystem[grant.Path]
+			guest := grant.GuestPath()
+			current, exists := filesystem[guest]
 			if !exists {
-				filesystem[grant.Path] = resolvedFilesystemGrant{access: grant.Access, sources: []ProfileSource{source}}
+				filesystem[guest] = resolvedFilesystemGrant{
+					path: grant.Path, mountPath: grant.MountPath,
+					access: grant.Access, sources: []ProfileSource{source},
+				}
 				continue
+			}
+			// Two scopes may legitimately grant the same sandbox path, but only
+			// from the same host directory. Disagreeing sources are an authoring
+			// conflict the union lattice cannot settle: picking either one would
+			// silently discard the other tier's authored grant.
+			if current.path != grant.Path {
+				return EffectiveProfile{}, fmt.Errorf(
+					"sandbox path %q is claimed by two different host paths %q and %q across sandbox profile scopes",
+					guest, current.path, grant.Path,
+				)
 			}
 			if accessRank(grant.Access) > accessRank(current.access) {
 				current.access = grant.Access
 			}
 			current.sources = append(current.sources, source)
-			filesystem[grant.Path] = current
+			filesystem[guest] = current
 		}
 		for _, entry := range normalized.Environment {
 			if _, exists := agentDirectories[entry.Name]; exists {
@@ -235,38 +255,71 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	// invariants, this closes the window in which a path component changes
 	// between per-scope normalization and consumption of the result.
 	revalidated := map[string]resolvedFilesystemGrant{}
-	paths := make([]string, 0, len(filesystem))
-	for path := range filesystem {
-		paths = append(paths, path)
+	guestPaths := make([]string, 0, len(filesystem))
+	for guest := range filesystem {
+		guestPaths = append(guestPaths, guest)
 	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		grant := filesystem[path]
-		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{Path: path, Access: grant.access}}, true)
+	sort.Strings(guestPaths)
+	for _, guest := range guestPaths {
+		grant := filesystem[guest]
+		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{
+			Path: grant.path, Access: grant.access, MountPath: grant.mountPath,
+		}}, true)
 		if err != nil {
-			return EffectiveProfile{}, fmt.Errorf("revalidate effective filesystem path %q: %w", path, err)
+			return EffectiveProfile{}, fmt.Errorf("revalidate effective filesystem path %q: %w", grant.path, err)
 		}
 		canonical := normalized[0]
-		current, exists := revalidated[canonical.Path]
+		canonicalGuest := canonical.GuestPath()
+		current, exists := revalidated[canonicalGuest]
 		if !exists {
-			revalidated[canonical.Path] = resolvedFilesystemGrant{access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...)}
+			revalidated[canonicalGuest] = resolvedFilesystemGrant{
+				path: canonical.Path, mountPath: canonical.MountPath,
+				access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...),
+			}
 			continue
+		}
+		// Two authored guest paths can collapse onto one canonical guest path
+		// only when the host side also canonicalizes to one directory; anything
+		// else is the same collision the merge above refuses.
+		if current.path != canonical.Path {
+			return EffectiveProfile{}, fmt.Errorf(
+				"effective sandbox path %q is claimed by two different host paths %q and %q",
+				canonicalGuest, current.path, canonical.Path,
+			)
 		}
 		if accessRank(canonical.Access) > accessRank(current.access) {
 			current.access = canonical.Access
 		}
 		current.sources = append(current.sources, grant.sources...)
-		revalidated[canonical.Path] = current
+		revalidated[canonicalGuest] = current
 	}
-	paths = paths[:0]
-	for path := range revalidated {
-		paths = append(paths, path)
+	guestPaths = guestPaths[:0]
+	for guest := range revalidated {
+		guestPaths = append(guestPaths, guest)
 	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		grant := revalidated[path]
-		result.Filesystem = append(result.Filesystem, FilesystemGrant{Path: path, Access: grant.access})
-		result.Provenance.Filesystem[path] = canonicalSources(grant.sources)
+	sort.Strings(guestPaths)
+	for _, guest := range guestPaths {
+		grant := revalidated[guest]
+		result.Filesystem = append(result.Filesystem, FilesystemGrant{
+			Path: grant.path, Access: grant.access, MountPath: grant.mountPath,
+		})
+		// Provenance stays keyed on the host path: it answers "which profile
+		// granted authority over this directory", and the host path is the
+		// authority-bearing side. A directory mounted twice lists both
+		// contributing scopes under its one host key.
+		result.Provenance.Filesystem[grant.path] = canonicalSources(
+			append(append([]ProfileSource(nil), result.Provenance.Filesystem[grant.path]...),
+				grant.sources...))
+	}
+	// The merged set has to satisfy the same cross-rule mount-path invariants a
+	// single profile does; a collision or a denied source can first appear when
+	// two scopes compose.
+	protectedForMounts, protectedErr := protectedPaths()
+	if protectedErr != nil {
+		return EffectiveProfile{}, protectedErr
+	}
+	if err := validateMountPaths(result.Filesystem, protectedForMounts); err != nil {
+		return EffectiveProfile{}, fmt.Errorf("validate effective filesystem mount paths: %w", err)
 	}
 	activeCanonicalPaths := make(map[string]bool, len(result.Filesystem))
 	for _, grant := range result.Filesystem {

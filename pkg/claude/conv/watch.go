@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -2358,7 +2359,21 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
 		launchGrants = launchFilesystem
+		// The bare read/write/deny dir lists below can only express same-path
+		// rules. Refuse a resume whose recorded policy needs a projection this
+		// implementation cannot enforce, rather than resuming with the host path
+		// exposed and the authored sandbox path empty.
+		if err := sandboxpolicy.ValidateMountPathSupport(
+			launchFilesystem, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
 		for _, grant := range launchFilesystem {
+			if grant.IsRemapped() {
+				// Carried by the tclaude-layer launch spec, which reads the
+				// grants directly; a bare dir list would lose the projection.
+				continue
+			}
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
 				writeDirs = append(writeDirs, grant.Path)

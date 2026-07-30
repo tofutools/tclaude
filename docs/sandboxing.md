@@ -1059,6 +1059,76 @@ The dashboard's **Add common rule → Deny access to the Home directory** insert
 the `deny ~` row for you. It stores nothing: afterwards it is an ordinary,
 editable row.
 
+## Mounting a host directory at a different sandbox path
+
+A `read` or `write` row may carry an optional `mount_path`. The host directory
+named by `path` then appears inside the sandbox at `mount_path` instead of at
+its host path — a Kubernetes-style volume mount:
+
+```json
+[
+  { "path": "/var/lib/shared-datasets/corpus-v3",
+    "access": "read",
+    "mount_path": "/data" }
+]
+```
+
+The agent sees `/data`; `/var/lib/shared-datasets/corpus-v3` is not visible
+inside the sandbox at all. That lets a profile give agents a stable conventional
+path without exposing (or depending on) the host's real directory layout, and
+lets one profile compose across machines whose host paths differ.
+
+Rules:
+
+- **Omitting `mount_path` is the same-path behavior every profile had before.**
+  Nothing changes for a rule that does not use it.
+- **`deny` rows may not carry a `mount_path`.** A deny hides a host path rather
+  than projecting one, so it always applies to the host path. Authoring one is a
+  validation error rather than a silently ignored field.
+- **`path` stays the authority.** Symlink resolution, directory-ness and the
+  protected-root wall are all decided against the host path, exactly as before.
+  `mount_path` is validated syntactically (absolute, cleaned, not `/`) because
+  it names a location in a namespace that does not exist yet.
+- **Ordering, shadowing and most-specific-wins are evaluated on the sandbox
+  side**, because that is the namespace the agent actually observes.
+- Two different host paths may not claim one `mount_path` (that is a validation
+  error); one host path at several mount paths is fine.
+- A `mount_path` may not intersect protected tclaude state or shadow the agentd
+  control socket, and — at launch — may not cover a directory the launch itself
+  requires, such as the workspace.
+- A host path whose most specific rule is a `deny` may not be mounted elsewhere;
+  that would re-expose exactly the content the deny hides under another name. A
+  path reopened by a narrower `read`/`write` beneath a broad deny is fine.
+- **A missing host source is skipped and the mount simply does not appear**,
+  the same rule missing paths already follow. tclaude never creates host
+  directories as a side effect of launching.
+
+### Where it is enforced
+
+Projecting a directory onto another path requires a real mount namespace, so
+this is not universally available:
+
+| Implementation / platform | `mount_path` |
+|---------------------------|--------------|
+| `tclaude-layer` or `stacked`, **Linux** (bubblewrap) | ✅ enforced with `--ro-bind`/`--bind src dest` |
+| `tclaude-layer` or `stacked`, **macOS** (Seatbelt) | ❌ refused — Seatbelt is a path filter over the host namespace, not a mount namespace |
+| `harness-builtin` (any harness, any platform) | ❌ refused — the harness receives path lists and confines itself in the host namespace |
+
+Where it is unsupported, tclaude **refuses the launch** with
+`unsupported_sandbox_profile_mount_path` and buckets the rule as unsupported in
+the effective preview. It never falls back to mounting at the host path: that
+would break the authored contract in both directions, exposing a path you did
+not authorize while leaving the one you did authorize empty.
+
+One further Linux caveat. Under the **host-open** network posture the sandbox
+root is the real host root bound read-only, so bubblewrap has nowhere to create
+a new mount point and the mount point must already exist on the host; tclaude
+refuses with `tclaude_layer_missing_mount_point` naming the path rather than
+creating it for you. Under the isolated or filtered postures the root is
+constructed, and the mount point is created inside the namespace with nothing
+required on the host. (Decoupling the constructed root from the network posture
+is tracked separately as TCL-798.)
+
 ## What tclaude reopens for you, and what you must author
 
 When a deny covers paths tclaude needs to keep usable, it pairs read reopens

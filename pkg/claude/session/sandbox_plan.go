@@ -116,7 +116,11 @@ func DescribeTclaudeLayerPlan(
 	}
 
 	for _, entry := range plan.Entries {
-		add(2, "profile-plan", "effective-filesystem", mountModeLabel(entry.Mode), entry.Path, entry.Path)
+		// Source is the host authority and Target is where it lands inside the
+		// sandbox. They differ for a mount_path grant, and the row must show both
+		// so a dry-run reader can tell a projected mount from a same-path one.
+		add(2, "profile-plan", "effective-filesystem", mountModeLabel(entry.Mode),
+			entry.SourcePath(), entry.Path)
 	}
 
 	protected, err := sandboxpolicy.ProtectedPaths()
@@ -195,11 +199,15 @@ func DescribeRecordedEffectivePlan(
 	for _, entry := range plan.Entries {
 		mode := mountModeLabel(entry.Mode)
 		if entry.Mode != sandboxpolicy.MountHide {
+			target := entry.Path
+			if entry.IsRemapped() {
+				target = fmt.Sprintf("%s (from %s)", entry.Path, entry.Source)
+			}
 			out.UnavailableEntries = append(out.UnavailableEntries,
 				SandboxPlanUnavailableEntry{
 					Class: 2, ClassName: "profile-plan",
 					Origin: "recorded-effective-filesystem",
-					Mode:   mode, Target: entry.Path,
+					Mode:   mode, Target: target,
 					Reason: "launch-time presence was not recorded — disposition unavailable; use hypothetical mode",
 				})
 			continue

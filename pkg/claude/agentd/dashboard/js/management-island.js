@@ -946,15 +946,26 @@ function sandboxFilesystemEditorRows(filesystem, spellings) {
   });
 }
 
+// sandboxMountPathWire keeps an authored mount_path (TCL-866) on the wire.
+// Omitting the key entirely when there is none keeps the request byte-identical
+// for every profile that has no projection, and dropping the field for rows the
+// editor cannot yet author would silently delete authority the operator (or the
+// profile scribe) put there.
+function sandboxMountPathWire(row) {
+  const mountPath = (row.mount_path || '').trim();
+  return mountPath ? { mount_path: mountPath } : {};
+}
+
 function sandboxFilesystemWire(draft, baseline) {
-  const pathsUnchanged = JSON.stringify((draft.filesystem || []).map((row) => row.path))
-    === JSON.stringify((baseline.filesystem || []).map((row) => row.path));
+  const pathKey = (rows) => JSON.stringify((rows || []).map((row) => [row.path, row.mount_path || '']));
+  const pathsUnchanged = pathKey(draft.filesystem) === pathKey(baseline.filesystem);
   const retained = draft.filesystem_spellings;
   if (pathsUnchanged && retained?.version === 1) {
     return {
       filesystem: (draft.filesystem || []).map((row) => ({
         path: row._resolved_path || row.path,
         access: row.access,
+        ...sandboxMountPathWire(row),
       })),
       filesystem_spellings: clone(retained),
     };
@@ -963,7 +974,9 @@ function sandboxFilesystemWire(draft, baseline) {
   // canonicalizes the visible spellings and writes a fresh sidecar; it never
   // infers new launch authority from an old retained spelling.
   return {
-    filesystem: (draft.filesystem || []).map((row) => ({ path: row.path, access: row.access })),
+    filesystem: (draft.filesystem || []).map((row) => ({
+      path: row.path, access: row.access, ...sandboxMountPathWire(row),
+    })),
     filesystem_spellings: null,
   };
 }
@@ -1170,7 +1183,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
-      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row sbx-filesystem-row"><${SegmentedControl} className="sbx-access sbx-filesystem-access" label=${`Filesystem row ${index + 1} access`} value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'Read'], ['write', 'Write'], ['deny', 'Deny']]}/><span class="sbx-path-binding"><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/>${row._resolved_path && html`<span class="sbx-binding-target">binds → ${row._resolved_path}${row._spellings?.length > 1 ? ` · also retained: ${row._spellings.slice(1).join(', ')}` : ''}</span>`}${row.mount_path && html`<span class="sbx-binding-target sbx-mount-path">mounts inside the sandbox at → ${row.mount_path}</span>`}</span><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes

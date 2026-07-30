@@ -32,11 +32,14 @@ func openCodePermissionJSONForLaunch(
 			return "", err
 		}
 		for _, grant := range filesystem {
+			// OpenCode's soft tool governance names paths its tools will see,
+			// so a remapped grant contributes its sandbox path. Unremapped rules
+			// are unaffected: their guest path is the host path.
 			switch grant.Access {
 			case sandboxpolicy.AccessRead:
-				spec.ReadDirs = append(spec.ReadDirs, grant.Path)
+				spec.ReadDirs = append(spec.ReadDirs, grant.GuestPath())
 			case sandboxpolicy.AccessWrite:
-				spec.WriteDirs = append(spec.WriteDirs, grant.Path)
+				spec.WriteDirs = append(spec.WriteDirs, grant.GuestPath())
 			case sandboxpolicy.AccessDeny:
 				spec.DenyDirs = append(spec.DenyDirs, grant.Path)
 			}

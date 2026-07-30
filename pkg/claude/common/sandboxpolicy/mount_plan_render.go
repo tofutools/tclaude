@@ -253,6 +253,17 @@ func NetworkPostureForAccess(access NetworkAccess) (NetworkPosture, error) {
 //     (NormalizeForPersistence): the rule survives resolution and becomes
 //     active on a later launch, once the directory exists and revalidates.
 //
+// Remapped grants (TCL-866): a grant carrying a mount_path is emitted as an
+// entry whose Path is the GUEST path and whose Source is the canonical host
+// path. Everything above about ordering, folding and shadowing is stated in
+// guest-path space, because that is the space the applier's mount table lives
+// in and the space the agent observes. Host-path authority is untouched:
+// symlink resolution, directory-ness and protected-root containment were all
+// decided against Path by Normalize/Resolve before the renderer ran, and the
+// guest path is validated syntactically only — the renderer still performs no
+// filesystem access, so it cannot and must not ask whether the guest mountpoint
+// exists. That question belongs to the applier, which owns the namespace.
+//
 // Malformed input is rejected rather than dropped, because silently discarding
 // a row would fail OPEN whenever that row was a deny. The syntactic checks
 // mirror canonicalDirectory's — absolute, within MaxPathBytes, valid UTF-8, no
@@ -269,7 +280,11 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 	for _, section := range sections {
 		total += len(section.grants)
 	}
-	byPath := make(map[string]Access, total)
+	type plannedMount struct {
+		access Access
+		source string
+	}
+	byGuest := make(map[string]plannedMount, total)
 	for _, section := range sections {
 		for i, grant := range section.grants {
 			switch grant.Access {
@@ -278,25 +293,57 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 				return MountPlan{}, fmt.Errorf("%s[%d].access %q is invalid (want read, write, or deny)",
 					section.label, i, grant.Access)
 			}
-			path, err := canonicalMountPath(grant.Path)
+			source, err := canonicalMountPath(grant.Path)
 			if err != nil {
 				return MountPlan{}, fmt.Errorf("%s[%d].path: %w", section.label, i, err)
 			}
+			guest := source
+			if grant.MountPath != "" {
+				if grant.Access == AccessDeny {
+					return MountPlan{}, fmt.Errorf(
+						"%s[%d].mount_path is not allowed on a deny rule", section.label, i)
+				}
+				guest, err = canonicalMountPath(grant.MountPath)
+				if err != nil {
+					return MountPlan{}, fmt.Errorf("%s[%d].mount_path: %w", section.label, i, err)
+				}
+			}
+			// Folding happens in GUEST-path space, because that is the position
+			// the entry occupies inside the namespace and therefore what a later
+			// entry would shadow. Two rules projecting different host directories
+			// onto one guest path are not the same rule spelled twice; folding
+			// them would silently discard one authored grant, so refuse instead.
+			previous, exists := byGuest[guest]
+			if !exists {
+				byGuest[guest] = plannedMount{access: grant.Access, source: source}
+				continue
+			}
+			if previous.source != source {
+				return MountPlan{}, fmt.Errorf(
+					"%s[%d]: sandbox path %q is claimed by two different host paths %q and %q",
+					section.label, i, guest, previous.source, source)
+			}
 			// Same-path folding uses the package-wide lattice so a plan composed
 			// from several sections cannot depend on the order they were appended.
-			if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous) {
-				byPath[path] = grant.Access
+			if accessRank(grant.Access) > accessRank(previous.access) {
+				previous.access = grant.Access
+				byGuest[guest] = previous
 			}
 		}
 	}
-	paths := make([]string, 0, len(byPath))
-	for path := range byPath {
+	paths := make([]string, 0, len(byGuest))
+	for path := range byGuest {
 		paths = append(paths, path)
 	}
 	sortMountPaths(paths)
 	entries := make([]MountEntry, 0, len(paths))
 	for _, path := range paths {
-		entries = append(entries, MountEntry{Path: path, Mode: mountModeForAccess(byPath[path])})
+		planned := byGuest[path]
+		entry := MountEntry{Path: path, Mode: mountModeForAccess(planned.access)}
+		if planned.source != path {
+			entry.Source = planned.source
+		}
+		entries = append(entries, entry)
 	}
 	return MountPlan{Entries: entries}, nil
 }

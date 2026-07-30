@@ -521,6 +521,15 @@ func runNew(params *NewParams) error {
 		sandboxMode = ""
 		params.Sandbox = ""
 	}
+	// Mount paths are enforceable only where tclaude owns a mount namespace.
+	// This gate runs before every harness-specific one because the alternative
+	// is not a weaker policy but a WRONG one: the host path would be exposed and
+	// the authored sandbox path would be empty.
+	if err := sandboxpolicy.ValidateMountPathSupport(
+		sandboxSnapshotActiveFilesystem(launchSandbox), sandboxImplementation, runtime.GOOS,
+	); err != nil {
+		return err
+	}
 	if !outerLayer && len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
 		h.Name == harness.CodexName && params.PermissionProfile != harness.CodexAgentProfile {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
@@ -1829,6 +1838,16 @@ func OneShotLaunchPosture(
 		return harness.SpawnSpec{}, fmt.Errorf("prepare one-shot launch posture: nil harness")
 	}
 	harnessName := targetHarness.Name
+	// A one-shot replay renders a harness-NATIVE sandbox posture: there is no
+	// tclaude-owned mount namespace here at all, so a recorded mount_path cannot
+	// be reproduced. Refuse rather than replaying the rule at its host path,
+	// which would be a different policy than the one being replayed.
+	if err := sandboxpolicy.ValidateMountPathSupport(
+		sandboxSnapshotActiveFilesystem(effectiveSandbox),
+		sandboxpolicy.ImplementationHarnessBuiltin, runtime.GOOS,
+	); err != nil {
+		return harness.SpawnSpec{}, err
+	}
 	params := &NewParams{}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, sandboxMode, cwd)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -2119,7 +2138,12 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	out := make([]string, 0, len(snapshot.Effective.Filesystem))
 	for _, grant := range snapshot.Effective.Filesystem {
 		if grant.Access == access {
-			out = append(out, grant.Path)
+			// These lists describe the namespace the harness will run in, so a
+			// remapped grant contributes the path it occupies THERE. Under the
+			// stacked implementation that is what the nested harness sandbox
+			// must allow; every surface that cannot mount at all refuses a
+			// remapped grant before reaching here.
+			out = append(out, grant.GuestPath())
 		}
 	}
 	return out

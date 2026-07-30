@@ -130,6 +130,18 @@ func renderSeatbeltProfile(
 	}
 
 	for i, entry := range plan.Entries {
+		// Seatbelt is a path filter over the real host namespace, not a mount
+		// namespace: it can allow or deny a path, but it cannot make a directory
+		// appear somewhere else. Refuse rather than approximate — binding at the
+		// host path instead would expose a path the operator did not authorize
+		// while leaving the one they did authorize empty. This is the same
+		// refusal darwinSeatbeltReadOnlyPaths already makes for daemon-final
+		// source→target binds.
+		if entry.IsRemapped() {
+			return "", nil, fmt.Errorf(
+				"seatbelt_mount_path_projection: Seatbelt cannot project host path %q onto sandbox path %q (mount plan entry %d); mount paths require a mount namespace, which only the Linux tclaude-layer provides",
+				entry.SourcePath(), entry.Path, i)
+		}
 		path, cleanErr := cleanSeatbeltPath(fmt.Sprintf("mount plan entry %d", i), entry.Path)
 		if cleanErr != nil {
 			return "", nil, cleanErr
