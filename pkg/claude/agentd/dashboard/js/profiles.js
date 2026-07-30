@@ -272,7 +272,7 @@ function profileDetailChips(p) {
   const parts = [];
   if (p.disabled) parts.push(`🚫 disabled · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
   else if (p.disabled_reason) parts.push(`last disable reason · ${String(p.disabled_reason).replace(/\s+/g, ' ').trim()}`);
-  if (p.operator_only) parts.push('👤 operator only');
+  if (!p.disabled && p.operator_only) parts.push('👤 operator only');
   const text = (label, value) => { if (value) parts.push(`${label} ${String(value).replace(/\s+/g, ' ').trim()}`); };
   const toggle = (label, value) => { if (value != null) parts.push(`${label} ${value ? 'on' : 'off'}`); };
   text('harness', p.harness);
