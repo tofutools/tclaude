@@ -786,12 +786,7 @@ func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
 	assert.Equal(t, "--ro-bind-data", relay.SetupArgs[index-2])
 	assert.Equal(t, strconv.Itoa(proxyNetworkHostsFD), relay.SetupArgs[index-1])
 
-	// The descriptor named above must be the one bubblewrap receives at that
-	// number: fd 3 is bubblewrap's status pipe, so the relay's own files start
-	// at filteredNetworkBootstrapBinaryFD.
 	require.Len(t, relay.Files, 2)
-	assert.Equal(t, proxyNetworkHostsFD,
-		filteredNetworkBootstrapBinaryFD+len(relay.Files)-1)
 
 	hosts := sandboxpolicy.ProxyNetworkHostsFile()
 	assert.Contains(t, string(hosts), "127.0.0.1 localhost",
@@ -804,4 +799,38 @@ func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
 		assert.True(t, addr.IsLoopback(),
 			"the namespace hosts file may name only loopback, got %q", line)
 	}
+}
+
+// TestProxyNetworkHostsFileReachesTheNamedDescriptor proves the descriptor
+// NUMBER in the bubblewrap argument is the one that actually carries the hosts
+// file, by reading it from a stand-in for bwrap.
+//
+// Asserting the arithmetic instead — that the constant equals first-fd plus an
+// offset — would only restate the assumption the argument already encodes. The
+// layout it depends on (bubblewrap's status pipe at fd 3, then this engine's
+// files, with no stacked binding in between) is enforced elsewhere by refusals;
+// this observes the result rather than trusting that chain.
+func TestProxyNetworkHostsFileReachesTheNamedDescriptor(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	policy, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+
+	observed := filepath.Join(t.TempDir(), "hosts-at-fd")
+	fakeBwrap := filepath.Join(t.TempDir(), "bwrap")
+	require.NoError(t, os.WriteFile(fakeBwrap, []byte(
+		"#!/bin/sh\ncat <&"+strconv.Itoa(proxyNetworkHostsFD)+" >"+observed+
+			"\nprintf '{\"child-pid\":%d}' \"$$\" >&3\n"), 0o700))
+
+	_, err = runTclaudeLayerWinchRelay(
+		[]string{fakeBwrap, "--", "/bin/true"}, nil,
+		stackedRelayBindingOptions{ProxyPolicy: policy})
+	// The stand-in hands out no listener, so the launch fails closed after the
+	// descriptors are in place. What is under test is what it read.
+	require.Error(t, err)
+
+	carried, err := os.ReadFile(observed)
+	require.NoError(t, err)
+	assert.Equal(t, string(sandboxpolicy.ProxyNetworkHostsFile()), string(carried),
+		"the descriptor the /etc/hosts argument names must carry the hosts file")
 }

@@ -287,10 +287,25 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 // The packet engine reaches the same place by a different route: it synthesizes
 // its own hosts file too, and its DNS broker holds the name authority.
 //
-// Only /etc/hosts is replaced. The resolver configuration is left alone because
-// it cannot produce an answer: the namespace is empty, so no nameserver is
-// reachable, and a query has nowhere to go. /etc/hosts is the one local
-// resolution path that needs no network at all.
+// Only /etc/hosts is replaced, because it is the one resolution path the FLOOR
+// ITSELF provides that needs no network. The resolver configuration is left
+// alone: a query has nowhere to go in an empty namespace, the socket-backed NSS
+// modules (systemd-resolved, nscd, sssd) live under /run, which the constructed
+// root does not bind, and a resolv.conf naming a loopback stub can only reach
+// the sandbox's own loopback — where the floor grants no capabilities and no
+// namespace root, so nothing can bind port 53 to answer.
+//
+// What this does NOT cover, stated because it is the boundary of the guarantee:
+// the sandbox inherits the host's /etc/nsswitch.conf and NSS modules, so an
+// operator who authorizes a resolver socket through the unix_sockets axis
+// restores exactly the name-to-literal conversion this file exists to prevent.
+// Refusing known resolver sockets under this engine belongs with the selection
+// surface, where an authored engine and authored sockets first meet.
+//
+// The delivered property is therefore "no automatic name-to-address conversion",
+// not "no host-derived address knowledge": /etc/resolv.conf and friends remain
+// readable and still disclose host addresses. Disclosure is not authorization —
+// a literal the sandbox learns still has to pass the proxy's CIDR rows.
 func ProxyNetworkHostsFile() []byte {
 	return []byte(
 		"127.0.0.1 localhost\n" +
