@@ -192,7 +192,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   assert.deepEqual(
     [...impl.options].map((option) => option.textContent),
     [
-      'Unset (inherit at spawn)',
+      'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
       'Stacked: tclaude + Claude Code (experimental)',
       'tclaude built-in OS sandbox (experimental)',
@@ -216,7 +216,7 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   assert.deepEqual(
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
-      'Unset (inherit at spawn)',
+      'Unset (resolved defaults at spawn)',
       'Stacked: tclaude + OpenCode (experimental)',
       'tclaude built-in OS sandbox (experimental)',
     ],
@@ -2973,4 +2973,83 @@ test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) 
     { name: 'p', harness: 'claude', ssh_workaround: false }, {}, catalog,
   );
   assert.equal(model.profilePayload(claude, null, catalog).ssh_workaround, undefined);
+});
+
+// TCL-865. The editor exposes two different resolutions next to each other, and
+// before this they were worded as if they were the same one. This pins the
+// finished vocabulary at the render, not just in the source: the target
+// selectors say "Resolved defaults", the composed sandbox layers are named
+// on screen without opening a disclosure, and a Claude launch whose sandbox
+// mode is `inherit` never reads as though its built-in sandbox is definitely on.
+test('sandbox editor separates resolved launch defaults from composed sandbox layers', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      id: 7, name: 'scratch', filesystem: [{ path: '/home/operator/work', access: 'write' }],
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: { group: 'crew' },
+    catalog: [{
+      name: 'claude', display_name: 'Claude Code',
+      can_builtin_os_sandbox: true, can_tclaude_layer: true, can_stacked: true,
+    }],
+  });
+  const axis = (outcome) => ({ tier: '1 write rule', outcome, detail: 'resolver-owned detail' });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox() {
+      return {
+        targets: [{
+          target: {
+            implementation: 'harness-builtin', harness: 'claude',
+            platform: 'linux', sandbox: 'inherit',
+          },
+          resolved_by: 'group default profile "crew-launch"',
+          predicted: true,
+          axes: {
+            filesystem: axis('enforced_partial'), environment: axis('enforced'),
+            agent_directories: axis('enforced'), network: axis('enforced'),
+            unix_sockets: axis('enforced'),
+          },
+        }],
+        contexts: [{
+          context: { global: 'house-rules', group: 'crew-rules', group_name: 'crew', explicit: 'scratch' },
+          filesystem: [{ path: '/home/operator/work', access: 'write' }],
+          environment: [], agent_directories: [],
+          network: { mode: 'open' }, unix_sockets: { mode: 'closed' },
+          agentd_socket: 'always reachable', notices: [],
+        }],
+      };
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  // Launch-parameter resolution: one phrase, in every target selector.
+  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-harness').options[0].textContent,
+    'Resolved defaults');
+  assert.equal(
+    host.querySelector('#sandbox-profile-editor-evaluate-implementation').options[0].textContent,
+    'Resolved defaults');
+  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-platform').options[0].textContent,
+    'Resolved defaults (this host)');
+  assert.match(host.querySelector('#sandbox-profile-editor-evaluate-intro').textContent,
+    /explicit launch choice → named spawn profile → group default spawn profile → global default spawn profile → harness default\./);
+
+  // Sandbox-policy composition: every layer named, by scope, without a click.
+  assert.equal(host.querySelector('#sandbox-profile-editor-policy-layers').textContent.trim(),
+    'Composed sandbox-profile layers: global “house-rules” + group “crew-rules” + explicit “scratch”');
+
+  // `inherit` is never left to explain itself, and naming the implementation
+  // owner does not assert that its sandbox is switched on.
+  const details = host.querySelector('.sbx-target-details').textContent;
+  assert.match(details, /Sandbox mode: inherit — Claude's own settings decide whether its built-in sandbox is enabled/);
+  assert.match(details, /Resolved defaults came from: group default profile "crew-launch"/);
+  assert.match(host.querySelector('.sbx-policy-target').textContent,
+    /Claude on Linux · built-in sandbox \(enabled only if Claude settings enable it\)/);
+  unmount();
 });

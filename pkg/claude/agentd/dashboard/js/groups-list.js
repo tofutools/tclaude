@@ -323,7 +323,7 @@ function GroupProfileChip({ group, actions, kind }) {
       }}
     >
       <option value=${NEW_PROFILE}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}</option>
-      <option value="">${sandbox ? '(inherit)' : '(none)'}</option>
+      <option value="">${sandbox ? '(none — global layer only)' : '(none)'}</option>
       ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
       ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
     </select>`;
@@ -332,8 +332,8 @@ function GroupProfileChip({ group, actions, kind }) {
     ? `group-sandbox-profile${current ? '' : ' unset'}`
     : `group-default-model${current ? '' : ' unset'}`;
   const title = sandbox
-    ? current ? `Sandbox profile for ${group.name}: ${current} — composes after the global sandbox profile for newly launched agents. Click to change.` : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'
-    : current ? `Default spawn profile for agents spawned into this group: ${current} — fills blank launch fields at spawn. Click to change.` : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)';
+    ? current ? `Sandbox profile for ${group.name}: ${current} — the group layer of the composed sandbox policy, applied together with the global sandbox profile and any explicit one. Click to change.` : 'No group sandbox profile — the composed sandbox policy of a launch here is the global one plus any explicit profile. Click to set one.'
+    : current ? `Group default spawn profile for agents spawned into this group: ${current} — the resolved-defaults tier above the global default spawn profile, filling launch fields the spawn left blank. Click to change.` : 'No group default spawn profile — click to set one. (Resolved defaults fall through to the global default spawn profile, then the harness default.)';
   return html`<span
     ref=${triggerRef}
     class=${className} tabindex="0" role="button"

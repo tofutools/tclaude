@@ -31,6 +31,10 @@ import {
   autoCompactWindowHintFor, sandboxModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
 } from './agent-spawn-model.js';
+import {
+  RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_LABEL, SANDBOX_PROFILE_COMPOSITION,
+  SANDBOX_PROFILE_LAYERS_LABEL, sandboxModeDetail, sandboxModeLabel, sandboxProfileLayersText,
+} from './resolved-defaults.js';
 
 // Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
 // framing, and the platform requirement stated rather than implied. A profile
@@ -42,7 +46,7 @@ const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for agents lau
   + "whole harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — a '
   + 'host without them refuses the launch instead of falling back. '
-  + 'Unset leaves the choice to the spawn-time profile chain.';
+  + `Unset leaves the choice to the resolved defaults at spawn. ${RESOLVED_DEFAULTS_CHAIN}`;
 
 // Shared with the spawn dialog's own copy of this control: the two consequences
 // an operator has to know are the cap and the status-line decoupling.
@@ -115,7 +119,15 @@ const AGENT_DIRECTORIES_HELP = 'Environment-variable names backed by fresh isola
   + 'directories created for each spawned agent.';
 const EFFECTIVE_POLICY_HELP = 'Evaluates the composed policy for the selected implementation, '
   + 'harness, platform, and assignment context. This preview reports enforcement capability '
-  + 'limits without changing the authored profile.';
+  + 'limits without changing the authored profile. '
+  + `${SANDBOX_PROFILE_COMPOSITION} The launch target those layers are evaluated against is a `
+  + `separate question, answered by the target controls below. ${RESOLVED_DEFAULTS_CHAIN}`;
+
+// The line under the target controls. It states, in one place, the distinction
+// the three selectors above and the layer row below are each half of: the
+// selectors resolve LAUNCH PARAMETERS, the preview composes SANDBOX POLICY.
+const EVALUATION_TARGET_INTRO = `${RESOLVED_DEFAULTS_LABEL} answer which launch these rules are `
+  + `evaluated against; override any of them to try another target. ${RESOLVED_DEFAULTS_CHAIN}`;
 
 const html = htm.bind(h);
 
@@ -286,8 +298,10 @@ function SandboxPolicyResult({ target, context, contextIndex }) {
       helpOpen=${ruleHelpOpen} setHelpOpen=${setRuleHelpOpen}
       helpPrefix=${helpPrefix} targetLabel=${targetLabel}/>
     <details class="sbx-target-details"><summary>Evaluation details</summary>
-      ${target.target.sandbox ? html`<div>Sandbox mode: ${target.target.sandbox}</div>` : null}
-      ${target.resolved_by ? html`<div>Resolved from: ${target.resolved_by}</div>` : null}
+      ${target.target.sandbox ? html`<div>Sandbox mode: ${sandboxModeDetail(target.target.harness, target.target.sandbox)}</div>` : null}
+      ${target.resolved_by
+    ? html`<div>${RESOLVED_DEFAULTS_LABEL} came from: ${target.resolved_by}</div>`
+    : html`<div>Launch target overridden here; ${RESOLVED_DEFAULTS_LABEL.toLowerCase()} were not used.</div>`}
     </details>
   </div>`;
 }
@@ -806,7 +820,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
     <${Row} label="Effort"><${Select} value=${draft.effort} onChange=${(value) => change(setDraft, 'effort', value)} options=${[['', "Default (harness's own)"], ...(hEntry?.effort_levels || ['low', 'medium', 'high', 'xhigh', 'max']).map((value) => [value, value])]} /></${Row}>
     <${HelpField} id=${sandboxID} label="Sandbox" title="Launch containment for the agent. The modes are per-harness."
       value=${draft.sandbox}
-      options=${(hEntry?.sandbox_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_sandbox ? ' (recommended)' : '') }))}
+      options=${(hEntry?.sandbox_modes || []).map((value) => ({
+    value,
+    label: sandboxModeLabel(draft.harness, value)
+      + (value === hEntry.default_sandbox ? ' (recommended)' : ''),
+  }))}
       onChange=${(event) => change(setDraft, 'sandbox', event.currentTarget.value)}
       help=${sandboxHelp} open=${helpOpen === sandboxID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_sandbox} />
@@ -817,7 +835,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
           onChange=${(value) => setDraft((current) => ({
     ...current, sandbox_implementation: value, sandbox_implementation_cleared: null,
   }))}
-          options=${[['', 'Unset (inherit at spawn)'],
+          options=${[['', `Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`],
     ...sandboxImplOptions.map((option) => [option.value, option.label])]} />
         <${SandboxImplHint} hint=${sandboxImplHint} />
       </div>
@@ -1223,7 +1241,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
             setEvaluateImplementation(implementations[0]?.[0] || 'harness-builtin');
           }
         }}>
-          <option value="">Resolved default target</option>
+          <option value="">${RESOLVED_DEFAULTS_LABEL}</option>
           ${evaluationHarnesses.map((entry) => html`
             <option value=${entry.name}>${entry.display_name || entry.name}</option>
           `)}
@@ -1231,7 +1249,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <label>Sandbox implementation <select id="sandbox-profile-editor-evaluate-implementation" value=${evaluateImplementation} disabled=${!evaluateHarness} onChange=${(event) => setEvaluateImplementation(event.currentTarget.value)}>
           ${evaluateHarness
     ? evaluationImplementations.map(([value, label]) => html`<option value=${value}>${label}</option>`)
-    : html`<option value="harness-builtin">Resolved with harness</option>`}
+    : html`<option value="harness-builtin">${RESOLVED_DEFAULTS_LABEL}</option>`}
         </select></label>
         <label>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
           const nextPlatform = event.currentTarget.value;
@@ -1246,17 +1264,29 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
           ${evaluateHarness ? html`
             <option value="linux">Linux</option>
             <option value="darwin">macOS</option>
-          ` : html`<option value="linux">Resolved current host</option>`}
+          ` : html`<option value="linux">${RESOLVED_DEFAULTS_LABEL} (this host)</option>`}
         </select></label>
       </div>
+      <div class="sbx-evaluation-target-intro" id="sandbox-profile-editor-evaluate-intro"
+        >${EVALUATION_TARGET_INTRO}</div>
       ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}
       ${(prediction?.contexts?.length || 0) > 1 && html`<label>Rules for <select id="sandbox-profile-editor-effective-context" value=${effectiveContext} onChange=${(event) => setEffectiveContext(Number(event.currentTarget.value))}>${prediction.contexts.map((context, index) => html`<option value=${index}>${context.context.group_name ? `group ${context.context.group_name}` : context.context.global === draft.name ? 'global assignment' : 'explicit selection'}</option>`)}</select></label>`}
+      ${/* The composed layers stay on screen rather than folding into the
+           details below: which sandbox profile occupies which scope is the one
+           thing the rule buckets never restate, and it is what separates
+           "composed sandbox policy" from the launch-parameter defaults the
+           target controls above resolve. */ ''}
+      ${selectedEffective && html`<div class="sbx-policy-layers" id="sandbox-profile-editor-policy-layers">
+        <strong>${SANDBOX_PROFILE_LAYERS_LABEL}:</strong> ${sandboxProfileLayersText(selectedEffective.context, 'this draft alone — no global or group sandbox profile applies')}
+      </div>`}
       ${selectedEffective && prediction?.targets?.map((target, index) => html`<${SandboxPolicyResult} key=${index} target=${target} context=${selectedEffective} contextIndex=${effectiveContext}/>`)}
       ${(selectedEffective?.notices || []).length > 0 && html`<div class="sbx-a11y-status" role="status" aria-live="polite" aria-atomic="true">Policy composition warning: ${selectedEffective.notices.map((notice) => notice.detail).join('. ')}</div>`}
       ${selectedEffective && html`<details class="sbx-composition-details"><summary>How these rules were combined</summary>
-        <div><strong>Profile layers:</strong> ${['global', 'group', 'explicit'].flatMap((scope) => selectedEffective.context[scope] ? [`${scope} “${selectedEffective.context[scope]}”`] : []).join(' → ') || 'draft only'}</div>
+        ${/* The layer list itself is the always-visible row above; this
+             disclosure carries only the rule that explains it. */ ''}
+        <div>${SANDBOX_PROFILE_COMPOSITION}</div>
         ${prediction?.remaining_contexts ? html`<div class="sbx-preview-status">Showing 10 assignments; ${prediction.remaining_contexts} more are omitted from this selector but still included in the overall safety check.</div>` : null}
       </details>`}
       ${(selectedEffective?.notices || []).map((notice, index) => html`<div key=${index} class="sbx-composition-warning">⚠ ${notice.detail}</div>`)}

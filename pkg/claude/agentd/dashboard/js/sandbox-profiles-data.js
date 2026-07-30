@@ -390,5 +390,13 @@ export function sandboxTargetLabel(value = {}) {
     && target.implementation === 'harness-builtin'
     ? ` · ${CODEX_BUILTIN_FILTERED_NETWORK_SHORT}`
     : '';
-  return `${harness} on ${platform} · ${implementation}${networkDisclosure}`;
+  // Naming the implementation says who WOULD own containment, not that it is
+  // switched on. Under Claude's `inherit` that second question is still open —
+  // settings.json decides — so the label must not answer it.
+  const undecided = target.harness === 'claude'
+    && target.implementation === 'harness-builtin'
+    && target.sandbox === 'inherit'
+    ? ' (enabled only if Claude settings enable it)'
+    : '';
+  return `${harness} on ${platform} · ${implementation}${undecided}${networkDisclosure}`;
 }

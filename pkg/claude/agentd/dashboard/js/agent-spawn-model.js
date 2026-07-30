@@ -168,7 +168,7 @@ export function sandboxModeHelpForImplementation(help, implementation, harness) 
   const harnessName = text(harness);
   if (harnessName === 'opencode') return text(help);
   if (!text(implementation)) {
-    return 'Sandbox implementation is inherited from the profile chain at launch, '
+    return 'The sandbox implementation comes from the resolved defaults at launch, '
       + "so this mode's effect is not known yet.";
   }
   if (text(implementation) === SANDBOX_IMPL_TCLAUDE_LAYER
@@ -258,11 +258,11 @@ function sandboxImplView(harness, context) {
     sandboxImplDefault: text(catalog.default) || SANDBOX_IMPL_DEFAULT,
     sandboxImplCanBuiltin: canBuiltinOSSandbox,
     sandboxImplInheritLabel: canBuiltinOSSandbox
-      ? `profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
+      ? `spawn-profile chain, then ${text(catalog.default) || SANDBOX_IMPL_DEFAULT}`
         + (text(harness?.name) === 'codex'
           ? ` (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
           : '')
-      : 'profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
+      : 'spawn-profile chain, then no built-in OS sandbox; access-control is a command filter, not confinement',
     sandboxImplHarness: harnessLabel,
     sandboxImplHarnessName: text(harness?.name),
     sandboxImplCanStacked: !!harness?.can_stacked,

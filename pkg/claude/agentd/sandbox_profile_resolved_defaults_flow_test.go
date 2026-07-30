@@ -1,0 +1,85 @@
+package agentd_test
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/testharness"
+)
+
+// TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers pins the
+// two halves of the TCL-865 vocabulary at their source, so the dashboard's copy
+// is describing something the daemon actually does.
+//
+// The halves are deliberately different mechanisms and the test asserts both:
+//
+//   - RESOLVED DEFAULTS: with no explicit target, the preview walks the same
+//     launch chain a real spawn walks — the group's default spawn profile
+//     outranks the global one, which outranks the harness default — and says
+//     which tier it took.
+//   - COMPOSED SANDBOX LAYERS: the global, group, and explicit sandbox profiles
+//     all appear in the effective context, by scope and by name. This is what
+//     the editor's always-visible layer row renders, so a preview that silently
+//     dropped a layer would leave that row lying.
+func TestSandboxProfilePreviewResolvesLaunchDefaultsAndNamesComposedLayers(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+
+	for _, name := range []string{"house-rules", "crew-rules"} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+			"name": name, "filesystem": []any{}, "environment": []any{},
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	}
+	require.NoError(t, db.SetGlobalSandboxProfile("house-rules"))
+	_, err = db.SetAgentGroupSandboxProfile("crew", "crew-rules")
+	require.NoError(t, err)
+
+	// The group's default SPAWN profile decides the launch target. Codex, so a
+	// preview that quietly fell back to the harness default (Claude) is visible
+	// rather than accidentally correct.
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "crew-launch", Harness: "codex"})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("crew", "crew-launch")
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+		"draft": map[string]any{
+			"name": "scratch-draft", "filesystem": []any{}, "environment": []any{},
+		},
+		"context": map[string]any{"group": "crew"},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	var got struct {
+		Targets []struct {
+			Target struct {
+				Harness string `json:"harness"`
+			} `json:"target"`
+			ResolvedBy string `json:"resolved_by"`
+		} `json:"targets"`
+		Contexts []struct {
+			Context map[string]string `json:"context"`
+		} `json:"contexts"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+
+	require.Len(t, got.Targets, 1)
+	assert.Equal(t, "codex", got.Targets[0].Target.Harness,
+		"the preview must resolve the launch target the way a real spawn into this group would")
+	assert.Contains(t, got.Targets[0].ResolvedBy, `group default profile "crew-launch"`,
+		"the preview has to name the tier it resolved from; the dashboard renders this verbatim")
+
+	require.Len(t, got.Contexts, 1)
+	assert.Equal(t, map[string]string{
+		"global":     "house-rules",
+		"group":      "crew-rules",
+		"group_name": "crew",
+		"explicit":   "scratch-draft",
+	}, got.Contexts[0].Context,
+		"every composed sandbox-profile layer must be identifiable by scope and name")
+}

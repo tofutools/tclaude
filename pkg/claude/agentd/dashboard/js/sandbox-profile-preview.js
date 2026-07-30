@@ -1,3 +1,7 @@
+import {
+  SANDBOX_PROFILE_LAYERS_LABEL, sandboxProfileLayersText,
+} from './resolved-defaults.js';
+
 function flattenProfile(profile, byName, state) {
   const filesystem = new Map();
   const environment = new Map();
@@ -72,8 +76,12 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
     for (const name of flattened.owned.keys()) owned.set(name, scope);
     if (flattened.network) network = `${flattened.network} (${scope})`;
   }
-  const scopes = applied.map((item) => `${item.scope}:${item.profile.name}`).join(' → ')
-    || 'no profiles applied';
+  // Same phrasing as the sandbox-profile editor's always-visible layer row, so
+  // the launch dialog and the editor describe one composition in one vocabulary.
+  const layerContext = {};
+  for (const { scope, profile } of applied) layerContext[scope] = profile.name;
+  const scopes = `${SANDBOX_PROFILE_LAYERS_LABEL}: `
+    + sandboxProfileLayersText(layerContext, 'none — no sandbox profile applies to this launch');
   const grants = [...filesystem]
     .map(([path, value]) => `${value.access} ${path} (${value.scope})`).join(' · ');
   const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');

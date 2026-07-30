@@ -14,8 +14,8 @@ function labels(kind, current) {
       dataName: 'data-sandbox-profile', create: '＋ new sandbox profile…', none: '(none)',
       aria: current ? `Global sandbox profile: ${current}. Click to change.` : 'Set global sandbox profile',
       title: current
-        ? `Global sandbox profile: ${current} — newly launched agents inherit it before any group or explicit assignment. Click to change.`
-        : 'No global sandbox profile — click to set one. Newly launched agents inherit it unless their group adds another assignment.',
+        ? `Global sandbox profile: ${current} — the first composed layer of every launch's sandbox policy, joined by the group and any explicit sandbox profile. Click to change.`
+        : 'No global sandbox profile — click to set one. It would become the first composed layer of every launch\'s sandbox policy, joined by the group and any explicit sandbox profile.',
     };
   }
   return {
@@ -23,8 +23,8 @@ function labels(kind, current) {
     dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
     aria: current ? `Dashboard default spawn profile: ${current}. Click to change.` : 'Set dashboard default spawn profile',
     title: current
-      ? `Dashboard default spawn profile: ${current} — pre-fills the spawn dialog when the chosen group has no default profile of its own. Click to change.`
-      : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)',
+      ? `Global default spawn profile: ${current} — the last resolved-defaults tier before the harness default, used when the chosen group has no default spawn profile of its own. Click to change.`
+      : 'No global default spawn profile — click to set one. It is the last resolved-defaults tier before the harness default, after a group’s own default spawn profile.',
   };
 }
 

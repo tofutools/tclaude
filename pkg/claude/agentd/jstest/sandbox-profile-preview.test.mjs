@@ -19,7 +19,8 @@ test('ordinary grants compose through the deny > write > read lattice', () => {
   );
   assert.equal(
     policy.text,
-    'global:dev · write /data (global) · env: GOFLAGS (global) · network: internet (global)',
+    'Composed sandbox-profile layers: global “dev” · write /data (global)'
+    + ' · env: GOFLAGS (global) · network: internet (global)',
   );
   assert.equal(
     composeSandboxProfilePreview([{ scope: 'global', profile: dev }], { base, dev }),
@@ -81,7 +82,8 @@ test('a deny row and its narrower reopens both survive composition as authored',
   );
   assert.equal(
     policy.text,
-    'explicit:workspace · deny /home/op (explicit) · read /home/op/go (explicit) · write /home/op/work (explicit)',
+    'Composed sandbox-profile layers: explicit “workspace” · deny /home/op (explicit)'
+    + ' · read /home/op/go (explicit) · write /home/op/work (explicit)',
   );
 });
 
@@ -96,7 +98,8 @@ test('retired read_baseline/read_baseline_exclusions JSON is ignored, never rend
     read_baseline_exclusions: ['secrets.ssh', 'home.directory'],
   };
   const policy = composeSandboxProfilePolicy([{ scope: 'global', profile: legacy }], { legacy });
-  assert.equal(policy.text, 'global:legacy · read /data (global)');
+  assert.equal(policy.text,
+    'Composed sandbox-profile layers: global “legacy” · read /data (global)');
   assert.equal(policy.readBaseline, undefined);
   assert.equal(policy.readExclusions, undefined);
 });

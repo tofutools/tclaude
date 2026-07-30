@@ -47,6 +47,10 @@ import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
+import {
+  RESOLVED_DEFAULTS_CHAIN, RESOLVED_DEFAULTS_LABEL, SANDBOX_PROFILE_COMPOSITION,
+  sandboxModeLabel,
+} from './resolved-defaults.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
@@ -67,7 +71,7 @@ const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new ag
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '
-  + 'Blank inherits from the spawn-profile chain.';
+  + `Blank uses the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`;
 const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network access cannot '
   + 'be enforced, launch with outbound network access open. Enforceable filesystem and '
   + 'Unix-socket rules still apply. This choice is not saved and starts unchecked every time.';
@@ -115,10 +119,13 @@ function ErrorBanner({ error, onDismiss }) {
   </div>`;
 }
 
-function SettingOptions({ setting }) {
+// labelFor lets a setting rewrite a mode token that says nothing to a human —
+// today only Claude's sandbox `inherit`. Every other setting renders its own
+// tokens, which already name their effect.
+function SettingOptions({ setting, labelFor = null }) {
   return setting.modes.map((mode) => ({
     value: mode,
-    label: `${mode}${mode === setting.recommended ? ' (recommended)' : ''}`,
+    label: `${labelFor ? labelFor(mode) : mode}${mode === setting.recommended ? ' (recommended)' : ''}`,
   }));
 }
 
@@ -692,7 +699,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       ${draft.fixedGroup ? `joining group: ${draft.group}` : ''}
     </div>
     <label class="cron-create-row" id="agent-spawn-load-profile-row"
-      title="Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree).">
+      title=${`Pre-fill this dialog from a saved spawn profile — a reusable bundle of the harness / model / effort / sandbox + name / role / descr / initial-message fields (NOT the directory or worktree). Fields left blank here fall through to the resolved defaults. ${RESOLVED_DEFAULTS_CHAIN}`}>
       <span class="cron-create-label"><${Words} prefix="profiles-word" plain="Profile" wizard="Pattern" /></span>
       <div class="cron-create-target"><div class="cron-target-input-row">
         <select id="agent-spawn-load-profile" value=${draft.profile} disabled=${busy}
@@ -845,7 +852,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     </label>
     <${HelpField} id="agent-spawn-sandbox" label="Sandbox"
       title="Launch containment for the new agent. The modes are per-harness."
-      value=${draft.sandbox} options=${SettingOptions({ setting: view.sandbox })}
+      value=${draft.sandbox} options=${SettingOptions({
+    setting: view.sandbox,
+    labelFor: (mode) => sandboxModeLabel(draft.harness, mode),
+  })}
       onChange=${(event) => {
         const value = event.currentTarget.value;
         touched.current.add('sandbox');
@@ -865,7 +875,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           touched.current.add('sandboxImpl');
           setDraft((before) => setSpawnSandboxImpl(before, value));
         }}>
-        <option value="">— inherit (${view.sandboxImplInheritLabel}) —</option>
+        <option value="">— ${RESOLVED_DEFAULTS_LABEL} (${view.sandboxImplInheritLabel}) —</option>
         ${(view.sandboxImplOptions || []).map((option) => html`
           <option key=${option.value} value=${option.value}>${option.label}</option>`)}
       </select>
@@ -885,12 +895,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         </div>
       </div>`}
     <${HelpField} id="agent-spawn-sandbox-profile" descriptionID="agent-spawn-sandbox-profile-preview" label="Sandbox profile"
-      title="Choose inherited profiles, omit every tclaude sandbox-profile value, or compose an explicit profile after the global and group profiles."
+      title=${`Sandbox policy, not a launch default: ${SANDBOX_PROFILE_COMPOSITION} Choose the composed layers, omit every tclaude sandbox-profile value, or add an explicit profile on top of the global and group ones.`}
       value=${view.sandboxProfilesDisabled ? SANDBOX_PROFILE_NONE : draft.sandboxProfile}
       options=${view.sandboxProfilesDisabled ? [
         { value: SANDBOX_PROFILE_NONE, label: '— none (required by this sandbox mode) —' },
       ] : [
-        { value: '', label: '— inherit global + group profiles —' },
+        { value: '', label: '— composed global + group sandbox profiles —' },
         { value: SANDBOX_PROFILE_NONE, label: '— none (omit all tclaude profile values) —' },
         ...(sandboxPolicy.profiles || []).map((profile) => ({ value: profile.name, label: profile.name })),
       ]}
