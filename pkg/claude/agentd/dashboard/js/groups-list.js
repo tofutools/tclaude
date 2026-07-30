@@ -33,7 +33,8 @@ function GroupActivity({ members, snapshot }) {
   const modes = activityModeViews(summary, snapshot?.activity_bots);
   if (!modes.length) return null;
   const attention = groupHasUnreadHumanNotifications(members, snapshot);
-  return html`<span class="group-activity">
+  return html`<span class="group-activity"
+    aria-label=${attention ? `${summary.summaryText} · a member has unread notifications` : null}>
     ${attention ? html`<span class="human-notification-hint" aria-hidden="true"
       title="A member of this group has unread notifications">!</span>` : null}
     <${ActivityModes} modes=${modes} modeTitles />

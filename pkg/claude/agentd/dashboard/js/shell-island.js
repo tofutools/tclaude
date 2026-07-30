@@ -80,7 +80,10 @@ function GlobalActivity({ state, groupsState }) {
   }, []);
   useLayoutEffect(() => syncBotAnimations(), [view.animationKey]);
   return html`
-    <span class="global-activity" id="global-activity" aria-label="Activity across all groups" title=${view.title || null}>
+    <span class="global-activity" id="global-activity"
+      aria-label=${hasUnreadHumanNotifications(snapshot)
+        ? 'Activity across all groups · one or more agents have unread notifications'
+        : 'Activity across all groups'} title=${view.title || null}>
       ${hasUnreadHumanNotifications(snapshot) ? html`<span class="human-notification-hint"
         aria-hidden="true" title="One or more agents have unread notifications">!</span>` : null}
       <${ActivityModes} modes=${view.modes} />

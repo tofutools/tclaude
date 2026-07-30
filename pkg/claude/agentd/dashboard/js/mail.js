@@ -191,6 +191,9 @@ export const mailState = createMailState({
   selected: dashPrefs.getItem(SELECTED_KEY) || HUMAN_ID,
   boxQuery: dashPrefs.getItem(BOX_FILTER_KEY) || '',
   messageQuery: dashPrefs.getItem('tclaude.dash.filter.messages') || '',
+  // Exact human.notify sender constraint used only by Groups-row deep links.
+  // It is intentionally session-local; editing the visible search clears it.
+  senderFilter: '',
   // showRetired drives the include_retired param on both fetches. Sticky
   // (persisted) so the operator's choice survives a reload.
   showRetired: dashPrefs.getItem(SHOW_RETIRED_KEY) === '1',
@@ -245,6 +248,7 @@ function setBoxQuery(value) {
 }
 
 function setMessageQuery(value) {
+  mail.senderFilter = '';
   mail.messageQuery = String(value ?? '');
   const key = 'tclaude.dash.filter.messages';
   if (mail.messageQuery) dashPrefs.setItem(key, mail.messageQuery);
@@ -367,6 +371,7 @@ async function loadMessages() {
     page: String(mail.page),
     page_size: String(mail.pageSize),
   });
+  if (id === HUMAN_ID && mail.senderFilter) params.set('sender', mail.senderFilter);
   // The "all" firehose and group folders honour include_retired
   // server-side — a group folder hides retired members' traffic by
   // default, like the firehose. Sending it for a specific agent folder is
@@ -932,8 +937,9 @@ function paintReader() { mailState.touch(); }
 
 // --- selection ------------------------------------------------------
 
-function selectMailbox(id) {
+function selectMailbox(id, options = {}) {
   if (mail.busy) return Promise.resolve(false);
+  if (!options.preserveSenderFilter) mail.senderFilter = '';
   if (!id || id === mail.selected) {
     // Re-click on the active folder: just refresh it.
     return loadMessages().then(() => {
@@ -1048,7 +1054,7 @@ async function openHumanNotifications(sender) {
     mail.searchTimer = null;
   }
   mail.messageQuery = sender;
-  dashPrefs.setItem('tclaude.dash.filter.messages', sender);
+  mail.senderFilter = sender;
   mail.page = 1;
   mail.selectedMsgs.clear();
   const navBtn = $('nav [data-tab="messages"]');
@@ -1057,10 +1063,14 @@ async function openHumanNotifications(sender) {
     navBtn.click();
   }
   await loadMailboxes();
-  const selected = await selectMailbox(HUMAN_ID);
+  const selected = await selectMailbox(HUMAN_ID, { preserveSenderFilter: true });
   if (!selected) return;
-  mail.selectedMsgId = mail.messages[0]?.id ?? null;
-  paintReader();
+  const first = mail.messages[0];
+  if (first) selectMessage(first.id);
+  else {
+    mail.selectedMsgId = null;
+    paintReader();
+  }
 }
 
 // --- access requests (human approvals) ------------------------------
