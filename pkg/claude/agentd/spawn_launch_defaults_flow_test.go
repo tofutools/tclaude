@@ -113,3 +113,50 @@ func TestSpawnLaunchDefaultsHonorAnExplicitHarness(t *testing.T) {
 	rec := profileReq(t, f, http.MethodGet, "/v1/spawn-launch-defaults?harness=nope", nil)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 }
+
+// TestSpawnLaunchDefaultsRankTheNamedSpawnProfileFirst covers the tier that is
+// easiest to forget and most misleading to omit.
+//
+// Picking a spawn profile pre-fills the dialog, so it is tempting to assume the
+// named tier can never be the one answering a BLANK field. It can: the operator
+// can set the implementation select back to blank (a harness switch clears it
+// too) while the profile stays selected, and the spawn request still carries
+// `profile`. handleGroupSpawn ranks that named profile above the group and
+// global tiers, so a preview that walked only the ambient tiers would name an
+// implementation the launch does not use — worse than naming nothing.
+func TestSpawnLaunchDefaultsRankTheNamedSpawnProfileFirst(t *testing.T) {
+	f := newFlow(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "crew-launch", Harness: "claude", SandboxImplementation: "harness-builtin",
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultProfile("crew", "crew-launch")
+	require.NoError(t, err)
+	_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "layered", Aliases: []string{"layered-alias"},
+		Harness: "claude", SandboxImplementation: "tclaude-layer",
+	})
+	require.NoError(t, err)
+
+	// Without the named profile the group tier answers...
+	ambient := getLaunchDefaults(t, f, "?group=crew")
+	assert.Equal(t, "harness-builtin", ambient.Implementation)
+
+	// ...and with it selected, it outranks the group tier.
+	named := getLaunchDefaults(t, f, "?group=crew&profile=layered")
+	assert.Equal(t, "tclaude-layer", named.Implementation,
+		"a selected spawn profile outranks the group default, exactly as a real spawn resolves it")
+	assert.Contains(t, named.ResolvedBy, `profile "layered"`)
+
+	// An alias resolves to the same profile and says which alias it came through,
+	// matching the provenance a real spawn records.
+	alias := getLaunchDefaults(t, f, "?group=crew&profile=layered-alias")
+	assert.Equal(t, "tclaude-layer", alias.Implementation)
+	assert.Contains(t, alias.ResolvedBy, `profile "layered" via alias "layered-alias"`)
+
+	// A profile handle that resolves to nothing is the caller's mistake.
+	rec := profileReq(t, f, http.MethodGet, "/v1/spawn-launch-defaults?profile=ghost", nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}

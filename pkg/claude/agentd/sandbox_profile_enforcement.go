@@ -444,7 +444,10 @@ func flattenSandboxProfileForDraftInspection(
 // stacked the harness's own built-in mode is what gets predicted, and OpenCode's
 // implementation-specific mode has to be derived.
 func defaultSandboxProfilePredictionTarget(groupName string) (sandboxProfileEnforcementTargetRequest, string, error) {
-	defaults, err := resolveLaunchDefaults(groupName, "")
+	defaults, fail, err := resolveLaunchDefaults(groupName, "", "")
+	if fail != nil {
+		return sandboxProfileEnforcementTargetRequest{}, "", fmt.Errorf("%s", fail.Msg)
+	}
 	if err != nil {
 		return sandboxProfileEnforcementTargetRequest{}, "", err
 	}

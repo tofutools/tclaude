@@ -230,6 +230,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     profileRequest.current += 1;
     worktreeRequest.current += 1;
     sandboxRequest.current += 1;
+    launchDefaultsRequest.current += 1;
     directoryRequest.current += 1;
     for (const attachment of attachmentsRef.current) {
       if (attachment.url) URL.revokeObjectURL(attachment.url);
@@ -332,12 +333,13 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     return undefined;
   }, [draft.group, draft.sandboxProfile, view.sandboxProfilesDisabled, current.sandboxRevision]);
 
-  // Ask the daemon what a blank implementation row resolves to. Keyed on group
-  // + harness because those are the two inputs: the group selects which default
-  // spawn profiles apply, and the harness decides which implementations are
-  // even valid. The request counter drops an answer that lands after a newer
-  // pick, and a failure clears the label rather than leaving the previous
-  // group's answer on screen under a new group.
+  // Ask the daemon what a blank implementation row resolves to. Keyed on the
+  // three inputs that change the answer: the selected spawn profile (which the
+  // spawn request carries and which outranks the ambient tiers), the group
+  // (which selects those tiers), and the harness (which decides what is even
+  // valid). The request counter drops an answer that lands after a newer pick,
+  // and a failure clears the label rather than leaving a previous selection's
+  // answer on screen under a new one.
   useEffect(() => {
     if (!view.showSandboxImpl || typeof actions?.loadLaunchDefaults !== 'function') {
       setLaunchDefaults(null);
@@ -346,7 +348,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const request = ++launchDefaultsRequest.current;
     const generation = current.generation;
     setLaunchDefaults(null);
-    Promise.resolve(actions.loadLaunchDefaults(draft.group, draft.harness)).then((value) => {
+    Promise.resolve(actions.loadLaunchDefaults(
+      draft.group, draft.profile, draft.harness,
+    )).then((value) => {
       if (request !== launchDefaultsRequest.current || !state.isCurrent(generation)) return;
       setLaunchDefaults(value || null);
     }).catch(() => {
@@ -354,7 +358,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       setLaunchDefaults(null);
     });
     return undefined;
-  }, [draft.group, draft.harness, view.showSandboxImpl]);
+  }, [draft.group, draft.profile, draft.harness, view.showSandboxImpl]);
 
   // Re-probe the effective sandbox whenever an input to it changes. CWD is a
   // free-text field, so the same 350ms debounce the worktree-repo probe uses

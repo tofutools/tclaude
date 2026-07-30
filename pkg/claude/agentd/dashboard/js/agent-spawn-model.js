@@ -1,7 +1,6 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import {
   CODEX_BUILTIN_FILTERED_NETWORK_HINT,
-  CODEX_BUILTIN_FILTERED_NETWORK_SHORT,
   codexBuiltinSandboxOptionLabel,
 } from './sandbox-network-disclosure.js';
 

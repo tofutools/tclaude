@@ -148,11 +148,13 @@ export function createAgentSpawnActions({
 
     /* Ask the daemon what a launch would resolve for the fields this dialog
        leaves blank. The browser cannot work this out: clearing the profile row
-       blanks the dialog but not the group/global default spawn profiles, which
-       the daemon still applies at spawn. */
-    async loadLaunchDefaults(groupName, harnessName) {
+       blanks the dialog but not the tiers beneath it. A selected spawn profile
+       still rides on the spawn request and outranks the group/global defaults,
+       and the daemon applies all three at launch. */
+    async loadLaunchDefaults(groupName, profileHandle, harnessName) {
       const query = new URLSearchParams();
       if (groupName) query.set('group', groupName);
+      if (profileHandle) query.set('profile', profileHandle);
       if (harnessName) query.set('harness', harnessName);
       return jsonRequest(fetchImpl, `/api/spawn-launch-defaults?${query.toString()}`);
     },

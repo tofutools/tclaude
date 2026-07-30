@@ -33,31 +33,64 @@ type launchDefaults struct {
 	resolvedBy string
 }
 
-// resolveLaunchDefaults walks the same tiers a real spawn walks — group default
-// spawn profile, then global default spawn profile, then the harness default —
-// for the fields the sandbox-implementation row cares about.
+// resolveLaunchDefaults walks the same tiers a real spawn walks — the named
+// spawn profile, then the group default spawn profile, then the global default
+// spawn profile, then the harness default — for the fields the
+// sandbox-implementation row cares about.
+//
+// profileHandle is the dialog's selected spawn profile, and it belongs here even
+// though picking a profile pre-fills the dialog: the operator can set the
+// implementation select back to blank (or a harness switch can clear it) while
+// the profile stays selected. The spawn request still carries `profile`, and
+// handleGroupSpawn ranks that named profile ABOVE the group and global tiers, so
+// omitting it here would name an implementation the launch does not use.
 //
 // requestedHarness is the caller's already-chosen harness, if it has one: the
 // spawn dialog's harness select is an explicit choice that outranks every
 // profile tier, and the implementation a profile carries is only valid relative
 // to it. Blank means "resolve the harness too", which is what the sandbox
-// profile editor's preview does.
+// profile editor's preview does — it has neither a named profile nor a harness
+// choice, and passes "" for both.
 //
-// The two tiers below explicit are deliberately the ONLY ones here. The named
-// spawn profile and an explicit launch choice sit above them in the full chain,
-// but both are dialog state: when either sets a value the field is not blank,
-// so this function is never the one answering.
-func resolveLaunchDefaults(groupName, requestedHarness string) (launchDefaults, error) {
+// A caller fault (an unknown harness, a profile whose stored value is invalid
+// for its own harness) comes back as *spawnFailure with the status that belongs
+// to it; err is reserved for storage.
+func resolveLaunchDefaults(
+	groupName, profileHandle, requestedHarness string,
+) (launchDefaults, *spawnFailure, error) {
+	var namedProfile *db.SpawnProfile
+	if handle := strings.TrimSpace(profileHandle); handle != "" {
+		resolved, err := db.ResolveSpawnProfile(handle)
+		if err != nil {
+			return launchDefaults{}, nil, err
+		}
+		if resolved == nil {
+			return launchDefaults{}, &spawnFailure{
+				http.StatusBadRequest, "not_found",
+				fmt.Sprintf("no such spawn profile %q", handle),
+			}, nil
+		}
+		namedProfile = resolved
+	}
 	var groupProfile *db.SpawnProfile
 	if strings.TrimSpace(groupName) != "" {
 		group, err := db.GetAgentGroupByName(strings.TrimSpace(groupName))
 		if err != nil {
-			return launchDefaults{}, err
+			return launchDefaults{}, nil, err
 		}
 		groupProfile = groupDefaultProfile(group)
 	}
 	globalProfile := globalDefaultProfile()
+	// Same order as handleGroupSpawn's profileTiers, including the alias form of
+	// the named tier's provenance, so resolved_by reads identically to the
+	// provenance a real spawn records.
+	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
+	if namedProfile != nil && strings.TrimSpace(profileHandle) != namedProfile.Name {
+		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`,
+			namedProfile.Name, strings.TrimSpace(profileHandle))
+	}
 	tiers := []launchProfileTier{
+		{profile: namedProfile, source: namedProfileSource},
 		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource)},
 		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource)},
 	}
@@ -78,7 +111,14 @@ func resolveLaunchDefaults(groupName, requestedHarness string) (launchDefaults, 
 	}
 	resolvedHarness, err := harness.Resolve(harnessName)
 	if err != nil {
-		return launchDefaults{}, err
+		// Only the caller can have supplied a name nothing resolves; a tier's
+		// harness came out of harnessOrDefault and is always known.
+		if strings.TrimSpace(requestedHarness) != "" {
+			return launchDefaults{}, &spawnFailure{
+				http.StatusBadRequest, "invalid_harness", err.Error(),
+			}, nil
+		}
+		return launchDefaults{}, nil, err
 	}
 
 	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
@@ -87,7 +127,7 @@ func resolveLaunchDefaults(groupName, requestedHarness string) (launchDefaults, 
 		func(raw string) (string, error) { return harness.ValidateSandboxMode(resolvedHarness, raw) },
 	)
 	if fail != nil {
-		return launchDefaults{}, fmt.Errorf("%s", fail.Msg)
+		return launchDefaults{}, fail, nil
 	}
 	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
 		sandboxImplementationField, "", resolvedHarness.Name, tiers,
@@ -97,22 +137,22 @@ func resolveLaunchDefaults(groupName, requestedHarness string) (launchDefaults, 
 		},
 	)
 	if fail != nil {
-		return launchDefaults{}, fmt.Errorf("%s", fail.Msg)
+		return launchDefaults{}, fail, nil
 	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(requestedImplementation)
 	if err != nil {
-		return launchDefaults{}, err
+		return launchDefaults{}, nil, err
 	}
 	sandboxMode, err := harness.ResolveSandboxMode(resolvedHarness, requestedSandbox)
 	if err != nil {
-		return launchDefaults{}, err
+		return launchDefaults{}, nil, err
 	}
 	return launchDefaults{
 		harness:        resolvedHarness,
 		sandbox:        sandboxMode,
 		implementation: implementation,
 		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
-	}, nil
+	}, nil, nil
 }
 
 // joinProvenanceSources renders the distinct tiers a set of fields resolved
@@ -137,7 +177,8 @@ type spawnLaunchDefaultsJSON struct {
 	ResolvedBy     string `json:"resolved_by,omitempty"`
 }
 
-// handleSpawnLaunchDefaults answers GET /v1/spawn-launch-defaults?group=&harness=
+// handleSpawnLaunchDefaults answers
+// GET /v1/spawn-launch-defaults?group=&profile=&harness=
 // with the values a spawn into that group would resolve for the launch fields
 // left blank.
 //
@@ -150,20 +191,15 @@ func handleSpawnLaunchDefaults(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET")
 		return
 	}
-	defaults, err := resolveLaunchDefaults(
-		r.URL.Query().Get("group"), r.URL.Query().Get("harness"),
+	query := r.URL.Query()
+	defaults, fail, err := resolveLaunchDefaults(
+		query.Get("group"), query.Get("profile"), query.Get("harness"),
 	)
+	if fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	if err != nil {
-		// A harness the caller invented is a bad request, not a daemon fault;
-		// everything else here is storage or an inconsistent profile.
-		if strings.TrimSpace(r.URL.Query().Get("harness")) != "" {
-			if _, resolveErr := harness.Resolve(
-				harnessOrDefault(strings.TrimSpace(r.URL.Query().Get("harness"))),
-			); resolveErr != nil {
-				writeError(w, http.StatusBadRequest, "invalid_arg", resolveErr.Error())
-				return
-			}
-		}
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}

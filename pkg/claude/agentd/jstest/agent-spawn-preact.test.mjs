@@ -484,10 +484,16 @@ async function mountSpawn(t, overrides = {}) {
     }),
     loadSandboxPolicy: async (_group, selected) => ({ profiles: [], selected, preview: 'no profiles applied' }),
     loadUnsandboxedAutonomy: async () => ({ info: [], warnings: [], sandboxState: '', sandboxSource: '' }),
-    loadLaunchDefaults: async (group, harnessName) => ({
-      harness: harnessName || 'claude', sandbox: '', implementation: 'harness-builtin',
-      resolved_by: 'harness default',
-    }),
+    loadLaunchDefaults: async (group, profileHandle, harnessName) => {
+      calls.push(['launch-defaults', group, profileHandle, harnessName]);
+      // Deliberately NOT the harness default: a regression that dropped the
+      // request and mapped the local sandboxImplDefault would render
+      // "…built-in" and has to be distinguishable from reading this answer.
+      return {
+        harness: harnessName || 'claude', sandbox: '',
+        implementation: 'tclaude-layer', resolved_by: 'group default profile "crew"',
+      };
+    },
     resolveWorktree: async () => ({ path: '', branch: '' }),
     uploadAttachments: async () => [],
     spawn: async () => ({ conv_id: 'abcdef1234' }),
@@ -550,7 +556,7 @@ test('Preact agent-spawn renders the unenforced-network checkbox under the sandb
 
 test('Preact agent-spawn owner renders profile/custom/capability states without remounting on refresh', async (t) => {
   const mounted = await mountSpawn(t);
-  const { harness, host, state } = mounted;
+  const { harness, host, state, calls } = mounted;
   state.open({ groupName: 'alpha' });
   await flush(harness);
   assert.ok(host.querySelector('#agent-spawn-modal'));
@@ -599,10 +605,15 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
       .find((option) => option.value === 'harness-builtin').textContent,
     'Codex built-in (no filtered network sandbox yet)',
   );
-  // The blank row NAMES what the daemon said a blank field resolves to, in the
-  // same words as the concrete option — not the mechanism that produced it.
+  // The blank row NAMES what the DAEMON said a blank field resolves to, in the
+  // same words as the concrete option — not the mechanism that produced it, and
+  // not the harness default the browser could have guessed on its own.
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
-    '— Resolved default (Codex built-in (no filtered network sandbox yet)) —');
+    '— Resolved default (tclaude built-in OS sandbox (experimental)) —');
+  assert.ok(
+    calls.some(([kind, , , harnessName]) => kind === 'launch-defaults' && harnessName === 'codex'),
+    'the resolved default is re-asked for the newly selected harness',
+  );
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
     'an inherited target stays neutral because the profile chain has not resolved yet');
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');
@@ -1366,4 +1377,36 @@ test('spawn profile seed carries only steered startup-context trims', async (t) 
     { ...draft, contextFeatures: { 'bundled-skills': 'off' } }, context,
   );
   assert.deepEqual(seeded.context_features, { 'bundled-skills': 'off' });
+});
+
+// The row must never invent an answer. Three ways the daemon's answer can be
+// absent — a failed request, a host that wired the dialog without the action,
+// and an answer naming an implementation this harness does not offer — all have
+// to land on the unnamed form rather than on a plausible-looking guess.
+test('the resolved-default row names nothing when the daemon has not answered', async (t) => {
+  for (const [label, override] of [
+    ['a failed request', { loadLaunchDefaults: async () => { throw new Error('nope'); } }],
+    ['a missing action', { loadLaunchDefaults: undefined }],
+    ['an answer with no matching option', {
+      loadLaunchDefaults: async () => ({ implementation: 'harness-builtin' }),
+    }],
+  ]) {
+    const mounted = await mountSpawn(t);
+    const { harness, host, state, actions } = mounted;
+    Object.assign(actions, override);
+    if (override.loadLaunchDefaults === undefined) delete actions.loadLaunchDefaults;
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    // OpenCode is the harness whose option list omits harness-builtin, which is
+    // exactly what a blank field resolves to server-side.
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'opencode');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    await flush(harness);
+    const row = host.querySelector('#agent-spawn-sandbox-impl');
+    assert.ok(row, `${label}: the implementation row must still render`);
+    assert.equal(row.options[0].textContent, '— Resolved default —',
+      `${label} must leave the resolved default unnamed`);
+    mounted.cleanup();
+  }
 });
