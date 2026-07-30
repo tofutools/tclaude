@@ -179,10 +179,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   });
   const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', key: '' });
   // What the daemon says a blank sandbox-implementation row would resolve to
-  // for this group + harness. Null while unknown (unfetched, in flight, or the
-  // request failed), which the row renders as an unnamed resolved default
-  // rather than a guess.
-  const [launchDefaults, setLaunchDefaults] = useState(null);
+  // for this group + harness. The request key makes answers ineligible after
+  // their inputs change; the derived value below is null while unknown, which
+  // the row renders as an unnamed resolved default rather than a guess.
+  const [launchDefaultsAnswer, setLaunchDefaultsAnswer] = useState({
+    key: '', value: null,
+  });
   // Live mirror for the submit closure: after its awaits, the captured
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
@@ -222,7 +224,16 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   attachmentsRef.current = attachments;
   worktreesRef.current = worktrees;
   draftRef.current = draft;
-  const view = spawnCapabilityView(draft, context);
+  const launchDefaultsKey = JSON.stringify([
+    draft.group, draft.profile, draft.harness,
+  ]);
+  // A draft change renders before its effect can clear the previous answer.
+  // Reject the old key during that render so a built-in result for the prior
+  // group/profile/harness cannot reveal the wrong mode for one paint.
+  const launchDefaults = launchDefaultsAnswer.key === launchDefaultsKey
+    ? launchDefaultsAnswer.value
+    : null;
+  const view = spawnCapabilityView(draft, context, launchDefaults?.implementation);
   const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
@@ -344,23 +355,24 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // answer on screen under a new one.
   useEffect(() => {
     if (!view.showSandboxImpl || typeof actions?.loadLaunchDefaults !== 'function') {
-      setLaunchDefaults(null);
+      setLaunchDefaultsAnswer({ key: '', value: null });
       return undefined;
     }
     const request = ++launchDefaultsRequest.current;
     const generation = current.generation;
-    setLaunchDefaults(null);
+    const answerKey = launchDefaultsKey;
+    setLaunchDefaultsAnswer({ key: '', value: null });
     Promise.resolve(actions.loadLaunchDefaults(
       draft.group, draft.profile, draft.harness,
     )).then((value) => {
       if (request !== launchDefaultsRequest.current || !state.isCurrent(generation)) return;
-      setLaunchDefaults(value || null);
+      setLaunchDefaultsAnswer({ key: answerKey, value: value || null });
     }).catch(() => {
       if (request !== launchDefaultsRequest.current || !state.isCurrent(generation)) return;
-      setLaunchDefaults(null);
+      setLaunchDefaultsAnswer({ key: '', value: null });
     });
     return undefined;
-  }, [draft.group, draft.profile, draft.harness, view.showSandboxImpl]);
+  }, [draft.group, draft.profile, draft.harness, view.showSandboxImpl, launchDefaultsKey]);
 
   // Re-probe the effective sandbox whenever an input to it changes. CWD is a
   // free-text field, so the same 350ms debounce the worktree-repo probe uses
@@ -696,7 +708,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const selectedModel = modelSelectValue(draft, context);
   const sandboxHelp = sandboxModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
-    draft.sandboxImpl || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
+    draft.sandboxImpl
+      || launchDefaults?.implementation
+      || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
     draft.harness,
   );
   const approvalHelp = view.approval.help[draft.approval] || '';
@@ -918,7 +932,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       </div>`}
     <${HelpField} id="agent-spawn-sandbox"
       label=${sandboxModeControlLabel(view.harness)}
-      title="Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
+      title="Harness-native sandbox mode. Available when Sandbox explicitly or by resolved default uses the harness's built-in sandbox."
       value=${draft.sandbox} options=${SettingOptions({
     setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness, draft.sandbox),
     optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),

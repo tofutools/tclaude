@@ -461,7 +461,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   };
 }
 
-export function spawnCapabilityView(draft, context) {
+export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
   const harness = findSpawnHarness(context.harnesses, draft.harness);
   const models = Array.isArray(harness?.models) ? harness.models : [];
   const hasModelList = !harness || models.length > 0;
@@ -469,6 +469,9 @@ export function spawnCapabilityView(draft, context) {
   const approval = launchSetting(harness, 'approval');
   const tools = launchSetting(harness, 'tools');
   const askTimeout = launchSetting(harness, 'askTimeout');
+  const selectedSandboxImpl = text(draft.sandboxImpl);
+  const resolvedBuiltinSandbox = !selectedSandboxImpl
+    && text(resolvedSandboxImpl) === SANDBOX_IMPL_DEFAULT;
   const sandboxProfilesDisabled = draft.sandboxImpl === SANDBOX_IMPL_OFF
     || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access');
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
@@ -501,8 +504,8 @@ export function spawnCapabilityView(draft, context) {
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
     showAutoCompactWindow: harness ? !!harness.can_auto_compact_window : draft.harness === 'claude',
     ...sandboxImplView(harness, context),
-    showSandboxMode: !!(sandbox.visible
-      && draft.sandboxImpl === SANDBOX_IMPL_DEFAULT),
+    showSandboxMode: !!(sandbox.visible && harness?.can_builtin_os_sandbox !== false
+      && (selectedSandboxImpl === SANDBOX_IMPL_DEFAULT || resolvedBuiltinSandbox)),
     autoCompactWindowMin: Number(harness?.auto_compact_window_min) || 0,
     autoCompactWindowMax: Number(harness?.auto_compact_window_max) || 0,
     contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
@@ -511,8 +514,9 @@ export function spawnCapabilityView(draft, context) {
 }
 
 // sandboxModeControlLabel names the nested control after the harness that owns
-// it. It is shown only for an explicit harness-builtin selection; the primary
-// Sandbox selector above it chooses the implementation (or Off).
+// it. It is shown when an explicit or resolved-default selection uses the
+// harness-builtin implementation; the primary Sandbox selector above it
+// chooses the implementation (or Off).
 export function sandboxModeControlLabel(harness) {
   const name = text(harness?.name);
   const label = name === 'codex'
