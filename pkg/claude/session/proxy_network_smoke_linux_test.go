@@ -318,16 +318,16 @@ func runProxySmokeLaunch(
 	helperBinary := filepath.Join(helperDir, "proxy-smoke-helper")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
+	rules.Engine = sandboxpolicy.NetworkEngineProxy
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules
 	stateRoot := filepath.Join(smokeHome, "."+harness.DefaultName)
 	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-		HarnessName:   harness.DefaultName,
-		Cwd:           helperDir,
-		Snapshot:      &snapshot,
-		StateRoot:     stateRoot,
-		NetworkEngine: sandboxpolicy.NetworkEngineProxy,
+		HarnessName: harness.DefaultName,
+		Cwd:         helperDir,
+		Snapshot:    &snapshot,
+		StateRoot:   stateRoot,
 	})
 	require.NoError(t, err)
 	command, err := WrapTclaudeLayerSpec(bwrapBinary, spec,

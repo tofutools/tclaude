@@ -62,6 +62,8 @@ export function sandboxProfileSummary(profile) {
   }
   const networkDenies = authoredNetwork.deny_packs.length + authoredNetwork.deny.length;
   if (networkDenies) parts.push(`${networkDenies} network deny${networkDenies === 1 ? '' : 's'}`);
+  if (authoredNetwork.engine === 'packet') parts.push('packet filter');
+  if (authoredNetwork.engine === 'proxy') parts.push('proxy filter');
   const axes = sandboxAccessAxes(profile);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
   return parts.join(' · ') || 'no sandbox rules';
@@ -87,6 +89,9 @@ export function sandboxNetworkAuthoring(profile = {}) {
     deny_packs: [],
     allow: network?.allow || [],
     deny: [],
+    // Engine is orthogonal to the legacy mode this branch reconstructs, so a
+    // legacy payload that already names one keeps it.
+    ...(network?.engine ? { engine: network.engine } : {}),
   };
 }
 
@@ -149,6 +154,7 @@ export function sandboxProfileForWire(draft) {
       ...(value.network.deny_packs?.length ? { deny_packs: [...value.network.deny_packs].sort() } : {}),
       ...((value.network.allow || []).length ? { allow: value.network.allow } : {}),
       ...((value.network.deny || []).length ? { deny: value.network.deny } : {}),
+      ...(value.network.engine ? { engine: value.network.engine } : {}),
     };
   }
   const networkAllow = networkEntriesForWire(value.network.allow);
@@ -180,6 +186,7 @@ export function sandboxAccessDraftErrors(draft) {
   const authoredNetwork = sandboxNetworkAuthoring(draft);
   const axes = sandboxAccessAxes(draft);
   if (!['inherit', 'allow', 'deny'].includes(authoredNetwork.baseline)) errors.push('Network baseline is invalid.');
+  if (!['', 'packet', 'proxy'].includes(authoredNetwork.engine || '')) errors.push('Network filtering engine is invalid.');
   if (authoredNetwork.baseline === 'inherit' &&
       (authoredNetwork.packs.length || authoredNetwork.deny_packs.length ||
        authoredNetwork.allow.length || authoredNetwork.deny.length)) {

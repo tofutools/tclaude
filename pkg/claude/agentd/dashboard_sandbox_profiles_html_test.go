@@ -36,6 +36,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`if (draft.unix_sockets !== undefined) body.unix_sockets = draft.unix_sockets`: "Unix-socket axis persists in save payloads",
 		`if (draft.filesystem_spellings !== undefined) body.filesystem_spellings`:      "retained spellings persist in save payloads",
 		`id="sandbox-profile-editor-network-baseline"`:                                 "compositional network baseline selector",
+		`id="sandbox-profile-editor-network-engine"`:                                   "network filtering engine selector",
 		`id="sandbox-profile-editor-unix-sockets-mode"`:                                "structured Unix-socket posture selector",
 		`className="sbx-socket-selector"`:                                              "Unix-socket row kind reuses the shared segmented control",
 		`.sbx-socket-selector > .sbx-segmented-option.is-selected.sbx-state-path_glob`: "Unix-socket syntax choice retains neutral selected styling",

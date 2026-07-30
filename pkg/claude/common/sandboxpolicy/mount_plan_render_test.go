@@ -883,7 +883,11 @@ func TestRenderMountPlanWithEngineRecordsTheDeployedEngine(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The engine is authored policy, so it reaches the renderer on the
+			// profile. Passing it again as the caller argument exercises the
+			// cross-check agreeing rather than a second source of truth.
 			rules := tc.rules
+			rules.Engine = tc.selected
 			plan, err := RenderMountPlanWithEngine(
 				EffectiveProfile{Network: &rules}, tc.selected)
 			if err != nil {
@@ -896,7 +900,13 @@ func TestRenderMountPlanWithEngineRecordsTheDeployedEngine(t *testing.T) {
 	}
 }
 
-func TestRenderMountPlanLeavesEngineSelectionToItsCaller(t *testing.T) {
+// TestRenderMountPlanReadsTheAuthoredEngine pins the contract the plan's engine
+// field states: it names the engine this plan actually DEPLOYS. The selection
+// used to arrive only as a caller argument, because nothing could author one;
+// now that a profile can, an inspection surface that rendered the pre-engine
+// default for a proxy-authored policy would print a mechanism the launch does
+// not run.
+func TestRenderMountPlanReadsTheAuthoredEngine(t *testing.T) {
 	rules := NetworkRules{
 		Mode:  AccessModeList,
 		Allow: []NetworkAllowEntry{{Domain: "example.com"}},
@@ -907,6 +917,31 @@ func TestRenderMountPlanLeavesEngineSelectionToItsCaller(t *testing.T) {
 	}
 	if plan.NetworkEngine != NetworkEnginePacket {
 		t.Fatalf("plan engine = %q, want the packet gateway", plan.NetworkEngine)
+	}
+
+	rules.Engine = NetworkEngineProxy
+	plan, err = RenderMountPlan(EffectiveProfile{Network: &rules})
+	if err != nil {
+		t.Fatalf("render authored proxy: %v", err)
+	}
+	if plan.NetworkEngine != NetworkEngineProxy {
+		t.Fatalf("plan engine = %q, want the authored proxy engine", plan.NetworkEngine)
+	}
+}
+
+// TestRenderMountPlanRefusesAnEngineTheProfileDoesNotAuthor keeps the caller
+// argument a cross-check rather than an override, so a plan and the launch
+// contract cannot answer to two different authorities.
+func TestRenderMountPlanRefusesAnEngineTheProfileDoesNotAuthor(t *testing.T) {
+	rules := NetworkRules{
+		Mode:   AccessModeList,
+		Allow:  []NetworkAllowEntry{{Domain: "example.com"}},
+		Engine: NetworkEnginePacket,
+	}
+	_, err := RenderMountPlanWithEngine(
+		EffectiveProfile{Network: &rules}, NetworkEngineProxy)
+	if err == nil {
+		t.Fatal("expected a disagreeing engine to refuse the plan")
 	}
 }
 

@@ -385,3 +385,87 @@ func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
 		})
 	}
 }
+
+// TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice is the daemon-spawn half
+// of the engine-conditional prerequisite disclosure. The session boundary and
+// this guard both append that notice, so a gate applied at only one of them
+// would let a dashboard-spawned agent persist a launch-gate claim naming pasta
+// and nft while the /enforcement preview for the same profile says the opposite.
+func TestProxyEngineSpawnOmitsThePacketPrerequisiteNotice(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(
+		func() session.FilteredNetworkPrerequisite {
+			return session.FilteredNetworkPrerequisite{
+				Detected: true,
+				Detail:   "test namespace, pasta, and nft readiness",
+			}
+		},
+	))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
+			return harness.LaunchOSSandbox{
+				State:           "on",
+				Source:          "test filtered gateway",
+				FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+			}, nil
+		},
+	))
+	// Codex rather than Claude Code, for the same reason the sibling test above
+	// carries a CODEX_HOME: the control cases must reach the filtered launch
+	// path, and Claude Code's provider inspection reads repository settings
+	// that a developer machine may not expose. The guard under test is
+	// harness-independent.
+	codexHome := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(codexHome, "auth.json"),
+		[]byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`),
+		0o600))
+	t.Setenv("CODEX_HOME", codexHome)
+	for _, tc := range []struct {
+		profile    string
+		engine     sandboxpolicy.NetworkEngine
+		wantNotice bool
+	}{
+		{"engine-unset-deny", sandboxpolicy.NetworkEngineUnset, true},
+		{"engine-packet-deny", sandboxpolicy.NetworkEnginePacket, true},
+		{"engine-proxy-deny", sandboxpolicy.NetworkEngineProxy, false},
+	} {
+		t.Run(tc.profile, func(t *testing.T) {
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: tc.profile,
+				Network: &sandboxpolicy.NetworkRules{
+					Baseline: sandboxpolicy.NetworkBaselineAllow,
+					Deny: []sandboxpolicy.NetworkAllowEntry{{
+						CIDR: "192.0.2.0/24", Ports: []int{443},
+					}},
+					Engine: tc.engine,
+				},
+			})
+			require.NoError(t, err)
+
+			resp := f.AsHuman().SpawnWith("crew", map[string]any{
+				"name":                   tc.profile + "-worker",
+				"harness":                harness.CodexName,
+				"sandbox":                harness.SandboxReadOnly,
+				"sandbox_implementation": string(sandboxpolicy.ImplementationTclaudeLayer),
+				"sandbox_profile":        tc.profile,
+			})
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+
+			snapshot, ok := f.World.SpawnSandboxPolicy(resp.ConvID)
+			require.True(t, ok)
+			require.NotNil(t, snapshot)
+			found := false
+			for _, notice := range snapshot.Effective.AccessNotices {
+				if notice.Reason == sandboxpolicy.AccessNoticeReasonFilteredPrerequisite {
+					found = true
+					assert.Contains(t, notice.Detail, "nft",
+						"the packet prerequisite notice names the packet gateway's checks")
+				}
+			}
+			assert.Equal(t, tc.wantNotice, found,
+				"the packet gateway's prerequisite disclosure must follow the engine")
+		})
+	}
+}

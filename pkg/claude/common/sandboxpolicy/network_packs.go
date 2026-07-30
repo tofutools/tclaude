@@ -132,11 +132,17 @@ func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 	if err != nil {
 		return NetworkRules{}, err
 	}
+	// The engine survives materialization on every branch below, including the
+	// inherit branch that authorizes nothing else. It names the mechanism for a
+	// rule set rather than a destination in it, so dropping it here would let a
+	// pack-expanded profile launch under a different engine than it authored.
 	switch in.Baseline {
 	case NetworkBaselineInherit:
-		return NetworkRules{}, nil
+		return NetworkRules{Engine: in.Engine}, nil
 	case NetworkBaselineAllow:
-		return NetworkRules{Mode: AccessModeOpen, Deny: denyEntries}, nil
+		return NetworkRules{
+			Mode: AccessModeOpen, Deny: denyEntries, Engine: in.Engine,
+		}, nil
 	case NetworkBaselineDeny:
 	default:
 		return NetworkRules{}, fmt.Errorf("network.baseline %q is invalid", in.Baseline)
@@ -147,10 +153,13 @@ func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 		return NetworkRules{}, err
 	}
 	if len(allowEntries) == 0 {
-		return NetworkRules{Mode: AccessModeClosed, Deny: denyEntries}, nil
+		return NetworkRules{
+			Mode: AccessModeClosed, Deny: denyEntries, Engine: in.Engine,
+		}, nil
 	}
 	return NetworkRules{
 		Mode: AccessModeList, Allow: allowEntries, Deny: denyEntries,
+		Engine: in.Engine,
 	}, nil
 }
 

@@ -299,8 +299,12 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 // the sandbox inherits the host's /etc/nsswitch.conf and NSS modules, so an
 // operator who authorizes a resolver socket through the unix_sockets axis
 // restores exactly the name-to-literal conversion this file exists to prevent.
-// Refusing known resolver sockets under this engine belongs with the selection
-// surface, where an authored engine and authored sockets first meet.
+// NetworkEngineResolverSocketConflict refuses the known ones at the selection
+// surface, where an authored engine and authored sockets first meet — but only
+// on the unix_sockets axis. A filesystem grant covering a resolver's directory
+// reaches the same socket inode and is not refused yet; see the scope note on
+// that function. Neither is reachable while the engine deploys nothing, and
+// both have to hold before it does.
 //
 // The delivered property is therefore "no automatic name-to-address conversion",
 // not "no host-derived address knowledge": /etc/resolv.conf and friends remain

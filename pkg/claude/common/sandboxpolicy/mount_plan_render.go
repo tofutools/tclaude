@@ -117,12 +117,22 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 	return RenderMountPlanWithEngine(effective, NetworkEngineUnset)
 }
 
-// RenderMountPlanWithEngine is RenderMountPlan with the resolved filtering
-// engine supplied by the caller. The engine is not part of EffectiveProfile
-// today — its authoring surface arrives with the selection surface — so it
-// enters here as materialized launch intent rather than being read from the
-// profile. Passing NetworkEngineUnset is exactly RenderMountPlan, which is why
-// that is the delegation above rather than a duplicated body.
+// RenderMountPlanWithEngine is RenderMountPlan with a caller-supplied engine
+// CROSS-CHECK rather than a caller-supplied selection.
+//
+// The engine is authored policy: it reaches this renderer on the effective
+// profile's own network axis, and that is the only value the plan is ever
+// built from. A caller that also names one is checked against the profile and
+// refused on disagreement, exactly as the launch contract is — the two seams
+// answer to one authority, so neither can render a plan the other would not.
+// NetworkEngineUnset means "no opinion", which is why RenderMountPlan above is
+// a plain delegation.
+//
+// This is why the plan's engine field can promise what it promises: the field
+// names the engine this plan actually deploys, so an inspection surface cannot
+// print a mechanism the launch would not run. Before the selection surface
+// existed the profile could not spell an engine at all, and this function took
+// the selection itself; it no longer does.
 //
 // The engine never reaches the plan raw: DeployedNetworkEngine decides whether
 // this policy deploys one at all, so a selection on a policy that needs no
@@ -151,7 +161,15 @@ func RenderMountPlanWithEngine(
 	}
 	plan.NetworkPosture = posture
 	plan.RootPosture = RootPostureForAxes(axes)
-	plan.NetworkEngine, err = DeployedNetworkEngine(axes.Network, selected)
+	if err := ValidateNetworkEngine(selected); err != nil {
+		return MountPlan{}, fmt.Errorf("resolve network filtering engine: %w", err)
+	}
+	if selected != NetworkEngineUnset && selected != axes.Network.Engine {
+		return MountPlan{}, fmt.Errorf(
+			"mount plan names network filtering engine %q but the effective sandbox profile authors %q",
+			selected, axes.Network.Engine)
+	}
+	plan.NetworkEngine, err = DeployedNetworkEngineForRules(axes.Network)
 	if err != nil {
 		return MountPlan{}, fmt.Errorf("resolve network filtering engine: %w", err)
 	}

@@ -108,6 +108,42 @@ type TclaudeLayerLaunchInput struct {
 	NetworkEngine sandboxpolicy.NetworkEngine
 }
 
+// tclaudeLayerContractNetworkEngine derives the launch contract's engine from
+// the ONE place that composes it: the effective profile's resolved network
+// axis. A caller that also names an engine is not merged with, it is checked
+// against — the profile is the authority, and a disagreement means the caller
+// is about to launch something the operator did not author.
+//
+// Deriving here rather than at each construction site is deliberate. A launch
+// path that forgot to copy the field would otherwise silently run pre-engine
+// behavior for a profile that authored an engine, which is exactly the
+// disclosure-does-not-match-launch failure the selection surface exists to
+// prevent; there is no site left that can forget.
+func tclaudeLayerContractNetworkEngine(
+	effective sandboxpolicy.EffectiveProfile,
+	input TclaudeLayerLaunchInput,
+) (sandboxpolicy.NetworkEngine, error) {
+	if err := sandboxpolicy.ValidateNetworkEngine(input.NetworkEngine); err != nil {
+		return sandboxpolicy.NetworkEngineUnset, err
+	}
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(effective)
+	if err != nil {
+		return sandboxpolicy.NetworkEngineUnset, err
+	}
+	authored := axes.Network.Engine
+	if err := sandboxpolicy.ValidateNetworkEngine(authored); err != nil {
+		return sandboxpolicy.NetworkEngineUnset, err
+	}
+	if input.NetworkEngine != sandboxpolicy.NetworkEngineUnset &&
+		input.NetworkEngine != authored {
+		return sandboxpolicy.NetworkEngineUnset, fmt.Errorf(
+			"tclaude-layer launch names network filtering engine %q but the effective sandbox profile authors %q",
+			input.NetworkEngine, authored,
+		)
+	}
+	return authored, nil
+}
+
 // TclaudeLayerNetworkPosture derives the launch posture after applying any
 // persisted per-rule degradation notices. Access lists and default-allow
 // denies intentionally have no legacy network_access spelling, so launch and
@@ -242,9 +278,9 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		WriteDirs:         contractWriteDirs,
 		ProfileFilesystem: profileFilesystem,
 		OpenCodeControl:   input.OpenCodeControl,
-		NetworkEngine:     input.NetworkEngine,
 	}
-	if err := sandboxpolicy.ValidateNetworkEngine(contract.NetworkEngine); err != nil {
+	contract.NetworkEngine, err = tclaudeLayerContractNetworkEngine(effective, input)
+	if err != nil {
 		return TclaudeLayerLaunchSpec{}, err
 	}
 	if input.Snapshot != nil && input.Snapshot.UnixSocketMaterialization != nil {
@@ -539,6 +575,30 @@ func FilteredNetworkPrerequisiteNotice(
 	}
 }
 
+// FilteredNetworkPrerequisiteNoticeApplies reports whether the packet
+// gateway's pasta/nft prerequisite disclosure describes THIS policy's launch.
+//
+// The probe behind that notice is the packet gateway's: pasta, nft, and the
+// namespace privileges they need. The proxy engine reaches its floor through
+// the isolated posture's plain unshare and has none of those prerequisites
+// (§2.5), so disclosing them would name a launch gate that does not gate this
+// launch — and a failing pasta on a host that will never call pasta would read
+// as the reason the rules are not enforced.
+//
+// It is exported because the notice is appended from two launch surfaces — the
+// session boundary and the daemon spawn guard — and a gate applied at only one
+// of them would let the two disagree about the same profile.
+//
+// An unresolvable engine keeps the notice rather than dropping it: failing to
+// answer the question is not evidence that the prerequisite is absent, and
+// suppressing a launch-gate disclosure is the worse error.
+func FilteredNetworkPrerequisiteNoticeApplies(
+	network sandboxpolicy.NetworkRules,
+) bool {
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(network)
+	return err != nil || engine != sandboxpolicy.NetworkEngineProxy
+}
+
 func appendFilteredNetworkPrerequisiteNotice(
 	notices []sandboxpolicy.AccessNotice,
 	outerLayer bool,
@@ -548,6 +608,9 @@ func appendFilteredNetworkPrerequisiteNotice(
 ) []sandboxpolicy.AccessNotice {
 	posture, err := sandboxpolicy.NetworkPostureForRules(network)
 	if !outerLayer || err != nil || posture != sandboxpolicy.NetworkFiltered {
+		return notices
+	}
+	if !FilteredNetworkPrerequisiteNoticeApplies(network) {
 		return notices
 	}
 	return append(notices, FilteredNetworkPrerequisiteNotice(probe(), enforcing))
@@ -662,8 +725,13 @@ func ValidateTclaudeLayerNetwork(
 		}
 		fallthrough
 	case sandboxpolicy.AccessModeList:
+		deployedEngine, engineErr :=
+			sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+		if engineErr != nil {
+			return nil, engineErr
+		}
 		if endpointErr := validateModelTransportLoopbackForPlatform(
-			h, resolvedModel, runtime.GOOS,
+			h, resolvedModel, runtime.GOOS, deployedEngine,
 		); endpointErr != nil {
 			return nil, endpointErr
 		}
@@ -1836,6 +1904,14 @@ func describeModelTransportRequirementForPlatform(
 	goos string,
 ) string {
 	detail := harness.DescribeModelTransportRequirementForRules(rules, requirement)
+	// Same swap as the endpoint check above: the proxy engine installs no
+	// synthetic name, so the requirement must be described in the spelling the
+	// operator actually has to configure.
+	if engine, err := sandboxpolicy.DeployedNetworkEngineForRules(rules); err == nil &&
+		engine == sandboxpolicy.NetworkEngineProxy {
+		return strings.ReplaceAll(
+			detail, sandboxpolicy.FilteredNetworkHostLoopbackName, "localhost")
+	}
 	if goos == "darwin" {
 		detail = strings.ReplaceAll(
 			detail,
@@ -1855,6 +1931,7 @@ func validateModelTransportLoopbackForPlatform(
 	h *harness.Harness,
 	resolved harness.ResolvedModelTransport,
 	goos string,
+	engine sandboxpolicy.NetworkEngine,
 ) error {
 	if strings.TrimSpace(resolved.BaseURL) == "" {
 		return nil
@@ -1867,6 +1944,26 @@ func validateModelTransportLoopbackForPlatform(
 	harnessName := ""
 	if h != nil {
 		harnessName = h.Name
+	}
+	// The proxy engine removes the asymmetry this function exists to police.
+	// It installs no synthetic host-loopback mapping at all; the loopback
+	// selector means "CONNECT localhost:P through the tclaude proxy, which
+	// reaches real host loopback" (§4.5), identically on Linux and Darwin. So
+	// under this engine the platform-specific spellings swap: localhost is
+	// correct everywhere and needs no remedy, and the packet engine's synthetic
+	// name resolves to nothing on either platform.
+	if engine == sandboxpolicy.NetworkEngineProxy {
+		if host != sandboxpolicy.FilteredNetworkHostLoopbackName {
+			return nil
+		}
+		return &harness.SandboxCapabilityError{
+			Harness: harnessName,
+			Kind:    harness.SandboxCapabilityModelTransport,
+			Message: fmt.Sprintf(
+				"resolved provider endpoint %q uses the synthetic host-loopback name, which only the packet filtering engine installs; under the proxy filtering engine configure the provider for localhost, 127.0.0.1, or ::1 at the same port and author a loopback rule for it, choose a resolvable non-loopback provider, or use network open",
+				resolved.BaseURL,
+			),
+		}
 	}
 	if goos == "darwin" &&
 		host == sandboxpolicy.FilteredNetworkHostLoopbackName {

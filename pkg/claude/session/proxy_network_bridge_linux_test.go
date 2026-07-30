@@ -32,6 +32,10 @@ func proxyBridgeTestPlan(
 	engine sandboxpolicy.NetworkEngine,
 ) sandboxpolicy.MountPlan {
 	t.Helper()
+	// The engine is authored policy, so it reaches the renderer on the profile
+	// rather than only as a caller argument; passing it in both places
+	// exercises the render seam's cross-check agreeing.
+	rules.Engine = engine
 	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
 		sandboxpolicy.EffectiveProfile{Network: &rules}, engine)
 	require.NoError(t, err)
@@ -600,11 +604,10 @@ func TestTclaudeLayerWinchRelayStartsAProxySandbox(t *testing.T) {
 // under the packet supervisor's fd contract.
 func TestTclaudeLayerUnixRelayRefusesTheProxyEngine(t *testing.T) {
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-		HarnessName:   "claude",
-		Cwd:           t.TempDir(),
-		StateRoot:     t.TempDir(),
-		Snapshot:      proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
-		NetworkEngine: sandboxpolicy.NetworkEngineProxy,
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
 	})
 	require.NoError(t, err)
 	_, err = tclaudeLayerUnixRelayServerCommandArgs(spec, []string{"bwrap"})
@@ -630,11 +633,10 @@ func TestBuildTclaudeLayerLaunchSpecRefusesAnInvalidEngine(t *testing.T) {
 // survives the spec round trip production persists.
 func TestTclaudeLayerLaunchSpecCarriesTheEngineToThePlan(t *testing.T) {
 	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
-		HarnessName:   "claude",
-		Cwd:           t.TempDir(),
-		StateRoot:     t.TempDir(),
-		Snapshot:      proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
-		NetworkEngine: sandboxpolicy.NetworkEngineProxy,
+		HarnessName: "claude",
+		Cwd:         t.TempDir(),
+		StateRoot:   t.TempDir(),
+		Snapshot:    proxyBridgeSnapshot(proxyBridgeDiscriminatingRules()),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, sandboxpolicy.NetworkEngineProxy, spec.Contract.NetworkEngine)
@@ -645,9 +647,14 @@ func TestTclaudeLayerLaunchSpecCarriesTheEngineToThePlan(t *testing.T) {
 		tclaudeLayerPlanFloorPosture(plan))
 }
 
+// proxyBridgeSnapshot authors the proxy engine on the effective profile, which
+// is where BuildTclaudeLayerLaunchSpec now reads it from: the launch contract
+// derives the engine from composed policy rather than accepting it as a
+// separate launch input.
 func proxyBridgeSnapshot(
 	rules sandboxpolicy.NetworkRules,
 ) *sandboxpolicy.Snapshot {
+	rules.Engine = sandboxpolicy.NetworkEngineProxy
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules
 	return &snapshot

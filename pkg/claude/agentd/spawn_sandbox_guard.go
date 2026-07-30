@@ -217,6 +217,16 @@ func planSandboxProfileAccessForLaunch(
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
 				posture = sandboxpolicy.NetworkFiltered
 			} else if runtime.GOOS == "linux" {
+				// The probe below is the packet gateway's, and it still gates
+				// the posture for every engine. That is deliberate for M2.3:
+				// the proxy engine's capability cells are unenforced, so a
+				// proxy-engine profile is widened to open here regardless of
+				// what this probe answers. Giving the proxy floor its own
+				// spawn-time prerequisite gate belongs with the activation that
+				// makes the floor reachable; only the DISCLOSURE is made
+				// engine-conditional here, below, because a persisted notice
+				// naming pasta and nft for a launch that uses neither is wrong
+				// today rather than at activation.
 				probe := probeFilteredNetworkPrerequisite()
 				filteredProbe = &probe
 				if supportErr := session.ValidateFilteredNetworkHarnessSupport(
@@ -270,6 +280,7 @@ func planSandboxProfileAccessForLaunch(
 	}
 	if implementation.UsesTclaudeLayer() &&
 		requestedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+		session.FilteredNetworkPrerequisiteNoticeApplies(axes.Network) &&
 		(runtime.GOOS == "linux" ||
 			(runtime.GOOS == "darwin" &&
 				!sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network))) {

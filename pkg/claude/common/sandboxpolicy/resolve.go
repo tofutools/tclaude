@@ -118,6 +118,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	hasNewNetwork := false
 	hasNewUnixSockets := false
 	networkListContributors := []string{}
+	engineSelections := []NetworkEngineSelection{}
 	socketListContributors := []string{}
 	observableFilesystemSpellings := []observableFilesystemSpelling{}
 	for _, tier := range []struct {
@@ -234,6 +235,18 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		hasNewNetwork = hasNewNetwork || normalized.Network != nil
 		hasNewUnixSockets = hasNewUnixSockets || normalized.UnixSockets != nil
 		tierLabel := fmt.Sprintf("%s %q", tier.scope, normalized.Name)
+		// Engine is composed apart from the access lattice on purpose: it is
+		// not an access axis, so there is no strictness to intersect. Each
+		// tier's authored opinion is collected here and settled by
+		// ResolveNetworkEngine after the loop, which is what produces the
+		// which-engine-won-and-from-where disclosure. A tier that named no
+		// engine is still recorded, because ResolveNetworkEngine absorbing an
+		// unset layer is the precedence rule rather than a caller's omission.
+		engineSelections = append(engineSelections, NetworkEngineSelection{
+			Layer:  networkEngineLayerForScope(tier.scope),
+			Engine: axes.Network.Engine,
+			Source: fmt.Sprintf("%s profile %q", tier.scope, normalized.Name),
+		})
 		if axes.Network.Mode == AccessModeList {
 			networkListContributors = appendUniqueStrings(networkListContributors, tierLabel)
 			networkSource := source
@@ -383,9 +396,18 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.Provenance.AgentDirectories[name] = canonicalSources(sources)
 	}
 	sort.Strings(result.AgentDirectories)
+	resolvedEngine, err := ResolveNetworkEngine(engineSelections)
+	if err != nil {
+		return EffectiveProfile{}, fmt.Errorf(
+			"resolve network filtering engine across sandbox profile scopes: %w", err)
+	}
+	networkRules.Engine = resolvedEngine.Engine
 	if hasNewNetwork {
 		result.Network = cloneNetworkRulesPtr(&networkRules)
 		result.NetworkAccess = LegacyNetworkAccessForExport(result.Network, result.NetworkAccess)
+	}
+	if notice, ok := networkEngineCompositionNotice(resolvedEngine); ok {
+		result.AccessNotices = append(result.AccessNotices, notice)
 	}
 	if hasNewUnixSockets ||
 		(hasNewNetwork && unixSocketRules.Mode != AccessModeUnset) {
