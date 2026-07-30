@@ -308,13 +308,13 @@ outrank it). Three modes:
   arrays with the operator's existing scopes. tclaude also merges one
   non-profile host-control rule for the exact named tmux socket hosting
   tclaude's agent panes. Linux enforces it through Claude's `denyRead`
-  `/dev/null` mask whenever the inherited sandbox is enabled. On macOS,
-  Claude's exact `allowUnixSockets` list permits agentd but excludes the tmux
-  server; the hardening installer leaves `allowAllUnixSockets` absent and
-  migrates an older installed `true` value to `false`, while sandbox mode `on`
-  pins `false` in the launch overlay. tclaude does not nest another Seatbelt
-  around the harness. The explicit `tclaude-layer` implementation owns its
-  existing tmux host-control rule instead.
+  `/dev/null` mask whenever the inherited sandbox is enabled. Claude's built-in
+  macOS settings have no exact Unix-socket deny. The hardening installer adds
+  `allowAllUnixSockets: true` only when the key is missing and preserves an
+  operator-selected `false`; with `false`, the exact `allowUnixSockets`
+  allowlist applies instead. tclaude does not nest another Seatbelt around the
+  harness. The explicit `tclaude-layer` implementation owns its existing tmux
+  host-control rule instead.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the
@@ -327,11 +327,12 @@ outrank it). Three modes:
 
 On Linux the tmux rule is socket-specific: agents may still run the `tmux`
 binary against a private socket they own, but cannot connect to the existing
-`tclaude` server and use `capture-pane`, `send-keys`, or session mutation. On
-macOS Claude exposes an allowlist rather than a single-socket deny, so all
-unlisted Unix sockets (including private tmux sockets and `SSH_AUTH_SOCK`) are
-blocked unless the operator adds them explicitly. The sandbox editor shows the
-generated Claude rule as read-only launch context alongside Codex's managed
+`tclaude` server and use `capture-pane`, `send-keys`, or session mutation.
+Claude's built-in macOS sandbox cannot provide that exact distinction: broad
+Unix-socket access leaves the tclaude server reachable, while an
+operator-selected `allowAllUnixSockets: false` blocks every socket not listed
+in `allowUnixSockets`. The sandbox editor shows the generated Claude rule and
+this platform limitation as read-only launch context alongside Codex's managed
 baseline.
 
 This is the per-session counterpart to the **global** hardening guide

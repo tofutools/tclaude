@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -22,30 +21,21 @@ import (
 //
 // It is a faithful copy of that doc's recommended config block — the
 // doc is the source of truth, so this must be kept in lockstep with it.
-// The `sandbox` sub-tree comes from harness.ClaudeSandboxOnBlockForGOOS(), the
-// same effective block the per-session `--sandbox on` spawn mode injects via
-// `--settings`. Unix-socket policy is platform-specific: Linux requires
-// `allowAllUnixSockets=true`; a fresh macOS settings file omits that default-
-// false key while the higher-precedence launch overlay pins it false. The
-// `permissions` deny-list below is hardening-only — a global settings concern,
-// not a per-session sandbox knob — so it stays here.
+// The `sandbox` sub-tree comes from harness.ClaudeSandboxOnBlock(), the
+// SAME block the per-session `--sandbox on` spawn mode injects via
+// `--settings`, so the global hardening and the per-session override can
+// never drift. The append-only merge adds `allowAllUnixSockets: true` only
+// when the key is missing; an existing operator-selected false value is a
+// reported conflict and remains unchanged. The `permissions` deny-list below
+// is hardening-only — a global settings concern, not a per-session sandbox
+// knob — so it stays here.
 //
 // Arrays are []any (not []string) so the merge engine compares and
 // appends them uniformly against values decoded from the user's file,
 // where every JSON array is a []any.
 func sandboxHardeningSpec() map[string]any {
-	return sandboxHardeningSpecForGOOS(runtime.GOOS)
-}
-
-func sandboxHardeningSpecForGOOS(goos string) map[string]any {
-	sandbox := harness.ClaudeSandboxOnBlockForGOOS(goos)
-	if goos == "darwin" {
-		// Absence is the safe/default macOS value. Existing true values are
-		// migrated to explicit false separately; fresh installs need no key.
-		delete(sandbox["network"].(map[string]any), "allowAllUnixSockets")
-	}
 	return map[string]any{
-		"sandbox": sandbox,
+		"sandbox": harness.ClaudeSandboxOnBlock(),
 		"permissions": map[string]any{
 			// The tool-permission layer mirrors the OS-sandbox deny above. It
 			// matters independently: it still blocks the Read/Edit tools when
@@ -60,10 +50,9 @@ func sandboxHardeningSpecForGOOS(goos string) map[string]any {
 	}
 }
 
-// hardeningReport accumulates what an install did so the caller can print a
-// summary. The merge is append-only except for the targeted macOS legacy
-// socket migration, so this records additions, that update, what was already
-// in place, and the conflicts it deliberately left alone.
+// hardeningReport accumulates what a merge did so the caller can print a
+// summary. The merge is append-only, so this records additions, what
+// was already in place, and the conflicts it deliberately left alone.
 type hardeningReport struct {
 	// added is one human-readable line per scalar key or array element
 	// the merge appended, in deterministic depth-first order.
@@ -72,9 +61,6 @@ type hardeningReport struct {
 	// with the value the hardening wants — a second run fills this and
 	// leaves added empty (idempotency).
 	alreadyPresent []string
-	// updated records the one security migration allowed to replace a
-	// previously installed scalar: macOS allowAllUnixSockets true -> false.
-	updated []string
 	// scalarConflicts is one line per scalar key present with a
 	// DIFFERENT value than the hardening wants. Left unchanged — the
 	// human is warned to fix it themselves.
@@ -85,11 +71,11 @@ type hardeningReport struct {
 	typeConflicts []string
 }
 
-// changed reports whether the install mutated the tree. Additions and the
-// targeted macOS update mutate it; conflicts and "already present" entries do
-// not. When false the caller must not rewrite the file — that is what keeps a
-// second run a true no-op.
-func (r *hardeningReport) changed() bool { return len(r.added) > 0 || len(r.updated) > 0 }
+// changed reports whether the merge actually mutated the tree. Only
+// additions mutate it; conflicts are skipped and "already present" is a
+// no-op. When false the caller must not rewrite the file — that is what
+// keeps a second run a true no-op.
+func (r *hardeningReport) changed() bool { return len(r.added) > 0 }
 
 // hardeningResult is the outcome of applySandboxHardening: the report
 // plus the file-level side effects the caller turns into output.
@@ -256,19 +242,15 @@ func backupSettings(settingsPath string) (string, error) {
 	return backupPath, nil
 }
 
-// applySandboxHardening loads the Claude Code settings file at settingsPath,
-// applies the platform hardening, and — only if it changed something — backs
-// the file up and rewrites it. The ordinary merge is append-only. On macOS it
-// also migrates the legacy allowAllUnixSockets=true value to false so the
-// exact socket allowlist becomes effective.
+// applySandboxHardening loads the Claude Code settings file at
+// settingsPath, merges the sandbox-hardening spec into it append-only,
+// and — only if the merge actually added something — backs the file up
+// and rewrites it. It returns a hardeningResult describing what
+// happened; the caller is responsible for printing a summary.
 //
 // Taking settingsPath explicitly keeps this end-to-end-testable against
 // a temp file; installSandboxHardening is the thin production wrapper.
 func applySandboxHardening(settingsPath string) (*hardeningResult, error) {
-	return applySandboxHardeningForGOOS(settingsPath, runtime.GOOS)
-}
-
-func applySandboxHardeningForGOOS(settingsPath, goos string) (*hardeningResult, error) {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create settings directory: %w", err)
 	}
@@ -279,10 +261,7 @@ func applySandboxHardeningForGOOS(settingsPath, goos string) (*hardeningResult, 
 	}
 
 	r := &hardeningReport{}
-	if goos == "darwin" {
-		disableLegacyMacOSAllowAllUnixSockets(tree, r)
-	}
-	mergeHardening("", tree, sandboxHardeningSpecForGOOS(goos), r)
+	mergeHardening("", tree, sandboxHardeningSpec(), r)
 
 	res := &hardeningResult{report: r, settingsPath: settingsPath}
 	if !r.changed() {
@@ -311,39 +290,6 @@ func applySandboxHardeningForGOOS(settingsPath, goos string) (*hardeningResult, 
 	}
 	res.wrote = true
 	return res, nil
-}
-
-// disableLegacyMacOSAllowAllUnixSockets repairs settings written by older
-// tclaude releases. On macOS, allowAllUnixSockets=true disables the path
-// allowlist that keeps Claude away from host-control sockets. This is the sole
-// overwrite performed by the hardening installer: it is narrow, backed up by
-// applySandboxHardeningForGOOS, and idempotent.
-func disableLegacyMacOSAllowAllUnixSockets(tree map[string]any, r *hardeningReport) {
-	sandbox, ok := tree["sandbox"].(map[string]any)
-	if !ok {
-		return
-	}
-	network, ok := sandbox["network"].(map[string]any)
-	if !ok {
-		return
-	}
-	value, present := network["allowAllUnixSockets"]
-	if !present {
-		return
-	}
-	enabled, ok := value.(bool)
-	if !ok {
-		r.typeConflicts = append(r.typeConflicts,
-			"sandbox.network.allowAllUnixSockets: macOS hardening expects false or omission but settings.json has "+
-				jsonKind(value)+" — skipped")
-		return
-	}
-	if !enabled {
-		return
-	}
-	network["allowAllUnixSockets"] = false
-	r.updated = append(r.updated,
-		"sandbox.network.allowAllUnixSockets = false (was true; macOS uses allowUnixSockets as an allowlist)")
 }
 
 // installSandboxHardening is the --install-sandbox-hardening entry
@@ -388,9 +334,6 @@ func printHardeningReport(res *hardeningResult) {
 
 	for _, line := range r.added {
 		fmt.Printf("✓ Added %s\n", line)
-	}
-	for _, line := range r.updated {
-		fmt.Printf("✓ Updated %s\n", line)
 	}
 	if n := len(r.alreadyPresent); n > 0 {
 		fmt.Printf("✓ %d hardening %s already present\n", n, pluralEntries(n))

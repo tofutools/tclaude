@@ -3,7 +3,6 @@ package harness
 import (
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strings"
 )
 
@@ -129,10 +128,10 @@ func (claudeSandbox) ModeHelp(mode string) string {
 }
 
 // ClaudeSandboxOnBlock is the value of the settings.json `sandbox` key the
-// `on` mode injects via `--settings`. The global
-// `tclaude setup --install-sandbox-hardening` reuses its effective policy; on
-// fresh macOS settings it omits the default-false allowAllUnixSockets key,
-// while this higher-precedence launch overlay pins false.
+// `on` mode injects via `--settings` — and the single source of truth the
+// global `tclaude setup --install-sandbox-hardening` reuses for its own
+// `sandbox` block, so the per-session override and the global hardening can
+// never drift (docs/sandbox-hardening.md is the human-facing source of truth).
 //
 // It enables the sandbox AND preserves the properties a daemon-spawned agent
 // needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
@@ -145,13 +144,11 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // is disabled so those boundaries cannot be skipped. ~/.codex remains readable
 // because it also contains the Codex runtime itself; denying that whole root
 // can strand the harness.
-//
-// Unix-socket policy is platform-specific. macOS honors the exact
-// `allowUnixSockets` path list, so enabling `allowAllUnixSockets` there would
-// disable the only built-in filter protecting other host sockets. Linux/WSL2
-// cannot filter Unix sockets by path, so it requires the broader
-// `allowAllUnixSockets` switch and relies on filesystem visibility for the
-// tclaude host-control boundary.
+// This block is cross-platform: macOS honors per-path `allowUnixSockets`;
+// Linux/WSL2 require the broader `allowAllUnixSockets`, which macOS also
+// honors. Listing both keeps one block functional on either platform. The
+// append-only setup merge preserves an existing operator-selected false value
+// instead of replacing it with true.
 //
 // Arrays are []any (not []string) so the setup merge engine compares and
 // appends them uniformly against values decoded from a user's settings file
@@ -159,30 +156,15 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // same as []string for the spawner's `--settings` payload. A fresh map each
 // call so the setup merge can mutate it in place without aliasing.
 func ClaudeSandboxOnBlock() map[string]any {
-	return ClaudeSandboxOnBlockForGOOS(runtime.GOOS)
-}
-
-// ClaudeSandboxOnBlockForGOOS is ClaudeSandboxOnBlock with an explicit
-// platform for setup rendering and cross-platform tests.
-func ClaudeSandboxOnBlockForGOOS(goos string) map[string]any {
-	network := map[string]any{
-		"allowUnixSockets": tclaudeAgentdSocketTildes(),
-		"allowedDomains":   []any{"github.com", "api.github.com"},
-	}
-	switch goos {
-	case "linux":
-		network["allowAllUnixSockets"] = true
-	case "darwin":
-		// The launch overlay outranks user/project settings. Pin false so an
-		// older allowAllUnixSockets=true cannot disable the macOS path allowlist
-		// even before the operator reruns the hardening installer migration.
-		network["allowAllUnixSockets"] = false
-	}
 	return map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,
 		"allowUnsandboxedCommands": false,
-		"network":                  network,
+		"network": map[string]any{
+			"allowUnixSockets":    tclaudeAgentdSocketTildes(),
+			"allowAllUnixSockets": true,
+			"allowedDomains":      []any{"github.com", "api.github.com"},
+		},
 		"filesystem": map[string]any{
 			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
 			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},

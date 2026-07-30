@@ -157,9 +157,11 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 	}
 }
 
-// TestClaudeSandboxOnBlock_MatchesHardening pins the effective policy the
-// per-session `on` block and global hardening share. (The setup package asserts
-// its platform-specific persisted shape separately.)
+// TestClaudeSandboxOnBlock_MatchesHardening guards the single-source-of-truth
+// contract: the per-session `on` block IS the block the global
+// `--install-sandbox-hardening` setup writes, so they cannot drift. (The setup
+// package asserts its own spec separately; here we just pin the keys the
+// spawner/setup both depend on.)
 func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	b := ClaudeSandboxOnBlock()
 	if b["enabled"] != true {
@@ -174,8 +176,8 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 			b["allowUnsandboxedCommands"])
 	}
 	net, _ := b["network"].(map[string]any)
-	if net == nil {
-		t.Fatalf("on block must configure unix sockets, got %v", b["network"])
+	if net == nil || net["allowAllUnixSockets"] != true {
+		t.Fatalf("on block must keep unix sockets reachable, got %v", b["network"])
 	}
 	if domains, _ := net["allowedDomains"].([]any); !slices.Equal(
 		domains, []any{"github.com", "api.github.com"},
@@ -196,23 +198,6 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	b["enabled"] = "mutated"
 	if again := ClaudeSandboxOnBlock(); again["enabled"] != true {
 		t.Fatal("ClaudeSandboxOnBlock must return a fresh map each call (mutation leaked)")
-	}
-}
-
-func TestClaudeSandboxOnBlock_PlatformUnixSocketPolicy(t *testing.T) {
-	linuxNetwork := ClaudeSandboxOnBlockForGOOS("linux")["network"].(map[string]any)
-	if linuxNetwork["allowAllUnixSockets"] != true {
-		t.Fatalf("Linux must allow AF_UNIX broadly and filter by filesystem, got %v", linuxNetwork)
-	}
-
-	darwinNetwork := ClaudeSandboxOnBlockForGOOS("darwin")["network"].(map[string]any)
-	if darwinNetwork["allowAllUnixSockets"] != false {
-		t.Fatalf("macOS launch override must pin per-path Unix-socket filtering, got %v", darwinNetwork)
-	}
-	if sockets, _ := darwinNetwork["allowUnixSockets"].([]any); !slices.Equal(
-		sockets, tclaudeAgentdSocketTildes(),
-	) {
-		t.Fatalf("macOS must allowlist only tclaude agentd sockets, got %v", darwinNetwork)
 	}
 }
 
