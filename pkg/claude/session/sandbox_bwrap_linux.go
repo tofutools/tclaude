@@ -32,8 +32,12 @@ const bwrapProbeTimeout = 5 * time.Second
 
 var (
 	lookPathBwrap = exec.LookPath
-	probeBwrap    = func(binary string, posture sandboxpolicy.NetworkPosture) error {
-		args, err := tclaudeLayerProbeArgs(posture)
+	probeBwrap    = func(
+		binary string,
+		posture sandboxpolicy.NetworkPosture,
+		root sandboxpolicy.RootPosture,
+	) error {
+		args, err := tclaudeLayerProbeArgs(posture, root)
 		if err != nil {
 			return err
 		}
@@ -57,13 +61,23 @@ var (
 	}
 )
 
-func tclaudeLayerProbeArgs(posture sandboxpolicy.NetworkPosture) ([]string, error) {
+func tclaudeLayerProbeArgs(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) ([]string, error) {
 	args := []string{
 		"--die-with-parent",
 		"--ro-bind", "/", "/",
 	}
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen:
+		if root == sandboxpolicy.RootConstructed {
+			// A host-open constructed root keeps the network namespace but
+			// still needs the PID namespace that closes the /proc/<pid>/root
+			// route back to the host mount namespace. Probe exactly that, and
+			// not the network namespace the launch will not create.
+			args = append(args, "--unshare-pid")
+		}
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		args = append(args, "--unshare-net", "--unshare-pid")
 	case sandboxpolicy.NetworkFiltered:
@@ -110,8 +124,11 @@ func filteredNetworkProbeCapabilityCheck(posture sandboxpolicy.NetworkPosture) s
 		` && case "$cap_eff" in *[4567cCdDeEfF]??) true ;; *) false ;; esac`
 }
 
-func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
-	binary, err := resolveBwrapServerBinary(posture)
+func resolveBwrapBinary(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (string, error) {
+	binary, err := resolveBwrapServerBinary(posture, root)
 	if err != nil {
 		return "", err
 	}
@@ -121,18 +138,25 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return binary, nil
 }
 
-func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
+func resolveBwrapServerBinary(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
 		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
 	}
-	if err := probeBwrap(binary, posture); err != nil {
+	if err := probeBwrap(binary, posture, root); err != nil {
 		requiredNamespaces := "mount namespace and read-only remount support"
 		switch posture {
 		case sandboxpolicy.NetworkIsolatedWithAgentd:
 			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by isolated-with-agentd"
 		case sandboxpolicy.NetworkFiltered:
 			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by filtered network"
+		default:
+			if root == sandboxpolicy.RootConstructed {
+				requiredNamespaces = "mount and PID namespaces plus read-only remount support required by a constructed root under host networking"
+			}
 		}
 		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
@@ -285,7 +309,10 @@ func tclaudeLayerOpenCodeLaunchOSSandbox() harness.LaunchOSSandbox {
 	}
 }
 
-func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
+func tclaudeLayerLaunchOSSandbox(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) harness.LaunchOSSandbox {
 	switch posture {
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		return harness.LaunchOSSandbox{
@@ -299,6 +326,19 @@ func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.L
 			FilteredNetwork: true,
 		}
 	default:
+		if root == sandboxpolicy.RootConstructed {
+			// TCL-798. The ambient-socket caveat that keeps the plain host-open
+			// row unverified does not apply: ambient FILESYSTEM sockets are gone
+			// here. What remains is narrower and is named rather than implied,
+			// because the shared network namespace is exactly what makes it
+			// possible.
+			return harness.LaunchOSSandbox{
+				State: "on",
+				Source: "tclaude-layer (bubblewrap; host network; isolated PIDs; " +
+					"constructed root; agentd socket allowlisted; " +
+					"abstract-namespace Unix sockets remain reachable through the shared network namespace)",
+			}
+		}
 		return harness.LaunchOSSandbox{
 			State: "on",
 			// Source names the mechanism and posture that decided; the badge's

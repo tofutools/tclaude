@@ -9,11 +9,17 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func resolveBwrapBinary(sandboxpolicy.NetworkPosture) (string, error) {
+func resolveBwrapBinary(
+	sandboxpolicy.NetworkPosture,
+	sandboxpolicy.RootPosture,
+) (string, error) {
 	return "", fmt.Errorf("tclaude-layer requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
 }
 
-func resolveBwrapServerBinary(sandboxpolicy.NetworkPosture) (string, error) {
+func resolveBwrapServerBinary(
+	sandboxpolicy.NetworkPosture,
+	sandboxpolicy.RootPosture,
+) (string, error) {
 	return "", fmt.Errorf(
 		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }

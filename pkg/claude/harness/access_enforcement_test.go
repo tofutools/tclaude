@@ -112,6 +112,10 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Contains(t, notices[0].Detail, "remain reachable")
 	assert.Contains(t, notices[0].Detail, "outside")
 
+	// TCL-798: the constructed root no longer requires giving up host
+	// networking, so both restricting tiers are enforceable here — Partial, and
+	// permanently so, because abstract-namespace sockets are not filesystem
+	// objects and the network namespace is shared.
 	hostOpenClosedSockets := sandboxpolicy.ResolvedAxes{
 		Network:     sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
 		UnixSockets: sandboxpolicy.UnixSocketRules{Mode: sandboxpolicy.AccessModeClosed},
@@ -120,12 +124,18 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenClosedSockets, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, caps.socketClosed,
-		"removing combination awareness and claiming static Full must fail this assertion")
-	_, _, err = PlanAccessEnforcement(hostOpenClosedSockets, caps)
-	require.EqualError(t, err,
-		`unix_sockets "closed" cannot be enforced with open network access on Linux tclaude-layer; `+
-			`close network access as well, use an access list, or run without the socket restriction`)
+	assert.Equal(t, EnforcePartial, caps.socketClosed,
+		"claiming Full here would deny the abstract-namespace remainder this posture cannot reach")
+	rendered, notices, err = PlanAccessEnforcement(hostOpenClosedSockets, caps)
+	require.NoError(t, err)
+	assert.Equal(t, hostOpenClosedSockets.UnixSockets, rendered.UnixSockets,
+		"an enforceable tier must survive the ladder rather than widening to open")
+	require.Len(t, notices, 1)
+	assert.Equal(t, "partial_mechanism", notices[0].Reason)
+	assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider, notices[0].Effect)
+	assert.Contains(t, notices[0].Detail, "abstract-namespace Unix sockets",
+		"the day-one disclosure of the abstract-socket remainder is mandatory")
+	assert.Contains(t, notices[0].Detail, "readable/writable directories")
 
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
@@ -138,14 +148,50 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenSocketList, ClaudeSandboxOff, "linux",
 	)
 	require.NoError(t, err)
+	assert.Equal(t, EnforcePartial, caps.socketList)
 	rendered, notices, err = PlanAccessEnforcement(hostOpenSocketList, caps)
 	require.NoError(t, err)
-	assert.Equal(t, sandboxpolicy.AccessModeOpen, rendered.UnixSockets.Mode)
+	assert.Equal(t, hostOpenSocketList.UnixSockets, rendered.UnixSockets)
 	require.Len(t, notices, 1)
-	assert.Contains(t, notices[0].Detail,
-		"unenforced under host-open network on Linux tclaude-layer")
-	assert.Contains(t, notices[0].Detail, "host-open",
-		"a delivered widening must disclose the same socket-open surface the renderer receives")
+	assert.Equal(t, "partial_mechanism", notices[0].Reason)
+	assert.Contains(t, notices[0].Detail, "abstract-namespace Unix sockets")
+
+	// No default-on: a profile that never authored the axis must launch in
+	// exactly the posture it launched in before TCL-798, with no notice.
+	hostOpenUnsetSockets := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
+	}
+	caps, err = accessEnforcementForTargetForTest(
+		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenUnsetSockets, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	_, notices, err = PlanAccessEnforcement(hostOpenUnsetSockets, caps)
+	require.NoError(t, err)
+	assert.Empty(t, notices,
+		"an unset socket axis must not acquire a constructed root under host-open network")
+
+	// The stacked implementation composes this root with a harness-native inner
+	// sandbox that has no smoke evidence for the combination, so it keeps the
+	// pre-TCL-798 rating.
+	caps, err = accessEnforcementForTargetForTest(
+		h, sandboxpolicy.ImplementationStacked, hostOpenClosedSockets, ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, caps.socketClosed)
+
+	// A deny entry renders the filtered posture instead of host-open; that
+	// combination is rated by its own row, not by this one.
+	hostOpenDeniedClosedSockets := hostOpenClosedSockets
+	hostOpenDeniedClosedSockets.Network = sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeOpen,
+		Deny: []sandboxpolicy.NetworkAllowEntry{{Host: "metadata.google.internal"}},
+	}
+	caps, err = accessEnforcementForTargetForTest(
+		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenDeniedClosedSockets,
+		ClaudeSandboxOff, "linux",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, EnforceNone, caps.socketClosed)
 
 	// The public resolver consumes the same axes rather than returning a static
 	// per-target capability descriptor.
@@ -154,7 +200,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 		evidence, ClaudeSandboxOff,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforceNone, resolved.socketClosed)
+	assert.Equal(t, EnforcePartial, resolved.socketClosed)
 }
 
 func TestSocketListAdaptersPreserveRuledCombinationBoundaries(t *testing.T) {

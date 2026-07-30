@@ -204,7 +204,8 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 		require.NoError(t, os.Remove(controlPath))
 		previousResolver := resolveOpenCodeTclaudeLayer
 		resolveOpenCodeTclaudeLayer = func(
-			sandboxpolicy.NetworkPosture,
+			_ sandboxpolicy.NetworkPosture,
+			_ sandboxpolicy.RootPosture,
 		) (string, harness.LaunchOSSandbox, error) {
 			return "/usr/bin/bwrap", harness.LaunchOSSandbox{}, nil
 		}

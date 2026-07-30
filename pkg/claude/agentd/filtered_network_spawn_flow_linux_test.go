@@ -47,7 +47,7 @@ func TestDefaultAllowDenySpawnSelectsFilteredNetworkPosture(t *testing.T) {
 			))
 			var resolvedPostures []sandboxpolicy.NetworkPosture
 			t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-				func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
 					resolvedPostures = append(resolvedPostures, posture)
 					return harness.LaunchOSSandbox{
 						State:           "on",
@@ -131,7 +131,7 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
 			return harness.LaunchOSSandbox{
 				State:           "on",
 				Source:          "test filtered gateway",
@@ -197,7 +197,7 @@ func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) 
 				},
 			))
 			t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-				func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+				func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
 					require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 					return harness.LaunchOSSandbox{
 						State:           "on",
@@ -257,7 +257,7 @@ func TestLocalAccessSpawnAllowsConcreteHostLoopbackProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
 			require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 			return harness.LaunchOSSandbox{
 				State:           "on",
@@ -303,7 +303,7 @@ func TestLocalModelAPIsSpawnAllowsFirstPartyCloudProvider(t *testing.T) {
 		},
 	))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(
-		func(_ string, posture sandboxpolicy.NetworkPosture) (harness.LaunchOSSandbox, error) {
+		func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) (harness.LaunchOSSandbox, error) {
 			require.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 			return harness.LaunchOSSandbox{
 				State:           "on",

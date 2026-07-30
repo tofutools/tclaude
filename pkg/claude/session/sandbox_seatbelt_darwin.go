@@ -77,7 +77,13 @@ func probeDarwinSeatbeltCapability(binary string) error {
 	return nil
 }
 
-func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
+// The root posture is ignored on Darwin: Seatbelt is a path filter over the
+// host mount namespace and has no root to construct. It expresses the same
+// socket-confinement intent with native denies instead (TCL-798).
+func resolveBwrapBinary(
+	posture sandboxpolicy.NetworkPosture,
+	_ sandboxpolicy.RootPosture,
+) (string, error) {
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
@@ -108,8 +114,11 @@ func resolveBwrapBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
 	return darwinSeatbeltExecutable, nil
 }
 
-func resolveBwrapServerBinary(posture sandboxpolicy.NetworkPosture) (string, error) {
-	return resolveBwrapBinary(posture)
+func resolveBwrapServerBinary(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (string, error) {
+	return resolveBwrapBinary(posture, root)
 }
 
 func tclaudeLayerStackedCommand(
@@ -381,7 +390,10 @@ func darwinSeatbeltLstatIdentity(path string) (seatbeltFileIdentity, bool) {
 	return seatbeltFileIdentity{dev: uint64(stat.Dev), ino: stat.Ino}, true
 }
 
-func tclaudeLayerLaunchOSSandbox(posture sandboxpolicy.NetworkPosture) harness.LaunchOSSandbox {
+func tclaudeLayerLaunchOSSandbox(
+	posture sandboxpolicy.NetworkPosture,
+	_ sandboxpolicy.RootPosture,
+) harness.LaunchOSSandbox {
 	switch posture {
 	// Source names the mechanism and posture that decided. The Darwin fidelity
 	// caveats — no PID isolation, no constructed root, no mount namespace,

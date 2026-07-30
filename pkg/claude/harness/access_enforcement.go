@@ -442,7 +442,23 @@ func accessEnforcementTable(
 						`use a socket access list or leave unix_sockets unset`
 			}
 		} else {
-			if goos == "linux" {
+			if goos == "linux" && linuxHostOpenConstructedRootAvailable(
+				h, implementation, axes) {
+				// TCL-798. The constructed root no longer requires giving up
+				// host networking, so the filesystem half of the socket axis is
+				// enforceable here. It is Partial rather than Full, and
+				// permanently so: with the host network namespace shared,
+				// Linux abstract-namespace sockets are not filesystem objects
+				// at all and no mount plan can reach them.
+				caps.SocketClosed = EnforcePartial
+				caps.SocketList = EnforcePartial
+				caps.SocketCombinationDetail =
+					"tclaude builds the sandbox root, so listed Unix sockets are bound and " +
+						"ambient filesystem sockets outside the sandbox's readable/writable directories are absent; " +
+						"sockets beneath those readable/writable directories remain reachable, and because host networking is kept, " +
+						"abstract-namespace Unix sockets (@…) live in the shared network namespace rather than the filesystem and remain reachable — " +
+						"close network access as well to confine those too"
+			} else if goos == "linux" {
 				caps.SocketCombinationDetail =
 					"Unix-socket restrictions are unenforced under host-open network on Linux tclaude-layer; " +
 						"they are enforceable when network access is closed because that posture uses the constructed root"
@@ -503,6 +519,43 @@ func accessEnforcementTable(
 	default:
 		return accessEnforcementTableRow{}, fmt.Errorf("harness %q has no access-enforcement capability descriptor", h.Name)
 	}
+}
+
+// linuxHostOpenConstructedRootAvailable reports whether this exact launch would
+// get TCL-798's host-network constructed root, and therefore whether the socket
+// axis may be rated above EnforceNone with the network axis left open.
+//
+// Three conditions, each load-bearing:
+//
+//   - tclaude-layer proper. The stacked implementation composes this root with
+//     a harness-native inner sandbox whose interaction with a constructed
+//     host-open root has no smoke evidence, and an unproven combination may not
+//     raise a capability rating.
+//   - Claude Code or Codex. OpenCode's boundary is its agentd-owned server with
+//     a control plane of its own; its host-open arm is deliberately left on the
+//     pre-TCL-798 path.
+//   - A host-open network posture. An allow list or any deny renders the
+//     filtered posture instead, which already constructs its root beneath a
+//     private network namespace and is rated separately.
+//
+// The socket TIER is deliberately not part of the predicate. This function only
+// answers whether the mechanism exists; the ladder applies the rating solely to
+// a profile that explicitly authored a closed or list tier, which is what keeps
+// the constructed root from turning itself on under profiles that never asked
+// about sockets.
+func linuxHostOpenConstructedRootAvailable(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	axes sandboxpolicy.ResolvedAxes,
+) bool {
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return false
+	}
+	if h == nil || (h.Name != DefaultName && h.Name != CodexName) {
+		return false
+	}
+	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
+	return err == nil && posture == sandboxpolicy.NetworkHostOpen
 }
 
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {

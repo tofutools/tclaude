@@ -35,7 +35,8 @@ func TestResolveTclaudeLayerDarwinAcceptsFilteredSeatbeltCapability(t *testing.T
 		return nil
 	}
 
-	binary, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	binary, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	assert.Equal(t, darwinSeatbeltExecutable, binary)
 	assert.True(t, probed)
@@ -65,7 +66,8 @@ func TestResolveTclaudeLayerDarwinAcceptsIsolatedNetwork(t *testing.T) {
 		return nil
 	}
 
-	binary, verdict, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
+	binary, verdict, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	assert.Equal(t, darwinSeatbeltExecutable, binary)
 	assert.True(t, probed)
@@ -84,7 +86,8 @@ func TestResolveTclaudeLayerDarwinRefusesMissingOrBrokenSeatbelt(t *testing.T) {
 	statDarwinSeatbelt = func(string) (os.FileInfo, error) {
 		return nil, errors.New("not found")
 	}
-	_, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.ErrorContains(t, err, darwinSeatbeltExecutable)
 
 	executable, statErr := os.Stat(os.Args[0])
@@ -95,7 +98,8 @@ func TestResolveTclaudeLayerDarwinRefusesMissingOrBrokenSeatbelt(t *testing.T) {
 	probeDarwinSeatbelt = func(string) error {
 		return errors.New("operation unexpectedly succeeded")
 	}
-	_, _, err = ResolveTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	_, _, err = ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	require.ErrorContains(t, err, "deny-write capability")
 }
 
@@ -176,7 +180,8 @@ func TestDarwinSeatbeltCapabilityProbeHasDeadline(t *testing.T) {
 }
 
 func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) {
-	hostOpen := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
+	hostOpen := TclaudeLayerLaunchOSSandbox(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	assert.Equal(t, "on", hostOpen.State)
 	assert.Equal(t,
 		"tclaude-layer (Seatbelt/sandbox-exec; host network)",
@@ -185,7 +190,8 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	assert.True(t, hostOpen.Unverified)
 	assert.NotContains(t, hostOpen.Source, "bubblewrap")
 
-	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
+	isolated := TclaudeLayerLaunchOSSandbox(
+		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
 	assert.Equal(t, "on", isolated.State)
 	assert.Equal(t,
 		"tclaude-layer (Seatbelt/sandbox-exec; isolated network; "+
@@ -194,7 +200,8 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	)
 	assert.True(t, isolated.Unverified)
 
-	local := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered)
+	local := TclaudeLayerLaunchOSSandbox(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	assert.Equal(t, "on", local.State)
 	assert.True(t, local.FilteredNetwork)
 	assert.Contains(t, local.Source, "real host loopback")

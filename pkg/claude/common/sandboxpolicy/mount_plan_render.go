@@ -133,6 +133,7 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 		return MountPlan{}, err
 	}
 	plan.NetworkPosture = posture
+	plan.RootPosture = RootPostureForAxes(axes)
 	if posture == NetworkFiltered {
 		filtered, filteredErr := CompileFilteredNetworkRules(axes.Network)
 		if filteredErr != nil {
@@ -166,6 +167,58 @@ func NetworkPostureForRules(rules NetworkRules) (NetworkPosture, error) {
 			rules.Mode,
 		)
 	}
+}
+
+// RootPostureForAxes decides whether the plan needs a constructed filesystem
+// root. It is the whole of TCL-798's policy seam: everything else in this
+// change is an applier honoring the answer.
+//
+// Two independent reasons produce a constructed root, and either alone is
+// enough:
+//
+//  1. The network posture already required one. Both isolated and filtered
+//     start from a fresh root, and that predates this function.
+//  2. The profile EXPLICITLY restricts Unix sockets. Hiding ambient filesystem
+//     sockets and reopening only the listed ones is a filesystem operation, so
+//     it needs a root tclaude builds rather than the host's own.
+//
+// Reason 2 is deliberately keyed on an explicit closed/list tier, never on the
+// unset or open tiers. That is the no-default-on rule: a profile that says
+// nothing about sockets, or says "open", must keep launching in exactly the
+// posture it launched in before this function existed. Widening the trigger
+// would silently swap the filesystem root under every existing host-open
+// profile.
+//
+// What this cannot do is stated where it is decided, not only in the docs: with
+// the host network namespace shared, Linux abstract-namespace sockets (@…) live
+// in that namespace rather than in the filesystem, so no constructed root can
+// hide them. The capability layer rates this combination Partial and discloses
+// the abstract-socket remainder; see harness.accessEnforcementTable.
+func RootPostureForAxes(axes ResolvedAxes) RootPosture {
+	posture, err := NetworkPostureForRules(axes.Network)
+	if err != nil {
+		// An invalid network mode is reported by NetworkPostureForRules at the
+		// seam that can attribute it. Failing closed here keeps a corrupted
+		// value from being the reason a root is NOT constructed.
+		return RootConstructed
+	}
+	return RootPostureFor(posture, axes.UnixSockets.Mode)
+}
+
+// RootPostureFor is RootPostureForAxes with the network half already decided.
+// A launch boundary may have settled on a weaker network posture than the
+// profile asked for — a filtered launch whose live gateway prerequisites fail
+// runs host-open — and every surface describing that launch must agree about
+// the root it will actually build.
+func RootPostureFor(posture NetworkPosture, sockets AccessMode) RootPosture {
+	if posture == NetworkIsolatedWithAgentd || posture == NetworkFiltered {
+		return RootConstructed
+	}
+	switch sockets {
+	case AccessModeClosed, AccessModeList:
+		return RootConstructed
+	}
+	return RootHostInherited
 }
 
 // NetworkPostureForAccess maps the operator-authored network intent onto the

@@ -115,7 +115,8 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	allowedPort := requireFilteredSmokePort(t, filteredGatewayAllowedPortEnv)
 	deniedPort := requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv)
 
-	bwrapBinary, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkFiltered)
+	bwrapBinary, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	executables, err := resolveFilteredNetworkExecutables()
 	require.NoError(t, err)
@@ -229,7 +230,8 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 				h,
 				sandboxpolicy.ImplementationTclaudeLayer,
 				axes,
-				TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered),
+				TclaudeLayerLaunchOSSandbox(
+					sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed),
 				"",
 			)
 			require.NoError(t, capsErr)
@@ -438,7 +440,8 @@ func runFilteredLocalPresetSmoke(
 			h,
 			sandboxpolicy.ImplementationTclaudeLayer,
 			axes,
-			TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkFiltered),
+			TclaudeLayerLaunchOSSandbox(
+				sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed),
 			"",
 		)
 		require.NoError(t, err)

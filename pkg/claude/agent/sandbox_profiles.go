@@ -199,6 +199,9 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 			entry.Target, entry.Reason)
 	}
 	fmt.Fprintf(w, "  network posture: %s\n", result.Plan.NetworkPosture)
+	if result.Plan.RootPosture != "" {
+		fmt.Fprintf(w, "  root posture: %s\n", result.Plan.RootPosture)
+	}
 	for _, entry := range result.Plan.Entries {
 		source := ""
 		if entry.Source != "" && entry.Source != entry.Target {

@@ -105,6 +105,46 @@ func TestBwrapArgsAllowsRemapWithoutHostMountPointUnderConstructedRoot(t *testin
 	assert.NotEqual(t, -1, indexOfBwrapBind(got, "--ro-bind", source, guest))
 }
 
+// TCL-798 retires the missing-mount-point refusal for a host-open plan that
+// constructs its root: the network posture is unchanged, but there is now a
+// fresh tmpfs root for bubblewrap to create the mount point in. The refusal is
+// a property of the ROOT posture, not of the network posture it used to be
+// welded to.
+func TestBwrapArgsAllowsRemapWithoutHostMountPointUnderHostOpenConstructedRoot(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	source := filepath.Join(home, "dataset")
+	require.NoError(t, os.MkdirAll(source, 0o755))
+	guest := "/srv/shared"
+
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkHostOpen,
+		RootPosture:    sandboxpolicy.RootConstructed,
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: guest, Mode: sandboxpolicy.MountRO, Source: source},
+		},
+	}
+	got, err := bwrapArgs(nil, plan)
+	require.NoError(t, err)
+	assert.NotEqual(t, -1, indexOfBwrapBind(got, "--ro-bind", source, guest))
+	_, statErr := os.Stat(guest)
+	assert.True(t, os.IsNotExist(statErr),
+		"the applier still must not create the mount point on the host")
+
+	// Mutation guard: the same plan with the root posture removed must go back
+	// to refusing, so this test cannot pass because the refusal was deleted.
+	plan.RootPosture = sandboxpolicy.RootHostInherited
+	_, err = bwrapArgs(nil, plan)
+	require.ErrorContains(t, err, "tclaude_layer_missing_mount_point")
+}
+
 func TestBwrapArgsRefusesRemappedHideEntry(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "dataset")

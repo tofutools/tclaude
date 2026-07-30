@@ -73,7 +73,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		resolveTclaudeLayerAccessVerdict = oldVerdict
 	})
 	resolveTclaudeLayerAccessVerdict = func(
-		string, sandboxpolicy.NetworkPosture,
+		string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture,
 	) (harness.LaunchOSSandbox, error) {
 		return harness.LaunchOSSandbox{State: "on", Source: "test bwrap"}, nil
 	}
@@ -125,7 +125,7 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 		resolveTclaudeLayerAccessVerdict = oldVerdict
 	})
 	resolveTclaudeLayerAccessVerdict = func(
-		_ string, posture sandboxpolicy.NetworkPosture,
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
 	) (harness.LaunchOSSandbox, error) {
 		return harness.LaunchOSSandbox{
 			State: "on", Source: "test bwrap",
@@ -205,7 +205,7 @@ func TestPlanSandboxProfileAccessEnforcesOpenCodeLinuxDenyRows(t *testing.T) {
 	}
 	var resolvedPostures []sandboxpolicy.NetworkPosture
 	resolveTclaudeLayerAccessVerdict = func(
-		_ string, posture sandboxpolicy.NetworkPosture,
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
 	) (harness.LaunchOSSandbox, error) {
 		resolvedPostures = append(resolvedPostures, posture)
 		return harness.LaunchOSSandbox{
@@ -265,7 +265,7 @@ func TestPlanSandboxProfileAccessMintsModelTransportFromLaunchContext(t *testing
 		}
 	}
 	resolveTclaudeLayerAccessVerdict = func(
-		string, sandboxpolicy.NetworkPosture,
+		string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture,
 	) (harness.LaunchOSSandbox, error) {
 		return harness.LaunchOSSandbox{
 			State: "on", Source: "test filtered bwrap", FilteredNetwork: true,

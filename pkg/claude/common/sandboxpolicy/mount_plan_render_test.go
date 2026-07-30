@@ -752,6 +752,7 @@ func TestMountPlanSnapshot(t *testing.T) {
 			want: strings.Join([]string{
 				"mount-plan:",
 				"  network host-open",
+				"  root host-inherited",
 				"  mounts  (empty)",
 				"",
 			}, "\n"),
@@ -767,6 +768,7 @@ func TestMountPlanSnapshot(t *testing.T) {
 			want: strings.Join([]string{
 				"mount-plan:",
 				"  network host-open",
+				"  root host-inherited",
 				"  hide /home/dev",
 				"  rw   /home/dev/git/project",
 				"  ro   /home/dev/git/project/.git",
@@ -784,6 +786,7 @@ func TestMountPlanSnapshot(t *testing.T) {
 			want: strings.Join([]string{
 				"mount-plan:",
 				"  network host-open",
+				"  root host-inherited",
 				"  rw   /home/dev",
 				"  hide /home/dev/.aws",
 				"  hide /home/dev/.ssh",
@@ -810,6 +813,7 @@ func TestMountPlanSnapshotIncludesAliases(t *testing.T) {
 	want := strings.Join([]string{
 		"mount-plan:",
 		"  network isolated-with-agentd",
+		"  root constructed",
 		"  alias /home/dev/cache -> /mnt/cache",
 		"  mounts  (empty)",
 		"",

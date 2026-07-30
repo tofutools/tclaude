@@ -706,7 +706,11 @@ func openCodeServeProcessExec(
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture)
+	root, err := session.TclaudeLayerRootPosture(posture, sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, nil, nil, noCleanup, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(posture, root)
 	if err != nil {
 		return "", nil, nil, nil, noCleanup, err
 	}
@@ -1016,7 +1020,13 @@ func openCodeServeExec(
 			"unsupported_sandbox_profile_network: OpenCode tclaude-layer requires the host-open loopback control plane and endpoint-ownership proof",
 		)
 	}
-	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(sandboxpolicy.NetworkHostOpen)
+	root, err := session.TclaudeLayerRootPosture(
+		sandboxpolicy.NetworkHostOpen, sandboxSpec.Effective)
+	if err != nil {
+		return "", nil, err
+	}
+	bwrapBinary, _, err := resolveOpenCodeTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, root)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1058,7 +1068,8 @@ func openCodeTclaudeLayerLaunchSpec(
 	}
 	if posture != sandboxpolicy.NetworkHostOpen {
 		if posture == sandboxpolicy.NetworkFiltered {
-			_, _, filteredErr := resolveOpenCodeTclaudeLayer(posture)
+			_, _, filteredErr := resolveOpenCodeTclaudeLayer(
+				posture, sandboxpolicy.RootConstructed)
 			if filteredErr != nil {
 				return nil, filteredErr
 			}

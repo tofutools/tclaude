@@ -731,14 +731,16 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux bubblewrap verdict; platform verdicts have build-tagged tests")
 	}
-	verdict := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkHostOpen)
+	verdict := TclaudeLayerLaunchOSSandbox(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
 	assert.Equal(t, "on", verdict.State)
 	assert.Equal(t, "tclaude-layer (bubblewrap; host network)", verdict.Source)
 	assert.NotContains(t, verdict.Source, "ambient host Unix sockets reachable",
 		"the socket caveat is the badge's partial-fidelity sentence to state, once")
 	assert.True(t, verdict.Unverified, "the badge must render the partial-fidelity caveat")
 
-	isolated := TclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkIsolatedWithAgentd)
+	isolated := TclaudeLayerLaunchOSSandbox(
+		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
 	assert.Equal(t, "on", isolated.State)
 	assert.Contains(t, isolated.Source, "isolated network")
 	assert.Contains(t, isolated.Source, "host loopback/IDE bridge unavailable")
@@ -747,7 +749,8 @@ func TestTclaudeLayerVerdictRecordsPartialSocketFidelity(t *testing.T) {
 	assert.False(t, isolated.Unverified, "constructed-root socket isolation has full fidelity")
 
 	openCode := TclaudeLayerLaunchOSSandboxForHarness(
-		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen)
+		harness.OpenCodeName, sandboxpolicy.NetworkHostOpen,
+		sandboxpolicy.RootHostInherited)
 	assert.Equal(t, "on", openCode.State)
 	assert.Equal(t,
 		"tclaude-layer (bubblewrap; OpenCode tool-executing server confined)",
@@ -1133,6 +1136,76 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, len(got)-4, indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir),
 		"class-4 tmux hide remains final under the constructed root")
+}
+
+// TCL-798. The whole point of the new posture is that these two decisions are
+// now independent, so the assertions come in pairs: everything the constructed
+// root does, and the network namespace still being the host's.
+func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	socket := agentipc.CanonicalSocketPath()
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	policySocket := filepath.Join(home, "runtime", "build.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(policySocket), 0o700))
+	policyListener, err := net.Listen("unix", policySocket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = policyListener.Close() })
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkHostOpen,
+		RootPosture:    sandboxpolicy.RootConstructed,
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: home, Mode: sandboxpolicy.MountHide},
+			{Path: workspace, Mode: sandboxpolicy.MountRW},
+		},
+	}
+	socketPaths := append(sandboxpolicy.AgentdSocketFloor(), policySocket)
+	got, err := bwrapArgsWithDaemonFinal(
+		[]string{workspace}, plan, nil, nil, nil, socketPaths, "", nil)
+	require.NoError(t, err)
+
+	assert.NotContains(t, got, "--unshare-net",
+		"host IP networking is exactly what this posture preserves")
+	assert.NotContains(t, got, "--unshare-user")
+	assert.Contains(t, got, "--unshare-pid",
+		"without a PID namespace a host process's /proc/<pid>/root reopens every hidden socket")
+	rootTmpfs := indexOfBwrapTriplet(got, "--tmpfs", "/")
+	rootRemount := indexOfBwrapTriplet(got, "--remount-ro", "/")
+	require.NotEqual(t, -1, rootTmpfs)
+	require.NotEqual(t, -1, rootRemount)
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/"),
+		"a constructed root must not also blanket-bind the host root")
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/usr"),
+		"the static OS surface is what makes the constructed root usable")
+
+	socketBinds := indicesOfBwrapTriplet(got, "--ro-bind", socket)
+	require.Len(t, socketBinds, 2,
+		"the agentd floor must survive an ordinary ancestor deny here too")
+	assert.Less(t, socketBinds[1], rootRemount)
+	require.Len(t, indicesOfBwrapTriplet(got, "--ro-bind", policySocket), 2,
+		"an authored socket must be bound and repaired beneath the ancestor deny")
+
+	// Mutation guard: with the root posture back at its zero value the same
+	// plan must render the pre-TCL-798 host-open arguments, so no assertion
+	// above can be satisfied by making the constructed root unconditional.
+	plan.RootPosture = sandboxpolicy.RootHostInherited
+	inherited, err := bwrapArgsWithDaemonFinal(
+		[]string{workspace}, plan, nil, nil, nil, socketPaths, "", nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/"))
+	assert.NotContains(t, inherited, "--unshare-pid")
+	assert.Equal(t, -1, indexOfBwrapTriplet(inherited, "--ro-bind", "/usr"))
+	assert.Empty(t, indicesOfBwrapTriplet(inherited, "--ro-bind", policySocket),
+		"an inherited root has no constructed root to allowlist sockets into")
 }
 
 func TestBwrapArgsIsolatedAliasesRespectHideAndRemountOrdering(t *testing.T) {

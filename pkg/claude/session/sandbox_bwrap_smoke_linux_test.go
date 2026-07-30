@@ -49,6 +49,7 @@ const (
 	smokePeerSocketEnv         = "TCLAUDE_SANDBOX_V2_PEER_SOCKET"
 	smokePositiveRootSocketEnv = "TCLAUDE_SANDBOX_V2_POSITIVE_ROOT_SOCKET"
 	smokeSocketHelperEnv       = "TCLAUDE_SANDBOX_V2_SOCKET_HELPER"
+	smokeHostNetworkHelperEnv  = "TCLAUDE_SANDBOX_V2_HOSTNET_HELPER"
 	// TCL-866 mount-path evidence. Each pair names the host directory a grant
 	// reads from and the sandbox path it must appear at.
 	smokeMountROSourceEnv = "TCLAUDE_SANDBOX_V2_MOUNT_RO_SOURCE"
@@ -73,7 +74,8 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on an unsandboxed Linux host with bubblewrap")
 	}
-	binary, _, err := ResolveTclaudeLayer(sandboxpolicy.NetworkIsolatedWithAgentd)
+	binary, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 
 	home, err := os.UserHomeDir()
@@ -297,6 +299,141 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			t, binary, helperBinary, phase0, plan,
 			policySockets[i], policySockets[1-i], positiveRootSocket,
 		)
+	}
+
+	// TCL-798. The constructed root has so far only ever served isolated
+	// launches; this arm is the real-engine evidence that it also holds up with
+	// the HOST network namespace, which is a much broader surface. It is the
+	// evidence the Linux SocketClosed/SocketList capability flip under
+	// network=open rests on.
+	t.Run("host-network-constructed-root", func(t *testing.T) {
+		hostNetworkPlan := resizePlanClone(plan)
+		hostNetworkPlan.NetworkPosture = sandboxpolicy.NetworkHostOpen
+		hostNetworkPlan.RootPosture = sandboxpolicy.RootConstructed
+		require.Equal(t, sandboxpolicy.RootConstructed,
+			hostNetworkPlan.EffectiveRootPosture())
+		runTclaudeLayerHostNetworkConstructedRootHelper(
+			t, binary, helperBinary, phase0, hostNetworkPlan,
+			policySockets[0], policySockets[1], runtimeSocket, tmuxSocket,
+			strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(),
+			tclaudeBinary, mounts,
+		)
+	})
+}
+
+func runTclaudeLayerHostNetworkConstructedRootHelper(
+	t *testing.T,
+	binary, helperBinary string,
+	phase0WriteDirs []string,
+	plan sandboxpolicy.MountPlan,
+	allowedSocket, peerSocket, runtimeSocket, tmuxSocket,
+	hostPID, hostLoopbackAddr, tclaudeBinary string,
+	mounts tclaudeLayerSmokeMounts,
+) {
+	t.Helper()
+	socketPaths := append(sandboxpolicy.AgentdSocketFloor(), allowedSocket)
+	args, err := bwrapArgsWithDaemonFinal(
+		phase0WriteDirs, plan, nil, nil, nil, socketPaths, "", nil)
+	require.NoError(t, err)
+	require.NotContains(t, args, "--unshare-net",
+		"this arm exists to prove the constructed root without network isolation")
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary,
+		append(args, "--", helperBinary,
+			"-test.run=^TestTclaudeLayerHostNetworkConstructedRootHelper$")...)
+	cmd.Env = append(os.Environ(),
+		smokeHostNetworkHelperEnv+"=1",
+		smokeAllowedSocketEnv+"="+allowedSocket,
+		smokePeerSocketEnv+"="+peerSocket,
+		smokeRuntimeSocketEnv+"="+runtimeSocket,
+		smokeTmuxSocketEnv+"="+tmuxSocket,
+		smokeHostPIDEnv+"="+hostPID,
+		smokeLoopbackAddrEnv+"="+hostLoopbackAddr,
+		smokeTclaudeBinaryEnv+"="+tclaudeBinary,
+		smokeMountROSourceEnv+"="+mounts.ReadOnlySource,
+		smokeMountROGuestEnv+"="+mounts.ReadOnlyGuest,
+		smokeMountRWSourceEnv+"="+mounts.ReadWriteSource,
+		smokeMountRWGuestEnv+"="+mounts.ReadWriteGuest,
+	)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatal("tclaude-layer host-network constructed-root smoke timed out")
+	}
+	require.NoErrorf(t, err,
+		"tclaude-layer host-network constructed-root smoke output: %s", output)
+}
+
+func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
+	if os.Getenv(smokeHostNetworkHelperEnv) != "1" {
+		t.Skip("host-smoke host-network constructed-root helper subprocess")
+	}
+	allowedSocket := os.Getenv(smokeAllowedSocketEnv)
+	peerSocket := os.Getenv(smokePeerSocketEnv)
+	runtimeSocket := os.Getenv(smokeRuntimeSocketEnv)
+	tmuxSocket := os.Getenv(smokeTmuxSocketEnv)
+	hostPID := os.Getenv(smokeHostPIDEnv)
+	hostLoopbackAddr := os.Getenv(smokeLoopbackAddrEnv)
+	tclaudeBinary := os.Getenv(smokeTclaudeBinaryEnv)
+
+	// 1. Ambient filesystem sockets are gone, which is the capability being
+	//    claimed, and the /proc/<pid>/root route around it is closed too.
+	if conn, err := net.DialTimeout("unix", runtimeSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("ambient runtime socket remained reachable inside the host-network constructed root")
+	}
+	if conn, err := net.DialTimeout("unix", tmuxSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("host tmux socket remained reachable despite the final applier hide")
+	}
+	if conn, err := net.DialTimeout("unix", peerSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("a non-allowlisted socket remained reachable")
+	}
+	procRootSocket := filepath.Join(
+		"/proc", hostPID, "root", strings.TrimPrefix(runtimeSocket, "/"))
+	if conn, err := net.DialTimeout("unix", procRootSocket, 250*time.Millisecond); err == nil {
+		_ = conn.Close()
+		t.Fatal("ambient socket remained reachable through a host process's /proc/<pid>/root")
+	}
+
+	// 2. The allowlisted socket and agentd still work.
+	conn, err := net.DialTimeout("unix", allowedSocket, 250*time.Millisecond)
+	require.NoError(t, err, "the allowlisted socket must be reachable")
+	require.NoError(t, conn.Close())
+	whoami, err := exec.Command(tclaudeBinary, "agent", "whoami").CombinedOutput()
+	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
+		"agentd must stay reachable through the constructed root; got %q", whoami)
+
+	// 3. Host IP networking is exactly what this posture preserves. A host
+	//    loopback listener the isolated posture could not see is reachable here,
+	//    and the host resolver survived root construction.
+	hostConn, err := net.DialTimeout("tcp4", hostLoopbackAddr, 2*time.Second)
+	require.NoError(t, err,
+		"the host network namespace must be preserved; host loopback is unreachable")
+	require.NoError(t, hostConn.Close())
+	resolv, err := os.ReadFile("/etc/resolv.conf")
+	require.NoError(t, err,
+		"a host-network sandbox that cannot read its resolver cannot resolve names")
+	assert.NotEmpty(t, strings.TrimSpace(string(resolv)))
+
+	// 4. TCL-866 projections land in a root the host never had to prepare.
+	mountROGuest := os.Getenv(smokeMountROGuestEnv)
+	mountRWGuest := os.Getenv(smokeMountRWGuestEnv)
+	projected, err := os.ReadFile(filepath.Join(mountROGuest, "probe"))
+	require.NoError(t, err,
+		"a remapped read grant must appear at its sandbox path under this posture too")
+	assert.Equal(t, "mounted-ro", string(projected))
+	require.NoError(t,
+		os.WriteFile(filepath.Join(mountRWGuest, "written-host-network"), []byte("ok"), 0o600))
+	for _, hostSource := range []string{
+		os.Getenv(smokeMountROSourceEnv), os.Getenv(smokeMountRWSourceEnv),
+	} {
+		require.NotEmpty(t, hostSource)
+		_, err = os.Stat(hostSource)
+		require.Errorf(t, err,
+			"the host path %q must not also be exposed inside the sandbox", hostSource)
 	}
 }
 

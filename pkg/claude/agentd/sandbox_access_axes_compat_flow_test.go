@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -123,10 +124,15 @@ func TestSandboxProfileEnforcementPredictionIsOrderedAndCannotGateLaunch(t *test
 	assert.Equal(t, "tclaude-layer", got.Targets[0].Implementation)
 	assert.Equal(t, "linux", got.Targets[0].Platform)
 	assert.True(t, got.Targets[0].Predicted)
-	assert.Equal(t, harness.AccessPredictionRefused,
+	// TCL-798: Linux tclaude-layer now has a host-network constructed root, so
+	// this combination is enforceable — partially, and the prediction has to say
+	// which part is not.
+	assert.Equal(t, harness.AccessPredictionEnforcedPartial,
 		got.Targets[0].Axes.UnixSockets.Outcome)
 	assert.Contains(t, got.Targets[0].Axes.UnixSockets.Detail,
-		`unix_sockets "closed" cannot be enforced with open network access`)
+		"abstract-namespace Unix sockets")
+	assert.Contains(t, got.Targets[0].Axes.UnixSockets.Detail,
+		"readable/writable directories")
 	assert.Equal(t, "harness-builtin", got.Targets[1].Implementation)
 	assert.Equal(t, harness.AccessPredictionEnforced,
 		got.Targets[1].Axes.UnixSockets.Outcome)
@@ -1245,7 +1251,7 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(func(
-		_ string, posture sandboxpolicy.NetworkPosture,
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
 	) (harness.LaunchOSSandbox, error) {
 		return harness.LaunchOSSandbox{
 			State: "on", Source: fmt.Sprintf("test live tclaude-layer verdict for %v", posture),
@@ -1283,30 +1289,95 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	require.NoError(t, json.Unmarshal(warned.Raw, &spawn))
 	require.NotNil(t, spawn.Resolved)
 	require.NotEmpty(t, spawn.Resolved.Warnings)
-	warningLiteral := "host-open network on Linux tclaude-layer"
-	closedLiteral := `unix_sockets \"closed\" cannot be enforced with open network access on Linux tclaude-layer`
+	// TCL-798 flips the Linux host-open socket combination from "no mechanism,
+	// widened to open" to "constructed root, enforced partially". Darwin's
+	// host-open renderer still wires no socket denies, so it keeps the old
+	// wording and the old refusals.
+	warningLiteral := "abstract-namespace Unix sockets"
 	ambientLiteral := `unix_sockets \"open\" cannot preserve ambient host socket visibility with closed network access`
-	if runtime.GOOS == "darwin" {
-		warningLiteral = "tclaude-layer Seatbelt (process scope)"
-		closedLiteral = `unix_sockets \"closed\" is not yet enforceable with open network access on macOS tclaude-layer`
-		ambientLiteral = `ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer`
-	}
-	assert.Contains(t, spawn.Resolved.Warnings[len(spawn.Resolved.Warnings)-1],
-		warningLiteral)
-	persisted, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
-	require.NoError(t, err)
-	require.NotNil(t, persisted)
-	require.NotEmpty(t, persisted.Effective.AccessNotices)
-	assert.Equal(t, sandboxpolicy.AccessNoticeClassDegradation,
-		persisted.Effective.AccessNotices[len(persisted.Effective.AccessNotices)-1].Class)
-
-	for _, tc := range []struct {
+	refusedProfiles := []struct {
 		profile string
 		want    string
 	}{
-		{"socket-closed", closedLiteral},
 		{"ambient-sockets", ambientLiteral},
-	} {
+	}
+	socketsSurviveHostOpen := true
+	if runtime.GOOS == "darwin" {
+		warningLiteral = "tclaude-layer Seatbelt (process scope)"
+		ambientLiteral = `ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer`
+		refusedProfiles = []struct {
+			profile string
+			want    string
+		}{
+			{"socket-closed",
+				`unix_sockets \"closed\" is not yet enforceable with open network access on macOS tclaude-layer`},
+			{"ambient-sockets", ambientLiteral},
+		}
+		socketsSurviveHostOpen = false
+	}
+	assert.Truef(t, containsSubstring(spawn.Resolved.Warnings, warningLiteral),
+		"spawn warnings %v must disclose %q", spawn.Resolved.Warnings, warningLiteral)
+	persisted, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	socketDegradation := socketDegradationNotice(persisted.Effective.AccessNotices)
+	require.NotNil(t, socketDegradation,
+		"a partially enforced socket axis must persist its degradation notice")
+	if socketsSurviveHostOpen {
+		// The delivered launch keeps the authored allow list rather than
+		// widening it away, and the plan it renders builds its own root while
+		// leaving the host network namespace alone.
+		require.NotNil(t, persisted.Effective.UnixSockets)
+		assert.Equal(t, sandboxpolicy.AccessModeList,
+			persisted.Effective.UnixSockets.Mode)
+		assert.Equal(t, sandboxpolicy.AccessNoticeEffectEnforcedWider,
+			socketDegradation.Effect)
+		assert.Contains(t, socketDegradation.Detail, "abstract-namespace Unix sockets")
+		plan, planErr := sandboxpolicy.RenderMountPlan(persisted.Effective)
+		require.NoError(t, planErr)
+		assert.Equal(t, sandboxpolicy.NetworkHostOpen, plan.NetworkPosture)
+		assert.Equal(t, sandboxpolicy.RootConstructed, plan.RootPosture)
+
+		// A host-open profile that never authored the socket axis must be
+		// untouched by all of this.
+		create("no-socket-axis", map[string]any{"mode": "open"}, nil)
+		untouched := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": "untouched", "approval": "bypassPermissions",
+			"sandbox_profile":        "no-socket-axis",
+			"sandbox_implementation": "tclaude-layer",
+		})
+		require.Equalf(t, http.StatusOK, untouched.Code, "body=%s", untouched.Raw)
+		var untouchedSpawn agent.SpawnResponse
+		require.NoError(t, json.Unmarshal(untouched.Raw, &untouchedSpawn))
+		untouchedConfig, configErr := db.AgentEffectiveSandboxConfigForConv(
+			untouchedSpawn.ConvID)
+		require.NoError(t, configErr)
+		require.NotNil(t, untouchedConfig)
+		assert.Nil(t, untouchedConfig.Effective.UnixSockets)
+		untouchedPlan, planErr := sandboxpolicy.RenderMountPlan(untouchedConfig.Effective)
+		require.NoError(t, planErr)
+		assert.Equal(t, sandboxpolicy.RootHostInherited, untouchedPlan.RootPosture,
+			"no default-on: an unauthored socket axis keeps the inherited host root")
+
+		// Closed sockets under host-open network now launch too, with the same
+		// truthful partial disclosure rather than a refusal.
+		closedSockets := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": "closed-sockets", "approval": "bypassPermissions",
+			"sandbox_profile":        "socket-closed",
+			"sandbox_implementation": "tclaude-layer",
+		})
+		require.Equalf(t, http.StatusOK, closedSockets.Code, "body=%s", closedSockets.Raw)
+		var closedSpawn agent.SpawnResponse
+		require.NoError(t, json.Unmarshal(closedSockets.Raw, &closedSpawn))
+		require.NotNil(t, closedSpawn.Resolved)
+		require.NotEmpty(t, closedSpawn.Resolved.Warnings)
+		assert.Truef(t, containsSubstring(closedSpawn.Resolved.Warnings,
+			"abstract-namespace Unix sockets"),
+			"closed-socket warnings %v must disclose the abstract-socket remainder",
+			closedSpawn.Resolved.Warnings)
+	}
+
+	for _, tc := range refusedProfiles {
 		refused := f.AsHuman().SpawnWith("crew", map[string]any{
 			"name": "refused-" + tc.profile, "approval": "bypassPermissions",
 			"sandbox_profile":        tc.profile,
@@ -1325,4 +1396,29 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	require.Equalf(t, http.StatusOK, legacyBehavior.Code,
 		"unset sockets plus closed network preserves today's isolated launch: %s",
 		legacyBehavior.Raw)
+}
+
+func containsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// socketDegradationNotice picks the unix_sockets degradation out of a persisted
+// notice list. Indexing the last entry would be wrong once the axis survives
+// the ladder: a delivered socket list also emits a launch-class materialization
+// notice after it.
+func socketDegradationNotice(
+	notices []sandboxpolicy.AccessNotice,
+) *sandboxpolicy.AccessNotice {
+	for i := range notices {
+		if notices[i].Class == sandboxpolicy.AccessNoticeClassDegradation &&
+			notices[i].Axis == "unix_sockets" {
+			return &notices[i]
+		}
+	}
+	return nil
 }

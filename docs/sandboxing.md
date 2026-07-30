@@ -255,9 +255,11 @@ remains Linux-only. Linux uses
 isolated-with-agentd network boundary. If any required capability is missing,
 tclaude refuses the launch instead of silently falling back.
 
-On Linux the layer does not unshare the IPC namespace. The host-open posture
-also retains the host PID namespace; the isolated posture unshares PIDs as part
-of closing ambient socket access. Under `tclaude-layer`, the harness's own OS
+On Linux the layer does not unshare the IPC namespace. A host-open posture with
+an inherited root also retains the host PID namespace; every constructed root
+unshares PIDs as part of closing ambient socket access, including the host-open
+constructed root, because otherwise a host process's `/proc/<pid>/root` would
+lead straight back to the sockets the root just hid. Under `tclaude-layer`, the harness's own OS
 sandbox is disabled inside the wrapper. The explicit Linux-only `stacked`
 implementation above is the reviewed exception for Claude Code and Codex.
 OpenCode's inner access profile permits all paths without compiling the sandbox
@@ -316,8 +318,10 @@ Missing or corrupt durable allocation state refuses a replay instead of
 silently returning to shared state. Harness-builtin OpenCode launches are
 unchanged.
 
-The Linux host-open posture starts with a read-only view of the host root; the
-isolated posture uses the constructed root described below. Both give `/dev`,
+The Linux host-open posture starts with a read-only view of the host root
+unless the profile authors the `unix_sockets` axis; the isolated and filtered
+postures, and host-open with an authored socket axis, use the constructed root
+described below. Both give `/dev`,
 `/proc`, and `/tmp` fresh sandbox views. Both platform appliers enforce four
 load-bearing precedence classes:
 
@@ -534,6 +538,25 @@ wraps the whole harness process, not only its tool executions:
   them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
   launch-contract path.
 
+Since TCL-798 the constructed root is no longer welded to the network posture.
+A profile that leaves network access open but authors the `unix_sockets` axis
+as `closed` or an allow `list` gets a **host-network constructed root** on
+Linux: bubblewrap builds the same fresh root and PID namespace as the isolated
+posture, binds the agentd socket and any listed sockets back, and does NOT
+create a network namespace, so host IP networking, host loopback services, and
+the IDE bridge keep working.
+
+That posture is deliberately rated **partially enforced**, permanently. With the
+host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
+not filesystem objects at all, so no mount plan can hide them; close network
+access as well if you need those confined too. The recursive-root remainder
+applies here as it does under closed network access: a socket beneath a
+directory the profile makes readable or writable stays reachable.
+
+It is never on by default. A profile that says nothing about `unix_sockets`, or
+sets it to `open`, launches with exactly the read-only host root it launched
+with before.
+
 The isolated posture has an explicit platform delta:
 
 | Property | Linux (`bubblewrap`) | macOS (`Seatbelt`) |
@@ -688,7 +711,9 @@ from escaping the constructed root through a host process's
 explicitly bound, or when an operator-authored filesystem grant re-exposes a
 parent directory under the normal most-specific-wins policy. This is the
 constructed-root posture's socket boundary; the compact badge tooltip does not
-report socket fidelity. Opt into its adjacent details chevron with
+report socket fidelity. The host-network constructed root shares the filesystem
+half of that boundary and the same PID isolation, but not the abstract-namespace
+half: that one closes only when the network namespace does. Opt into its adjacent details chevron with
 `features.recorded_sandbox_details` for recorded launch fidelity, or use
 `sandbox-profiles plan` for a dry-run of explicit inputs.
 
@@ -852,7 +877,10 @@ remain unreachable, across Linux's new network namespace or behind Darwin's
 Seatbelt network denies. tclaude deliberately does not infer the assertion from
 Codex `--oss` or a model name.
 
-The remaining limitation in the host-open posture is explicit:
+The remaining limitation in the host-open posture with an INHERITED root is
+explicit (a host-open profile that authors the `unix_sockets` axis gets the
+constructed root described above instead, and the ambient filesystem sockets go
+with it):
 
 - Ambient host Unix sockets remain connectable through the read-only root.
   Privileged daemon sockets such as `docker.sock` or containerd-class sockets
@@ -1148,14 +1176,15 @@ the effective preview. It never falls back to mounting at the host path: that
 would break the authored contract in both directions, exposing a path you did
 not authorize while leaving the one you did authorize empty.
 
-One further Linux caveat. Under the **host-open** network posture the sandbox
-root is the real host root bound read-only, so bubblewrap has nowhere to create
-a new mount point and the mount point must already exist on the host; tclaude
-refuses with `tclaude_layer_missing_mount_point` naming the path rather than
-creating it for you. Under the isolated or filtered postures the root is
-constructed, and the mount point is created inside the namespace with nothing
-required on the host. (Decoupling the constructed root from the network posture
-is tracked separately as TCL-798.)
+One further Linux caveat. When the sandbox root is the real host root bound
+read-only, bubblewrap has nowhere to create a new mount point, so the mount
+point must already exist on the host; tclaude refuses with
+`tclaude_layer_missing_mount_point` naming the path rather than creating it for
+you. Wherever tclaude constructs the root the mount point is created inside the
+namespace with nothing required on the host. Since TCL-798 that covers more
+than the isolated and filtered postures: a host-open profile that authors the
+`unix_sockets` axis also constructs its root, and the refusal no longer applies
+to it.
 
 ## What tclaude reopens for you, and what you must author
 

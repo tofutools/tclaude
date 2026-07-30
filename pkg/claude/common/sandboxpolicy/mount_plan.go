@@ -92,6 +92,35 @@ const (
 	NetworkFiltered
 )
 
+// RootPosture describes how an applier that owns a mount namespace builds the
+// sandbox filesystem root. It is a SIBLING of NetworkPosture rather than more
+// values on it, because the two answer different questions and TCL-798 stopped
+// them from being the same answer.
+//
+// Until TCL-798 the constructed root existed only beneath an isolated network
+// namespace, so one posture value could imply both. That coupling left the
+// profile combination unix_sockets=closed|list + network=open with no
+// enforcement path on Linux: the only mechanism that hides ambient filesystem
+// sockets was reachable only by also taking the host network away. Separating
+// the fields lets a plan ask for a constructed root while keeping host IP
+// networking.
+//
+// Appliers without a mount namespace ignore this field. macOS Seatbelt is a
+// path filter over the host namespace: it has no root to construct and
+// expresses the same intent with native socket denies, which is why Darwin
+// never had this gap.
+type RootPosture int
+
+const (
+	// RootHostInherited binds the host root read-only. It is the zero value so
+	// existing MountPlan literals keep the walking skeleton's behavior, and it
+	// leaves every ambient filesystem socket reachable.
+	RootHostInherited RootPosture = iota
+	// RootConstructed starts from a fresh root, so filesystem AF_UNIX sockets
+	// are absent unless the launch contract or the policy plan binds them back.
+	RootConstructed
+)
+
 // MountPlan is the harness-neutral mount intermediate representation.
 //
 // Entries are ordered: later entries shadow earlier ones. Renderers preserve
@@ -102,5 +131,24 @@ type MountPlan struct {
 	Entries         []MountEntry
 	Aliases         []MountAlias
 	NetworkPosture  NetworkPosture
+	RootPosture     RootPosture
 	FilteredNetwork *FilteredNetworkRuleSet
+}
+
+// EffectiveRootPosture is the root an applier must actually build, and is what
+// appliers and plan output read instead of the raw field.
+//
+// RootHostInherited is the zero value, which keeps pre-TCL-798 plan literals
+// valid. But an isolated or filtered network posture has ALWAYS implied a
+// constructed root, so a literal that names one of those postures and leaves
+// the new field unset must not be read as a request for the host root: that
+// would silently unbuild the root of the very postures whose whole point is
+// building one. Restating the implication here means the coupling is broken in
+// one direction only — a constructed root no longer requires network isolation,
+// while network isolation still requires a constructed root.
+func (p MountPlan) EffectiveRootPosture() RootPosture {
+	if p.RootPosture == RootConstructed {
+		return RootConstructed
+	}
+	return RootPostureFor(p.NetworkPosture, AccessModeUnset)
 }

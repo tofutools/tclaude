@@ -16,12 +16,13 @@ import (
 var resolveTclaudeLayerAccessVerdict = func(
 	harnessName string,
 	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
 ) (harness.LaunchOSSandbox, error) {
 	if session.TclaudeLayerUsesServerBoundary(harnessName) {
-		_, verdict, err := session.ResolveTclaudeLayerServer(posture)
+		_, verdict, err := session.ResolveTclaudeLayerServer(posture, root)
 		return verdict, err
 	}
-	_, verdict, err := session.ResolveTclaudeLayer(posture)
+	_, verdict, err := session.ResolveTclaudeLayer(posture, root)
 	return verdict, err
 }
 
@@ -229,7 +230,12 @@ func planSandboxProfileAccessForLaunch(
 				}
 			}
 		}
-		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture)
+		// The socket axis is read as AUTHORED here, before the capability
+		// ladder runs: this verdict is one of the ladder's inputs. If the
+		// ladder later widens the axis the probe was merely stricter than the
+		// launch needed, which fails closed.
+		root := sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode)
+		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture, root)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				sandboxImplementationUnavailableKind, err.Error()}
