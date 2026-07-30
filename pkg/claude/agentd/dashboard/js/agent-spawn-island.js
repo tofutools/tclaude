@@ -707,7 +707,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const resolvedSandboxImplLabel = sandboxImplResolvedLabel(
     view.sandboxImplOptions, launchDefaults?.implementation,
   );
-  const sandboxImplHint = sandboxImplHintFor(draft, view);
+  const sandboxImplHint = sandboxImplHintFor(draft, view, launchDefaults?.implementation);
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';

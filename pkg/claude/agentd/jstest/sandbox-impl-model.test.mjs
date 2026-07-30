@@ -152,14 +152,10 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   const codex = model.spawnCapabilityView({ harness: 'codex' }, { harnesses, sandboxImpl });
   const codexBuiltin = codex.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
   // A selector option names the implementation and nothing else. The
-  // filtered-network caveat is real, but it belongs on the description and the
-  // hint below the row, where it can be stated in full — not squeezed into a
-  // parenthetical that a closed <select> truncates.
+  // filtered-network caveat is real, but it is carried by the hint under the
+  // row, which has room to state it in full — not squeezed into a parenthetical
+  // that a closed <select> truncates.
   assert.equal(codexBuiltin.label, 'Codex CLI built-in');
-  assert.doesNotMatch(codexBuiltin.label, /filtered network/,
-    'option labels carry no metadata beyond which implementation is being chosen');
-  assert.match(codexBuiltin.descr, /no filtered network sandbox yet/,
-    'the caveat survives the label change, on the description');
   assert.match(codexBuiltin.descr, /upstream proxy is experimental and off by default/);
 });
 
@@ -187,7 +183,20 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   assert.equal(model.sandboxImplResolvedLabel(codexView.sandboxImplOptions, ''), '',
     'an unresolved answer names nothing rather than guessing');
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: '' }, codexView), null,
-    'inherit leaves the profile chain in control and must not claim the builtin target won');
+    'with no answer from the daemon the chain is still in control, so claim nothing');
+  assert.equal(
+    model.sandboxImplHintFor({ sandboxImpl: '' }, codexView, 'tclaude-layer'), null,
+    'a blank row resolving to the tclaude layer is not the Codex built-in caveat',
+  );
+  // Once the daemon HAS answered, a blank row is not unresolved any more — it
+  // names Codex's built-in sandbox, so it must also carry that sandbox's
+  // caveat. Withholding it here was the hole left when the caveat came out of
+  // the option label, and it is the commonest Codex spawn: the row untouched.
+  const codexResolvedHint = model.sandboxImplHintFor(
+    { sandboxImpl: '' }, codexView, 'harness-builtin',
+  );
+  assert.equal(codexResolvedHint.warn, true);
+  assert.match(codexResolvedHint.text, /no filtered network sandbox yet/);
   const codexHint = model.sandboxImplHintFor(
     { sandboxImpl: 'harness-builtin' }, codexView,
   );

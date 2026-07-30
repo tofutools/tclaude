@@ -644,6 +644,39 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   mounted.cleanup();
 });
 
+// The caveat used to ride in the option label, so an untouched Codex row
+// carried it for free. The label now names the implementation only, which left
+// the commonest Codex spawn — row never touched — silent about the one thing
+// that implementation cannot do. The hint has to cover the blank row too, using
+// the daemon's answer rather than a guess.
+test('an untouched Codex row still discloses the built-in sandbox network gap', async (t) => {
+  const mounted = await mountSpawn(t, {
+    loadLaunchDefaults: async (_group, _profile, harnessName) => ({
+      harness: harnessName || 'claude', sandbox: '',
+      implementation: 'harness-builtin', resolved_by: 'harness default',
+    }),
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    const harnessSelect = host.querySelector('#agent-spawn-harness');
+    setValue(harnessSelect, 'codex');
+    await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+    await flush(harness);
+
+    assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
+      'the row is untouched — this is the resolved-default path, not an explicit pick');
+    assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
+      '— Resolved default (Codex CLI built-in) —');
+    const hint = host.querySelector('#agent-spawn-sandbox-impl-hint');
+    assert.ok(hint, 'a blank row the daemon resolved to Codex built-in must still warn');
+    assert.match(hint.textContent, /no filtered network sandbox yet/);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
 test('Codex sandbox-off keeps a visible forced-none sandbox-profile choice', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;
