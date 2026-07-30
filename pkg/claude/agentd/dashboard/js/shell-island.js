@@ -10,6 +10,7 @@ import {
   messagesBadgeView,
   usageView,
 } from './shell-model.js';
+import { hasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
 const FOOTER_SESSION_EXPANDED_PREF = 'tclaude.dash.footer.session_expanded';
@@ -80,6 +81,8 @@ function GlobalActivity({ state, groupsState }) {
   useLayoutEffect(() => syncBotAnimations(), [view.animationKey]);
   return html`
     <span class="global-activity" id="global-activity" aria-label="Activity across all groups" title=${view.title || null}>
+      ${hasUnreadHumanNotifications(snapshot) ? html`<span class="human-notification-hint"
+        aria-hidden="true" title="One or more agents have unread notifications">!</span>` : null}
       <${ActivityModes} modes=${view.modes} />
     </span>
   `;

@@ -986,10 +986,11 @@ func humanMailboxPage(q string, page, pageSize int) mailboxPage {
 
 // humanMsgMatchesSearch reports whether a human notification matches the
 // (already-lowercased) query, over the same fields the agent-folder
-// search covers that a human message has: sender title / conv-id, group,
+// search covers that a human message has: sender title / stable agent-id /
+// conv-id, group,
 // subject, body.
 func humanMsgMatchesSearch(m mailboxMessage, lq string) bool {
-	for _, s := range []string{m.FromTitle, m.FromConv, m.Group, m.Subject, m.Body} {
+	for _, s := range []string{m.FromTitle, m.FromAgent, m.FromConv, m.Group, m.Subject, m.Body} {
 		if s != "" && strings.Contains(strings.ToLower(s), lq) {
 			return true
 		}

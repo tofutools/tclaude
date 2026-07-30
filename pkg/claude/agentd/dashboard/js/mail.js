@@ -1036,6 +1036,33 @@ async function openMailbox(id) {
   paintReader();
 }
 
+// Groups-tab unread markers target the shared human.notify folder, then narrow
+// its server-side search to the sending stable agent id. Set the query before
+// selecting the folder so selectMailbox's first load is already filtered; this
+// avoids a flash/race with the prior folder's debounced search.
+async function openHumanNotifications(sender) {
+  sender = String(sender || '').trim();
+  if (!sender) return;
+  if (mail.searchTimer) {
+    clearTimeout(mail.searchTimer);
+    mail.searchTimer = null;
+  }
+  mail.messageQuery = sender;
+  dashPrefs.setItem('tclaude.dash.filter.messages', sender);
+  mail.page = 1;
+  mail.selectedMsgs.clear();
+  const navBtn = $('nav [data-tab="messages"]');
+  if (navBtn) {
+    suppressNextMessagesAttention();
+    navBtn.click();
+  }
+  await loadMailboxes();
+  const selected = await selectMailbox(HUMAN_ID);
+  if (!selected) return;
+  mail.selectedMsgId = mail.messages[0]?.id ?? null;
+  paintReader();
+}
+
 // --- access requests (human approvals) ------------------------------
 
 // accessRequestsMailbox is the synthetic sidebar folder for approvals. It
@@ -1575,7 +1602,7 @@ function initMail() {
 export const mailController = Object.freeze({
   state: mailState,
   renderMailTab, initMail, renderAccessRequests,
-  focusAccessRequest, openMailbox, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
+  focusAccessRequest, openMailbox, openHumanNotifications, senderOnline, focusNextAttention, setBoxQuery, setMessageQuery,
   setShowRetired, setShowEmpty, setShowPrevGens,
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
   toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,
