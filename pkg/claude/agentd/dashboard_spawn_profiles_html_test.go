@@ -70,6 +70,7 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="profile-editor-name"`, "the editor's profile-name field")
 	present(`id="profile-editor-disabled"`, "the editor can disable a profile without deleting it")
 	present(`id="profile-editor-disabled-reason"`, "the editor captures the reason shown on failed spawns")
+	present(`hidden=${local || !draft.disabled}`, "the disable reason is only shown while the profile is disabled")
 	present(`profile-card-disabled`, "disabled profiles stay visible and visibly marked in the manager")
 	present(`🚫 Disabled`, "disabled profile cards use an unmistakable prohibition marker")
 	present(`const status = profile.disabled`, "profile selectors key their warning marker from the explicit disabled state")
