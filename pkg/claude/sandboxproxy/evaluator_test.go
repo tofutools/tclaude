@@ -295,3 +295,57 @@ func TestNewEvaluatorRejectsUnmaterializedRules(t *testing.T) {
 		t.Fatal("expected unmaterialized launch intent to be refused")
 	}
 }
+
+// TestLoopbackIdentityIsOneDomainEverywhere pins the property whose absence
+// produced a deny bypass: every spelling of the host is governed by the
+// loopback selector, on both polarities and at both evaluation stages. A strict
+// predicate in one place and a broad one in another is exactly how a deny row
+// authored against the loopback selector went unmatched.
+func TestLoopbackIdentityIsOneDomainEverywhere(t *testing.T) {
+	// 0.0.0.0 and :: reach the host, and Linux routes 0.0.0.0/8 there, so all
+	// of these must behave exactly as 127.0.0.1 does.
+	spellings := []string{"127.0.0.1", "::1", "0.0.0.0", "::", "0.5.6.7"}
+
+	denyPolicy := listRules(
+		[]sandboxpolicy.NetworkAllowEntry{{Domain: "example.com"}, {Loopback: true}},
+		[]sandboxpolicy.NetworkAllowEntry{{Loopback: true, Ports: []int{22}}},
+	)
+	allowPolicy := listRules(
+		[]sandboxpolicy.NetworkAllowEntry{{Loopback: true, Ports: []int{8080}}}, nil)
+
+	for _, spelling := range spellings {
+		addr := netip.MustParseAddr(spelling)
+
+		t.Run("a loopback deny refuses a name resolving to "+spelling, func(t *testing.T) {
+			got := mustEvaluator(t, denyPolicy).EvaluateResolvedAddress(
+				mustTarget(t, "example.com", 22), addr)
+			if got.Verdict != VerdictDeniedByRule {
+				t.Fatalf("verdict = %q, want %q", got.Verdict, VerdictDeniedByRule)
+			}
+		})
+
+		t.Run("a loopback deny refuses a literal "+spelling, func(t *testing.T) {
+			got := mustEvaluator(t, denyPolicy).Evaluate(mustTarget(t, spelling, 22))
+			if got.Verdict != VerdictDeniedByRule {
+				t.Fatalf("verdict = %q, want %q", got.Verdict, VerdictDeniedByRule)
+			}
+		})
+
+		t.Run("a loopback allow admits a literal "+spelling, func(t *testing.T) {
+			got := mustEvaluator(t, allowPolicy).Evaluate(
+				mustTarget(t, spelling, 8080))
+			if !got.Allowed() {
+				t.Fatalf("verdict = %q, want allowed by the loopback row",
+					got.Verdict)
+			}
+		})
+
+		t.Run("no loopback row refuses a literal "+spelling, func(t *testing.T) {
+			evaluator := mustEvaluator(t, listRules(
+				[]sandboxpolicy.NetworkAllowEntry{{Domain: "example.com"}}, nil))
+			if got := evaluator.Evaluate(mustTarget(t, spelling, 8080)); got.Allowed() {
+				t.Fatalf("%s was allowed with no authored loopback row", spelling)
+			}
+		})
+	}
+}

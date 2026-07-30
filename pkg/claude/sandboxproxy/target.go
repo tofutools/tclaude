@@ -80,27 +80,25 @@ func ParseTarget(host string, port int) (Target, error) {
 // resolve host-side and meet the private-destination blocker like any other.
 const LoopbackTargetName = "localhost"
 
-// IsLoopback reports whether the client asked for host loopback. Under this
-// posture the loopback selector is the only authority over host loopback —
-// there is no synthetic address for a CIDR rule or a DNS answer to smuggle in.
+// IsLoopback reports whether the client asked for the host running the proxy,
+// by any of its spellings. Under this posture the loopback selector is the only
+// authority over host loopback — there is no synthetic address for a CIDR rule
+// or a DNS answer to smuggle in.
+//
+// This is deliberately the single loopback predicate in the package. An earlier
+// revision had a strict one here and a broader one for resolved addresses; the
+// two disagreed about 0.0.0.0, and a deny row authored against the loopback
+// selector went unmatched as a result. One predicate, used by both polarities
+// and both evaluation stages, is what keeps that from recurring.
 func (t Target) IsLoopback() bool {
 	switch t.Kind {
 	case TargetKindLiteral:
-		return t.Addr.IsLoopback()
+		return namesLocalHost(t.Addr)
 	case TargetKindName:
 		return t.Name == LoopbackTargetName
 	default:
 		return false
 	}
-}
-
-// namesLocalHost reports whether the target reaches the host running the
-// proxy, by any of its spellings. It is the loopback selector's full domain.
-func (t Target) namesLocalHost() bool {
-	if t.IsLoopback() {
-		return true
-	}
-	return t.Kind == TargetKindLiteral && namesLocalHost(t.Addr)
 }
 
 // Host renders the destination identity as the client stated it.

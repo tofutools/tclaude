@@ -125,7 +125,7 @@ func (e *Evaluator) Evaluate(target Target) Decision {
 	// its own; host loopback is only ever reached through an authored loopback
 	// row. Honoring the default here would hand an open policy a destination it
 	// never asked for and never previously had.
-	if e.defaultAccept && !target.namesLocalHost() {
+	if e.defaultAccept && !target.IsLoopback() {
 		return Decision{Verdict: VerdictAllowed}
 	}
 	if rule := e.match(e.rules.Rules, names.Allow, target, false); rule != nil {
