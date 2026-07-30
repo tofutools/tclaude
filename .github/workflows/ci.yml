@@ -576,7 +576,9 @@ jobs:
           # deny-probe failure inside the sandbox.
           for endpoint in "TCP4:198.18.1.10:41001" "TCP6:[fd00:824::10]:41001"; do
             token="opencode-deny-fixture-$endpoint"
-            reply=$(printf '%s' "$token" | timeout 5 socat -T 2 -t 2 - "$endpoint")
+            # Tolerate a failing round trip here: the explicit check below is
+            # the diagnostic, not the shell's -e abort.
+            reply=$(printf '%s' "$token" | timeout 5 socat -T 2 -t 2 - "$endpoint" || true)
             if [[ "$reply" != "$token" ]]; then
               echo "::error::OpenCode deny fixture failed a direct round trip to $endpoint"
               exit 1
