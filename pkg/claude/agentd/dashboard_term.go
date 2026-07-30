@@ -105,8 +105,8 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := termSessionName(res.ConvID, which)
-	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, shellSingleQuote(name), shellSingleQuote(dir))
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
+		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(name), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, name)
 }
 
@@ -171,8 +171,8 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessName := groupTermSessionName(g.Name)
-	cmd := fmt.Sprintf("tmux -L %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, shellSingleQuote(sessName), shellSingleQuote(dir))
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
+		clcommon.TmuxSocketName, webTerminalTmuxFlags(), shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName)
 }
 
@@ -234,7 +234,7 @@ func handleDashboardOpenWindowWS(w http.ResponseWriter, r *http.Request) {
 	// (#{client_tty}) teardown detachTmuxSession already flags as future work;
 	// until then this is still strictly better than the pre-fix behaviour and
 	// correct for the common native-terminal case.
-	runPTYOverWS(w, r, openAttachCmdForce(sess.ID), sess.TmuxSession)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmdForce(sess.ID)), sess.TmuxSession)
 }
 
 // spawnFocusWSPath builds the /api/spawn-focus-ws/{label} path the
@@ -278,7 +278,7 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no tmux pane for "+label, http.StatusNotFound)
 		return
 	}
-	runPTYOverWS(w, r, openAttachCmd(label), sess.TmuxSession)
+	runPTYOverWS(w, r, webTerminalAttachCmd(openAttachCmd(label)), sess.TmuxSession)
 }
 
 // termWSHook lets the env-gated real-browser terminal smoke observe and
@@ -362,6 +362,34 @@ func hangupProcessGroup(proc *os.Process) {
 	if err := syscall.Kill(-proc.Pid, syscall.SIGHUP); err != nil {
 		_ = proc.Signal(syscall.SIGHUP)
 	}
+}
+
+// webTerminalTmuxFlags are the tmux client flags for a terminal rendered by the
+// dashboard's xterm.js, spelled for the `sh -c` command strings the PTY sites
+// build. The browser terminal loads a linkHandler for OSC 8, so it can honestly
+// claim the hyperlink capability tmux gates hyperlink passthrough on — without
+// it, a link a harness draws with label text (rather than a bare URL) arrives as
+// dead text, because tmux keeps the target in its grid and never emits it.
+//
+// A PTY site that reaches tmux through `tclaude session attach` cannot spell the
+// flag here — the wrapper builds the tmux argv itself — and uses
+// webTerminalAttachCmd instead.
+func webTerminalTmuxFlags() string {
+	return "-T " + clcommon.TmuxHyperlinksFeature
+}
+
+// webTerminalAttachCmd carries the same OSC 8 opt-in across the one process hop
+// `tclaude session attach` adds, by exporting it for exactly that command.
+//
+// The assignment is a prefix on the command rather than an entry in the PTY's
+// own environment on purpose. A browser terminal is an interactive shell the
+// operator runs things in, and anything started there — a daemon restart, say —
+// would inherit a process-wide copy and hand it to native terminal attaches it
+// later opens, re-enabling hyperlinks on the very terminals whose renderer we
+// know nothing about. Scoping it to the exec'd command keeps the claim attached
+// to the client it is true of. `VAR=value exec cmd` exports VAR to cmd.
+func webTerminalAttachCmd(attachCommand string) string {
+	return clcommon.TmuxClientFeaturesEnv + "=" + clcommon.TmuxHyperlinksFeature + " " + attachCommand
 }
 
 // runPTYOverWS upgrades the request to a WebSocket and pumps a PTY

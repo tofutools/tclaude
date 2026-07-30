@@ -23,6 +23,11 @@ func attachToSessionWithFlags(tmuxSession string, force bool) error {
 	if force {
 		args = []string{"attach-session", "-d", "-t", clcommon.ExactTarget(tmuxSession)}
 	}
+	// Client feature flags belong before the command word. Only a caller that
+	// knows what renders this client's output sets the env var (the dashboard's
+	// PTY bridge does, for OSC 8); a native terminal attach leaves it unset and
+	// keeps tmux's own terminal detection untouched.
+	args = append(clcommon.TmuxClientFeatureArgs(os.Getenv(clcommon.TmuxClientFeaturesEnv)), args...)
 
 	cmd := clcommon.TmuxCommand(args...)
 	cmd.Stdin = os.Stdin

@@ -1603,7 +1603,12 @@ To make a browser-owned selection instead, use **Option-drag on macOS** or
 **Copy**. Clicking Copy without a browser selection shows this modifier hint.
 HTTP(S) links open with
 **Ctrl/⌘-click**; requiring the modifier keeps
-ordinary terminal clicks available to the running program. Pasting a PNG, JPEG,
+ordinary terminal clicks available to the running program. Both kinds of link
+work: text that is itself a URL, and an explicit terminal hyperlink whose
+visible text is a label rather than an address — the form Claude Code and Codex
+use for documents, issues, and sessions. Because a labelled link chooses its
+text independently of its target, hovering one shows the real destination in
+the terminal's status line before you commit to the click. Pasting a PNG, JPEG,
 or WebP clipboard image uploads it to a bounded temporary directory on the
 agentd host and pastes that host-side path into Claude Code or Codex as an image
 attachment. This also works through remote dashboard access—the image bytes

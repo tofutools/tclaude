@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -208,6 +209,38 @@ func TestTUIRemoteAttachUsesANonDisplacingTmuxClient(t *testing.T) {
 		"a remote viewer must not displace another attached operator")
 	assert.Empty(t, teardownSession,
 		"closing this stream must not detach every other client on the session")
+}
+
+// Unlike the dashboard's browser terminals, this stream lands on the operator's
+// REAL terminal — the remote TUI writes the bytes to its own raw-mode stdout —
+// so tmux must not be told the far end renders OSC 8. Nothing here knows what
+// emulator the operator is running, and the browser terminals' opt-in must not
+// drift into this shared PTY path.
+func TestTUIRemoteAttachDoesNotForceHyperlinksOnANativeTerminal(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	spawned := f.Spawn("dev", "worker")
+
+	var command string
+	t.Cleanup(agentd.SetTermWSHookForTest(&agentd.TermWSHook{
+		RewriteCommand: func(gotCommand, gotSession string) (string, string) {
+			command = gotCommand
+			return gotCommand, gotSession
+		},
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://agent-host:8321"))
+
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(), httptest.NewRequest(
+		http.MethodGet,
+		"http://agent-host:8321/api/tui/attach-ws/"+spawned.ConvID,
+		nil,
+	))
+	require.NotEmpty(t, command, "status=%d body=%s", rec.Code, rec.Body.String())
+
+	assert.NotContains(t, command, "-T hyperlinks",
+		"a native terminal must keep tmux's own capability detection: %q", command)
+	assert.NotContains(t, command, clcommon.TmuxClientFeaturesEnv,
+		"the browser terminals' feature opt-in must not reach this path: %q", command)
 }
 
 // Enter on an offline agent is the console's "turn this back on": it goes

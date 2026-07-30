@@ -167,13 +167,38 @@ export function shouldArmTmuxClipboard(drag, event, mouseTrackingMode) {
     !event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey;
 }
 
+// Embedded credentials are rejected, not merely hidden. `https://<anything>@evil
+// .example/` renders as the victim host right up to the '@', which is the whole
+// point of putting it there; a terminal link carrying userinfo is either a
+// spoof or a credential leak, and neither is worth a click. Doing it here
+// covers both opening a link and describing one.
 function safeHTTPURL(raw) {
   try {
     const url = new URL(raw);
-    return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : null;
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (url.username || url.password) return null;
+    return url.href;
   } catch (_) {
     return null;
   }
+}
+
+// The status line is one row of chrome under the terminal, so a long target
+// would push out the hint that precedes it. Shorten the PATH only: the origin
+// answers "who am I about to contact", so eliding any part of it would defeat
+// the reveal it exists for. `new URL` has already punycoded the host and
+// percent-encoded anything in the path that could reorder the display.
+function shortenForStatus(rawURL, max = 120) {
+  let url;
+  try {
+    url = new URL(rawURL);
+  } catch (_) {
+    return rawURL.slice(0, max);
+  }
+  const rest = url.href.slice(url.origin.length);
+  const room = max - url.origin.length;
+  if (rest.length <= room) return url.href;
+  return `${url.origin}${rest.slice(0, Math.max(room - 1, 0))}…`;
 }
 
 function legacyCopy(text) {
@@ -364,15 +389,36 @@ export function attachTerminalInteractions({
     const url = safeHTTPURL(raw);
     if (!url) { flash('blocked unsafe link'); return; }
     if (!event || (!event.ctrlKey && !event.metaKey)) {
-      flash('Ctrl/Cmd-click to open link');
+      // Keep the destination in the hint. This flash replaces whatever the
+      // hover put there and no further hover fires until the pointer moves, so
+      // dropping the target here would blank it precisely when the human has
+      // just been told to click again.
+      flash(`Ctrl/Cmd-click to open ${shortenForStatus(url)}`);
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
   };
+  // An OSC 8 hyperlink chooses its label text independently of its target, so
+  // "see the docs" — or a string that reads like some other URL — can point
+  // anywhere. Show the real destination while the pointer rests on it, so
+  // Ctrl/Cmd-click is never a blind gesture. The same linkHandler is handed to
+  // the web-links addon below, so plain URL matches get the reveal too; there
+  // the text already IS the target, and it costs nothing to be consistent.
+  const showLinkTarget = (raw) => {
+    if (!setStatus) return;
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    const url = safeHTTPURL(raw);
+    setStatus(url ? `Ctrl/Cmd-click → ${shortenForStatus(url)}` : 'blocked unsafe link');
+  };
+  const clearLinkTarget = () => {
+    if (!setStatus) return;
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    setStatus(baseStatus());
+  };
   const linkHandler = {
     activate: (event, text) => activateLink(event, text),
-    hover: () => {},
-    leave: () => {},
+    hover: (event, text) => showLinkTarget(text),
+    leave: () => clearLinkTarget(),
     allowNonHttpProtocols: false,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks
