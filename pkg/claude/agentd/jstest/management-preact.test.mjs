@@ -207,8 +207,10 @@ test('profile editor names the harness-owned sandbox after the selected harness'
   assert.equal(
     [...host.querySelector('#profile-editor-sandbox-impl').options]
       .find((option) => option.value === 'harness-builtin').textContent,
-    'Codex built-in (no filtered network sandbox yet)',
+    'Codex built-in',
   );
+  // The filtered-network caveat left the option label but not the dialog: it is
+  // still on the description, which is where there is room to state it.
   assert.match(host.textContent, /upstream proxy is experimental and off by default/);
 
   choose(harnessSelect, 'opencode');
@@ -1632,7 +1634,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     [...host.querySelector('#sandbox-profile-editor-evaluate-implementation').options]
       .map((option) => option.textContent),
     [
-      'Codex built-in sandbox (no filtered network sandbox yet)',
+      'Codex built-in sandbox',
       'tclaude sandbox',
       'Stacked sandboxes',
     ],

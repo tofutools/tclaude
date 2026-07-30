@@ -603,7 +603,8 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(
     [...host.querySelector('#agent-spawn-sandbox-impl').options]
       .find((option) => option.value === 'harness-builtin').textContent,
-    'Codex built-in (no filtered network sandbox yet)',
+    'Codex CLI built-in',
+    'the option names the implementation only; its caveat lives in the hint below the row',
   );
   // The blank row NAMES what the DAEMON said a blank field resolves to, in the
   // same words as the concrete option — not the mechanism that produced it, and

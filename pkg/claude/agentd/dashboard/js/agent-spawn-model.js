@@ -1,7 +1,7 @@
 import { readReviewer, reviewerValue } from './approval-controls.js';
 import {
   CODEX_BUILTIN_FILTERED_NETWORK_HINT,
-  codexBuiltinSandboxOptionLabel,
+  isCodexBuiltinSandboxOption,
 } from './sandbox-network-disclosure.js';
 
 export const MODEL_CUSTOM_VALUE = '__custom__';
@@ -217,13 +217,13 @@ export function sandboxImplOptionsFor(
     .filter((option) => canBuiltinOSSandbox
       || text(option?.value) !== SANDBOX_IMPL_DEFAULT)
     .map((option) => {
-      const codexLabel = codexBuiltinSandboxOptionLabel(
+      const codexBuiltin = isCodexBuiltinSandboxOption(
         text(option?.value), text(harnessName),
       );
       return {
         ...option,
-        label: codexLabel || fillHarnessPlaceholder(option?.label, displayName),
-        descr: codexLabel
+        label: fillHarnessPlaceholder(option?.label, displayName),
+        descr: codexBuiltin
           ? CODEX_BUILTIN_FILTERED_NETWORK_HINT
           : fillHarnessPlaceholder(option?.descr, displayName),
       };

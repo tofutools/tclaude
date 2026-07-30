@@ -151,10 +151,15 @@ test('the harness-owned option is named after the actual harness', async (t) => 
 
   const codex = model.spawnCapabilityView({ harness: 'codex' }, { harnesses, sandboxImpl });
   const codexBuiltin = codex.sandboxImplOptions.find((o) => o.value === 'harness-builtin');
-  assert.equal(
-    codexBuiltin.label,
-    'Codex built-in (no filtered network sandbox yet)',
-  );
+  // A selector option names the implementation and nothing else. The
+  // filtered-network caveat is real, but it belongs on the description and the
+  // hint below the row, where it can be stated in full — not squeezed into a
+  // parenthetical that a closed <select> truncates.
+  assert.equal(codexBuiltin.label, 'Codex CLI built-in');
+  assert.doesNotMatch(codexBuiltin.label, /filtered network/,
+    'option labels carry no metadata beyond which implementation is being chosen');
+  assert.match(codexBuiltin.descr, /no filtered network sandbox yet/,
+    'the caveat survives the label change, on the description');
   assert.match(codexBuiltin.descr, /upstream proxy is experimental and off by default/);
 });
 
@@ -177,7 +182,7 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // fourth thing.
   assert.equal(
     model.sandboxImplResolvedLabel(codexView.sandboxImplOptions, 'harness-builtin'),
-    'Codex built-in (no filtered network sandbox yet)',
+    'Codex CLI built-in',
   );
   assert.equal(model.sandboxImplResolvedLabel(codexView.sandboxImplOptions, ''), '',
     'an unresolved answer names nothing rather than guessing');

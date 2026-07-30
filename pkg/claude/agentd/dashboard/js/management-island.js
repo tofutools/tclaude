@@ -14,10 +14,7 @@ import {
   sandboxRuleBuckets,
   sandboxTargetLabel,
 } from './sandbox-profiles-data.js';
-import {
-  CODEX_BUILTIN_FILTERED_NETWORK_HINT,
-  CODEX_BUILTIN_FILTERED_NETWORK_SHORT,
-} from './sandbox-network-disclosure.js';
+import { CODEX_BUILTIN_FILTERED_NETWORK_HINT } from './sandbox-network-disclosure.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -220,11 +217,12 @@ function sandboxEvaluationImplementations(harness, platform, catalog) {
   if (!entry) return [];
   const options = [];
   if (entry.can_builtin_os_sandbox) {
+    // Names the implementation, nothing else — Codex's missing filtered-network
+    // sandbox is stated on the evaluation RESULT (sandboxTargetLabel and the
+    // rule notices), which is where it changes what an operator should do.
     options.push([
       'harness-builtin',
-      harness === 'codex'
-        ? `Codex built-in sandbox (${CODEX_BUILTIN_FILTERED_NETWORK_SHORT})`
-        : 'Harness built-in sandbox',
+      harness === 'codex' ? 'Codex built-in sandbox' : 'Harness built-in sandbox',
     ]);
   }
   if (entry.can_tclaude_layer) options.push(['tclaude-layer', 'tclaude sandbox']);
