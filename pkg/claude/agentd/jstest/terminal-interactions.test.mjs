@@ -430,24 +430,33 @@ test('local OSC 8 file URLs decode to host paths without query or fragment metad
 });
 
 test('visible local-file detection finds absolute paths without stealing web URLs', () => {
-  const text = 'image /home/me/render.png docs https://example.test/a/b literal file:///tmp/report%20one.md';
+  const text = 'docs https://example.test/a/b literal file:///tmp/report%20one.md image /home/me/render.png).';
   assert.deepEqual(visibleLocalFileLinks(text), [
-    {
-      text: '/home/me/render.png',
-      start: text.indexOf('/home/me/render.png'),
-      end: text.indexOf('/home/me/render.png') + '/home/me/render.png'.length,
-    },
     {
       text: 'file:///tmp/report%20one.md',
       start: text.indexOf('file:///tmp/report%20one.md'),
       end: text.indexOf('file:///tmp/report%20one.md') + 'file:///tmp/report%20one.md'.length,
     },
+    {
+      text: '/home/me/render.png',
+      start: text.indexOf('/home/me/render.png'),
+      end: text.indexOf('/home/me/render.png') + '/home/me/render.png'.length,
+    },
   ]);
-  assert.deepEqual(visibleLocalFileLinks('relative.png //server/share /'), []);
+  for (const value of [
+    'relative.png //server/share /',
+    'example.com/docs/getting-started',
+    'abc/def',
+    '2026/07/30',
+    '/tmp/my report.png',
+    '/tmp/report.png followed by prose',
+  ]) {
+    assert.deepEqual(visibleLocalFileLinks(value), [], value);
+  }
 });
 
 test('visible local-file provider maps detected text to xterm cells', () => {
-  const text = 'get /tmp/result.png now';
+  const text = 'get /tmp/result.png';
   const line = {
     length: text.length,
     isWrapped: false,
@@ -471,6 +480,40 @@ test('visible local-file provider maps detected text to xterm cells', () => {
   assert.equal(links[0].activate, handlers.activate);
 });
 
+test('visible local-file provider maps wrapped and wide-cell paths', () => {
+  const rows = ['界 /tmp/long-', 'result.png'];
+  const lines = rows.map((text, row) => ({
+    length: row === 0 ? text.length + 1 : text.length,
+    isWrapped: row > 0,
+    translateToString: () => text,
+    getCell: (col) => {
+      if (row === 0 && col === 0) {
+        return { getWidth: () => 2, getChars: () => '界' };
+      }
+      if (row === 0 && col === 1) {
+        return { getWidth: () => 0, getChars: () => '' };
+      }
+      const char = text[col - (row === 0 ? 1 : 0)];
+      return { getWidth: () => 1, getChars: () => char || '' };
+    },
+  }));
+  const term = { buffer: { active: { getLine: (row) => lines[row] || null } } };
+  const provider = visibleLocalFileLinkProvider(term, {
+    activate() {}, hover() {}, leave() {},
+  });
+  let links;
+  provider.provideLinks(1, (value) => { links = value; });
+  assert.equal(links.length, 1);
+  assert.equal(links[0].text, '/tmp/long-result.png');
+  assert.deepEqual(links[0].range, {
+    start: { x: 4, y: 1 },
+    end: { x: 10, y: 2 },
+  });
+  provider.provideLinks(2, (value) => { links = value; });
+  assert.equal(links.length, 1);
+  assert.deepEqual(links[0].range.end, { x: 10, y: 2 });
+});
+
 test('file hyperlinks reveal the host path and download only on a modified click', async () => {
   const downloaded = [];
   const { statuses, interactions, links } = linkHarness({
@@ -487,6 +530,25 @@ test('file hyperlinks reveal the host path and download only on a modified click
     assert.deepEqual(downloaded, ['/tmp/final chart.png']);
     await Promise.resolve();
     assert.equal(statuses.at(-1), 'downloading final chart.png…');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('long file-link hover text stays bounded without changing the download target', async () => {
+  const downloaded = [];
+  const { statuses, interactions, links } = linkHarness({
+    downloadFile: (path) => downloaded.push(path),
+  });
+  try {
+    const path = `/home/agent/${'deep-directory/'.repeat(20)}result.png`;
+    links.hover({}, `file://${path}`);
+    const shown = statuses.at(-1);
+    assert.ok(shown.endsWith('result.png'), shown);
+    assert.ok(shown.includes('…'), shown);
+    assert.ok(shown.length <= 130, `file-link status stays on one line: ${shown.length}`);
+    links.activate({ ctrlKey: true }, `file://${path}`);
+    assert.deepEqual(downloaded, [path], 'shortening is display-only');
   } finally {
     interactions.dispose();
   }

@@ -219,16 +219,38 @@ export function safeTerminalLink(raw) {
 // plain because the browser cannot know which terminal directory they name.
 const VISIBLE_LOCAL_FILE_RE = /file:\/\/(?:localhost)?\/[^\s"'<>]+|\/[^\s"'<>]+/g;
 
+function trimPathPunctuation(raw) {
+  let end = raw.length;
+  while (end > 1 && /[.,;:!?]/.test(raw[end - 1])) end--;
+  for (const [open, close] of [['(', ')'], ['[', ']'], ['{', '}']]) {
+    while (end > 1 && raw[end - 1] === close) {
+      const value = raw.slice(0, end);
+      const opens = value.split(open).length - 1;
+      const closes = value.split(close).length - 1;
+      if (closes <= opens) break;
+      end--;
+    }
+  }
+  return raw.slice(0, end);
+}
+
 export function visibleLocalFileLinks(text) {
   if (typeof text !== 'string' || !text) return [];
   const links = [];
   for (const match of text.matchAll(VISIBLE_LOCAL_FILE_RE)) {
-    const raw = match[0];
+    const matched = match[0];
     const start = match.index;
-    // Do not reinterpret the slash inside https://, a protocol-relative URL,
-    // or another path-like token as a host file.
+    // A raw absolute path must start at a token boundary. This prevents the
+    // suffixes of dates, bare-domain URLs, and relative paths becoming links.
     const before = start > 0 ? text[start - 1] : '';
-    if (raw.startsWith('/') && (before === ':' || before === '/')) continue;
+    if (matched.startsWith('/') && before && !/[\s([{"'<>=]/.test(before)) continue;
+    const raw = trimPathPunctuation(matched);
+    if (raw === '/') continue;
+    // A space can be part of a host filename but is indistinguishable from a
+    // prose boundary in plain terminal cells. Only recover a raw path when the
+    // rest of its logical line is blank; explicit file:// URLs remain
+    // unambiguous and may appear inline.
+    if (raw.startsWith('/') && /\S/.test(text.slice(start + matched.length))) continue;
     const parsed = safeTerminalLink(raw);
     if (!parsed || parsed.kind !== 'file') continue;
     links.push({ text: raw, start, end: start + raw.length });
@@ -244,27 +266,69 @@ function stringBoundaryToCell(line, index) {
     if (index <= seen) return col;
     const next = seen + (cell.getChars().length || 1);
     if (index < next) return col;
-    if (index === next) return col + 1;
+    if (index === next) return col + cell.getWidth();
     seen = next;
   }
   return line.length;
 }
 
+function wrappedLineWindow(term, row) {
+  const buffer = term.buffer.active;
+  let first = row;
+  let line = buffer.getLine(first);
+  if (!line) return null;
+  while (line.isWrapped && first > 0) {
+    first--;
+    line = buffer.getLine(first);
+    if (!line) return null;
+  }
+  const lines = [line];
+  while (true) {
+    const next = buffer.getLine(first + lines.length);
+    if (!next || !next.isWrapped) break;
+    lines.push(next);
+  }
+  return { first, lines, texts: lines.map((item) => item.translateToString(true)) };
+}
+
+function logicalBoundaryToBuffer(window, index, endBoundary) {
+  let seen = 0;
+  for (let offset = 0; offset < window.lines.length; offset++) {
+    const length = window.texts[offset].length;
+    const atLineEnd = index === seen + length;
+    if (index < seen + length || (atLineEnd && (endBoundary || offset === window.lines.length - 1))) {
+      return {
+        x: stringBoundaryToCell(window.lines[offset], index - seen),
+        y: window.first + offset + 1,
+      };
+    }
+    seen += length;
+  }
+  const last = window.lines.length - 1;
+  return {
+    x: stringBoundaryToCell(window.lines[last], window.texts[last].length),
+    y: window.first + last + 1,
+  };
+}
+
 export function visibleLocalFileLinkProvider(term, handlers) {
   return {
     provideLinks(y, callback) {
-      const line = term.buffer.active.getLine(y - 1);
-      if (!line || line.isWrapped) {
+      const window = wrappedLineWindow(term, y - 1);
+      if (!window) {
         callback([]);
         return;
       }
-      const text = line.translateToString(true);
+      const text = window.texts.join('');
       const links = visibleLocalFileLinks(text).map((match) => {
-        const start = stringBoundaryToCell(line, match.start);
-        const end = stringBoundaryToCell(line, match.end);
+        const start = logicalBoundaryToBuffer(window, match.start, false);
+        const end = logicalBoundaryToBuffer(window, match.end, true);
         return {
           text: match.text,
-          range: { start: { x: start + 1, y }, end: { x: end, y } },
+          range: {
+            start: { x: start.x + 1, y: start.y },
+            end: { x: end.x, y: end.y },
+          },
           activate: handlers.activate,
           hover: handlers.hover,
           leave: handlers.leave,
@@ -291,6 +355,12 @@ function shortenForStatus(rawURL, max = 120) {
   const room = max - url.origin.length;
   if (rest.length <= room) return url.href;
   return `${url.origin}${rest.slice(0, Math.max(room - 1, 0))}…`;
+}
+
+function shortenPathForStatus(path, max = 100) {
+  if (path.length <= max) return path;
+  const tailLength = Math.min(48, Math.floor((max - 1) / 2));
+  return `${path.slice(0, max - tailLength - 1)}…${path.slice(-tailLength)}`;
 }
 
 function legacyCopy(text) {
@@ -514,7 +584,9 @@ export function attachTerminalInteractions({
       // dropping the target here would blank it precisely when the human has
       // just been told to click again.
       const action = link.kind === 'file' ? 'download' : 'open';
-      const target = link.kind === 'file' ? link.target : shortenForStatus(link.target);
+      const target = link.kind === 'file'
+        ? shortenPathForStatus(link.target)
+        : shortenForStatus(link.target);
       flash(`Ctrl/Cmd-click to ${action} ${target}`);
       return;
     }
@@ -542,7 +614,9 @@ export function attachTerminalInteractions({
       return;
     }
     const action = link.kind === 'file' ? 'download →' : '→';
-    const target = link.kind === 'file' ? link.target : shortenForStatus(link.target);
+    const target = link.kind === 'file'
+      ? shortenPathForStatus(link.target)
+      : shortenForStatus(link.target);
     setStatus(`Ctrl/Cmd-click ${action} ${target}`);
   };
   const clearLinkTarget = () => {
