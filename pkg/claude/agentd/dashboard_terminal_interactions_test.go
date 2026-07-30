@@ -60,6 +60,8 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"Ignore unsolicited OSC 52 completely",
 		"navigator.clipboard.writeText(",
 		"new globalThis.WebLinksAddon.WebLinksAddon(",
+		"term.registerLinkProvider(",
+		"visibleLocalFileLinkProvider(term, linkHandler)",
 		"term.options.linkHandler = linkHandler",
 		"if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;",
 		"if (url.protocol !== 'file:'",

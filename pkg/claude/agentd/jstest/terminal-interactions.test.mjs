@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
 	attachTerminalInteractions, beginGestureClipboardWrite, decodeOSC52,
 	isBrowserPasteShortcut, isComposeMessageShortcut, safeTerminalLink,
-	shouldArmTmuxClipboard, terminalKeyInput,
+	shouldArmTmuxClipboard, terminalKeyInput, visibleLocalFileLinkProvider,
+	visibleLocalFileLinks,
 } from '../dashboard/js/terminal-interactions.js';
 
 function key(overrides = {}) {
@@ -163,8 +164,10 @@ function terminalHarness(ownerDocument) {
   host.title = '';
   let osc52 = null;
   let keyHandler = null;
+  let linkProvider = null;
   const term = {
     options: {},
+    buffer: { active: { getLine() { return null; } } },
     modes: { mouseTrackingMode: 'drag' },
     parser: {
       registerOscHandler(id, handler) {
@@ -174,6 +177,10 @@ function terminalHarness(ownerDocument) {
       },
     },
     onSelectionChange() { return { dispose() {} }; },
+    registerLinkProvider(provider) {
+      linkProvider = provider;
+      return { dispose() {} };
+    },
     attachCustomKeyEventHandler(handler) { keyHandler = handler; },
     hasSelection() { return false; },
     getSelection() { return ''; },
@@ -182,6 +189,7 @@ function terminalHarness(ownerDocument) {
   return {
     host, term,
     key: (event) => keyHandler(event),
+    linkProvider: () => linkProvider,
     osc52: (payload) => osc52(payload),
   };
 }
@@ -419,6 +427,48 @@ test('local OSC 8 file URLs decode to host paths without query or fragment metad
   ]) {
     assert.equal(safeTerminalLink(raw), null, raw);
   }
+});
+
+test('visible local-file detection finds absolute paths without stealing web URLs', () => {
+  const text = 'image /home/me/render.png docs https://example.test/a/b literal file:///tmp/report%20one.md';
+  assert.deepEqual(visibleLocalFileLinks(text), [
+    {
+      text: '/home/me/render.png',
+      start: text.indexOf('/home/me/render.png'),
+      end: text.indexOf('/home/me/render.png') + '/home/me/render.png'.length,
+    },
+    {
+      text: 'file:///tmp/report%20one.md',
+      start: text.indexOf('file:///tmp/report%20one.md'),
+      end: text.indexOf('file:///tmp/report%20one.md') + 'file:///tmp/report%20one.md'.length,
+    },
+  ]);
+  assert.deepEqual(visibleLocalFileLinks('relative.png //server/share /'), []);
+});
+
+test('visible local-file provider maps detected text to xterm cells', () => {
+  const text = 'get /tmp/result.png now';
+  const line = {
+    length: text.length,
+    isWrapped: false,
+    translateToString: () => text,
+    getCell: (col) => ({
+      getWidth: () => 1,
+      getChars: () => text[col],
+    }),
+  };
+  const term = { buffer: { active: { getLine: (row) => row === 2 ? line : null } } };
+  const handlers = { activate() {}, hover() {}, leave() {} };
+  const provider = visibleLocalFileLinkProvider(term, handlers);
+  let links;
+  provider.provideLinks(3, (value) => { links = value; });
+  assert.equal(links.length, 1);
+  assert.equal(links[0].text, '/tmp/result.png');
+  assert.deepEqual(links[0].range, {
+    start: { x: 5, y: 3 },
+    end: { x: 19, y: 3 },
+  });
+  assert.equal(links[0].activate, handlers.activate);
 });
 
 test('file hyperlinks reveal the host path and download only on a modified click', async () => {

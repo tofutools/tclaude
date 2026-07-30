@@ -212,6 +212,69 @@ export function safeTerminalLink(raw) {
   }
 }
 
+// Some harness renderers colour a local path but do not attach OSC 8 metadata.
+// xterm therefore sees ordinary cells, not a hyperlink. Recognize the two
+// unambiguous visible forms we can safely recover: a local file:// URI and an
+// absolute POSIX path. Relative labels such as "report.png" deliberately stay
+// plain because the browser cannot know which terminal directory they name.
+const VISIBLE_LOCAL_FILE_RE = /file:\/\/(?:localhost)?\/[^\s"'<>]+|\/[^\s"'<>]+/g;
+
+export function visibleLocalFileLinks(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const links = [];
+  for (const match of text.matchAll(VISIBLE_LOCAL_FILE_RE)) {
+    const raw = match[0];
+    const start = match.index;
+    // Do not reinterpret the slash inside https://, a protocol-relative URL,
+    // or another path-like token as a host file.
+    const before = start > 0 ? text[start - 1] : '';
+    if (raw.startsWith('/') && (before === ':' || before === '/')) continue;
+    const parsed = safeTerminalLink(raw);
+    if (!parsed || parsed.kind !== 'file') continue;
+    links.push({ text: raw, start, end: start + raw.length });
+  }
+  return links;
+}
+
+function stringBoundaryToCell(line, index) {
+  let seen = 0;
+  for (let col = 0; col < line.length; col++) {
+    const cell = line.getCell(col);
+    if (!cell || cell.getWidth() === 0) continue;
+    if (index <= seen) return col;
+    const next = seen + (cell.getChars().length || 1);
+    if (index < next) return col;
+    if (index === next) return col + 1;
+    seen = next;
+  }
+  return line.length;
+}
+
+export function visibleLocalFileLinkProvider(term, handlers) {
+  return {
+    provideLinks(y, callback) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line || line.isWrapped) {
+        callback([]);
+        return;
+      }
+      const text = line.translateToString(true);
+      const links = visibleLocalFileLinks(text).map((match) => {
+        const start = stringBoundaryToCell(line, match.start);
+        const end = stringBoundaryToCell(line, match.end);
+        return {
+          text: match.text,
+          range: { start: { x: start + 1, y }, end: { x: end, y } },
+          activate: handlers.activate,
+          hover: handlers.hover,
+          leave: handlers.leave,
+        };
+      });
+      callback(links);
+    },
+  };
+}
+
 // The status line is one row of chrome under the terminal, so a long target
 // would push out the hint that precedes it. Shorten the PATH only: the origin
 // answers "who am I about to contact", so eliding any part of it would defeat
@@ -501,6 +564,9 @@ export function attachTerminalInteractions({
       (event, uri) => activateLink(event, uri), linkHandler,
     ));
   }
+  disposables.push(term.registerLinkProvider(
+    visibleLocalFileLinkProvider(term, linkHandler),
+  ));
 
   disposables.push(term.onSelectionChange(updateCopyButton));
   // tmux's normal mouse/copy-mode path stores the text in a tmux buffer and
