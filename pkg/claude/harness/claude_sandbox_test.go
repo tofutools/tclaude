@@ -208,8 +208,8 @@ func TestClaudeSandboxOnBlock_PlatformUnixSocketPolicy(t *testing.T) {
 	}
 
 	darwinNetwork := ClaudeSandboxOnBlockForGOOS("darwin")["network"].(map[string]any)
-	if _, present := darwinNetwork["allowAllUnixSockets"]; present {
-		t.Fatalf("macOS must preserve per-path Unix-socket filtering, got %v", darwinNetwork)
+	if darwinNetwork["allowAllUnixSockets"] != false {
+		t.Fatalf("macOS launch override must pin per-path Unix-socket filtering, got %v", darwinNetwork)
 	}
 	if sockets, _ := darwinNetwork["allowUnixSockets"].([]any); !slices.Equal(
 		sockets, tclaudeAgentdSocketTildes(),

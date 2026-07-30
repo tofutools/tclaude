@@ -168,8 +168,14 @@ func ClaudeSandboxOnBlockForGOOS(goos string) map[string]any {
 		"allowUnixSockets": tclaudeAgentdSocketTildes(),
 		"allowedDomains":   []any{"github.com", "api.github.com"},
 	}
-	if goos == "linux" {
+	switch goos {
+	case "linux":
 		network["allowAllUnixSockets"] = true
+	case "darwin":
+		// The launch overlay outranks user/project settings. Pin false so an
+		// older allowAllUnixSockets=true cannot disable the macOS path allowlist
+		// even before the operator reruns the hardening installer migration.
+		network["allowAllUnixSockets"] = false
 	}
 	return map[string]any{
 		"enabled":                  true,

@@ -311,9 +311,10 @@ outrank it). Three modes:
   `/dev/null` mask whenever the inherited sandbox is enabled. On macOS,
   Claude's exact `allowUnixSockets` list permits agentd but excludes the tmux
   server; the hardening installer leaves `allowAllUnixSockets` absent and
-  migrates an older installed `true` value to `false`. tclaude does not nest
-  another Seatbelt around the harness. The explicit `tclaude-layer`
-  implementation owns its existing tmux host-control rule instead.
+  migrates an older installed `true` value to `false`, while sandbox mode `on`
+  pins `false` in the launch overlay. tclaude does not nest another Seatbelt
+  around the harness. The explicit `tclaude-layer` implementation owns its
+  existing tmux host-control rule instead.
 - **`on`** — forces the OS sandbox **on** for this session even if `settings.json`
   leaves it off. It injects the same `sandbox` block as the global hardening
   (single source of truth), so the **agentd Unix socket stays reachable** (the

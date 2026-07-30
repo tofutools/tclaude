@@ -23,13 +23,12 @@ import (
 // It is a faithful copy of that doc's recommended config block — the
 // doc is the source of truth, so this must be kept in lockstep with it.
 // The `sandbox` sub-tree comes from harness.ClaudeSandboxOnBlockForGOOS(), the
-// SAME block the per-session `--sandbox on` spawn mode injects via
-// `--settings`, so the global hardening and the per-session override can
-// never drift. Its Unix-socket policy is platform-specific: Linux requires
-// `allowAllUnixSockets`, while macOS must leave that broad switch absent so
-// its exact `allowUnixSockets` list remains effective. The `permissions`
-// deny-list below is hardening-only — a global settings concern, not a
-// per-session sandbox knob — so it stays here.
+// same effective block the per-session `--sandbox on` spawn mode injects via
+// `--settings`. Unix-socket policy is platform-specific: Linux requires
+// `allowAllUnixSockets=true`; a fresh macOS settings file omits that default-
+// false key while the higher-precedence launch overlay pins it false. The
+// `permissions` deny-list below is hardening-only — a global settings concern,
+// not a per-session sandbox knob — so it stays here.
 //
 // Arrays are []any (not []string) so the merge engine compares and
 // appends them uniformly against values decoded from the user's file,
@@ -39,8 +38,14 @@ func sandboxHardeningSpec() map[string]any {
 }
 
 func sandboxHardeningSpecForGOOS(goos string) map[string]any {
+	sandbox := harness.ClaudeSandboxOnBlockForGOOS(goos)
+	if goos == "darwin" {
+		// Absence is the safe/default macOS value. Existing true values are
+		// migrated to explicit false separately; fresh installs need no key.
+		delete(sandbox["network"].(map[string]any), "allowAllUnixSockets")
+	}
 	return map[string]any{
-		"sandbox": harness.ClaudeSandboxOnBlockForGOOS(goos),
+		"sandbox": sandbox,
 		"permissions": map[string]any{
 			// The tool-permission layer mirrors the OS-sandbox deny above. It
 			// matters independently: it still blocks the Read/Edit tools when

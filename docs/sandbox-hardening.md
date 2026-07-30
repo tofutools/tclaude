@@ -217,6 +217,8 @@ path. On macOS it leaves that broad key out. **Existing installations must
 re-run the command after upgrading**: in addition to adding newer hardening
 keys, the macOS installer backs up the settings file and changes a legacy
 `allowAllUnixSockets: true` to `false` so the exact allowlist takes effect.
+The per-session Claude sandbox mode `on` also pins this value to `false` in
+its higher-precedence launch overlay on macOS.
 
 For tclaude-managed Claude sessions, the launch-specific `--settings` overlay
 also adds `denyRead` + `denyWrite` for the exact named tmux socket hosting agent
