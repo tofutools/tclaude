@@ -230,7 +230,9 @@ function networkRuleLabel(entry = {}, mode = 'allow') {
   let selector = '';
   if (entry.host) selector = `host ${entry.host}`;
   if (entry.domain) selector = `domain ${entry.domain}${entry.include_subdomains ? ' and subdomains' : ''}`;
-  if (entry.cidr) selector = `network ${entry.cidr}`;
+  // "network CIDR …" rather than "network network …": the selector name the
+  // editor's own dropdown uses, so the row does not repeat the axis word.
+  if (entry.cidr) selector = `CIDR ${entry.cidr}`;
   if (entry.loopback) selector = 'local machine';
   const ports = Array.isArray(entry.ports) ? entry.ports : [];
   const verb = mode === 'deny' ? 'Deny' : 'Allow';
