@@ -2025,6 +2025,16 @@ belong to lower-numbered shards), so the fixed four-shard loop combines with
 any filter. Set `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in
 a usual platform install location.
 
+`TestDashSnapSandboxPreviewOverflow` rides along with those commands (the name
+shares the `TestDashSnap` prefix, and it honours the same filter/shard
+variables). It is a measuring smoke rather than a screenshot matrix: it opens
+the real sandbox-profile editor on a wide network policy, expands every
+effective-policy-preview bucket, and hard-fails unless the editor overlay,
+card, preview section and every bucket measure 0px horizontal overflow with no
+clipped labels, at 1280px and 720px in both skins. Page-level overflow is
+deliberately not asserted — the shell scrolls sideways by design (see the
+`.bar-inner` note in `dashboard.css`).
+
 Behind the same env gate, two functional real-browser smokes cover the
 terminal shells: `TestDashboardTerminalRevealFocusChrome` (tab-reveal keyboard
 focus) and `TestDashboardTerminalShellLiveChrome`, which drives a live

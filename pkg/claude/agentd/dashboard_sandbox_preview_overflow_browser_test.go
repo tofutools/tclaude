@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd/dashsnap"
 )
 
-// TestDashboardSandboxPreviewOverflowChrome is TCL-862's real-layout
+// TestDashSnapSandboxPreviewOverflow is TCL-862's real-layout
 // acceptance check: an expanded effective-policy-preview bucket full of long
 // rule rows must wrap inside the bucket instead of widening the
 // sandbox-profile editor. It measures the editor's own boxes (overlay, card,
@@ -22,12 +23,19 @@ import (
 // (JOH-313: header/nav widen to the content width and the tab strip never
 // shrinks), so a page-level delta says nothing about this modal.
 //
-// 720px is where the defect was reported; 1280px guards the roomy layout
-// against a regression from the same fix. Both a Claude target and an OpenCode
-// one are captured: the two targets bucket the same rules
-// differently and the OpenCode run adds the long launch-blocked prose under a
-// bucket, which is the widest content the preview can hold.
-func TestDashboardSandboxPreviewOverflowChrome(t *testing.T) {
+// 720px is where the defect was reported and 1280px is the roomy layout; the
+// two together bound the responsive range this modal is designed for. Below
+// ~552px the card's own min-width (520px) exceeds a flex-centred overlay and
+// it is clipped regardless of the preview's contents — a separate, known floor
+// this test deliberately does not sample. Both a Claude target and an OpenCode
+// one are captured: the two targets bucket the same rules differently and the
+// OpenCode run adds the long launch-blocked prose under a bucket, which is the
+// widest content the preview can hold.
+//
+// The name shares TestDashSnap's prefix so the documented `-run TestDashSnap`
+// smoke commands pick it up, and it honours TCLAUDE_DASHSNAP_FILTER/SHARD the
+// same way so the canonical four-shard loop splits it like any other matrix.
+func TestDashSnapSandboxPreviewOverflow(t *testing.T) {
 	if os.Getenv("TCLAUDE_DASHSNAP") == "" {
 		t.Skip("browser smoke — set TCLAUDE_DASHSNAP=1 (needs local Chrome)")
 	}
@@ -61,7 +69,31 @@ func TestDashboardSandboxPreviewOverflowChrome(t *testing.T) {
 		}
 	}
 
-	outDir := filepath.Join(dashSnapOutRoot(t), "sandbox-preview-overflow-"+time.Now().Format("20060102-150405.000"))
+	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
+		var filtered []dashsnap.State
+		for _, state := range states {
+			if strings.Contains(state.Key, filter) {
+				filtered = append(filtered, state)
+			}
+		}
+		if len(filtered) == 0 {
+			t.Skipf("TCLAUDE_DASHSNAP_FILTER %q matches no preview-overflow state", filter)
+		}
+		states = filtered
+	}
+	matrixSize := len(states)
+	shard, err := dashsnap.ParseShard(os.Getenv("TCLAUDE_DASHSNAP_SHARD"))
+	if err != nil {
+		t.Fatalf("TCLAUDE_DASHSNAP_SHARD: %v", err)
+	}
+	states = shard.Pick(states)
+	if len(states) == 0 {
+		t.Skipf("TCLAUDE_DASHSNAP_SHARD %d/%d selects no states (%d after filtering) — all covered by lower shards",
+			shard.Index, shard.Total, matrixSize)
+	}
+
+	outDir := filepath.Join(dashSnapOutRoot(t),
+		"sandbox-preview-overflow-"+time.Now().Format("20060102-150405.000")+shard.Suffix())
 	shots, err := dashsnap.Capture(dashsnap.Config{
 		BaseURL: srv.URL,
 		OutDir:  outDir,
@@ -69,6 +101,11 @@ func TestDashboardSandboxPreviewOverflowChrome(t *testing.T) {
 		Height:  1200,
 		States:  states,
 	})
+	// An environment without a usable Chrome must never read as a dashboard
+	// regression — the same contract every other smoke here follows.
+	if errors.Is(err, dashsnap.ErrBrowserUnavailable) {
+		t.Skipf("environment: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
 	}
@@ -177,11 +214,11 @@ func sandboxPreviewOverflowJS(mode string) string {
     var delta=node.scrollWidth-node.clientWidth;
     if(delta>1) overflow.push(probe[0]+' +'+delta+'px');
   });
-  var clipped=[...document.querySelectorAll(
+  var clippedLabels=[...document.querySelectorAll(
     '.sbx-rule-row > span:first-child, .sbx-rule-bucket > summary, .sbx-rule-reason')]
     .filter(function(node){return node.scrollWidth-node.clientWidth>1;})
     .map(function(node){return (node.textContent||'').slice(0,60);});
-  if(overflow.length||clipped.length){
+  if(overflow.length||clippedLabels.length){
     // Name the widest offending boxes so a failure points at the element that
     // refuses to wrap instead of only reporting a container delta.
     var limit=modal.querySelector('.cron-create-modal').getBoundingClientRect().right;
@@ -198,7 +235,7 @@ func sandboxPreviewOverflowJS(mode string) string {
           +' over='+entry.over+'px';
       });
     throw new Error('preview-overflow-%s: overflow '+JSON.stringify(overflow)
-      +' clipped '+JSON.stringify(clipped)+' offenders '+JSON.stringify(offenders));
+      +' clipped '+JSON.stringify(clippedLabels)+' offenders '+JSON.stringify(offenders));
   }
   section.scrollIntoView({block:'center'});
   await new Promise(function(resolve){setTimeout(resolve,120);});

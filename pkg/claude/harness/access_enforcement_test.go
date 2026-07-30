@@ -1009,6 +1009,28 @@ func TestComposedNetworkDisclosureSentencesAreSeparated(t *testing.T) {
 		"ambient outbound network access remains available. Configured deny rules are enforced.",
 		predicted.Network.Detail)
 
+	// Allow rows compose the launch-check condition the same way as deny rows.
+	allowRows := DescribePredictedNetworkEntries(
+		sandboxpolicy.NetworkRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{Domain: "api.example.com", Ports: []int{443}}},
+		},
+		PredictedAccessEnforcement{
+			NetworkList: EnforceFull,
+			NetworkSelectors: []NetworkSelectorCapability{{
+				Selector: string(sandboxpolicy.NetworkSelectorDomain),
+				Level:    EnforceFull,
+			}},
+			NetworkPorts:         EnforceFull,
+			NetworkListCondition: "Live network probes must pass.",
+			Mechanism:            "test gateway",
+			Scope:                "process",
+		})
+	require.Len(t, allowRows, 1)
+	assert.Equal(t,
+		"test gateway enforces this destination. Live network probes must pass.",
+		allowRows[0].Detail)
+
 	// Per-row details compose the launch-check condition the same way.
 	rows := DescribePredictedNetworkDenyEntries(
 		[]sandboxpolicy.NetworkAllowEntry{deny},
