@@ -1237,6 +1237,26 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:   "management-sandbox-mount-path-editor",
+			Title: "Management — mount a directory at a sandbox path",
+			Caption: "The per-row \u2933 control on the filesystem table. Row 1 is remapped with its panel open; " +
+				"row 2's control is quiet and unset; the deny row's is disabled, because a deny always applies to the host path.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxMountPathDashSnapJS("editor"),
+			SettleMS: 700,
+		},
+		{
+			Key:   "management-sandbox-mount-path-preview",
+			Title: "Management — mount paths refused off the Linux tclaude-layer",
+			Caption: "The effective preview is the always-visible disclosure of the host \u2190 sandbox mapping. " +
+				"On harness-builtin the remapped rule is bucketed Unsupported with the named missing capability, never re-pointed at the host path.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxMountPathDashSnapJS("preview"),
+			SettleMS: 700,
+		},
+		{
 			Key:      "management-sandbox-editor-common-rules",
 			Title:    "Management — sandbox common-rule presets",
 			Caption:  "The \"add common rule\" menu expanded on the filesystem table: audited presets with their description, warning, and the exact paths each one would insert as ordinary deny rows.",
@@ -3446,6 +3466,104 @@ func sandboxDenyPreviewDashSnapJS(mode string) string {
 		mode, baseline, mode, mode, mode, mode, mode,
 		harnessName, platform, targetText, targetText, mode, bucketClass,
 		mode, mode, mode, mode, mode)
+}
+
+// sandboxMountPathDashSnapJS captures the two TCL-866 surfaces the ticket asks
+// for evidence of: the per-row "mount at" control in its three states, and the
+// effective-preview disclosure of the host → sandbox mapping.
+//
+// The two are deliberately separate captures because they answer different
+// questions. The editor one shows how an operator AUTHORS a projection and that
+// a set row is identifiable without opening anything. The preview one shows what
+// a reviewer SEES, on a target that cannot enforce it — the rule bucketed
+// Unsupported with the named capability rather than quietly mounted at the host
+// path.
+func sandboxMountPathDashSnapJS(mode string) string {
+	switch mode {
+	case "editor", "preview":
+	default:
+		panic("unknown sandbox mount-path dashsnap mode: " + mode)
+	}
+	return fmt.Sprintf(`return (async function(){
+  var module = await import('/static/js/sandbox-profiles.js');
+  module.openSandboxProfileEditor({
+    name:'dashsnap-mount-%s',
+    filesystem:[
+      {path:'/srv/shared-datasets/corpus-v3',access:'read',mount_path:'/data'},
+      {path:'/srv/build',access:'write'},
+      {path:'/srv/secrets',access:'deny'}
+    ],
+    environment:[],includes:[],agent_directories:[],
+    network:{baseline:'allow',packs:[],deny_packs:[],allow:[],deny:[]},
+    unix_sockets:{mode:''}
+  });
+  var deadline=Date.now()+6000;
+  while(!document.querySelector('#sandbox-profile-editor-filesystem-section')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var filesystem=document.querySelector('#sandbox-profile-editor-filesystem-section');
+  if(!filesystem) throw new Error('mount-%s: sandbox editor did not open');
+  filesystem.open=true;
+  var toggles=[0,1,2].map(function(i){
+    return document.querySelector('#sandbox-profile-editor-mount-toggle-'+i);
+  });
+  if(toggles.some(function(t){return !t;})) throw new Error('mount-%s: per-row mount control missing');
+  if(!toggles[0].classList.contains('is-set')){
+    throw new Error('mount-%s: a remapped row must render the set state without being opened');
+  }
+  if(toggles[1].classList.contains('is-set')){
+    throw new Error('mount-%s: an ordinary row must not render the set state');
+  }
+  if(!toggles[2].disabled){
+    throw new Error('mount-%s: a deny row must not offer a mount path');
+  }
+  // The set state has to be visibly different from the unset one, not merely a
+  // different class. Compare what the browser actually paints.
+  var setPaint=getComputedStyle(toggles[0]);
+  var unsetPaint=getComputedStyle(toggles[1]);
+  if(setPaint.color===unsetPaint.color&&setPaint.backgroundColor===unsetPaint.backgroundColor){
+    throw new Error('mount-%s: set and unset controls paint identically');
+  }
+  if(%q==='editor'){
+    toggles[0].click();
+    await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+    var panel=document.querySelector('#sandbox-profile-editor-mount-panel-0');
+    if(!panel) throw new Error('mount-editor: the mount panel did not open');
+    if(!panel.textContent.includes('Linux tclaude-layer or stacked only')){
+      throw new Error('mount-editor: the platform caveat is missing from the panel');
+    }
+    filesystem.scrollIntoView({block:'center'});
+    return;
+  }
+  function choose(select,value){
+    select.value=value;
+    select.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-harness'),'claude');
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-implementation'),'harness-builtin');
+  choose(document.querySelector('#sandbox-profile-editor-evaluate-platform'),'linux');
+  deadline=Date.now()+8000;
+  while(!document.querySelector('.sbx-rule-bucket-not-applied')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,50);});
+  }
+  var effective=document.querySelector('#sandbox-profile-editor-effective-policy-section');
+  if(!effective) throw new Error('mount-preview: effective policy section missing');
+  effective.open=true;
+  var bucket=document.querySelector('.sbx-rule-bucket-not-applied');
+  if(!bucket) throw new Error('mount-preview: the remapped rule was not bucketed Unsupported');
+  bucket.open=true;
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  var mapped=[...bucket.querySelectorAll('.sbx-rule-row')].filter(function(row){
+    return row.textContent.includes('/data ← /srv/shared-datasets/corpus-v3');
+  });
+  if(!mapped.length){
+    throw new Error('mount-preview: the preview row does not disclose the host ← sandbox mapping');
+  }
+  if(!bucket.textContent.includes('mount namespace')){
+    throw new Error('mount-preview: the refusal does not name the missing capability');
+  }
+  bucket.scrollIntoView({block:'center'});
+})();`, mode, mode, mode, mode, mode, mode, mode, mode)
 }
 
 func actionDialogJS(call, readySelector, extraJS string) string {

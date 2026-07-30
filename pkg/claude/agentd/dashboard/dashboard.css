@@ -4813,7 +4813,8 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 }
 .sbx-filesystem-row {
   display: grid;
-  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto;
+  /* access · path · Browse · mount-at · remove */
+  grid-template-columns: 10rem minmax(10rem, 1fr) auto auto auto;
   min-width: 0;
 }
 .sbx-filesystem-row > * { min-width: 0; }
@@ -4856,6 +4857,36 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
   overflow: hidden; color: #8b949e; font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-overflow: ellipsis; white-space: nowrap;
 }
+/* ---- "mount at" control (TCL-866) -----------------------------------------
+   The value lives in the panel below the row, so the button carries the whole
+   at-a-glance signal: quiet when unset (same weight as Browse), filled and
+   coloured when the row projects its directory onto another sandbox path. That
+   contrast is what lets a reviewer scan the table for remapped rows without
+   opening every popover; the exact path is in the button's title. Disabled on
+   deny rows, where a mount path is a validation error rather than an option. */
+.sbx-row .sbx-mount-btn {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #6e7681;
+}
+.sbx-row .sbx-mount-btn.is-set {
+  background: rgba(165, 162, 255, .16);
+  border-color: #3b3566;
+  color: #a5a2ff;
+  font-weight: 700;
+}
+.sbx-row .sbx-mount-btn.is-set:hover { background: rgba(165, 162, 255, .24); }
+.sbx-row .sbx-mount-btn:disabled { opacity: .3; cursor: default; }
+.sbx-row .sbx-mount-btn:disabled:hover { background: #0d1117; }
+.sbx-mount-panel {
+  border: 1px solid #3b3566; border-radius: 5px;
+  background: #12111f; padding: 9px 10px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.sbx-mount-title { color: #a5a2ff; font-size: 12px; }
+.sbx-mount-row { display: flex; gap: 6px; align-items: stretch; }
+.sbx-mount-row > input { flex: 1; min-width: 0; }
+.sbx-mount-help { color: #8b949e; font-size: 11px; line-height: 1.4; }
+.sbx-mount-help strong { color: #c9d1d9; font-weight: 600; }
 /* Global harness rules explain the layer beneath the named profile. They look
    like rows so the combined filesystem policy is scannable, but use immutable
    text/badges and never participate in the editor draft. */
@@ -11180,6 +11211,29 @@ body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-sub
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #sandbox-profile-editor-modal button:not(#sandbox-profile-editor-submit):hover { background: #3a2a63; }
+/* The wizard theme repaints every editor button in one gold-on-plum chrome,
+   which erased the mount control's set/unset distinction — the whole point of
+   that control being loud. Restore the contrast in the theme's own palette
+   rather than letting the row read as ordinary.
+   The selector carries :not(#…-submit) for the same reason the segmented
+   options above do: the blanket wizard button rule counts TWO ids (the modal's,
+   plus the one inside :not()), so a plainer selector loses to it. */
+body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#sandbox-profile-editor-submit).is-set {
+  background: rgba(169, 123, 214, .32);
+  border-color: #a97bd6;
+  color: #f3e6c0;
+  box-shadow: 0 0 8px rgba(169, 123, 214, .45);
+}
+body.wizard #sandbox-profile-editor-modal .sbx-row > button.sbx-mount-btn:not(#sandbox-profile-editor-submit).is-set:hover {
+  background: rgba(169, 123, 214, .45);
+}
+body.wizard #sandbox-profile-editor-modal .sbx-mount-panel {
+  background: #1c1436;
+  border-color: #a97bd6;
+}
+body.wizard #sandbox-profile-editor-modal .sbx-mount-title { color: #f3e6c0; }
+body.wizard #sandbox-profile-editor-modal .sbx-mount-help { color: #b39ddb; }
+body.wizard #sandbox-profile-editor-modal .sbx-mount-help strong { color: #f3e6c0; }
 body.wizard #sandbox-profile-editor-modal .sbx-segmented-control {
   border-color: rgba(122, 93, 176, .65);
 }

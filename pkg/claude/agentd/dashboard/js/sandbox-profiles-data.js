@@ -244,7 +244,15 @@ function effectiveRuleRows(context = {}) {
   for (const entry of context.filesystem || []) {
     const prefix = entry.access === 'write' ? 'Read/write'
       : entry.access === 'read' ? 'Read-only' : 'Block';
-    rows.push({ axis: 'filesystem', label: `${prefix}: ${entry.path}` });
+    // A remapped rule names the path the agent will actually see FIRST, with
+    // the host directory the authority came from after it (TCL-866). This
+    // preview is the canonical always-visible disclosure of the mapping — the
+    // editor row's own control is a popover — so the rule line has to carry it
+    // rather than reading like an ordinary same-path grant.
+    const mountPath = (entry.mount_path || '').trim();
+    const target = mountPath && mountPath !== entry.path
+      ? `${mountPath} ← ${entry.path}` : entry.path;
+    rows.push({ axis: 'filesystem', label: `${prefix}: ${target}` });
   }
   for (const name of context.environment || []) {
     rows.push({ axis: 'environment', label: `Set environment: ${name}` });

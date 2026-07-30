@@ -3130,3 +3130,156 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
     /Claude on Linux · built-in sandbox \(enabled only if Claude settings enable it\)/);
   unmount();
 });
+
+test('mount-path control discloses a projection and refuses it on a deny row', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  let saved = null;
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'mounted',
+      filesystem: [
+        { path: '/srv/corpus', access: 'read', mount_path: '/data' },
+        { path: '/srv/work', access: 'write' },
+        { path: '/home/operator/.ssh', access: 'deny' },
+      ],
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(payload) { saved = payload; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const toggles = [0, 1, 2].map((index) =>
+    host.querySelector(`#sandbox-profile-editor-mount-toggle-${index}`));
+
+  // Requirement 1: a remapped row is identifiable WITHOUT opening its popover,
+  // which is the whole reason the set state is loud rather than a quiet toggle.
+  assert.equal(toggles[0].classList.contains('is-set'), true,
+    'a row with a mount path renders the set state');
+  assert.equal(toggles[1].classList.contains('is-set'), false);
+  assert.match(toggles[0].getAttribute('title'), /Mounts inside the sandbox at \/data/);
+  assert.match(toggles[0].getAttribute('aria-label'), /Mounts inside the sandbox at \/data/);
+
+  // A deny always applies to the host path, so the control is not offered.
+  assert.equal(toggles[2].disabled, true);
+  assert.equal(toggles[2].classList.contains('is-set'), false);
+  assert.match(toggles[2].getAttribute('title'), /deny always applies to the host path/);
+
+  // The panel is collapsed until asked for, so the common case stays two fields.
+  assert.equal(host.querySelector('#sandbox-profile-editor-mount-panel-0'), null);
+  assert.equal(toggles[0].getAttribute('aria-expanded'), 'false');
+  await harness.act(() => harness.fireEvent(toggles[0], 'click'));
+  const panel = host.querySelector('#sandbox-profile-editor-mount-panel-0');
+  assert.notEqual(panel, null);
+  assert.equal(panel.querySelector('input').value, '/data');
+  assert.match(panel.textContent, /not visible inside the sandbox at all/,
+    'the panel states what the host path stops being');
+  assert.match(panel.textContent, /Linux tclaude-layer or stacked only/,
+    'the platform caveat lives inline, which is what this control shape affords');
+  assert.match(panel.textContent, /never fall back to exposing the host path/);
+
+  // Authoring a projection on the plain write row round-trips onto the wire.
+  await harness.act(() => harness.fireEvent(toggles[1], 'click'));
+  const second = host.querySelector('#sandbox-profile-editor-mount-panel-1 input');
+  second.value = '/scratch';
+  await harness.act(() => harness.fireEvent(second, 'input'));
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [
+    { path: '/srv/corpus', access: 'read', mount_path: '/data' },
+    { path: '/srv/work', access: 'write', mount_path: '/scratch' },
+    { path: '/home/operator/.ssh', access: 'deny' },
+  ], 'mount_path rides the wire, and rows without one stay byte-identical');
+  unmount();
+});
+
+test('switching a remapped row to deny drops the mount path instead of saving an invalid rule', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  let saved = null;
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'switched',
+      filesystem: [{ path: '/srv/corpus', access: 'read', mount_path: '/data' }],
+      environment: [], includes: [], agent_directories: [],
+    },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(payload) { saved = payload; },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const control = host.querySelector('.sbx-filesystem-access');
+  await harness.act(() => harness.fireEvent(segment(control, 'deny'), 'click'));
+  const toggle = host.querySelector('#sandbox-profile-editor-mount-toggle-0');
+  assert.equal(toggle.disabled, true);
+  assert.equal(toggle.classList.contains('is-set'), false,
+    'the glyph returns to unset, so the dropped value is visible rather than silent');
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [{ path: '/srv/corpus', access: 'deny' }],
+    'a deny carries no mount_path, which the daemon would reject');
+  unmount();
+});
+
+test('effective preview discloses the host to sandbox mapping on the rule line', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/sandbox-profiles-data.js');
+
+  // With the editor control collapsed behind a popover, this preview is the
+  // canonical always-visible disclosure of the mapping.
+  const enforced = model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+  }, {
+    filesystem: [
+      { path: '/srv/corpus', access: 'read', mount_path: '/data' },
+      { path: '/srv/work', access: 'write' },
+      { path: '/home/operator/.ssh', access: 'deny' },
+    ],
+  });
+  assert.deepEqual(enforced.applied.rules, [
+    'Read-only: /data ← /srv/corpus',
+    'Read/write: /srv/work',
+    'Block: /home/operator/.ssh',
+  ]);
+
+  // On a surface that cannot mount, the rule is bucketed Unsupported with the
+  // named capability, never quietly re-pointed at the host path.
+  const refused = model.sandboxRuleBuckets({
+    filesystem: {
+      outcome: 'refused',
+      detail: '1 directory rule mounts a host directory at a different sandbox path'
+        + ' ("/srv/corpus" → "/data"); that needs a mount namespace, which only the'
+        + ' Linux tclaude-layer provides, so launch is refused rather than mounting'
+        + ' at the host path',
+    },
+  }, {
+    filesystem: [{ path: '/srv/corpus', access: 'read', mount_path: '/data' }],
+  });
+  assert.deepEqual(refused.notApplied.rules, ['Read-only: /data ← /srv/corpus']);
+  assert.equal(refused.launchRefused, true);
+  assert.equal(refused.notApplied.reasons[0].label, 'Launch blocked');
+  assert.match(refused.notApplied.reasons[0].detail, /mount namespace/);
+
+  // A rule with no mount path is unchanged, and a mount_path equal to the host
+  // path is the same-path rule it actually is.
+  assert.deepEqual(model.sandboxRuleBuckets({
+    filesystem: { outcome: 'enforced', detail: '' },
+  }, {
+    filesystem: [{ path: '/srv/corpus', access: 'read', mount_path: '/srv/corpus' }],
+  }).applied.rules, ['Read-only: /srv/corpus']);
+});
