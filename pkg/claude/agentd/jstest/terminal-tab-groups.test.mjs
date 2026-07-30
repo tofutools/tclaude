@@ -279,7 +279,7 @@ test('group names strip invisible and bidi-spoofing characters, not just control
   assert.equal(sanitizeGroupName('  keep me  '), 'keep me');
 });
 
-test('tab groups persist, restore, and are bounded like the pane order they ride alongside', async (t) => {
+test('tab groups persist, restore, and remain bounded', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState, TERMINAL_TAB_GROUP_KEY, MAX_TERMINAL_TAB_GROUPS } =
     await harness.importDashboardModule('js/terminal-shell-state.js');
@@ -291,14 +291,18 @@ test('tab groups persist, restore, and are bounded like the pane order they ride
   assert.deepEqual(stored.groups, [{ id: group.id, name: 'infra', color: 'blue', collapsed: false }]);
   assert.deepEqual(stored.members, { b: group.id, c: group.id });
 
-  // Membership outlives the terminals themselves, exactly like the pane order:
-  // closing every tab of a stack and reopening one restores it to its stack.
+  // Membership outlives the terminals themselves: closing every tab of a
+  // stack and reopening one restores it to its stack.
   state.removePanes(['b', 'c']);
   assert.deepEqual(JSON.parse(prefs.getItem(TERMINAL_TAB_GROUP_KEY)).members, { b: group.id, c: group.id });
 
   const restored = createTerminalShellState({ prefs });
   for (const key of ['a', 'c']) restored.openPane({ ws: `/${key}`, key, label: key });
   assert.deepEqual(stripOf(restored), ['a', 'infra[c]'], 'a reopened tab returns to its stack');
+  restored.openPane({ ws: '/d', key: 'd', label: 'd' });
+  restored.openPane({ ws: '/b', key: 'b', label: 'b' });
+  assert.deepEqual(stripOf(restored), ['a', 'infra[c,b]', 'd'],
+    'a remembered member appends inside its group without moving the group');
   assert.equal(restored.groups.value[0].id, group.id);
 
   const hostile = createTerminalShellState({
@@ -330,7 +334,7 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistOrder: false });
+  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,
@@ -422,7 +426,7 @@ test('a tab context menu offers the grouping commands drag-and-drop cannot reach
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistOrder: false });
+  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,
@@ -473,7 +477,7 @@ async function mountStrip(harness, keys) {
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
   const { createTerminalShellActions } = await harness.importDashboardModule('js/terminal-shell-actions.js');
   const { TerminalTabs } = await harness.importDashboardModule('js/terminal-shell-island.js');
-  const state = createTerminalShellState({ prefs: memoryPrefs(), persistOrder: false });
+  const state = createTerminalShellState({ prefs: memoryPrefs(), persistPresentation: false });
   const actions = createTerminalShellActions({ state, fetchImpl: async () => ({ ok: true }) });
   const widgetFactory = () => ({
     connect: async () => true,

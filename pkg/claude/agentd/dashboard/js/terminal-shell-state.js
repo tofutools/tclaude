@@ -2,10 +2,8 @@ import { computed, signal } from '@preact/signals';
 import { dashPrefs } from './prefs.js';
 import { normalizeSeed } from './terminals-core.js';
 
-export const TERMINAL_PANE_ORDER_KEY = 'tclaude.dash.terminals.order';
 export const TERMINAL_TAB_GROUP_KEY = 'tclaude.dash.terminals.groups';
 export const MAX_REMEMBERED_TERMINAL_PANES = 512;
-export const MAX_TERMINAL_PANE_ORDER_BYTES = 60 * 1024;
 export const MAX_TERMINAL_TAB_GROUPS = 24;
 export const MAX_TERMINAL_GROUP_NAME_LENGTH = 40;
 export const MAX_TERMINAL_TAB_GROUP_BYTES = 60 * 1024;
@@ -16,20 +14,6 @@ export const MAX_TERMINAL_TAB_GROUP_BYTES = 60 * 1024;
 export const TERMINAL_GROUP_COLORS = Object.freeze([
   'blue', 'purple', 'green', 'amber', 'red', 'teal', 'pink', 'slate',
 ]);
-
-function boundPreferredOrder(keys) {
-  const bounded = [];
-  const encoder = new TextEncoder();
-  let bytes = 2; // JSON array brackets.
-  for (const key of keys) {
-    if (bounded.length >= MAX_REMEMBERED_TERMINAL_PANES) break;
-    const entryBytes = encoder.encode(JSON.stringify(key)).byteLength + (bounded.length ? 1 : 0);
-    if (bytes + entryBytes > MAX_TERMINAL_PANE_ORDER_BYTES) continue;
-    bounded.push(key);
-    bytes += entryBytes;
-  }
-  return bounded;
-}
 
 // Group names are operator text rendered into the tab strip and into the
 // accessible announcements, so they are normalized the same way on the way in
@@ -115,7 +99,7 @@ export function terminalSeedKey(seed) {
   return seed.key || seed.ws;
 }
 
-export function createTerminalShellState({ prefs = dashPrefs, persistOrder = true } = {}) {
+export function createTerminalShellState({ prefs = dashPrefs, persistPresentation = true } = {}) {
   const panes = signal([]);
   const activeKey = signal(null);
   const modal = signal(null);
@@ -143,35 +127,11 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
   let paneSequence = 0;
   let modalSequence = 0;
   let groupSequence = 0;
-  let preferredOrder = null;
   let groupsLoaded = false;
 
-  function readPreferredOrder() {
-    if (preferredOrder) return preferredOrder;
-    try {
-      const parsed = JSON.parse(prefs.getItem(TERMINAL_PANE_ORDER_KEY) || '[]');
-      preferredOrder = Array.isArray(parsed)
-        ? boundPreferredOrder([...new Set(parsed.filter((key) => typeof key === 'string' && key))])
-        : [];
-    } catch (_) {
-      preferredOrder = [];
-    }
-    return preferredOrder;
-  }
-
-  function persistPreferredOrder(visibleKeys = panes.value.map((pane) => pane.key)) {
-    const visible = new Set(visibleKeys);
-    preferredOrder = boundPreferredOrder([
-      ...visibleKeys,
-      ...readPreferredOrder().filter((key) => !visible.has(key)),
-    ]);
-    if (!persistOrder) return;
-    try { prefs.setItem(TERMINAL_PANE_ORDER_KEY, JSON.stringify(preferredOrder)); } catch (_) {}
-  }
-
-  // Membership is remembered for keys that are not currently open, exactly like
-  // the pane order is: closing every tab of a stack and reopening one later
-  // restores it to its stack instead of dropping it into the ungrouped run.
+  // Membership is remembered for keys that are not currently open: closing
+  // every tab of a stack and reopening one later restores it to its stack
+  // instead of dropping it into the ungrouped run.
   function loadGroups() {
     if (groupsLoaded) return;
     groupsLoaded = true;
@@ -205,9 +165,9 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
   }
 
   function persistGroups() {
-    if (!persistOrder) return;
-    // Bound the same way the order pref is: prefer membership for tabs that are
-    // open right now, then the remembered tail, and stop before the byte cap.
+    if (!persistPresentation) return;
+    // Prefer membership for tabs that are open right now, then the remembered
+    // tail, and stop before the byte cap.
     const openKeys = new Set(panes.value.map((pane) => pane.key));
     const ordered = [...membership.value.entries()]
       .sort((a, b) => Number(openKeys.has(b[0])) - Number(openKeys.has(a[0])));
@@ -243,7 +203,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     if (normalized.every((pane, index) => panes.value[index] === pane)
       && normalized.length === panes.value.length) return null;
     panes.value = normalized;
-    persistPreferredOrder();
     return Object.freeze({
       pane: normalized.find((pane) => pane.key === activeKey.value) || null,
       panes: normalized,
@@ -284,9 +243,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
       || !normalized.every((pane, index) => panes.value[index] === pane);
     if (orderChanged) {
       panes.value = normalized;
-      persistPreferredOrder();
     }
-    if (changed || orderChanged) persistGroups();
+    if (changed) persistGroups();
     return changed || orderChanged;
   }
 
@@ -312,10 +270,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
       label: seed.label || 'terminal',
       seed: Object.freeze({ ...seed }),
     });
-    // Opening is a new strip action, even when this terminal key appeared in a
-    // previously persisted order. Put it after the panes that are open now;
+    // Opening is a new strip action. Put it after the panes that are open now;
     // normalizeGrouping only pulls it back beside remembered group siblings.
-    // Explicit drag/keyboard moves remain the sole writers of preferred order.
     panes.value = normalizeGrouping([...panes.value, pane], groupIDFor);
     activeKey.value = key;
     // A pane that lands in a collapsed stack must be visible to be usable, so
@@ -418,7 +374,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     if (normalized.length === panes.value.length
       && normalized.every((pane, index) => panes.value[index] === pane)) return null;
     panes.value = normalized;
-    persistPreferredOrder();
     const firstIndex = normalized.findIndex((pane) => groupIDFor(pane.key) === groupID);
     return Object.freeze({ group, index: firstIndex, count: members.length });
   }
@@ -657,7 +612,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     for (const key of members) next.delete(key);
     membership.value = next;
     panes.value = normalizeGrouping(panes.value, groupIDFor);
-    persistPreferredOrder();
     persistGroups();
     return true;
   }

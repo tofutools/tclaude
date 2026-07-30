@@ -456,7 +456,7 @@ test('dragging the solo header title off the header sends the terminal back to t
       harness.importDashboardModule('js/terminal-shell-actions.js'),
       harness.importDashboardModule('js/terminal-shell-island.js'),
     ]);
-  const state = createTerminalShellState({ persistOrder: false });
+  const state = createTerminalShellState({ persistPresentation: false });
   const reattached = [];
   const actions = createTerminalShellActions({
     state,
