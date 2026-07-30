@@ -1120,3 +1120,4 @@ CREATE TABLE agent_standing_order_hook_selectors (
 
 CREATE INDEX idx_agent_standing_order_hook_selectors_event
 			ON agent_standing_order_hook_selectors(harness, event, order_id);
+
