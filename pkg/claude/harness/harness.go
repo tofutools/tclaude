@@ -218,6 +218,24 @@ type Harness struct {
 	// engages for a Codex agent. See db.BgShellSet (TCL-613).
 	BackgroundShells bool
 
+	// Monitors marks a harness that can run a MONITOR — a long-running
+	// watch whose output is streamed back into the conversation as events,
+	// outliving the turn that started it — and that names each such watch
+	// in its hook stream well enough for tclaude to track it. Claude Code
+	// sets it true: its `Monitor` tool's PostToolUse payload carries the
+	// resulting taskId, the watch's timeout, and whether it is persistent.
+	// Codex has no equivalent and leaves it false, so nothing in the
+	// monitor ledger, its liveness reconcile, or the "👁+N" badge engages
+	// for a Codex agent.
+	//
+	// This is deliberately a separate capability from BackgroundShells even
+	// though the two share a task id namespace: a harness could gain either
+	// without the other, and Claude Code itself withholds Monitor on
+	// several platforms and under CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC.
+	// A monitor that never launches simply never enters the ledger, so the
+	// capability bit stays a coarse harness-level gate. See db.MonitorSet.
+	Monitors bool
+
 	// OfflineModelTransport marks a harness for which tclaude has a supported
 	// way to run the model/control transport without IP networking. It does not
 	// assert that a particular launch configured such a transport; the
@@ -264,6 +282,14 @@ func (h *Harness) SupportsDirTrust() bool {
 // nothing would ever retire.
 func (h *Harness) SupportsBackgroundShells() bool {
 	return h != nil && h.BackgroundShells
+}
+
+// SupportsMonitors reports whether tclaude tracks monitors for this
+// harness. Callers must not feed or read the monitor ledger when it is
+// false — an unknown/empty harness folds to false, so a harness tclaude
+// cannot reason about never grows a ledger nothing would ever retire.
+func (h *Harness) SupportsMonitors() bool {
+	return h != nil && h.Monitors
 }
 
 // SupportsOfflineModelTransport reports whether the harness descriptor can

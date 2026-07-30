@@ -1819,7 +1819,12 @@ type agentState struct {
 	// actual descendant processes at read time rather than trusted from
 	// the hook stream, which announces launches but never exits. See
 	// bgShellCountOnRead / db.BgShellSet.
-	BgShellCount int    `json:"bg_shell_count,omitempty"`
+	BgShellCount int `json:"bg_shell_count,omitempty"`
+	// MonitorCount is how many monitors (Claude Code `Monitor` watches)
+	// the agent still has running — the dashboard's "👁+N" badge. It is
+	// reconciled on the same read pass, and against the same process list,
+	// as BgShellCount. See backgroundCountsOnRead / db.MonitorSet.
+	MonitorCount int    `json:"monitor_count,omitempty"`
 	LastHook     string `json:"last_hook,omitempty"`
 	Cwd          string `json:"cwd,omitempty"`
 	// Context-window usage, read from the same sessions row the hook
@@ -2118,12 +2123,15 @@ func stateForConvInSessionsBatched(
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
-		// Background shells are children of the harness process, so a dead
-		// session has none either. For a live row this re-derives the
-		// ledger from the agent's actual descendant processes — the badge
-		// is only trustworthy because of this step, since the hook stream
-		// announces a background shell's launch but never its exit.
-		out.BgShellCount = bgShellCountOnRead(pick, alive)
+		// Background shells are children of the harness process and
+		// monitors belong to it, so a dead session has neither. For a live
+		// row this re-derives both ledgers from the agent's actual
+		// descendant processes in one pass — the badges are only
+		// trustworthy because of this step, since the hook stream announces
+		// a launch of either kind but never its end.
+		background := backgroundCountsOnRead(pick, alive)
+		out.BgShellCount = background.Shells
+		out.MonitorCount = background.Monitors
 		// Keep the status consistent with the reconciled counts. The stored
 		// row's status_detail was written by whichever hook last fired, off
 		// the counts AS THEY WERE THEN — so any of the three cases below can
@@ -2139,7 +2147,8 @@ func stateForConvInSessionsBatched(
 		// the hook that would have recorded it — Claude Code's idle_prompt
 		// Notification, for one, sets a bare idle without consulting either
 		// ledger. Rendering that agent as plain idle is self-contradicting
-		// when the adjacent badge says a sub-agent or shell is still working.
+		// when the adjacent badge says a sub-agent, shell, or monitor is
+		// still working.
 		//
 		// PARTIAL change: two shells reconciled down to one moves neither
 		// boundary, so without the last case the pill would keep reading
@@ -2151,16 +2160,16 @@ func stateForConvInSessionsBatched(
 		// Only the DISPLAY is adjusted in every case; the stored row
 		// converges on the session's next hook.
 		switch {
-		case out.SubagentCount == 0 && out.BgShellCount == 0:
+		case out.SubagentCount == 0 && out.BgShellCount == 0 && out.MonitorCount == 0:
 			if out.Status == session.StatusMainAgentIdle {
 				out.Status = session.StatusIdle
 				out.StatusDetail = ""
 			}
-		case (out.SubagentCount > 0 || out.BgShellCount > 0) && out.Status == session.StatusIdle:
+		case out.Status == session.StatusIdle:
 			out.Status = session.StatusMainAgentIdle
-			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
+			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
 		case out.Status == session.StatusMainAgentIdle:
-			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
+			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount, out.MonitorCount)
 		}
 	}
 	if !pick.LastHook.IsZero() {

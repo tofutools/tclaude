@@ -53,39 +53,104 @@ type BgShellLiveness struct {
 // construction — so entries are walked in a stable sorted order to keep
 // the outcome deterministic rather than map-iteration random.
 func ReconcileBgShells(ledger map[string]db.BgShellSeen, cmdlines []string) BgShellLiveness {
-	var out BgShellLiveness
-	if len(ledger) == 0 {
+	return ReconcileBackground(ledger, nil, cmdlines).Shells
+}
+
+// BackgroundLiveness is the result of ONE reconcile pass over both
+// process-backed ledgers a session can hold.
+type BackgroundLiveness struct {
+	Shells   BgShellLiveness
+	Monitors BgShellLiveness
+}
+
+// ReconcileBackground decides, for every entry of a session's
+// background-shell and monitor ledgers at once, whether the command it
+// recorded is still running among cmdlines.
+//
+// The two ledgers MUST be reconciled together rather than in two passes,
+// because each live process may be claimed by at most one entry and the
+// two kinds are indistinguishable in the process table: a monitor's watch
+// script is launched by the harness exactly the way a background shell is
+// (the harness reports a command monitor's task type as `local_bash`). Two
+// independent passes would let a background shell and a monitor with
+// similar commands both claim the same process, so neither would ever be
+// retired.
+//
+// Entries are walked shells-first, each group sorted by id, purely so the
+// outcome is deterministic when interchangeable duplicates compete for the
+// same process — which one of N identical commands gets retired is
+// arbitrary by construction.
+//
+// WEBSOCKET monitors are never offered a process to match. A `ws` watch
+// runs inside the harness process and has no descendant of its own, so
+// asking this reconcile about it would retire it instantly and always;
+// it is reported Undecided and left to its deadline and the TTL.
+func ReconcileBackground(
+	shells map[string]db.BgShellSeen,
+	monitors map[string]db.MonitorSeen,
+	cmdlines []string,
+) BackgroundLiveness {
+	var out BackgroundLiveness
+	if len(shells) == 0 && len(monitors) == 0 {
 		return out
 	}
-	ids := make([]string, 0, len(ledger))
-	for id := range ledger {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
 
 	claimed := make([]bool, len(cmdlines))
-	for _, id := range ids {
-		needle := bgShellNeedle(ledger[id].Command)
+	// claim finds an unclaimed process whose argv contains needle, marking
+	// it taken. An empty needle means "too generic to look for".
+	claim := func(needle string) (matched, decided bool) {
 		if needle == "" {
-			out.Undecided = append(out.Undecided, id)
-			continue
+			return false, false
 		}
-		matched := false
 		for i, cmd := range cmdlines {
 			if claimed[i] || !strings.Contains(cmd, needle) {
 				continue
 			}
 			claimed[i] = true
-			matched = true
-			break
+			return true, true
 		}
-		if matched {
-			out.Alive = append(out.Alive, id)
-		} else {
-			out.Dead = append(out.Dead, id)
+		return false, true
+	}
+
+	for _, id := range sortedKeys(shells) {
+		matched, decided := claim(bgShellNeedle(shells[id].Command))
+		out.Shells.record(id, matched, decided)
+	}
+	for _, id := range sortedKeys(monitors) {
+		e := monitors[id]
+		if e.WS {
+			out.Monitors.Undecided = append(out.Monitors.Undecided, id)
+			continue
 		}
+		matched, decided := claim(bgShellNeedle(e.Command))
+		out.Monitors.record(id, matched, decided)
 	}
 	return out
+}
+
+// record files one entry's verdict into the right bucket.
+func (v *BgShellLiveness) record(id string, matched, decided bool) {
+	switch {
+	case !decided:
+		v.Undecided = append(v.Undecided, id)
+	case matched:
+		v.Alive = append(v.Alive, id)
+	default:
+		v.Dead = append(v.Dead, id)
+	}
+}
+
+// sortedKeys returns a map's keys in a stable order.
+func sortedKeys[V any](m map[string]V) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // bgShellNeedle reduces a recorded shell command to the longest fragment

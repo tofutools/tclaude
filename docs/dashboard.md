@@ -502,6 +502,20 @@ While at least one is running the state pill also holds at
 to `idle`. Claude Code only; Codex has no equivalent mechanism and never
 shows the badge.
 
+Beside it sits a **monitor badge** — `👁+N`, shown when the agent has *N*
+[monitors](https://code.claude.com/docs/en/tools-reference#monitor-tool)
+still watching. A monitor is Claude Code's third kind of turn-outliving
+work: a `Monitor` call tails a log, polls a CI job or PR, or holds a
+websocket, and streams each event back into the conversation long after the
+turn that started it ended. An agent whose only outstanding work is a
+monitor used to render as plain `idle`; it now holds at `main_agent_idle`
+just as it does for a background shell. Hover the badge for the count.
+Claude Code only, and only where Claude Code itself offers the tool: it is
+withheld on Amazon Bedrock, Google Cloud's Agent Platform and Microsoft
+Foundry, under `DISABLE_TELEMETRY` or
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, and when the `background-tasks`
+context feature is turned off.
+
 > **How the background-shell count stays honest.** Claude Code fires a hook
 > when such a shell *launches* (`PostToolUse` for `Bash`, carrying the
 > `backgroundTaskId`) but **none when it exits** — so a hook-fed count could
@@ -522,6 +536,22 @@ shows the badge.
 > has no opinion and a generous staleness TTL is the only bound — the count
 > then falls back to the hook's view rather than to zero, since silently
 > hiding real work is the worse failure.
+>
+> **The monitor badge shares this machinery.** A monitor's watch script is
+> launched below the harness exactly the way a background shell is — the
+> harness reports a command monitor's task type as `local_bash` — so both
+> ledgers are reconciled in ONE pass over ONE process list, with each live
+> process claimable by at most one entry. Two independent passes would let a
+> shell and a monitor with similar commands both claim the same process, and
+> so retire neither. Monitors carry one signal background shells do not: a
+> non-persistent watch has a `timeout_ms` the harness itself enforces, which
+> the ledger records as an absolute deadline (never extended by the watch
+> still being alive now). Two things the reconcile cannot see: a **websocket**
+> watch runs inside the harness process and has no descendant to match, so it
+> is deliberately left to its deadline and the TTL rather than retired the
+> instant the dashboard looks; and a **plugin-declared** monitor starts
+> without a `Monitor` tool call, so no hook announces it and it never enters
+> the ledger at all.
 >
 > The sub-agent badge rests on the same ledger discipline for a different
 > reason: `SubagentStart`/`SubagentStop` both exist, but the pair is lossy —
@@ -575,8 +605,8 @@ informational. Both transitions ask for confirmation; use **Ctrl/Cmd+Enter** to
 confirm or **Escape** to cancel.
 
 All restart actions above are deliberately refused unless the live session
-reports `idle` and its database ledgers contain zero live background agents and
-zero live background shell commands. The check is a basic preflight, not a
+reports `idle` and its database ledgers contain zero live background agents,
+zero live background shell commands, and zero live monitors. The check is a basic preflight, not a
 race-free lock: if the agent starts work just afterwards, the normal stop path
 still governs the restart. If a restarted agent does not come back, the chosen
 posture remains durable and the ordinary wake action retries it.

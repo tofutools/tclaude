@@ -153,8 +153,8 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 	}
 
 	subagents := db.ParseSubagentSet(row.SubagentsJSON).LiveCount(now)
-	shells := bgShellCountOnReadAt(row, true, now)
-	active := subagents > 0 || shells > 0
+	background := backgroundCountsOnReadAt(row, true, now)
+	active := subagents > 0 || background.any()
 
 	if active {
 		delete(r.pendingIdle, st.ID)
@@ -164,7 +164,7 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		_, err := db.SetSessionStatusIfUnchanged(
 			st.ID, st.Status, st.Updated,
 			session.StatusMainAgentIdle,
-			session.BackgroundActivityDetail(subagents, shells),
+			session.BackgroundActivityDetail(subagents, background.Shells, background.Monitors),
 			now,
 		)
 		if err != nil {
@@ -216,7 +216,7 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		latest.Status != session.StatusIdle ||
 		!latest.UpdatedAt.Equal(st.Updated) ||
 		db.ParseSubagentSet(latest.SubagentsJSON).LiveCount(now) > 0 ||
-		bgShellCountOnReadAt(latest, true, now) > 0 {
+		backgroundCountsOnReadAt(latest, true, now).any() {
 		delete(r.pendingIdle, st.ID)
 		return
 	}

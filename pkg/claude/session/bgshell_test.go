@@ -122,11 +122,19 @@ func TestHarnessTracksBackgroundShells(t *testing.T) {
 func TestBackgroundActivityDetail(t *testing.T) {
 	// The sub-agents-only wording predates background shells and is
 	// asserted verbatim by existing tests — it must not drift.
-	assert.Equal(t, "2 subagents running", BackgroundActivityDetail(2, 0))
-	assert.Equal(t, "0 subagents running", BackgroundActivityDetail(0, 0))
-	assert.Equal(t, "1 background shell running", BackgroundActivityDetail(0, 1))
-	assert.Equal(t, "3 background shells running", BackgroundActivityDetail(0, 3))
-	assert.Equal(t, "2 subagents, 1 background shell running", BackgroundActivityDetail(2, 1))
+	assert.Equal(t, "2 subagents running", BackgroundActivityDetail(2, 0, 0))
+	assert.Equal(t, "0 subagents running", BackgroundActivityDetail(0, 0, 0))
+	assert.Equal(t, "1 background shell running", BackgroundActivityDetail(0, 1, 0))
+	assert.Equal(t, "3 background shells running", BackgroundActivityDetail(0, 3, 0))
+	assert.Equal(t, "2 subagents, 1 background shell running", BackgroundActivityDetail(2, 1, 0))
+
+	// Monitors are the third kind, and compose with the other two.
+	assert.Equal(t, "1 monitor running", BackgroundActivityDetail(0, 0, 1))
+	assert.Equal(t, "2 monitors running", BackgroundActivityDetail(0, 0, 2))
+	assert.Equal(t, "2 subagents, 1 monitor running", BackgroundActivityDetail(2, 0, 1))
+	assert.Equal(t, "1 background shell, 2 monitors running", BackgroundActivityDetail(0, 1, 2))
+	assert.Equal(t, "1 subagents, 2 background shells, 3 monitors running",
+		BackgroundActivityDetail(1, 2, 3))
 }
 
 func TestBgShellNeedle(t *testing.T) {

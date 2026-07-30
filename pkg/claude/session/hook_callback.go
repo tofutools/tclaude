@@ -805,13 +805,41 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// and keeps running past the parent's turn just the same, so it
 	// belongs in the session's ledger. The gate's early return persists
 	// full state, so the mutation is not lost.
-	if harnessTracksBackgroundShells(state.Harness) {
+	//
+	// ---- Monitor ledger (db.MonitorSet) ----
+	//
+	// Same shape, same lossiness, and — because a `Monitor` watch is a
+	// background task in the SAME id namespace as a background shell — the
+	// same TaskStop event retires from either. A stop is routed to the one
+	// ledger that actually knows the id rather than offered to both, so a
+	// TaskStop naming a monitor cannot also decrement the shell count.
+	//
+	// A stop carrying NO id keeps its legacy meaning ("drop the oldest
+	// background shell") and is deliberately not extended to monitors: with
+	// two ledgers there is no non-arbitrary way to guess which one lost an
+	// entry, and dropping from both would double-count a single kill.
+	trackShells := harnessTracksBackgroundShells(state.Harness)
+	trackMonitors := harnessTracksMonitors(state.Harness)
+	if trackShells {
 		state.BgShells.Sweep(state.LastHook)
-		if id, command, ok := bgShellLaunch(input); ok {
-			state.BgShells = state.BgShells.Add(id, command, state.LastHook)
-		} else if id, ok := bgShellStop(input); ok {
-			state.BgShells.Remove(id)
-		}
+	}
+	if trackMonitors {
+		state.Monitors.Sweep(state.LastHook)
+	}
+	shellID, shellCommand, isShellLaunch := bgShellLaunch(input)
+	monitor, isMonitorLaunch := monitorLaunch(input, state.LastHook)
+	stopID, isStop := bgShellStop(input)
+	switch {
+	case trackShells && isShellLaunch:
+		state.BgShells = state.BgShells.Add(shellID, shellCommand, state.LastHook)
+	case trackMonitors && isMonitorLaunch:
+		state.Monitors = state.Monitors.Add(
+			monitor.ID, monitor.Command, monitor.Label, monitor.WS,
+			state.LastHook, monitor.Deadline)
+	case isStop && trackMonitors && state.Monitors.Has(stopID):
+		state.Monitors.Remove(stopID)
+	case isStop && trackShells:
+		state.BgShells.Remove(stopID)
 	}
 
 	// Hooks fired from INSIDE a sub-agent (agent_id set) must not drive
@@ -1022,15 +1050,16 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		// that somehow survives one re-adds itself via Sight() on its
 		// next hook.
 		state.Subagents = nil
-		// Background shells are children of the harness PROCESS, which a
-		// /clear or /resume does not restart — so unlike sub-agents they
-		// can genuinely outlive this boundary, and only a startup
-		// SessionStart (a new process) is a true known-zero for them.
-		// Clearing on every SessionStart would blank the ledger on every
-		// /clear while the shells kept running; the liveness reconcile
-		// retires them honestly instead.
+		// Background shells are children of the harness PROCESS, and
+		// monitors belong to it, which a /clear or /resume does not
+		// restart — so unlike sub-agents both can genuinely outlive this
+		// boundary, and only a startup SessionStart (a new process) is a
+		// true known-zero for them. Clearing on every SessionStart would
+		// blank the ledgers on every /clear while the work kept running;
+		// the liveness reconcile retires them honestly instead.
 		if input.Source == "startup" || input.Source == "" {
 			state.BgShells = nil
+			state.Monitors = nil
 		}
 		if input.Source != "compact" {
 			state.Status = StatusIdle
@@ -1078,12 +1107,13 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 			}
 			return nil
 		}
-		// The process is going away — sub-agents run inside it and
-		// background shells are its children, so neither can survive.
-		// Known-zero boundary, same as the reaper's
+		// The process is going away — sub-agents and monitors run inside
+		// it and background shells are its children, so none of the three
+		// can survive. Known-zero boundary, same as the reaper's
 		// MarkSessionExitedIfUnchanged.
 		state.Subagents = nil
 		state.BgShells = nil
+		state.Monitors = nil
 		state.Status = StatusExited
 		state.StatusDetail = ""
 		accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{

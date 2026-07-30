@@ -71,6 +71,12 @@ func init() {
 		// ledger of the shells still running and badge an agent that only
 		// LOOKS idle. See BackgroundShells + db.BgShellSet (TCL-613).
 		BackgroundShells: true,
+		// Claude Code's Monitor tool starts a watch that streams events back
+		// into the conversation and outlives the turn, and hands the caller a
+		// taskId in the same namespace as a background shell. An agent
+		// watching a CI job has work outstanding and must not read as idle.
+		// See Monitors + db.MonitorSet.
+		Monitors: true,
 		// Claude Code blocks a first launch in an untrusted dir on its "Do you
 		// trust the files in this folder?" dialog — the same startup gate as
 		// Codex's trust-folder modal, and equally fatal to an unattended pane.
