@@ -165,7 +165,7 @@ function SandboxHelp({ children }) {
   return html`<span class="sbx-section-help" onClick=${(event) => event.stopPropagation()}>${children}</span>`;
 }
 
-function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = false, className = '', attention = false, children }) {
+function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = false, className = '', attention = false, entryCount = null, children }) {
   const [helpOpen, setHelpOpen] = useState('');
   const sectionRef = useRef(null);
   const hadAttention = useRef(false);
@@ -177,6 +177,7 @@ function SandboxSection({ id, label, help = '', helpID = `${id}-help`, hidden = 
     <summary class="sbx-section-summary sbx-section-legend"><span>${label}</span>
       ${help && html`<${SandboxHelp}><${HelpDisclosure} id=${helpID} label=${label} help=${help}
         open=${helpOpen === helpID} setOpen=${setHelpOpen}/></${SandboxHelp}>`}
+      ${entryCount !== null && html`<span class=${`sbx-section-count${entryCount === 0 ? ' sbx-section-count-empty' : ''}`}>${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}</span>`}
     </summary>
     <div class="sbx-section-body">${children}</div>
   </details>`;
@@ -490,7 +491,8 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
   };
   return html`<${SandboxSection} id="sandbox-profile-editor-network-section" className="sbx-access-axis"
       label="Network" help=${NETWORK_ACCESS_HELP} helpID="sandbox-profile-editor-network-help"
-      attention=${packVisibilityAttention}>
+      attention=${packVisibilityAttention}
+      entryCount=${rules.packs.length + rules.deny_packs.length + manualRows.length}>
     <label class="sbx-network-baseline-label">Baseline <${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/></label>
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
       <button type="button" onClick=${retryPackCatalog}>${packCatalogBusy ? 'retry loading' : 'retry catalog'}</button></div>`}
@@ -570,7 +572,8 @@ function SocketAccessEditor({ draft, setDraft, catalog, notice, setNotice }) {
     setNotice({ label: entry.label, added: added.length, skipped: incoming.length - added.length, removed, warning: entry.warning || '' });
   };
   return html`<${SandboxSection} id="sandbox-profile-editor-unix-sockets-section"
-      className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}>
+      className="sbx-access-axis" label="Unix sockets" help=${UNIX_SOCKETS_HELP}
+      entryCount=${rules.allow.length}>
     <${Select} id="sandbox-profile-editor-unix-sockets-mode" value=${rules.mode || ''} onChange=${(mode) => update({ mode, allow: mode === 'list' ? rules.allow : [] })} options=${ACCESS_MODE_OPTIONS}/>
     ${rules.mode === 'list' && html`<div class="sbx-rows sbx-socket-rows">${rules.allow.map((row, index) => { const glob = Object.hasOwn(row, 'path_glob'); return html`<div key=${index} class="sbx-row sbx-access-row sbx-socket-row">
       <${SegmentedControl} className="sbx-socket-selector" label=${`Unix socket row ${index + 1} kind`}
@@ -1160,7 +1163,8 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       packCatalogBusy=${commonRuleFeedBusy}/><${SocketAccessEditor} draft=${draft} setDraft=${setDraft} catalog=${commonRules} notice=${socketTemplateNotice} setNotice=${setSocketTemplateNotice}/>`}
     <${SandboxSection} id="sandbox-profile-editor-filesystem-section" label="Filesystem"
       help=${FILESYSTEM_HELP} hidden=${advanced}
-      attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}>
+      attention=${globalConfigWarnings.length > 0 || !!commonRuleFeedError}
+      entryCount=${draft.filesystem.length}>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
           ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
@@ -1193,9 +1197,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       </div>`}
     </${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-environment-section" label="Environment"
-      help=${ENVIRONMENT_HELP} hidden=${advanced}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
+      help=${ENVIRONMENT_HELP} hidden=${advanced} entryCount=${draft.environment.length}><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input class="sbx-env-value" value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-includes-section" label="Includes"
-      help=${INCLUDES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.includes.map((name, index) => {
+      help=${INCLUDES_HELP} hidden=${advanced} entryCount=${draft.includes.length}><div class="sbx-rows">${draft.includes.map((name, index) => {
     const missing = !!name && !sandboxProfiles.some((item) => item.name === name);
     const warningID = `sandbox-profile-editor-include-warning-${index}`;
     const options = [
@@ -1206,7 +1210,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     return html`<div key=${index} class="sbx-row sbx-include-row"><${Select} class="sbx-inc-name" value=${name} aria-invalid=${missing || null} aria-describedby=${missing ? warningID : null} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${options} />${missing && html`<span id=${warningID} class="sbx-global-warning sbx-include-warning" role="alert">⚠ "${name}" not found in registry</span>`}<button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`;
   })}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-agent-directories-section" label="Agent-owned directories"
-      help=${AGENT_DIRECTORIES_HELP} hidden=${advanced}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></${SandboxSection}>
+      help=${AGENT_DIRECTORIES_HELP} hidden=${advanced} entryCount=${draft.agent_directories.length}><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></${SandboxSection}>
     <${SandboxSection} id="sandbox-profile-editor-effective-policy-section"
       className="sbx-effective-preview" label="Effective policy preview"
       help=${EFFECTIVE_POLICY_HELP} hidden=${advanced}
