@@ -82,7 +82,22 @@ type proxySmokeFixture struct {
 	HostDenied    int
 }
 
+// proxySmokeFixtureFromEnv reads the complete fixture. It is what the
+// in-sandbox helper uses: every value, including the host-loopback ports the
+// launching test chose, arrives through the environment the sandbox inherits.
 func proxySmokeFixtureFromEnv(t *testing.T) proxySmokeFixture {
+	t.Helper()
+	fixture := proxySmokeRunnerFixture(t)
+	fixture.HostAllowed = requireFilteredSmokePort(t, proxySmokeHostAllowedEnv)
+	fixture.HostDenied = requireFilteredSmokePort(t, proxySmokeHostDeniedEnv)
+	return fixture
+}
+
+// proxySmokeRunnerFixture reads only what the CI job supplies. The
+// host-loopback halves are owned by the launching test, which starts those
+// servers itself so the job never has to keep two more ports in step with the
+// authored policy.
+func proxySmokeRunnerFixture(t *testing.T) proxySmokeFixture {
 	t.Helper()
 	return proxySmokeFixture{
 		AllowedAddr:   requireFilteredSmokeEnv(t, filteredGatewayAllowedAddrEnv),
@@ -90,8 +105,6 @@ func proxySmokeFixtureFromEnv(t *testing.T) proxySmokeFixture {
 		AllowedPrefix: requireFilteredSmokeEnv(t, filteredGatewayAllowedPrefixEnv),
 		AllowedPort:   requireFilteredSmokePort(t, filteredGatewayAllowedPortEnv),
 		DeniedPort:    requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv),
-		HostAllowed:   requireFilteredSmokePort(t, proxySmokeHostAllowedEnv),
-		HostDenied:    requireFilteredSmokePort(t, proxySmokeHostDeniedEnv),
 	}
 }
 
@@ -197,8 +210,7 @@ func TestTclaudeLayerProxyFloorSmoke(t *testing.T) {
 	if os.Getenv(proxySmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_FILTERED_PROXY_SMOKE=1 on the executing Linux CI boundary")
 	}
-	fixture := proxySmokeFixtureFromEnv(t)
-	output := runProxySmokeLaunch(t, fixture,
+	_, output := runProxySmokeLaunch(t,
 		"^TestTclaudeLayerProxyFloorHelper$",
 		[]string{proxySmokeFloorHelperEnv + "=1"})
 	for _, marker := range []string{
@@ -221,8 +233,7 @@ func TestTclaudeLayerProxyPolicySmoke(t *testing.T) {
 	if os.Getenv(proxySmokeEnv) != "1" {
 		t.Skip("set TCLAUDE_FILTERED_PROXY_SMOKE=1 on the executing Linux CI boundary")
 	}
-	fixture := proxySmokeFixtureFromEnv(t)
-	output := runProxySmokeLaunch(t, fixture,
+	fixture, output := runProxySmokeLaunch(t,
 		"^TestTclaudeLayerProxyPolicyHelper$",
 		[]string{
 			proxySmokePolicyHelperEnv + "=1",
@@ -255,11 +266,16 @@ func TestTclaudeLayerProxyPolicySmoke(t *testing.T) {
 // runs the named helper test inside it.
 func runProxySmokeLaunch(
 	t *testing.T,
-	fixture proxySmokeFixture,
 	helperTest string,
 	helperEnv []string,
-) string {
+) (proxySmokeFixture, string) {
 	t.Helper()
+	fixture := proxySmokeRunnerFixture(t)
+	// The launching test owns both host-loopback halves: an allowed port the
+	// authored loopback row reaches, and a LIVE denied port, so a refusal there
+	// is the policy answering rather than nothing listening.
+	fixture.HostAllowed = proxySmokeLoopbackServer(t)
+	fixture.HostDenied = proxySmokeLoopbackServer(t)
 	tclaudeBinary := strings.TrimSpace(os.Getenv(filteredGatewayTclaudeBinaryEnv))
 	require.NotEmpty(t, tclaudeBinary)
 	tclaudeBinary, err := filepath.Abs(tclaudeBinary)
@@ -327,7 +343,31 @@ func runProxySmokeLaunch(
 	output, runErr := cmd.CombinedOutput()
 	require.NoErrorf(t, runErr, "proxy smoke output:\n%s", output)
 	require.NoError(t, ctx.Err())
-	return string(output)
+	return fixture, string(output)
+}
+
+// proxySmokeLoopbackServer starts a host-loopback TCP listener and returns its
+// port.
+func proxySmokeLoopbackServer(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+	address, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return address.Port
 }
 
 // proxySmokeHelperEnv passes the live fixture to the in-sandbox helper. The
