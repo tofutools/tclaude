@@ -995,13 +995,39 @@ func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 	return nil
 }
 
-// sessionConvByPID returns the conv-id of the most-recently-updated sessions
-// row whose recorded host pid is hostPID, or "" when none matches (or the
-// match has no conv-id yet). The sessions table is keyed by the tmux pane_pid
-// recorded at spawn; convIDForPID probes both the harness ancestor's own pid
-// and its parent's because the harness runs one hop below that pane_pid.
+// sessionConvByPID returns the conv-id of the sessions row recorded against
+// hostPID, or "" when none matches (or the match has no conv-id yet). The
+// sessions table is keyed by the tmux pane_pid recorded at spawn; convIDForPID
+// probes both the harness ancestor's own pid and its parent's because the
+// harness runs one hop below that pane_pid.
+//
+// This is the general pid -> conv-id lookup behind DIRECT CLI identity, and it
+// takes the same dead-incumbent repair as sessionRowByPID (TCL-771). It was
+// left on the plain most-recently-updated query by TCL-761, whose blast radius
+// was telemetry; here the answer becomes peer.ConvID, which classify() turns
+// into classAgent, so every authorization decision for that caller keys on it.
+// A pid is not unique over a machine's lifetime, and session rows are not
+// pruned, so a long-dead row can shadow a live agent's pane pid and hand the
+// caller a stranger's identity.
+//
+// The repair semantics are sessionRowByPID's exactly, and deliberately so: a
+// demonstrably dead incumbent is displaced only by a demonstrably live
+// sibling, never filtered and never re-ranked. Ambiguity — one row, a nameless
+// incumbent, nothing else alive, an unreachable tmux — keeps the incumbent, so
+// this can never resolve nothing where the old code resolved something.
+//
+// Failing CLOSED on ambiguity was considered and rejected: multiple rows per
+// pid is the NORMAL case (rows are never pruned and record the pane pid they
+// had at spawn), so refusing whenever liveness is merely inconclusive — a cold
+// cache, a transiently unreachable tmux, a row auto-registered outside tmux
+// with no session name — would refuse legitimate live callers as a matter of
+// routine. Pid reuse is also an accident rather than an attacker-choosable
+// primitive: a caller cannot pick the pid the OS hands it, and the binding to
+// host pids the daemon itself recorded is what a sandboxed caller cannot forge
+// either way. Residual limitation: a dead incumbent with no provably live
+// sibling still resolves as before.
 func sessionConvByPID(hostPID int) string {
-	if row, err := db.FindSessionByPID(hostPID); err == nil && row != nil {
+	if row := preferLiveRowAtPID(hostPID, nil); row != nil {
 		return row.ConvID
 	}
 	return ""

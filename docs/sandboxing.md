@@ -879,19 +879,32 @@ The daemon identifies the calling session from host pids it recorded at
 spawn, never from anything the caller sends; a `TCLAUDE_SESSION_ID` in the
 request is accepted only as a cross-check and a disagreement is refused.
 
-A pid is not unique over a machine's lifetime, so a long-dead session's row
-can be recorded against the same number as a live agent's pane. On the
-brokered paths, when more than one row claims the pid the daemon replaces a
-winner whose tmux session it can see is gone with one it can see is alive.
-It is a repair of a demonstrably dead answer, not a re-ranking: with nothing
-provably alive, with tmux unreachable, or with no recorded tmux session to
-judge by, resolution is exactly what it was before. It matters because
-picking the corpse refuses a live agent's callbacks, and that failure
-sustains itself — the live row is advanced mainly by the very callbacks
-being refused.
+A pid is not unique over a machine's lifetime, and session rows are not
+pruned, so a long-dead session's row can be recorded against the same number
+as a live agent's pane. When more than one row claims the pid the daemon
+replaces a winner whose tmux session it can see is gone with one it can see is
+alive. It is a repair of a demonstrably dead answer, not a re-ranking: with
+nothing provably alive, with tmux unreachable, or with no recorded tmux session
+to judge by, resolution is exactly what it was before, so no caller is refused
+that would previously have been placed. It matters because picking the corpse
+refuses a live agent's callbacks, and that failure sustains itself — the live
+row is advanced mainly by the very callbacks being refused.
 
-The repair covers the brokered hook and status-line paths and the
-`tclaude-layer` ancestry walks. For OpenCode, CLI identity may cross at most 16
+The repair covers the brokered hook and status-line paths, the
+`tclaude-layer` ancestry walks, and the general pid → conv-id lookup behind
+direct CLI identity. That last one is the one whose answer becomes the caller's
+conversation for authorization, so a reused pid there means a caller is
+authorized as whichever conversation happened to hold the freshest row.
+
+Refusing outright on an ambiguous pid was considered and rejected: several rows
+per pid is the normal case rather than the suspicious one, so refusing whenever
+liveness is merely inconclusive would routinely reject legitimate live callers.
+Pid reuse is also an accident rather than something a caller can steer — it
+cannot choose the pid the OS hands it, and identity stays bound to host pids the
+daemon itself recorded either way. The residual limitation is deliberate: a dead
+incumbent with no provably live sibling still resolves as it did before.
+
+For OpenCode, CLI identity may cross at most 16
 wrapper ancestors only when the matching runtime row explicitly records
 `tclaude-layer`; the candidate still has to pass the server endpoint-ownership
 proof. Harness-builtin OpenCode rows retain the exact/one-parent lookup.
