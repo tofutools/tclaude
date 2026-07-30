@@ -302,6 +302,7 @@ export function attachTerminalInteractions({
   terminalPath,
   onComposeMessage = null, onSelectionChange = () => {},
   requestPalette = requestCommandPalette,
+  fetchImpl = globalThis.fetch,
   downloadFile = null,
 }) {
   let statusTimer = null;
@@ -415,14 +416,25 @@ export function attachTerminalInteractions({
     term.focus();
   }
 
-  function downloadHostFile(path) {
+  async function downloadHostFile(path) {
     if (downloadFile) {
       downloadFile(path);
       return;
     }
     const query = new URLSearchParams({ terminal: terminalPath, path });
+    const href = `/api/terminal-file?${query}`;
+    // Keep the eventual GET streaming through the browser rather than
+    // buffering a potentially large file into a Blob, but make errors and an
+    // expired auth session observable first. auth-session.js wraps this fetch
+    // and owns the top-level sign-in redirect.
+    const response = await fetchImpl(href, {
+      method: 'HEAD', credentials: 'same-origin', cache: 'no-store',
+    });
+    if (!response?.ok) {
+      throw new Error(`download unavailable (${response?.status || 'network error'})`);
+    }
     const anchor = ownerDocument.createElement('a');
-    anchor.href = `/api/terminal-file?${query}`;
+    anchor.href = href;
     anchor.download = '';
     anchor.style.display = 'none';
     ownerDocument.body.append(anchor);
@@ -444,8 +456,10 @@ export function attachTerminalInteractions({
       return;
     }
     if (link.kind === 'file') {
-      downloadHostFile(link.target);
-      flash(`downloading ${link.target.split('/').pop() || 'file'}…`);
+      void downloadHostFile(link.target).then(
+        () => flash(`downloading ${link.target.split('/').pop() || 'file'}…`),
+        (error) => flash(String(error?.message || error).slice(0, 120), 5000),
+      );
       return;
     }
     window.open(link.target, '_blank', 'noopener,noreferrer');

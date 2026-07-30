@@ -3,6 +3,7 @@ package agentd
 import (
 	"encoding/json"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,12 +183,17 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 // attachments. That shared path is what makes remote-browser image paste work:
 // bytes move through agentd rather than relying on its host OS clipboard.
 func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
+	setupTestDB(t)
 	withDashboardAuth(t)
 	isolateSpawnAttachmentsBase(t)
+	_, err := db.CreateAgentGroup("terminal-downloads", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("terminal-downloads", t.TempDir())
+	require.NoError(t, err)
 
 	r := newSpawnAttachUpload(t, []uploadPart{{filename: "pasted-image.png", data: []byte("png")}})
 	r.URL.Path = "/api/terminal-attachments"
-	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/term-ws/agent?which=current")
+	r.URL.RawQuery = "terminal=" + url.QueryEscape("/api/group-term-ws/terminal-downloads")
 	mux := http.NewServeMux()
 	registerDashboardSpawnAttachmentRoutes(mux)
 	w := httptest.NewRecorder()
@@ -200,13 +207,18 @@ func TestTerminalAttachmentsRouteUsesBoundedUpload(t *testing.T) {
 }
 
 func TestTerminalFileRouteDownloadsHostFile(t *testing.T) {
+	setupTestDB(t)
 	withDashboardAuth(t)
 	dir := t.TempDir()
+	_, err := db.CreateAgentGroup("terminal-downloads", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("terminal-downloads", dir)
+	require.NoError(t, err)
 	path := filepath.Join(dir, "result å.md")
 	require.NoError(t, os.WriteFile(path, []byte("# done\n"), 0o600))
 
 	query := url.Values{
-		"terminal": {"/api/term-ws/agent?which=current"},
+		"terminal": {"/api/group-term-ws/terminal-downloads"},
 		"path":     {path},
 	}.Encode()
 	r := dashboardRequest(http.MethodGet, "/api/terminal-file?"+query, "")
@@ -223,8 +235,13 @@ func TestTerminalFileRouteDownloadsHostFile(t *testing.T) {
 }
 
 func TestTerminalFileRouteRejectsInvalidTargets(t *testing.T) {
+	setupTestDB(t)
 	withDashboardAuth(t)
 	dir := t.TempDir()
+	_, err := db.CreateAgentGroup("terminal-downloads", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("terminal-downloads", dir)
+	require.NoError(t, err)
 	mux := http.NewServeMux()
 	registerDashboardSpawnAttachmentRoutes(mux)
 
@@ -235,7 +252,7 @@ func TestTerminalFileRouteRejectsInvalidTargets(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			query := url.Values{
-				"terminal": {"/api/term-ws/agent"},
+				"terminal": {"/api/group-term-ws/terminal-downloads"},
 				"path":     {path},
 			}.Encode()
 			w := httptest.NewRecorder()
@@ -247,11 +264,48 @@ func TestTerminalFileRouteRejectsInvalidTargets(t *testing.T) {
 
 	path := filepath.Join(dir, "report.md")
 	require.NoError(t, os.WriteFile(path, []byte("private"), 0o600))
-	query := url.Values{"terminal": {"/not-a-terminal"}, "path": {path}}.Encode()
+	for name, terminal := range map[string]string{
+		"unknown route":     "/not-a-terminal",
+		"missing agent":     "/api/term-ws/not-an-agent?which=current",
+		"invalid selector":  "/api/term-ws/agent/nested?which=current",
+		"invalid directory": "/api/term-ws/agent?which=elsewhere",
+		"missing group":     "/api/group-term-ws/ghost",
+		"nested group":      "/api/group-term-ws/terminal-downloads/nested",
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := url.Values{"terminal": {terminal}, "path": {path}}.Encode()
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, dashboardRequest(http.MethodGet,
+				"/api/terminal-file?"+query, ""))
+			assert.NotEqual(t, http.StatusOK, w.Code)
+		})
+	}
+}
+
+func TestTerminalFileRoutePreservesLongUnicodeFilename(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	dir := t.TempDir()
+	_, err := db.CreateAgentGroup("terminal-downloads", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("terminal-downloads", dir)
+	require.NoError(t, err)
+	original := strings.Repeat("å", 70) + ".md"
+	path := filepath.Join(dir, original)
+	require.NoError(t, os.WriteFile(path, []byte("done"), 0o600))
+
+	query := url.Values{
+		"terminal": {"/api/group-term-ws/terminal-downloads"},
+		"path":     {path},
+	}.Encode()
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, dashboardRequest(http.MethodGet,
+	handleDashboardTerminalFile(w, dashboardRequest(http.MethodHead,
 		"/api/terminal-file?"+query, ""))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	_, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
+	require.NoError(t, err)
+	assert.Equal(t, sanitizeAttachmentFilename(original), params["filename"])
+	assert.True(t, utf8.ValidString(params["filename"]))
 }
 
 func TestTerminalAttachmentsRouteUsesLayerVisibleSessionRoot(t *testing.T) {

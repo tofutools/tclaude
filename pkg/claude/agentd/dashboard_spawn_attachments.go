@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
@@ -190,8 +191,8 @@ func handleDashboardTerminalFile(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
 	}
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "method", "GET or HEAD only")
 		return
 	}
 	if _, _, status, err := terminalAttachmentBase(
@@ -256,8 +257,29 @@ func terminalAttachmentBase(
 	}
 	path := terminalURL.Path
 	switch {
-	case strings.HasPrefix(path, "/api/term-ws/"),
-		strings.HasPrefix(path, "/api/group-term-ws/"):
+	case strings.HasPrefix(path, "/api/term-ws/"):
+		selector, unescapeErr := terminalPathSelector(path, "/api/term-ws/")
+		if unescapeErr != nil {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid agent terminal path")
+		}
+		if _, _, resolveErr := agent.ResolveSelectorCached(selector); resolveErr != nil {
+			return "", false, http.StatusNotFound, fmt.Errorf("terminal agent is unavailable")
+		}
+		if _, ok := normaliseWhich(terminalURL.Query().Get("which")); !ok {
+			return "", false, http.StatusBadRequest, fmt.Errorf(
+				`terminal directory must be "start", "current", or "worktree"`,
+			)
+		}
+		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
+	case strings.HasPrefix(path, "/api/group-term-ws/"):
+		name, unescapeErr := terminalPathSelector(path, "/api/group-term-ws/")
+		if unescapeErr != nil {
+			return "", false, http.StatusBadRequest, fmt.Errorf("invalid group terminal path")
+		}
+		group, groupErr := db.GetAgentGroupByName(name)
+		if groupErr != nil || group == nil || strings.TrimSpace(group.DefaultCwd) == "" {
+			return "", false, http.StatusNotFound, fmt.Errorf("terminal group is unavailable")
+		}
 		return spawnAttachmentsBaseDir(), true, http.StatusOK, nil
 	}
 
@@ -321,6 +343,18 @@ func terminalAttachmentBase(
 		return privateRoot, false, http.StatusOK, nil
 	}
 	return "", false, http.StatusConflict, fmt.Errorf("terminal session sandbox is unavailable")
+}
+
+func terminalPathSelector(path, prefix string) (string, error) {
+	raw := strings.TrimPrefix(path, prefix)
+	if raw == "" || strings.Contains(raw, "/") {
+		return "", fmt.Errorf("missing or nested selector")
+	}
+	selector, err := url.PathUnescape(raw)
+	if err != nil || selector == "" || strings.Contains(selector, "/") {
+		return "", fmt.Errorf("invalid selector")
+	}
+	return selector, nil
 }
 
 func storeDashboardAttachments(
@@ -477,7 +511,15 @@ func sanitizeAttachmentFilename(name string) string {
 		if len(ext) > 16 {
 			ext = ""
 		}
-		name = name[:maxNameLen-len(ext)] + ext
+		stem := strings.TrimSuffix(name, ext)
+		for len(stem) > maxNameLen-len(ext) {
+			_, size := utf8.DecodeLastRuneInString(stem)
+			if size == 0 {
+				break
+			}
+			stem = stem[:len(stem)-size]
+		}
+		name = stem + ext
 	}
 	if name == "" || name == "." || name == ".." {
 		return "attachment"

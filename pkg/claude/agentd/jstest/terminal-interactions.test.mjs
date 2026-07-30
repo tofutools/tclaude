@@ -322,8 +322,9 @@ test('terminal lifecycle accepts only the latest armed pane OSC 52', async () =>
 // An OSC 8 hyperlink picks its label text independently of its target, so the
 // hover reveal is the only thing standing between "see the docs" and wherever
 // it actually points. These drive the real linkHandler the terminal installs.
-function linkHarness(options = {}) {
+function linkHarness(options = {}, setupDocument = () => {}) {
   const doc = new FakeEventTarget();
+  setupDocument(doc);
   const harness = terminalHarness(doc);
   const statuses = [];
   const interactions = attachTerminalInteractions({
@@ -420,7 +421,7 @@ test('local OSC 8 file URLs decode to host paths without query or fragment metad
   }
 });
 
-test('file hyperlinks reveal the host path and download only on a modified click', () => {
+test('file hyperlinks reveal the host path and download only on a modified click', async () => {
   const downloaded = [];
   const { statuses, interactions, links } = linkHarness({
     downloadFile: (path) => downloaded.push(path),
@@ -434,7 +435,38 @@ test('file hyperlinks reveal the host path and download only on a modified click
     assert.deepEqual(downloaded, []);
     links.activate({ metaKey: true }, raw);
     assert.deepEqual(downloaded, ['/tmp/final chart.png']);
+    await Promise.resolve();
     assert.equal(statuses.at(-1), 'downloading final chart.png…');
+  } finally {
+    interactions.dispose();
+  }
+});
+
+test('file downloads preflight through fetch and surface a non-2xx response', async () => {
+  const fetches = [];
+  const anchors = [];
+  const { statuses, interactions, links } = linkHarness({
+    terminalPath: '/api/term-ws/agent?which=current',
+    fetchImpl: async (...args) => {
+      fetches.push(args);
+      return { ok: false, status: 403 };
+    },
+  }, (doc) => {
+    doc.body = { append: (anchor) => anchors.push(anchor) };
+    doc.createElement = () => ({
+      style: {}, click() { throw new Error('failed preflight must not click'); }, remove() {},
+    });
+  });
+  try {
+    links.activate({ ctrlKey: true }, 'file:///tmp/result.png');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fetches.length, 1);
+    assert.match(fetches[0][0], /^\/api\/terminal-file\?/);
+    assert.deepEqual(fetches[0][1], {
+      method: 'HEAD', credentials: 'same-origin', cache: 'no-store',
+    });
+    assert.deepEqual(anchors, []);
+    assert.equal(statuses.at(-1), 'download unavailable (403)');
   } finally {
     interactions.dispose();
   }

@@ -1629,11 +1629,12 @@ work: text that is itself a URL, and an explicit terminal hyperlink whose
 visible text is a label rather than an address — the form Claude Code and Codex
 use for documents, issues, and sessions. Because a labelled link chooses its
 text independently of its target, hovering one shows the real destination in
-the terminal's status line before you commit to the click. OSC 8
-`file://` links are downloads: Ctrl/⌘-click asks the authenticated agentd
-backend to stream that host-local regular file to the browser. This works from
-a remote dashboard, where the browser cannot dereference the agent host's path
-itself; remote-host file URLs, directories, and devices stay blocked.
+the terminal's status line before you commit to the click. OSC 8 `file://`
+links and absolute-path targets are downloads: Ctrl/⌘-click asks the
+authenticated agentd backend to preflight and then stream that host-local
+regular file to the browser. This works from a remote dashboard, where the
+browser cannot dereference the agent host's path itself; remote-host file URLs,
+directories, and devices stay blocked.
 Pasting a PNG, JPEG, or WebP clipboard image uploads it to a bounded temporary
 directory on the agentd host and pastes that host-side path into Claude Code or
 Codex as an image attachment. This also works through remote dashboard
