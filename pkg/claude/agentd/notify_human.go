@@ -594,13 +594,29 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 	// even though the actor's spawn-time pending_name was already durable in
 	// SQLite. Resolve only those blank snapshots by stable agent_id so existing
 	// messages heal too; a non-empty historical snapshot remains immutable.
+	// Heal pre-stable-id rows too. Replaced conversation generations remain
+	// mapped to their actor in SQLite, so this restores rotation-stable
+	// attribution without rewriting historical notification rows.
+	agentByConv := make(map[string]string)
+	for _, m := range rows {
+		if m.FromAgent == "" && m.FromConv != "" {
+			if _, seen := agentByConv[m.FromConv]; !seen {
+				agentByConv[m.FromConv], _ = db.AgentIDForConv(m.FromConv)
+			}
+		}
+	}
+
 	missingTitleAgents := make([]string, 0)
 	seenAgents := make(map[string]struct{})
 	for _, m := range rows {
-		if m.FromTitle == "" && m.FromAgent != "" {
-			if _, seen := seenAgents[m.FromAgent]; !seen {
-				seenAgents[m.FromAgent] = struct{}{}
-				missingTitleAgents = append(missingTitleAgents, m.FromAgent)
+		fromAgent := m.FromAgent
+		if fromAgent == "" {
+			fromAgent = agentByConv[m.FromConv]
+		}
+		if m.FromTitle == "" && fromAgent != "" {
+			if _, seen := seenAgents[fromAgent]; !seen {
+				seenAgents[fromAgent] = struct{}{}
+				missingTitleAgents = append(missingTitleAgents, fromAgent)
 			}
 		}
 	}
@@ -617,13 +633,17 @@ func buildHumanMessagesSnapshot() ([]dashboardHumanMessage, int) {
 			unread++
 		}
 		fromTitle := m.FromTitle
+		fromAgent := m.FromAgent
+		if fromAgent == "" {
+			fromAgent = agentByConv[m.FromConv]
+		}
 		if fromTitle == "" {
-			fromTitle = pendingNames[m.FromAgent]
+			fromTitle = pendingNames[fromAgent]
 		}
 		view := dashboardHumanMessage{
 			ID:        m.ID,
 			FromConv:  m.FromConv,
-			FromAgent: m.FromAgent,
+			FromAgent: fromAgent,
 			FromTitle: fromTitle,
 			Group:     m.GroupName,
 			Subject:   m.Subject,

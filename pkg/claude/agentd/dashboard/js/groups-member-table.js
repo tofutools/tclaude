@@ -9,6 +9,9 @@ import {
 } from './helpers.js';
 import { isWizardActive } from './slop.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
+import {
+  humanNotificationSenderQuery, memberUnreadHumanCount,
+} from './human-notification-attention.js';
 
 const html = htm.bind(h);
 
@@ -659,12 +662,23 @@ function SudoBadge({ grants, conv }) {
   return html`<span class="sudo-badge" data-act="sudo-manage" data-conv=${grants[0].conv_id || conv || ''} title=${title}>🔓</span>`;
 }
 
+function HumanNotificationAttention({ member, snapshot }) {
+  const unread = memberUnreadHumanCount(member, snapshot);
+  if (!unread) return null;
+  const label = member.title || member.conv_id;
+  const title = `${unread} unread notification${unread === 1 ? '' : 's'} from ${label} — open in Messages`;
+  return html`<button type="button" class="human-notification-attention"
+    data-act="view-human-notifications" ...${memberAttrs(member)}
+    data-sender=${humanNotificationSenderQuery(member)}
+    aria-label=${title} title=${title}><span aria-hidden="true">!</span></button>`;
+}
+
 function MemberName({ member, snapshot, actions, grants, editorKey }) {
   const state = member.state || {};
   const canRename = harnessCanRename(snapshot, state.harness);
   const idPrefix = memberColHidden('id') ? `${idTooltip(member.agent_id, member.conv_id)} — ` : '';
-  if (!canRename) return html`<div class="rowname"><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
-  return html`<div class="rowname"><${InlineEditor}
+  if (!canRename) return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><span class="rowname-text rowname-fixed" title=${`${idPrefix}This agent's harness does not support renaming`}>${member.title || '(unnamed)'}</span><${SudoBadge} grants=${grants} conv=${member.conv_id} /></div>`;
+  return html`<div class="rowname"><${HumanNotificationAttention} member=${member} snapshot=${snapshot} /><${InlineEditor}
     editorKey=${editorKey} value=${member.title || ''} className="rowname-input"
     placeholder="1-64 chars: A-Za-z0-9 _ - [ ] { } ( ) — Enter saves, Esc cancels"
     onCommit=${(value) => actions.renameAgent(member, value)}

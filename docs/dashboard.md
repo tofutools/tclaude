@@ -402,6 +402,15 @@ Every group, expandable to its members. Each member row shows the status
 dot, role / description, working directory, git branch or
 worktree, effective permissions, and an **owner** badge where applicable.
 
+An amber **!** floating over the start of an agent's name means that agent has
+sent one or more unread notifications to the human with
+`tclaude agent notify-human`. Select it to open **Messages → Human**, already
+filtered to that agent. Matching amber marks over the top-bar activity bots
+and a group's activity bots are non-interactive breadcrumbs: globally they mean
+some agent needs attention, and on a group they mean one of its members does.
+Only the agent-row mark is a link; reading or marking the notification updates
+all three levels on the next dashboard refresh.
+
 The row's harness/model line carries a **sandbox badge** — `🔒` when the OS
 sandbox confined the agent, `⚠` for a posture weaker than it looks. It reflects
 what actually confined the launch, not which mode was requested, so a Claude

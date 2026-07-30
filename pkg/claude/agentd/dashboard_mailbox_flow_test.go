@@ -929,23 +929,66 @@ func TestDashboardMailbox_HumanNotificationResolvesBlankTitleByAgent(t *testing.
 	f.HaveGroup("codex-team")
 	f.HaveMember("codex-team", codexConv)
 	f.HavePendingName(codexConv, "codex-reviewer")
-	_, err := db.InsertHumanMessage(&db.HumanMessage{
+	msgID, err := db.InsertHumanMessage(&db.HumanMessage{
 		FromConv: codexConv,
 		Subject:  "review complete",
 		Body:     "all checks pass",
 	})
 	require.NoError(t, err)
+	// Recreate a pre-from_agent historical row, then rotate the sender. The
+	// dashboard must recover the stable actor through the predecessor conv.
+	raw, err := db.Open()
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE human_messages SET from_agent = '' WHERE id = ?`, msgID)
+	require.NoError(t, err)
+	agentID, err := db.AgentIDForConv(codexConv)
+	require.NoError(t, err)
+	const nextConv = "mbox-code-1111-2222-333333333308"
+	_, err = db.RotateAgentConv(codexConv, nextConv, "test")
+	require.NoError(t, err)
 	dash := dashHandlerForTest(t)
 
 	page := getMailboxPage(t, dash, "human", "", 0, 0)
 	require.Len(t, page.Messages, 1)
-	assert.NotEmpty(t, page.Messages[0].FromAgent)
+	assert.Equal(t, agentID, page.Messages[0].FromAgent)
 	assert.Equal(t, "codex-reviewer", page.Messages[0].FromTitle)
 
 	search := getMailboxPage(t, dash, "human", "codex-reviewer", 0, 0)
 	require.Equal(t, 1, search.Total)
 	require.Len(t, search.Messages, 1)
 	assert.Equal(t, "review complete", search.Messages[0].Subject)
+}
+
+func TestDashboardMailbox_HumanSenderFilterIsExact(t *testing.T) {
+	f := newFlow(t)
+	const aliceConv = "mbox-exact-alice"
+	const bobConv = "mbox-exact-bob"
+	f.HaveGroup("exact-team")
+	f.HaveMember("exact-team", aliceConv)
+	f.HaveMember("exact-team", bobConv)
+	aliceAgent, err := db.AgentIDForConv(aliceConv)
+	require.NoError(t, err)
+	bobAgent, err := db.AgentIDForConv(bobConv)
+	require.NoError(t, err)
+	_, err = db.InsertHumanMessage(&db.HumanMessage{
+		FromConv: aliceConv, FromAgent: aliceAgent, Subject: "alice alert",
+	})
+	require.NoError(t, err)
+	_, err = db.InsertHumanMessage(&db.HumanMessage{
+		FromConv: bobConv, FromAgent: bobAgent, Subject: "mentions " + aliceAgent,
+		Body: "another reference to " + aliceAgent,
+	})
+	require.NoError(t, err)
+
+	dash := dashHandlerForTest(t)
+	rec := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodGet,
+		"/api/mailbox?id=human&sender="+url.QueryEscape(aliceAgent)+"&q="+url.QueryEscape(aliceAgent), nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var page mailboxPageResp
+	testharness.DecodeJSON(t, rec, &page)
+	require.Len(t, page.Messages, 1)
+	assert.Equal(t, aliceAgent, page.Messages[0].FromAgent)
+	assert.Equal(t, "alice alert", page.Messages[0].Subject)
 }
 
 // Scenario: the human folder paginates + searches in Go over its

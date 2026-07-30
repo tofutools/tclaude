@@ -439,7 +439,7 @@ type mailboxPage struct {
 }
 
 // handleDashboardMailbox serves
-// GET /api/mailbox?id=<conv|human|all>&q=&page=&page_size= — one
+// GET /api/mailbox?id=<conv|human|all>&q=&sender=&page=&page_size= — one
 // newest-first page of the selected mailbox's messages, server-filtered
 // by q. Cookie-authed (dashboard-only).
 func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
@@ -456,10 +456,11 @@ func handleDashboardMailbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	sender := strings.TrimSpace(r.URL.Query().Get("sender"))
 	page, pageSize := mailboxPageParams(r)
 
 	if id == humanMailboxID {
-		p := humanMailboxPage(q, page, pageSize)
+		p := humanMailboxPage(q, sender, page, pageSize)
 		writeMailboxPage(w, map[string]any{
 			"id":    humanMailboxID,
 			"kind":  "human",
@@ -727,20 +728,20 @@ func (d *mailboxDecorator) recipients(convs, agents []string) []recipientLine {
 // folder, "" for the aggregate "all" folder, which renders from→to).
 func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMessage {
 	mm := mailboxMessage{
-		ID:           m.ID,
-		Direction:    dir,
-		FromConv:     m.FromConv,
-		FromAgent:    m.FromAgent,
-		FromTitle:    d.titleOf(m.FromConv),
-		ToConv:       m.ToConv,
-		ToAgent:      m.ToAgent,
-		ToTitle:      d.titleOf(m.ToConv),
-		ToRecipients: d.recipients(m.ToRecipients, m.ToRecipientAgents),
-		CcRecipients: d.recipients(m.CcRecipients, m.CcRecipientAgents),
-		Group:        d.groupNames[m.GroupID],
-		Subject:      m.Subject,
-		Body:         m.Body,
-		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
+		ID:               m.ID,
+		Direction:        dir,
+		FromConv:         m.FromConv,
+		FromAgent:        m.FromAgent,
+		FromTitle:        d.titleOf(m.FromConv),
+		ToConv:           m.ToConv,
+		ToAgent:          m.ToAgent,
+		ToTitle:          d.titleOf(m.ToConv),
+		ToRecipients:     d.recipients(m.ToRecipients, m.ToRecipientAgents),
+		CcRecipients:     d.recipients(m.CcRecipients, m.CcRecipientAgents),
+		Group:            d.groupNames[m.GroupID],
+		Subject:          m.Subject,
+		Body:             m.Body,
+		CreatedAt:        m.CreatedAt.Format(time.RFC3339),
 		Read:             !m.ReadAt.IsZero(),
 		ParentID:         m.ParentID,
 		OperatorAuthored: d.operatorMsgs[m.ID],
@@ -954,14 +955,14 @@ func retiredGroupParticipants(members []string, groupID int64, retiredSet map[st
 // small (the operator's own notifications) and lives in a different
 // table with its own builder, so search + paging happen in Go over the
 // already-loaded, newest-first snapshot rather than in SQL.
-func humanMailboxPage(q string, page, pageSize int) mailboxPage {
+func humanMailboxPage(q, sender string, page, pageSize int) mailboxPage {
 	all := humanMailboxMessages()
 	filtered := all
-	if q != "" {
+	if sender != "" || q != "" {
 		lq := strings.ToLower(q)
 		filtered = make([]mailboxMessage, 0, len(all))
 		for _, m := range all {
-			if humanMsgMatchesSearch(m, lq) {
+			if humanMsgMatchesSender(m, sender) && (q == "" || humanMsgMatchesSearch(m, lq)) {
 				filtered = append(filtered, m)
 			}
 		}
@@ -984,12 +985,20 @@ func humanMailboxPage(q string, page, pageSize int) mailboxPage {
 	}
 }
 
+// humanMsgMatchesSender is the structured half of a Groups-row notification
+// deep link. Unlike q, it is exact and sender-only: another agent mentioning
+// this id in a subject/body must never leak into the focused result.
+func humanMsgMatchesSender(m mailboxMessage, sender string) bool {
+	return sender == "" || m.FromAgent == sender || (m.FromAgent == "" && m.FromConv == sender)
+}
+
 // humanMsgMatchesSearch reports whether a human notification matches the
 // (already-lowercased) query, over the same fields the agent-folder
-// search covers that a human message has: sender title / conv-id, group,
+// search covers that a human message has: sender title / stable agent-id /
+// conv-id, group,
 // subject, body.
 func humanMsgMatchesSearch(m mailboxMessage, lq string) bool {
-	for _, s := range []string{m.FromTitle, m.FromConv, m.Group, m.Subject, m.Body} {
+	for _, s := range []string{m.FromTitle, m.FromAgent, m.FromConv, m.Group, m.Subject, m.Body} {
 		if s != "" && strings.Contains(strings.ToLower(s), lq) {
 			return true
 		}

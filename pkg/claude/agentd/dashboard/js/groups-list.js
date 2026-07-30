@@ -20,6 +20,7 @@ import {
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
 import { MemberTable } from './groups-member-table.js';
+import { groupHasUnreadHumanNotifications } from './human-notification-attention.js';
 
 const html = htm.bind(h);
 
@@ -31,7 +32,13 @@ function GroupActivity({ members, snapshot }) {
   const summary = activitySummary(members);
   const modes = activityModeViews(summary, snapshot?.activity_bots);
   if (!modes.length) return null;
-  return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
+  const attention = groupHasUnreadHumanNotifications(members, snapshot);
+  return html`<span class="group-activity"
+    aria-label=${attention ? `${summary.summaryText} · a member has unread notifications` : null}>
+    ${attention ? html`<span class="human-notification-hint" aria-hidden="true"
+      title="A member of this group has unread notifications">!</span>` : null}
+    <${ActivityModes} modes=${modes} modeTitles />
+  </span>`;
 }
 
 export function safeGroupAttachmentURL(value) {

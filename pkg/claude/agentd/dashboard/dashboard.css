@@ -1014,7 +1014,7 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 }
 .last-hook { color: #7d8590; font-size: 11px; }
 .id { font-family: ui-monospace, "JetBrains Mono", "Fira Code", monospace; font-size: 12px; color: #7d8590; }
-.rowname { font-weight: 600; }
+.rowname { position: relative; font-weight: 600; }
 /* Floor the NAME column at 14ch so short titles don't let it collapse
    into the ID column on the left. Auto layout honours min-width on a td
    as a column-width minimum. The Description column gets a modest floor
@@ -1045,6 +1045,35 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
   border: 1px solid transparent;
 }
 .rowname-text:hover { border-color: #58a6ff; }
+.human-notification-attention {
+  position: absolute; z-index: 4; left: -8px; top: -10px;
+  width: 24px; height: 24px; margin: 0; padding: 0;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: transparent;
+  color: #fff3c4; cursor: pointer;
+}
+.human-notification-attention > span,
+.human-notification-hint {
+  width: 16px; height: 16px;
+  display: grid; place-items: center;
+  border: 1px solid #ffd76a; border-radius: 50%;
+  background: #5d4300; color: #fff3c4;
+  font-size: 11px; font-weight: 900; line-height: 1;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55), 0 0 0 2px #161b22;
+}
+.human-notification-attention:hover > span,
+.human-notification-attention:focus-visible > span {
+  background: #815b00; transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(227, 179, 65, 0.22), 0 0 0 2px #161b22;
+}
+.human-notification-attention:focus-visible {
+  outline: 2px solid #58a6ff; outline-offset: 1px;
+}
+.human-notification-hint {
+  position: absolute; z-index: 4; left: -7px; top: -8px;
+  width: 15px; height: 15px; font-size: 10px;
+  pointer-events: none;
+}
 .rowname-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 0 4px; font: inherit; font-weight: 600;
@@ -1193,7 +1222,7 @@ body.wizard .group-attachment button:hover { color: #f3e6c0; }
    dropped under prefers-reduced-motion below; the bots/tags/counts (the
    actual information) stay. */
 .group-activity {
-  display: inline-flex; align-items: center;
+  position: relative; display: inline-flex; align-items: center;
   margin: 0 6px; vertical-align: middle; line-height: 1;
 }
 /* Each group emits a regular-mode, a slop-mode AND a wizard-mode wrapper;
@@ -1292,11 +1321,15 @@ body.wizard .ga-wizard { display: inline-flex; }
    + the ungrouped bucket. Collapses out of the flex header when empty
    (renderGlobalActivity clears innerHTML when there's no live membership). */
 .global-activity {
-  display: inline-flex; align-items: center; margin-left: 6px;
+  position: relative; display: inline-flex; align-items: center; margin-left: 6px;
   vertical-align: middle; cursor: default;
 }
 .global-activity:empty { display: none; }
 .global-activity .actbot { font-size: 15px; }
+.global-activity .human-notification-hint {
+  left: -8px; top: -8px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55), 0 0 0 2px #0d1117;
+}
 
 /* ── Sprite (pixel-art) bots — the slop-mode default ──────────────────
    pixellab robots animated by DISCRETE background-image keyframes: each
