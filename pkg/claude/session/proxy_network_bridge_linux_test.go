@@ -36,6 +36,29 @@ func proxyBridgeTestPlan(
 	return plan
 }
 
+// proxyBridgeConstructedRootFixture satisfies the launch-contract precondition
+// every constructed root shares: the canonical agentd socket path must exist,
+// because the floor allowlists exactly it. HOME is redirected first so the
+// fixture is hermetic rather than depending on the developer or the runner
+// already having a daemon.
+//
+// The placeholder is an ordinary file rather than a listening socket. These
+// tests assert on the ARGUMENTS a plan renders, and the argument builder asks
+// only whether the path exists; binding a real socket would additionally have
+// to fit the 108-byte sockaddr limit under an arbitrary temporary HOME, which
+// is a constraint about the fixture rather than about the floor.
+func proxyBridgeConstructedRootFixture(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	floor := sandboxpolicy.AgentdSocketFloor()
+	require.NotEmpty(t, floor)
+	require.NoError(t, os.MkdirAll(filepath.Dir(floor[0]), 0o700))
+	placeholder, err := os.OpenFile(
+		floor[0], os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	require.NoError(t, placeholder.Close())
+}
+
 func proxyBridgeDiscriminatingRules() sandboxpolicy.NetworkRules {
 	return sandboxpolicy.NetworkRules{
 		Mode: sandboxpolicy.AccessModeList,
@@ -51,6 +74,7 @@ func proxyBridgeDiscriminatingRules() sandboxpolicy.NetworkRules {
 // capabilities. Reverting the floor mapping fails this on the --unshare-user
 // assertion.
 func TestProxyNetworkFloorReusesTheIsolatedConstruction(t *testing.T) {
+	proxyBridgeConstructedRootFixture(t)
 	rules := proxyBridgeDiscriminatingRules()
 	proxyArgs, err := bwrapArgs(nil,
 		proxyBridgeTestPlan(t, rules, sandboxpolicy.NetworkEngineProxy))
@@ -82,6 +106,7 @@ func TestProxyNetworkFloorReusesTheIsolatedConstruction(t *testing.T) {
 // does not inherit the packet relay's private /run, which exists only so the
 // in-namespace resolver can be rebound.
 func TestProxyNetworkFloorOmitsThePacketResolverFilesystem(t *testing.T) {
+	proxyBridgeConstructedRootFixture(t)
 	rules := proxyBridgeDiscriminatingRules()
 	proxyArgs, err := bwrapArgs(nil,
 		proxyBridgeTestPlan(t, rules, sandboxpolicy.NetworkEngineProxy))
