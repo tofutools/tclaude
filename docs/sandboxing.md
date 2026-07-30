@@ -248,7 +248,8 @@ wall or routing agentd through host TCP. That engine does not enable a posture:
 OpenCode isolated profiles still refuse because OpenCode requires hosted model
 traffic. Filtered OpenCode supports inspected explicit-provider configs on
 Linux, while the release-owned local/model-API pack combination remains
-launch-refused pending the TCL-826 effective-config seam. The Unix relay
+launch-refused: they name no explicit provider endpoint to resolve, and
+OpenCode exposes no effective-config read of its own loader. The Unix relay
 remains Linux-only. Linux uses
 `bwrap` from `PATH` and requires working unprivileged user namespaces. macOS uses
 `/usr/bin/sandbox-exec` for filesystem confinement and for the
@@ -622,7 +623,7 @@ whole-destination block.
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local
 providers, and host-local development services. OpenCode local-provider
 launches are currently refused because their effective provider endpoint is
-not yet available at the launch seam; that work is tracked in TCL-826.
+not available at the launch seam: those presets name no explicit provider.
 `net-anthropic` and `net-openai-codex` independently provide the direct
 Anthropic and OpenAI API-key endpoints. New drafts select these three packs
 once on their first transition to Deny all; they remain ordinary editable pack
@@ -655,12 +656,12 @@ refuses with `unsupported_filtered_model_transport` unless the authored
 Access list, directly or through **Includes**, covers the provider endpoint.
 A concrete provider at `host.tclaude.internal` on Linux, or real
 `localhost`/`127.0.0.1`/`::1` on macOS, passes that same gate. The Anthropic
-and OpenAI API packs cover first-party API-key traffic, but
-ChatGPT-auth Codex remains refused; custom providers, web search, plugins, MCP
+and OpenAI API packs cover first-party API-key traffic and the opt-in ChatGPT
+pack covers ChatGPT-signed-in Codex; custom providers, web search, plugins, MCP
 servers, and commands run by the agent need their own authored destinations.
 OpenCode remains launch-refused under the built-in local/model-API combination with
-`unsupported_filtered_model_transport`, naming TCL-826 and the network-open
-remedy; the editor does not advertise its local-provider constituency as
+`unsupported_filtered_model_transport`, naming the missing explicit provider and
+the network-open remedy; the editor does not advertise its local-provider constituency as
 present-day support.
 
 When a profile path reaches resolution with a symlinked spelling, the
@@ -775,20 +776,52 @@ later shares a denied address can still be cut even when its name passed the
 selector preflight. At the executing launch seam, Claude's direct Anthropic
 default and concrete `ANTHROPIC_BASE_URL` are resolved from the launch
 environment; third-party provider modes and provider-changing live settings
-refuse with a named remedy. If Claude's provider route changes after that
-preflight, an unauthored destination under a list baseline is denied
-fail-closed for new flows at the packet floor; complete dynamic provider
-resolution is tracked in TCL-826.
+refuse with a named remedy.
 
-Codex resolves its selected provider and concrete base URL from the effective
-`config.toml`; provider-changing pass-through overrides and incomplete custom
-providers likewise refuse. Codex ChatGPT authentication can load and refresh
-remote provider overrides that the launch seam cannot inspect. Filtered mode
-therefore requires inspectable file-backed API-key authentication (or an
-explicit custom provider that does not require OpenAI auth); ChatGPT, external
-token, and opaque keyring routes refuse with the named remedies of signing in
-with an API key or using network open. Complete dynamic provider resolution is
-tracked in TCL-826.
+Claude Code 2.1.220 also loads **remote managed settings**: a policy-tier
+settings source fetched from the API rather than read from a file. A payload
+verified by a fresh authenticated fetch is exempt from the environment filter
+that strips provider routing out of an unverified one, so it can carry
+`ANTHROPIC_BASE_URL`, a `CLAUDE_CODE_USE_*` provider selector, proxy variables,
+or CA/mTLS material. The fetch happens at Claude startup — after this preflight
+— and repeats on an hourly background poll that applies changes to the running
+process. Unlike Codex, therefore, a running Claude session can re-route.
+tclaude inspects the locally cached copy at
+`$CLAUDE_CONFIG_DIR/remote-settings.json` (or the
+`CLAUDE_CODE_REMOTE_SETTINGS_PATH` override) and refuses a launch whose cached
+remote policy carries provider routing, which covers the consented, persisted
+case. It cannot observe a payload that has not been fetched yet. When the route
+moves anyway, the unauthored destination under a list baseline is denied
+fail-closed for new flows at the packet floor, and the launch notice says so.
+
+Codex resolves its selected provider and concrete base URL from Codex's own
+merged effective configuration, read at launch through the app-server
+`config/read` request rather than by parsing `config.toml`. That merge includes
+the layers no local file exposes — the MDM layer and the enterprise cloud-config
+bundle — and reports, per key, which layer won and a content hash for it. When a
+provider-routing key was won by a remotely delivered layer, the launch notice
+names that layer and hash. A repository-local `.codex/config.toml` is a real
+layer but may not set any provider-routing key, so repository contents cannot
+move model traffic.
+
+Because the effective route is now readable, ChatGPT sign-in is no longer
+refused. A ChatGPT-authenticated launch resolves to the effective
+`chatgpt_base_url` (default `https://chatgpt.com/backend-api/`) plus the
+token-refresh endpoint `auth.openai.com`, which is a constant in the harness and
+cannot be moved by any config layer. Both must be covered by the authored list;
+the opt-in `net-openai-chatgpt` pack provides them. Provider-changing
+pass-through overrides, an unresolvable effective config, a selected profile,
+and credential routes tclaude cannot inspect — `CODEX_ACCESS_TOKEN` and the
+keyring/ephemeral credential stores — still refuse, because they leave the
+destination unknown rather than merely secret.
+
+Codex snapshots its cloud-config bundle once at process start; its background
+refresher only warms the on-disk cache for later starts and does not re-route a
+running process. The residual window is therefore bounded to the gap between
+this preflight and process start, where a changed route reaches an unauthored
+destination and is denied fail-closed at the packet floor. Reading the effective
+config runs the Codex binary before the sandbox exists, which is a launch-time
+side effect including whatever bundle refresh Codex performs at start.
 
 OpenCode filtered supports explicit-provider configs only. The launch model and
 frozen profile `OPENCODE_CONFIG_CONTENT` must name exactly one provider using
@@ -819,16 +852,17 @@ tool-executing server and all of its subprocesses.
 
 For all supported harnesses, a nonempty `HTTP_PROXY`, `HTTPS_PROXY`, or
 `ALL_PROXY` (including lowercase variants) changes the actual transport
-boundary and therefore refuses filtered launch until TCL-826 adds proxy-aware
-resolution; remove the proxy variable or use network open.
+boundary and therefore refuses filtered launch: the real destination sits behind
+a proxy this seam does not resolve, so the authored list cannot be checked
+against it. Remove the proxy variable or use network open.
 
 The built-in `net-anthropic` and `net-openai-codex` packs are backed by the
 named CI origin audit against Claude Code 2.1.220 and Codex CLI 0.145.0. The
 active minimal evidence set is `api.anthropic.com:443` for Claude and
-`api.openai.com:443` for API-key Codex. The same audit separately records
-ChatGPT model and refresh traffic at `chatgpt.com:443` and
-`auth.openai.com:443` for TCL-826, but those destinations are not included in
-the active packs while ChatGPT-auth filtered launches are refused. Any
+`api.openai.com:443` for API-key Codex. The same audit records ChatGPT model and refresh traffic
+at `chatgpt.com:443` and `auth.openai.com:443`, which back the separate opt-in
+`net-openai-chatgpt` pack. Those destinations stay out of `net-openai-codex` so
+an API-key profile does not silently gain them. Any
 undeclared mandatory origin fails the audit.
 Codex's optional plugin-marketplace synchronization is not model transport; it
 may be unavailable unless the authored profile separately admits its

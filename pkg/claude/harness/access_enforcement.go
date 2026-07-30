@@ -405,10 +405,11 @@ func accessEnforcementTable(
 			(IsLocalAccessNetworkPreset(axes.Network) ||
 				IsLocalModelAPIsNetworkPreset(axes.Network)) {
 			// General explicit-provider OpenCode filtering is supported on
-			// Linux. These two convenience presets are narrower: until
-			// TCL-826 resolves OpenCode's effective local-provider endpoint,
-			// advertising their packet capability would make the rendered
-			// surface disagree with the launch-gated model-transport refusal.
+			// Linux. These two convenience presets are narrower: they name no
+			// explicit provider, and OpenCode exposes no effective-config read
+			// to resolve one from, so advertising their packet capability would
+			// make the rendered surface disagree with the launch-gated
+			// model-transport refusal.
 			caps.NetworkList = EnforceNone
 			caps.NetworkSelectors = nil
 			caps.NetworkPorts = EnforceNone
@@ -416,7 +417,7 @@ func accessEnforcementTable(
 			caps.NetworkDenyPorts = EnforceNone
 			caps.NetworkListCondition = ""
 			caps.NetworkListRefusal =
-				"missing capability unsupported_filtered_model_transport: OpenCode local-preset effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open"
+				"missing capability unsupported_filtered_model_transport: OpenCode's local presets name no explicit provider and OpenCode exposes no effective-config read of its own loader, so their launch endpoint cannot be resolved; use an explicit-provider OpenCode config, use Claude Code or Codex with a resolvable provider, or use network open"
 		}
 		if axes.Network.Mode == sandboxpolicy.AccessModeClosed {
 			caps.SocketClosed = EnforceFull

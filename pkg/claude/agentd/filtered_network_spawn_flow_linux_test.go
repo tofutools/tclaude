@@ -379,7 +379,7 @@ func TestLocalPresetsOpenCodeRefuseAtNamedModelTransportSeam(t *testing.T) {
 			failure := decodeFailure(t, resp.Raw)
 			assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
 			assert.Contains(t, failure.Error, "OpenCode")
-			assert.Contains(t, failure.Error, "TCL-826")
+			assert.Contains(t, failure.Error, "no explicit provider")
 			assert.Contains(t, failure.Error, "network open")
 			assert.Empty(t, resp.ConvID)
 		})

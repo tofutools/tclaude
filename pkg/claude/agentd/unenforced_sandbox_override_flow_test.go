@@ -216,6 +216,6 @@ func TestDashboardOverrideDoesNotBypassFilteredModelTransport(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, resp, &failure)
 	assert.Equal(t, harness.SandboxCapabilityModelTransport, failure.Code)
-	assert.Contains(t, failure.Error, "TCL-826")
+	assert.Contains(t, failure.Error, "no explicit provider")
 	assert.Contains(t, failure.Error, "network open")
 }

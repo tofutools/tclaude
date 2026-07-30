@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,9 +75,44 @@ func TestResolveTclaudeLayerClaudeModelTransportFromExactLaunchInputs(t *testing
 		})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTPS_PROXY")
-	assert.Contains(t, err.Error(), "actual network boundary")
+	assert.Contains(t, err.Error(), "behind a proxy this seam does not resolve")
 	assert.Contains(t, err.Error(), "network open")
-	assert.Contains(t, err.Error(), "TCL-826")
+}
+
+func TestResolveTclaudeLayerClaudeRefusesRemoteManagedProviderSettings(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	remote := filepath.Join(home, ".claude", "remote-settings.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(remote), 0o700))
+	require.NoError(t, os.WriteFile(remote, []byte(
+		`{"env":{"ANTHROPIC_BASE_URL":"https://remote-managed.example/v1"}}`), 0o600))
+
+	_, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.DefaultName),
+		ModelTransportLaunchContext{
+			Cwd:         cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{{Name: "HOME", Value: home}},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), remote)
+	assert.Contains(t, err.Error(), "ANTHROPIC_BASE_URL")
+
+	// The relocation override has to be followed, or the inspected set silently
+	// misses the file the harness will actually read.
+	relocated := filepath.Join(t.TempDir(), "policy.json")
+	require.NoError(t, os.WriteFile(relocated, []byte(
+		`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}`), 0o600))
+	_, err = ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.DefaultName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CLAUDE_CODE_REMOTE_SETTINGS_PATH", Value: relocated},
+			},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), relocated)
+	assert.Contains(t, err.Error(), "CLAUDE_CODE_USE_BEDROCK")
 }
 
 func TestResolveTclaudeLayerClaudeRefusesMutableSettingsProvider(t *testing.T) {
@@ -111,7 +147,7 @@ func TestResolveTclaudeLayerClaudeRefusesMutableSettingsProvider(t *testing.T) {
 	assert.Contains(t, err.Error(), "mutable")
 }
 
-func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {
+func TestResolveTclaudeLayerCodexModelTransportFromEffectiveConfig(t *testing.T) {
 	home, cwd := isolateModelTransportLaunch(t)
 	codexHome := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(codexHome, 0o700))
@@ -124,6 +160,7 @@ func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {
 			{Name: "CODEX_HOME", Value: codexHome},
 		},
 	}
+	effective := stubCodexEffectiveConfig(t, codexEffectiveConfig{})
 	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
 		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
 
@@ -135,24 +172,102 @@ func TestResolveTclaudeLayerCodexModelTransportFromConfig(t *testing.T) {
 		ProviderResolved: true,
 	}, resolved)
 
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-model_provider = "corp"
-[model_providers.corp]
-base_url = "https://models.example/v1"
-`), 0o600))
+	// An enterprise cloud-config layer that a local config.toml parser cannot
+	// see still resolves, because the effective read is the authority.
+	*effective = codexEffectiveConfig{
+		ModelProvider: "corp",
+		ModelProviders: map[string]codexEffectiveProvider{
+			"corp": {BaseURL: "https://models.example/v1"},
+		},
+		RemoteOrigins: []codexRemoteConfigOrigin{{
+			Key: "model_provider", Layer: "enterpriseManaged",
+			Name: "acme-workspace", Version: "sha256:abc",
+		}},
+	}
 	resolved, err = ResolveTclaudeLayerModelTransport(codex, context)
 	require.NoError(t, err)
 	assert.Equal(t, "corp", resolved.Provider)
 	assert.Equal(t, "https://models.example/v1", resolved.BaseURL)
 
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-model_provider = "openai"
-openai_base_url = "https://openai-gateway.example/v1"
-`), 0o600))
+	*effective = codexEffectiveConfig{
+		ModelProvider: "openai",
+		OpenAIBaseURL: "https://openai-gateway.example/v1",
+	}
 	resolved, err = ResolveTclaudeLayerModelTransport(codex, context)
 	require.NoError(t, err)
 	assert.Equal(t, "openai", resolved.Provider)
 	assert.Equal(t, "https://openai-gateway.example/v1", resolved.BaseURL)
+}
+
+func TestResolveTclaudeLayerCodexResolvesChatGPTSignInRoute(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+	codex := harness.MustGet(harness.CodexName)
+	context := ModelTransportLaunchContext{
+		Model: "gpt-5.4",
+		Cwd:   cwd,
+		Environment: []sandboxpolicy.EnvironmentEntry{
+			{Name: "HOME", Value: home},
+			{Name: "CODEX_HOME", Value: codexHome},
+		},
+	}
+	effective := stubCodexEffectiveConfig(t, codexEffectiveConfig{})
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"chatgpt","tokens":{"access_token":"token"}}`), 0o600))
+
+	resolved, err := ResolveTclaudeLayerModelTransport(codex, context)
+	require.NoError(t, err)
+	assert.Equal(t, "openai", resolved.Provider)
+	assert.Equal(t, "https://chatgpt.com/backend-api/", resolved.BaseURL)
+	assert.Equal(t,
+		[]string{"https://auth.openai.com/oauth/token"},
+		resolved.AuxiliaryBaseURLs)
+
+	requirement, err := harness.ResolveModelTransportRequirement(codex, resolved)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "chatgpt.com", Ports: []int{443}},
+		{Domain: "auth.openai.com", Ports: []int{443}},
+	}, requirement.Destinations)
+	// The API-key pack does not cover the ChatGPT route, so a template
+	// attribution here would over-report coverage.
+	assert.Empty(t, requirement.Template)
+
+	// A workspace override of chatgpt_base_url moves the model endpoint, and
+	// the resolved requirement has to follow it rather than the default.
+	effective.ChatGPTBaseURL = "https://codex.acme.example/backend-api/"
+	resolved, err = ResolveTclaudeLayerModelTransport(codex, context)
+	require.NoError(t, err)
+	assert.Equal(t, "https://codex.acme.example/backend-api/", resolved.BaseURL)
+	requirement, err = harness.ResolveModelTransportRequirement(codex, resolved)
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.NetworkAllowEntry{
+		{Domain: "codex.acme.example", Ports: []int{443}},
+		{Domain: "auth.openai.com", Ports: []int{443}},
+	}, requirement.Destinations)
+}
+
+func TestResolveTclaudeLayerCodexRefusesUnresolvableEffectiveConfig(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codex := harness.MustGet(harness.CodexName)
+	context := ModelTransportLaunchContext{
+		Cwd:         cwd,
+		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "HOME", Value: home}},
+	}
+	previous := codexEffectiveConfigReader
+	codexEffectiveConfigReader = func(
+		string, []sandboxpolicy.EnvironmentEntry,
+	) (codexEffectiveConfig, error) {
+		return codexEffectiveConfig{}, errors.New(
+			"the Codex app-server effective-config read did not answer within 45s")
+	}
+	t.Cleanup(func() { codexEffectiveConfigReader = previous })
+
+	_, err := ResolveTclaudeLayerModelTransport(codex, context)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not answer")
+	assert.Contains(t, err.Error(), "network open")
 }
 
 func TestResolveTclaudeLayerCodexRefusesAmbiguousProviderInputs(t *testing.T) {
@@ -168,19 +283,10 @@ func TestResolveTclaudeLayerCodexRefusesAmbiguousProviderInputs(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-profile = "work"
-[profiles.work]
-chatgpt_base_url = "https://auth-gateway.example"
-`), 0o600))
+	stubCodexEffectiveConfig(t, codexEffectiveConfig{ModelProvider: "missing"})
+	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(
+		`{"auth_mode":"apikey","OPENAI_API_KEY":"test-key"}`), 0o600))
 	_, err := ResolveTclaudeLayerModelTransport(codex, context)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rejects legacy profile")
-
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-model_provider = "missing"
-`), 0o600))
-	_, err = ResolveTclaudeLayerModelTransport(codex, context)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no concrete")
 
@@ -200,31 +306,7 @@ model_provider = "missing"
 	assert.Contains(t, err.Error(), `"-p"`)
 }
 
-func TestResolveTclaudeLayerCodexRefusesUnmergedExternalProviderConfig(t *testing.T) {
-	home, cwd := isolateModelTransportLaunch(t)
-	systemConfig := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(systemConfig, []byte(
-		`openai_base_url = "https://system-gateway.example/v1"`), 0o600))
-	codexExternalModelConfigPaths = func() []string {
-		return []string{systemConfig}
-	}
-
-	_, err := ResolveTclaudeLayerModelTransport(
-		harness.MustGet(harness.CodexName),
-		ModelTransportLaunchContext{
-			Cwd: cwd,
-			Environment: []sandboxpolicy.EnvironmentEntry{
-				{Name: "HOME", Value: home},
-			},
-		},
-	)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), systemConfig)
-	assert.Contains(t, err.Error(), "openai_base_url")
-	assert.Contains(t, err.Error(), "cannot merge exactly")
-}
-
-func TestResolveTclaudeLayerCodexRefusesChatGPTAndOpaqueAuth(t *testing.T) {
+func TestResolveTclaudeLayerCodexRefusesUninspectableAuthRoute(t *testing.T) {
 	home, cwd := isolateModelTransportLaunch(t)
 	codexHome := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(codexHome, 0o700))
@@ -236,40 +318,54 @@ func TestResolveTclaudeLayerCodexRefusesChatGPTAndOpaqueAuth(t *testing.T) {
 			{Name: "CODEX_HOME", Value: codexHome},
 		},
 	}
+	effective := stubCodexEffectiveConfig(t, codexEffectiveConfig{})
 
-	for name, auth := range map[string]string{
-		"chatgpt":     `{"auth_mode":"chatgpt","tokens":{"access_token":"secret"}}`,
-		"legacy_chat": `{"tokens":{"access_token":"secret"}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			require.NoError(t, os.WriteFile(
-				filepath.Join(codexHome, "auth.json"), []byte(auth), 0o600))
-			_, err := ResolveTclaudeLayerModelTransport(codex, context)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "API key")
-			assert.Contains(t, err.Error(), "network open")
-			assert.Contains(t, err.Error(), "TCL-826")
-		})
-	}
-
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(
-		`cli_auth_credentials_store = "keyring"`), 0o600))
+	// A credential store tclaude cannot read hides which of the two very
+	// different destination sets the launch will use.
+	effective.AuthStore = "keyring"
 	_, err := ResolveTclaudeLayerModelTransport(codex, context)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `cli_auth_credentials_store="keyring"`)
-	assert.Contains(t, err.Error(), "TCL-826")
+	assert.Contains(t, err.Error(), "network open")
+
+	effective.AuthStore = ""
+	context.Environment = append(context.Environment,
+		sandboxpolicy.EnvironmentEntry{Name: "CODEX_ACCESS_TOKEN", Value: "token"})
+	_, err = ResolveTclaudeLayerModelTransport(codex, context)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CODEX_ACCESS_TOKEN")
+	assert.Contains(t, err.Error(), "network open")
+}
+
+func TestResolveTclaudeLayerCodexRefusesUnauthenticatedFirstPartyLaunch(t *testing.T) {
+	home, cwd := isolateModelTransportLaunch(t)
+	codexHome := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexHome, 0o700))
+
+	_, err := ResolveTclaudeLayerModelTransport(
+		harness.MustGet(harness.CodexName),
+		ModelTransportLaunchContext{
+			Cwd: cwd,
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "HOME", Value: home},
+				{Name: "CODEX_HOME", Value: codexHome},
+			},
+		})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no Codex authentication is present")
+	assert.Contains(t, err.Error(), "network open")
 }
 
 func TestResolveTclaudeLayerCodexAllowsAuthlessExplicitProvider(t *testing.T) {
 	home, cwd := isolateModelTransportLaunch(t)
 	codexHome := filepath.Join(home, ".codex")
 	require.NoError(t, os.MkdirAll(codexHome, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(`
-model_provider = "corp"
-[model_providers.corp]
-base_url = "https://models.example/v1"
-requires_openai_auth = false
-`), 0o600))
+	stubCodexEffectiveConfig(t, codexEffectiveConfig{
+		ModelProvider: "corp",
+		ModelProviders: map[string]codexEffectiveProvider{
+			"corp": {BaseURL: "https://models.example/v1"},
+		},
+	})
 
 	resolved, err := ResolveTclaudeLayerModelTransport(
 		harness.MustGet(harness.CodexName),
@@ -390,8 +486,25 @@ func isolateModelTransportLaunch(t *testing.T) (home, cwd string) {
 	previous := claudeManagedProviderSettingsRoot
 	claudeManagedProviderSettingsRoot = func() string { return managed }
 	t.Cleanup(func() { claudeManagedProviderSettingsRoot = previous })
-	previousCodexExternal := codexExternalModelConfigPaths
-	codexExternalModelConfigPaths = func() []string { return nil }
-	t.Cleanup(func() { codexExternalModelConfigPaths = previousCodexExternal })
+	t.Setenv("CLAUDE_CODE_REMOTE_SETTINGS_PATH", "")
+	stubCodexEffectiveConfig(t, codexEffectiveConfig{})
 	return home, cwd
+}
+
+// stubCodexEffectiveConfig replaces the real app-server probe. Unit tests pin
+// the resolution rules; the probe itself is covered by the pinned-harness smoke.
+func stubCodexEffectiveConfig(
+	t *testing.T,
+	config codexEffectiveConfig,
+) *codexEffectiveConfig {
+	t.Helper()
+	stub := &config
+	previous := codexEffectiveConfigReader
+	codexEffectiveConfigReader = func(
+		string, []sandboxpolicy.EnvironmentEntry,
+	) (codexEffectiveConfig, error) {
+		return *stub, nil
+	}
+	t.Cleanup(func() { codexEffectiveConfigReader = previous })
+	return stub
 }

@@ -25,11 +25,23 @@ type ModelTransportRequirement struct {
 // model/provider configuration has resolved. ProviderResolved prevents an
 // empty context from masquerading as proof of the harness default. BaseURL is
 // optional only for a known first-party provider.
+//
+// AuxiliaryBaseURLs carries endpoints the resolved route mandatorily needs
+// besides its model endpoint — Codex's ChatGPT token refresh is the first such
+// case. They are separate from BaseURL because they are not provider choices a
+// resolver may substitute for one another: every one of them has to be covered.
+// Provenance names a remotely delivered configuration layer that won one of the
+// provider-routing keys. It is empty when every routing key came from a file
+// the operator can read, and is disclosed verbatim at launch when it is not:
+// an operator who never wrote the endpoint in the allow list deserves to be
+// told which remote layer chose it.
 type ResolvedModelTransport struct {
-	Model            string `json:"model,omitempty"`
-	Provider         string `json:"provider,omitempty"`
-	BaseURL          string `json:"base_url,omitempty"`
-	ProviderResolved bool   `json:"provider_resolved"`
+	Model             string   `json:"model,omitempty"`
+	Provider          string   `json:"provider,omitempty"`
+	BaseURL           string   `json:"base_url,omitempty"`
+	AuxiliaryBaseURLs []string `json:"auxiliary_base_urls,omitempty"`
+	Provenance        []string `json:"provenance,omitempty"`
+	ProviderResolved  bool     `json:"provider_resolved"`
 }
 
 // ModelTransportResolver is deliberately separate from ModelCatalog. A model
@@ -47,6 +59,16 @@ type staticModelTransport struct {
 }
 
 func (r staticModelTransport) ResolveModelTransport(
+	resolved ResolvedModelTransport,
+) (ModelTransportRequirement, error) {
+	requirement, err := r.resolveModelEndpoint(resolved)
+	if err != nil {
+		return ModelTransportRequirement{}, err
+	}
+	return withAuxiliaryModelTransport(requirement, resolved.AuxiliaryBaseURLs)
+}
+
+func (r staticModelTransport) resolveModelEndpoint(
 	resolved ResolvedModelTransport,
 ) (ModelTransportRequirement, error) {
 	if !resolved.ProviderResolved {
@@ -81,18 +103,67 @@ func (r staticModelTransport) ResolveModelTransport(
 	}, nil
 }
 
+// withAuxiliaryModelTransport unions the mandatory non-model endpoints into a
+// resolved requirement. A named template stops being an honest coverage claim
+// once the route needs a destination the template does not contain, so the
+// template attribution is dropped rather than left to over-report.
+func withAuxiliaryModelTransport(
+	requirement ModelTransportRequirement,
+	auxiliary []string,
+) (ModelTransportRequirement, error) {
+	if len(auxiliary) == 0 {
+		return requirement, nil
+	}
+	for _, rawURL := range auxiliary {
+		extra, err := customModelTransportRequirement(rawURL, "")
+		if err != nil {
+			return ModelTransportRequirement{}, err
+		}
+		for _, destination := range extra.Destinations {
+			if !containsNetworkDestination(requirement.Destinations, destination) {
+				requirement.Destinations = append(
+					requirement.Destinations, destination)
+			}
+		}
+	}
+	requirement.Template = ""
+	requirement.ResolvedBy += " plus its required auxiliary endpoints"
+	return requirement, nil
+}
+
+func containsNetworkDestination(
+	destinations []sandboxpolicy.NetworkAllowEntry,
+	candidate sandboxpolicy.NetworkAllowEntry,
+) bool {
+	for _, destination := range destinations {
+		if strings.EqualFold(destination.Domain, candidate.Domain) &&
+			destination.CIDR == candidate.CIDR &&
+			destination.Host == candidate.Host &&
+			destination.Loopback == candidate.Loopback &&
+			slices.Equal(destination.Ports, candidate.Ports) {
+			return true
+		}
+	}
+	return false
+}
+
 type unresolvedOpenCodeModelTransport struct{}
 
 func (unresolvedOpenCodeModelTransport) ResolveModelTransport(
 	resolved ResolvedModelTransport,
 ) (ModelTransportRequirement, error) {
 	if resolved.ProviderResolved && strings.TrimSpace(resolved.BaseURL) != "" {
-		return customModelTransportRequirement(
+		requirement, err := customModelTransportRequirement(
 			resolved.BaseURL, "resolved OpenCode provider endpoint")
+		if err != nil {
+			return ModelTransportRequirement{}, err
+		}
+		return withAuxiliaryModelTransport(
+			requirement, resolved.AuxiliaryBaseURLs)
 	}
 	return ModelTransportRequirement{}, fmt.Errorf(
 		"OpenCode model %q does not expose a concrete resolved provider endpoint at the harness descriptor seam; "+
-			"OpenCode effective-config model transport resolution is tracked in TCL-826; use Claude Code or Codex with a resolvable provider, or use network open",
+			"OpenCode has no inspected effective-config read for its own loader, so use Claude Code or Codex with a resolvable provider, or use network open",
 		displayResolvedModel(resolved.Model),
 	)
 }

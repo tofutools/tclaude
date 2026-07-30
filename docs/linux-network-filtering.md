@@ -148,8 +148,8 @@ using the Linux `tclaude-layer` filtered gateway. Other implementation,
 harness, and platform cells omit each deny row individually with a persisted
 disclosure; an unsupported port-scoped row is never widened into a
 whole-destination block. OpenCode's `net-local` and local-model-API presets
-stay outside the activation with the rest of their filtered surface, pending
-TCL-826.
+stay outside the activation with the rest of their filtered surface: they name
+no explicit provider endpoint to resolve.
 
 Because an OpenCode deny is now real, it is also load-bearing at launch: an
 OpenCode profile carrying a deny row enters the filtered path and is refused

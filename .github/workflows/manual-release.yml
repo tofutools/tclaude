@@ -447,6 +447,27 @@ jobs:
             exit 1
           fi
 
+      - name: Run pinned Codex effective-config seam evidence
+        env:
+          TCLAUDE_FILTERED_MODEL_ENDPOINT_SMOKE: "1"
+        run: |
+          smoke_log="$RUNNER_TEMP/tclaude-codex-effective-config.log"
+          go test ./pkg/claude/session \
+            -run '^TestPinnedCodexEffectiveConfigSeam$' \
+            -count=1 -v -timeout=120s |
+            tee "$smoke_log"
+          if ! grep -q '^--- PASS: TestPinnedCodexEffectiveConfigSeam ' "$smoke_log"; then
+            {
+              echo "### Pinned Codex effective-config seam evidence did not complete"
+              echo
+              echo "The named real Codex effective-config read did not report an explicit pass."
+              echo "A skip, missing/renamed test, version drift, or zero-test success is a hard failure."
+              echo "The smoke must resolve provider routing through Codex 0.145.0's own app-server config/read, including its layer precedence."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::TestPinnedCodexEffectiveConfigSeam did not report an explicit pass"
+            exit 1
+          fi
+
       - name: Run OpenCode executor sandbox smoke
         env:
           TCLAUDE_OPENCODE_LAYER_SMOKE: "1"

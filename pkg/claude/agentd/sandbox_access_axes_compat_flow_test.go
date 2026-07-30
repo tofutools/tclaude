@@ -857,7 +857,7 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	for _, row := range openCodeRows {
 		assert.Equal(t, harness.AccessPredictionRefused, row.Outcome,
 			"the exact built-in local/model combination refuses as a whole")
-		assert.Contains(t, row.Detail, "TCL-826")
+		assert.Contains(t, row.Detail, "no explicit provider")
 	}
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
@@ -984,7 +984,8 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
 	}
 
-	// The local presets remain launch-refused pending TCL-826; advertising a
+	// The local presets remain launch-refused for want of an explicit provider;
+	// advertising a
 	// deny capability there would disagree with that refusal.
 	_, rows = request(t, map[string]any{
 		"baseline": "deny",
