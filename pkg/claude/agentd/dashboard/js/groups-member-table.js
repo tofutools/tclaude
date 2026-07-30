@@ -674,6 +674,7 @@ function HumanNotificationAttention({ member, snapshot }) {
   const message = memberHumanMessages(member, snapshot, true)[0];
   const title = `${unread} unread notification${unread === 1 ? '' : 's'} from ${label} — open quick reader`;
   const attachment = message?.attachment;
+  const previewID = message ? `human-notification-preview-${message.id}` : undefined;
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -693,8 +694,9 @@ function HumanNotificationAttention({ member, snapshot }) {
   return html`<button type="button" class="human-notification-attention"
     ...${memberAttrs(member)}
     data-sender=${humanNotificationSenderQuery(member)}
-    aria-label=${title} onClick=${openReader}><span class="human-notification-attention-glyph" aria-hidden="true">!</span>
-    ${message && html`<span class="human-notification-preview" role="tooltip">
+    aria-label=${title} aria-describedby=${previewID}
+    onClick=${openReader}><span class="human-notification-attention-glyph" aria-hidden="true">!</span>
+    ${message && html`<span class="human-notification-preview" id=${previewID} role="tooltip">
       <span class="human-notification-preview-head">
         <strong>${message.subject || '(no subject)'}</strong>
         <span>${relTime(message.created_at)}</span>

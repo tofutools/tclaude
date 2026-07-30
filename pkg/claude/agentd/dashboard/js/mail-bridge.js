@@ -26,9 +26,9 @@ export function openMailbox(id) {
   if (controller) return controller.openMailbox?.(id);
   pending.push((next) => next.openMailbox?.(id));
 }
-export function openHumanNotifications(sender) {
-  if (controller) return controller.openHumanNotifications?.(sender);
-  pending.push((next) => next.openHumanNotifications?.(sender));
+export function openHumanNotifications(sender, messageID) {
+  if (controller) return controller.openHumanNotifications?.(sender, messageID);
+  pending.push((next) => next.openHumanNotifications?.(sender, messageID));
 }
 export function focusAccessRequest(id) {
   if (controller) return controller.focusAccessRequest?.(id);

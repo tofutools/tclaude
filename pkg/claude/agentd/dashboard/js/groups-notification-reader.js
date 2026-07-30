@@ -6,6 +6,7 @@ import { humanNotificationMatchesSender } from './human-notification-attention.j
 import { openHumanNotifications } from './mail-bridge.js';
 
 const html = htm.bind(h);
+const readWrites = new Map();
 
 function attachmentSize(bytes) {
   const size = Number(bytes || 0);
@@ -67,10 +68,11 @@ function replaceMessageRead(state, id, read) {
   return current.read;
 }
 
-async function persistMessageRead(state, id, read, onError) {
+export async function persistHumanMessageRead(state, id, read, onError) {
   const prior = replaceMessageRead(state, id, read);
   if (prior === null) return;
-  try {
+  const previous = readWrites.get(id) || Promise.resolve();
+  const request = previous.catch(() => {}).then(async () => {
     const response = await fetch('/api/human-messages/read', {
       method: 'POST',
       credentials: 'same-origin',
@@ -78,11 +80,17 @@ async function persistMessageRead(state, id, read, onError) {
       body: JSON.stringify({ id, read }),
     });
     if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+  });
+  readWrites.set(id, request);
+  try {
+    await request;
   } catch (error) {
     const current = (state.snapshot.value?.messages || [])
       .find((message) => message.id === id);
     if (current?.read === read) replaceMessageRead(state, id, prior);
     onError?.(error);
+  } finally {
+    if (readWrites.get(id) === request) readWrites.delete(id);
   }
 }
 
@@ -110,7 +118,7 @@ export function GroupsNotificationReader({
 
   useEffect(() => {
     if (!message || message.read) return;
-    void persistMessageRead(state, message.id, true, actions.reportError);
+    void persistHumanMessageRead(state, message.id, true, actions.reportError);
   }, [message?.id]);
 
   useEffect(() => {
@@ -135,6 +143,7 @@ export function GroupsNotificationReader({
   const created = message.created_at ? new Date(message.created_at).toLocaleString() : '';
 
   return html`<aside class="human-notification-drawer" role="dialog"
+    data-message-id=${message.id}
     aria-modal="false" aria-labelledby="human-notification-drawer-subject">
     <header class="human-notification-drawer-header">
       <div>
@@ -160,25 +169,29 @@ export function GroupsNotificationReader({
       <span>${index + 1} of ${messages.length} from this agent</span>
       <span class="human-notification-drawer-order">newest first</span>
     </nav>
+    <div class="human-notification-drawer-announcement" role="status"
+      aria-live="polite" aria-atomic="true">
+      ${`Notification ${index + 1} of ${messages.length}: ${message.subject || '(no subject)'}`}
+    </div>
     <div class="human-notification-drawer-scroll">
-      <section class="human-notification-drawer-message">
+      <div class="human-notification-drawer-message">
         <h2 id="human-notification-drawer-subject">${message.subject || '(no subject)'}</h2>
         <div class="human-notification-drawer-date">${created}${created ? ` · ${relTime(message.created_at)}` : ''}</div>
         <div class="human-notification-drawer-body"><${LinkifiedBody} text=${message.body || ''} /></div>
         <${Attachment} message=${message} />
-      </section>
+      </div>
     </div>
-    <footer class="human-notification-drawer-actions">
+    <div class="human-notification-drawer-actions">
       <button type="button" class="primary" onClick=${() => {
         onClose(false);
-        openHumanNotifications(senderID);
+        openHumanNotifications(senderID, message.id);
       }}>Open in Messages ↗</button>
       <button type="button" onClick=${() =>
-        persistMessageRead(state, message.id, !message.read, actions.reportError)}>
+        persistHumanMessageRead(state, message.id, !message.read, actions.reportError)}>
         ${message.read ? 'Mark unread' : 'Mark read'}
       </button>
       <span class="grow"></span>
       <button type="button" onClick=${() => onClose(true)}>Close</button>
-    </footer>
+    </div>
   </aside>`;
 }

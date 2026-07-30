@@ -77,6 +77,7 @@ import { lastSnapshot } from './dashboard.js';
 import { confirmModal, toast } from './refresh.js';
 import { fetchListFull } from './list-paging.js';
 import { suppressNextMessagesAttention } from './mail-bridge.js';
+import { humanNotificationTargetPage } from './human-notification-attention.js';
 import {
   adjacentAttentionPages, createMailState, HUMAN_MAILBOX_ID as HUMAN_ID,
   messageDeleteEndpoint, nextMessagesAttention, prepareMessagesAttention,
@@ -941,6 +942,7 @@ function selectMailbox(id, options = {}) {
   if (mail.busy) return Promise.resolve(false);
   if (!options.preserveSenderFilter) mail.senderFilter = '';
   if (!id || id === mail.selected) {
+    if (Number(options.page) > 0) mail.page = Number(options.page);
     // Re-click on the active folder: just refresh it.
     return loadMessages().then(() => {
       pruneSelections();
@@ -952,7 +954,7 @@ function selectMailbox(id, options = {}) {
   mail.selectedMsgId = null;
   mail.selectedMsgs.clear();  // message selection is per-folder
   mail.messages = [];
-  mail.page = 1;              // a new folder starts at its first page
+  mail.page = Number(options.page) > 0 ? Number(options.page) : 1;
   mail.total = 0;
   mail.totalUnfiltered = 0;
   if (mail.searchTimer) { clearTimeout(mail.searchTimer); mail.searchTimer = null; }
@@ -1046,7 +1048,7 @@ async function openMailbox(id) {
 // its server-side search to the sending stable agent id. Set the query before
 // selecting the folder so selectMailbox's first load is already filtered; this
 // avoids a flash/race with the prior folder's debounced search.
-async function openHumanNotifications(sender) {
+async function openHumanNotifications(sender, messageID) {
   sender = String(sender || '').trim();
   if (!sender) return;
   if (mail.searchTimer) {
@@ -1055,7 +1057,11 @@ async function openHumanNotifications(sender) {
   }
   mail.messageQuery = sender;
   mail.senderFilter = sender;
-  mail.page = 1;
+  messageID = Number(messageID) || null;
+  const targetPage = messageID
+    ? humanNotificationTargetPage(lastSnapshot, sender, messageID, mail.pageSize)
+    : 1;
+  mail.page = targetPage;
   mail.selectedMsgs.clear();
   const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) {
@@ -1063,9 +1069,15 @@ async function openHumanNotifications(sender) {
     navBtn.click();
   }
   await loadMailboxes();
-  const selected = await selectMailbox(HUMAN_ID, { preserveSenderFilter: true });
+  const selected = await selectMailbox(HUMAN_ID, {
+    preserveSenderFilter: true,
+    page: targetPage,
+  });
   if (!selected) return;
-  const first = mail.messages[0];
+  const target = messageID
+    ? mail.messages.find((message) => message.id === messageID)
+    : null;
+  const first = target || mail.messages[0];
   if (first) selectMessage(first.id);
   else {
     mail.selectedMsgId = null;

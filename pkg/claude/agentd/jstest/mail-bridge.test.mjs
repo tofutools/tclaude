@@ -22,3 +22,16 @@ test('Messages bridge routes ordinary attention clicks but preserves explicit de
   assert.equal(snapshots.length, 2, 'suppression is consumed by only one click');
   unregister();
 });
+
+test('Messages bridge preserves the selected human notification identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  const bridge = await harness.importDashboardModule('js/mail-bridge.js');
+  const opened = [];
+  const unregister = bridge.registerMailController({
+    openHumanNotifications(sender, messageID) { opened.push([sender, messageID]); },
+  });
+
+  bridge.openHumanNotifications('agt_sender', 42);
+  assert.deepEqual(opened, [['agt_sender', 42]]);
+  unregister();
+});

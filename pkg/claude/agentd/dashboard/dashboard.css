@@ -1160,6 +1160,10 @@ body.wizard .task-edit-icon:hover { color: #f3e6c0; text-shadow: 0 0 6px rgba(21
 .human-notification-drawer-nav button:hover:not(:disabled) { color: #f0f6fc; border-color: #58a6ff; }
 .human-notification-drawer-nav button:disabled { opacity: .35; cursor: default; }
 .human-notification-drawer-order { margin-left: auto; }
+.human-notification-drawer-announcement {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .human-notification-drawer-scroll { min-height: 0; flex: 1; overflow: auto; }
 .human-notification-drawer-message { padding: 20px; }
 .human-notification-drawer-message h2 {

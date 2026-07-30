@@ -8,12 +8,21 @@ export function unreadHumanMessages(snapshot) {
 }
 
 export function humanNotificationMatchesSender(message, sender) {
-  const agent = String(sender?.agent || sender?.agent_id || '');
-  const conv = String(sender?.conv || sender?.conv_id || '');
+  const selector = typeof sender === 'string' ? sender : '';
+  const agent = String(selector || sender?.agent || sender?.agent_id || '');
+  const conv = String(selector || sender?.conv || sender?.conv_id || '');
   return !!(
     (agent && message?.from_agent === agent)
     || (conv && message?.from_conv === conv)
   );
+}
+
+export function humanNotificationTargetPage(snapshot, sender, messageID, pageSize) {
+  const size = Math.max(1, Number(pageSize) || 1);
+  const index = (snapshot?.messages || [])
+    .filter((message) => humanNotificationMatchesSender(message, sender))
+    .findIndex((message) => message.id === Number(messageID));
+  return index < 0 ? 1 : Math.floor(index / size) + 1;
 }
 
 function senderMatchesMember(message, member) {

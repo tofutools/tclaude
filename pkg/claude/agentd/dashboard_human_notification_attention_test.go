@@ -12,10 +12,12 @@ func TestHumanNotificationAttentionAssetsAreWired(t *testing.T) {
 	}{
 		"member row":      {"js/groups-member-table.js", "human-notification-attention"},
 		"hover preview":   {"js/groups-member-table.js", "human-notification-preview"},
+		"preview a11y":    {"js/groups-member-table.js", "aria-describedby"},
 		"group bots":      {"js/groups-list.js", "human-notification-hint"},
 		"global bots":     {"js/shell-island.js", "human-notification-hint"},
 		"reader launch":   {"js/groups-island.js", "tclaude:open-human-notification"},
 		"quick reader":    {"js/groups-notification-reader.js", "GroupsNotificationReader"},
+		"reader a11y":     {"js/groups-notification-reader.js", "aria-live=\"polite\""},
 		"auto read":       {"js/groups-notification-reader.js", "/api/human-messages/read"},
 		"attachment":      {"js/groups-notification-reader.js", "/attachment"},
 		"mail bridge":     {"js/mail-bridge.js", "openHumanNotifications"},
