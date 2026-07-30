@@ -15,6 +15,7 @@ const sandboxImpl = {
     { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
     { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)', experimental: true, descr: 'Linux only' },
     { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
+    { value: 'off', label: 'Off', descr: 'Disables OS-level confinement.' },
   ],
   default: 'harness-builtin',
   host_available: true,
@@ -36,6 +37,9 @@ const harnesses = [
   {
     name: 'codex', display_name: 'Codex CLI', models: [],
     can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
+    can_sandbox: true,
+    sandbox_modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    default_sandbox: 'tclaude-agent',
   },
   {
     name: 'opencode', display_name: 'OpenCode', models: [], can_tclaude_layer: true,
@@ -93,10 +97,12 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   // The HARNESS half decides whether there is a choice to render at all.
   const claude = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
   assert.equal(claude.showSandboxImpl, true);
+  assert.equal(claude.showSandboxMode, false,
+    'resolved defaults do not expose an independently misleading native mode');
   assert.equal(claude.sandboxImplDefault, 'harness-builtin');
   assert.deepEqual(
     claude.sandboxImplOptions.map((o) => o.value),
-    ['harness-builtin', 'tclaude-layer', 'stacked'],
+    ['harness-builtin', 'tclaude-layer', 'stacked', 'off'],
   );
 
   // Read from the capability flag, not the harness NAME — so a later workstream
@@ -107,7 +113,7 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   assert.equal(opencode.sandboxImplCanBuiltin, false);
   assert.deepEqual(
     opencode.sandboxImplOptions.map((o) => o.value),
-    ['tclaude-layer', 'stacked'],
+    ['tclaude-layer', 'stacked', 'off'],
     'OpenCode must never offer a harness-builtin OS sandbox that does not exist',
   );
   // A blank row for OpenCode resolves to harness-builtin server-side, which is
@@ -117,6 +123,35 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   assert.equal(
     model.sandboxImplResolvedLabel(opencode.sandboxImplOptions, 'harness-builtin'), '',
     'an answer with no matching option must not be named',
+  );
+  const opencodeDefaultHint = model.sandboxImplHintFor(
+    { harness: 'opencode', sandboxImpl: '' }, opencode,
+  );
+  assert.match(opencodeDefaultHint.text, /No built-in OS sandbox/);
+  assert.match(opencodeDefaultHint.text, /command filter, not confinement/);
+  assert.equal(opencode.showSandboxMode, false,
+    'OpenCode owns no built-in OS sandbox mode to reveal');
+
+  const builtin = model.spawnCapabilityView(
+    { harness: 'codex', sandboxImpl: 'harness-builtin' }, { harnesses, sandboxImpl },
+  );
+  assert.equal(builtin.showSandboxMode, true);
+  assert.equal(
+    model.sandboxModeControlLabel(builtin.harness),
+    'Codex sandbox mode',
+  );
+  assert.deepEqual(
+    model.sandboxModeOptionsForImplementation({
+      modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    }, 'codex').modes,
+    ['tclaude-agent', 'workspace-write', 'read-only'],
+  );
+  assert.deepEqual(
+    model.sandboxModeOptionsForImplementation({
+      modes: ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    }, 'codex', 'danger-full-access').modes,
+    ['tclaude-agent', 'workspace-write', 'read-only', 'danger-full-access'],
+    'a legacy built-in + native-off pair remains represented until changed',
   );
 });
 
@@ -197,6 +232,27 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   );
   assert.equal(codexResolvedHint.warn, true);
   assert.match(codexResolvedHint.text, /no filtered network sandbox yet/);
+
+  // A legacy native-off pairing is a more specific statement about the same
+  // blank row, so it outranks the caveat above rather than competing with it.
+  const legacyOff = model.sandboxImplHintFor({
+    sandboxImpl: '', harness: 'codex', sandbox: 'danger-full-access',
+  }, codexView);
+  assert.equal(legacyOff.warn, true);
+  assert.match(legacyOff.text, /Legacy Codex CLI sandbox mode Off is preserved/);
+  assert.match(legacyOff.text, /Choose Off above to disable every OS sandbox/);
+  assert.match(
+    model.sandboxImplHintFor({
+      sandboxImpl: '', harness: 'codex', sandbox: 'danger-full-access',
+    }, codexView, 'harness-builtin').text,
+    /Legacy Codex CLI sandbox mode Off is preserved/,
+    'a resolved built-in answer does not displace the more specific legacy-off notice',
+  );
+  const legacyBuiltinOff = model.sandboxImplHintFor({
+    sandboxImpl: 'harness-builtin', harness: 'codex', sandbox: 'danger-full-access',
+  }, codexView);
+  assert.equal(legacyBuiltinOff.warn, true);
+  assert.match(legacyBuiltinOff.text, /built-in \+ native Off is preserved/);
   const codexHint = model.sandboxImplHintFor(
     { sandboxImpl: 'harness-builtin' }, codexView,
   );
@@ -206,6 +262,11 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   assert.match(codexHint.text, /upstream proxy is experimental and off by default/);
   assert.match(codexHint.text, /tclaude-layer filtering on Linux/);
   assert.match(codexHint.text, /network open \(Allow all\)/);
+
+  const off = model.sandboxImplHintFor({ sandboxImpl: 'off' }, codexView);
+  assert.equal(off.warn, true);
+  assert.match(off.text, /Sandbox OFF/);
+  assert.match(off.text, /without OS-level confinement/);
 
   const openCodeView = model.spawnCapabilityView(
     { harness: 'opencode' }, { harnesses, sandboxImpl },
@@ -357,7 +418,7 @@ test('an unavailable host warns with the concrete reason and the real consequenc
   // Still selectable — the row is rendered and the option list is intact.
   assert.equal(view.showSandboxImpl, true);
   assert.equal(view.sandboxImplHostAvailable, false);
-  assert.equal(view.sandboxImplOptions.length, 3);
+  assert.equal(view.sandboxImplOptions.length, 4);
 
   const hint = model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view);
   assert.equal(hint.warn, true);
@@ -410,6 +471,10 @@ test('the spawn request omits an untouched row and sends an explicit one', async
   assert.equal(layered.body.sandbox_implementation, 'tclaude-layer');
   const stacked = model.buildSpawnRequest({ ...base, sandboxImpl: 'stacked' }, context, null);
   assert.equal(stacked.body.sandbox_implementation, 'stacked');
+  const off = model.buildSpawnRequest({ ...base, sandboxImpl: 'off' }, context, null);
+  assert.equal(off.body.sandbox_implementation, 'off');
+  assert.equal(off.body.omit_sandbox_profiles, true,
+    'off is a durable backend value and explicitly omits unenforceable profile policy');
 
   // OpenCode supports the layer through its managed server topology.
   const oc = model.buildSpawnRequest(

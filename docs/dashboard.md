@@ -1634,7 +1634,11 @@ links and absolute-path targets are downloads: Ctrl/⌘-click asks the
 authenticated agentd backend to preflight and then stream that host-local
 regular file to the browser. This works from a remote dashboard, where the
 browser cannot dereference the agent host's path itself; remote-host file URLs,
-directories, and devices stay blocked.
+directories, and devices stay blocked. When a harness only colours a visible
+absolute path without emitting OSC 8 metadata, the terminal recognizes that
+path directly and gives it the same download behavior. Relative labels remain
+plain because they do not identify a host file without the terminal's working
+directory.
 Pasting a PNG, JPEG, or WebP clipboard image uploads it to a bounded temporary
 directory on the agentd host and pastes that host-side path into Claude Code or
 Codex as an image attachment. This also works through remote dashboard

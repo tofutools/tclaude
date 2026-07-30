@@ -123,7 +123,7 @@ func recordedSandboxProfilePlan(selector string) (sandboxProfilePlanResponse, er
 		Notices:  []sandboxpolicy.AccessNotice{},
 		Plan: session.SandboxPlanDescription{
 			Applicable: false,
-			Reason:     "harness-builtin has no outer mount plan",
+			Reason:     "selected implementation has no outer mount plan",
 			Entries:    []session.SandboxPlanEntry{},
 			Aliases:    []sandboxpolicy.MountAlias{},
 		},

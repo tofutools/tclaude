@@ -44,10 +44,11 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
   const harness = defaultHarness(catalog, seed?.harness);
   const h = harnessByName(catalog, harness);
   const defaults = harnessDefaults(h);
+  const sandbox = seed?.sandbox || defaults.sandbox;
   return {
     name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
-    model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
+    model: seed?.model || '', effort: seed?.effort || '', sandbox,
     approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
     ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     auto_compact_window: seed?.auto_compact_window || '',

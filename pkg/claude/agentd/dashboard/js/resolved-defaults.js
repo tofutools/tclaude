@@ -75,7 +75,11 @@ export const CLAUDE_INHERIT_SANDBOX_PLAIN = "Claude's own settings decide whethe
 // `inherit` is rewritten: it is the one mode whose token says nothing about what
 // the launch actually gets. Every other mode already names its own effect.
 export function sandboxModeLabel(harnessName, mode) {
-  return harnessName === 'claude' && mode === 'inherit' ? CLAUDE_INHERIT_SANDBOX_LABEL : mode;
+  if (harnessName === 'claude' && mode === 'inherit') return CLAUDE_INHERIT_SANDBOX_LABEL;
+  if (harnessName === 'codex' && mode === 'tclaude-agent') {
+    return 'Managed workspace + agent coordination (tclaude-agent)';
+  }
+  return mode;
 }
 
 // sandboxModeOptionLabel is the selectable form: the label plus the harness's

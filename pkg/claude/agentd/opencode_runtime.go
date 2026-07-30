@@ -148,7 +148,7 @@ var (
 )
 
 func startOpenCodeRuntime(
-	sessionID, cwd, title, resumeID, permissionJSON string,
+	sessionID, cwd, title, resumeID, permissionJSON, sandboxImplementation string,
 	sandboxSpec *session.TclaudeLayerLaunchSpec,
 ) (*openCodeLaunch, error) {
 	permissionJSON = strings.TrimSpace(permissionJSON)
@@ -163,7 +163,9 @@ func startOpenCodeRuntime(
 	if err != nil {
 		return nil, err
 	}
-	sandboxImplementation, sandboxSpecJSON, err := openCodeSandboxRecord(sandboxSpec)
+	sandboxSpecJSON := ""
+	sandboxImplementation, sandboxSpecJSON, err = openCodeSandboxRecord(
+		sandboxImplementation, sandboxSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -306,10 +308,25 @@ func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
 }
 
 func openCodeSandboxRecord(
+	rawImplementation string,
 	spec *session.TclaudeLayerLaunchSpec,
 ) (string, string, error) {
+	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
+	if err != nil {
+		return "", "", err
+	}
 	if spec == nil {
-		return string(sandboxpolicy.ImplementationHarnessBuiltin), "", nil
+		switch implementation {
+		case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
+			return string(implementation), "", nil
+		default:
+			return "", "", fmt.Errorf(
+				"OpenCode sandbox implementation %q requires a launch spec", implementation)
+		}
+	}
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
+		return "", "", fmt.Errorf(
+			"OpenCode sandbox launch spec is incompatible with implementation %q", implementation)
 	}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
@@ -337,10 +354,11 @@ func openCodeRuntimeSandboxSpec(
 		return nil, fmt.Errorf("OpenCode runtime sandbox implementation: %w", err)
 	}
 	switch implementation {
-	case sandboxpolicy.ImplementationHarnessBuiltin:
+	case sandboxpolicy.ImplementationHarnessBuiltin, sandboxpolicy.ImplementationOff:
 		if strings.TrimSpace(runtime.SandboxLaunchSpecJSON) != "" {
 			return nil, fmt.Errorf(
-				"OpenCode harness-builtin runtime unexpectedly carries a tclaude-layer launch spec")
+				"OpenCode %s runtime unexpectedly carries a tclaude-layer launch spec",
+				implementation)
 		}
 		return nil, nil
 	case sandboxpolicy.ImplementationTclaudeLayer:

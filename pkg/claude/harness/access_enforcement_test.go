@@ -596,6 +596,27 @@ func TestCodexBuiltinFilteredNetworkPredictionDisclosesUnavailableCapability(t *
 		"no filtered-egress applier exists")
 }
 
+func TestSandboxOffPredictionNeverCreditsBuiltinEnforcement(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeClosed},
+		UnixSockets: sandboxpolicy.UnixSocketRules{
+			Mode: sandboxpolicy.AccessModeClosed,
+		},
+	}
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
+		t.Run(harnessName, func(t *testing.T) {
+			prediction, err := PredictAccessEnforcement(
+				MustGet(harnessName), sandboxpolicy.ImplementationOff,
+				axes, "", "linux",
+			)
+			require.NoError(t, err)
+			assert.Equal(t, "sandbox off", prediction.Mechanism)
+			assert.Equal(t, EnforceNone, prediction.NetworkClosed)
+			assert.Equal(t, EnforceNone, prediction.SocketClosed)
+		})
+	}
+}
+
 func TestM2bFilteredPredictionDisclosesLivePrerequisiteCondition(t *testing.T) {
 	axes := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{

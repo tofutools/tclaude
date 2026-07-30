@@ -64,8 +64,12 @@ func sandboxProfileCapabilityFailure(
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox_implementation", err.Error()}
 	}
-	if _, err := harness.ResolveOpenCodeSandboxImplementationMode(
-		harnessOrDefault(harnessName), sandboxMode, implementation); err != nil {
+	h, err := harness.ResolveSpawnable(harnessOrDefault(harnessName))
+	if err != nil {
+		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_harness", err.Error()}
+	}
+	if _, err := harness.ResolveSandboxImplementationMode(
+		h, sandboxMode, implementation); err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "invalid_sandbox", err.Error()}
 	}
 	if snapshot == nil {
@@ -312,10 +316,19 @@ func planSandboxProfileAccessForLaunch(
 // sandboxProfilesDisabled reports launch modes whose explicit contract omits
 // every tclaude sandbox-profile tier. Codex danger-full-access uses the raw
 // --sandbox opt-out, which cannot be combined with the managed permission
-// profile that renders filesystem rules. OpenCode off remains profile-aware so
-// an incompatible filesystem or network profile fails loudly instead of being
-// silently discarded; an empty policy is still a valid off launch.
-func sandboxProfilesDisabled(harnessName, sandboxMode string) bool {
+// profile that renders filesystem rules. An explicit implementation=off is a
+// harness-neutral opt-out and therefore omits every sandbox-profile tier,
+// including for OpenCode.
+func sandboxProfilesDisabled(
+	harnessName, sandboxMode string,
+	sandboxImplementation ...string,
+) bool {
+	if len(sandboxImplementation) > 0 {
+		implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation[0])
+		if err == nil && implementation == sandboxpolicy.ImplementationOff {
+			return true
+		}
+	}
 	switch harnessOrDefault(harnessName) {
 	case harness.CodexName:
 		return strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull

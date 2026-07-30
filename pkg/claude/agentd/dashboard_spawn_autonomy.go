@@ -83,7 +83,7 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 			"invalid_"+sandboxImplementationField, err.Error())
 		return
 	}
-	sandboxMode, fail := resolveOpenCodeSandboxImplementationMode(
+	sandboxMode, fail := resolveSandboxImplementationMode(
 		h, sandboxMode, sandboxImplementation)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)

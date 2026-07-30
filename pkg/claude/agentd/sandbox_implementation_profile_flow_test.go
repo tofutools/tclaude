@@ -266,7 +266,8 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)
-		require.Len(t, options, 3)
+		require.Len(t, options, 4)
+		assert.Equal(t, "off", options[3].(map[string]any)["value"])
 		var sawExperimental, sawStacked, sawBuiltin bool
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)

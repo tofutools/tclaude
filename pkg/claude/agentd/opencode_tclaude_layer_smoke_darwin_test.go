@@ -138,7 +138,7 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 	require.NoError(t, err)
 	launch, err := startOpenCodeRuntime(
 		openCodeDarwinLayerSmokeSessionID, cwd, "OpenCode Darwin layer smoke",
-		"", permissionJSON, spec)
+		"", permissionJSON, string(sandboxpolicy.ImplementationTclaudeLayer), spec)
 	if err != nil {
 		logOpenCodeDarwinLayerSmokeServerLogs(t,
 			filepath.Join(allocation.StateRoot, "data", "opencode", "log"))

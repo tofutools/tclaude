@@ -186,7 +186,7 @@ instead of slash-command injection).
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **Built-in OS sandbox** (`SupportsBuiltinOSSandbox`) | ✅ SRT | ✅ native `--sandbox` | ❌ none; `access-control` is a command filter, not confinement |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off`; experimental Linux `stacked` = tclaude bwrap + real SRT bwrap/seccomp after a live probe | ✅ managed profile (default) or raw `--sandbox`; experimental Linux `stacked` = tclaude bwrap + current Codex bwrap managed profile after a live probe | ⚠️ Linux `tclaude-layer` confines the agentd-owned tool executor with documented caveats; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
+| **OS sandbox at spawn** | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers `inherit`/`on` | ✅ implementation selector: built-in, tclaude-layer, stacked, or off; built-in mode offers managed profile (default) or raw confined modes | ⚠️ tclaude-layer confines the agentd-owned tool executor with documented caveats; off is explicit; `stacked` refuses; built-in `access-control` is a command filter, not confinement |
 | **Filtered network under `tclaude-layer`** ([contract](sandboxing.md#isolated-with-agentd-network-posture)) | ⚠️ Linux CIDR/ports plus DNS-to-IP host/domain leases; Linux denies active (DNS-name deny is Partial under Allow all); macOS native loopback-only lists; mixed macOS lists are NotEnforced/open; exact provider context and explicit model endpoint coverage required | ⚠️ same Linux allow/deny gateway and native-loopback boundary; DNS-name deny is Partial under Allow all | ⚠️ Linux allow-list packet floor plus active denies (DNS-name deny is Partial under Allow all) for explicit-provider configs only; opaque/default/dynamic routes refuse, and the local convenience presets remain launch-refused — denies included — pending TCL-826 |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
@@ -207,12 +207,16 @@ Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠�
 ### Sandbox & approval defaults (Codex)
 
 Codex has a built-in OS-level sandbox and an approval policy, both selectable at
-launch. tclaude uses them to keep **unattended, daemon-spawned** Codex agents
-safe and non-blocking:
+launch. The dashboard's primary **Sandbox** selector chooses the implementation
+(Codex built-in, tclaude built-in, stacked, or Off). Selecting Codex built-in
+reveals **Codex sandbox mode** below it. tclaude uses these controls to keep
+**unattended, daemon-spawned** Codex agents safe and non-blocking:
 
-- **Launch containment** — the spawn dialog (and `--sandbox`) offers four
-  options: **`tclaude-agent`** (the recommended default), plus the three raw
-  Codex modes `workspace-write` | `read-only` | `danger-full-access`.
+- **Codex built-in mode** — the nested mode control (and `--sandbox`) offers
+  **`tclaude-agent`** (shown as “Managed workspace + agent coordination” and
+  recommended), plus the confined raw Codex modes `workspace-write` and
+  `read-only`. Sandbox Off is selected in the primary implementation control
+  and resolves to Codex's native `danger-full-access` mode.
   - **`tclaude-agent`** is *not* a Codex `--sandbox` mode — it selects a
     tclaude-managed **permission profile**. Each session launches with a
     unique `codex -p tclaude-agent-<launch-id>` profile derived from the
@@ -430,7 +434,7 @@ server because its children execute the tools; the attach client remains only
 a UI. A restart revalidates and replays that persisted spec; a wrapped row with
 a missing, corrupt, or no-longer-valid spec is refused rather than restarted
 unwrapped. The mode is normalized to `tclaude-layer` in the launch record;
-pairing that mode with `harness-builtin`, or pairing `off` with the outer
+pairing that mode with `harness-builtin`, or pairing the OpenCode mode `off` with the outer
 implementation, is a launch error.
 
 OpenCode has no `harness-builtin` OS sandbox. Leaving the implementation unset
@@ -438,7 +442,9 @@ keeps the historical behavior — its command filter plus the explicit warning �
 but explicitly pinning `harness-builtin` is rejected. Pure replay of an older
 recorded `harness-builtin` value is grandfathered because old rows did not
 persist whether it was pinned or defaulted, and the two spellings grant the
-same OpenCode posture.
+same OpenCode posture. The dashboard therefore offers resolved defaults,
+`tclaude-layer`, the disclosed-but-refused stacked option, and Off; it does not
+mislabel OpenCode's access-control command filter as a built-in OS sandbox.
 
 agentd waits for authenticated health, asks the server to mint the conversation
 ID, delivers the startup prompt through `prompt_async`, consumes the
