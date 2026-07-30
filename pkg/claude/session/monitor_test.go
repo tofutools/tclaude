@@ -93,11 +93,66 @@ func TestMonitorLaunch_DegradesRatherThanDropsOnAPoorPayload(t *testing.T) {
 	require.True(t, ok, "an unreadable response must not fail the hook or lose the launch")
 	assert.Equal(t, "", got.ID)
 
-	// A zero or absent timeout must fold to "no deadline", never to a
-	// deadline in the past that would retire a live watch instantly.
+	// A zero or absent timeout on BOTH sides must fold to "no deadline",
+	// never to a deadline in the past that would retire a live watch
+	// instantly.
 	got, ok = monitorLaunch(monitorHook(t, "Monitor",
 		map[string]any{"command": "tail -f app.log"},
 		map[string]any{"taskId": "b4", "timeoutMs": 0, "persistent": false},
+	), now)
+	require.True(t, ok)
+	assert.True(t, got.Deadline.IsZero())
+}
+
+// The two bounds ride in tool_input as well as tool_response. A harness
+// version that reshapes the response must not cost the deadline, because
+// for a websocket watch the deadline is the ONLY thing that can ever
+// retire it — the process reconcile has no opinion about a socket.
+func TestMonitorLaunch_FallsBackToTheInputForTheDeadline(t *testing.T) {
+	now := time.Now()
+
+	got, ok := monitorLaunch(monitorHook(t, "Monitor",
+		map[string]any{
+			"ws":         map[string]any{"url": "wss://events.example.com/stream"},
+			"timeout_ms": 60000,
+			"persistent": false,
+		},
+		map[string]any{"taskId": "b1"}, // response reshaped: no timeoutMs
+	), now)
+	require.True(t, ok)
+	assert.True(t, got.Deadline.Equal(now.Add(time.Minute)),
+		"a 1-minute watch must not be bounded only by the 2-hour TTL")
+
+	// The response stays authoritative when it does carry a timeout.
+	got, ok = monitorLaunch(monitorHook(t, "Monitor",
+		map[string]any{"command": "tail -f app.log", "timeout_ms": 60000},
+		map[string]any{"taskId": "b2", "timeoutMs": 300000, "persistent": false},
+	), now)
+	require.True(t, ok)
+	assert.True(t, got.Deadline.Equal(now.Add(5*time.Minute)),
+		"the harness's own echo of what it will enforce wins")
+}
+
+// The two failure directions are not symmetric: a lost timeout over-reports
+// a finished watch, but a lost `persistent` would invent a deadline for a
+// watch that has none and retire a LIVE monitor early. So either source
+// claiming persistent must suppress the deadline.
+func TestMonitorLaunch_EitherSourceClaimingPersistentSuppressesTheDeadline(t *testing.T) {
+	now := time.Now()
+
+	// Response reshaped to drop `persistent`; the input still says so.
+	got, ok := monitorLaunch(monitorHook(t, "Monitor",
+		map[string]any{"command": "tail -f app.log", "timeout_ms": 60000, "persistent": true},
+		map[string]any{"taskId": "b1", "timeoutMs": 60000},
+	), now)
+	require.True(t, ok)
+	assert.True(t, got.Deadline.IsZero(),
+		"a persistent watch must never be given an absolute deadline")
+
+	// And the other way round: only the response knows.
+	got, ok = monitorLaunch(monitorHook(t, "Monitor",
+		map[string]any{"command": "tail -f app.log", "timeout_ms": 60000},
+		map[string]any{"taskId": "b2", "timeoutMs": 60000, "persistent": true},
 	), now)
 	require.True(t, ok)
 	assert.True(t, got.Deadline.IsZero())

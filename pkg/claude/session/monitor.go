@@ -31,6 +31,12 @@ type monitorToolInput struct {
 	Command     string          `json:"command"`
 	Description string          `json:"description"`
 	WS          *monitorWSInput `json:"ws"`
+	// TimeoutMs and Persistent are the CALLER's requested bounds. The
+	// harness echoes both back in tool_response, which is the authority —
+	// but the same hook carries them here too, so an unreadable response
+	// need not cost the deadline. See monitorLaunch.
+	TimeoutMs  int64 `json:"timeout_ms"`
+	Persistent bool  `json:"persistent"`
 }
 
 // monitorWSInput is the websocket source. Only the URL is kept, as the
@@ -74,6 +80,19 @@ func harnessTracksMonitors(name string) bool {
 // deadline" and leave retirement to the process reconcile and the TTL,
 // never to a deadline in the past that would retire a live watch instantly.
 //
+// Both bounds are read from tool_response FIRST (the harness's own echo of
+// what it will enforce) and from tool_input as a fallback, because the two
+// failure directions are not symmetric and this file must fail closed in
+// each:
+//
+//   - A LOST timeout leaves a short watch bounded only by the TTL. For a
+//     websocket watch — which the process reconcile can never retire —
+//     that is up to MonitorTTL of badge for work that ended in a minute,
+//     so the input's timeout_ms is used when the response yields none.
+//   - A LOST `persistent` would invent an absolute deadline for a watch
+//     that has none, retiring a live monitor early. So persistent is the
+//     OR of both sources: either one claiming it suppresses the deadline.
+//
 // A missing taskId yields an empty id rather than a rejection, matching
 // bgShellLaunch: the launch DID happen, and db.MonitorSet.Add keys such an
 // entry anonymously. A command entry still self-heals through the
@@ -111,8 +130,13 @@ func monitorLaunch(input HookCallbackInput, now time.Time) (launch monitorLaunch
 	if launch.Label == "" {
 		launch.Label = wsURL
 	}
-	if !resp.Persistent && resp.TimeoutMs > 0 {
-		launch.Deadline = now.Add(time.Duration(resp.TimeoutMs) * time.Millisecond)
+	timeoutMs := resp.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = in.TimeoutMs
+	}
+	persistent := resp.Persistent || in.Persistent
+	if !persistent && timeoutMs > 0 {
+		launch.Deadline = now.Add(time.Duration(timeoutMs) * time.Millisecond)
 	}
 	return launch, true
 }

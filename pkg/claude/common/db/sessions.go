@@ -827,7 +827,7 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	}
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'exited', status_detail = '', updated_at = ?,
-			subagent_count = 0, subagents_json = '', bg_shells_json = '',
+			subagent_count = 0, subagents_json = '', bg_shells_json = '', monitors_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
 		time.Now().Format(time.RFC3339Nano),
