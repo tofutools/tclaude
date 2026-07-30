@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -64,37 +65,51 @@ func harnessTracksBackgroundShells(name string) bool {
 
 // hasBackgroundActivity reports whether anything this session launched is
 // believed to still be running past the end of the main thread's turn — a
-// sub-agent or a background shell. It is the predicate the Stop /
-// SubagentStop arms use to decide between plain idle and main_agent_idle.
+// sub-agent, a background shell, or a monitor. It is the predicate the
+// Stop / SubagentStop arms use to decide between plain idle and
+// main_agent_idle.
 func (s *SessionState) hasBackgroundActivity() bool {
-	return len(s.Subagents) > 0 || len(s.BgShells) > 0
+	return len(s.Subagents) > 0 || len(s.BgShells) > 0 || len(s.Monitors) > 0
 }
 
 // backgroundActivityDetail renders this session's status_detail for
 // main_agent_idle.
 func (s *SessionState) backgroundActivityDetail() string {
-	return BackgroundActivityDetail(len(s.Subagents), len(s.BgShells))
+	return BackgroundActivityDetail(len(s.Subagents), len(s.BgShells), len(s.Monitors))
 }
 
 // BackgroundActivityDetail renders the status_detail that accompanies
 // main_agent_idle: what is still running now that the main thread's turn
-// has ended. The sub-agents-only wording is preserved verbatim from before
-// background shells existed, so existing read surfaces and their tests keep
-// seeing the exact string they always did.
+// has ended.
+//
+// Each kind contributes a clause only when it is non-zero, and the clauses
+// keep their historical wording: the sub-agent clause is the un-pluralized
+// "%d subagents" it has been since before background shells existed, and
+// the all-zero case still renders "0 subagents running". Existing read
+// surfaces and their tests therefore keep seeing the exact strings they
+// always did for the two-kind cases.
 //
 // Exported because the dashboard re-renders it from its own RECONCILED
 // counts, which can differ from the stored row's (a ledger entry whose
 // process is gone is dropped at read time). Sharing one formatter keeps the
 // pill's text and the badges beside it from disagreeing.
-func BackgroundActivityDetail(subagents, shells int) string {
-	switch {
-	case shells == 0:
-		return fmt.Sprintf("%d subagents running", subagents)
-	case subagents == 0:
-		return fmt.Sprintf("%s running", pluralize(shells, "background shell"))
-	default:
-		return fmt.Sprintf("%d subagents, %s running", subagents, pluralize(shells, "background shell"))
+func BackgroundActivityDetail(subagents, shells, monitors int) string {
+	var parts []string
+	if subagents > 0 {
+		parts = append(parts, fmt.Sprintf("%d subagents", subagents))
 	}
+	if shells > 0 {
+		parts = append(parts, pluralize(shells, "background shell"))
+	}
+	if monitors > 0 {
+		parts = append(parts, pluralize(monitors, "monitor"))
+	}
+	if len(parts) == 0 {
+		// Preserved verbatim: callers reach this when every ledger is
+		// empty, and the historical string is what read surfaces expect.
+		return fmt.Sprintf("%d subagents running", subagents)
+	}
+	return strings.Join(parts, ", ") + " running"
 }
 
 // pluralize renders "1 thing" / "N things".

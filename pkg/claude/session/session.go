@@ -46,6 +46,11 @@ type SessionState struct {
 	// self-healing story (hooks announce a launch but never an exit, so
 	// process liveness is the authoritative reconcile).
 	BgShells db.BgShellSet `json:"bgShells,omitempty"`
+	// Monitors is the ledger of Claude Code monitors (the `Monitor` tool)
+	// believed to be watching under this session, keyed by taskId — see
+	// db.MonitorSet for why it is separate from BgShells despite sharing
+	// that id namespace.
+	Monitors db.MonitorSet `json:"monitors,omitempty"`
 	Created  time.Time     `json:"created"`
 	Updated  time.Time     `json:"updated"`
 	LastHook time.Time     `json:"lastHook"`
@@ -210,6 +215,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		SubagentCount:          s.SubagentCount,
 		SubagentsJSON:          s.Subagents.Encode(),
 		BgShellsJSON:           s.BgShells.Encode(),
+		MonitorsJSON:           s.Monitors.Encode(),
 		CreatedAt:              s.Created,
 		UpdatedAt:              s.Updated,
 		LastHook:               s.LastHook,
@@ -241,6 +247,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		SubagentCount:          r.SubagentCount,
 		Subagents:              db.ParseSubagentSet(r.SubagentsJSON),
 		BgShells:               db.ParseBgShellSet(r.BgShellsJSON),
+		Monitors:               db.ParseMonitorSet(r.MonitorsJSON),
 		Created:                r.CreatedAt,
 		Updated:                r.UpdatedAt,
 		LastHook:               r.LastHook,
@@ -547,8 +554,8 @@ func FormatDuration(d time.Duration) string {
 
 // MarkStateExited flips an in-memory state to exited and clears both
 // activity ledgers — sub-agents run inside the (now dead) harness
-// process and background shells are its children, so neither can
-// survive it. Mirrors what the hook callback's SessionEnd arm and the
+// process, and background shells and monitors both belong to it, so
+// none of the three can survive it. Mirrors what the hook callback's SessionEnd arm and the
 // reaper's MarkSessionExitedIfUnchanged do; the caller persists via
 // SaveSessionState when needed.
 func MarkStateExited(state *SessionState) {
@@ -556,6 +563,7 @@ func MarkStateExited(state *SessionState) {
 	state.Subagents = nil
 	state.SubagentCount = 0
 	state.BgShells = nil
+	state.Monitors = nil
 }
 
 // RefreshSessionStatus updates the session status based on actual state

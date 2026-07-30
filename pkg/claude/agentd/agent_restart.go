@@ -25,7 +25,8 @@ func agentRestartIdleFailure(sess *db.SessionRow, now time.Time) string {
 		subagents = set.LiveCount(now)
 	}
 	backgroundShells := db.ParseBgShellSet(sess.BgShellsJSON).LiveCount(now)
-	if sess.Status == session.StatusIdle && subagents == 0 && backgroundShells == 0 {
+	monitors := db.ParseMonitorSet(sess.MonitorsJSON).LiveCount(now)
+	if sess.Status == session.StatusIdle && subagents == 0 && backgroundShells == 0 && monitors == 0 {
 		return ""
 	}
 	var blockers []string
@@ -41,6 +42,9 @@ func agentRestartIdleFailure(sess *db.SessionRow, now time.Time) string {
 	}
 	if backgroundShells > 0 {
 		blockers = append(blockers, fmt.Sprintf("%d background shell command(s) still running", backgroundShells))
+	}
+	if monitors > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d monitor(s) still running", monitors))
 	}
 	return "an agent can only restart while fully idle; " + strings.Join(blockers, ", ")
 }
