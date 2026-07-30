@@ -735,6 +735,65 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:     "groups-notification-preview",
+			Title:   "Groups — notification hover preview",
+			Caption: "TCL-875: focusing the clickable agent marker reveals the preview-only subject, three-line body excerpt, age and attachment status without opening the reader or changing read state.",
+			JS: showGroups + expandGroups + `return (async function(){
+  var deadline = Date.now() + 4000;
+  var marker = null;
+  while (Date.now() < deadline) {
+    marker = document.querySelector('.human-notification-attention');
+    if (marker) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  if (!marker) throw new Error('groups-notification-preview: unread agent marker missing');
+  marker.focus();
+  await new Promise(function(resolve){ setTimeout(resolve, 450); });
+  var preview = marker.querySelector('.human-notification-preview');
+  if (!preview || getComputedStyle(preview).visibility !== 'visible') throw new Error('groups-notification-preview: preview did not appear');
+  if (!preview.querySelector('.human-notification-preview-body')) throw new Error('groups-notification-preview: body excerpt missing');
+  if (document.querySelector('.human-notification-drawer')) throw new Error('groups-notification-preview: preview opened the reader');
+})();`,
+			SettleMS: 100,
+		},
+		{
+			Key:     "groups-notification-reader",
+			Title:   "Groups — notification quick reader",
+			Caption: "TCL-875: an agent-level unread marker opens the non-modal reader over Groups, keeps the hierarchy visible, takes keyboard focus, and exposes sender navigation plus read and Messages actions.",
+			JS: showGroups + expandGroups + `return (async function(){
+  var deadline = Date.now() + 4000;
+  var marker = null;
+  while (Date.now() < deadline) {
+    marker = document.querySelector('.human-notification-attention');
+    if (marker) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+  if (!marker) throw new Error('groups-notification-reader: unread agent marker missing');
+  marker.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var drawer = document.querySelector('.human-notification-drawer');
+  if (!drawer) throw new Error('groups-notification-reader: drawer did not open');
+  if (!document.querySelector('#tab-groups.active')) throw new Error('groups-notification-reader: opening navigated away from Groups');
+  if (document.activeElement !== drawer.querySelector('.human-notification-drawer-close')) throw new Error('groups-notification-reader: close action did not take focus');
+  if (!drawer.querySelector('.human-notification-drawer-body') ||
+      !drawer.querySelector('.human-notification-drawer-actions .primary')) {
+    throw new Error('groups-notification-reader: reader content/actions missing');
+  }
+  // The visual matrix reuses one DB fixture across both skins. Restore the
+  // opened message server-side without publishing it into the current page:
+  // this capture still shows the real optimistic "opened · read" state, while
+  // the later wizard capture gets the unread launch marker too.
+  var id = Number(drawer.dataset.messageId);
+  var response = await fetch('/api/human-messages/read', {
+    method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:id, read:false})
+  });
+  if (!response.ok) throw new Error('groups-notification-reader: fixture read-state restore failed');
+})();`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "message-access-populated",
 			Title:   "Message/access dialogs — populated compose",
 			Caption: "TCL-454: the Preact-owned scoped composer renders the live roster, role/class filter, populated draft, and sole migrated modal id in the same viewport and both skins.",
