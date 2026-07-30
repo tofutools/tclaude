@@ -98,8 +98,13 @@ func TestNormalizeAllowsOneHostPathAtTwoMountPaths(t *testing.T) {
 
 func TestNormalizeRejectsMountPathIntoProtectedRoot(t *testing.T) {
 	home, dirs := mountPathFixture(t, "data")
-	_, err := Normalize(Profile{Name: "protected", Filesystem: []FilesystemGrant{
-		{Path: dirs[0], Access: AccessWrite, MountPath: filepath.Join(home, ".claude", "sessions")},
+	// protectedPaths() canonicalizes; spell the rule the same way so the test
+	// asserts the guard rather than a spelling coincidence. The symlinked
+	// spelling has its own case below.
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	_, err = Normalize(Profile{Name: "protected", Filesystem: []FilesystemGrant{
+		{Path: dirs[0], Access: AccessWrite, MountPath: filepath.Join(canonicalHome, ".claude", "sessions")},
 	}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "intersects protected directory")
@@ -343,4 +348,23 @@ func TestRequireContainedAllowsChildRepeatingTheParentsMount(t *testing.T) {
 		Path: dirs[0], Access: AccessRead, MountPath: "/data",
 	})
 	require.NoError(t, RequireContained(snapshot, snapshot))
+}
+
+// TestNormalizeRejectsMountPathIntoProtectedRootThroughASymlink covers the
+// spelling half of the protected-root wall on the sandbox side. The authored
+// mount_path is stored lexically, so the guard has to compare the canonical form
+// too — otherwise a symlinked spelling of a protected root walks through it.
+// (This is the shape that made macOS's /var → /private/var differ from Linux.)
+func TestNormalizeRejectsMountPathIntoProtectedRootThroughASymlink(t *testing.T) {
+	home, dirs := mountPathFixture(t, "data")
+	sessions := filepath.Join(home, ".claude", "sessions")
+	require.NoError(t, os.MkdirAll(sessions, 0o755))
+	link := filepath.Join(home, "session-link")
+	require.NoError(t, os.Symlink(sessions, link))
+
+	_, err := Normalize(Profile{Name: "aliased", Filesystem: []FilesystemGrant{
+		{Path: dirs[0], Access: AccessWrite, MountPath: link},
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "intersects protected directory")
 }

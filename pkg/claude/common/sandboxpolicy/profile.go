@@ -428,6 +428,22 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	return out, missing, nil
 }
 
+// canonicalGuestPathForComparison resolves a sandbox path the same way
+// protectedPaths() resolves its own entries, so the two are compared in one
+// spelling. It is used ONLY for comparison: the authored mount_path is stored
+// lexically, because it names a location inside a namespace that does not exist
+// yet. A path that cannot be resolved at all is returned unchanged, which is the
+// common case for a guest path with no host counterpart.
+func canonicalGuestPathForComparison(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if resolved, err := canonicalMissingDirectory(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
 // mostSpecificHostDeny reports the deny rule that actually governs a host path,
 // if any. Only same-path rules take part: a remapped rule confers its access at
 // its sandbox path, not at the host path it reads from, so it cannot reopen a
@@ -483,20 +499,29 @@ func validateMountPaths(grants []FilesystemGrant, protected []string) error {
 			continue
 		}
 		guest := grant.GuestPath()
-		for _, denied := range protected {
-			if pathsIntersect(guest, denied) {
-				return fmt.Errorf(
-					"filesystem rule for %q: sandbox path %q intersects protected directory %q",
-					grant.Path, guest, denied,
-				)
+		// Compare BOTH the authored spelling and its canonical form. The stored
+		// mount_path stays lexical — it names a namespace location, so resolving
+		// it is not meaningful in general — but the protected-root wall is a
+		// wall around real directories, and on macOS "/var/…" and
+		// "/private/var/…" are one directory. Checking only the authored
+		// spelling would let the other one walk straight through.
+		for _, candidate := range []string{guest, canonicalGuestPathForComparison(guest)} {
+			for _, denied := range protected {
+				if pathsIntersect(candidate, denied) {
+					return fmt.Errorf(
+						"filesystem rule for %q: sandbox path %q intersects protected directory %q",
+						grant.Path, guest, denied,
+					)
+				}
 			}
-		}
-		for _, socket := range sockets {
-			if pathContainsOrEqual(guest, socket) {
-				return fmt.Errorf(
-					"filesystem rule for %q: sandbox path %q would shadow the agentd control socket %q",
-					grant.Path, guest, socket,
-				)
+			for _, socket := range sockets {
+				if pathContainsOrEqual(candidate, socket) ||
+					pathContainsOrEqual(candidate, canonicalGuestPathForComparison(socket)) {
+					return fmt.Errorf(
+						"filesystem rule for %q: sandbox path %q would shadow the agentd control socket %q",
+						grant.Path, guest, socket,
+					)
+				}
 			}
 		}
 		// A deny is expressed against the HOST path, so a remap of a denied
