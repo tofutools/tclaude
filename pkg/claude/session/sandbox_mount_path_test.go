@@ -1,12 +1,15 @@
 package session
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -77,8 +80,18 @@ func TestBwrapArgsRefusesRemapWithoutHostMountPointUnderHostOpenRoot(t *testing.
 // creates the mount point inside the namespace and nothing on the host has to
 // exist for it.
 func TestBwrapArgsAllowsRemapWithoutHostMountPointUnderConstructedRoot(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "dataset")
+	// The isolated posture requires the canonical agentd socket to be live, so
+	// stand one up the way the other constructed-root tests do.
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	source := filepath.Join(home, "dataset")
 	require.NoError(t, os.MkdirAll(source, 0o755))
 	guest := "/srv/shared"
 

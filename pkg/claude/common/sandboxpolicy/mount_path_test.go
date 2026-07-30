@@ -295,7 +295,9 @@ func TestFlattenOverridesMountsByGuestPath(t *testing.T) {
 		return nil, nil
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []FilesystemGrant{
+	// ElementsMatch, not Equal: the canonical order is by guest path, and
+	// whether the temp dir sorts before or after "/srv" depends on TMPDIR.
+	assert.ElementsMatch(t, []FilesystemGrant{
 		{Path: dirs[0], Access: AccessRead},
 		{Path: dirs[0], Access: AccessWrite, MountPath: "/srv/shared"},
 	}, got.Filesystem,
