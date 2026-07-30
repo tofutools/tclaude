@@ -47,7 +47,7 @@ func TestDashboardHTML_ResolvedDefaultsVocabulary(t *testing.T) {
 		`${RESOLVED_DEFAULTS_LABEL} (this host)`:                           "the platform selector narrows the same phrase instead of coining another",
 		`— ${RESOLVED_DEFAULTS_LABEL} (${view.sandboxImplInheritLabel}) —`: "the spawn dialog's implementation row names resolved defaults",
 		"`Unset (${RESOLVED_DEFAULTS_LABEL.toLowerCase()} at spawn)`":      "the profile editor's implementation row names resolved defaults",
-		`id="sandbox-profile-editor-evaluate-intro"`:                       "the target controls carry the launch-chain explanation",
+		`<label title=${EVALUATION_TARGET_TITLE}>Agent harness`:            "the target controls carry the explanation as a tooltip, not a paragraph",
 
 		// Sandbox-policy composition stays distinguishable from those defaults.
 		`'— composed global + group sandbox profiles —'`:     "the spawn dialog's sandbox-profile option names composition, not a default",

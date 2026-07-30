@@ -326,7 +326,12 @@ function GroupProfileChip({ group, actions, kind }) {
       }}
     >
       <option value=${NEW_PROFILE}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}</option>
-      <option value="">${sandbox ? '(none — global layer only)' : '(none)'}</option>
+      ${/* "no group layer", not "global layer only": clearing this control
+           removes the GROUP layer, which is all this control owns. A launch
+           into the group can still add an explicit sandbox profile on top of
+           the global one, so naming the composed result here would be a claim
+           this selector is not in a position to make. */ ''}
+      <option value="">${sandbox ? '(none — no group layer)' : '(none)'}</option>
       ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
       ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
     </select>`;

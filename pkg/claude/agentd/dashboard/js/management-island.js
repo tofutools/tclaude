@@ -122,13 +122,15 @@ const EFFECTIVE_POLICY_HELP = 'Evaluates the composed policy for the selected im
   + 'harness, platform, and assignment context. This preview reports enforcement capability '
   + 'limits without changing the authored profile. '
   + `${SANDBOX_PROFILE_COMPOSITION} The launch target those layers are evaluated against is a `
-  + `separate question, answered by the target controls below. ${RESOLVED_DEFAULTS_CHAIN}`;
+  + `separate question, answered by the target controls. ${RESOLVED_DEFAULTS_CHAIN} `
+  + RESOLVED_DEFAULTS_CHAIN_PREVIEW;
 
-// The line under the target controls. It states, in one place, the distinction
-// the three selectors above and the layer row below are each half of: the
-// selectors resolve LAUNCH PARAMETERS, the preview composes SANDBOX POLICY.
-const EVALUATION_TARGET_INTRO = `${RESOLVED_DEFAULTS_LABEL} answer which launch these rules are `
-  + `evaluated against; override any control to try another target. ${RESOLVED_DEFAULTS_CHAIN_PREVIEW}`;
+// The three target selectors share one native tooltip. It goes on the controls
+// rather than into a paragraph beneath them: this section already has a [?]
+// disclosure carrying the full explanation, and a permanent block of prose
+// between a control and its result is what help-field.js exists to avoid.
+const EVALUATION_TARGET_TITLE = `${RESOLVED_DEFAULTS_LABEL} evaluate the launch a real spawn `
+  + `would resolve; override any control to try another target. ${RESOLVED_DEFAULTS_CHAIN_PREVIEW}`;
 
 const html = htm.bind(h);
 
@@ -1230,7 +1232,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
       attention=${!!predictionError || (selectedEffective?.notices || []).length > 0
         || effectivePolicyAttention}>
       <div class="sbx-evaluation-target-controls">
-        <label>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
+        <label title=${EVALUATION_TARGET_TITLE}>Agent harness <select id="sandbox-profile-editor-evaluate-harness" value=${evaluateHarness} onChange=${(event) => {
           const nextHarness = event.currentTarget.value;
           const implementations = sandboxEvaluationImplementations(
             nextHarness, evaluatePlatform, descriptor.catalog,
@@ -1245,12 +1247,12 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
             <option value=${entry.name}>${entry.display_name || entry.name}</option>
           `)}
         </select></label>
-        <label>Sandbox implementation <select id="sandbox-profile-editor-evaluate-implementation" value=${evaluateImplementation} disabled=${!evaluateHarness} onChange=${(event) => setEvaluateImplementation(event.currentTarget.value)}>
+        <label title=${EVALUATION_TARGET_TITLE}>Sandbox implementation <select id="sandbox-profile-editor-evaluate-implementation" value=${evaluateImplementation} disabled=${!evaluateHarness} onChange=${(event) => setEvaluateImplementation(event.currentTarget.value)}>
           ${evaluateHarness
     ? evaluationImplementations.map(([value, label]) => html`<option value=${value}>${label}</option>`)
     : html`<option value="harness-builtin">${RESOLVED_DEFAULTS_LABEL}</option>`}
         </select></label>
-        <label>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
+        <label title=${EVALUATION_TARGET_TITLE}>Operating system <select id="sandbox-profile-editor-evaluate-platform" value=${evaluatePlatform} disabled=${!evaluateHarness} onChange=${(event) => {
           const nextPlatform = event.currentTarget.value;
           const implementations = sandboxEvaluationImplementations(
             evaluateHarness, nextPlatform, descriptor.catalog,
@@ -1266,8 +1268,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
           ` : html`<option value="linux">${RESOLVED_DEFAULTS_LABEL} (this host)</option>`}
         </select></label>
       </div>
-      <div class="sbx-evaluation-target-intro" id="sandbox-profile-editor-evaluate-intro"
-        >${EVALUATION_TARGET_INTRO}</div>
       ${predictionPaused && html`<div class="sbx-preview-status">Effective policy preview paused: ${predictionPauseReason}</div>`}
       ${predictionBusy && html`<div class="sbx-preview-status">Evaluating draft…</div>`}
       ${predictionError && html`<div class="sbx-preview-error" role="alert">Could not evaluate draft: ${predictionError}</div>`}

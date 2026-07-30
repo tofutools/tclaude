@@ -4362,12 +4362,6 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-evaluation-target-controls select {
   width: 100%;
 }
-.sbx-evaluation-target-intro {
-  color: var(--text-muted);
-  font-size: .78rem;
-  line-height: 1.4;
-  margin: 0 0 .5rem;
-}
 .sbx-policy-layers {
   background: rgba(110, 118, 129, .12);
   border-radius: .35rem;

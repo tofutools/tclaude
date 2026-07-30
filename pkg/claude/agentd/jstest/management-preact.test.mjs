@@ -3037,10 +3037,15 @@ test('sandbox editor separates resolved launch defaults from composed sandbox la
     'Resolved defaults');
   assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-platform').options[0].textContent,
     'Resolved defaults (this host)');
-  // The preview resolves a launch with no explicit choice and no named spawn
-  // profile, so the intro must state ITS tiers, not the general chain — that
-  // would promise two controls this dialog does not have.
-  assert.match(host.querySelector('#sandbox-profile-editor-evaluate-intro').textContent,
+  // The explanation rides on the controls as a tooltip; a permanent paragraph
+  // between a control and its result is what help-field.js exists to avoid.
+  // It states the tiers THIS preview walks, not the general chain — the preview
+  // has no explicit launch choice and no named spawn profile to offer.
+  assert.equal(host.querySelector('#sandbox-profile-editor-evaluate-intro'), null,
+    'the target controls must not grow a permanent block of prose');
+  const targetTitle = host.querySelector('#sandbox-profile-editor-evaluate-harness')
+    .closest('label').getAttribute('title');
+  assert.match(targetTitle,
     /no explicit launch choice and no named spawn profile, so its resolved defaults run: group default spawn profile → global default spawn profile → harness default\./);
 
   // Sandbox-policy composition: every layer named, by scope, without a click.
