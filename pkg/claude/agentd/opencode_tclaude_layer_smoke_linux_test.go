@@ -1230,6 +1230,14 @@ func startOpenCodeLayerSmokeAttach(
 	return stop
 }
 
+// The production client's 5s timeout is sized for ordinary control-plane calls.
+// This smoke's bash tool deliberately runs a long deny boundary in one shell
+// request, so the graded wait is openCodeLayerSmokeShellWait rather than a
+// client deadline that would cut the tool off mid-probe.
+var openCodeLayerSmokeHTTPClient = &http.Client{
+	Timeout: openCodeLayerSmokeShellWait,
+}
+
 func runOpenCodeLayerSmokeShell(
 	t *testing.T,
 	runtime db.OpenCodeRuntime,
@@ -1292,7 +1300,8 @@ func requestOpenCodeLayerSmokeShellWithContext(
 			return nil, err
 		}
 		request = request.WithContext(ctx)
-		response, err := opencodeapi.Do(openCodeHTTPClient, request, runtime)
+		response, err := opencodeapi.Do(
+			openCodeLayerSmokeHTTPClient, request, runtime)
 		if err != nil {
 			if ctx.Err() != nil && lastBusyBody != nil {
 				return nil, fmt.Errorf(
