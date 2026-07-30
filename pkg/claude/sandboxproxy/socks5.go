@@ -79,7 +79,7 @@ func (s *Server) serveSOCKS5(conn net.Conn, reader *bufio.Reader) {
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
-	pipe(conn, upstream)
+	pipe(&bufferedConn{Conn: conn, reader: reader}, upstream)
 }
 
 // socks5Greet performs the method-negotiation exchange.

@@ -227,6 +227,14 @@ func (s *Server) connect(
 		return nil, decision, nil
 	}
 	conn, resolved, err := s.dialer.Connect(ctx, s.evaluator, target)
+	if resolved.Verdict == VerdictUnresolvable {
+		// A name that will not resolve is an upstream failure, not a policy
+		// refusal. Rendering it as one would tell a client its profile
+		// forbids a destination the profile in fact allows.
+		s.report(carriage, target, decision)
+		s.reportError(carriage, err)
+		return nil, decision, err
+	}
 	if !resolved.Allowed() {
 		s.report(carriage, target, resolved)
 		return nil, resolved, nil
@@ -237,6 +245,25 @@ func (s *Server) connect(
 		return nil, decision, err
 	}
 	return conn, decision, nil
+}
+
+// bufferedConn preserves bytes the carriage parser already pulled into its
+// reader. A client may pipeline payload immediately after its CONNECT request
+// or SOCKS5 request — a TLS ClientHello commonly arrives in the same segment —
+// and those bytes live in the bufio.Reader, not in the socket. Reading the raw
+// connection from here on would silently drop them.
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func (c *bufferedConn) CloseWrite() error {
+	if half, ok := c.Conn.(writeCloser); ok {
+		return half.CloseWrite()
+	}
+	return c.Conn.Close()
 }
 
 // pipe joins an authorized tunnel and returns when either side finishes.

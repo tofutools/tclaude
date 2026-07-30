@@ -31,6 +31,7 @@ type testOrigin struct {
 	addr     *net.TCPAddr
 	mu       sync.Mutex
 	accepted int
+	received []byte
 }
 
 func newTestOrigin(t *testing.T) *testOrigin {
@@ -53,8 +54,20 @@ func newTestOrigin(t *testing.T) *testOrigin {
 				defer func() { _ = conn.Close() }()
 				_, _ = io.WriteString(conn, originBanner)
 				// Hold the connection open until the peer finishes, so a
-				// carried tunnel is observable in both directions.
-				_, _ = io.Copy(io.Discard, conn)
+				// carried tunnel is observable in both directions, and keep
+				// what arrived so client-to-origin carriage is checkable.
+				buf := make([]byte, 4096)
+				for {
+					n, err := conn.Read(buf)
+					if n > 0 {
+						origin.mu.Lock()
+						origin.received = append(origin.received, buf[:n]...)
+						origin.mu.Unlock()
+					}
+					if err != nil {
+						return
+					}
+				}
 			}()
 		}
 	}()
@@ -66,6 +79,26 @@ func (o *testOrigin) connections() int {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.accepted
+}
+
+// waitForReceived polls until the origin has read want, so the assertion does
+// not race the tunnel's own copy loop.
+func (o *testOrigin) waitForReceived(t *testing.T, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		o.mu.Lock()
+		got := string(o.received)
+		o.mu.Unlock()
+		if strings.Contains(got, want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	o.mu.Lock()
+	got := string(o.received)
+	o.mu.Unlock()
+	t.Fatalf("origin received %q, want it to contain %q", got, want)
 }
 
 // decisionRecord is what the audit hook observed for one request.
@@ -733,5 +766,122 @@ func TestCloseTearsDownCarriedConnections(t *testing.T) {
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err := reader.Read(make([]byte, 1)); err == nil {
 		t.Fatal("the carried connection outlived the proxy")
+	}
+}
+
+// TestPipelinedPayloadSurvivesTheHandshake guards a real hazard of parsing a
+// handshake with a buffered reader: a client commonly sends its first payload
+// in the same segment as the request — a TLS ClientHello after CONNECT is the
+// normal case — so those bytes land in the parser's buffer rather than the
+// socket. Reading the bare connection from there on would drop them silently,
+// which presents as a hung TLS handshake rather than an obvious failure.
+func TestPipelinedPayloadSurvivesTheHandshake(t *testing.T) {
+	const payload = "pipelined-client-payload"
+
+	t.Run("http connect", func(t *testing.T) {
+		proxy := startProxy(t, listRules([]sandboxpolicy.NetworkAllowEntry{
+			{Domain: "example.com", Ports: []int{443}},
+		}, nil), equivalenceResolutions())
+		conn, err := net.DialTimeout("tcp", proxy.addr, 5*time.Second)
+		if err != nil {
+			t.Fatalf("dial proxy: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		// One write: request and payload arrive together.
+		if _, err := io.WriteString(conn,
+			"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"+
+				payload,
+		); err != nil {
+			t.Fatalf("write CONNECT: %v", err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn),
+			&http.Request{Method: http.MethodConnect})
+		if err != nil {
+			t.Fatalf("read CONNECT response: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("CONNECT status = %s, want 200", resp.Status)
+		}
+		proxy.origin.waitForReceived(t, payload)
+	})
+
+	t.Run("socks5 connect", func(t *testing.T) {
+		proxy := startProxy(t, listRules([]sandboxpolicy.NetworkAllowEntry{
+			{Domain: "example.com", Ports: []int{443}},
+		}, nil), equivalenceResolutions())
+		conn, err := net.DialTimeout("tcp", proxy.addr, 5*time.Second)
+		if err != nil {
+			t.Fatalf("dial proxy: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write([]byte{
+			socks5Version, 0x01, socks5AuthNone,
+		}); err != nil {
+			t.Fatalf("write greeting: %v", err)
+		}
+		if _, err := io.ReadFull(conn, make([]byte, 2)); err != nil {
+			t.Fatalf("read greeting reply: %v", err)
+		}
+		host := "example.com"
+		request := []byte{socks5Version, socks5CmdConnect, 0x00,
+			socks5ATYPDomain, byte(len(host))}
+		request = append(request, host...)
+		request = binary.BigEndian.AppendUint16(request, 443)
+		// One write: request and payload arrive together.
+		request = append(request, payload...)
+		if _, err := conn.Write(request); err != nil {
+			t.Fatalf("write socks request: %v", err)
+		}
+		reply := make([]byte, 4)
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			t.Fatalf("read socks reply: %v", err)
+		}
+		if reply[1] != socks5ReplySucceeded {
+			t.Fatalf("socks reply = 0x%02x, want 0x00", reply[1])
+		}
+		bound := 4 + 2
+		if reply[3] == socks5ATYPIPv6 {
+			bound = 16 + 2
+		}
+		if _, err := io.ReadFull(conn, make([]byte, bound)); err != nil {
+			t.Fatalf("read socks bound address: %v", err)
+		}
+		proxy.origin.waitForReceived(t, payload)
+	})
+}
+
+// TestUnresolvableTargetIsNotRenderedAsARefusal keeps a resolution failure from
+// telling a client its profile forbids a destination the profile allows.
+func TestUnresolvableTargetIsNotRenderedAsARefusal(t *testing.T) {
+	rules := listRules([]sandboxpolicy.NetworkAllowEntry{
+		{Domain: "unresolvable.example", Ports: []int{443}},
+	}, nil)
+	// The resolution table deliberately has no entry for this name.
+	proxy := startProxy(t, rules, equivalenceResolutions())
+	outcome := httpConnect(t, proxy.addr, "unresolvable.example:443")
+	if outcome.Refused {
+		t.Fatalf("a resolution failure was rendered as a policy refusal: %+v",
+			outcome)
+	}
+	if !strings.Contains(outcome.Response, "502") {
+		t.Fatalf("status = %q, want 502", outcome.Response)
+	}
+	record := proxy.lastDecision(t)
+	if !record.Decision.Allowed() {
+		t.Fatalf("recorded verdict = %q, want the policy verdict (allowed)",
+			record.Decision.Verdict)
+	}
+
+	socksOutcome := socks5Connect(t, proxy.addr, "unresolvable.example", 443)
+	if socksOutcome.Refused {
+		t.Fatalf("socks rendered a resolution failure as a refusal: %+v",
+			socksOutcome)
+	}
+	if socksOutcome.Response != "0x04" {
+		t.Fatalf("socks reply = %s, want 0x04 (host unreachable)",
+			socksOutcome.Response)
 	}
 }

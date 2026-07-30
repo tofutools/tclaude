@@ -36,6 +36,7 @@ var hopByHopHeaders = []string{
 // enforced on the host the client requested, which is exactly the identity a
 // CONNECT states, so no trust store anywhere needs to change.
 func (s *Server) serveHTTP(conn net.Conn, reader *bufio.Reader) {
+	client := &bufferedConn{Conn: conn, reader: reader}
 	for {
 		_ = conn.SetDeadline(time.Now().Add(handshakeTimeout))
 		req, err := http.ReadRequest(reader)
@@ -43,7 +44,7 @@ func (s *Server) serveHTTP(conn net.Conn, reader *bufio.Reader) {
 			return
 		}
 		if req.Method == http.MethodConnect {
-			s.serveHTTPConnect(conn, req)
+			s.serveHTTPConnect(client, req)
 			return
 		}
 		if !s.serveHTTPAbsoluteForm(conn, req) {
@@ -52,7 +53,7 @@ func (s *Server) serveHTTP(conn net.Conn, reader *bufio.Reader) {
 	}
 }
 
-func (s *Server) serveHTTPConnect(conn net.Conn, req *http.Request) {
+func (s *Server) serveHTTPConnect(conn *bufferedConn, req *http.Request) {
 	target, err := parseHTTPAuthority(req.Host, 0)
 	if err != nil {
 		s.reportError(CarriageHTTP, err)
@@ -113,7 +114,7 @@ func (s *Server) serveHTTPAbsoluteForm(conn net.Conn, req *http.Request) bool {
 		return false
 	}
 	defer func() { _ = upstream.Close() }()
-	return s.forwardHTTP(conn, upstream, req)
+	return s.forwardHTTP(conn, upstream, req, target)
 }
 
 // forwardHTTP relays one origin-form request over the already-authorized
@@ -122,9 +123,14 @@ func (s *Server) forwardHTTP(
 	conn net.Conn,
 	upstream net.Conn,
 	req *http.Request,
+	target Target,
 ) bool {
 	outbound := req.Clone(req.Context())
 	outbound.RequestURI = ""
+	// Forward the authority policy actually authorized. A client may send a
+	// Host header naming a different vhost than the request line; the request
+	// line is what was evaluated, so it is what the origin must be told.
+	outbound.Host = target.Host()
 	for _, header := range hopByHopHeaders {
 		outbound.Header.Del(header)
 	}
