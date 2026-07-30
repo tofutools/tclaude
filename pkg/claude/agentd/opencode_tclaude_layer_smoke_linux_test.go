@@ -491,14 +491,15 @@ type openCodeFilteredSmokeFixture struct {
 // negative lease on the answered address, and the host-loopback address is the
 // same destination the inspected model route depends on.
 type openCodeFilteredDenyFixture struct {
-	allowedAddr    string
-	adjacentAddr   string
-	allowedAddr6   string
-	adjacentAddr6  string
-	allowedPrefix6 string
-	coveringPrefix string
-	allowedPort    int
-	deniedPort     int
+	allowedAddr     string
+	adjacentAddr    string
+	allowedAddr6    string
+	adjacentAddr6   string
+	allowedPrefix6  string
+	coveringPrefix  string
+	coveringPrefix6 string
+	allowedPort     int
+	deniedPort      int
 }
 
 type openCodeFilteredToolHelperConfig struct {
@@ -531,6 +532,8 @@ func newOpenCodeFilteredDenyFixture(t *testing.T) openCodeFilteredDenyFixture {
 	}
 	fixture.coveringPrefix = openCodeFilteredCoveringPrefix(
 		t, fixture.allowedAddr, fixture.adjacentAddr)
+	fixture.coveringPrefix6 = openCodeFilteredCoveringPrefix(
+		t, fixture.allowedAddr6, fixture.adjacentAddr6)
 	return fixture
 }
 
@@ -589,7 +592,7 @@ func openCodeFilteredNetworkRules(
 			},
 		},
 		{CIDR: denyFixture.coveringPrefix},
-		{CIDR: denyFixture.allowedPrefix6},
+		{CIDR: denyFixture.coveringPrefix6},
 		{CIDR: denyFixture.allowedAddr6 + "/128"},
 		{
 			Host:  openCodeFilteredAllowedHost,

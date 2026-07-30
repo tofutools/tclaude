@@ -158,8 +158,13 @@ func TestOpenCodeDefaultAllowDenyRefusesWithoutExplicitProvider(t *testing.T) {
 		"sandbox_profile":        "opencode-default-allow-deny-no-provider",
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, resp.Code)
-	assert.Contains(t, string(resp.Raw), "unsupported_filtered_model_transport")
-	assert.Contains(t, string(resp.Raw), "explicit provider/model launch model")
+	body := string(resp.Raw)
+	assert.Contains(t, body, "unsupported_filtered_model_transport")
+	// The refusal must name what forced the filtered gateway, not only the
+	// model transport the operator never asked about.
+	assert.Contains(t, body, "open apart from 1 enforced deny rule")
+	assert.Contains(t, body, "remove the deny rules to launch with open network")
+	assert.Contains(t, body, "explicit provider/model launch model")
 }
 
 func TestLocalAccessSpawnRefusesCloudModelWithoutExplicitEndpoint(t *testing.T) {

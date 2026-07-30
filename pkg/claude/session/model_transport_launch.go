@@ -57,6 +57,39 @@ func ResolveTclaudeLayerModelTransport(
 	}
 }
 
+// AnnotateDenyDrivenFilteredModelTransport explains why an otherwise-open
+// profile is being held to the filtered gateway's model-transport contract.
+// Under a default-allow baseline the deny rows are the only reason the launch
+// entered the filtered path, so a refusal naming just the model transport reads
+// as unrelated to anything the operator authored. Enforcing those denies means
+// this launch cannot silently continue with them dropped, so the refusal has to
+// name the deny rules, the reason, and both ways out.
+func AnnotateDenyDrivenFilteredModelTransport(
+	rules sandboxpolicy.NetworkRules,
+	err error,
+) error {
+	if err == nil ||
+		rules.Mode != sandboxpolicy.AccessModeOpen ||
+		len(rules.Deny) == 0 {
+		return err
+	}
+	message := fmt.Sprintf(
+		"this profile's network is open apart from %d enforced deny rule(s), and enforcing a deny requires the packet-filtered gateway, whose model transport this launch does not satisfy: %s; remove the deny rules to launch with open network, or resolve the model transport named above",
+		len(rules.Deny), err)
+	// The stable capability kind is what the CLI and dashboard use to render
+	// the specific remedy, so re-mint the typed error rather than wrapping it
+	// in a plain one whose message the failure converter would discard.
+	var capabilityErr *harness.SandboxCapabilityError
+	if errors.As(err, &capabilityErr) {
+		return &harness.SandboxCapabilityError{
+			Harness: capabilityErr.Harness,
+			Kind:    capabilityErr.Kind,
+			Message: message,
+		}
+	}
+	return errors.New(message)
+}
+
 const openCodeFilteredProviderNPM = "@ai-sdk/openai-compatible"
 
 var openCodeManagedConfigPaths = func() []string {

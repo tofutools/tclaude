@@ -318,6 +318,13 @@ func accessEnforcementTable(
 			caps.NetworkPorts = EnforceFull
 			caps.NetworkListCondition =
 				"At launch, bubblewrap, pasta, and nft must pass live checks. If any check fails, these rules are not enforced and outbound traffic is open."
+			if h.Name == OpenCodeName {
+				// Preview and runtime must not disagree: OpenCode reaches this
+				// gateway only through an inspected explicit provider, and a
+				// launch without one is refused rather than started unfiltered.
+				caps.NetworkListCondition +=
+					" OpenCode additionally requires an explicit provider/model launch model and inline explicit-provider config; a launch without one is refused, not started with these rules dropped."
+			}
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&

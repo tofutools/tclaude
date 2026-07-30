@@ -938,6 +938,10 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 		"deny": denies,
 	}, "linux")
 	assert.Equal(t, harness.AccessPredictionEnforced, axes.Network.Outcome)
+	assert.Contains(t, axes.Network.Detail,
+		"explicit provider/model launch model",
+		"the preview must disclose the launch gate that decides whether these "+
+			"rules ever apply")
 	require.Len(t, rows, 3)
 	for _, row := range rows {
 		if row.Mode != "deny" {
