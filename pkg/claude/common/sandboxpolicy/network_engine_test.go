@@ -283,3 +283,116 @@ func TestNetworkRulesAreDiscriminatingRequiresMaterializedIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestDeployedNetworkEngineDeploysOnlyForDiscriminatingPolicies(t *testing.T) {
+	discriminating := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Domain: "example.com"}},
+	}
+	loopbackOnly := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Loopback: true}},
+	}
+	for _, tc := range []struct {
+		name     string
+		rules    NetworkRules
+		selected NetworkEngine
+		want     NetworkEngine
+	}{
+		{
+			name:     "discriminating policy honors an explicit proxy selection",
+			rules:    discriminating,
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineProxy,
+		},
+		{
+			name:     "discriminating policy without a selection keeps the packet gateway",
+			rules:    discriminating,
+			selected: NetworkEngineUnset,
+			want:     NetworkEnginePacket,
+		},
+		{
+			name:     "discriminating policy honors an explicit packet selection",
+			rules:    discriminating,
+			selected: NetworkEnginePacket,
+			want:     NetworkEnginePacket,
+		},
+		{
+			// The selection is latent rather than an error: the floor alone
+			// expresses a loopback-only list, so there is nothing to filter.
+			name:     "loopback-only list deploys nothing under a proxy selection",
+			rules:    loopbackOnly,
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineUnset,
+		},
+		{
+			name:     "closed posture deploys nothing under a proxy selection",
+			rules:    NetworkRules{Mode: AccessModeClosed},
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineUnset,
+		},
+		{
+			name:     "open posture without denies deploys nothing",
+			rules:    NetworkRules{Mode: AccessModeOpen},
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineUnset,
+		},
+		{
+			name: "open posture with a deny is discriminating",
+			rules: NetworkRules{
+				Mode: AccessModeOpen,
+				Deny: []NetworkAllowEntry{{Domain: "example.com"}},
+			},
+			selected: NetworkEngineProxy,
+			want:     NetworkEngineProxy,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DeployedNetworkEngine(tc.rules, tc.selected)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("deployed engine = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeployedNetworkEngineFailsClosed(t *testing.T) {
+	discriminating := NetworkRules{
+		Mode:  AccessModeList,
+		Allow: []NetworkAllowEntry{{Domain: "example.com"}},
+	}
+	for _, tc := range []struct {
+		name     string
+		rules    NetworkRules
+		selected NetworkEngine
+	}{
+		{
+			name:     "invalid engine spelling",
+			rules:    discriminating,
+			selected: NetworkEngine("socks"),
+		},
+		{
+			name:     "unmaterialized packs",
+			rules:    NetworkRules{Mode: AccessModeList, Packs: []string{"github"}},
+			selected: NetworkEngineProxy,
+		},
+		{
+			name:     "unresolved baseline",
+			rules:    NetworkRules{Baseline: NetworkBaselineDeny},
+			selected: NetworkEngineProxy,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DeployedNetworkEngine(tc.rules, tc.selected)
+			if err == nil {
+				t.Fatal("expected an error, got none")
+			}
+			if got != NetworkEngineUnset {
+				t.Fatalf("an erroring predicate deployed %q", got)
+			}
+		})
+	}
+}

@@ -189,6 +189,7 @@ func Cmd() *cobra.Command {
 			tclaudeLayerWinchRelayCmd(),
 			tclaudeLayerFilteredBootstrapCmd(),
 			tclaudeLayerFilteredNFTCmd(),
+			tclaudeLayerProxyBootstrapCmd(),
 		},
 		RunFunc: func(_ *boa.NoParams, cmd *cobra.Command, args []string) {
 			// Default to interactive watch mode

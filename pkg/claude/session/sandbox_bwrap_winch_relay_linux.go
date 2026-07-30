@@ -34,7 +34,13 @@ type stackedRelayBindingOptions struct {
 	Consume        bool
 	ReadyPath      string
 	FilteredPolicy string
-	PreserveFDs    int
+	// ProxyPolicy carries the proxy engine's compiled policy. It is a separate
+	// flag from FilteredPolicy rather than a mode byte on one payload so that
+	// neither engine can ever be handed the other's policy by a parsing
+	// accident: a supervisor started for one engine cannot silently supervise
+	// the other.
+	ProxyPolicy string
+	PreserveFDs int
 }
 
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
@@ -91,6 +97,12 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 		"",
 		"compiled filtered-network relay policy (internal)",
 	)
+	cmd.Flags().StringVar(
+		&binding.ProxyPolicy,
+		"proxy-network-policy",
+		"",
+		"compiled proxy-network relay policy (internal)",
+	)
 	cmd.Flags().IntVar(
 		&binding.PreserveFDs,
 		"preserve-fds",
@@ -118,6 +130,19 @@ func runTclaudeLayerWinchRelay(
 		strings.TrimSpace(binding.ManifestPath) != "" {
 		return 125, fmt.Errorf("stacked and filtered relay bindings cannot be combined")
 	}
+	if strings.TrimSpace(binding.ProxyPolicy) != "" {
+		// One launch runs one engine. Refusing the combinations here means no
+		// later code has to decide which policy is authoritative, which is the
+		// shape of question that produces a bypass.
+		if strings.TrimSpace(binding.FilteredPolicy) != "" {
+			return 125, fmt.Errorf(
+				"packet and proxy filtering engines cannot be combined")
+		}
+		if strings.TrimSpace(binding.ManifestPath) != "" {
+			return 125, fmt.Errorf(
+				"stacked and proxy relay bindings cannot be combined")
+		}
+	}
 	if binding.PreserveFDs != 0 &&
 		(binding.PreserveFDs != 2 || strings.TrimSpace(binding.FilteredPolicy) == "") {
 		return 125, fmt.Errorf(
@@ -137,6 +162,11 @@ func runTclaudeLayerWinchRelay(
 		return 125, err
 	}
 	defer filtered.Close()
+	proxy, err := prepareProxyNetworkRelay(binding.ProxyPolicy)
+	if err != nil {
+		return 125, err
+	}
+	defer proxy.Close()
 	preservedFiles := make([]*os.File, 0, binding.PreserveFDs)
 	for index := 0; index < binding.PreserveFDs; index++ {
 		fd := 3 + index
@@ -161,9 +191,17 @@ func runTclaudeLayerWinchRelay(
 	}
 	defer func() { _ = statusR.Close() }()
 
-	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+len(filtered.SetupArgs)+8)
+	engineSetupArgs := filtered.SetupArgs
+	engineCommand := filtered.Command
+	engineFiles := filtered.Files
+	if proxy.Active() {
+		engineSetupArgs = proxy.SetupArgs
+		engineCommand = proxy.Command
+		engineFiles = proxy.Files
+	}
+	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+len(engineSetupArgs)+8)
 	childArgs = append(childArgs, "--json-status-fd", "3")
-	if len(bindingArgs) == 0 && len(filtered.SetupArgs) == 0 {
+	if len(bindingArgs) == 0 && len(engineSetupArgs) == 0 {
 		childArgs = append(childArgs, argv[1:]...)
 	} else {
 		commandIndex := -1
@@ -179,9 +217,9 @@ func runTclaudeLayerWinchRelay(
 		}
 		childArgs = append(childArgs, original[:commandIndex]...)
 		childArgs = append(childArgs, bindingArgs...)
-		childArgs = append(childArgs, filtered.SetupArgs...)
+		childArgs = append(childArgs, engineSetupArgs...)
 		childArgs = append(childArgs, "--")
-		childArgs = append(childArgs, filtered.Command...)
+		childArgs = append(childArgs, engineCommand...)
 		childArgs = append(childArgs, original[commandIndex+1:]...)
 	}
 	child := exec.Command(argv[0], childArgs...)
@@ -194,14 +232,14 @@ func runTclaudeLayerWinchRelay(
 	// so bubblewrap preserves them during startup even on the minimum
 	// supported 0.9.x series.
 	child.ExtraFiles = append([]*os.File{statusW}, bindingFiles...)
-	child.ExtraFiles = append(child.ExtraFiles, filtered.Files...)
+	child.ExtraFiles = append(child.ExtraFiles, engineFiles...)
 	child.ExtraFiles = append(child.ExtraFiles, preservedFiles...)
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
 		return 125, fmt.Errorf("start bubblewrap: %w", err)
 	}
 	_ = statusW.Close()
-	if len(filtered.Files) > 0 {
+	if len(engineFiles) > 0 {
 		// The child owns duplicates of the sealed bootstrap image and policy
 		// files. The parent no longer needs its bootstrap-image descriptor
 		// once bubblewrap has started.
@@ -249,6 +287,19 @@ func runTclaudeLayerWinchRelay(
 		return 125, fmt.Errorf("pin bubblewrap child pid %d: %w", status.ChildPID, err)
 	}
 	defer func() { _ = unix.Close(childPidfd) }()
+	if proxy.Active() {
+		// The proxy is serving on the sandbox's own listener before the gate
+		// below opens, so the harness never observes a namespace whose only
+		// reachable endpoint answers nothing. Any error here returns without
+		// releasing the gate: the harness does not start, and the namespace it
+		// would have started in has no route anywhere.
+		if err := proxy.waitListenerReady(status.ChildPID); err != nil {
+			return 125, err
+		}
+		if err := proxy.releaseHarness(); err != nil {
+			return 125, err
+		}
+	}
 	if len(filtered.SetupArgs) > 0 {
 		if err := filtered.waitPolicyReady(status.ChildPID); err != nil {
 			return 125, err
@@ -290,6 +341,9 @@ func runTclaudeLayerWinchRelay(
 				<-pastaWait
 				pastaWaited = true
 			}
+			// Sandbox exit terminates the proxy, and Close tears down both
+			// halves of every carried tunnel rather than only the listener.
+			proxy.Close()
 			return tclaudeLayerRelayExitCode(waitErr)
 		case pastaErr := <-pastaWait:
 			pastaWaited = true
@@ -306,6 +360,26 @@ func runTclaudeLayerWinchRelay(
 			return 125, fmt.Errorf(
 				"filtered-network pasta gateway exited; sandbox terminated fail-closed: %w",
 				pastaErr,
+			)
+		case proxyErr := <-proxy.waitCh():
+			// The filtering proxy is the sandbox's only exit. Its exit is
+			// therefore the same class of event as a pasta exit under the
+			// packet engine, and gets the identical fail-closed teardown: the
+			// sandbox is killed rather than left running against a listener
+			// nothing is serving.
+			select {
+			case waitErr := <-waitCh:
+				waited = true
+				return tclaudeLayerRelayExitCode(waitErr)
+			default:
+			}
+			_ = unix.PidfdSendSignal(childPidfd, syscall.SIGKILL, nil, 0)
+			if proxyErr == nil {
+				proxyErr = errors.New("filtering proxy exited unexpectedly")
+			}
+			return 125, fmt.Errorf(
+				"filtered-network filtering proxy exited; sandbox terminated fail-closed: %w",
+				proxyErr,
 			)
 		case dnsErr := <-filtered.DNSWait:
 			select {

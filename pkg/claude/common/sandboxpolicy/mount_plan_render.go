@@ -114,6 +114,23 @@ type mountGrantSection struct {
 // mints per agent rather than host authority the profile grants. NetworkAccess
 // maps onto the sibling NetworkPosture field rather than onto Entries.
 func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
+	return RenderMountPlanWithEngine(effective, NetworkEngineUnset)
+}
+
+// RenderMountPlanWithEngine is RenderMountPlan with the resolved filtering
+// engine supplied by the caller. The engine is not part of EffectiveProfile
+// today — its authoring surface arrives with the selection surface — so it
+// enters here as materialized launch intent rather than being read from the
+// profile. Passing NetworkEngineUnset is exactly RenderMountPlan, which is why
+// that is the delegation above rather than a duplicated body.
+//
+// The engine never reaches the plan raw: DeployedNetworkEngine decides whether
+// this policy deploys one at all, so a selection on a policy that needs no
+// filtering renders the same plan it always did.
+func RenderMountPlanWithEngine(
+	effective EffectiveProfile,
+	selected NetworkEngine,
+) (MountPlan, error) {
 	axes, err := PlannedEffectiveAccessAxes(effective)
 	if err != nil {
 		return MountPlan{}, err
@@ -134,6 +151,10 @@ func RenderMountPlan(effective EffectiveProfile) (MountPlan, error) {
 	}
 	plan.NetworkPosture = posture
 	plan.RootPosture = RootPostureForAxes(axes)
+	plan.NetworkEngine, err = DeployedNetworkEngine(axes.Network, selected)
+	if err != nil {
+		return MountPlan{}, fmt.Errorf("resolve network filtering engine: %w", err)
+	}
 	if posture == NetworkFiltered {
 		filtered, filteredErr := CompileFilteredNetworkRules(axes.Network)
 		if filteredErr != nil {
