@@ -50,6 +50,10 @@ const (
 	smokePositiveRootSocketEnv = "TCLAUDE_SANDBOX_V2_POSITIVE_ROOT_SOCKET"
 	smokeSocketHelperEnv       = "TCLAUDE_SANDBOX_V2_SOCKET_HELPER"
 	smokeHostNetworkHelperEnv  = "TCLAUDE_SANDBOX_V2_HOSTNET_HELPER"
+	// The resolved host resolver target, empty when /etc/resolv.conf is a plain
+	// file. Non-empty means the constructed root had to reopen it, and the
+	// helper turns that into a hard assertion instead of a guess.
+	smokeResolverTargetEnv = "TCLAUDE_SANDBOX_V2_RESOLVER_TARGET"
 	// TCL-866 mount-path evidence. Each pair names the host directory a grant
 	// reads from and the sandbox path it must appear at.
 	smokeMountROSourceEnv = "TCLAUDE_SANDBOX_V2_MOUNT_RO_SOURCE"
@@ -316,7 +320,7 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 			t, binary, helperBinary, phase0, hostNetworkPlan,
 			policySockets[0], policySockets[1], runtimeSocket, tmuxSocket,
 			strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(),
-			tclaudeBinary, mounts,
+			tclaudeBinary, mounts, resolvedHostResolverTarget(t),
 		)
 	})
 }
@@ -329,6 +333,7 @@ func runTclaudeLayerHostNetworkConstructedRootHelper(
 	allowedSocket, peerSocket, runtimeSocket, tmuxSocket,
 	hostPID, hostLoopbackAddr, tclaudeBinary string,
 	mounts tclaudeLayerSmokeMounts,
+	resolverTarget string,
 ) {
 	t.Helper()
 	socketPaths := append(sandboxpolicy.AgentdSocketFloor(), allowedSocket)
@@ -355,6 +360,7 @@ func runTclaudeLayerHostNetworkConstructedRootHelper(
 		smokeMountROGuestEnv+"="+mounts.ReadOnlyGuest,
 		smokeMountRWSourceEnv+"="+mounts.ReadWriteSource,
 		smokeMountRWGuestEnv+"="+mounts.ReadWriteGuest,
+		smokeResolverTargetEnv+"="+resolverTarget,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -417,6 +423,32 @@ func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
 	require.NoError(t, err,
 		"a host-network sandbox that cannot read its resolver cannot resolve names")
 	assert.NotEmpty(t, strings.TrimSpace(string(resolv)))
+	// On a systemd-resolved-class runner /etc/resolv.conf is a symlink into
+	// /run, which the constructed root does not have. The reopen of that one
+	// target file is what keeps the read above from landing on nothing, so
+	// assert the target itself is present rather than trusting the symlink.
+	if resolverTarget := os.Getenv(smokeResolverTargetEnv); resolverTarget != "" {
+		targetBytes, targetErr := os.ReadFile(resolverTarget)
+		require.NoErrorf(t, targetErr,
+			"the host resolver target %q must be reopened inside the constructed root",
+			resolverTarget)
+		assert.NotEmpty(t, strings.TrimSpace(string(targetBytes)))
+	}
+	// End-to-end: names actually resolve. This is the evidence that the reopen
+	// works rather than merely that a file is readable. Retried because CI DNS
+	// is a network dependency, but a persistent failure is a real failure.
+	var lookupErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		lookupCtx, cancelLookup := context.WithTimeout(
+			context.Background(), 5*time.Second)
+		_, lookupErr = net.DefaultResolver.LookupHost(lookupCtx, "github.com")
+		cancelLookup()
+		if lookupErr == nil {
+			break
+		}
+	}
+	require.NoError(t, lookupErr,
+		"DNS must resolve inside a host-network constructed root; the host resolver reopen is what makes this work")
 
 	// 4. TCL-866 projections land in a root the host never had to prepare.
 	mountROGuest := os.Getenv(smokeMountROGuestEnv)
@@ -828,4 +860,20 @@ func copyTestBinary(t *testing.T, source, destination string) {
 	_, err = io.Copy(dst, src)
 	require.NoError(t, err)
 	require.NoError(t, dst.Close())
+}
+
+// resolvedHostResolverTarget reports the real file /etc/resolv.conf points at
+// when it is a symlink, and "" when it is an ordinary file. It is the fixture
+// half of the reopen assertion: the smoke cannot know in advance whether the
+// runner is systemd-resolved-class, so it measures the host and tells the
+// helper what to demand.
+func resolvedHostResolverTarget(t *testing.T) string {
+	t.Helper()
+	info, err := os.Lstat("/etc/resolv.conf")
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return ""
+	}
+	target, err := filepath.EvalSymlinks("/etc/resolv.conf")
+	require.NoError(t, err, "the host resolver symlink must resolve")
+	return target
 }

@@ -136,6 +136,12 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Contains(t, notices[0].Detail, "abstract-namespace Unix sockets",
 		"the day-one disclosure of the abstract-socket remainder is mandatory")
 	assert.Contains(t, notices[0].Detail, "readable/writable directories")
+	// The PID namespace is a REQUIREMENT of this posture's semantic, not a side
+	// effect, so its consequence is disclosed in the same sentence family: an
+	// operator authoring closed sockets under host networking also loses host
+	// process visibility.
+	assert.Contains(t, notices[0].Detail, "PID namespace")
+	assert.Contains(t, notices[0].Detail, "cannot see or signal host processes")
 
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
@@ -155,6 +161,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	require.Len(t, notices, 1)
 	assert.Equal(t, "partial_mechanism", notices[0].Reason)
 	assert.Contains(t, notices[0].Detail, "abstract-namespace Unix sockets")
+	assert.Contains(t, notices[0].Detail, "cannot see or signal host processes")
 
 	// No default-on: a profile that never authored the axis must launch in
 	// exactly the posture it launched in before TCL-798, with no notice.

@@ -457,7 +457,10 @@ func accessEnforcementTable(
 						"ambient filesystem sockets outside the sandbox's readable/writable directories are absent; " +
 						"sockets beneath those readable/writable directories remain reachable, and because host networking is kept, " +
 						"abstract-namespace Unix sockets (@…) live in the shared network namespace rather than the filesystem and remain reachable — " +
-						"close network access as well to confine those too"
+						"close network access as well to confine those too. " +
+						"This posture also puts the agent in its own PID namespace, which is required rather than incidental: " +
+						"without it a host process's /proc/<pid>/root would lead straight back to the sockets the constructed root just hid. " +
+						"The agent therefore cannot see or signal host processes, and tools that read the host process table stop working."
 			} else if goos == "linux" {
 				caps.SocketCombinationDetail =
 					"Unix-socket restrictions are unenforced under host-open network on Linux tclaude-layer; " +

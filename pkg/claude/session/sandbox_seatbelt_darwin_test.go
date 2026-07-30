@@ -209,7 +209,8 @@ func TestTclaudeLayerDarwinVerdictIsPlatformSpecificAndUnverified(t *testing.T) 
 	assert.True(t, local.Unverified)
 
 	openCode := TclaudeLayerLaunchOSSandboxForHarness(
-		"opencode", sandboxpolicy.NetworkHostOpen)
+		"opencode", sandboxpolicy.NetworkHostOpen,
+		sandboxpolicy.RootHostInherited)
 	assert.Equal(t, "on", openCode.State)
 	assert.Contains(t, openCode.Source, "Seatbelt/sandbox-exec")
 	assert.Contains(t, openCode.Source, "OpenCode tool-executing server confined")

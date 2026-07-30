@@ -1803,7 +1803,13 @@ func appendTclaudeLayerStaticOSRoot(args []string) ([]string, error) {
 // OS surface a resolver symlink may point into. Distributions that manage
 // /etc/resolv.conf dynamically (systemd-resolved, resolvconf, NetworkManager)
 // all park the real file under /run.
-const tclaudeLayerHostResolverRuntimeRoot = "/run"
+// These two are variables only so a test can point the traversal below at a
+// fixture instead of the developer's real resolver and real /run. Neither is
+// reassigned in production.
+var (
+	tclaudeLayerHostResolverPath        = "/etc/resolv.conf"
+	tclaudeLayerHostResolverRuntimeRoot = "/run"
+)
 
 // appendTclaudeLayerHostResolver keeps DNS working for a constructed root that
 // still has the HOST network namespace.
@@ -1830,10 +1836,15 @@ func appendTclaudeLayerHostResolver(
 	args []string,
 	plan sandboxpolicy.MountPlan,
 ) ([]string, error) {
-	if plan.NetworkPosture != sandboxpolicy.NetworkHostOpen {
+	if plan.NetworkPosture != sandboxpolicy.NetworkHostOpen ||
+		plan.EffectiveRootPosture() != sandboxpolicy.RootConstructed {
+		// An inherited root already carries the real /run, and an isolated or
+		// filtered posture has no host resolver to preserve. The caller only
+		// reaches here for a constructed root; this restates the precondition
+		// so the reopen cannot be moved somewhere it would widen a plan.
 		return args, nil
 	}
-	const resolver = "/etc/resolv.conf"
+	resolver := tclaudeLayerHostResolverPath
 	info, err := os.Lstat(resolver)
 	switch {
 	case err == nil:

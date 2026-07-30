@@ -293,3 +293,116 @@ func TestRenderSeatbeltProfileRefusesProjection(t *testing.T) {
 	assert.Contains(t, err.Error(), "/srv/shared")
 	assert.Contains(t, err.Error(), "/Users/dev/dataset")
 }
+
+// The host resolver reopen is what keeps DNS working once a host-network plan
+// stops inheriting the host root. Its real-engine evidence is the CI smoke arm;
+// this covers the traversal deterministically, against a fixture rather than
+// the developer's own /etc/resolv.conf.
+func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T) {
+	hostOpenConstructed := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkHostOpen,
+		RootPosture:    sandboxpolicy.RootConstructed,
+	}
+	root := t.TempDir()
+	runtimeDir := filepath.Join(root, "systemd", "resolve")
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+	target := filepath.Join(runtimeDir, "stub-resolv.conf")
+	require.NoError(t, os.WriteFile(target, []byte("nameserver 127.0.0.53\n"), 0o644))
+
+	t.Run("symlink into the runtime root binds the file and creates its parents", func(t *testing.T) {
+		resolver := filepath.Join(t.TempDir(), "resolv.conf")
+		require.NoError(t, os.Symlink(target, resolver))
+		swapTclaudeLayerHostResolver(t, resolver, root)
+
+		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		require.NoError(t, err)
+		assert.NotEqual(t, -1, indexOfBwrapBind(got, "--ro-bind", target, target),
+			"the resolver target file must be reopened")
+		// Only the target FILE. /run is where the ambient sockets this posture
+		// exists to hide tend to live, so its directory must never be bound.
+		for i := 0; i+1 < len(got); i++ {
+			if got[i] == "--ro-bind" || got[i] == "--bind" {
+				assert.NotEqual(t, root, got[i+1],
+					"binding the runtime root would hand back the sockets the constructed root took away")
+			}
+		}
+		for _, parent := range []string{root, filepath.Join(root, "systemd"), runtimeDir} {
+			assert.Containsf(t, got, parent,
+				"the mount point's parent %q must be created inside the namespace", parent)
+			assert.Equal(t, "--dir", got[indexOfBwrapArg(got, parent)-1])
+		}
+	})
+
+	t.Run("a plain file needs nothing; the read-only /etc bind already carries it", func(t *testing.T) {
+		resolver := filepath.Join(t.TempDir(), "resolv.conf")
+		require.NoError(t, os.WriteFile(resolver, []byte("nameserver 1.1.1.1\n"), 0o644))
+		swapTclaudeLayerHostResolver(t, resolver, root)
+
+		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("a target outside the runtime root is not chased", func(t *testing.T) {
+		outside := filepath.Join(t.TempDir(), "elsewhere.conf")
+		require.NoError(t, os.WriteFile(outside, []byte("nameserver 1.1.1.1\n"), 0o644))
+		resolver := filepath.Join(t.TempDir(), "resolv.conf")
+		require.NoError(t, os.Symlink(outside, resolver))
+		swapTclaudeLayerHostResolver(t, resolver, root)
+
+		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		require.NoError(t, err)
+		assert.Empty(t, got,
+			"silently binding an arbitrary host path to make DNS work would be a wider hole than the failure it prevents")
+	})
+
+	t.Run("a dangling symlink is left as broken as it is on the host", func(t *testing.T) {
+		resolver := filepath.Join(t.TempDir(), "resolv.conf")
+		require.NoError(t, os.Symlink(filepath.Join(root, "gone.conf"), resolver))
+		swapTclaudeLayerHostResolver(t, resolver, root)
+
+		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		require.NoError(t, err, "a resolver already broken on the host must not fail the launch")
+		assert.Empty(t, got)
+	})
+
+	t.Run("an inherited root and an isolated network are both left alone", func(t *testing.T) {
+		resolver := filepath.Join(t.TempDir(), "resolv.conf")
+		require.NoError(t, os.Symlink(target, resolver))
+		swapTclaudeLayerHostResolver(t, resolver, root)
+
+		for _, plan := range []sandboxpolicy.MountPlan{
+			{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+			{NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+				RootPosture: sandboxpolicy.RootConstructed},
+			{NetworkPosture: sandboxpolicy.NetworkFiltered,
+				RootPosture: sandboxpolicy.RootConstructed},
+		} {
+			got, err := appendTclaudeLayerHostResolver(nil, plan)
+			require.NoError(t, err)
+			assert.Emptyf(t, got,
+				"%v has no host resolver to preserve", plan.NetworkPosture)
+		}
+	})
+}
+
+func swapTclaudeLayerHostResolver(t *testing.T, resolver, runtimeRoot string) {
+	t.Helper()
+	previousPath := tclaudeLayerHostResolverPath
+	previousRoot := tclaudeLayerHostResolverRuntimeRoot
+	tclaudeLayerHostResolverPath = resolver
+	tclaudeLayerHostResolverRuntimeRoot = runtimeRoot
+	t.Cleanup(func() {
+		tclaudeLayerHostResolverPath = previousPath
+		tclaudeLayerHostResolverRuntimeRoot = previousRoot
+	})
+}
+
+func indexOfBwrapArg(args []string, want string) int {
+	for i, arg := range args {
+		if arg == want {
+			return i
+		}
+	}
+	return -1
+}

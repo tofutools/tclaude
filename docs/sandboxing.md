@@ -553,6 +553,14 @@ access as well if you need those confined too. The recursive-root remainder
 applies here as it does under closed network access: a socket beneath a
 directory the profile makes readable or writable stays reachable.
 
+The PID namespace is a **requirement** of this posture rather than a side
+effect, and it has a cost worth knowing before you author the axis. Without it a
+host process's `/proc/<pid>/root` leads straight back to the sockets the
+constructed root just hid, so the posture's whole claim would be false. The
+consequence is that the agent cannot see or signal host processes, and tools
+that read the host process table stop working. This is stated in the launch
+warning alongside the abstract-socket caveat.
+
 It is never on by default. A profile that says nothing about `unix_sockets`, or
 sets it to `open`, launches with exactly the read-only host root it launched
 with before.
@@ -685,6 +693,15 @@ OpenCode remains launch-refused under the built-in local/model-API combination w
 `unsupported_filtered_model_transport`, naming TCL-826 and the network-open
 remedy; the editor does not advertise its local-provider constituency as
 present-day support.
+
+One operational detail of the host-network constructed root: the static OS
+surface binds `/etc` read-only, but on a systemd-resolved-class host
+`/etc/resolv.conf` is a symlink into `/run`, which a constructed root does not
+have. tclaude reopens that one resolver **file** read-only, creating its parent
+directories inside the namespace — never `/run` itself, which is exactly where
+the ambient sockets this posture exists to hide tend to live. A resolver target
+outside `/run` is deliberately not chased: silently binding an arbitrary host
+path to make DNS work would be a wider hole than the failure it prevents.
 
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep
