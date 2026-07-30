@@ -358,6 +358,7 @@ export function createManagementActions({
     state.openDialog({
       kind: 'sandbox-editor', seed, options,
       catalog: getSnapshot()?.harnesses || [],
+      sandboxImpl: getSnapshot()?.sandbox_impl || {},
     });
     if (options.notice) state.error.value = options.notice;
   }
@@ -377,6 +378,7 @@ export function createManagementActions({
       seed: { ...source, name },
       options: { editExisting: false, cloneSourceName: source.name },
       catalog: getSnapshot()?.harnesses || [],
+      sandboxImpl: getSnapshot()?.sandbox_impl || {},
     });
     return true;
   }

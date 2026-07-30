@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,6 +261,8 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 		t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
 
 		catalog := snapshotSandboxImpl(t, f)
+		assert.Equal(t, runtime.GOOS, catalog["platform"],
+			"the catalog must identify the OS running agentd")
 		assert.Equal(t, "harness-builtin", catalog["default"],
 			"the default must remain the legacy implementation")
 		options, _ := catalog["options"].([]any)

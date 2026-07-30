@@ -995,7 +995,9 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
   const [socketTemplateNotice, setSocketTemplateNotice] = useState(null);
   const [evaluateHarness, setEvaluateHarness] = useState('');
   const [evaluateImplementation, setEvaluateImplementation] = useState('harness-builtin');
-  const [evaluatePlatform, setEvaluatePlatform] = useState('linux');
+  const [evaluatePlatform, setEvaluatePlatform] = useState(() =>
+    ['linux', 'darwin'].includes(descriptor.sandboxImpl?.platform)
+      ? descriptor.sandboxImpl.platform : 'linux');
   const [prediction, setPrediction] = useState(null);
   const [predictionError, setPredictionError] = useState('');
   const [predictionBusy, setPredictionBusy] = useState(false);

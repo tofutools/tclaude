@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"runtime"
 	"sync"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 // they could drift, and a stale "experimental" label or a caveat that no longer
 // matches the probe is exactly the overclaim epic requirement 12 forbids.
 type dashboardSandboxImpl struct {
+	// Platform is the OS agentd is running on. The sandbox-profile editor uses
+	// it as the default target for effective-policy evaluation; the dashboard
+	// may be open in a remote browser whose own OS is different.
+	Platform string `json:"platform"`
 	// Options is the catalog in presentation order. Never null, so the page's
 	// .map() is safe.
 	Options []dashboardSandboxImplOption `json:"options"`
@@ -163,6 +168,7 @@ func cachedSandboxImplHostAvailability(
 // the platform caveat is stated rather than implied.
 func buildSandboxImplCatalog() dashboardSandboxImpl {
 	out := dashboardSandboxImpl{
+		Platform: runtime.GOOS,
 		Options: []dashboardSandboxImplOption{
 			{
 				Value: string(sandboxpolicy.ImplementationHarnessBuiltin),
