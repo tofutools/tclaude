@@ -59,8 +59,8 @@ const (
 	openCodeFilteredDeniedPortEnv     = "TCLAUDE_FILTERED_DENIED_PORT"
 	// Both names resolve to the adjacent fixture address, so a denied name and
 	// an allowed name deliberately share one destination address.
-	openCodeFilteredDenyHost    = "exact-host.filtered.test"
-	openCodeFilteredAllowedHost = "sibling.filtered.test"
+	openCodeFilteredDenyHost    = "oc-exact-host.filtered.test"
+	openCodeFilteredAllowedHost = "oc-sibling.filtered.test"
 	openCodeFilteredProbeWait   = 900 * time.Millisecond
 	// Mirrors the broker's unexported filteredNetworkDNSHostMappingTTL. Every
 	// negative-lease assertion refreshes the lease first rather than relying on
@@ -429,6 +429,12 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	if filtered {
 		require.Containsf(t, output, openCodeFilteredDenyHelperTag,
 			"the real bash tool must report the deny boundary it executed: %s", output)
+		// The tool's stdout returns over HTTP, so nothing of it reaches the
+		// smoke log on its own. CI greps this log for the marker below, which
+		// is why it has to be emitted here, after the assertion above proved
+		// the executing tool actually produced it.
+		t.Logf("OpenCode filtered deny boundary reported %q; tool output:\n%s",
+			openCodeFilteredDenyHelperTag, output)
 	}
 	require.FileExists(t, filepath.Join(cwd, "tool-written"))
 	_, statErr := os.Stat(filepath.Join(outside, "blocked"))

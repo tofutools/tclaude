@@ -513,8 +513,8 @@ jobs:
           # Both names share the adjacent address on purpose: the DNS deny case
           # proves a negative lease cuts an address an allowed name also uses.
           {
-            echo "198.18.1.200 exact-host.filtered.test sibling.filtered.test"
-            echo "fd00:824::200 exact-host.filtered.test sibling.filtered.test"
+            echo "198.18.1.200 oc-exact-host.filtered.test oc-sibling.filtered.test"
+            echo "fd00:824::200 oc-exact-host.filtered.test oc-sibling.filtered.test"
           } | sudo tee -a /etc/hosts >/dev/null
 
           for address in 198.18.1.10 198.18.1.200; do
@@ -556,6 +556,18 @@ jobs:
                 exit 1
               fi
             done
+          done
+
+          # Prove the fixture is reachable from the host before the smoke runs,
+          # so a routing fault reads as a fixture error rather than an opaque
+          # deny-probe failure inside the sandbox.
+          for endpoint in "TCP4:198.18.1.10:41001" "TCP6:[fd00:824::10]:41001"; do
+            token="opencode-deny-fixture-$endpoint"
+            reply=$(printf '%s' "$token" | timeout 5 socat -T 2 -t 2 - "$endpoint")
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::OpenCode deny fixture failed a direct round trip to $endpoint"
+              exit 1
+            fi
           done
 
           smoke_log="$RUNNER_TEMP/opencode-filtered-network-smoke.log"

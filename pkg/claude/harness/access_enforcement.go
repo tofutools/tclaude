@@ -118,6 +118,12 @@ type PredictedNetworkEntry struct {
 
 const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is saved, but this launch target does not apply network deny entries; traffic matching this destination is not blocked by this rule. Choose Linux tclaude sandbox for enforced deny rules."
 
+// OpenCodeFilteredExplicitProviderCaveat is the launch gate every OpenCode
+// filtered row depends on. It is disclosed on the rows themselves so the
+// effective-policy preview and the runtime cannot disagree about whether the
+// rules will apply.
+const OpenCodeFilteredExplicitProviderCaveat = "OpenCode additionally requires an explicit provider/model launch model and inline explicit-provider config; a launch without one is refused, not started with these rules dropped."
+
 const FilteredNetworkDNSDenyDefaultAllowCaveat = "tclaude blocks addresses observed for this denied name through the sandbox DNS broker. With Allow all, another address for the same service, or encrypted DNS that bypasses the broker, can remain reachable. A blocked shared address also affects other names until the DNS lease expires."
 
 type accessEnforcementTableRow struct {
@@ -323,7 +329,7 @@ func accessEnforcementTable(
 				// gateway only through an inspected explicit provider, and a
 				// launch without one is refused rather than started unfiltered.
 				caps.NetworkListCondition +=
-					" OpenCode additionally requires an explicit provider/model launch model and inline explicit-provider config; a launch without one is refused, not started with these rules dropped."
+					" " + OpenCodeFilteredExplicitProviderCaveat
 			}
 			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
@@ -356,6 +362,18 @@ func accessEnforcementTable(
 					Selector: string(sandboxpolicy.NetworkSelectorLoopback),
 					Level:    EnforceFull,
 				},
+			}
+			if h.Name == OpenCodeName {
+				// A deny-only profile has no allow list, so the launch-gate
+				// disclosure on NetworkListCondition would never reach the
+				// operator. Carry it on each deny selector instead: the row
+				// says enforced, and the launch it depends on is refused rather
+				// than started with the row dropped.
+				for index := range caps.NetworkDenySelectors {
+					caps.NetworkDenySelectors[index].Detail = strings.TrimSpace(
+						caps.NetworkDenySelectors[index].Detail + " " +
+							OpenCodeFilteredExplicitProviderCaveat)
+				}
 			}
 			caps.NetworkDenyPorts = EnforceFull
 		}

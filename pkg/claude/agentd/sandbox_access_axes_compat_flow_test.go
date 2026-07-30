@@ -966,6 +966,12 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 		assert.Equal(t, harness.AccessPredictionEnforcedPartial, row.Outcome)
 		assert.Contains(t, row.Detail, "encrypted DNS that bypasses the broker")
 	}
+	// A deny-only profile has no allow list to carry the launch-gate
+	// disclosure, so each deny row must carry it instead.
+	for _, row := range rows {
+		assert.Contains(t, row.Detail,
+			harness.OpenCodeFilteredExplicitProviderCaveat)
+	}
 
 	// macOS has no OpenCode filtered gateway, so its deny rows stay omitted.
 	_, rows = request(t, map[string]any{

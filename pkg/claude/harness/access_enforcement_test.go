@@ -385,6 +385,10 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 				}
 				assert.Equal(t, denyWant, row.NetworkDenyPorts,
 					"deny activates only in the Linux tclaude-layer cells whose own executing CI smoke covers deny")
+				if denyWant == EnforceNone {
+					assert.Empty(t, row.NetworkDenySelectors,
+						"an inactive cell must not advertise deny selectors at all")
+				}
 				for _, capability := range row.NetworkDenySelectors {
 					assert.Equal(t, denyWant, capability.Level)
 				}

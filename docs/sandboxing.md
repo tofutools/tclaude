@@ -592,9 +592,9 @@ Fully supported, Partially supported, or Unsupported bucket for the selected
 target. Its `?` disclosure identifies the target and explains the mechanism,
 limitation, and remedy without turning an authored row into a global
 enforcement claim. macOS, built-in, and stacked cells, plus OpenCode's local
-presets, remain unsupported for network denies. Capability planning omits their deny rows
-individually; a port-scoped deny is never widened into a whole-destination
-block.
+presets, remain unsupported for network denies. Capability planning omits
+their deny rows individually; a port-scoped deny is never widened into a
+whole-destination block.
 
 `net-local` provides the unscoped loopback destination for local model servers
 such as Ollama, LM Studio, and llama.cpp, Codex OSS mode, OpenCode local
