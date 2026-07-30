@@ -596,7 +596,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
     'Codex built-in (no filtered network sandbox yet)',
   );
   assert.match(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
-    /inherit \(profile chain, then harness-builtin \(no filtered network sandbox yet\)\)/);
+    /Resolved defaults \(spawn-profile chain, then harness-builtin \(no filtered network sandbox yet\)\)/);
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl-hint'), null,
     'an inherited target stays neutral because the profile chain has not resolved yet');
   const codexImpl = host.querySelector('#agent-spawn-sandbox-impl');

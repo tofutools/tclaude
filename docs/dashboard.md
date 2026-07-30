@@ -848,8 +848,9 @@ loaded back into the normal editor; review every field and explicitly press
 preview to persist it. Creating or editing a profile is first validated as a
 dry run, so canceling the preview does not change the profile library.
 
-The spawn dialog's preview shows the composed global → group → explicit
-sources, effective filesystem access, and environment **names**. It never shows
+The spawn dialog's preview names the composed sandbox-profile layers (global,
+group, and an explicit profile when one is chosen), effective filesystem access,
+and environment **names**. It never shows
 environment values. Values are ordinary non-secret configuration — do not put
 credentials in a sandbox profile — and changes take effect only when an agent
 is spawned or relaunched. The daemon remains authoritative for canonical path,
@@ -880,8 +881,29 @@ shows concrete effective rules grouped as **Fully supported rules**,
 implementation/harness/platform. Partial and unsupported groups open
 automatically, while fully supported rules always start folded. All three
 groups remain visible with a rule count, including zero-count partial and
-unsupported groups. Unset axes are omitted, and profile-layer composition
-details stay behind a secondary disclosure.
+unsupported groups. Unset axes are omitted. The composed
+sandbox-profile layers — global, group, and the explicit draft when one applies
+— are named by scope on screen; the rule that explains how they combine stays
+behind a secondary disclosure.
+
+The preview's target controls — agent harness, sandbox implementation,
+operating system — each offer **Resolved defaults**, the dashboard's one name
+for the launch values a real spawn would resolve. Leaving all three at that
+setting evaluates the draft against the launch the daemon would actually
+produce for the selected group; the launch chain is *explicit launch choice →
+named spawn profile → group default spawn profile → global default spawn
+profile → harness default*, and the preview reports which tier it took under
+**Evaluation details**. Because the preview has no spawn dialog and no
+`--profile`, its own resolution starts at the group default spawn profile.
+Overriding a control replaces resolution for that axis only.
+
+Keep this distinct from sandbox-policy composition. Resolved defaults pick one
+winner per launch field; sandbox profiles do not compete — the global sandbox
+profile, the group sandbox profile, and an explicit sandbox profile all apply
+together. Claude's sandbox mode `inherit` is rendered in plain language
+throughout ("Claude settings decide"), because the token alone does not say
+whether the built-in sandbox ends up enabled; for the same reason, naming a
+resolved implementation owner never asserts that its sandbox is switched on.
 
 Each assignment context has its own verdict, while the daemon also evaluates
 every context for the aggregate safety result. If another assignment has a
@@ -898,7 +920,7 @@ does not guess support from the selected mode. The raw JSON view includes both
 
 The selector's **none** choice explicitly omits every tclaude sandbox-profile
 tier for that launch, including global/group environment values and agent-owned
-directories; blank instead inherits the global and group tiers. Selecting Codex
+directories; blank instead composes the global and group tiers. Selecting Codex
 `danger-full-access` forces **none** and disables the selector: the raw
 no-sandbox mode cannot represent the managed profile's filesystem policy.
 

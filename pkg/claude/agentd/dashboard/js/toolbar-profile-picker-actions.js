@@ -39,7 +39,7 @@ export function createToolbarProfilePickerActions({
       try {
         if (kind === 'profile') {
           const canonical = await setDashDefaultProfile(name);
-          notify(canonical ? `dashboard default profile → ${canonical}` : 'dashboard default profile cleared');
+          notify(canonical ? `global default spawn profile → ${canonical}` : 'global default spawn profile cleared');
           // Begin and await a newer dashboard request before repainting. Its
           // request generation invalidates any poll that captured the prior
           // server-backed default before this mutation completed.
@@ -76,7 +76,7 @@ export function createToolbarProfilePickerActions({
       try {
         return await actions.commit(kind, name);
       } catch (cause) {
-        notify(`set ${kind === 'sandbox' ? 'global sandbox' : 'dashboard default'} profile failed: ${cause?.message || cause}`, true);
+        notify(`set ${kind === 'sandbox' ? 'global sandbox profile' : 'global default spawn profile'} failed: ${cause?.message || cause}`, true);
         return false;
       }
     },

@@ -50,7 +50,7 @@ test('sandbox mode help tells the truth for the selected implementation', async 
   const off = modeHelp['claude/sandbox/off'];
 
   const inherited = model.sandboxModeHelpForImplementation(off, '', 'claude');
-  assert.match(inherited, /inherited from the profile chain at launch/);
+  assert.match(inherited, /comes from the resolved defaults at launch/);
   assert.match(inherited, /effect is not known yet/);
   assert.doesNotMatch(inherited, /runs unconfined|rules as OS mounts/);
   assert.equal(

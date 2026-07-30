@@ -4362,6 +4362,15 @@ body.wizard #context-features-modal .perm-row-desc.context-features-caution { co
 .sbx-evaluation-target-controls select {
   width: 100%;
 }
+.sbx-policy-layers {
+  background: rgba(110, 118, 129, .12);
+  border-radius: .35rem;
+  font-size: .82rem;
+  line-height: 1.4;
+  margin: .35rem 0 .5rem;
+  padding: .4rem .55rem;
+  overflow-wrap: anywhere;
+}
 .sbx-row.sbx-access-row {
   display: grid;
 }

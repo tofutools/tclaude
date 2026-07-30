@@ -226,7 +226,7 @@ test('profile mutation starts and awaits a newer poll generation before repaint'
     refresh: async () => {},
   });
   assert.equal(await editorActions.commitFromEditor('profile', 'broken'), false);
-  assert.deepEqual(notices, [['set dashboard default profile failed: save rejected', true]],
+  assert.deepEqual(notices, [['set global default spawn profile failed: save rejected', true]],
     'a non-awaited editor callback is converted into visible feedback');
   delete globalThis.__toolbarProfileTestEvents;
 });

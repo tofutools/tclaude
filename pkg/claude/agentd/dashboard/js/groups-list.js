@@ -13,6 +13,9 @@ import { PAGE_SIZES, listLimit } from './list-paging.js';
 import { activityModeViews, activitySummary } from './group-activity.js';
 import { ActivityModes } from './activity-bots.js';
 import {
+  GROUP_DEFAULT_PROFILE_ROLE, GROUP_SANDBOX_PROFILE_ROLE, RESOLVED_DEFAULTS_LABEL,
+} from './resolved-defaults.js';
+import {
   buildGroupTree, groupMembersView, realGroupOpen, virtualGroupOpen,
 } from './groups-view-model.js';
 import { ActionMenu, InlineEditor, useGroupsInteractions } from './groups-interactions.js';
@@ -323,7 +326,12 @@ function GroupProfileChip({ group, actions, kind }) {
       }}
     >
       <option value=${NEW_PROFILE}>${sandbox ? '＋ new sandbox profile…' : (isWizardActive() ? '＋ new pattern…' : '＋ new profile…')}</option>
-      <option value="">${sandbox ? '(inherit)' : '(none)'}</option>
+      ${/* "no group layer", not "global layer only": clearing this control
+           removes the GROUP layer, which is all this control owns. A launch
+           into the group can still add an explicit sandbox profile on top of
+           the global one, so naming the composed result here would be a claim
+           this selector is not in a position to make. */ ''}
+      <option value="">${sandbox ? '(none — no group layer)' : '(none)'}</option>
       ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
       ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
     </select>`;
@@ -332,8 +340,8 @@ function GroupProfileChip({ group, actions, kind }) {
     ? `group-sandbox-profile${current ? '' : ' unset'}`
     : `group-default-model${current ? '' : ' unset'}`;
   const title = sandbox
-    ? current ? `Sandbox profile for ${group.name}: ${current} — composes after the global sandbox profile for newly launched agents. Click to change.` : 'No group sandbox profile — newly launched agents get the global one only. Click to set one.'
-    : current ? `Default spawn profile for agents spawned into this group: ${current} — fills blank launch fields at spawn. Click to change.` : 'No default spawn profile — click to set one. (Spawns use their own fields until set.)';
+    ? current ? `Sandbox profile for ${group.name}: ${current} — ${GROUP_SANDBOX_PROFILE_ROLE}. Click to change.` : `No group sandbox profile — click to set one. It would be ${GROUP_SANDBOX_PROFILE_ROLE}.`
+    : current ? `Group default spawn profile for agents spawned into this group: ${current} — ${GROUP_DEFAULT_PROFILE_ROLE}. Click to change.` : `No group default spawn profile — click to set one. (${RESOLVED_DEFAULTS_LABEL} fall through to the global default spawn profile, then the harness default.)`;
   return html`<span
     ref=${triggerRef}
     class=${className} tabindex="0" role="button"

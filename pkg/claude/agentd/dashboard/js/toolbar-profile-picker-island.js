@@ -3,28 +3,44 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerToolbarProfilePickerController } from './toolbar-profile-picker.js';
 import { isWizardActive } from './slop.js';
+import {
+  GLOBAL_DEFAULT_PROFILE_ROLE, GLOBAL_SANDBOX_PROFILE_ROLE,
+} from './resolved-defaults.js';
 
 const html = htm.bind(h);
 const NEW_PROFILE = '/new-profile';
+
+// GLOBAL_DEFAULT_PROFILE_NAME is the accessible name AND the tooltip's opening
+// words. They were allowed to differ once — the tooltip said "Global", the
+// aria-label said "Dashboard" — which gave one control two names depending on
+// how you perceive it.
+const GLOBAL_DEFAULT_PROFILE_NAME = 'Global default spawn profile';
+const GLOBAL_SANDBOX_PROFILE_NAME = 'Global sandbox profile';
 
 function labels(kind, current) {
   if (kind === 'sandbox') {
     return {
       id: 'dashboard-default-sandbox-profile', icon: '🛡', className: 'global-sandbox-profile',
       dataName: 'data-sandbox-profile', create: '＋ new sandbox profile…', none: '(none)',
-      aria: current ? `Global sandbox profile: ${current}. Click to change.` : 'Set global sandbox profile',
+      name: GLOBAL_SANDBOX_PROFILE_NAME,
+      aria: current
+        ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current}. Click to change.`
+        : `Set ${GLOBAL_SANDBOX_PROFILE_NAME.toLowerCase()}`,
       title: current
-        ? `Global sandbox profile: ${current} — newly launched agents inherit it before any group or explicit assignment. Click to change.`
-        : 'No global sandbox profile — click to set one. Newly launched agents inherit it unless their group adds another assignment.',
+        ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current} — ${GLOBAL_SANDBOX_PROFILE_ROLE}. Click to change.`
+        : `No ${GLOBAL_SANDBOX_PROFILE_NAME.toLowerCase()} — click to set one. It would become ${GLOBAL_SANDBOX_PROFILE_ROLE}.`,
     };
   }
   return {
     id: 'dashboard-default-profile', icon: '🧠', className: 'user-default-model',
     dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
-    aria: current ? `Dashboard default spawn profile: ${current}. Click to change.` : 'Set dashboard default spawn profile',
+    name: GLOBAL_DEFAULT_PROFILE_NAME,
+    aria: current
+      ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current}. Click to change.`
+      : `Set ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()}`,
     title: current
-      ? `Dashboard default spawn profile: ${current} — pre-fills the spawn dialog when the chosen group has no default profile of its own. Click to change.`
-      : 'No dashboard default spawn profile — click to set one. (Pre-fills the spawn dialog as a fallback after a group’s own default.)',
+      ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current} — ${GLOBAL_DEFAULT_PROFILE_ROLE}. Click to change.`
+      : `No ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()} — click to set one. It is ${GLOBAL_DEFAULT_PROFILE_ROLE}.`,
   };
 }
 
@@ -80,7 +96,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
     return closed;
   };
   return html`<${Fragment}><select ref=${selectRef} class="toolbar-profile-select" value=${current} disabled=${saving}
-    aria-label=${kind === 'sandbox' ? 'Global sandbox profile' : 'Dashboard default spawn profile'}
+    aria-label=${copy.name}
     aria-busy=${loading ? 'true' : undefined} aria-invalid=${error ? 'true' : undefined}
     aria-describedby=${error ? errorID : undefined} title=${error || undefined}
     onKeyDown=${(event) => {
