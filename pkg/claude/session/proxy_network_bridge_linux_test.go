@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -753,7 +755,53 @@ func TestProxyNetworkSetupArgsGrantNoCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	defer relay.Close()
 	assert.False(t, slices.Contains(relay.SetupArgs, "--cap-add"))
-	assert.Len(t, relay.Files, 1, "the bootstrap image is the only sealed input")
+	assert.Len(t, relay.Files, 2,
+		"the sealed inputs are the bootstrap image and the namespace hosts file")
 	assert.Contains(t, relay.SetupArgs, proxyNetworkBootstrapSyncPath)
 	assert.Contains(t, relay.Command, tclaudeLayerProxyBootstrapCommand)
+}
+
+// TestProxyNetworkFloorMasksHostNameMappings proves the namespace cannot
+// resolve a name locally that the HOST maps.
+//
+// This is a policy property, not hygiene. The proxy engine authorizes by name,
+// and can only do so for names the sandbox asks it about rather than resolving
+// itself. The constructed root binds the host's /etc read-only, so without this
+// mask a process could turn any host-mapped name into an address literal with
+// no query leaving the namespace — and a literal is matched against CIDR
+// selectors only, so an authored deny on that name would have nothing to match.
+func TestProxyNetworkFloorMasksHostNameMappings(t *testing.T) {
+	plan := proxyBridgeTestPlan(t,
+		proxyBridgeDiscriminatingRules(), sandboxpolicy.NetworkEngineProxy)
+	encoded, err := encodeProxyNetworkRelayPolicy(plan)
+	require.NoError(t, err)
+	relay, err := prepareProxyNetworkRelay(encoded)
+	require.NoError(t, err)
+	defer relay.Close()
+
+	require.Contains(t, relay.SetupArgs, "/etc/hosts",
+		"the proxy floor must replace the host's name mappings")
+	index := slices.Index(relay.SetupArgs, "/etc/hosts")
+	require.GreaterOrEqual(t, index, 2)
+	assert.Equal(t, "--ro-bind-data", relay.SetupArgs[index-2])
+	assert.Equal(t, strconv.Itoa(proxyNetworkHostsFD), relay.SetupArgs[index-1])
+
+	// The descriptor named above must be the one bubblewrap receives at that
+	// number: fd 3 is bubblewrap's status pipe, so the relay's own files start
+	// at filteredNetworkBootstrapBinaryFD.
+	require.Len(t, relay.Files, 2)
+	assert.Equal(t, proxyNetworkHostsFD,
+		filteredNetworkBootstrapBinaryFD+len(relay.Files)-1)
+
+	hosts := sandboxpolicy.ProxyNetworkHostsFile()
+	assert.Contains(t, string(hosts), "127.0.0.1 localhost",
+		"a process must still be able to name its own loopback")
+	for _, line := range strings.Split(strings.TrimSpace(string(hosts)), "\n") {
+		fields := strings.Fields(line)
+		require.NotEmpty(t, fields)
+		addr, parseErr := netip.ParseAddr(fields[0])
+		require.NoError(t, parseErr)
+		assert.True(t, addr.IsLoopback(),
+			"the namespace hosts file may name only loopback, got %q", line)
+	}
 }

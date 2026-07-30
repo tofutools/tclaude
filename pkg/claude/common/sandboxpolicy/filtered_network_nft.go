@@ -271,6 +271,33 @@ func FilteredNetworkHostsFile(hostHosts []byte) ([]byte, error) {
 	), nil
 }
 
+// ProxyNetworkHostsFile is the proxy engine's namespace hosts file: the
+// loopback names a process needs to talk to itself, and nothing else.
+//
+// Every host-derived mapping is dropped, and that is a policy decision rather
+// than tidiness. The proxy engine authorizes destinations by NAME — a host row,
+// a domain row, a deny row — and it can only do that for names the sandbox
+// hands it instead of resolving itself. A namespace that inherited the host's
+// /etc/hosts would let a process turn any mapped name into an address literal
+// without any query leaving it, and a literal is matched against CIDR selectors
+// only. An authored deny on that name would then have nothing to match, so a
+// refused name would become a permitted literal wherever some CIDR row covers
+// its address.
+//
+// The packet engine reaches the same place by a different route: it synthesizes
+// its own hosts file too, and its DNS broker holds the name authority.
+//
+// Only /etc/hosts is replaced. The resolver configuration is left alone because
+// it cannot produce an answer: the namespace is empty, so no nameserver is
+// reachable, and a query has nowhere to go. /etc/hosts is the one local
+// resolution path that needs no network at all.
+func ProxyNetworkHostsFile() []byte {
+	return []byte(
+		"127.0.0.1 localhost\n" +
+			"::1 localhost ip6-localhost ip6-loopback\n",
+	)
+}
+
 // FilteredNetworkResolvConf makes the broker authoritative inside the private
 // namespace. Only sandbox-private loopback is named, so no packet can bypass
 // the broker through pasta or a host resolver address.
