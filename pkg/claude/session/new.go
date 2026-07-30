@@ -971,8 +971,13 @@ func runNew(params *NewParams) error {
 	// network posture it used to be inseparable from (TCL-798).
 	tclaudeLayerRoot := sandboxpolicy.RootHostInherited
 	if outerLayer && launchSandbox != nil {
-		tclaudeLayerRoot, err = TclaudeLayerRootPosture(
-			tclaudeLayerPosture, launchSandbox.Effective)
+		// This runs before the capability ladder, so the gated helper is
+		// required: on a target where the socket-driven constructed root does
+		// not apply the ladder is about to widen the axis away, and claiming a
+		// constructed root here would refuse an explicit agentd socket for a
+		// launch that never confines sockets.
+		tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
+			h, sandboxImplementation, tclaudeLayerPosture, launchSandbox.Effective)
 		if err != nil {
 			return fmt.Errorf("derive sandbox root posture: %w", err)
 		}
@@ -1227,8 +1232,9 @@ func runNew(params *NewParams) error {
 			// filtered posture implied a constructed root, and dropping to
 			// host-open must not keep claiming one unless the profile's own
 			// socket axis still asks for it.
-			tclaudeLayerRoot, err = TclaudeLayerRootPosture(
-				tclaudeLayerPosture, launchSandbox.Effective)
+			tclaudeLayerRoot, err = TclaudeLayerLaunchRootPosture(
+				h, sandboxImplementation, tclaudeLayerPosture,
+				launchSandbox.Effective)
 			if err != nil {
 				return fmt.Errorf("derive sandbox root posture: %w", err)
 			}

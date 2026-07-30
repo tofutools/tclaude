@@ -142,6 +142,13 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	// process visibility.
 	assert.Contains(t, notices[0].Detail, "PID namespace")
 	assert.Contains(t, notices[0].Detail, "cannot see or signal host processes")
+	// Building the root also narrows what the agent can SEE. An operator who
+	// authored only a SOCKET rule must not discover that by watching a launch
+	// fail, so the filesystem consequence is disclosed here too.
+	assert.Contains(t, notices[0].Detail, "no longer visible at all")
+	assert.Contains(t, notices[0].Detail,
+		"read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt)",
+		"sockets on the static OS surface stay connectable; naming it is what makes the remainder honest")
 
 	hostOpenSocketList := sandboxpolicy.ResolvedAxes{
 		Network: sandboxpolicy.NetworkRules{Mode: sandboxpolicy.AccessModeOpen},
@@ -201,13 +208,20 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Equal(t, EnforceNone, caps.socketClosed)
 
 	// The public resolver consumes the same axes rather than returning a static
-	// per-target capability descriptor.
+	// per-target capability descriptor. Unlike the table helper above it reads
+	// the REAL platform, so its expectation is the platform's own: TCL-798's
+	// constructed root is a Linux mount-namespace capability, and Darwin's
+	// host-open renderer still wires no socket denies.
+	wantResolved := EnforceNone
+	if runtime.GOOS == "linux" {
+		wantResolved = EnforcePartial
+	}
 	resolved, err := ResolveAccessEnforcement(
 		h, sandboxpolicy.ImplementationTclaudeLayer, hostOpenSocketList,
 		evidence, ClaudeSandboxOff,
 	)
 	require.NoError(t, err)
-	assert.Equal(t, EnforcePartial, resolved.socketClosed)
+	assert.Equal(t, wantResolved, resolved.socketClosed)
 }
 
 func TestSocketListAdaptersPreserveRuledCombinationBoundaries(t *testing.T) {

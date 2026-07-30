@@ -230,11 +230,17 @@ func planSandboxProfileAccessForLaunch(
 				}
 			}
 		}
-		// The socket axis is read as AUTHORED here, before the capability
-		// ladder runs: this verdict is one of the ladder's inputs. If the
-		// ladder later widens the axis the probe was merely stricter than the
-		// launch needed, which fails closed.
-		root := sandboxpolicy.RootPostureFor(posture, axes.UnixSockets.Mode)
+		// This verdict is one of the ladder's own inputs, so the socket axis is
+		// still the authored one. Ask the same gate the ladder will: on a
+		// target where the socket-driven constructed root does not apply, the
+		// axis is about to be widened away and the verdict must not describe a
+		// root the launch will never build.
+		sockets := axes.UnixSockets.Mode
+		if !harness.SupportsHostOpenConstructedRoot(
+			h, implementation, axes, runtime.GOOS) {
+			sockets = sandboxpolicy.AccessModeUnset
+		}
+		root := sandboxpolicy.RootPostureFor(posture, sockets)
 		verdict, err = resolveTclaudeLayerAccessVerdict(h.Name, posture, root)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,

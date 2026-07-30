@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -303,7 +304,12 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 		NetworkPosture: sandboxpolicy.NetworkHostOpen,
 		RootPosture:    sandboxpolicy.RootConstructed,
 	}
-	root := t.TempDir()
+	// EvalSymlinks the fixture root: on macOS the temp dir lives under /var,
+	// which is itself a symlink to /private/var, so an unresolved root would
+	// place the resolved target outside it and the traversal would correctly
+	// decline to chase it.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	runtimeDir := filepath.Join(root, "systemd", "resolve")
 	require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
 	target := filepath.Join(runtimeDir, "stub-resolv.conf")
@@ -314,7 +320,7 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 		require.NoError(t, os.Symlink(target, resolver))
 		swapTclaudeLayerHostResolver(t, resolver, root)
 
-		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		got, _, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
 		require.NoError(t, err)
 		assert.NotEqual(t, -1, indexOfBwrapBind(got, "--ro-bind", target, target),
 			"the resolver target file must be reopened")
@@ -338,7 +344,7 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 		require.NoError(t, os.WriteFile(resolver, []byte("nameserver 1.1.1.1\n"), 0o644))
 		swapTclaudeLayerHostResolver(t, resolver, root)
 
-		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		got, _, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
@@ -350,10 +356,35 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 		require.NoError(t, os.Symlink(outside, resolver))
 		swapTclaudeLayerHostResolver(t, resolver, root)
 
-		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		got, _, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
 		require.NoError(t, err)
 		assert.Empty(t, got,
 			"silently binding an arbitrary host path to make DNS work would be a wider hole than the failure it prevents")
+	})
+
+	// bwrap binds whatever it is given. A resolver pointing at a directory would
+	// recursively expose that /run subtree — where the ambient sockets this
+	// posture hides actually live — and one pointing at a socket would reopen an
+	// ambient socket outright, either way making the Partial rating untrue.
+	t.Run("a non-regular target under the runtime root is refused", func(t *testing.T) {
+		socketDir := filepath.Join(root, "user", "1000")
+		require.NoError(t, os.MkdirAll(socketDir, 0o755))
+		// A FIFO stands in for the ambient socket: it is the same "not a regular
+		// file" case, without sockaddr_un's 108-byte path limit that a real
+		// listener under a long temp path would hit.
+		ambient := filepath.Join(socketDir, "bus")
+		require.NoError(t, syscall.Mkfifo(ambient, 0o600))
+
+		for _, target := range []string{socketDir, ambient} {
+			resolver := filepath.Join(t.TempDir(), "resolv.conf")
+			require.NoError(t, os.Symlink(target, resolver))
+			swapTclaudeLayerHostResolver(t, resolver, root)
+
+			got, _, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+			require.NoError(t, err)
+			assert.Emptyf(t, got,
+				"binding %q would re-expose exactly what the constructed root hides", target)
+		}
 	})
 
 	t.Run("a dangling symlink is left as broken as it is on the host", func(t *testing.T) {
@@ -361,7 +392,7 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 		require.NoError(t, os.Symlink(filepath.Join(root, "gone.conf"), resolver))
 		swapTclaudeLayerHostResolver(t, resolver, root)
 
-		got, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
+		got, _, err := appendTclaudeLayerHostResolver(nil, hostOpenConstructed)
 		require.NoError(t, err, "a resolver already broken on the host must not fail the launch")
 		assert.Empty(t, got)
 	})
@@ -378,7 +409,7 @@ func TestAppendTclaudeLayerHostResolverReopensOnlyTheRunTargetFile(t *testing.T)
 			{NetworkPosture: sandboxpolicy.NetworkFiltered,
 				RootPosture: sandboxpolicy.RootConstructed},
 		} {
-			got, err := appendTclaudeLayerHostResolver(nil, plan)
+			got, _, err := appendTclaudeLayerHostResolver(nil, plan)
 			require.NoError(t, err)
 			assert.Emptyf(t, got,
 				"%v has no host resolver to preserve", plan.NetworkPosture)
@@ -405,4 +436,51 @@ func indexOfBwrapArg(args []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// A profile deny on the resolver's parent must not silently break DNS. The
+// reopen happens during root construction, before plan replay, so without a
+// repair an ordinary ancestor hide would shadow it with no notice — exactly the
+// case the agentd socket is already repaired for.
+func TestBwrapArgsRepairsHostResolverBeneathAnOrdinaryDeny(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	runtimeRoot, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(runtimeRoot, "systemd", "resolve", "stub-resolv.conf")
+	require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
+	require.NoError(t, os.WriteFile(target, []byte("nameserver 127.0.0.53\n"), 0o644))
+	resolver := filepath.Join(t.TempDir(), "resolv.conf")
+	require.NoError(t, os.Symlink(target, resolver))
+	swapTclaudeLayerHostResolver(t, resolver, runtimeRoot)
+
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkHostOpen,
+		RootPosture:    sandboxpolicy.RootConstructed,
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: runtimeRoot, Mode: sandboxpolicy.MountHide},
+		},
+	}
+	got, err := bwrapArgs(nil, plan)
+	require.NoError(t, err)
+	binds := indicesOfBwrapTriplet(got, "--ro-bind", target)
+	require.Len(t, binds, 2,
+		"the resolver must be reopened during root construction and repaired after the deny")
+	denyHide := indexOfBwrapTriplet(got, "--tmpfs", runtimeRoot)
+	require.NotEqual(t, -1, denyHide)
+	assert.Less(t, denyHide, binds[1],
+		"the repair must land after the hide that shadowed the original bind")
+
+	// Mutation guard: with no deny covering it, the reopen stands alone.
+	plan.Entries = nil
+	got, err = bwrapArgs(nil, plan)
+	require.NoError(t, err)
+	assert.Len(t, indicesOfBwrapTriplet(got, "--ro-bind", target), 1)
 }

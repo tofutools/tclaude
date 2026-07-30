@@ -565,6 +565,21 @@ It is never on by default. A profile that says nothing about `unix_sockets`, or
 sets it to `open`, launches with exactly the read-only host root it launched
 with before.
 
+Two consequences of building the root reach beyond sockets, and both are stated
+in the launch warning rather than left to be discovered:
+
+- **What the agent can see narrows.** Host paths outside your filesystem grants
+  and the static OS surface are no longer present at all, where a host-open
+  launch without this rule showed the whole read-only host root. Before adding a
+  socket rule to an existing host-open profile, check that anything the agent
+  needs — toolchains under your home, `/var`, `/srv`, `/opt`-style installs — is
+  actually granted.
+- **Sockets on the static OS surface stay reachable.** `/usr`, `/bin`, `/sbin`,
+  `/lib*`, `/etc`, and `/opt` are mounted read-only, and a read-only mount does
+  not block `connect()`, so an AF_UNIX socket living under one of those paths
+  remains connectable. This is the same remainder the closed-network posture
+  has, named here because a host-open profile is a far more common shape.
+
 The isolated posture has an explicit platform delta:
 
 | Property | Linux (`bubblewrap`) | macOS (`Seatbelt`) |
@@ -700,8 +715,11 @@ surface binds `/etc` read-only, but on a systemd-resolved-class host
 have. tclaude reopens that one resolver **file** read-only, creating its parent
 directories inside the namespace — never `/run` itself, which is exactly where
 the ambient sockets this posture exists to hide tend to live. A resolver target
-outside `/run` is deliberately not chased: silently binding an arbitrary host
-path to make DNS work would be a wider hole than the failure it prevents.
+outside `/run` is deliberately not chased, and one that is not a regular file is
+refused: silently binding an arbitrary host path — still less a directory or a
+socket — to make DNS work would be a wider hole than the failure it prevents. If
+an ordinary profile deny covers the resolver's parent, the reopen is repaired
+after that deny, the same way the agentd socket is.
 
 When a profile path reaches resolution with a symlinked spelling, the
 constructed root recreates the highest symlinked component so tools can keep

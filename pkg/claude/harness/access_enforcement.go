@@ -442,8 +442,8 @@ func accessEnforcementTable(
 						`use a socket access list or leave unix_sockets unset`
 			}
 		} else {
-			if goos == "linux" && linuxHostOpenConstructedRootAvailable(
-				h, implementation, axes) {
+			if linuxHostOpenConstructedRootAvailable(
+				h, implementation, axes, goos) {
 				// TCL-798. The constructed root no longer requires giving up
 				// host networking, so the filesystem half of the socket axis is
 				// enforceable here. It is Partial rather than Full, and
@@ -454,11 +454,16 @@ func accessEnforcementTable(
 				caps.SocketList = EnforcePartial
 				caps.SocketCombinationDetail =
 					"tclaude builds the sandbox root, so listed Unix sockets are bound and " +
-						"ambient filesystem sockets outside the sandbox's readable/writable directories are absent; " +
-						"sockets beneath those readable/writable directories remain reachable, and because host networking is kept, " +
-						"abstract-namespace Unix sockets (@…) live in the shared network namespace rather than the filesystem and remain reachable — " +
+						"ambient filesystem sockets are absent; sockets beneath the sandbox's own readable/writable " +
+						"directories, and beneath the read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt), " +
+						"remain reachable. Because host networking is kept, abstract-namespace Unix sockets (@…) live in the " +
+						"shared network namespace rather than the filesystem and remain reachable — " +
 						"close network access as well to confine those too. " +
-						"This posture also puts the agent in its own PID namespace, which is required rather than incidental: " +
+						"Two consequences of building the root reach beyond sockets. " +
+						"Host paths outside your filesystem grants and that OS surface are no longer visible at all, " +
+						"where a host-open launch without this rule would have shown the whole read-only host root — " +
+						"check that anything the agent needs (toolchains under your home, /var, /srv, /opt-style installs) is granted. " +
+						"And the agent runs in its own PID namespace, which is required rather than incidental: " +
 						"without it a host process's /proc/<pid>/root would lead straight back to the sockets the constructed root just hid. " +
 						"The agent therefore cannot see or signal host processes, and tools that read the host process table stop working."
 			} else if goos == "linux" {
@@ -546,11 +551,21 @@ func accessEnforcementTable(
 // a profile that explicitly authored a closed or list tier, which is what keeps
 // the constructed root from turning itself on under profiles that never asked
 // about sockets.
+//
+// It is exported through SupportsHostOpenConstructedRoot because the launch
+// boundary has to ask the same question BEFORE the ladder runs — the capability
+// verdict is one of the ladder's own inputs — and a launch that answered it
+// differently from the table would probe for, and disclose, a root it is not
+// going to build.
 func linuxHostOpenConstructedRootAvailable(
 	h *Harness,
 	implementation sandboxpolicy.Implementation,
 	axes sandboxpolicy.ResolvedAxes,
+	goos string,
 ) bool {
+	if goos != "linux" {
+		return false
+	}
 	if implementation != sandboxpolicy.ImplementationTclaudeLayer {
 		return false
 	}
@@ -559,6 +574,24 @@ func linuxHostOpenConstructedRootAvailable(
 	}
 	posture, err := sandboxpolicy.NetworkPostureForRules(axes.Network)
 	return err == nil && posture == sandboxpolicy.NetworkHostOpen
+}
+
+// SupportsHostOpenConstructedRoot reports whether this launch target would get
+// TCL-798's host-network constructed root from an explicitly authored socket
+// tier. Callers outside this package use it so the pre-ladder launch surfaces —
+// the bubblewrap capability probe, the launch badge, the agent-socket
+// environment — agree with the rating the ladder is about to compute.
+//
+// It answers only whether the MECHANISM applies to this target. Whether the
+// profile actually asked for it is the socket tier's question, which
+// sandboxpolicy.RootPostureFor answers.
+func SupportsHostOpenConstructedRoot(
+	h *Harness,
+	implementation sandboxpolicy.Implementation,
+	axes sandboxpolicy.ResolvedAxes,
+	goos string,
+) bool {
+	return linuxHostOpenConstructedRootAvailable(h, implementation, axes, goos)
 }
 
 func accessEnforcementFromTable(row accessEnforcementTableRow) AccessEnforcement {
