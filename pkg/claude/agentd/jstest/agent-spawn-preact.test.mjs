@@ -686,6 +686,13 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
   try {
     state.open({ groupName: 'alpha' });
     await flush(harness);
+    const claudeMode = host.querySelector('#agent-spawn-sandbox');
+    assert.equal(selectedValue(host.querySelector('#agent-spawn-sandbox-impl')), '',
+      'the initial Claude implementation row is untouched');
+    assert.equal(claudeMode.closest('.cron-create-row').hidden, false,
+      'a resolved Claude built-in default reveals its native mode');
+    assert.match(claudeMode.closest('.cron-create-row').textContent, /Claude Code sandbox mode/);
+
     const harnessSelect = host.querySelector('#agent-spawn-harness');
     setValue(harnessSelect, 'codex');
     await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
@@ -698,6 +705,10 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
     const hint = host.querySelector('#agent-spawn-sandbox-impl-hint');
     assert.ok(hint, 'a blank row the daemon resolved to Codex built-in must still warn');
     assert.match(hint.textContent, /no filtered network sandbox yet/);
+    const codexMode = host.querySelector('#agent-spawn-sandbox');
+    assert.equal(codexMode.closest('.cron-create-row').hidden, false,
+      'a resolved Codex built-in default reveals its native mode');
+    assert.match(codexMode.closest('.cron-create-row').textContent, /Codex sandbox mode/);
   } finally {
     mounted.cleanup();
   }

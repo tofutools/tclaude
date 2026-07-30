@@ -33,6 +33,7 @@ const harnesses = [
   {
     name: 'claude', display_name: 'Claude Code', models: ['sonnet'],
     can_tclaude_layer: true, can_stacked: true, can_builtin_os_sandbox: true,
+    can_sandbox: true, sandbox_modes: ['inherit', 'on', 'off'], default_sandbox: 'inherit',
   },
   {
     name: 'codex', display_name: 'Codex CLI', models: [],
@@ -98,7 +99,14 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   const claude = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
   assert.equal(claude.showSandboxImpl, true);
   assert.equal(claude.showSandboxMode, false,
-    'resolved defaults do not expose an independently misleading native mode');
+    'an unresolved default does not expose an independently misleading native mode');
+  assert.equal(
+    model.spawnCapabilityView(
+      { harness: 'claude' }, { harnesses, sandboxImpl }, 'harness-builtin',
+    ).showSandboxMode,
+    true,
+    'a daemon-resolved Claude built-in default exposes the native mode',
+  );
   assert.equal(claude.sandboxImplDefault, 'harness-builtin');
   assert.deepEqual(
     claude.sandboxImplOptions.map((o) => o.value),
@@ -131,11 +139,34 @@ test('sandbox-implementation view gates on the harness, discloses on the host', 
   assert.match(opencodeDefaultHint.text, /command filter, not confinement/);
   assert.equal(opencode.showSandboxMode, false,
     'OpenCode owns no built-in OS sandbox mode to reveal');
+  assert.equal(
+    model.spawnCapabilityView(
+      { harness: 'opencode' }, { harnesses, sandboxImpl }, 'harness-builtin',
+    ).showSandboxMode,
+    false,
+    'an invalid resolved answer never gives OpenCode a built-in mode control',
+  );
 
   const builtin = model.spawnCapabilityView(
     { harness: 'codex', sandboxImpl: 'harness-builtin' }, { harnesses, sandboxImpl },
   );
   assert.equal(builtin.showSandboxMode, true);
+  assert.equal(
+    model.spawnCapabilityView(
+      { harness: 'codex' }, { harnesses, sandboxImpl }, 'harness-builtin',
+    ).showSandboxMode,
+    true,
+    'a daemon-resolved Codex built-in default exposes the native mode',
+  );
+  assert.equal(
+    model.spawnCapabilityView(
+      { harness: 'codex', sandboxImpl: 'off' },
+      { harnesses, sandboxImpl },
+      'harness-builtin',
+    ).showSandboxMode,
+    false,
+    'an explicit implementation overrides an older or inherited resolved answer',
+  );
   assert.equal(
     model.sandboxModeControlLabel(builtin.harness),
     'Codex sandbox mode',

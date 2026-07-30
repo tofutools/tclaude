@@ -222,7 +222,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   attachmentsRef.current = attachments;
   worktreesRef.current = worktrees;
   draftRef.current = draft;
-  const view = spawnCapabilityView(draft, context);
+  const view = spawnCapabilityView(draft, context, launchDefaults?.implementation);
   const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
@@ -696,7 +696,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const selectedModel = modelSelectValue(draft, context);
   const sandboxHelp = sandboxModeHelpForImplementation(
     view.sandbox.help[draft.sandbox],
-    draft.sandboxImpl || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
+    draft.sandboxImpl
+      || launchDefaults?.implementation
+      || (view.showSandboxImpl ? '' : view.sandboxImplDefault),
     draft.harness,
   );
   const approvalHelp = view.approval.help[draft.approval] || '';
@@ -918,7 +920,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       </div>`}
     <${HelpField} id="agent-spawn-sandbox"
       label=${sandboxModeControlLabel(view.harness)}
-      title="Harness-native sandbox mode. Available only when the harness's built-in sandbox is selected above."
+      title="Harness-native sandbox mode. Available when Sandbox explicitly or by resolved default uses the harness's built-in sandbox."
       value=${draft.sandbox} options=${SettingOptions({
     setting: sandboxModeOptionsForImplementation(view.sandbox, draft.harness, draft.sandbox),
     optionLabel: (mode, recommended) => sandboxModeOptionLabel(draft.harness, mode, recommended),
