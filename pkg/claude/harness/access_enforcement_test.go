@@ -379,11 +379,16 @@ func TestFilteredNetworkCapabilityMatrixFlipsOnlySmokeBackedCells(t *testing.T) 
 				if platform == "linux" &&
 					target.implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 					(target.harness.Name == DefaultName ||
-						target.harness.Name == CodexName) {
+						target.harness.Name == CodexName ||
+						target.harness.Name == OpenCodeName) {
 					denyWant = EnforceFull
 				}
 				assert.Equal(t, denyWant, row.NetworkDenyPorts,
-					"deny activates only in the exact Claude/Codex cells with PR1 smoke evidence")
+					"deny activates only in the Linux tclaude-layer cells whose own executing CI smoke covers deny")
+				if denyWant == EnforceNone {
+					assert.Empty(t, row.NetworkDenySelectors,
+						"an inactive cell must not advertise deny selectors at all")
+				}
 				for _, capability := range row.NetworkDenySelectors {
 					assert.Equal(t, denyWant, capability.Level)
 				}
@@ -450,12 +455,17 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 			},
 		},
 	}
-	for _, harnessName := range []string{DefaultName, CodexName} {
+	modes := map[string]string{
+		DefaultName:  ClaudeSandboxOff,
+		CodexName:    SandboxDangerFull,
+		OpenCodeName: OpenCodeSandboxTclaudeLayer,
+	}
+	for _, harnessName := range []string{DefaultName, CodexName, OpenCodeName} {
 		t.Run(harnessName, func(t *testing.T) {
 			row, err := accessEnforcementTable(
 				MustGet(harnessName),
 				sandboxpolicy.ImplementationTclaudeLayer,
-				axes, ClaudeSandboxOff, "linux", true,
+				axes, modes[harnessName], "linux", true,
 			)
 			require.NoError(t, err)
 
@@ -481,17 +491,47 @@ func TestLinuxTclaudeLayerDenyCapabilityDrivesPredictionAndLaunchPlan(t *testing
 		})
 	}
 
-	row, err := accessEnforcementTable(
+	// The OpenCode local presets stay outside the activation: their filtered
+	// list is refused at launch pending TCL-826, so their deny rows must keep
+	// disclosing omission rather than inheriting the flipped cell.
+	localPresetAxes := sandboxpolicy.ResolvedAxes{
+		Network: sandboxpolicy.NetworkRules{
+			Mode:  sandboxpolicy.AccessModeList,
+			Allow: []sandboxpolicy.NetworkAllowEntry{{Loopback: true}},
+			Deny:  axes.Network.Deny,
+		},
+	}
+	presetRow, err := accessEnforcementTable(
 		MustGet(OpenCodeName),
 		sandboxpolicy.ImplementationTclaudeLayer,
-		axes, OpenCodeSandboxTclaudeLayer, "linux", true,
+		localPresetAxes, OpenCodeSandboxTclaudeLayer, "linux", true,
+	)
+	require.NoError(t, err)
+	presetRows := DescribePredictedNetworkDenyEntries(
+		localPresetAxes.Network.Deny,
+		predictedAccessEnforcementFromTable(presetRow))
+	require.Len(t, presetRows, 2)
+	for _, predictedRow := range presetRows {
+		assert.Equal(t, AccessPredictionNotEnforced, predictedRow.Outcome)
+		assert.Equal(t, PredictedNetworkDenyNotEnforcedDetail,
+			predictedRow.Detail)
+	}
+	// That preset never reaches a plan at all: its filtered list is refused.
+	_, _, err = PlanAccessEnforcement(
+		localPresetAxes, accessEnforcementFromTable(presetRow))
+	require.ErrorContains(t, err, "unsupported_filtered_model_transport")
+
+	// A cell without any executing deny smoke still omits each deny row.
+	row, err := accessEnforcementTable(
+		Default(), sandboxpolicy.ImplementationTclaudeLayer,
+		axes, ClaudeSandboxOff, "darwin", true,
 	)
 	require.NoError(t, err)
 	rendered, notices, err := PlanAccessEnforcement(
 		axes, accessEnforcementFromTable(row))
 	require.NoError(t, err)
 	assert.Empty(t, rendered.Network.Deny,
-		"the out-of-scope OpenCode cell must omit deny rows")
+		"a cell without deny capability must omit deny rows")
 	require.Len(t, notices, 1)
 	assert.Equal(t, "deny_selector_unsupported", notices[0].Reason)
 	assert.Equal(t, []int{0, 1}, notices[0].Entries)

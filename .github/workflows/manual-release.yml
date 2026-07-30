@@ -467,12 +467,117 @@ jobs:
           fi
 
       - name: Run OpenCode filtered-network activation smoke
+        shell: bash
         env:
           TCLAUDE_OPENCODE_LAYER_SMOKE: "1"
           TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY: ${{ runner.temp }}/tclaude-sandbox-v2
+          TCLAUDE_FILTERED_ALLOWED_ADDR: 198.18.1.10
+          TCLAUDE_FILTERED_ADJACENT_ADDR: 198.18.1.200
+          TCLAUDE_FILTERED_ALLOWED_ADDR6: "fd00:824::10"
+          TCLAUDE_FILTERED_ADJACENT_ADDR6: "fd00:824::200"
+          TCLAUDE_FILTERED_ALLOWED_PREFIX6: "fd00:824::/120"
+          TCLAUDE_FILTERED_ALLOWED_PORT: "41001"
+          TCLAUDE_FILTERED_DENIED_PORT: "41002"
         run: |
+          # The deny cases need live adjacent targets and resolvable names. The
+          # gateway smoke's own fixture is torn down with its step, so this
+          # boundary provisions an independent namespace on its own subnet.
+          namespace=tclaude-opencode-deny-target
+          host_link=tclocd0
+          peer_link=tclocd1
+          hosts_backup="$RUNNER_TEMP/tclaude-opencode-deny-hosts.before"
+          sudo cp /etc/hosts "$hosts_backup"
+          server_pids=()
+          cleanup() {
+            for pid in "${server_pids[@]}"; do
+              sudo kill "$pid" 2>/dev/null || true
+            done
+            sudo ip netns del "$namespace" 2>/dev/null || true
+            sudo ip link del "$host_link" 2>/dev/null || true
+            sudo tee /etc/hosts <"$hosts_backup" >/dev/null || true
+          }
+          trap cleanup EXIT
+
+          sudo ip netns add "$namespace"
+          sudo ip link add "$host_link" type veth peer name "$peer_link"
+          sudo ip link set "$peer_link" netns "$namespace"
+          sudo ip link set dev "$host_link" addrgenmode none
+          sudo ip netns exec "$namespace" ip link set dev "$peer_link" addrgenmode none
+          sudo ip link set "$host_link" up
+          sudo ip address add 198.18.1.1/24 dev "$host_link"
+          sudo ip -6 address add fe80::824:1/64 dev "$host_link" nodad
+          sudo ip -6 address add fd00:824::1/64 dev "$host_link" nodad
+          sudo ip netns exec "$namespace" ip link set lo up
+          sudo ip netns exec "$namespace" ip link set "$peer_link" up
+          sudo ip netns exec "$namespace" ip address add 198.18.1.10/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip address add 198.18.1.200/24 dev "$peer_link"
+          sudo ip netns exec "$namespace" ip -6 address add fe80::824:2/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:824::10/64 dev "$peer_link" nodad
+          sudo ip netns exec "$namespace" ip -6 address add fd00:824::200/64 dev "$peer_link" nodad
+          # Both names share the adjacent address on purpose: the DNS deny case
+          # proves a negative lease cuts an address an allowed name also uses.
+          {
+            echo "198.18.1.200 oc-exact-host.filtered.test oc-sibling.filtered.test"
+            echo "fd00:824::200 oc-exact-host.filtered.test oc-sibling.filtered.test"
+          } | sudo tee -a /etc/hosts >/dev/null
+
+          for address in 198.18.1.10 198.18.1.200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP4-LISTEN:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-tcp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP4-RECVFROM:$port,bind=$address,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-udp-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          for address in fd00:824::10 fd00:824::200; do
+            for port in 41001 41002; do
+              sudo ip netns exec "$namespace" \
+                socat "TCP6-LISTEN:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-tcp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+              sudo ip netns exec "$namespace" \
+                socat "UDP6-RECVFROM:$port,bind=[$address],ipv6only=1,reuseaddr,fork" EXEC:/bin/cat \
+                >"$RUNNER_TEMP/opencode-deny-udp6-$address-$port.log" 2>&1 &
+              server_pids+=("$!")
+            done
+          done
+          sleep 1
+          listener_dump=$(sudo ip netns exec "$namespace" ss -lntu)
+          printf '%s\n' "$listener_dump"
+          for endpoint in 198.18.1.10:41001 198.18.1.10:41002 \
+            198.18.1.200:41001 198.18.1.200:41002 \
+            "[fd00:824::10]:41001" "[fd00:824::10]:41002" \
+            "[fd00:824::200]:41001" "[fd00:824::200]:41002"; do
+            for protocol in tcp udp; do
+              if ! awk -v protocol="$protocol" -v endpoint="$endpoint" \
+                '$1 == protocol && $5 == endpoint { found = 1 } END { exit !found }' \
+                <<<"$listener_dump"; then
+                echo "::error::OpenCode deny fixture failed to bind $protocol $endpoint"
+                exit 1
+              fi
+            done
+          done
+
+          # Prove the fixture is reachable from the host before the smoke runs,
+          # so a routing fault reads as a fixture error rather than an opaque
+          # deny-probe failure inside the sandbox.
+          for endpoint in "TCP4:198.18.1.10:41001" "TCP6:[fd00:824::10]:41001"; do
+            token="opencode-deny-fixture-$endpoint"
+            # Tolerate a failing round trip here: the explicit check below is
+            # the diagnostic, not the shell's -e abort.
+            reply=$(printf '%s' "$token" | timeout 5 socat -T 2 -t 2 - "$endpoint" || true)
+            if [[ "$reply" != "$token" ]]; then
+              echo "::error::OpenCode deny fixture failed a direct round trip to $endpoint"
+              exit 1
+            fi
+          done
+
           smoke_log="$RUNNER_TEMP/opencode-filtered-network-smoke.log"
-          go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=180s |
+          go test ./pkg/claude/agentd -run '^TestOpenCodeFilteredNetworkExecutorSmoke$' -count=1 -v -timeout=240s |
             tee "$smoke_log"
           if ! grep -q '^--- PASS: TestOpenCodeFilteredNetworkExecutorSmoke ' "$smoke_log"; then
             {
@@ -480,9 +585,19 @@ jobs:
               echo
               echo "The pinned real OpenCode explicit-provider and packet-boundary proof did not report an explicit pass."
               echo "A skip, missing/renamed test, config-isolation regression, or zero-test success is a hard failure."
-              echo "The smoke must prove the executing server consumes only the inspected provider route, then allow authored model/TCP/UDP traffic and deny an unauthorised port."
+              echo "The smoke must prove the executing server consumes only the inspected provider route, then allow authored model/TCP/UDP traffic, deny an unauthorised port, and enforce deny-wins overlap in both directions plus the DNS negative-lease cut."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::error::TestOpenCodeFilteredNetworkExecutorSmoke did not report an explicit pass"
+            exit 1
+          fi
+          if ! grep -q 'opencode-filtered-deny-helper PASS' "$smoke_log"; then
+            {
+              echo "### OpenCode filtered-network deny boundary did not execute"
+              echo
+              echo "The smoke passed without the real bash tool reporting the deny probes."
+              echo "The OpenCode deny capability cell claims enforcement only while this marker is produced by an executed run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::OpenCode filtered-network deny probes did not execute"
             exit 1
           fi
 

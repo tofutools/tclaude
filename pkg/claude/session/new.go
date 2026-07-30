@@ -1228,7 +1228,8 @@ func runNew(params *NewParams) error {
 					},
 				)
 				if resolveModelErr != nil {
-					return resolveModelErr
+					return AnnotateDenyDrivenFilteredModelTransport(
+						plannedAxes.Network, resolveModelErr)
 				}
 			}
 			modelNotices, modelErr := ValidateTclaudeLayerNetwork(
@@ -1237,7 +1238,8 @@ func runNew(params *NewParams) error {
 				resolvedModel,
 			)
 			if modelErr != nil {
-				return modelErr
+				return AnnotateDenyDrivenFilteredModelTransport(
+					plannedAxes.Network, modelErr)
 			}
 			notices = append(notices, modelNotices...)
 		}

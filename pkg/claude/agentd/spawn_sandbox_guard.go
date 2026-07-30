@@ -267,14 +267,18 @@ func planSandboxProfileAccessForLaunch(
 			h, modelContext)
 		if resolveModelErr != nil {
 			return nil, sandboxCapabilitySpawnFailure(
-				resolveModelErr, harness.SandboxCapabilityModelTransport)
+				session.AnnotateDenyDrivenFilteredModelTransport(
+					rendered.Network, resolveModelErr),
+				harness.SandboxCapabilityModelTransport)
 		}
 		modelNotices, modelErr := session.ValidateTclaudeLayerNetwork(
 			h, plannedEffective, resolvedModel,
 		)
 		if modelErr != nil {
 			return nil, sandboxCapabilitySpawnFailure(
-				modelErr, harness.SandboxCapabilityModelTransport)
+				session.AnnotateDenyDrivenFilteredModelTransport(
+					rendered.Network, modelErr),
+				harness.SandboxCapabilityModelTransport)
 		}
 		notices = append(notices, modelNotices...)
 	}

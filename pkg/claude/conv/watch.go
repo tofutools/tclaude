@@ -2473,13 +2473,17 @@ func resumeLaunchCmdWithStackedProof(
 				},
 			)
 			if err != nil {
-				return "", "", nil, err
+				return "", "", nil,
+					session.AnnotateDenyDrivenFilteredModelTransport(
+						plannedAxes.Network, err)
 			}
 		}
 		if _, err := session.ValidateTclaudeLayerNetwork(
 			h, effectiveProfile, resolvedModel,
 		); err != nil {
-			return "", "", nil, err
+			return "", "", nil,
+				session.AnnotateDenyDrivenFilteredModelTransport(
+					plannedAxes.Network, err)
 		}
 	}
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)

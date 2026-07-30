@@ -892,6 +892,115 @@ func TestSandboxProfileDraftEnforcementProjectsMaterializedPackRows(t *testing.T
 	assert.Contains(t, allKeys, `{"cidr":"192.0.2.9/24"}`)
 }
 
+// TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows pins the
+// disclosure switch the OpenCode deny smoke bought: the Linux tclaude-layer
+// cell leaves the Unsupported bucket, while the cells with no executing deny
+// evidence of their own keep their omission disclosure verbatim.
+func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing.T) {
+	f := newFlow(t)
+	request := func(t *testing.T, network map[string]any, platform string,
+	) (harness.PredictedAccessAxes, []harness.PredictedNetworkEntry) {
+		t.Helper()
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
+			"draft": map[string]any{
+				"name": "opencode-deny", "filesystem": []any{}, "environment": []any{},
+				"network": network,
+			},
+			"targets": []any{map[string]any{
+				"implementation": "tclaude-layer",
+				"harness":        "opencode",
+				"platform":       platform,
+			}},
+		})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var got struct {
+			Targets []struct {
+				Axes           harness.PredictedAccessAxes     `json:"axes"`
+				NetworkEntries []harness.PredictedNetworkEntry `json:"network_entries"`
+			} `json:"targets"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		require.Len(t, got.Targets, 1)
+		return got.Targets[0].Axes, got.Targets[0].NetworkEntries
+	}
+	denies := []any{
+		map[string]any{"domain": "blocked.example", "ports": []int{443}},
+		map[string]any{"cidr": "192.0.2.0/24"},
+	}
+
+	// Under the default-deny list posture every deny selector is fully
+	// enforced by the same packet gateway the smoke exercised.
+	axes, rows := request(t, map[string]any{
+		"baseline": "deny",
+		"allow": []any{
+			map[string]any{"domain": "api.example.com", "ports": []int{443}},
+		},
+		"deny": denies,
+	}, "linux")
+	assert.Equal(t, harness.AccessPredictionEnforced, axes.Network.Outcome)
+	assert.Contains(t, axes.Network.Detail,
+		"explicit provider/model launch model",
+		"the preview must disclose the launch gate that decides whether these "+
+			"rules ever apply")
+	require.Len(t, rows, 3)
+	for _, row := range rows {
+		if row.Mode != "deny" {
+			continue
+		}
+		assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+		assert.NotEqual(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
+	}
+
+	// Under default-allow the DNS selectors keep their honest broker caveat.
+	_, rows = request(t, map[string]any{
+		"baseline": "allow",
+		"deny":     denies,
+	}, "linux")
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, "deny", row.Mode)
+		if row.Entry.CIDR != "" {
+			assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
+			continue
+		}
+		assert.Equal(t, harness.AccessPredictionEnforcedPartial, row.Outcome)
+		assert.Contains(t, row.Detail, "encrypted DNS that bypasses the broker")
+	}
+	// A deny-only profile has no allow list to carry the launch-gate
+	// disclosure, so each deny row must carry it instead.
+	for _, row := range rows {
+		assert.Contains(t, row.Detail,
+			harness.OpenCodeFilteredExplicitProviderCaveat)
+	}
+
+	// macOS has no OpenCode filtered gateway, so its deny rows stay omitted.
+	_, rows = request(t, map[string]any{
+		"baseline": "allow",
+		"deny":     denies,
+	}, "darwin")
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		assert.Equal(t, harness.AccessPredictionNotEnforced, row.Outcome)
+		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
+	}
+
+	// The local presets remain launch-refused pending TCL-826; advertising a
+	// deny capability there would disagree with that refusal.
+	_, rows = request(t, map[string]any{
+		"baseline": "deny",
+		"packs":    []string{"net-local"},
+		"deny":     denies,
+	}, "linux")
+	require.Len(t, rows, 3)
+	for _, row := range rows {
+		if row.Mode != "deny" {
+			continue
+		}
+		assert.Equal(t, harness.AccessPredictionNotEnforced, row.Outcome)
+		assert.Equal(t, harness.PredictedNetworkDenyNotEnforcedDetail, row.Detail)
+	}
+}
+
 func TestSandboxProfileDraftEnforcementProjectsPolarityAwareDenyRows(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profile-enforcement", map[string]any{
@@ -948,7 +1057,9 @@ func TestSandboxProfileDraftEnforcementProjectsPolarityAwareDenyRows(t *testing.
 			"the effective preview gets per-rule outcomes for its selected context")
 		for _, row := range target.NetworkEntries {
 			assert.Equal(t, "deny", row.Mode)
-			if i < 2 {
+			// The three Linux tclaude-layer harnesses enforce denies; the
+			// Darwin cell still does not.
+			if i < 3 {
 				if row.Entry.CIDR != "" {
 					assert.Equal(t, harness.AccessPredictionEnforced, row.Outcome)
 				} else {
