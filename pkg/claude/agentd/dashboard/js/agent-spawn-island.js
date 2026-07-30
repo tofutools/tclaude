@@ -10,6 +10,7 @@ import {
   MODEL_CUSTOM_VALUE,
   SANDBOX_PROFILE_NONE,
   WT_NEW,
+  approvalControlsVisibleFor,
   applySpawnProfile,
   attachKey,
   buildSpawnRequest,
@@ -724,6 +725,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     view.sandboxImplOptions, launchDefaults?.implementation,
   );
   const sandboxImplHint = sandboxImplHintFor(draft, view, launchDefaults?.implementation);
+  const showApprovalControls = approvalControlsVisibleFor(
+    draft, launchDefaults?.implementation,
+  );
   const sandboxImplCleared = sandboxImplClearedNoticeFor(draft);
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
@@ -989,7 +993,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }))}
       onChange=${(event) => update('approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
-      disabled=${!view.approval.visible} busy=${busy} />
+      disabled=${!view.approval.visible || !showApprovalControls} busy=${busy} />
     <div class=${`cron-create-row${sandboxInfo.length === 0 ? ' sandbox-info-pending' : ''}`}
       id="agent-spawn-sandbox-info">
       <span class="cron-create-label"></span>
@@ -1017,7 +1021,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       value=${draft.approvalReviewer} options=${approvalReviewerOptions(false)}
       onChange=${(event) => update('approvalReviewer', event.currentTarget.value)}
       help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
-      disabled=${!view.showApprovalReviewer} busy=${busy} />
+      disabled=${!view.showApprovalReviewer || !showApprovalControls} busy=${busy} />
     <${HelpField} id="agent-spawn-tools" label="Tool governance"
       title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
       value=${draft.tools} options=${SettingOptions({ setting: view.tools })}

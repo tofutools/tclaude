@@ -215,6 +215,21 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
     { ...thenSparse, name: 'w' }, context, { path: '', branch: '' },
   ).body, false, 'so the request omits trust_dir entirely');
   assert.equal(model.spawnCapabilityView(draft, context).sandboxProfilesDisabled, true);
+  assert.equal(model.approvalControlsVisibleFor({
+    harness: 'codex', sandbox: 'tclaude-agent', sandboxImpl: '',
+  }, 'harness-builtin'), true, 'resolved Codex built-in sandbox exposes approval controls');
+  assert.equal(model.approvalControlsVisibleFor({
+    harness: 'codex', sandbox: 'tclaude-agent', sandboxImpl: 'tclaude-layer',
+  }, 'harness-builtin'), false, 'an explicit tclaude wall wins over the resolved default');
+  assert.equal(model.approvalControlsVisibleFor({
+    harness: 'codex', sandbox: 'danger-full-access', sandboxImpl: 'harness-builtin',
+  }), false, 'Codex native sandbox Off cannot produce a boundary approval');
+  assert.equal(model.approvalControlsVisibleFor({
+    harness: 'codex', sandbox: 'tclaude-agent', sandboxImpl: 'stacked',
+  }), true, 'stacked still runs Codex inside its own sandbox');
+  assert.equal(model.approvalControlsVisibleFor({
+    harness: 'claude', sandbox: 'off', sandboxImpl: 'off',
+  }), true, 'Claude Code permission controls are independent of sandboxing');
 
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   assert.equal(openCode.sandbox, 'off');
@@ -597,14 +612,10 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   const harnessSelect = host.querySelector('#agent-spawn-harness');
   setValue(harnessSelect, 'codex');
   await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  await flush(harness);
   assert.equal(host.querySelector('#agent-spawn-model-codex-row').hidden, false);
-  assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
-  assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
-  assert.match(host.querySelector('#agent-spawn-approval').textContent, /Never ask — no approval prompts/);
-  const reviewer = host.querySelector('#agent-spawn-approval-reviewer');
-  setValue(reviewer, 'auto_review');
-  await harness.act(() => harness.fireEvent(reviewer, 'change'));
-  assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
+  assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, true);
+  assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-remote-control-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
   assert.match(host.querySelector('#agent-spawn-trust-dir-row').textContent, /~\/\.codex\/config\.toml/,
@@ -633,6 +644,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   await harness.act(() => harness.fireEvent(codexImpl, 'change'));
   assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
     /upstream proxy is experimental and off by default/);
+  assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
+  assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
+  assert.match(host.querySelector('#agent-spawn-approval').textContent, /Never ask — no approval prompts/);
+  const reviewer = host.querySelector('#agent-spawn-approval-reviewer');
+  setValue(reviewer, 'auto_review');
+  await harness.act(() => harness.fireEvent(reviewer, 'change'));
+  assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
   const codexMode = host.querySelector('#agent-spawn-sandbox');
   assert.equal(codexMode.closest('.cron-create-row').hidden, false);
   assert.match(codexMode.closest('.cron-create-row').textContent, /Codex sandbox mode/);
@@ -711,6 +729,8 @@ test('an untouched Codex row still discloses the built-in sandbox network gap', 
     assert.equal(codexMode.closest('.cron-create-row').hidden, false,
       'a resolved Codex built-in default reveals its native mode');
     assert.match(codexMode.closest('.cron-create-row').textContent, /Codex sandbox mode/);
+    assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
   } finally {
     mounted.cleanup();
   }
@@ -731,12 +751,19 @@ test('the primary Sandbox off choice keeps a visible forced-none sandbox-profile
     assert.equal(host.querySelector('#agent-spawn-sandbox-row').hidden, true);
     assert.match(host.querySelector('#agent-spawn-sandbox-impl-hint').textContent,
       /Sandbox OFF/);
+    assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, true);
+    assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, true);
 
     const forcedNone = host.querySelector('#agent-spawn-sandbox-profile');
     assert.equal(forcedNone.closest('.cron-create-row').hidden, false,
       'the forced omission is explained instead of hiding the field');
     assert.equal(forcedNone.disabled, true);
     assert.match(forcedNone.options[0].textContent, /none.*required/i);
+
+    setValue(codexSandbox, 'harness-builtin');
+    await harness.act(() => harness.fireEvent(codexSandbox, 'change'));
+    assert.equal(host.querySelector('#agent-spawn-approval-row').hidden, false);
+    assert.equal(host.querySelector('#agent-spawn-approval-reviewer-row').hidden, false);
   } finally {
     mounted.cleanup();
   }

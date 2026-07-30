@@ -86,7 +86,11 @@ test('Codex profile permission modes populate, survive harness switches, save, a
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.openDialog({ kind: 'profile-editor', seed: { name: 'legacy', harness: 'codex', approval: '', auto_review: true }, options: {}, catalog });
+  state.openDialog({
+    kind: 'profile-editor',
+    seed: { name: 'legacy', harness: 'codex', approval: '', auto_review: true },
+    options: {}, catalog, sandboxImpl,
+  });
   const saves = []; const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions: { async saveProfile(value) { saves.push(value); } }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => Promise.resolve());
@@ -118,6 +122,15 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   const switchedApproval = harness.getByLabelText(host, /^Approval policy/);
   assert.deepEqual([...switchedApproval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
   assert.match(switchedApproval.options[0].textContent, /recommended/);
+  const sandboxImplementation = host.querySelector('#profile-editor-sandbox-impl');
+  choose(sandboxImplementation, 'off');
+  await harness.act(() => harness.fireEvent(sandboxImplementation, 'change'));
+  assert.equal(host.querySelector('#profile-editor-approval-row').hidden, true);
+  assert.equal(host.querySelector('#profile-editor-approval-reviewer-row').hidden, true);
+  choose(sandboxImplementation, 'harness-builtin');
+  await harness.act(() => harness.fireEvent(sandboxImplementation, 'change'));
+  assert.equal(host.querySelector('#profile-editor-approval-row').hidden, false);
+  assert.equal(host.querySelector('#profile-editor-approval-reviewer-row').hidden, false);
 
   choose(switchedApproval, 'untrusted'); await harness.act(() => harness.fireEvent(switchedApproval, 'change'));
   const switchedReviewer = host.querySelector('#profile-editor-approval-reviewer');

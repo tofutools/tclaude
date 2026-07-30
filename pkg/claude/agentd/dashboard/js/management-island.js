@@ -25,7 +25,7 @@ import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } fr
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
 import {
-  autoCompactWindowHintFor, sandboxModeHelpForImplementation,
+  approvalControlsVisibleFor, autoCompactWindowHintFor, sandboxModeHelpForImplementation,
   sandboxImplHintFor, sandboxImplClearedNoticeFor, sandboxImplOptionsFor,
   sandboxModeControlLabel, sandboxModeOptionsForImplementation,
 } from './agent-spawn-model.js';
@@ -828,6 +828,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
         : sandboxImpl?.host_unavailable_reason || '',
     },
   );
+  const showApprovalControls = !profile || approvalControlsVisibleFor({
+    harness: draft.harness,
+    sandbox: draft.sandbox,
+    sandbox_implementation: draft.sandbox_implementation,
+  }, sandboxImpl?.default);
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
   return html`
@@ -872,7 +877,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       options=${(hEntry?.approval_modes || []).map((value) => ({ value, label: approvalPolicyLabel(draft.harness, value, hEntry.default_approval) }))}
       onChange=${(event) => change(setDraft, 'approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
-      disabled=${!hEntry?.can_approval} />
+      disabled=${!hEntry?.can_approval || !showApprovalControls} />
     <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
       value=${draft.tools}
       options=${(hEntry?.tools_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_tools ? ' (recommended)' : '') }))}
@@ -896,7 +901,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false, san
       value=${draft.approval_reviewer} options=${approvalReviewerOptions(true)}
       onChange=${(event) => change(setDraft, 'approval_reviewer', event.currentTarget.value)}
       help=${reviewerHelp} open=${helpOpen === 'profile-editor-approval-reviewer'} setOpen=${setHelpOpen}
-      disabled=${!hEntry?.can_auto_review} />`}
+      disabled=${!hEntry?.can_auto_review || !showApprovalControls} />`}
     ${profile && html`<${HelpField} id="profile-editor-ask-timeout" label="Question timeout" title="AskUserQuestion idle-timeout for the agent."
       value=${draft.ask_user_question_timeout}
       options=${(hEntry?.ask_timeout_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_ask_timeout ? ' (recommended)' : '') }))}
